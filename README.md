@@ -4,6 +4,11 @@ Self-hosted, markdown-first memory for LLM agents — works across devices, agen
 
 **Status:** 🚧 Early development. Private repo while the shape stabilizes.
 
+[![smoke](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml)
+[![release](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml)
+
+Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
+
 ---
 
 ## What it gives you
