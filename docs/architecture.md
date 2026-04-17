@@ -109,9 +109,14 @@ Each pass is idempotent: delete output, re-run, same result.
 - Recovery is one re-ingestion pass.
 - Portability tested in CI, not promised in docs.
 
-## Alternatives considered
+## Alternatives considered briefly
 
-See [docs/decisions/0001-adopt-source-synthesis-index-frame.md](decisions/0001-adopt-source-synthesis-index-frame.md) for a full comparison against MemGPT/Letta, raw Mem0-centric, cognitive-type partitioning, and others.
+- **Mem0-centric / vector-DB-as-storage.** Rejected: losing the vector store means losing memory; maximum vendor lock-in.
+- **MemGPT / Letta tiered runtime.** Solves agent runtime state, not durable cross-device knowledge. Not the same problem.
+- **Cognitive-type partitioning** (episodic / semantic / procedural). Rejected: partitions by *content type* (philosophical) rather than *regenerability* (operational). Ages poorly as foundation models absorb more memory function intrinsically.
+- **Microsoft GraphRAG community summaries.** Adopted as a *technique* inside the synthesis layer, not as a replacement frame.
+- **Zep / Graphiti bi-temporal graphs.** Adopted as an *enrichment* of the index layer (the `valid_from` / `invalidated_at` borrow above), not as a separate frame.
+- **A-Mem Zettelkasten-for-agents** atomic-note discipline. Adopted for source markdown shape.
 
 ## References
 

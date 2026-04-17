@@ -76,7 +76,7 @@ universal-memory/
 
 ## Status and roadmap
 
-See [docs/decisions/](docs/decisions/) for the architecture decisions driving the current shape.
+See [ROADMAP.md](ROADMAP.md) for shipped work and what's planned next.
 
 ## License
 

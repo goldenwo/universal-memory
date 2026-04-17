@@ -8,20 +8,17 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 |---|---|---|
 | [v0.1.0](https://github.com/goldenwo/universal-memory/releases/tag/v0.1.0) | Memory server — Docker Compose + lifted mem0 HTTP server, vector-only, smoke-tested | Commit `58ad82d` on `main` |
 
-Foundations also shipped alongside v0.1.0:
+Foundations shipped alongside v0.1.0:
 
 - Architecture doc ([docs/architecture.md](docs/architecture.md)) — source/synthesis/index role-based frame
-- Four ADRs documenting the architectural decisions to date
-- Implementation plan + review loop discipline ([docs/plans/2026-04-16-memory-server-v0.1.md](docs/plans/2026-04-16-memory-server-v0.1.md))
 
 ## Near-term — plug-and-play arc
 
 Three ordered plans that collectively eliminate manual `docker compose` invocation for the end user. Each is independent and ships value on its own.
 
-### 1. Install wizard (`server/install.sh`)
+### 1. Install wizard (`server/install.sh`) — ✅ shipped in v0.1.1
 **Why:** `cp .env.example .env && edit .env && docker compose up -d` is three steps and requires knowing what to edit. An interactive script prompts for the required values, writes `.env`, runs `docker compose up -d`, and polls `/health`. Single command, no editing.
-**Scope:** small plan — shell script, ~100 lines. Plan: [docs/plans/2026-04-17-install-wizard.md](docs/plans/2026-04-17-install-wizard.md).
-**Expected lift:** user goes from "clone repo, edit config, run compose" to `./install.sh`.
+**Status:** shipped in [v0.1.1](https://github.com/goldenwo/universal-memory/releases/tag/v0.1.1).
 
 ### 2. CI workflow + GHCR image publishing
 **Why:** Two wins at once. (a) CI proves portability continuously: every PR spins up the stack on fresh Ubuntu and runs the smoke test — no more "works on my machine." (b) CI publishes the built image to `ghcr.io/goldenwo/universal-memory-server:<tag>`. Users pull the prebuilt image instead of building locally — first-run latency drops from ~2 min (npm install + build) to ~20 s (image pull).
@@ -37,13 +34,14 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 
 ## Layer 3 enrichment (index upgrades)
 
-### Kuzu graph memory ([ADR-0004](docs/decisions/0004-kuzu-for-graph-memory.md))
+### Kuzu graph memory
 **Why:** Multi-hop queries over ADR relationships (`supersedes`, `depends_on`, `contradicts`). Vector search can't answer "what depends on the choice to use PostgreSQL?"
+**Rationale for Kuzu over Neo4j/Memgraph/AGE:** Kuzu is embedded (no server process) — fits a Pi's 8 GB budget where Neo4j would not. Production-supported in mem0 OSS since Sep 2025.
 **Scope:** medium plan. Install `kuzu` optional dep in server image + update mem0 config + define graph schema for ADR-specific edges + extraction pipeline to populate edges from ADR frontmatter.
-**Blocked on:** validating mem0 OSS's Kuzu integration works in our setup (documented as production-supported since Sep 2025; haven't tested it ourselves).
+**Blocked on:** validating mem0 OSS's Kuzu integration works in our setup (documented as production-supported; haven't tested it ourselves).
 
 ### Bi-temporal metadata on index facts
-**Why:** Borrowed from Zep ([ADR-0001](docs/decisions/0001-adopt-source-synthesis-index-frame.md)). Each fact gets `valid_from` / `invalidated_at` so superseded information doesn't surface at recall time. Essential for ADR workflows where decisions get overturned.
+**Why:** Borrowed from Zep's temporal knowledge graph pattern. Each fact gets `valid_from` / `invalidated_at` so superseded information doesn't surface at recall time. Essential for ADR workflows where decisions get overturned.
 **Scope:** small-medium plan. Metadata schema + ingestion pipeline update + recall-path awareness.
 **Order:** after Kuzu (edges are the natural place for temporal metadata).
 
@@ -66,7 +64,7 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 ### `create-adr` skill + `/adr` slash command
 **Why:** ADR workflow first-class support. Writes the new ADR file using the template, creates the git commit, posts the atomic fact to the memory server.
 **Scope:** small plan. One skill + slash command + post-commit hook hook.
-**Decisions needed:** ADR-0005 (invocation model — `/adr` slash vs keyword detect vs end-of-session batch).
+**Decisions needed:** invocation model — `/adr` slash command vs keyword detection vs end-of-session batch.
 
 ### OpenClaw integration addon
 **Why:** For users who also run OpenClaw. `workspace-dream` skill for the Pi's hand-curated workspace markdown + autoCapture retrofit to write markdown before POSTing to the memory server.
@@ -74,7 +72,7 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 
 ### Cross-device markdown sync
 **Why:** Windows per-project auto-memory currently can't be read from Pi (and vice versa). Mem0 is the only cross-device surface today.
-**Decisions needed:** ADR-0006 (Syncthing vs nightly `git push` vs a sync daemon).
+**Decisions needed:** sync mechanism — Syncthing vs nightly `git push` vs a sync daemon.
 **Scope:** small-medium plan. Depends on chosen mechanism.
 
 ## Operational debt (lower priority, known)
@@ -88,14 +86,14 @@ Current image is ~583 MB. Dominated by mem0ai's transitively-bundled LLM provide
 ### History DB persistence
 Current: `/tmp/mem0-history.db` (ephemeral, reset on container restart). Users who want audit history of mem0 edits should be able to bind-mount a persistent location without editing config. Ship a commented volume mount example in `docker-compose.yml`.
 
-## Open architectural decisions (ADRs yet to write)
+## Open architectural decisions
 
-| ADR | Topic | Blocking |
-|---|---|---|
-| 0005 | ADR invocation model (`/adr` vs keyword vs end-of-session batch) | `create-adr` skill |
-| 0006 | Cross-device markdown sync mechanism (Syncthing / git / daemon) | Cross-device sync work |
-| 0007 | Raw capture co-location with Claude Code's per-project `memory/` dir | Stop-hook retrofit usability — deferred until autoDream behavior on custom subdirs is tested |
-| 0008 | Two deployment modes (cloud via mem0.ai vs self-hosted) — whether to support cloud mode officially | User-facing install flow |
+| Topic | Blocking |
+|---|---|
+| ADR invocation model (`/adr` vs keyword vs end-of-session batch) | `create-adr` skill |
+| Cross-device markdown sync mechanism (Syncthing / git / daemon) | Cross-device sync work |
+| Raw capture co-location with Claude Code's per-project `memory/` dir | Stop-hook retrofit usability — deferred until autoDream behavior on custom subdirs is tested |
+| Two deployment modes (cloud via mem0.ai vs self-hosted) | User-facing install flow |
 
 ## Distribution / release
 
@@ -107,7 +105,6 @@ After Claude Code plugin manifest is in and CI is green, register with the Claud
 
 ## How this doc is maintained
 
-- When a new plan is written, the item moves into the "next 1–3 items" list.
-- When a plan ships, the item moves to "Shipped" with evidence (commit SHA + tag).
+- When a new area becomes the next focus, the item moves into the "near-term" list.
+- When work ships, the item moves to "Shipped" with evidence (commit SHA + tag).
 - Items can split or merge as we learn more. Don't worship the structure — use it.
-- ADRs don't go here; they live under [docs/decisions/](docs/decisions/). This doc points at them.
