@@ -7,6 +7,7 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 | Version | What | Evidence |
 |---|---|---|
 | [v0.1.0](https://github.com/goldenwo/universal-memory/releases/tag/v0.1.0) | Memory server — Docker Compose + lifted mem0 HTTP server, vector-only, smoke-tested | Commit `58ad82d` on `main` |
+| v0.1.3 | Claude Code plugin (manifest + hooks registration + auto-start probe) | Commit on main, tagged v0.1.3 |
 
 Foundations shipped alongside v0.1.0:
 
@@ -25,12 +26,11 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 **Scope:** small plan. `.github/workflows/ci.yml` with a smoke-test job and a publish job (on tag push). Requires setting `GHCR_TOKEN` secret.
 **Depends on:** install wizard (CI smoke test can invoke it).
 
-### 3. Claude Code plugin manifest + auto-start hook
-**Why:** The final step to zero-touch. Plugin's SessionStart hook probes the endpoint; if unreachable, runs `docker compose up -d` using a bundled compose file. After initial plugin install, user never thinks about Docker again — sessions just work.
-**Scope:** medium plan. Plugin manifest (`.claude-plugin/`), `docker compose up -d` invocation from a hook, config discovery, clear first-run logging (never silent).
-**Depends on:** GHCR image (so the plugin can pull instead of needing the repo cloned).
+### 3. Claude Code plugin manifest + auto-start hook — ✅ shipped in v0.1.3
+**Why:** The final step to zero-touch. Plugin's SessionStart hook probes the endpoint; if unreachable, runs `docker compose up -d` using a user-configured compose dir. After initial plugin install, user never thinks about Docker again — sessions just work.
+**Status:** shipped in v0.1.3. Plugin manifest at `plugins/claude-code/universal-memory/.claude-plugin/plugin.json`, hook registration at `hooks/hooks.json`, auto-start probe at `hooks/auto-start.sh`. v0.1 intentionally scopes to the user's existing `server/` dir via `UM_COMPOSE_DIR` rather than bundling compose inside the plugin — bundling is a v0.2 candidate once demand surfaces.
 
-**Trust caveat:** auto-starting containers from a plugin hook is not invisible magic. The plugin must log clearly on first use and place the compose file somewhere the user can inspect.
+**Trust caveat:** auto-starting containers from a plugin hook is not invisible magic. The plugin logs clearly on first use via `[um-autostart]` lines and only acts when `UM_COMPOSE_DIR` explicitly points at a compose file the user controls.
 
 ## Layer 3 enrichment (index upgrades)
 
