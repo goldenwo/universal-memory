@@ -15,6 +15,17 @@ Self-hosted, markdown-first memory for LLM agents — works across devices, agen
 - **ADR workflow** — first-class support for recording architectural decisions per project, with automatic cross-project synthesis.
 - **Karpathy-inspired architecture** — three roles: source markdown (authoritative), LLM-compiled synthesis (regenerable), and vector/graph indexes (regenerable caches). See [docs/architecture.md](docs/architecture.md).
 
+## Who this is for
+
+You run Claude Code (CLI or the VS Code / JetBrains extension) and want cross-session, cross-device memory without vendor lock-in.
+
+- **Standalone users.** You don't run OpenClaw. The core (memory server + Claude Code plugin) works by itself. Docker + an OpenAI key is all you need. The `plugins/openclaw/` and `integrations/openclaw/` directories don't apply to you — skip them.
+- **OpenClaw users.** You already run OpenClaw for Discord auto-capture / agent workspace / etc. The optional addons in `plugins/openclaw/` integrate universal-memory with your existing setup (workspace-dream, autoCapture retrofit).
+
+**OpenClaw is never a prerequisite.** The memory server has zero OpenClaw code, dependencies, or assumptions. The server and Claude Code plugin can be installed and run without OpenClaw existing anywhere on your machine.
+
+See the [roadmap](ROADMAP.md) for what's shipped and what's planned.
+
 ## Two deployment modes
 
 | Mode | Who it's for | Setup time |
