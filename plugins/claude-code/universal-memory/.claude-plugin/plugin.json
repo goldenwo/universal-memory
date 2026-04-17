@@ -1,0 +1,12 @@
+{
+  "name": "universal-memory",
+  "description": "Cross-session, cross-device memory for Claude Code — markdown-first captures + vector recall via a self-hostable mem0 server. Auto-starts the local stack on demand.",
+  "version": "0.1.0",
+  "author": {
+    "name": "goldenwo"
+  },
+  "homepage": "https://github.com/goldenwo/universal-memory",
+  "repository": "https://github.com/goldenwo/universal-memory",
+  "license": "MIT",
+  "keywords": ["memory", "mem0", "context", "cross-session", "self-hosted", "markdown"]
+}
