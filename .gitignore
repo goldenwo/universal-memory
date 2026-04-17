@@ -64,3 +64,6 @@ credentials.json
 # History of these was scrubbed via git filter-repo in the past.
 docs/plans/
 docs/decisions/
+
+# Claude Code worktrees (created by superpowers skills / /worktree)
+.claude/worktrees/
