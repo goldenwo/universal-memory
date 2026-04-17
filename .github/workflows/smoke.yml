@@ -1,0 +1,74 @@
+name: smoke
+
+# Run on PRs and pushes to main. For PRs from forks, secrets are not
+# available — the job gates on head-repo match and skips cleanly.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Avoid redundant runs on rapid commits.
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege: smoke only needs to read the repo source. It doesn't
+# write commit statuses, write packages, or touch deployments.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Skip on fork PRs: secrets aren't available and the test would
+    # fail at the first OpenAI call. Fork contributors can run the
+    # same test locally before pushing.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # install.sh in UM_NONINTERACTIVE=1 mode reads the required values
+      # from env vars, fails fast if any are missing, and writes .env
+      # itself. We do not pre-write .env — letting install.sh own its
+      # entire code path is what we want to CI.
+      - name: Bring up stack via install.sh
+        working-directory: server
+        env:
+          UM_NONINTERACTIVE: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEM0_USER_ID: ci-smoke-${{ github.run_id }}
+          MEM0_MCP_PORT: "6335"
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY secret is not set on this repo."
+            echo "::error::Add it at Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          bash ./install.sh
+
+      - name: Run smoke test
+        working-directory: server
+        run: bash ./test/smoke.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: server
+        run: |
+          echo "::group::memory-server logs"
+          docker compose logs memory-server || true
+          echo "::endgroup::"
+          echo "::group::qdrant logs"
+          docker compose logs qdrant || true
+          echo "::endgroup::"
+
+      - name: Teardown
+        if: always()
+        working-directory: server
+        run: docker compose down --volumes || true
