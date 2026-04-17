@@ -8,13 +8,28 @@ Cross-session, cross-device memory for Claude Code, backed by a self-hostable me
 - **Stop:** after each turn, writes an append-only markdown capture of the exchange, then asynchronously POSTs to the memory server for indexing.
 - **Auto-start:** if the server isn't running and you've pointed the plugin at a compose dir, runs `docker compose up -d` for you on session start. Fails silently if not configured.
 
+## Deployment scenarios
+
+The plugin talks to *any* universal-memory server over HTTP. Pick the scenario that fits you:
+
+| Scenario | What you set up | Auto-start? |
+|---|---|---|
+| **Local Docker** — server runs on your dev machine | Clone repo, `server/install.sh`. Set `UM_ENDPOINT=http://localhost:6335` and `UM_COMPOSE_DIR=/path/to/server`. | ✅ plugin runs `docker compose up -d` when endpoint is down |
+| **Remote self-hosted** — server runs on a Pi, VPS, or k8s cluster | Deploy the server image (`ghcr.io/goldenwo/universal-memory-server`) on that host. Point `UM_ENDPOINT` at its URL (e.g. via Tailscale). Leave `UM_COMPOSE_DIR` unset. | ❌ remote host starts the server itself; plugin just points at it |
+| **Cloud Qdrant as index** | Configure your UM server (local or remote) to use a managed Qdrant URL in its `.env`. Plugin unchanged. | Depends on where the UM server runs |
+| **Cloud mem0.ai direct** (no UM server) | **Not supported in v0.1.** Would require the plugin to speak mem0.ai's API shape. Tracked on the roadmap. | — |
+
+OpenClaw users: the plugin has zero OpenClaw dependencies and runs identically whether OpenClaw is installed or not.
+
+Windows users: hooks are bash scripts and require Git Bash or WSL. Native PowerShell hooks are on the roadmap.
+
 ## Install
 
 Two steps.
 
 ### 1. Run a universal-memory server somewhere
 
-Easiest: use the included server at `server/` in the [universal-memory repo](https://github.com/goldenwo/universal-memory):
+Easiest (local Docker): use the included server at `server/` in the [universal-memory repo](https://github.com/goldenwo/universal-memory):
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory
@@ -22,7 +37,12 @@ cd universal-memory/server
 ./install.sh      # prompts for OpenAI key, writes .env, runs docker compose up -d
 ```
 
-Or pull the prebuilt image from GHCR and wire your own compose.
+For remote / custom hosting, pull the prebuilt image and wire your own compose or orchestrator:
+
+```bash
+docker pull ghcr.io/goldenwo/universal-memory-server:latest
+# then run it wherever — any host reachable from your dev machine works
+```
 
 ### 2. Install this plugin
 
@@ -46,7 +66,7 @@ Set these env vars (machine-global, or per-project via a `.envrc`/direnv, etc.):
 | Variable | Required? | Description |
 |---|---|---|
 | `UM_ENDPOINT` | required for the plugin to do anything | Your memory server URL. E.g. `http://localhost:6335` or `https://your-pi.taile....ts.net:6335`. |
-| `UM_COMPOSE_DIR` | optional | Path to the directory containing your `docker-compose.yml`. If set, the plugin auto-runs `docker compose up -d` there when the endpoint is unreachable. Leave unset to opt out of auto-start. |
+| `UM_COMPOSE_DIR` | optional | Path to a directory containing a `docker-compose.yml` for the UM server on *this* machine. If set, the plugin auto-runs `docker compose up -d` there when the endpoint is unreachable. Leave unset for remote-server scenarios — the plugin won't try to start a remote host it can't reach. |
 | `UM_CAPTURE_DIR` | optional | Where raw session captures get written. Defaults to `$HOME/.um/captures/<project>/raw/`. |
 
 If `UM_ENDPOINT` is unset, the plugin hooks exit silently and do nothing — safe default.

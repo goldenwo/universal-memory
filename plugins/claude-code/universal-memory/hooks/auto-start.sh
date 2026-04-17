@@ -7,8 +7,9 @@
 #   - If reachable: exit 0 silently. Nothing to do.
 #   - If unreachable AND UM_COMPOSE_DIR is set + valid:
 #       run `docker compose up -d` there, poll /health (up to 60s), log progress.
-#   - If unreachable AND UM_COMPOSE_DIR is unset: exit 0 silently with a
-#     one-line note that auto-start is available but unconfigured.
+#   - If unreachable AND UM_COMPOSE_DIR is unset: exit 0 with a one-line
+#     note. Only users running the server locally via Docker will want to
+#     set UM_COMPOSE_DIR; remote self-host users leave it unset.
 #
 # Fail-soft: never exit non-zero. We do not want to block session start.
 #
@@ -33,7 +34,8 @@ if curl -sf --max-time 2 "$UM_ENDPOINT/health" >/dev/null 2>&1; then
 fi
 
 if [ -z "$UM_COMPOSE_DIR" ]; then
-    log "server at $UM_ENDPOINT not reachable; set UM_COMPOSE_DIR to enable auto-start"
+    log "server at $UM_ENDPOINT not reachable — session will continue without memory."
+    log "(local Docker users: set UM_COMPOSE_DIR to enable auto-start. remote users: start the server on its host.)"
     exit 0
 fi
 
