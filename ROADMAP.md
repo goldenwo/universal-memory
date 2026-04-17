@@ -70,6 +70,17 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 **Why:** For users who also run OpenClaw. `workspace-dream` skill for the Pi's hand-curated workspace markdown + autoCapture retrofit to write markdown before POSTing to the memory server.
 **Scope:** medium plan. Requires coordinating with the `openclaw-mem0` plugin maintainer or forking.
 
+### Claude-mem bridge
+**Why:** [Claude-mem](https://github.com/thedotmack/claude-mem) is the leading memory plugin for Claude Code — it does per-session LLM-compressed capture into local SQLite+Chroma, with SSH sync between a user's own machines. Users will reasonably ask: *"how is this different, and can I use both?"*
+
+**The honest difference.** Claude-mem optimizes for one tool (Claude Code) across one user's machines. universal-memory optimizes for **one memory served to every surface** — Claude Code, Claude.ai web (via local MCP), Claude Desktop, Discord OpenClaw, any MCP- or HTTP-speaking agent — from a single cloud-hosted server. Claude-mem's capture breadth inside Claude Code is deeper (5 lifecycle hooks vs our 2); our cross-surface reach is wider and our markdown-first design means the vector store is a replaceable cache rather than the source of truth.
+
+**The bridge.** A small tool that reads Claude-mem's local SQLite export and appends its compressed summaries into the universal-memory markdown tree. Claude-mem becomes a contributor (tactical per-CC-session capture), universal-memory becomes the long-term vault (cross-surface access, cross-project synthesis, ADRs). Users get both without maintaining two sources of truth.
+
+**Scope:** small plan. One CLI tool + a scheduled pull (cron / systemd timer) + docs explaining when to use which. No changes to Claude-mem itself — we read its on-disk format read-only.
+
+**Open question:** whether the bridge flows one direction (claude-mem → UM) or bidirectional (UM summaries ingested back into claude-mem's search). Start one-way; revisit if daily use surfaces a need.
+
 ### Cross-device markdown sync
 **Why:** Windows per-project auto-memory currently can't be read from Pi (and vice versa). Mem0 is the only cross-device surface today.
 **Decisions needed:** sync mechanism — Syncthing vs nightly `git push` vs a sync daemon.
