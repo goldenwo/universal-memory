@@ -19,11 +19,21 @@ Self-hostable backend for the universal-memory system. Packaged as a single Dock
 ## Run it
 
 ```bash
-cp .env.example .env
-# edit .env: set OPENAI_API_KEY and MEM0_USER_ID
+./install.sh                        # interactive wizard — prompts for API key, writes .env, brings up stack, polls /health
+bash test/smoke.sh                  # optional end-to-end round-trip test
+```
+
+For advanced / CI use, run the wizard non-interactively:
+
+```bash
+UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-... MEM0_USER_ID=your-id ./install.sh
+```
+
+Or skip the wizard entirely and drive things by hand:
+
+```bash
+cp .env.example .env    # then edit .env: set OPENAI_API_KEY, MEM0_USER_ID
 docker compose up -d
-curl http://localhost:6335/health   # expect {"ok":true,"memories":0}
-bash test/smoke.sh                  # end-to-end round-trip test
 ```
 
 To stop and remove: `docker compose down` (data persists in `./data/qdrant`).
