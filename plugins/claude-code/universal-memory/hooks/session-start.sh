@@ -18,6 +18,13 @@ fi
 
 PROJECT=$(basename "${CLAUDE_CWD:-$(pwd)}")
 
+# Auto-start the server if it's unreachable and the operator configured
+# UM_COMPOSE_DIR. Silent on normal path (server already up).
+AUTO_START="$(dirname "${BASH_SOURCE[0]}")/auto-start.sh"
+if [ -x "$AUTO_START" ]; then
+	bash "$AUTO_START" || true
+fi
+
 curl -sf --max-time 10 -X POST "$UM_ENDPOINT/api/search" \
 	-H 'Content-Type: application/json' \
 	-d "{\"query\": \"$PROJECT project architecture preferences conventions\", \"limit\": 10}" \
