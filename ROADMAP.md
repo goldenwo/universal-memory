@@ -14,19 +14,26 @@ Foundations also shipped alongside v0.1.0:
 - Four ADRs documenting the architectural decisions to date
 - Implementation plan + review loop discipline ([docs/plans/2026-04-16-memory-server-v0.1.md](docs/plans/2026-04-16-memory-server-v0.1.md))
 
-## Near-term — next 1–3 items to plan
+## Near-term — plug-and-play arc
 
-### CI workflow (GitHub Actions)
-**Why:** Turns the "portability" claim from a statement into a continuously-verified fact. Fresh Ubuntu runner + `docker compose up` + smoke test on every PR. Catches regressions in the Dockerfile, deps, or `mem0ai` updates before they reach users.
-**Scope:** small plan. One `.github/workflows/smoke.yml` + secrets setup.
+Three ordered plans that collectively eliminate manual `docker compose` invocation for the end user. Each is independent and ships value on its own.
 
-### Claude Code plugin manifest
-**Why:** Hooks are already lifted into [plugins/claude-code/universal-memory/hooks/](plugins/claude-code/universal-memory/hooks/) — we need the `plugin.json` manifest + `.claude-plugin/` metadata so the plugin is installable via the Claude Code marketplace pattern.
-**Scope:** small plan. One manifest + README install instructions.
+### 1. Install wizard (`server/install.sh`)
+**Why:** `cp .env.example .env && edit .env && docker compose up -d` is three steps and requires knowing what to edit. An interactive script prompts for the required values, writes `.env`, runs `docker compose up -d`, and polls `/health`. Single command, no editing.
+**Scope:** small plan — shell script, ~100 lines. Plan: [docs/plans/2026-04-17-install-wizard.md](docs/plans/2026-04-17-install-wizard.md).
+**Expected lift:** user goes from "clone repo, edit config, run compose" to `./install.sh`.
 
-### Install wizard
-**Why:** `cp .env.example .env && vim .env` is friction. An interactive `server/install.sh` that prompts for `OPENAI_API_KEY`, `MEM0_USER_ID`, port, etc., writes `.env`, then `docker compose up -d` gets a user to working in seconds.
-**Scope:** small plan. Shell or Python script, plus a Windows PowerShell equivalent.
+### 2. CI workflow + GHCR image publishing
+**Why:** Two wins at once. (a) CI proves portability continuously: every PR spins up the stack on fresh Ubuntu and runs the smoke test — no more "works on my machine." (b) CI publishes the built image to `ghcr.io/goldenwo/universal-memory-server:<tag>`. Users pull the prebuilt image instead of building locally — first-run latency drops from ~2 min (npm install + build) to ~20 s (image pull).
+**Scope:** small plan. `.github/workflows/ci.yml` with a smoke-test job and a publish job (on tag push). Requires setting `GHCR_TOKEN` secret.
+**Depends on:** install wizard (CI smoke test can invoke it).
+
+### 3. Claude Code plugin manifest + auto-start hook
+**Why:** The final step to zero-touch. Plugin's SessionStart hook probes the endpoint; if unreachable, runs `docker compose up -d` using a bundled compose file. After initial plugin install, user never thinks about Docker again — sessions just work.
+**Scope:** medium plan. Plugin manifest (`.claude-plugin/`), `docker compose up -d` invocation from a hook, config discovery, clear first-run logging (never silent).
+**Depends on:** GHCR image (so the plugin can pull instead of needing the repo cloned).
+
+**Trust caveat:** auto-starting containers from a plugin hook is not invisible magic. The plugin must log clearly on first use and place the compose file somewhere the user can inspect.
 
 ## Layer 3 enrichment (index upgrades)
 
