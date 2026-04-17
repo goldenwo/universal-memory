@@ -2,7 +2,7 @@
 
 Self-hostable backend for the universal-memory system. Packaged as a single Docker Compose stack.
 
-**Status:** 🚧 Scaffold — implementation coming. Current working reference lives at `~/.openclaw/scripts/mem0-mcp-http.mjs` on the maintainer's Pi and will be lifted into this directory.
+**Status:** v0.1 — Docker Compose + vector memory server, smoke-tested. No graph (deferred to v0.2 per [ADR-0004](../docs/decisions/0004-kuzu-for-graph-memory.md)), no cron, no install wizard.
 
 ## What it runs
 
@@ -16,20 +16,18 @@ Self-hostable backend for the universal-memory system. Packaged as a single Dock
 - An OpenAI API key (for embeddings + extraction LLM), or configure alternative provider
 - ~1 GB free disk for the Qdrant collection (grows with memory volume)
 
-## Install
+## Run it
 
 ```bash
 cp .env.example .env
-# Edit .env: set OPENAI_API_KEY, MEM0_USER_ID (any string), optional tuning
-docker-compose up -d
+# edit .env: set OPENAI_API_KEY and MEM0_USER_ID
+docker compose up -d
+curl http://localhost:6335/health   # expect {"ok":true,"memories":0}
+bash test/smoke.sh                  # end-to-end round-trip test
 ```
 
-Verify:
-
-```bash
-curl http://localhost:6335/health
-# expected: {"ok": true, "memories": 0}
-```
+To stop and remove: `docker compose down` (data persists in `./data/qdrant`).
+To fully reset: `docker compose down && rm -rf ./data/qdrant`.
 
 ## Data
 

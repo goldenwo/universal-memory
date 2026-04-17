@@ -1,0 +1,18 @@
+{
+  "name": "universal-memory-server",
+  "version": "0.1.0",
+  "description": "Memory server for universal-memory — wraps mem0 OSS, exposes REST + MCP HTTP endpoints",
+  "type": "module",
+  "private": true,
+  "main": "mem0-mcp-http.mjs",
+  "scripts": {
+    "start": "node mem0-mcp-http.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "mem0ai": "^2.4.5"
+  },
+  "license": "MIT"
+}
