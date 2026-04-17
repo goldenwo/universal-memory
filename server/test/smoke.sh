@@ -36,13 +36,13 @@ curl -sf -X POST "$ENDPOINT/api/add" \
 	-d "{\"text\": \"User's unique identifier for the current session is $MARKER.\"}" \
 	>/dev/null
 
-# 3/5 poll search until marker appears (bounded — extraction LLM latency varies)
+# 3/5 poll /api/list until marker appears (bounded — extraction LLM latency
+# varies, and semantic search can drop low-signal tokens from the query
+# while /api/list is a deterministic existence check on stored memory text).
 echo "[smoke] 3/5 poll for marker (up to 30s)"
 FOUND=0
 for i in $(seq 1 15); do
-	RESULT=$(curl -sf -X POST "$ENDPOINT/api/search" \
-		-H 'Content-Type: application/json' \
-		-d "{\"query\": \"smoke test marker $MARKER\", \"limit\": 5}" || echo "[]")
+	RESULT=$(curl -sf "$ENDPOINT/api/list" || echo "[]")
 	if echo "$RESULT" | grep -q "$MARKER"; then
 		FOUND=1
 		echo "[smoke]     found on attempt $i"
@@ -51,7 +51,8 @@ for i in $(seq 1 15); do
 	sleep 2
 done
 [ "$FOUND" = "1" ] || {
-	echo "FAIL: marker never appeared in search after 30s — last result: $RESULT"
+	echo "FAIL: marker never appeared in /api/list after 30s"
+	echo "Last response: $RESULT"
 	exit 1
 }
 
