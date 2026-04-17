@@ -58,3 +58,9 @@ htmlcov/
 *.key
 secrets.json
 credentials.json
+
+# Internal working docs — not shipped to users
+# Files are kept locally for maintainer reference but never tracked.
+# History of these was scrubbed via git filter-repo in the past.
+docs/plans/
+docs/decisions/

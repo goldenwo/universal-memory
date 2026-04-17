@@ -2,7 +2,7 @@
 
 Self-hostable backend for the universal-memory system. Packaged as a single Docker Compose stack.
 
-**Status:** v0.1 — Docker Compose + vector memory server, smoke-tested. No graph (deferred to v0.2 per [ADR-0004](../docs/decisions/0004-kuzu-for-graph-memory.md)), no cron, no install wizard.
+**Status:** v0.1 — Docker Compose + vector memory server, smoke-tested. No graph memory yet (Kuzu deferred to v0.2), no synthesis-pass cron.
 
 ## What it runs
 
