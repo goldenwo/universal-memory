@@ -164,7 +164,7 @@ The memory server exposes 10 tools via JSON-RPC 2.0 at `POST /mcp`. Any MCP clie
 |---|---|
 | `memory_add` | Add a fact to mem0 (extraction pipeline) |
 | `memory_capture` | Write a new authored document to the vault and index it |
-| `memory_checkpoint` | Force a session summary + state refresh |
+| `memory_checkpoint` | Force a session summary + state refresh **(stub, v0.3)** |
 | `memory_forget` | Deprecate a document by ID |
 | `memory_supersede` | Replace a document; old gets `status=superseded`, new is created |
 | `memory_delete` | Delete a memory from the index by ID |

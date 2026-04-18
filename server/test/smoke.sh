@@ -749,7 +749,8 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false for checkpoint stub: ' + result_text
-assert 'not yet implemented' in result.get('error', ''), 'expected not-yet-implemented message: ' + result_text
+err = result.get('error', '')
+assert 'not implemented' in err or 'stub' in err or '/um-checkpoint' in err, 'expected stub/not-implemented message: ' + result_text
 print('OK T10-E: memory_checkpoint returns expected stub error')
 " || { echo "FAIL: T10-E memory_checkpoint stub check failed"; exit 1; }
 
@@ -1094,6 +1095,124 @@ HTTP_STATUS_NEITHER=$(curl -s -o /tmp/del_neither.json -w "%{http_code}" -X POST
 echo "    OK: neither id nor metadata returns 400"
 
 echo "[smoke]     Task 2.5 POST /api/delete all steps passed"
+
+# 4h/5 Task 2.5 verification: type=state never indexed; type=session_summary IS indexed
+echo "[smoke] 4h/5 Task 2.5 type-filter verification (state=0, session_summary>=1)"
+
+if [ -z "${UM_VAULT_DIR:-}" ]; then
+	echo "[smoke] WARN: UM_VAULT_DIR not set — skipping Task 2.5 type-filter verification"
+else
+
+T25_SUBDIR="${UM_VAULT_DIR}/sessions/smoke-t25-$$"
+T25_STATE_DIR="${UM_VAULT_DIR}/state/smoke-t25-$$"
+mkdir -p "$T25_SUBDIR" "$T25_STATE_DIR"
+
+T25_CLEANUP_IDS=""
+t25_cleanup() {
+	rm -rf "$T25_SUBDIR" "$T25_STATE_DIR"
+	for id in $T25_CLEANUP_IDS; do
+		[ -n "$id" ] || continue
+		curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null || true
+	done
+}
+trap t25_cleanup EXIT
+
+# Step 1: create and attempt to reindex a state doc — expect 400 (state docs rejected)
+echo "[smoke]     T25 step 1: state doc rejected by /api/reindex"
+cat > "$T25_STATE_DIR/state.md" <<'T25EOF'
+---
+schema_version: 1
+type: state
+id: state-smoke-t25
+title: State of play — smoke-t25
+status: current
+valid_from: 2026-04-17T00:00:00Z
+project: smoke-t25
+---
+State document body smoke-t25-unique-marker for type-filter test.
+T25EOF
+
+HTTP_STATUS_T25_STATE=$(curl -s -o /tmp/t25_state_resp.json -w "%{http_code}" -X POST "$ENDPOINT/api/reindex" \
+	-H 'Content-Type: application/json' \
+	-d "{\"path\": \"state/smoke-t25-$$/state.md\"}")
+[ "$HTTP_STATUS_T25_STATE" = "400" ] || { echo "FAIL: T25 state doc should be rejected with 400, got $HTTP_STATUS_T25_STATE"; exit 1; }
+echo "[smoke]     T25 step 1 OK: state doc reindex rejected with 400"
+
+# Step 2: search with type=state filter — must return zero results
+echo "[smoke]     T25 step 2: search with type=state filter → zero results"
+T25_STATE_SEARCH=$(curl -sf -X POST "$ENDPOINT/api/search" \
+	-H 'Content-Type: application/json' \
+	-d '{"query":"smoke-t25-unique-marker","limit":20,"include_superseded":true,"filters":{"type":"state"}}')
+echo "$T25_STATE_SEARCH" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('results', [])
+state_results = [r for r in results if (r.get('metadata') or {}).get('type') == 'state']
+if len(state_results) != 0:
+    print(f'FAIL: T25 step 2 — expected 0 type=state results, got {len(state_results)}: ' + json.dumps(state_results[:2]))
+    sys.exit(1)
+print(f'OK T25 step 2: type=state search returned 0 results (total {len(results)} results)')
+" || { echo "FAIL: T25 step 2 type=state search check failed"; exit 1; }
+
+# Step 3: create and reindex a session_summary doc
+echo "[smoke]     T25 step 3: reindex session_summary doc → indexed"
+T25_SUMMARY_ID="session-summary-smoke-t25-$(date +%s)-$$"
+cat > "$T25_SUBDIR/${T25_SUMMARY_ID}.md" <<T25SUMEOF
+---
+schema_version: 1
+type: session_summary
+id: ${T25_SUMMARY_ID}
+title: Smoke T25 Session Summary
+status: current
+valid_from: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+project: smoke-t25
+---
+Session summary body smoke-t25-unique-marker for type-filter test.
+T25SUMEOF
+
+RESP_T25_SUM=$(curl -sf -X POST "$ENDPOINT/api/reindex" \
+	-H 'Content-Type: application/json' \
+	-d "{\"path\": \"sessions/smoke-t25-$$/${T25_SUMMARY_ID}.md\"}")
+echo "    Reindex response: $RESP_T25_SUM"
+echo "$RESP_T25_SUM" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'T25 step 3 reindex failed: ' + json.dumps(data)
+print('OK T25 step 3: session_summary doc indexed')
+" || { echo "FAIL: T25 step 3 session_summary reindex failed"; exit 1; }
+
+# Capture IDs for cleanup
+T25_CLEANUP_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+if isinstance(items, dict): items = items.get('results', [])
+for r in items:
+    if (r.get('metadata') or {}).get('id') == '$T25_SUMMARY_ID':
+        print(r['id'])
+" 2>/dev/null || true)
+
+# Step 4: search with type=session_summary filter — must return >= 1 result
+echo "[smoke]     T25 step 4: search with type=session_summary filter → >=1 result"
+sleep 2
+T25_SUM_SEARCH=$(curl -sf -X POST "$ENDPOINT/api/search" \
+	-H 'Content-Type: application/json' \
+	-d "{\"query\":\"smoke-t25-unique-marker\",\"limit\":20,\"filters\":{\"type\":\"session_summary\"}}")
+echo "$T25_SUM_SEARCH" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('results', [])
+sum_results = [r for r in results if (r.get('metadata') or {}).get('type') == 'session_summary']
+if len(sum_results) < 1:
+    print(f'FAIL: T25 step 4 — expected >=1 type=session_summary results, got {len(sum_results)}')
+    print('All results:', json.dumps(results, indent=2))
+    sys.exit(1)
+print(f'OK T25 step 4: type=session_summary search returned {len(sum_results)} result(s)')
+" || { echo "FAIL: T25 step 4 type=session_summary search check failed"; exit 1; }
+
+trap - EXIT
+t25_cleanup
+echo "[smoke]     Task 2.5 type-filter verification passed (state=0, session_summary>=1)"
+fi  # end UM_VAULT_DIR guard
 
 # 5/5 assert count returned to baseline
 echo "[smoke] 5/5 verify baseline preserved"

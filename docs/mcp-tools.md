@@ -261,7 +261,7 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_checkpoint
 
-Force a session summary and state update. **STUB — not yet implemented.**
+Force a session summary and state update. **(stub, v0.3 — not implemented server-side)**
 
 **Input schema:**
 
@@ -269,9 +269,11 @@ Force a session summary and state update. **STUB — not yet implemented.**
 { "project": "string (optional)" }
 ```
 
-**Response:** `{ "ok": false, "error": "memory_checkpoint not yet implemented; use /um-checkpoint slash command or wait for Phase C Task 15/21" }`
+**Response:** `{ "ok": false, "error": "memory_checkpoint is not implemented server-side in v0.2.0 — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3." }`
 
-This tool is advertised in the tools list so clients can discover it. Wiring lands with Phase C (session-end.sh integration, Task 15/21).
+This tool is advertised in the tools list so MCP clients can discover it. The server-side implementation is deferred to v0.3 because `session-end.sh` requires host filesystem access and env vars (`UM_OPENAI_API_KEY`) that are not available inside the container.
+
+**Use instead:** In Claude Code, run `/um-checkpoint`. From a terminal, execute `hooks/session-end.sh` directly with `UM_PROJECT=<project>`.
 
 ---
 

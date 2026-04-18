@@ -213,7 +213,7 @@ const TOOLS = [
 	},
 	{
 		name: 'memory_checkpoint',
-		description: 'Force a session summary + state update (stub — not yet implemented; completes with Phase C Task 15/21)',
+		description: 'Force a session summary + state update (stub, v0.3) — not yet implemented server-side; use /um-checkpoint in Claude Code instead',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -427,10 +427,12 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_checkpoint': {
-			// STUB — wires in with Phase C Task 15/21 (session-end.sh integration)
+			// STUB (v0.3) — session-end.sh runs on the host with filesystem + env access;
+			// driving it from inside the container requires hook-in-container infrastructure
+			// planned for v0.3. Full MCP-driven implementation deferred.
 			return JSON.stringify({
 				ok: false,
-				error: 'memory_checkpoint not yet implemented; use /um-checkpoint slash command or wait for Phase C Task 15/21',
+				error: 'memory_checkpoint is not implemented server-side in v0.2.0 — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
 			});
 		}
 
@@ -666,7 +668,7 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false } = JSON.parse(await readBody(req));
+			const { query, limit = 5, include_superseded = false, filters } = JSON.parse(await readBody(req));
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify({error: 'query is required'}));
@@ -675,7 +677,14 @@ const server = createServer(async (req, res) => {
 			const includeSup = include_superseded === true;
 			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
 			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
-			const response = await doSearch(query, clampedLimitPost, includeSup);
+			let response = await doSearch(query, clampedLimitPost, includeSup);
+			// Optional metadata filters (project, type) — post-filter after mem0 recall
+			if (filters && typeof filters === 'object') {
+				let items = response.results;
+				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
+				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
+				response = { results: items };
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
 			return;
