@@ -45,11 +45,13 @@ async function writeFixture(base, relPath, content) {
 // 1. vaultPath()
 // ---------------------------------------------------------------------------
 
-test('vaultPath: returns UM_VAULT_DIR when set', () => {
+test('vaultPath: returns UM_VAULT_DIR when set (normalized to OS-native separators)', () => {
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = '/custom/vault';
-    assert.equal(vaultPath(), '/custom/vault');
+    // vaultPath() now runs path.resolve() so forward-slash input is
+    // canonicalized to OS-native separators (e.g. C:\custom\vault on Windows).
+    assert.equal(vaultPath(), path.resolve('/custom/vault'));
   } finally {
     if (original === undefined) {
       delete process.env.UM_VAULT_DIR;
@@ -371,8 +373,9 @@ test('slugify: preserves existing hyphens', () => {
   assert.equal(slugify('already-kebab-case'), 'already-kebab-case');
 });
 
-test('slugify: empty string returns empty string', () => {
-  assert.equal(slugify(''), '');
+test('slugify: empty string returns "untitled" (non-Latin fallback applies)', () => {
+  // After I3: empty result → 'untitled' as safe default.
+  assert.equal(slugify(''), 'untitled');
 });
 
 test('slugify: unicode diacritics are stripped via NFD normalization (Naïve → naive)', () => {
@@ -388,10 +391,68 @@ test('slugify: numbers are preserved', () => {
   assert.equal(slugify('Version 2.0 Release'), 'version-20-release');
 });
 
-test('slugify: all-punctuation returns empty string', () => {
-  assert.equal(slugify('!!! ???'), '');
+test('slugify: all-punctuation returns "untitled" (non-Latin fallback)', () => {
+  assert.equal(slugify('!!! ???'), 'untitled');
 });
 
 test('slugify: tabs and newlines treated as whitespace', () => {
   assert.equal(slugify('line\tone\ntwo'), 'line-one-two');
+});
+
+// I3: non-Latin / non-ASCII fallback to "untitled"
+test('slugify: CJK characters return "untitled"', () => {
+  assert.equal(slugify('東京'), 'untitled');
+});
+
+test('slugify: emoji returns "untitled"', () => {
+  assert.equal(slugify('😀'), 'untitled');
+});
+
+test('slugify: Arabic text returns "untitled"', () => {
+  assert.equal(slugify('مرحبا'), 'untitled');
+});
+
+test('slugify: only-hyphens edge case returns "untitled"', () => {
+  assert.equal(slugify('---'), 'untitled');
+});
+
+// C1: forward-slash vault path is accepted (not rejected as traversal)
+test('C1: forward-slash UM_VAULT_DIR works on all platforms', async () => {
+  // Create a real temp vault so readVaultFile can succeed
+  const nativeVault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-fwdslash-'));
+  const original = process.env.UM_VAULT_DIR;
+  try {
+    await fs.mkdir(path.join(nativeVault, 'notes'), { recursive: true });
+    await fs.writeFile(path.join(nativeVault, 'notes', 'test.md'), '# test', 'utf8');
+
+    // Supply the vault path with forward slashes (as would come from .env or docker-compose)
+    const forwardSlash = nativeVault.replace(/\\/g, '/');
+    process.env.UM_VAULT_DIR = forwardSlash;
+
+    // Before C1 this would throw "Path traversal detected" on Windows;
+    // after the fix it resolves correctly.
+    const content = await readVaultFile('notes/test.md');
+    assert.equal(content, '# test');
+  } finally {
+    await fs.rm(nativeVault, { recursive: true, force: true });
+    if (original === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = original;
+  }
+});
+
+// C2: listVaultFiles rejects traversal via subdir argument
+test('C2: listVaultFiles("../outside") throws traversal error', async () => {
+  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-traverse-'));
+  const original = process.env.UM_VAULT_DIR;
+  try {
+    process.env.UM_VAULT_DIR = vault;
+    await assert.rejects(
+      () => listVaultFiles('../outside'),
+      (err) => /traversal|escape|outside/i.test(err.message)
+    );
+  } finally {
+    await fs.rm(vault, { recursive: true, force: true });
+    if (original === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = original;
+  }
 });

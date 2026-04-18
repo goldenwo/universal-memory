@@ -41,10 +41,10 @@ import path from 'node:path';
  */
 export function vaultPath() {
   if (process.env.UM_VAULT_DIR) {
-    return process.env.UM_VAULT_DIR;
+    return path.resolve(process.env.UM_VAULT_DIR);
   }
   const home = process.env.HOME || process.env.USERPROFILE;
-  return path.join(home, '.um', 'vault');
+  return path.resolve(path.join(home, '.um', 'vault'));
 }
 
 // ---------------------------------------------------------------------------
@@ -60,12 +60,13 @@ export function vaultPath() {
  * @returns {string} resolved absolute path inside the vault
  */
 function safePath(vault, relPath) {
-  const resolved = path.resolve(vault, relPath);
+  const vaultNorm = path.resolve(vault);
+  const resolved = path.resolve(vaultNorm, relPath);
   // The resolved path must be inside the vault directory.
   // We check for vault + sep to prevent a path like /vaultX/foo
   // falsely matching a vault at /vault.
-  const vaultPrefix = vault.endsWith(path.sep) ? vault : vault + path.sep;
-  if (resolved !== vault && !resolved.startsWith(vaultPrefix)) {
+  const vaultPrefix = vaultNorm.endsWith(path.sep) ? vaultNorm : vaultNorm + path.sep;
+  if (resolved !== vaultNorm && !resolved.startsWith(vaultPrefix)) {
     throw new Error(
       `Path traversal detected: "${relPath}" resolves outside the vault root`
     );
@@ -105,7 +106,7 @@ export async function readVaultFile(relPath) {
  */
 export async function listVaultFiles(subdir) {
   const vault = vaultPath();
-  const base = path.join(vault, subdir);
+  const base = safePath(vault, subdir);
 
   // Check the subdir exists; return [] gracefully if not.
   try {
@@ -172,18 +173,24 @@ export async function statVaultFile(relPath) {
  *  5. Strip anything not [a-z0-9-].
  *  6. Collapse consecutive hyphens.
  *  7. Trim leading/trailing hyphens.
+ *  8. If the result is empty (e.g. all non-Latin input like CJK or emoji),
+ *     return "untitled" as a safe default.  Callers that require non-colliding
+ *     slugs for such input should hash the original title themselves.
  *
  * Examples:
  *   "My Great Note!"  → "my-great-note"
  *   "Naïve"           → "naive"
  *   "Café au Lait"    → "cafe-au-lait"
- *   ""                → ""
+ *   ""                → "untitled"
+ *   "東京"            → "untitled"
+ *   "😀"              → "untitled"
+ *   "!!!"             → "untitled"
  *
  * @param {string} title
  * @returns {string}
  */
 export function slugify(title) {
-  return title
+  const result = title
     .normalize('NFD')            // decompose combined chars (é → e + ́)
     .replace(/[^\x00-\x7F]/g, '') // strip non-ASCII (diacritics, emoji, etc.)
     .toLowerCase()
@@ -191,4 +198,6 @@ export function slugify(title) {
     .replace(/[^a-z0-9-]/g, '')  // strip non-slug chars (punctuation, etc.)
     .replace(/-{2,}/g, '-')      // collapse consecutive hyphens
     .replace(/^-+|-+$/g, '');    // trim leading/trailing hyphens
+  if (result === '' || result === '-') return 'untitled';
+  return result;
 }
