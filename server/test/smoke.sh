@@ -640,6 +640,246 @@ done
 echo "[smoke]     Task 9 records cleaned up ($T9_CLEANED)"
 echo "[smoke]     Task 9 decay-off path passed (decay-on math covered by unit tests)"
 
+# 4f/5 Task 10: MCP surface — new tools via POST /mcp JSON-RPC
+echo "[smoke] 4f/5 Task 10 MCP surface tests"
+
+mcp_call() {
+	# Usage: mcp_call <id> <tool_name> <json_args>
+	local id="$1" name="$2" args="$3"
+	curl -sf -X POST "$ENDPOINT/mcp" \
+		-H 'Content-Type: application/json' \
+		-d "{\"jsonrpc\":\"2.0\",\"id\":$id,\"method\":\"tools/call\",\"params\":{\"name\":\"$name\",\"arguments\":$args}}"
+}
+
+# T10-A: tools/list — all 10 tools advertised
+echo "[smoke]     T10-A: tools/list advertises all 10 tools"
+TOOLS_RESP=$(curl -sf -X POST "$ENDPOINT/mcp" \
+	-H 'Content-Type: application/json' \
+	-d '{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}')
+echo "$TOOLS_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+tools = [t['name'] for t in data.get('result', {}).get('tools', [])]
+expected = ['memory_search','memory_add','memory_list','memory_delete',
+            'memory_state','memory_recent','memory_capture','memory_checkpoint',
+            'memory_forget','memory_supersede']
+missing = [t for t in expected if t not in tools]
+if missing:
+    print('FAIL: missing tools:', missing)
+    sys.exit(1)
+print(f'OK T10-A: all 10 tools advertised: {tools}')
+" || { echo "FAIL: T10-A tools/list check failed"; exit 1; }
+
+# T10-B: memory_search with filters — returns {results:[...]} shape
+echo "[smoke]     T10-B: memory_search with filters"
+T10B_RESP=$(mcp_call 101 memory_search '{"query":"test","limit":2,"filters":{"type":"session_summary"}}')
+echo "$T10B_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert 'results' in result, 'FAIL: memory_search response missing results key: ' + result_text
+print(f'OK T10-B: memory_search with filters returned {{results:[...]}} shape ({len(result[\"results\"])} item(s))')
+" || { echo "FAIL: T10-B memory_search with filters failed"; exit 1; }
+
+# T10-C: memory_state — missing project returns {ok:true, state:null}
+echo "[smoke]     T10-C: memory_state for nonexistent project"
+T10C_RESP=$(mcp_call 102 memory_state '{"project":"nonexistent-t10-smoke-xyz"}')
+echo "$T10C_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true, got: ' + result_text
+assert result.get('state') is None, 'expected state:null, got: ' + result_text
+print('OK T10-C: memory_state nonexistent project returns ok:true, state:null')
+" || { echo "FAIL: T10-C memory_state failed"; exit 1; }
+
+# T10-C2: memory_state — with vault fixture (only if UM_VAULT_DIR set)
+if [ -n "${UM_VAULT_DIR:-}" ]; then
+	echo "[smoke]     T10-C2: memory_state with vault fixture"
+	T10_STATE_DIR="${UM_VAULT_DIR}/state/smoke-t10-state"
+	mkdir -p "$T10_STATE_DIR"
+	cat > "$T10_STATE_DIR/state.md" <<'STATEEOF'
+---
+schema_version: 1
+type: state
+id: state-smoke-t10
+title: State of play — smoke-t10-state
+status: current
+valid_from: 2026-04-17T12:00:00Z
+project: smoke-t10-state
+---
+# Smoke test state
+Body content for T10-C2.
+STATEEOF
+	T10C2_RESP=$(mcp_call 103 memory_state '{"project":"smoke-t10-state"}')
+	echo "$T10C2_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert result.get('state') is not None, 'expected state to be populated: ' + result_text
+assert result.get('valid_from') == '2026-04-17T12:00:00Z', 'wrong valid_from: ' + str(result.get('valid_from'))
+print('OK T10-C2: memory_state returns state with correct valid_from')
+" || { echo "FAIL: T10-C2 memory_state with fixture failed"; rm -rf "$T10_STATE_DIR"; exit 1; }
+	rm -rf "$T10_STATE_DIR"
+	echo "[smoke]     T10-C2 fixture cleaned up"
+fi
+
+# T10-D: memory_recent — returns {results:[...]} shape
+echo "[smoke]     T10-D: memory_recent shape check"
+T10D_RESP=$(mcp_call 104 memory_recent '{"limit":3}')
+echo "$T10D_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert 'results' in result, 'FAIL: memory_recent missing results key: ' + result_text
+print(f'OK T10-D: memory_recent returns {{results:[...]}} shape ({len(result[\"results\"])} item(s))')
+" || { echo "FAIL: T10-D memory_recent failed"; exit 1; }
+
+# T10-E: memory_checkpoint — stub returns not-implemented error
+echo "[smoke]     T10-E: memory_checkpoint stub"
+T10E_RESP=$(mcp_call 105 memory_checkpoint '{}')
+echo "$T10E_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is False, 'expected ok:false for checkpoint stub: ' + result_text
+assert 'not yet implemented' in result.get('error', ''), 'expected not-yet-implemented message: ' + result_text
+print('OK T10-E: memory_checkpoint returns expected stub error')
+" || { echo "FAIL: T10-E memory_checkpoint stub check failed"; exit 1; }
+
+# T10-F: write tools disabled (default) — capture/forget/supersede return error
+echo "[smoke]     T10-F: write tools return error when UM_MCP_WRITE_ENABLED not set"
+if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ]; then
+	echo "[smoke]     WARN: UM_MCP_WRITE_ENABLED=true — skipping write-disabled gate checks (T10-F)"
+else
+	for WRITE_TOOL in memory_capture memory_forget memory_supersede; do
+		case $WRITE_TOOL in
+			memory_capture) W_ARGS='{"content":"test","metadata":{"type":"authored","id":"t10f-test","title":"T10F"}}' ;;
+			memory_forget)  W_ARGS='{"id":"t10f-nonexistent"}' ;;
+			memory_supersede) W_ARGS='{"old_id":"t10f-old","new_doc":{"type":"authored","id":"t10f-new","title":"T10F New","content":"body"}}' ;;
+		esac
+		W_RESP=$(mcp_call 106 "$WRITE_TOOL" "$W_ARGS")
+		echo "$W_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
+assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+print(f'OK T10-F: $WRITE_TOOL returns error when writes disabled')
+" || { echo "FAIL: T10-F $WRITE_TOOL did not return expected disabled error"; exit 1; }
+	done
+fi
+
+# T10-G: write tools enabled (only if UM_MCP_WRITE_ENABLED=true and UM_VAULT_DIR set)
+if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ] && [ -n "${UM_VAULT_DIR:-}" ]; then
+	echo "[smoke]     T10-G: write tools enabled — memory_capture + forget + supersede"
+	T10G_IDS=""
+
+	# G1: memory_capture — create a new doc
+	echo "[smoke]     T10-G1: memory_capture creates authored doc"
+	T10G_CAP_ID="smoke-t10g-cap-$(date +%s)-$$"
+	T10G1_RESP=$(mcp_call 110 memory_capture "{\"content\":\"Smoke test capture body.\",\"metadata\":{\"type\":\"authored\",\"id\":\"$T10G_CAP_ID\",\"title\":\"Smoke T10G Capture\",\"project\":\"smoke-t10g\"}}")
+	echo "$T10G1_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert result.get('id') == '$T10G_CAP_ID', 'wrong id: ' + str(result.get('id'))
+print(f'OK T10-G1: memory_capture created doc {result.get(\"path\")}')
+" || { echo "FAIL: T10-G1 memory_capture failed"; exit 1; }
+	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+if isinstance(items, dict): items = items.get('results', [])
+for r in items:
+    if (r.get('metadata') or {}).get('id') == '$T10G_CAP_ID':
+        print(r['id'])
+" 2>/dev/null || true)"
+
+	# G2: memory_forget — deprecate the captured doc
+	echo "[smoke]     T10-G2: memory_forget deprecates doc"
+	T10G2_RESP=$(mcp_call 111 memory_forget "{\"id\":\"$T10G_CAP_ID\"}")
+	echo "$T10G2_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert result.get('status') == 'deprecated', 'expected status=deprecated: ' + result_text
+print(f'OK T10-G2: memory_forget deprecated {result.get(\"id\")}')
+" || { echo "FAIL: T10-G2 memory_forget failed"; exit 1; }
+	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+if isinstance(items, dict): items = items.get('results', [])
+for r in items:
+    if (r.get('metadata') or {}).get('id') == '$T10G_CAP_ID':
+        print(r['id'])
+" 2>/dev/null || true)"
+
+	# G3: memory_supersede — create a new doc and supersede an old one
+	echo "[smoke]     T10-G3: memory_supersede creates + supersedes"
+	T10G_OLD_ID="smoke-t10g-old-$(date +%s)-$$"
+	T10G_NEW_ID="smoke-t10g-new-$(date +%s)-$$"
+	# First create the old doc via memory_capture
+	mcp_call 112 memory_capture "{\"content\":\"Old doc body.\",\"metadata\":{\"type\":\"authored\",\"id\":\"$T10G_OLD_ID\",\"title\":\"Smoke T10G Old\",\"project\":\"smoke-t10g\"}}" > /dev/null
+	# Now supersede it
+	T10G3_RESP=$(mcp_call 113 memory_supersede "{\"old_id\":\"$T10G_OLD_ID\",\"new_doc\":{\"type\":\"authored\",\"id\":\"$T10G_NEW_ID\",\"title\":\"Smoke T10G New\",\"content\":\"New doc body.\",\"project\":\"smoke-t10g\"}}")
+	echo "$T10G3_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert result.get('old_status') == 'superseded', 'expected old_status=superseded: ' + result_text
+assert result.get('new_status') == 'current', 'expected new_status=current: ' + result_text
+print(f'OK T10-G3: memory_supersede created new={result.get(\"new_id\")} superseded old={result.get(\"old_id\")}')
+" || { echo "FAIL: T10-G3 memory_supersede failed"; exit 1; }
+
+	# Cleanup write-tool records
+	for id in $T10G_IDS; do
+		[ -n "$id" ] || continue
+		curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null || true
+	done
+	# Also cleanup any indexed entries for the new/old IDs
+	for doc_id in "$T10G_CAP_ID" "$T10G_OLD_ID" "$T10G_NEW_ID"; do
+		FOUND_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+if isinstance(items, dict): items = items.get('results', [])
+for r in items:
+    if (r.get('metadata') or {}).get('id') == '$doc_id':
+        print(r['id'])
+" 2>/dev/null || true)
+		for fid in $FOUND_IDS; do
+			curl -sf -X DELETE "$ENDPOINT/api/$fid" >/dev/null || true
+		done
+	done
+	# Remove fixture files from vault
+	rm -f "${UM_VAULT_DIR}/authored/smoke-t10g/${T10G_CAP_ID}.md"
+	rm -f "${UM_VAULT_DIR}/authored/smoke-t10g/${T10G_OLD_ID}.md"
+	rm -f "${UM_VAULT_DIR}/authored/smoke-t10g/${T10G_NEW_ID}.md"
+	rmdir "${UM_VAULT_DIR}/authored/smoke-t10g" 2>/dev/null || true
+	echo "[smoke]     T10-G write tool fixtures cleaned up"
+	echo "[smoke]     T10-G write tools (capture + forget + supersede) all passed"
+else
+	if [ "${UM_MCP_WRITE_ENABLED:-false}" != "true" ]; then
+		echo "[smoke]     SKIP T10-G: UM_MCP_WRITE_ENABLED not true — write tool integration skipped"
+	else
+		echo "[smoke]     SKIP T10-G: UM_VAULT_DIR not set — write tool integration skipped"
+	fi
+fi
+
+echo "[smoke]     Task 10 MCP surface tests passed"
+
 # 5/5 assert count returned to baseline
 echo "[smoke] 5/5 verify baseline preserved"
 FINAL=$(get_count)
