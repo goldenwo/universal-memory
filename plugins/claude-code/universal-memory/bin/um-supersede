@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# um-supersede <old_id> <new_file> — mark old as superseded; reindex both.
+set -uo pipefail
+
+OLD_ID="${1:-}"
+NEW_FILE="${2:-}"
+if [ -z "$OLD_ID" ] || [ -z "$NEW_FILE" ] || [ "$OLD_ID" = "-h" ] || [ "$OLD_ID" = "--help" ]; then
+  cat <<EOF
+usage: um-supersede <old_id> <new_file>
+
+Replaces an old document with a new one. Expected preconditions:
+- <old_id> is a doc that exists under the vault (found by filename stem).
+- <new_file> exists and has frontmatter with 'supersedes: [<old_id>]'.
+
+Mutates old file:
+  status: superseded
+  superseded_by: <new_id>
+  invalidated_at: <now>
+
+Reindexes both.
+
+EOF
+  exit 2
+fi
+
+LIB_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../hooks/lib"
+source "$LIB_DIR/vault.sh"
+
+VAULT=$(vault_path)
+
+# Locate old doc
+OLD_PATH=$(find "$VAULT" -maxdepth 4 -name "${OLD_ID}.md" -type f 2>/dev/null | head -1)
+if [ -z "$OLD_PATH" ]; then
+  echo "um-supersede: no doc found for old_id '$OLD_ID'" >&2
+  exit 1
+fi
+
+# Resolve new_file (must exist)
+if [ ! -f "$NEW_FILE" ]; then
+  echo "um-supersede: new file '$NEW_FILE' not found" >&2
+  exit 1
+fi
+NEW_ABS=$(readlink -f "$NEW_FILE" 2>/dev/null || echo "$NEW_FILE")
+
+# Verify NEW_FILE is under the vault
+case "$NEW_ABS" in
+  "$VAULT"/*) ;;
+  *) echo "um-supersede: new file must be inside vault (\$UM_VAULT_DIR)" >&2; exit 1 ;;
+esac
+
+# Extract new_id and verify supersedes contains old_id
+NEW_ID=$(fm_read "$NEW_ABS" "id")
+if [ -z "$NEW_ID" ]; then
+  echo "um-supersede: new file missing 'id' in frontmatter" >&2
+  exit 1
+fi
+SUPERSEDES=$(fm_read "$NEW_ABS" "supersedes")
+if ! echo "$SUPERSEDES" | grep -qF -- "$OLD_ID"; then
+  echo "um-supersede: new file's 'supersedes' must include '$OLD_ID' (got: '$SUPERSEDES')" >&2
+  exit 1
+fi
+
+# Mutate old doc (reuse um-forget-style mutation but with different fields)
+NEW_CONTENT=$(python3 - "$OLD_PATH" "$NEW_ID" <<'PY'
+import sys, re
+from datetime import datetime, timezone
+try:
+    import yaml
+except ImportError:
+    sys.exit(1)
+path, new_id = sys.argv[1], sys.argv[2]
+with open(path, 'r', encoding='utf-8') as f:
+    text = f.read()
+m = re.match(r'^---\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)$', text, re.DOTALL)
+if not m:
+    fm = {}
+    body = text
+else:
+    try:
+        fm = yaml.safe_load(m.group(1)) or {}
+    except Exception:
+        fm = {}
+    if not isinstance(fm, dict):
+        fm = {}
+    body = m.group(2)
+
+fm['status'] = 'superseded'
+fm['superseded_by'] = new_id
+fm['invalidated_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+fm_yaml = yaml.safe_dump(fm, sort_keys=False, default_flow_style=False).strip()
+print(f"---\n{fm_yaml}\n---\n{body}", end='')
+PY
+)
+if [ -z "$NEW_CONTENT" ]; then
+  echo "um-supersede: old doc mutation failed" >&2
+  exit 1
+fi
+
+# Acquire lock
+LOCKDIR="${OLD_PATH}.lockdir"
+LOCK_HELD=0
+for i in 1 2 3 4 5; do
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    LOCK_HELD=1
+    break
+  fi
+  sleep 1
+done
+if [ "${LOCK_HELD}" != "1" ]; then
+  echo "um-supersede: could not acquire lock on old doc" >&2
+  exit 1
+fi
+trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+
+# Atomic write old doc
+TMP="${OLD_PATH}.tmp.$$"
+printf '%s' "$NEW_CONTENT" > "$TMP" && mv "$TMP" "$OLD_PATH"
+if [ $? -ne 0 ]; then
+  rm -f "$TMP"
+  echo "um-supersede: old doc write failed" >&2
+  exit 1
+fi
+
+# Reindex both (best-effort)
+ENDPOINT="${UM_ENDPOINT:-http://localhost:6335}"
+OLD_REL="${OLD_PATH#$VAULT/}"
+NEW_REL="${NEW_ABS#$VAULT/}"
+for rel in "$NEW_REL" "$OLD_REL"; do
+  curl -sfm 5 -X POST "$ENDPOINT/api/reindex" \
+    -H 'Content-Type: application/json' \
+    -d "{\"path\":\"$rel\"}" >/dev/null 2>&1 || \
+    echo "um-supersede: reindex failed for $rel (server may be down)" >&2
+done
+
+echo "um-supersede: '$OLD_ID' superseded by '$NEW_ID'"
+echo "  old: $OLD_REL (status=superseded, superseded_by=$NEW_ID)"
+echo "  new: $NEW_REL (status=current)"
+exit 0

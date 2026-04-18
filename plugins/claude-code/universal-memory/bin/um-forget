@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# um-forget <id> — deprecate a doc via frontmatter mutation + reindex
+set -uo pipefail
+
+ID="${1:-}"
+if [ -z "$ID" ] || [ "$ID" = "-h" ] || [ "$ID" = "--help" ]; then
+  cat <<EOF
+usage: um-forget <id>
+
+Deprecates a memory document by setting its frontmatter:
+  status: deprecated
+  invalidated_at: <now>
+
+The document file remains on disk; default searches will exclude it.
+Use '?include_superseded=true' or 'memory_search {include_superseded:true}'
+to see deprecated docs again.
+
+EOF
+  exit 2
+fi
+
+# Source shared libs
+LIB_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../hooks/lib"
+source "$LIB_DIR/vault.sh"  # also sources frontmatter.sh
+
+VAULT=$(vault_path)
+
+# Find doc
+RELPATH=$(find "$VAULT" -maxdepth 4 -name "${ID}.md" -type f 2>/dev/null | head -1)
+if [ -z "$RELPATH" ]; then
+  echo "um-forget: no doc found for id '$ID' under $VAULT" >&2
+  exit 1
+fi
+# Convert to relative path for reindex
+REL="${RELPATH#$VAULT/}"
+
+# Acquire lock
+LOCKDIR="${RELPATH}.lockdir"
+LOCK_HELD=0
+for i in 1 2 3 4 5; do
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    LOCK_HELD=1
+    break
+  fi
+  sleep 1
+done
+if [ "${LOCK_HELD}" != "1" ]; then
+  echo "um-forget: could not acquire lock on $LOCKDIR" >&2
+  exit 1
+fi
+trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+
+# Mutate frontmatter via Python
+NEW_CONTENT=$(python3 - "$RELPATH" <<'PY'
+import sys, re
+from datetime import datetime, timezone
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("um-forget: pyyaml required\n")
+    sys.exit(1)
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    text = f.read()
+
+m = re.match(r'^---\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)$', text, re.DOTALL)
+if not m:
+    # No frontmatter — create one
+    fm = {}
+    body = text
+else:
+    try:
+        fm = yaml.safe_load(m.group(1)) or {}
+    except Exception:
+        fm = {}
+    if not isinstance(fm, dict):
+        fm = {}
+    body = m.group(2)
+
+fm['status'] = 'deprecated'
+fm['invalidated_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+# Serialize frontmatter
+fm_yaml = yaml.safe_dump(fm, sort_keys=False, default_flow_style=False).strip()
+print(f"---\n{fm_yaml}\n---\n{body}", end='')
+PY
+)
+if [ $? -ne 0 ] || [ -z "$NEW_CONTENT" ]; then
+  echo "um-forget: frontmatter mutation failed" >&2
+  exit 1
+fi
+
+# Atomic write
+TMP="${RELPATH}.tmp.$$"
+printf '%s' "$NEW_CONTENT" > "$TMP" || {
+  rm -f "$TMP"
+  echo "um-forget: write to tmp failed" >&2
+  exit 1
+}
+mv "$TMP" "$RELPATH" || {
+  rm -f "$TMP"
+  echo "um-forget: atomic rename failed" >&2
+  exit 1
+}
+
+# Reindex best-effort
+ENDPOINT="${UM_ENDPOINT:-http://localhost:6335}"
+curl -sfm 5 -X POST "$ENDPOINT/api/reindex" \
+  -H 'Content-Type: application/json' \
+  -d "{\"path\":\"$REL\"}" >/dev/null 2>&1 || \
+  echo "um-forget: reindex POST failed (server may be down). Doc is deprecated on disk." >&2
+
+echo "um-forget: deprecated '$ID' (path: $REL)"
+exit 0
