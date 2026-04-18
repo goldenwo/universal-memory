@@ -5,7 +5,8 @@
  * Endpoints:
  *   GET  /health              liveness + memory count
  *   POST /mcp                 JSON-RPC (MCP clients)
- *   POST /api/search          { query, limit? } -> top-K atomic facts
+ *   POST /api/search          { query, limit?, include_superseded? } -> { results: [...] }
+ *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
  *   DELETE /api/:id           remove a memory
@@ -13,6 +14,12 @@
  * Required env: OPENAI_API_KEY, MEM0_USER_ID
  * Optional env: MEM0_MCP_PORT (default 6335), QDRANT_HOST, QDRANT_PORT,
  *               QDRANT_COLLECTION, MEM0_EMBEDDER_MODEL, MEM0_LLM_MODEL
+ *
+ * Search filter (default, disable with include_superseded=true):
+ *   Excludes docs where status === 'superseded'|'deprecated'|'rejected'
+ *   or invalidated_at is non-null. Legacy docs with no metadata are treated
+ *   as current. Note: limit is applied before filtering, so callers may
+ *   receive fewer results than requested when some are excluded.
  */
 
 import { createServer } from 'http';
@@ -139,6 +146,29 @@ function readBody(req) {
 	});
 }
 
+/**
+ * Shared search handler — called by both POST and GET /api/search.
+ * Returns { results: [...] }.
+ * Default filter excludes superseded/deprecated/rejected docs and docs with
+ * invalidated_at set. Pass includeSuperseded=true to skip all filtering.
+ */
+async function doSearch(query, limit, includeSuperseded) {
+	const raw = await memory.search(query, { userId: USER_ID, limit: limit || 5 });
+	let items = raw?.results || raw || [];
+	if (!includeSuperseded) {
+		items = items.filter((r) => {
+			const md = r.metadata || {};
+			const excluded =
+				md.status === 'superseded' ||
+				md.status === 'deprecated' ||
+				md.status === 'rejected' ||
+				(md.invalidated_at != null);
+			return !excluded;
+		});
+	}
+	return { results: items };
+}
+
 const server = createServer(async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -165,10 +195,24 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit } = JSON.parse(await readBody(req));
-			const results = await memory.search(query, { userId: USER_ID, limit: limit || 5 });
+			const { query, limit, include_superseded } = JSON.parse(await readBody(req));
+			const response = await doSearch(query, limit, !!include_superseded);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(results?.results || results || []));
+			res.end(JSON.stringify(response));
+			return;
+		}
+		if (url.pathname === '/api/search' && req.method === 'GET') {
+			const q = url.searchParams.get('q') || '';
+			const limit = parseInt(url.searchParams.get('limit') || '5', 10);
+			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+			if (!q) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'q parameter is required' }));
+				return;
+			}
+			const response = await doSearch(q, limit, includeSuperseded);
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(response));
 			return;
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
