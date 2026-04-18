@@ -979,9 +979,21 @@ assert result.get('ok') is True, 'second forget should return ok:true: ' + resul
 assert result.get('already_deprecated') is True, 'second forget should return already_deprecated:true: ' + result_text
 print('OK T10-I step 3: second forget returned already_deprecated:true (idempotent)')
 " || { echo "FAIL: T10-I second forget (idempotency) failed"; exit 1; }
-	# Cleanup
+	# Cleanup vault file + any mem0 entries
 	rm -f "${UM_VAULT_DIR}/authored/smoke-t10i/${T10I_ID}.md"
 	rmdir "${UM_VAULT_DIR}/authored/smoke-t10i" 2>/dev/null || true
+	# Remove mem0 entries for T10-I doc (may exist as deprecated)
+	T10I_MEM_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+import json, sys
+items = json.load(sys.stdin)
+if isinstance(items, dict): items = items.get('results', [])
+for r in items:
+    if (r.get('metadata') or {}).get('id') == '$T10I_ID':
+        print(r['id'])
+" 2>/dev/null || true)
+	for mid in $T10I_MEM_IDS; do
+		curl -sf -X DELETE "$ENDPOINT/api/$mid" >/dev/null || true
+	done
 	echo "[smoke]     T10-I: forget idempotency verified"
 else
 	echo "[smoke]     SKIP T10-I: requires UM_MCP_WRITE_ENABLED=true and UM_VAULT_DIR"
