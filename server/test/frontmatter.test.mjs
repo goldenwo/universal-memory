@@ -137,3 +137,52 @@ test('serializeFrontmatter: null frontmatter returns body unchanged', () => {
   const result = serializeFrontmatter(null, body);
   assert.equal(result, body);
 });
+
+// ---------------------------------------------------------------------------
+// 8. Non-map YAML root: scalar
+// ---------------------------------------------------------------------------
+test('non-map YAML root (scalar): falls back to empty frontmatter, full text as body', () => {
+  const input = '---\nhello\n---\nbody';
+
+  const { frontmatter, body } = parseFrontmatter(input);
+
+  assert.deepEqual(frontmatter, {});
+  assert.equal(body, input);
+});
+
+// ---------------------------------------------------------------------------
+// 9. Non-map YAML root: array
+// ---------------------------------------------------------------------------
+test('non-map YAML root (array): falls back to empty frontmatter, full text as body', () => {
+  const input = '---\n- a\n- b\n---\nbody';
+
+  const { frontmatter, body } = parseFrontmatter(input);
+
+  assert.deepEqual(frontmatter, {});
+  assert.equal(body, input);
+});
+
+// ---------------------------------------------------------------------------
+// 10. Closing delimiter with trailing whitespace
+// ---------------------------------------------------------------------------
+test('trailing whitespace on closing delimiter: parses correctly, no corrupt leading whitespace in body', () => {
+  const input = '---\ntitle: hi\n--- \nbody';
+
+  const { frontmatter, body } = parseFrontmatter(input);
+
+  assert.equal(frontmatter.title, 'hi');
+  assert.equal(body, 'body');
+});
+
+// ---------------------------------------------------------------------------
+// 11. Body containing horizontal rule (---)
+// ---------------------------------------------------------------------------
+test('body containing horizontal rule: frontmatter and full body preserved', () => {
+  const input = '---\ntitle: Post\n---\n\n# Heading\n\n---\n\nBelow the rule.';
+
+  const { frontmatter, body } = parseFrontmatter(input);
+
+  assert.equal(frontmatter.title, 'Post');
+  assert.ok(body.includes('---'), 'horizontal rule preserved in body');
+  assert.ok(body.includes('Below the rule.'), 'body after horizontal rule preserved');
+});

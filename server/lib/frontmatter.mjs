@@ -14,8 +14,8 @@
 
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 
-/** Matches `---\n<yaml>\n---\n?<body>` including CRLF line endings. */
-const FM_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+/** Matches `---\n<yaml>\n---[ \t]*\n?<body>` including CRLF line endings. */
+const FM_REGEX = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;
 
 /**
  * Parse a markdown document that may begin with YAML front matter.
@@ -30,7 +30,11 @@ export function parseFrontmatter(text) {
   }
 
   try {
-    const fm = yamlParse(match[1]) || {};
+    const fm = yamlParse(match[1]);
+    if (fm === null || fm === undefined || typeof fm !== 'object' || Array.isArray(fm)) {
+      process.stderr.write(`[frontmatter] YAML root is not a mapping, falling back to empty frontmatter\n`);
+      return { frontmatter: {}, body: text };
+    }
     return { frontmatter: fm, body: match[2] };
   } catch (err) {
     process.stderr.write(`[frontmatter] malformed YAML, falling back to empty frontmatter: ${err.message}\n`);
