@@ -878,6 +878,127 @@ else
 	fi
 fi
 
+# T10-H: slug validation — invalid id rejected in capture, forget, supersede
+echo "[smoke]     T10-H: slug validation — invalid id fields rejected"
+
+# T10-H1: memory_capture with id containing '/' must fail (C1)
+T10H1_RESP=$(mcp_call 120 memory_capture '{"content":"Bad","metadata":{"type":"authored","id":"../bad","title":"Bad"}}')
+echo "$T10H1_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result = data.get('result', {})
+content = result.get('content', [{}])[0].get('text', '{}')
+# Errors surface either as isError:true (throw) or ok:false (soft error)
+is_err = result.get('isError', False)
+try:
+    parsed = json.loads(content)
+    ok_false = parsed.get('ok') is False
+except Exception:
+    ok_false = False
+if is_err or ok_false or 'must match' in content:
+    print('OK T10-H1: memory_capture with invalid id rejected')
+else:
+    print('FAIL T10-H1: memory_capture should have rejected invalid id but got:', content)
+    sys.exit(1)
+" || { echo "FAIL: T10-H1 slug validation (capture) failed"; exit 1; }
+
+# T10-H2: memory_forget with id containing '/' must fail (C1)
+T10H2_RESP=$(mcp_call 121 memory_forget '{"id":"../etc/passwd"}')
+echo "$T10H2_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result = data.get('result', {})
+content = result.get('content', [{}])[0].get('text', '{}')
+is_err = result.get('isError', False)
+if is_err or 'must match' in content:
+    print('OK T10-H2: memory_forget with invalid id rejected')
+else:
+    print('FAIL T10-H2: memory_forget should have rejected invalid id but got:', content)
+    sys.exit(1)
+" || { echo "FAIL: T10-H2 slug validation (forget) failed"; exit 1; }
+
+# T10-H3: memory_supersede with invalid old_id must fail (C1)
+T10H3_RESP=$(mcp_call 122 memory_supersede '{"old_id":"../bad","new_doc":{"type":"authored","id":"good-id","title":"T","content":"b"}}')
+echo "$T10H3_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result = data.get('result', {})
+content = result.get('content', [{}])[0].get('text', '{}')
+is_err = result.get('isError', False)
+if is_err or 'must match' in content:
+    print('OK T10-H3: memory_supersede with invalid old_id rejected')
+else:
+    print('FAIL T10-H3: memory_supersede should have rejected invalid old_id but got:', content)
+    sys.exit(1)
+" || { echo "FAIL: T10-H3 slug validation (supersede old_id) failed"; exit 1; }
+
+# T10-H4: memory_supersede with invalid new_doc.id must fail (C1)
+T10H4_RESP=$(mcp_call 123 memory_supersede '{"old_id":"good-old","new_doc":{"type":"authored","id":"bad/slash","title":"T","content":"b"}}')
+echo "$T10H4_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result = data.get('result', {})
+content = result.get('content', [{}])[0].get('text', '{}')
+is_err = result.get('isError', False)
+if is_err or 'must match' in content:
+    print('OK T10-H4: memory_supersede with invalid new_doc.id rejected')
+else:
+    print('FAIL T10-H4: memory_supersede should have rejected invalid new_doc.id but got:', content)
+    sys.exit(1)
+" || { echo "FAIL: T10-H4 slug validation (supersede new_doc.id) failed"; exit 1; }
+
+echo "[smoke]     T10-H: slug validation checks all passed"
+
+# T10-I: memory_forget idempotency (only if writes enabled and vault available)
+if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ] && [ -n "${UM_VAULT_DIR:-}" ]; then
+	echo "[smoke]     T10-I: memory_forget idempotency — second call returns already_deprecated:true"
+	T10I_ID="smoke-t10i-forget-$(date +%s)-$$"
+	# Step 1: capture a doc
+	mcp_call 130 memory_capture "{\"content\":\"Idempotency test body.\",\"metadata\":{\"type\":\"authored\",\"id\":\"$T10I_ID\",\"title\":\"T10-I Idempotency\",\"project\":\"smoke-t10i\"}}" > /dev/null
+	# Step 2: forget it (first call)
+	T10I_RESP1=$(mcp_call 131 memory_forget "{\"id\":\"$T10I_ID\"}")
+	echo "$T10I_RESP1" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'first forget should succeed: ' + result_text
+assert result.get('status') == 'deprecated', 'first forget should set status=deprecated: ' + result_text
+assert result.get('already_deprecated') is not True, 'first forget should NOT return already_deprecated: ' + result_text
+print('OK T10-I step 2: first forget succeeded, status=deprecated')
+" || { echo "FAIL: T10-I first forget failed"; exit 1; }
+	# Step 3: forget it again (second call — must be idempotent)
+	T10I_RESP2=$(mcp_call 132 memory_forget "{\"id\":\"$T10I_ID\"}")
+	echo "$T10I_RESP2" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'second forget should return ok:true: ' + result_text
+assert result.get('already_deprecated') is True, 'second forget should return already_deprecated:true: ' + result_text
+print('OK T10-I step 3: second forget returned already_deprecated:true (idempotent)')
+" || { echo "FAIL: T10-I second forget (idempotency) failed"; exit 1; }
+	# Cleanup
+	rm -f "${UM_VAULT_DIR}/authored/smoke-t10i/${T10I_ID}.md"
+	rmdir "${UM_VAULT_DIR}/authored/smoke-t10i" 2>/dev/null || true
+	echo "[smoke]     T10-I: forget idempotency verified"
+else
+	echo "[smoke]     SKIP T10-I: requires UM_MCP_WRITE_ENABLED=true and UM_VAULT_DIR"
+fi
+
+# T10-J: memory_recent with large limit stays within bounds (I2)
+echo "[smoke]     T10-J: memory_recent with limit=50 — capped internally, no error"
+T10J_RESP=$(mcp_call 140 memory_recent '{"limit":50}')
+echo "$T10J_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert 'results' in result, 'FAIL: memory_recent missing results key: ' + result_text
+assert len(result['results']) <= 50, 'FAIL: got more results than limit: ' + str(len(result['results']))
+print(f'OK T10-J: memory_recent limit=50 returned {len(result[\"results\"])} result(s), no error')
+" || { echo "FAIL: T10-J memory_recent large-limit check failed"; exit 1; }
+
 echo "[smoke]     Task 10 MCP surface tests passed"
 
 # 5/5 assert count returned to baseline

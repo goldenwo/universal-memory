@@ -34,11 +34,29 @@
 
 import { createServer } from 'http';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
-import { readVaultFile } from './lib/vault.mjs';
+import { readVaultFile, vaultPath } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+
+// ---------------------------------------------------------------------------
+// Slug validation — C1: id/project fields used as filename components must be safe
+// ---------------------------------------------------------------------------
+
+const SAFE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * Throws if value is not a string matching SAFE_NAME_RE.
+ * @param {string} field  - Human-readable field name for error messages
+ * @param {string} value  - The value to validate
+ */
+function validateSafeName(field, value) {
+  if (typeof value !== 'string' || !SAFE_NAME_RE.test(value)) {
+    throw new Error(`${field} must match ${SAFE_NAME_RE.source}`);
+  }
+}
 
 function requireEnv(name) {
 	const v = process.env[name];
@@ -257,6 +275,12 @@ async function reindexDoc(relPath) {
 		const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
 		throw new Error(`Missing required frontmatter fields: ${missing.join(', ')}`);
 	}
+	// C2: state.md documents must never be indexed into mem0 (they are served
+	// directly via /api/state and the memory_state MCP tool).
+	if (fm.type === 'state') {
+		throw new Error('state.md documents must not be indexed into mem0');
+	}
+	// TODO: shared reindex helper between HTTP /api/reindex and this internal function (I5)
 	const targetId = fm.id;
 	const allMemories = await memory.getAll({ userId: USER_ID });
 	const allItems = allMemories?.results || allMemories || [];
@@ -333,8 +357,10 @@ async function handleToolCall(name, args) {
 
 		case 'memory_recent': {
 			const limit = args.limit || 5;
+			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
+			const searchLimit = Math.min(limit * 3, 100);
 			// Search using a broad session-summary query, then filter by type
-			const searchResult = await doSearch('session_summary', limit * 3, false);
+			const searchResult = await doSearch('session_summary', searchLimit, false);
 			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
 			// Sort by valid_from descending (most recent first)
 			items.sort((a, b) => {
@@ -358,6 +384,9 @@ async function handleToolCall(name, args) {
 			if (!metadata || !metadata.type || !metadata.id || !metadata.title) {
 				throw new Error('metadata must include: type, id, title');
 			}
+			// C1: validate filename-path components before any path construction
+			validateSafeName('metadata.id', metadata.id);
+			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
 			const project = metadata.project || 'default';
 			const id = metadata.id;
 			const relPath = `authored/${project}/${id}.md`;
@@ -400,6 +429,8 @@ async function handleToolCall(name, args) {
 			}
 			const { id } = args;
 			if (!id) throw new Error('id is required');
+			// C1: validate id before using as path component
+			validateSafeName('id', id);
 
 			const relPath = await findDocByIdInVault(id);
 			if (!relPath) throw new Error(`Document not found in vault: ${id}`);
@@ -407,6 +438,11 @@ async function handleToolCall(name, args) {
 			// Read + parse
 			const fileText = await readVaultFile(relPath);
 			const { frontmatter: fm, body } = parseFrontmatter(fileText);
+
+			// I3: idempotency — if already deprecated, return early without overwriting invalidated_at
+			if (fm.status === 'deprecated' && fm.invalidated_at) {
+				return JSON.stringify({ ok: true, id, path: relPath, status: 'deprecated', already_deprecated: true });
+			}
 
 			// Mutate frontmatter
 			fm.status = 'deprecated';
@@ -436,6 +472,10 @@ async function handleToolCall(name, args) {
 			if (!new_doc || !new_doc.type || !new_doc.id || !new_doc.title || !new_doc.content) {
 				throw new Error('new_doc must include: type, id, title, content');
 			}
+			// C1: validate all filename-path components before any path construction
+			validateSafeName('old_id', old_id);
+			validateSafeName('new_doc.id', new_doc.id);
+			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
 
 			// 1. Find old doc
 			const oldRelPath = await findDocByIdInVault(old_id);
@@ -462,14 +502,23 @@ async function handleToolCall(name, args) {
 			console.log(`[mem0-mcp] memory_supersede: created new doc ${newRelPath}`);
 
 			// 3. Mutate old doc frontmatter
-			const oldFileText = await readVaultFile(oldRelPath);
-			const { frontmatter: oldFm, body: oldBody } = parseFrontmatter(oldFileText);
-			oldFm.status = 'superseded';
-			oldFm.superseded_by = newId;
-			oldFm.invalidated_at = now;
-			const updatedOld = serializeFrontmatter(oldFm, oldBody);
-			await writeVaultFile(oldRelPath, updatedOld);
-			console.log(`[mem0-mcp] memory_supersede: superseded old doc ${oldRelPath}`);
+			// I1: if the old-doc mutation fails, roll back the new doc we just wrote
+			// to avoid leaving the vault in an inconsistent state (two current docs,
+			// no supersedes linkage on the old doc).
+			try {
+				const oldFileText = await readVaultFile(oldRelPath);
+				const { frontmatter: oldFm, body: oldBody } = parseFrontmatter(oldFileText);
+				oldFm.status = 'superseded';
+				oldFm.superseded_by = newId;
+				oldFm.invalidated_at = now;
+				const updatedOld = serializeFrontmatter(oldFm, oldBody);
+				await writeVaultFile(oldRelPath, updatedOld);
+				console.log(`[mem0-mcp] memory_supersede: superseded old doc ${oldRelPath}`);
+			} catch (err) {
+				// Rollback: remove the new doc we wrote in step 2 (best-effort)
+				try { await fs.unlink(path.join(vaultPath(), newRelPath)); } catch {}
+				throw err;
+			}
 
 			// 4. Reindex both
 			let newIndexed = false;
