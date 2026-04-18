@@ -29,6 +29,14 @@ docker info >/dev/null 2>&1 || fail "Docker daemon not reachable. Start Docker D
 
 ok "Docker is running and server files are present."
 
+# ─── pyyaml availability ─────────────────────────────────────────────────
+# Shell hooks (Phase C) use python3 + pyyaml to parse session frontmatter.
+# Flag missing pyyaml now so users don't hit cryptic errors at hook time.
+python3 -c 'import yaml' 2>/dev/null || {
+	fail "pyyaml is not available. Install it with: pip install pyyaml"
+}
+ok "pyyaml is available."
+
 # ─── Collect required values ─────────────────────────────────────────────
 prompt() {
 	# $1=var name, $2=description, $3=default (optional), $4=secret (1=silent input)
@@ -65,6 +73,11 @@ if [ "${UM_NONINTERACTIVE:-0}" = "1" ]; then
 	: "${OPENAI_API_KEY:?UM_NONINTERACTIVE=1 but OPENAI_API_KEY is not set}"
 	: "${MEM0_USER_ID:?UM_NONINTERACTIVE=1 but MEM0_USER_ID is not set}"
 	MEM0_MCP_PORT="${MEM0_MCP_PORT:-6335}"
+	UM_VAULT_DIR="${UM_VAULT_DIR:-$HOME/.um/vault}"
+	UM_SUMMARY_ENABLED="${UM_SUMMARY_ENABLED:-true}"
+	# UM_OPENAI_API_KEY: fall back to OPENAI_API_KEY if not explicitly set
+	UM_OPENAI_API_KEY="${UM_OPENAI_API_KEY:-$OPENAI_API_KEY}"
+	UM_TEMPORAL_DECAY="${UM_TEMPORAL_DECAY:-false}"
 	ok "Non-interactive mode — using env values."
 else
 	info "Collecting configuration (press Enter to accept a shown default)."
@@ -73,6 +86,13 @@ else
 	prompt OPENAI_API_KEY "OpenAI API key (input hidden)" "" 1
 	prompt MEM0_USER_ID   "Memory namespace / user ID (any string; identifies this memory store)" "" 0
 	prompt MEM0_MCP_PORT  "HTTP port to expose" "6335" 0
+
+	# UM_OPENAI_API_KEY defaults to whatever OPENAI_API_KEY was just entered
+	_um_oai_default="${UM_OPENAI_API_KEY:-$OPENAI_API_KEY}"
+	prompt UM_OPENAI_API_KEY "OpenAI API key for UM hooks (input hidden; default: same as above)" "$_um_oai_default" 1
+	prompt UM_VAULT_DIR       "Vault directory for session summaries" "${UM_VAULT_DIR:-$HOME/.um/vault}" 0
+	prompt UM_SUMMARY_ENABLED "Enable session-summary pipeline (true/false)" "${UM_SUMMARY_ENABLED:-true}" 0
+	prompt UM_TEMPORAL_DECAY  "Enable temporal decay weighting (true/false)" "${UM_TEMPORAL_DECAY:-false}" 0
 fi
 
 # Basic sanity
@@ -80,6 +100,13 @@ fi
 [[ "$MEM0_MCP_PORT" =~ ^[0-9]+$ ]] || fail "MEM0_MCP_PORT must be a number. Got: $MEM0_MCP_PORT"
 [[ "$OPENAI_API_KEY" =~ [[:space:]] ]] && fail "OPENAI_API_KEY contains whitespace — refusing to write to .env."
 [[ "$MEM0_USER_ID" =~ [[:space:]] ]] && fail "MEM0_USER_ID contains whitespace — refusing to write to .env."
+[[ "$UM_VAULT_DIR" =~ [[:space:]] ]] && fail "UM_VAULT_DIR contains whitespace — refusing to write to .env."
+[[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
+[[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
+
+# Create vault directory (idempotent)
+mkdir -p "$UM_VAULT_DIR" || fail "Could not create vault directory: $UM_VAULT_DIR"
+ok "Vault directory ready: $UM_VAULT_DIR"
 
 info "Collected: user=$MEM0_USER_ID port=$MEM0_MCP_PORT  (API key hidden)"
 
@@ -113,6 +140,11 @@ fi
 	printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
 	printf 'MEM0_USER_ID=%s\n'   "$MEM0_USER_ID"
 	printf 'MEM0_MCP_PORT=%s\n'  "$MEM0_MCP_PORT"
+	printf 'UM_VAULT_DIR=%s\n'          "$UM_VAULT_DIR"
+	printf 'UM_MOUNT_MODE=%s\n'         "ro"
+	printf 'UM_SUMMARY_ENABLED=%s\n'    "$UM_SUMMARY_ENABLED"
+	printf 'UM_OPENAI_API_KEY=%s\n'     "$UM_OPENAI_API_KEY"
+	printf 'UM_TEMPORAL_DECAY=%s\n'     "$UM_TEMPORAL_DECAY"
 } > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true  # best-effort; no-op on Windows
@@ -162,5 +194,15 @@ cat <<EOF
 ║
 ║ Data persists at: server/data/qdrant/
 ║ Edit configuration: server/.env
+║
+║ IMPORTANT — shell profile:
+║   The UM_OPENAI_API_KEY value written to .env is only loaded by
+║   docker-compose. Hooks that run outside the container (Phase C)
+║   inherit env from the shell that spawned Claude Code, not from .env.
+║   To make hooks work, add this line to ~/.bashrc or ~/.zshrc
+║   (or set it as a Windows environment variable):
+║
+║     export UM_OPENAI_API_KEY="<your-key>"
+║
 ╚═════════════════════════════════════════════════════════════════════╝
 EOF
