@@ -694,12 +694,17 @@ const server = createServer(async (req, res) => {
 			const rawLimit = parseInt(url.searchParams.get('limit') || '5', 10);
 			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+			const typeFilter = url.searchParams.get('type') || null;
 			if (!q) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'q parameter is required' }));
 				return;
 			}
-			const response = await doSearch(q, limit, includeSuperseded);
+			let response = await doSearch(q, limit, includeSuperseded);
+			if (typeFilter) {
+				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
+				response = { results: items };
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
 			return;
