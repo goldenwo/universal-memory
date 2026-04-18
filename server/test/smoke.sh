@@ -520,6 +520,70 @@ echo "[smoke]     Task 7 fixtures and indexed records cleaned up"
 echo "[smoke]     Task 7 Cases A–F all passed"
 fi  # end UM_VAULT_DIR guard
 
+# 4d/5 Task 8: GET /api/state/:project — direct file read (Cases A–B)
+echo "[smoke] 4d/5 Task 8 state endpoint tests"
+
+if [ -z "${UM_VAULT_DIR:-}" ]; then
+	echo "[smoke] WARN: UM_VAULT_DIR not set — skipping Task 8 state tests"
+else
+T8_STATE_DIR="${UM_VAULT_DIR}/state/smoke-test-a"
+mkdir -p "$T8_STATE_DIR"
+
+# Case A: file exists → returns state with frontmatter and body
+echo "[smoke]     Task 8 Case A: state file exists → returns state"
+cat > "$T8_STATE_DIR/state.md" <<'EOF'
+---
+schema_version: 1
+type: state
+id: state-smoke-test-a
+title: State of play — smoke-test-a
+status: current
+valid_from: 2026-04-17T14:32:00Z
+project: smoke-test-a
+---
+# State of play — smoke-test-a
+
+## Current focus
+Smoke test body content.
+EOF
+
+RESP_T8A=$(curl -sf "$ENDPOINT/api/state/smoke-test-a")
+echo "    Response: $RESP_T8A"
+echo "$RESP_T8A" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true, got: ' + json.dumps(data)
+assert data.get('project') == 'smoke-test-a', 'wrong project: ' + str(data.get('project'))
+state = data.get('state')
+assert state is not None, 'state should not be null when file exists'
+fm = state.get('frontmatter', {})
+assert fm.get('id') == 'state-smoke-test-a', 'wrong frontmatter id: ' + str(fm.get('id'))
+assert 'Smoke test body content' in state.get('body', ''), 'body missing expected content'
+assert data.get('valid_from') == '2026-04-17T14:32:00Z', 'wrong valid_from: ' + str(data.get('valid_from'))
+print('OK Case A: state file returned with correct frontmatter, body, and valid_from')
+" || { echo "FAIL: Task 8 Case A failed"; rm -rf "$T8_STATE_DIR"; exit 1; }
+
+# Case B: file missing → state: null, valid_from: null, ok: true, status 200
+echo "[smoke]     Task 8 Case B: project has no state file → state: null"
+HTTP_STATUS_T8B=$(curl -s -o /tmp/t8_resp_b.json -w "%{http_code}" "$ENDPOINT/api/state/nonexistent-project-xyz")
+RESP_T8B=$(cat /tmp/t8_resp_b.json)
+echo "    HTTP $HTTP_STATUS_T8B — Response: $RESP_T8B"
+[ "$HTTP_STATUS_T8B" = "200" ] || { echo "FAIL: Case B should return 200, got $HTTP_STATUS_T8B"; rm -rf "$T8_STATE_DIR"; exit 1; }
+echo "$RESP_T8B" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true, got: ' + json.dumps(data)
+assert data.get('state') is None, 'state should be null when file missing, got: ' + str(data.get('state'))
+assert data.get('valid_from') is None, 'valid_from should be null when file missing, got: ' + str(data.get('valid_from'))
+print('OK Case B: missing state returns 200 with state=null, valid_from=null')
+" || { echo "FAIL: Task 8 Case B failed"; rm -rf "$T8_STATE_DIR"; exit 1; }
+
+# Cleanup
+rm -rf "$T8_STATE_DIR"
+echo "[smoke]     Task 8 state fixture cleaned up"
+echo "[smoke]     Task 8 Cases A–B all passed"
+fi  # end UM_VAULT_DIR guard
+
 # 5/5 assert count returned to baseline
 echo "[smoke] 5/5 verify baseline preserved"
 FINAL=$(get_count)

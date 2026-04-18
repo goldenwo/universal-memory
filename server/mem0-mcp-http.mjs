@@ -9,6 +9,7 @@
  *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
+ *   GET  /api/state/:project  read $VAULT/state/<project>/state.md directly (no mem0)
  *   DELETE /api/:id           remove a memory
  *   POST /api/reindex         { path } -> read vault file, upsert to mem0 with frontmatter metadata
  *
@@ -239,6 +240,33 @@ const server = createServer(async (req, res) => {
 			const all = await memory.getAll({ userId: USER_ID });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(all?.results || all || []));
+			return;
+		}
+		// GET /api/state/:project — direct file read, does NOT touch mem0
+		if (url.pathname.startsWith('/api/state/') && req.method === 'GET') {
+			const projectSegment = url.pathname.slice('/api/state/'.length);
+			// Reject empty or multi-segment paths (no nested slashes allowed)
+			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'Invalid project name: must match ^[a-zA-Z0-9._-]+$' }));
+				return;
+			}
+			const relPath = `state/${projectSegment}/state.md`;
+			let fileText;
+			try {
+				fileText = await readVaultFile(relPath);
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, project: projectSegment, state: null, valid_from: null }));
+					return;
+				}
+				throw err;
+			}
+			const { frontmatter, body } = parseFrontmatter(fileText);
+			const validFrom = frontmatter.valid_from || null;
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ ok: true, project: projectSegment, state: { frontmatter, body }, valid_from: validFrom }));
 			return;
 		}
 		if (url.pathname === '/api/reindex' && req.method === 'POST') {
