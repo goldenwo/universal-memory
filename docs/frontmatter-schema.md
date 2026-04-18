@@ -14,6 +14,7 @@ All eleven fields below are part of the universal spine. Fields marked optional
 may be omitted when not applicable; the system assigns defaults where noted.
 
 ```yaml
+# Abbreviated — see Examples below for full frontmatter delimiter form.
 schema_version: 1
 type: <string>              # session_summary | state | adr | note | fact | character | goal | ...
 id: <string>                # stable identifier; equals the filename stem (enables O(1) lookup)
@@ -92,7 +93,7 @@ UM stores and recalls them without interpreting them.
 
 - **current** — the active, authoritative version. Included in default recall.
 - **superseded** — replaced by a newer document. Excluded from default recall unless `?include_superseded=true` is passed. The chain is navigable via `supersedes` / `superseded_by`.
-- **deprecated** — still valid but scheduled for removal or no longer recommended. Excluded from default recall.
+- **deprecated** — still valid but scheduled for removal or no longer recommended. Excluded from default recall. May optionally point to a replacement via `superseded_by`. Usually a terminal state; no further status transitions are required.
 - **rejected** — was evaluated and rejected (common for ADRs). Excluded from default recall.
 
 Setting `invalidated_at` to a past timestamp is equivalent to marking a document
@@ -111,7 +112,9 @@ The default recall pipeline filters documents before ranking. The rules are:
 3. **Legacy compatibility** — v0.1.x documents that carry no frontmatter are
    treated as `status: current` and pass both filters.
 4. **Relaxed filter** — passing `?include_superseded=true` disables both the
-   status and invalidation filters, returning the full corpus.
+   status and invalidation filters, returning the full corpus. Despite the name,
+   this parameter relaxes all three exclusion filters: `status=superseded`,
+   `status=deprecated`, and non-null `invalidated_at`.
 5. **O(1) id lookup** — the `id` field equals the filename stem. A lookup by
    `id` bypasses vector search entirely and resolves in constant time.
 
@@ -137,15 +140,16 @@ receives half the recall weight of a brand-new document; a document 60 days old
 receives one quarter.
 
 Decay applies after the status and invalidation filters, so superseded documents
-are still excluded even with decay enabled. Setting `valid_from` overrides the
-age calculation — the clock starts from `valid_from` rather than file creation
-time.
+are still excluded even with decay enabled. When `valid_from` is set, the clock
+starts from that date rather than from an unstable timestamp such as file
+creation time (which varies across clones).
 
 Temporal decay is designed for high-churn note types (`session_summary`, `fact`,
 `state`) where recency is a strong relevance signal. It is less appropriate for
 stable reference types (`adr`, `character`, `strategy`) where the document's
 value is independent of age. Authors can opt individual documents out by omitting
-`valid_from` and setting a future `invalidated_at` as a ceiling.
+`valid_from`: documents with no `valid_from` field are treated as ageless —
+their decay factor is always 1.0.
 
 ---
 
