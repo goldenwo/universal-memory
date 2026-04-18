@@ -377,9 +377,6 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_capture': {
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
-			}
 			const { content, metadata } = args;
 			if (!metadata || !metadata.type || !metadata.id || !metadata.title) {
 				throw new Error('metadata must include: type, id, title');
@@ -387,6 +384,9 @@ async function handleToolCall(name, args) {
 			// C1: validate filename-path components before any path construction
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
 			const project = metadata.project || 'default';
 			const id = metadata.id;
 			const relPath = `authored/${project}/${id}.md`;
@@ -424,13 +424,13 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_forget': {
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
-			}
 			const { id } = args;
 			if (!id) throw new Error('id is required');
 			// C1: validate id before using as path component
 			validateSafeName('id', id);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
 
 			const relPath = await findDocByIdInVault(id);
 			if (!relPath) throw new Error(`Document not found in vault: ${id}`);
@@ -464,9 +464,6 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_supersede': {
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
-			}
 			const { old_id, new_doc } = args;
 			if (!old_id) throw new Error('old_id is required');
 			if (!new_doc || !new_doc.type || !new_doc.id || !new_doc.title || !new_doc.content) {
@@ -476,6 +473,9 @@ async function handleToolCall(name, args) {
 			validateSafeName('old_id', old_id);
 			validateSafeName('new_doc.id', new_doc.id);
 			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
 
 			// 1. Find old doc
 			const oldRelPath = await findDocByIdInVault(old_id);
