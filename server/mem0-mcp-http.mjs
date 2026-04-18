@@ -195,15 +195,24 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit, include_superseded } = JSON.parse(await readBody(req));
-			const response = await doSearch(query, limit, !!include_superseded);
+			const { query, limit = 5, include_superseded = false } = JSON.parse(await readBody(req));
+			if (!query || typeof query !== 'string' || !query.trim()) {
+				res.writeHead(400, {'Content-Type': 'application/json'});
+				res.end(JSON.stringify({error: 'query is required'}));
+				return;
+			}
+			const includeSup = include_superseded === true;
+			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
+			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			const response = await doSearch(query, clampedLimitPost, includeSup);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'GET') {
 			const q = url.searchParams.get('q') || '';
-			const limit = parseInt(url.searchParams.get('limit') || '5', 10);
+			const rawLimit = parseInt(url.searchParams.get('limit') || '5', 10);
+			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
 			if (!q) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });

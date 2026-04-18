@@ -31,7 +31,9 @@ curl -sf --max-time 10 -X POST "$UM_ENDPOINT/api/search" \
 	2>/dev/null | python3 -c '
 import json, sys
 try:
-    items = json.load(sys.stdin)
+    data = json.load(sys.stdin)
+    # v0.2.0 wraps in {results: [...]}; v0.1.x returned a bare array. Support both.
+    items = data.get('results') if isinstance(data, dict) else data
     if not items:
         print(json.dumps({"additionalContext": ""}))
         sys.exit(0)
