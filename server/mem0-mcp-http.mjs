@@ -10,6 +10,7 @@
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
  *   DELETE /api/:id           remove a memory
+ *   POST /api/reindex         { path } -> read vault file, upsert to mem0 with frontmatter metadata
  *
  * Required env: OPENAI_API_KEY, MEM0_USER_ID
  * Optional env: MEM0_MCP_PORT (default 6335), QDRANT_HOST, QDRANT_PORT,
@@ -23,7 +24,10 @@
  */
 
 import { createServer } from 'http';
+import path from 'node:path';
 import { Memory } from 'mem0ai/oss';
+import { parseFrontmatter } from './lib/frontmatter.mjs';
+import { readVaultFile } from './lib/vault.mjs';
 
 function requireEnv(name) {
 	const v = process.env[name];
@@ -235,6 +239,84 @@ const server = createServer(async (req, res) => {
 			const all = await memory.getAll({ userId: USER_ID });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(all?.results || all || []));
+			return;
+		}
+		if (url.pathname === '/api/reindex' && req.method === 'POST') {
+			const { path: relPath } = JSON.parse(await readBody(req));
+
+			// 1. path present
+			if (!relPath || typeof relPath !== 'string' || !relPath.trim()) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'path is required' }));
+				return;
+			}
+
+			// 2. read file (throws on traversal or ENOENT)
+			let fileText;
+			try {
+				fileText = await readVaultFile(relPath);
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					res.writeHead(404, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: `File not found: ${relPath}` }));
+					return;
+				}
+				if (err.message && err.message.includes('traversal')) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: `Path traversal detected: ${relPath}` }));
+					return;
+				}
+				throw err;
+			}
+
+			// 3. parse frontmatter
+			const { frontmatter: fm } = parseFrontmatter(fileText);
+
+			// 4. required fields
+			if (!fm.type || !fm.id || !fm.title) {
+				const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: `Missing required frontmatter fields: ${missing.join(', ')}` }));
+				return;
+			}
+
+			// 5. state type rejected
+			if (fm.type === 'state') {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'state.md is never reindexed — use /api/state (Task 10)' }));
+				return;
+			}
+
+			// 6. filename stem must match metadata.id
+			const stem = path.basename(relPath, '.md');
+			if (stem !== fm.id) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: `id mismatch: frontmatter id "${fm.id}" does not match filename stem "${stem}"` }));
+				return;
+			}
+
+			// 7. upsert: delete all existing entries with this metadata.id, then add
+			const targetId = fm.id;
+			const allMemories = await memory.getAll({ userId: USER_ID });
+			const allItems = allMemories?.results || allMemories || [];
+			const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
+			for (const item of existingItems) {
+				await memory.delete(item.id);
+			}
+
+			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
+			const metadata = {
+				schema_version: 1,
+				...fm,
+			};
+
+			// Compose a meaningful text to add to mem0 (title + body excerpt)
+			const { body } = parseFrontmatter(fileText);
+			const docText = `${fm.title}\n\n${body.trim()}`;
+			await memory.add(docText, { userId: USER_ID, metadata, infer: false });
+
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
 			return;
 		}
 		if (url.pathname.startsWith('/api/') && req.method === 'DELETE') {
