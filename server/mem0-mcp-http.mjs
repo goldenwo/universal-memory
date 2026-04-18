@@ -29,6 +29,7 @@ import path from 'node:path';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile } from './lib/vault.mjs';
+import { applyTemporalDecay } from './lib/ranking.mjs';
 
 function requireEnv(name) {
 	const v = process.env[name];
@@ -170,6 +171,14 @@ async function doSearch(query, limit, includeSuperseded) {
 				(md.invalidated_at != null);
 			return !excluded;
 		});
+	}
+	// Optional temporal decay re-ranking (off by default).
+	// Set UM_TEMPORAL_DECAY=true to enable; UM_DECAY_HALF_LIFE_DAYS controls
+	// the decay rate (default: 30 days). Applied after status filter so only
+	// allowed results are re-ranked.
+	if (process.env.UM_TEMPORAL_DECAY === 'true') {
+		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
+		items = applyTemporalDecay(items, halfLife);
 	}
 	return { results: items };
 }
