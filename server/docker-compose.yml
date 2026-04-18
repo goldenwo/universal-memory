@@ -15,6 +15,9 @@ services:
     environment:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
+      UM_VAULT_DIR: /vault
+    volumes:
+      - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
     ports:
       - "${MEM0_MCP_PORT:-6335}:6335"
     depends_on:
