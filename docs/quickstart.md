@@ -1,53 +1,81 @@
 # Quickstart
 
-**Status:** 🚧 Scaffold. Full walkthroughs pending plugin and server implementation.
+Get cross-session memory working in Claude Code in about 5 minutes.
 
-## Three install paths
+## Step 1: Start the memory server
 
-### Path 1 — Cloud mode (fastest, no self-hosted infra)
+Clone the repo and run the install wizard (sets up your `.env`, starts the Docker stack):
 
-For users who want to try the system with minimal setup.
-
-1. Sign up at [mem0.ai](https://mem0.ai) and grab an API key.
-2. Install the Claude Code plugin.
-3. Configure plugin with `mode: "cloud"` and paste the API key.
-
-Elapsed: ~60 seconds. You now have cross-session memory.
-
-### Path 2 — Self-hosted server
-
-For privacy, control, and zero per-request costs.
-
-1. Pick a host (laptop, Pi, VPS — anywhere Docker runs).
-2. `git clone` this repo, `cd server`.
-3. `cp .env.example .env` and set `OPENAI_API_KEY` + `MEM0_USER_ID`.
-4. `docker-compose up -d`.
-5. Install the Claude Code plugin (same as Path 1 but with `mode: "self-hosted"` and `endpoint: "http://your-host:6335"`).
-
-Elapsed: ~5 minutes.
-
-### Path 3 — Self-hosted + cross-device
-
-Add sync of markdown source files across your machines.
-
-1. Complete Path 2.
-2. Pick a sync mechanism: Syncthing (recommended), or nightly `git push` to a bare repo on the same host.
-3. Configure each additional device with the same endpoint.
-
-The memory server sees all your devices as one. Queries from any device return context captured on any other.
-
-## Verify it works
-
-After install, open a Claude Code session:
-
-```
-"What do you already know about this project?"
+```bash
+git clone https://github.com/goldenwo/universal-memory
+cd universal-memory/server
+bash install.sh
 ```
 
-On a fresh project with no prior memory, the response should be empty or near-empty. Captures accumulate as you work. On subsequent sessions, the SessionStart hook injects relevant prior facts automatically.
+The wizard prompts for your OpenAI API key, a user ID, and your vault directory. It writes `server/.env` and runs `docker compose up -d`.
+
+Verify it started:
+
+```bash
+curl http://localhost:6335/health
+# {"ok":true,"memories":0}
+```
+
+## Step 2: Register the plugin in Claude Code
+
+Add the marketplace to your `.claude/settings.json` (create it if it doesn't exist):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "universal-memory": {
+      "source": { "source": "github", "repo": "goldenwo/universal-memory" }
+    }
+  }
+}
+```
+
+Enable the `universal-memory` plugin from the plugin list. Reload Claude Code.
+
+Set env vars in your shell profile (`~/.bashrc`, `~/.zshenv`, etc.):
+
+```bash
+export UM_ENDPOINT=http://localhost:6335
+export UM_VAULT_DIR=$HOME/.um/vault        # match what the wizard set
+export UM_OPENAI_API_KEY=sk-...            # or OPENAI_API_KEY if already set globally
+```
+
+## Step 3: First session
+
+Open any project in Claude Code. Do some work. The Stop hook appends a raw capture after each message. At the end of the session, the SessionEnd hook synthesizes a summary.
+
+## Step 4: Second session — state injected
+
+Open a new session in the same project. The SessionStart hook reads `state.md` (if it exists) and injects it as context. Ask Claude: *"What do you already know about this project?"*
+
+The first synthesis runs during the first SessionEnd or the next SessionStart catchup. Give it a session or two to accumulate enough content.
+
+## Step 5: On-demand refresh with /um-checkpoint
+
+At any point mid-session, run `/um-checkpoint` to force a state update immediately — useful after a significant decision or before handing off to another session.
+
+## Optional: MCP write tools for Claude.ai
+
+If you also use Claude.ai or Claude Desktop and want those surfaces to write to your vault, enable write tools:
+
+```env
+# server/.env
+UM_MCP_WRITE_ENABLED=true
+UM_MOUNT_MODE=rw
+```
+
+Then restart the server: `docker compose restart memory-server`.
+
+**Read the security note in `docs/mcp-tools.md` first** — enabling writes opens the vault over HTTP. Bind to localhost or use a VPN/reverse proxy before enabling on a shared network.
 
 ## Troubleshooting
 
-- **Server unreachable:** check `curl http://your-host:6335/health` returns JSON. If not, inspect `docker-compose logs`.
-- **Hook not firing:** confirm Claude Code picked up the plugin — look for `universal-memory` in the active plugins list at session start.
-- **No memories retrieved:** verify your `userId` matches across plugin config and server `.env`.
+- **Server unreachable**: `curl http://localhost:6335/health` — if it fails, `docker compose logs memory-server`.
+- **No state injected**: check `ls "$UM_VAULT_DIR/state/<project>/"`. If empty, no synthesis has run yet. Try `/um-checkpoint`.
+- **Summaries not generating**: check `UM_OPENAI_API_KEY` is set. Look in `$UM_VAULT_DIR/.telemetry/` for logs.
+- **Plugin not loading**: confirm `universal-memory` appears in your active plugins list at session start. Check `.claude/settings.json` marketplace entry.

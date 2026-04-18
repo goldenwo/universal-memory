@@ -26,6 +26,14 @@ if ! declare -f vault_path >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# I1: honor UM_SUMMARY_ENABLED — skip entire pipeline when disabled
+# ---------------------------------------------------------------------------
+if [ "${UM_SUMMARY_ENABLED:-true}" = "false" ]; then
+  echo "[session-end] UM_SUMMARY_ENABLED=false — skipping summary pipeline" >&2
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Detached mode — re-invoke self without UM_DETACH, fork to background
 # ---------------------------------------------------------------------------
 if [ "${UM_DETACH:-0}" = "1" ]; then
