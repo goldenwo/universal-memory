@@ -19,6 +19,6 @@ services:
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
     ports:
-      - "${MEM0_MCP_PORT:-6335}:6335"
+      - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"
     depends_on:
       - qdrant

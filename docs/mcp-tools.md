@@ -383,3 +383,20 @@ docker compose restart memory-server
 The vault mount mode must be `rw` for writes to persist. When `UM_MCP_WRITE_ENABLED=false`
 (the default), the vault stays read-only to the server and write tools return a 
 `{ ok: false, error: "MCP writes disabled" }` response rather than an error.
+
+---
+
+## Security — MCP write tools expose the vault over HTTP
+
+**Security — MCP write tools expose the vault over HTTP**
+
+With `UM_MCP_WRITE_ENABLED=true` and the default Docker port mapping, the MCP server accepts unauthenticated write requests from any host that can reach port 6335. This includes:
+- Other devices on your LAN (hotel Wi-Fi, coffee-shop Wi-Fi, office network)
+- Browser tabs from any domain (CORS is `*`)
+
+Before enabling writes, do one of:
+1. **Bind to localhost only** (recommended for single-machine use): set `MEM0_MCP_PORT=127.0.0.1:6335` in `.env` so Docker binds only to localhost.
+2. **Front with a reverse proxy** that requires auth — nginx+basic-auth, Cloudflare Access, Tailscale Funnel, etc.
+3. **Restrict to a private overlay network** — Tailscale, WireGuard, ZeroTier.
+
+Without one of these, any device on your current network can read and write your entire memory vault.

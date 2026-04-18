@@ -144,6 +144,15 @@ state_file="$vault/state/$project/state.md"
 lockdir="$vault/state/$project/state.md.lockdir"
 mkdir -p "$(dirname "$lockdir")" || { echo "[session-end] could not mkdir for lock, skipping state update" >&2; exit 0; }
 
+# Capture state.md mtime BEFORE the update attempt (for accurate telemetry)
+state_mtime_before=0
+if [ -f "$state_file" ]; then
+  state_mtime_before=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null || echo 0)
+fi
+
+# Clear stale lock if older than 10 minutes (crashed previous run)
+try_clear_stale_lock "$lockdir" 600
+
 LOCK_HELD=0
 for i in 1 2 3 4 5; do
   if mkdir "$lockdir" 2>/dev/null; then
@@ -232,8 +241,10 @@ log="$vault/.telemetry/session-end.log"
 mkdir -p "$(dirname "$log")" 2>/dev/null || true
 state_updated="0"
 if [ -f "$state_file" ]; then
-  # Check if state was updated this run by comparing mtime to now (within 5s)
-  state_updated="1"
+  state_mtime_after=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null || echo 0)
+  if [ "$state_mtime_after" -gt "$state_mtime_before" ]; then
+    state_updated="1"
+  fi
 fi
 printf '%s\tproject=%s\tsummary=%s\tstate_updated=%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$project" "$summary_id" "$state_updated" >> "$log" 2>/dev/null || true

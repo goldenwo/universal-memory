@@ -497,6 +497,26 @@ async function handleToolCall(name, args) {
 			const newRelPath = `authored/${newProject}/${newId}.md`;
 			const now = new Date().toISOString();
 
+			// C1: guard against self-supersede (old and new resolve to the same path)
+			if (oldRelPath === newRelPath) {
+				throw new Error('old_id and new_doc resolve to the same path; cannot supersede a doc with itself');
+			}
+
+			// C1: guard against clobbering an existing unrelated doc at the new path
+			try {
+				await fs.access(path.join(vaultPath(), newRelPath));
+				// If we get here, the file exists — this is a collision
+				throw new Error(`new_doc target path already exists: ${newRelPath}`);
+			} catch (e) {
+				if (e.code === 'ENOENT') {
+					// Expected: new path does not exist yet — safe to proceed
+				} else if (e.message && e.message.startsWith('new_doc target path already exists')) {
+					throw e;
+				} else {
+					throw e;
+				}
+			}
+
 			// 2. Create new doc
 			const newFm = {
 				schema_version: 1,
