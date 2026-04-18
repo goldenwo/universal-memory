@@ -1,8 +1,6 @@
 # universal-memory
 
-Self-hosted, markdown-first memory for LLM agents — works across devices, agents, and projects.
-
-**Status:** 🚧 Early development. Private repo while the shape stabilizes.
+Self-hosted AI memory that closes the session-continuity gap across every Claude surface.
 
 [![smoke](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml)
 [![release](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml)
@@ -11,77 +9,132 @@ Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X
 
 ---
 
-## What it gives you
+## The problem
 
-- **Cross-session memory** — capture decisions and facts in one session, recall them in the next, across any device.
-- **Cross-device sync** — your markdown sources travel with you; every device sees the same knowledge.
-- **Works with multiple agents** — Claude Code, Claude Desktop, OpenClaw, or anything that speaks MCP or plain HTTP.
-- **Markdown as source of truth** — no vendor lock-in. If any part of the stack dies, your knowledge survives as readable files under git.
-- **ADR workflow** — first-class support for recording architectural decisions per project, with automatic cross-project synthesis.
-- **Karpathy-inspired architecture** — three roles: source markdown (authoritative), LLM-compiled synthesis (regenerable), and vector/graph indexes (regenerable caches). See [docs/architecture.md](docs/architecture.md).
+Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decision made in a morning coding session is invisible to an afternoon writing session and invisible to tomorrow. universal-memory fixes that: one memory store, accessible from every Claude surface, so context follows you instead of resetting each time.
+
+---
+
+## What you get
+
+- **Session continuity** — a `state.md` file per project is injected at the start of every session. Current focus, in-flight work, recent decisions, next actions — all there without manual setup.
+- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 10 MCP tools. Work captured in Claude Code is visible from Claude.ai the same day.
+- **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default.
+- **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
+
+---
 
 ## Who this is for
 
-You run Claude Code (CLI or the VS Code / JetBrains extension) and want cross-session, cross-device memory without vendor lock-in.
+Anyone who uses Claude across multiple sessions and wants continuity. This is not a coder-only tool.
 
-- **Standalone users.** You don't run OpenClaw. The core (memory server + Claude Code plugin) works by itself. Docker + an OpenAI key is all you need. The `plugins/openclaw/` and `integrations/openclaw/` directories don't apply to you — skip them.
-- **OpenClaw users.** You already run OpenClaw for Discord auto-capture / agent workspace / etc. The optional addons in `plugins/openclaw/` integrate universal-memory with your existing setup (workspace-dream, autoCapture retrofit).
+- A novelist tracking character sheets, plot decisions, and chapter notes across weeks of writing sessions.
+- A researcher logging hypotheses, experiment outcomes, and literature notes across tools.
+- A person tracking life goals, learning plans, and personal decisions.
+- A team capturing architecture decisions, quarterly strategies, and meeting outcomes.
+- A developer who wants session state and ADRs to follow them across machines and surfaces.
 
-**OpenClaw is never a prerequisite.** The memory server has zero OpenClaw code, dependencies, or assumptions. The server and Claude Code plugin can be installed and run without OpenClaw existing anywhere on your machine.
+---
 
-See the [roadmap](ROADMAP.md) for what's shipped and what's planned.
+## How it differs from alternatives
 
-## Two deployment modes
+**vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds on top: session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface. Using mem0 alone means no session state, no catchup mechanism, no document versioning.
 
-| Mode | Who it's for | Setup time |
-|---|---|---|
-| **Cloud** | Quick try, no infra hassle | ~60 seconds — sign up at mem0.ai, paste API key |
-| **Self-hosted** | Privacy, cost control, power users | ~5 minutes — `docker-compose up` on any Docker host |
+**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server.
 
-Both modes use the same plugins. Switching is a config change.
+**vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault that a human can open in any editor can also be queried by agents at conversation speed via the MCP surface.
 
-## Quickstart (self-hosted)
+---
+
+## Quickstart
+
+### 1. Start the memory server
 
 ```bash
-# 1. Clone and start the memory server
 git clone https://github.com/goldenwo/universal-memory
 cd universal-memory/server
-cp .env.example .env   # add OPENAI_API_KEY, set a userId
-docker-compose up -d
-
-# 2. Install the Claude Code plugin (from any dev machine)
-# (plugin install instructions — TBD as plugin stabilizes)
+cp .env.example .env         # set OPENAI_API_KEY and VAULT_PATH
+docker compose up -d
 ```
 
-See [docs/quickstart.md](docs/quickstart.md) for full instructions.
+Or use the one-command install wizard — see [docs/quickstart.md](docs/quickstart.md).
+
+### 2. First Claude Code session with the UM plugin
+
+Install the plugin (see [docs/quickstart.md](docs/quickstart.md) for the exact command). Open a Claude Code session. As you work, the Stop hook appends raw captures to the vault. Nothing else is required.
+
+### 3. Second Claude Code session — continuity works
+
+At the start of the next session, the SessionStart hook:
+- Detects unprocessed captures from the previous session.
+- Synthesizes them into a session summary.
+- Writes a fresh `state.md`.
+- Injects `state.md` as context before your first message.
+
+Your current focus, in-flight tasks, recent decisions, and next actions are waiting.
+
+### 4. Force a checkpoint mid-session
+
+At any point during a session, run:
+
+```
+/um-checkpoint
+```
+
+This immediately refreshes `state.md` from accumulated captures. Useful after a significant decision you want captured before continuing.
+
+### 5. From Claude.ai — connect and capture
+
+Connect the MCP server to Claude.ai via the connector URL (`http://your-host:6335/mcp`). Once connected:
+
+```
+memory_state("my-project")    # loads current state.md from Claude.ai
+memory_search("query")        # semantic search across all indexed documents
+memory_capture(...)           # write a new document to the vault from Claude.ai
+```
+
+Captures made from Claude.ai are visible in Claude Code sessions and vice versa.
+
+---
+
+## MCP tool surface
+
+10 tools available to any MCP client:
+
+| Tool | Type | What it does |
+|---|---|---|
+| `memory_search` | read | Semantic search over indexed documents |
+| `memory_list` | read | List all indexed memories |
+| `memory_state` | read | Load `state.md` for a project |
+| `memory_recent` | read | Recent session summaries, date-sorted |
+| `memory_add` | write | Add a fact to the index |
+| `memory_capture` | write | Write a new authored document to the vault |
+| `memory_checkpoint` | write | Force session summary + state refresh |
+| `memory_forget` | write | Deprecate a document by ID |
+| `memory_supersede` | write | Replace a document; preserves audit chain |
+| `memory_delete` | write | Remove a memory from the index |
+
+Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
+
+---
 
 ## Repository layout
 
 ```
 universal-memory/
-├── server/                      Self-hostable backend (Qdrant + mem0 HTTP + cron jobs)
+├── server/                      Self-hostable backend (Qdrant + mem0 + MCP endpoint)
 ├── plugins/
-│   ├── claude-code/             Claude Code plugin (hooks, skills, MCP config)
-│   └── openclaw/                Optional addon for OpenClaw users
+│   └── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
 ├── docs/
-│   ├── architecture.md          Design principles and the three-role model
-│   ├── quickstart.md            Install walkthroughs
-│   └── decisions/               ADRs about the system itself (dogfooding)
-├── examples/                    Reference configs for different setups
-└── .github/workflows/           CI for portability verification
+│   ├── architecture.md          Two-tier design, three pillars, MCP surface
+│   ├── state-of-play.md         state.md concept reference
+│   ├── frontmatter-schema.md    Document schema and versioning reference
+│   ├── mcp-tools.md             Full MCP tool reference with examples
+│   └── quickstart.md            Install walkthroughs
+└── .github/workflows/           CI smoke tests and release pipeline
 ```
 
-## Design principles
-
-1. **Markdown is the only authoritative substrate.** Vector stores and graphs are regenerable caches.
-2. **Every fact has a markdown source.** If it only lives in the index, it's at risk.
-3. **Zero required infrastructure for basic use.** Cloud mode works with just an API key.
-4. **Generic by default, personal by config.** No hardcoded hostnames, user IDs, or paths.
-5. **Portability is tested, not claimed.** CI verifies clean-install works.
-
-## Status and roadmap
-
-See [ROADMAP.md](ROADMAP.md) for shipped work and what's planned next.
+---
 
 ## License
 
