@@ -10,7 +10,8 @@
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
  *   GET  /api/state/:project  read $VAULT/state/<project>/state.md directly (no mem0)
- *   DELETE /api/:id           remove a memory
+ *   DELETE /api/:id           remove a memory (by mem0 UUID via URL param)
+ *   POST /api/delete          { metadata: { id } } or { id: <uuid> } -> delete by metadata.id or UUID
  *   POST /api/reindex         { path } -> read vault file, upsert to mem0 with frontmatter metadata
  *
  * Required env: OPENAI_API_KEY, MEM0_USER_ID
@@ -265,6 +266,22 @@ function mcpWriteEnabled() {
 }
 
 // ---------------------------------------------------------------------------
+// Shared helper: delete all mem0 entries matching a metadata.id value
+// Returns the count of deleted entries.
+// ---------------------------------------------------------------------------
+
+async function deleteByMetadataId(targetId) {
+	// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
+	const allMemories = await memory.getAll({ userId: USER_ID });
+	const allItems = allMemories?.results || allMemories || [];
+	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
+	for (const item of existingItems) {
+		await memory.delete(item.id);
+	}
+	return existingItems.length;
+}
+
+// ---------------------------------------------------------------------------
 // Internal reindex helper (POST /api/reindex equivalent, called server-side)
 // ---------------------------------------------------------------------------
 
@@ -280,14 +297,8 @@ async function reindexDoc(relPath) {
 	if (fm.type === 'state') {
 		throw new Error('state.md documents must not be indexed into mem0');
 	}
-	// TODO: shared reindex helper between HTTP /api/reindex and this internal function (I5)
 	const targetId = fm.id;
-	const allMemories = await memory.getAll({ userId: USER_ID });
-	const allItems = allMemories?.results || allMemories || [];
-	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
-	for (const item of existingItems) {
-		await memory.delete(item.id);
-	}
+	await deleteByMetadataId(targetId);
 	const metadata = { schema_version: 1, ...fm };
 	const docText = `${fm.title}\n\n${body.trim()}`;
 	await memory.add(docText, { userId: USER_ID, metadata, infer: false });
@@ -768,14 +779,8 @@ const server = createServer(async (req, res) => {
 
 			// 7. upsert: delete all existing entries with this metadata.id, then add
 			const targetId = fm.id;
-			// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
-			const allMemories = await memory.getAll({ userId: USER_ID });
-			const allItems = allMemories?.results || allMemories || [];
-			const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
 			// TODO(v0.3): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
-			for (const item of existingItems) {
-				await memory.delete(item.id);
-			}
+			await deleteByMetadataId(targetId);
 
 			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
 			const metadata = {
@@ -791,6 +796,59 @@ const server = createServer(async (req, res) => {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
 			return;
+		}
+		if (url.pathname === '/api/delete' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const hasMetadata = reqBody.metadata !== undefined;
+			const hasId = reqBody.id !== undefined;
+			if (hasMetadata && hasId) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'provide either metadata.id or id, not both' }));
+				return;
+			}
+			if (!hasMetadata && !hasId) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'provide either metadata.id (Shape A) or id (Shape B)' }));
+				return;
+			}
+			if (hasMetadata) {
+				// Shape A: delete by metadata.id
+				const targetId = reqBody.metadata?.id;
+				if (!targetId || typeof targetId !== 'string' || !targetId.trim()) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'metadata.id is required and must be a non-empty string' }));
+					return;
+				}
+				const deleted = await deleteByMetadataId(targetId);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ ok: true, deleted, query: `metadata.id=${targetId}` }));
+				return;
+			} else {
+				// Shape B: delete by mem0 UUID directly
+				const uuid = reqBody.id;
+				if (!uuid || typeof uuid !== 'string' || !uuid.trim()) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'id is required and must be a non-empty string' }));
+					return;
+				}
+				try {
+					await memory.delete(uuid);
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, deleted: 1, query: `id=${uuid}` }));
+				} catch (err) {
+					// mem0 may throw if UUID not found — treat as 0 deleted
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, deleted: 0, query: `id=${uuid}` }));
+				}
+				return;
+			}
 		}
 		if (url.pathname.startsWith('/api/') && req.method === 'DELETE') {
 			const id = url.pathname.split('/api/')[1];

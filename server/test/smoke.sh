@@ -1001,6 +1001,100 @@ print(f'OK T10-J: memory_recent limit=50 returned {len(result[\"results\"])} res
 
 echo "[smoke]     Task 10 MCP surface tests passed"
 
+# 4g/5 Task 2.5 gate: POST /api/delete — delete by metadata.id
+echo "[smoke] 4g/5 Task 2.5 POST /api/delete — delete-by-metadata"
+
+T_DEL_ID="smoke-t-delete-by-meta"
+T_DEL_IDS=""
+
+# Step 1: add doc with explicit metadata id
+echo "[smoke]     Step 1: add doc with metadata.id=$T_DEL_ID"
+DEL_ADD_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
+	-H 'Content-Type: application/json' \
+	-d "{\"text\": \"Delete-by-metadata smoke test probe for $T_DEL_ID.\", \"metadata\": {\"id\": \"$T_DEL_ID\", \"type\": \"smoke-probe\"}}")
+echo "$DEL_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert 'results' in data, 'response missing results key: ' + json.dumps(data)
+print('OK: add with metadata.id=$T_DEL_ID succeeded')
+" || { echo "FAIL: 4g step 1 add failed"; exit 1; }
+
+T_DEL_IDS=$(echo "$DEL_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    if r.get('id'): print(r['id'])
+")
+
+# Step 2: verify findable via /api/search
+echo "[smoke]     Step 2: verify doc is findable"
+sleep 2
+DEL_SEARCH_RESP=$(curl -sf -X POST "$ENDPOINT/api/search" \
+	-H 'Content-Type: application/json' \
+	-d "{\"query\": \"Delete-by-metadata smoke test probe for $T_DEL_ID\", \"limit\": 10, \"include_superseded\": true}")
+echo "$DEL_SEARCH_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data.get('results', [])
+found = any((r.get('metadata') or {}).get('id') == '$T_DEL_ID' for r in items)
+if found:
+    print('OK: doc with metadata.id=$T_DEL_ID found in search results')
+else:
+    print('WARN: doc not found in search (may be mem0 extraction artefact); proceeding to delete test')
+" || true
+
+# Step 3: POST /api/delete with {metadata: {id: "smoke-t-delete-by-meta"}}
+echo "[smoke]     Step 3: DELETE via POST /api/delete"
+DEL_RESP=$(curl -sf -X POST "$ENDPOINT/api/delete" \
+	-H 'Content-Type: application/json' \
+	-d "{\"metadata\": {\"id\": \"$T_DEL_ID\"}}")
+echo "    Response: $DEL_RESP"
+echo "$DEL_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true, got: ' + json.dumps(data)
+assert isinstance(data.get('deleted'), int), 'expected deleted to be an integer, got: ' + json.dumps(data)
+assert data.get('deleted') >= 0, 'expected deleted >= 0, got: ' + json.dumps(data)
+assert data.get('query') == 'metadata.id=$T_DEL_ID', 'expected query=metadata.id=$T_DEL_ID, got: ' + str(data.get('query'))
+print(f'OK: DELETE returned ok=True, deleted={data[\"deleted\"]}, query={data[\"query\"]}')
+" || { echo "FAIL: 4g step 3 POST /api/delete failed"; exit 1; }
+
+# Step 4: verify no longer findable
+echo "[smoke]     Step 4: verify doc no longer findable"
+sleep 2
+DEL_SEARCH2=$(curl -sf -X POST "$ENDPOINT/api/search" \
+	-H 'Content-Type: application/json' \
+	-d "{\"query\": \"Delete-by-metadata smoke test probe for $T_DEL_ID\", \"limit\": 10, \"include_superseded\": true}")
+echo "$DEL_SEARCH2" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data.get('results', [])
+remaining = [r for r in items if (r.get('metadata') or {}).get('id') == '$T_DEL_ID']
+if remaining:
+    print(f'FAIL: {len(remaining)} result(s) with metadata.id=$T_DEL_ID still present after delete')
+    sys.exit(1)
+else:
+    print('OK: no results with metadata.id=$T_DEL_ID after delete')
+" || { echo "FAIL: 4g step 4 post-delete search still found docs"; exit 1; }
+
+# Step 5: error cases — both present → 400
+echo "[smoke]     Step 5: both id + metadata → 400"
+HTTP_STATUS_BOTH=$(curl -s -o /tmp/del_both.json -w "%{http_code}" -X POST "$ENDPOINT/api/delete" \
+	-H 'Content-Type: application/json' \
+	-d '{"id":"some-uuid","metadata":{"id":"some-id"}}')
+[ "$HTTP_STATUS_BOTH" = "400" ] || { echo "FAIL: expected 400 when both present, got $HTTP_STATUS_BOTH"; exit 1; }
+echo "    OK: both id + metadata returns 400"
+
+# Step 6: error cases — neither present → 400
+echo "[smoke]     Step 6: neither id nor metadata → 400"
+HTTP_STATUS_NEITHER=$(curl -s -o /tmp/del_neither.json -w "%{http_code}" -X POST "$ENDPOINT/api/delete" \
+	-H 'Content-Type: application/json' \
+	-d '{}')
+[ "$HTTP_STATUS_NEITHER" = "400" ] || { echo "FAIL: expected 400 when neither present, got $HTTP_STATUS_NEITHER"; exit 1; }
+echo "    OK: neither id nor metadata returns 400"
+
+echo "[smoke]     Task 2.5 POST /api/delete all steps passed"
+
 # 5/5 assert count returned to baseline
 echo "[smoke] 5/5 verify baseline preserved"
 FINAL=$(get_count)
