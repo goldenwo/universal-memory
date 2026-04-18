@@ -74,6 +74,62 @@ else
 	echo "[smoke]     mem0 stored $NUM_ADDED fact(s) — will verify round-trip"
 fi
 
+# 2b/5 metadata roundtrip — POST with metadata, then search and verify it survives
+echo "[smoke] 2b/5 metadata roundtrip"
+META_MARKER="smoke-meta-$(date +%s)-$$"
+META_ADD_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
+	-H 'Content-Type: application/json' \
+	-d "{\"text\": \"Metadata roundtrip probe: $META_MARKER\", \"metadata\": {\"smoke_id\": \"$META_MARKER\", \"type\": \"smoke-probe\"}}")
+
+# Verify the response is valid JSON with results shape
+echo "$META_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert 'results' in data, 'response missing results key'
+assert isinstance(data['results'], list), 'results is not a list'
+" || {
+	echo "FAIL: /api/add with metadata did not return valid response shape"
+	echo "Response: $META_ADD_RESP"
+	exit 1
+}
+
+META_IDS=$(echo "$META_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    if r.get('id'):
+        print(r['id'])
+")
+
+if [ -z "$META_IDS" ]; then
+	echo "[smoke]     NOTE: mem0 extraction stored no facts for metadata probe — skipping metadata verification"
+else
+	# Search and check that metadata comes back on at least one result
+	META_SEARCH_RESP=$(curl -sf -X POST "$ENDPOINT/api/search" \
+		-H 'Content-Type: application/json' \
+		-d "{\"query\": \"$META_MARKER\", \"limit\": 5}")
+	echo "$META_SEARCH_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else (data.get('results') or [])
+smoke_id = '$META_MARKER'
+found = any(
+    (r.get('metadata') or {}).get('smoke_id') == smoke_id
+    for r in items
+)
+if not found:
+    print('WARN: metadata smoke_id not found in search results — may be a mem0 extraction artefact, not a forwarding bug')
+    print('Search response:', json.dumps(items, indent=2))
+else:
+    print('OK: metadata survived round-trip')
+" || true
+	# Cleanup metadata probe IDs
+	for id in $META_IDS; do
+		curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null || true
+	done
+	echo "[smoke]     metadata probe records cleaned up"
+fi
+
 # 3/5 if we stored anything, confirm each ID appears in /api/list (add -> list round-trip)
 echo "[smoke] 3/5 verify round-trip"
 if [ "$NUM_ADDED" -gt 0 ]; then

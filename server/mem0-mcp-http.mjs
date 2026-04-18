@@ -78,7 +78,7 @@ async function initMemory() {
 
 const TOOLS = [
 	{ name: 'memory_search', description: 'Search memories by semantic similarity', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } },
-	{ name: 'memory_add', description: 'Add a fact to long-term memory', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
+	{ name: 'memory_add', description: 'Add a fact to long-term memory', inputSchema: { type: 'object', properties: { text: { type: 'string' }, metadata: { type: 'object', description: 'Optional key-value metadata to attach to the memory' } }, required: ['text'] } },
 	{ name: 'memory_list', description: 'List all stored memories', inputSchema: { type: 'object', properties: {} } },
 	{ name: 'memory_delete', description: 'Delete a memory by ID', inputSchema: { type: 'object', properties: { memoryId: { type: 'string' } }, required: ['memoryId'] } },
 ];
@@ -94,7 +94,7 @@ async function handleToolCall(name, args) {
 			}).join('\n') || 'No results found.';
 		}
 		case 'memory_add': {
-			const result = await memory.add(args.text, { userId: USER_ID });
+			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
@@ -172,8 +172,8 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
-			const { text } = JSON.parse(await readBody(req));
-			const result = await memory.add(text, { userId: USER_ID });
+			const { text, metadata } = JSON.parse(await readBody(req));
+			const result = await memory.add(text, { userId: USER_ID, ...(metadata && { metadata }) });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(result));
 			return;
