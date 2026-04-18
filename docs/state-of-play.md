@@ -118,8 +118,9 @@ Two consumers access `state.md` directly:
 2. **`memory_state(project)` MCP tool** — available to Claude.ai, Claude Desktop,
    and any MCP client that connects to the universal-memory server. The tool
    performs a server-side direct file read of the mounted vault at
-   `$VAULT/state/<project>/state.md` and returns the body. This allows remote
-   clients to load project state without a filesystem hook.
+   `$VAULT/state/<project>/state.md` and returns the state.md content (or an
+   error when the project has no state.md yet). This allows remote clients to
+   load project state without a filesystem hook.
 
 `state.md` is **not indexed in mem0**. It is accessed only by direct file read.
 There is no vector search path to `state.md`; it is excluded from the recall

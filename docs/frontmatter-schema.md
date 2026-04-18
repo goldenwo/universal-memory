@@ -68,7 +68,6 @@ Common `type` values and typical extension fields:
 | `hypothesis` | `experiment_id`, `prediction`, `outcome` |
 | `goal` | `target_date`, `metric`, `owner` |
 | `strategy` | `horizon`, `quarter`, `owner`, `okr_ref` |
-| `state` | `phase`, `blockers` |
 
 This table is illustrative, not exhaustive. Extensions are defined by the author;
 UM stores and recalls them without interpreting them.
