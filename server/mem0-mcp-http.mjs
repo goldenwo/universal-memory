@@ -242,7 +242,15 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/reindex' && req.method === 'POST') {
-			const { path: relPath } = JSON.parse(await readBody(req));
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, {'Content-Type': 'application/json'});
+				res.end(JSON.stringify({error: 'invalid JSON body'}));
+				return;
+			}
+			const { path: relPath } = reqBody;
 
 			// 1. path present
 			if (!relPath || typeof relPath !== 'string' || !relPath.trim()) {
@@ -269,8 +277,8 @@ const server = createServer(async (req, res) => {
 				throw err;
 			}
 
-			// 3. parse frontmatter
-			const { frontmatter: fm } = parseFrontmatter(fileText);
+			// 3. parse once, destructure both frontmatter and body
+			const { frontmatter: fm, body } = parseFrontmatter(fileText);
 
 			// 4. required fields
 			if (!fm.type || !fm.id || !fm.title) {
@@ -297,9 +305,11 @@ const server = createServer(async (req, res) => {
 
 			// 7. upsert: delete all existing entries with this metadata.id, then add
 			const targetId = fm.id;
+			// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
 			const allMemories = await memory.getAll({ userId: USER_ID });
 			const allItems = allMemories?.results || allMemories || [];
 			const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
+			// TODO(v0.3): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
 			for (const item of existingItems) {
 				await memory.delete(item.id);
 			}
@@ -311,8 +321,8 @@ const server = createServer(async (req, res) => {
 			};
 
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
-			const { body } = parseFrontmatter(fileText);
 			const docText = `${fm.title}\n\n${body.trim()}`;
+			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
 			await memory.add(docText, { userId: USER_ID, metadata, infer: false });
 
 			res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -442,6 +442,8 @@ count = sum(1 for r in items if (r.get('metadata') or {}).get('id') == 'session-
 print(count)
 " 2>/dev/null || echo 0)
 echo "    Entries for session-summary-smoke-a after 2x reindex: $COUNT_C"
+[ "$COUNT_C" -eq 1 ] || { echo "FAIL: Case C upsert left $COUNT_C entries (expected 1)"; exit 1; }
+echo "OK Case C: upsert produced exactly 1 entry"
 # Update T7_A_IDS in case upsert created new entries
 T7_A_IDS_NEW=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
 import json, sys
