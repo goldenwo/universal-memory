@@ -6,13 +6,15 @@
   "private": true,
   "main": "mem0-mcp-http.mjs",
   "scripts": {
-    "start": "node mem0-mcp-http.mjs"
+    "start": "node mem0-mcp-http.mjs",
+    "test": "node --test test/**/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "mem0ai": "^2.4.5"
+    "mem0ai": "^2.4.5",
+    "yaml": "^2.8.3"
   },
   "license": "MIT"
 }
