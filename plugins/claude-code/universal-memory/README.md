@@ -13,7 +13,7 @@ Four hooks + one slash command + two CLIs:
 | **SessionStart** (`session-start.sh`) | On every new session | Reads `state.md` and injects it as `additionalContext`; detects unprocessed raw captures and kicks off the catchup pipeline in the background; injects a memory routing rubric so "remember this" has predictable behavior: durable facts go to mem0 via `memory_capture`; project-scoped work goes to `state.md` automatically |
 | **Stop** (`stop.sh`) | After every Claude turn | Appends an entry to the daily raw capture file — cheap, no LLM call, always runs |
 | **SessionEnd** (`session-end.sh`) | When Claude Code exits cleanly | Runs the full synthesis pipeline: LLM summary → `state.md` update → reindex |
-| **UserPromptSubmit** (`user-prompt-submit.sh`) | On every user message | Lightweight hook; logs prompt timestamps for later catchup boundary detection |
+| **UserPromptSubmit** (`user-prompt-submit.sh`) | On every user message | On first user message per session, vector-searches memory (`POST /api/search` with the prompt text) and injects top 5 hits (~2k token budget) as additionalContext. Exits silently for 2nd+ prompts and when server is unreachable. |
 | **`/um-checkpoint`** (slash command) | User-triggered | Forces `session-end.sh` to run immediately — use after a significant decision or before a long break |
 | **`um-forget`** (CLI) | Manual | Deprecates a vault document by ID (sets `status: deprecated`) and reindexes |
 | **`um-supersede`** (CLI) | Manual | Marks an old document superseded and registers the new one; reindexes both |

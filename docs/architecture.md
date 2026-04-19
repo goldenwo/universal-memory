@@ -25,7 +25,7 @@ Specific paths:
 ```
 $VAULT/authored/<project>/<id>.md   # authored documents
 $VAULT/state/<project>/state.md     # state of play (one per project)
-$VAULT/raw/<project>/YYYY-MM-DD.md  # append-only raw captures
+$VAULT/captures/<project>/raw/YYYY-MM-DD.md  # append-only raw captures
 ```
 
 Vault writes are controlled by who makes them. The Claude Code plugin hooks write directly (they run on the user's machine with full filesystem access). The memory server mounts the vault read-only by default; MCP writes go through the server only when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` are set.
@@ -47,7 +47,7 @@ The index is a semantic search cache over authored documents and session summari
 
 ### Pillar 1: Session summaries
 
-Every Claude Code session ends with a raw capture in `$VAULT/raw/<project>/YYYY-MM-DD.md`. The Stop hook appends each session's key events cheaply (no LLM call). At the next session start, a catchup process checks whether unprocessed captures exist and, if so, synthesizes them into a `session_summary` document (type: `session_summary` in frontmatter) and writes it to the vault. The summary is then indexed.
+Every Claude Code session ends with a raw capture in `$VAULT/captures/<project>/raw/YYYY-MM-DD.md`. The Stop hook appends each session's key events cheaply (no LLM call). At the next session start, a catchup process checks whether unprocessed captures exist and, if so, synthesizes them into a `session_summary` document (type: `session_summary` in frontmatter) and writes it to the vault. The summary is then indexed.
 
 The asymmetry is intentional: **capture is cheap (Stop hook, always runs), synthesis is expensive (LLM call, runs once on next start)**. This means a crashed or force-quit session still captures something, even if synthesis is delayed.
 
@@ -119,7 +119,7 @@ Claude Code session (hooks run on user's machine)
   │    /um-checkpoint → forces state.md refresh
   │
   └─ Stop hook
-       Appends raw capture to $VAULT/raw/<project>/YYYY-MM-DD.md
+       Appends raw capture to $VAULT/captures/<project>/raw/YYYY-MM-DD.md
        (No LLM call — cheap, always runs)
 
 Claude.ai / Claude Desktop / any MCP client
@@ -135,9 +135,13 @@ Claude.ai / Claude Desktop / any MCP client
 ## Read path
 
 ```
-Claude Code session start
+Claude Code session start (SessionStart hook)
   ├─ state.md injected via additionalContext (direct file read)
-  └─ mem0 search for top-10 relevant facts (vector search over tier 2)
+  └─ memory routing rubric appended to additionalContext
+
+Claude Code first user prompt (UserPromptSubmit hook)
+  └─ vector search over tier 2 — top 5 hits injected as additionalContext
+     (first prompt only; 2nd+ prompts exit silently)
 
 Claude.ai / Desktop / any MCP client
   ├─ memory_state(project) → direct read of state.md
@@ -160,16 +164,21 @@ The memory server exposes 10 tools via JSON-RPC 2.0 at `POST /mcp`. Any MCP clie
 | `memory_state` | Direct read of `state.md` for a project |
 | `memory_recent` | Recent session summaries, date-sorted |
 
-**Write tools (require `UM_MCP_WRITE_ENABLED=true`):**
+**Mem0-index tools (always available):**
 
 | Tool | What it does |
 |---|---|
 | `memory_add` | Add a fact to mem0 (extraction pipeline) |
+| `memory_delete` | Delete a memory from the index by ID |
+
+**Vault write tools (require `UM_MCP_WRITE_ENABLED=true`):**
+
+| Tool | What it does |
+|---|---|
 | `memory_capture` | Write a new authored document to the vault and index it |
 | `memory_checkpoint` | Force a session summary + state refresh **(stub, v0.3)** |
 | `memory_forget` | Deprecate a document by ID |
 | `memory_supersede` | Replace a document; old gets `status=superseded`, new is created |
-| `memory_delete` | Delete a memory from the index by ID |
 
 Full request/response schemas and curl examples are in `docs/mcp-tools.md`.
 
