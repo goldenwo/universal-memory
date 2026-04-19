@@ -13,7 +13,7 @@
 #   - Non-interactive path (UM_NONINTERACTIVE=1)
 #   - --verify path on a healthy install
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
@@ -365,6 +365,79 @@ assert_exit_zero "T8: install still exits 0 despite profile conflict" "$T8_EXIT"
 assert_contains "T8: warn about different value" "$T8_OUT" "different value"
 # Profile should still contain only the original key (not appended with new one)
 assert_not_contains "T8: profile not overwritten" "$(cat "$T8/home/.bashrc")" "sk-testkey12345"
+
+# ─── T9: C1 — stale symlink at plugin target is replaced, not corrupted ───────
+echo ""
+echo "=== T9: C1 — stale symlink replaced (not written into symlink target) ==="
+T9="$TMPROOT/t9"
+mkdir -p "$T9/vault" "$T9/plugins" "$T9/home" "$T9/elsewhere"
+touch "$T9/home/.bashrc"
+make_fakebin "$T9/bin" 200
+T9_SH=$(make_isolated_server "$T9/server")
+
+# Create a stale symlink pointing at $T9/elsewhere (not the plugin src)
+ln -s "$T9/elsewhere" "$T9/plugins/universal-memory"
+
+T9_EXIT=0
+T9_OUT=$(run_install "$T9/bin" "$T9_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T9/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T9/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T9/home") || T9_EXIT=$?
+
+assert_exit_zero "T9: install exits 0 over stale symlink" "$T9_EXIT"
+# Plugin should now be a real directory (or symlink to correct src), not a symlink to $T9/elsewhere
+T9_LINK_DEST=$(readlink "$T9/plugins/universal-memory" 2>/dev/null || true)
+if [ -L "$T9/plugins/universal-memory" ]; then
+  # It's a symlink — must point at plugin src, NOT the old stale target
+  assert_not_contains "T9: stale symlink target not written into" "$T9_LINK_DEST" "$T9/elsewhere"
+else
+  # It's a real directory — also correct
+  assert_file_exists "T9: plugin installed as directory over stale symlink" "$T9/plugins/universal-memory"
+fi
+# $T9/elsewhere must be empty — no files were written into it
+T9_ELSEWHERE_COUNT=$(ls "$T9/elsewhere" 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "T9: stale symlink target not corrupted" "$T9_ELSEWHERE_COUNT" "0"
+
+# ─── T10: C2 — malformed .env line does not crash --verify ────────────────────
+echo ""
+echo "=== T10: C2 — malformed .env key is skipped, --verify continues ==="
+T10="$TMPROOT/t10"
+mkdir -p "$T10/vault" "$T10/plugins" "$T10/home"
+make_fakebin "$T10/bin" 200
+T10_SH=$(make_isolated_server "$T10/server")
+
+# Pre-install plugin so plugin-registered passes
+cp -r "$PLUGIN_SRC" "$T10/plugins/universal-memory"
+
+# Write a .env file with one malformed line (key with a space)
+{
+  printf 'UM_VAULT_DIR=%s\n' "$T10/vault"
+  printf 'INVALID KEY=should-be-skipped\n'
+  printf 'UM_OPENAI_API_KEY=sk-testkey12345\n'
+} > "$T10/server/.env"
+
+T10_EXIT=0
+T10_OUT=$(env PATH="$T10/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T10/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T10/plugins" \
+  HOME="$T10/home" \
+  bash "$T10_SH" --verify 2>&1) || T10_EXIT=$?
+
+assert_exit_zero "T10: --verify exits 0 despite malformed .env line" "$T10_EXIT"
+assert_contains "T10: malformed key warning shown" "$T10_OUT" "malformed .env line"
+assert_contains "T10: all checks still pass" "$T10_OUT" "All checks passed"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

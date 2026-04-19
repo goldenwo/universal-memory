@@ -28,6 +28,11 @@ if [ "${1:-}" = "--verify" ]; then
   _vfail() { printf '\033[1;31m[verify]\033[0m %-30s \xe2\x9d\x8c  %s\n' "$1" "${2:-}" >&2; }
   _verify_fail=0
 
+  # M2: Guard against unset HOME when neither HOME nor CLAUDE_PLUGINS_DIR is available.
+  if [ -z "${HOME:-}" ] && [ -z "${CLAUDE_PLUGINS_DIR:-}" ]; then
+    fail "Neither HOME nor CLAUDE_PLUGINS_DIR is set — cannot determine plugin directory"
+  fi
+
   # Load .env so UM_VAULT_DIR etc. are available even if not already set in env.
   # We read the file manually to avoid clobbering vars the caller has explicitly
   # exported (e.g. when tests pass UM_VAULT_DIR directly).
@@ -36,6 +41,11 @@ if [ "${1:-}" = "--verify" ]; then
       # Skip comments and blank lines
       [[ "$_k" =~ ^[[:space:]]*# ]] && continue
       [ -z "$_k" ] && continue
+      # C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
+      if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        warn "Skipping malformed .env line: '$_k' is not a valid variable name"
+        continue
+      fi
       # Only export if not already set in environment
       if [ -z "${!_k+x}" ]; then
         export "$_k=$_v"
@@ -47,12 +57,16 @@ if [ "${1:-}" = "--verify" ]; then
   _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
 
+  # I3: Determine whether `timeout` is available (GNU coreutils / BSD).
+  _TIMEOUT_CMD=""
+  command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
+
   echo ""
   echo "[verify] Running post-install checks..."
   echo ""
 
   # ── docker-up ──────────────────────────────────────────────────────────────
-  _docker_ps_out=$(docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || true)
+  _docker_ps_out=$(${_TIMEOUT_CMD:+$_TIMEOUT_CMD 10} docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || true)
   if echo "$_docker_ps_out" | grep -qiE 'memory-server.*(Up|running)'; then
     _vpass "docker-up" "containers are Up"
   else
@@ -133,7 +147,7 @@ if [ "${1:-}" = "--verify" ]; then
   # ── session-end-dry-run ───────────────────────────────────────────────────
   _SESSION_END="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/session-end.sh"
   if [ -f "$_SESSION_END" ]; then
-    if UM_SUMMARY_ENABLED=false UM_VAULT_DIR="$_VAULT" bash "$_SESSION_END" 2>/dev/null; then
+    if UM_SUMMARY_ENABLED=false UM_VAULT_DIR="$_VAULT" ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 30} bash "$_SESSION_END" 2>/dev/null; then
       _vpass "session-end-dry-run" "exited 0 (summary skipped per UM_SUMMARY_ENABLED=false)"
     else
       _vfail "session-end-dry-run" "session-end.sh exited non-zero. Check env vars and logs."
@@ -238,6 +252,7 @@ fi
 [[ "$OPENAI_API_KEY" == sk-* ]] || warn "OPENAI_API_KEY does not start with 'sk-' — continuing anyway."
 [[ "$MEM0_MCP_PORT" =~ ^[0-9]+$ ]] || fail "MEM0_MCP_PORT must be a number. Got: $MEM0_MCP_PORT"
 [[ "$OPENAI_API_KEY" =~ [[:space:]] ]] && fail "OPENAI_API_KEY contains whitespace — refusing to write to .env."
+[[ "$UM_OPENAI_API_KEY" =~ [[:space:]] ]] && fail "UM_OPENAI_API_KEY contains whitespace — refusing to write to .env."
 [[ "$MEM0_USER_ID" =~ [[:space:]] ]] && fail "MEM0_USER_ID contains whitespace — refusing to write to .env."
 [[ "$UM_VAULT_DIR" =~ [[:space:]] ]] && fail "UM_VAULT_DIR contains whitespace — refusing to write to .env."
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
@@ -249,10 +264,15 @@ fi
 _validate_openai_key() {
 	local key="$1"
 	info "Validating OpenAI API key (GET /v1/models, 5s timeout)..."
-	local http_status
+	local http_status _cfg_tmp
+	# C3: Write the auth header to a temp file so the key never appears in ps output.
+	_cfg_tmp=$(mktemp)
+	chmod 600 "$_cfg_tmp"
+	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_cfg_tmp"
 	http_status=$(curl -sfo /dev/null -w "%{http_code}" --max-time 5 \
-		-H "Authorization: Bearer $key" \
+		--config "$_cfg_tmp" \
 		https://api.openai.com/v1/models 2>/dev/null || echo "000")
+	rm -f "$_cfg_tmp"
 	case "$http_status" in
 		200) ok "OpenAI API key validated." ;;
 		401) return 1 ;;  # caller handles retry or fail
@@ -348,7 +368,7 @@ _read_plugin_version() {
 	elif [ -f "$dir/plugin.json" ]; then
 		pjson="$dir/plugin.json"
 	else
-		return
+		return 0  # no plugin.json found — return empty string, exit 0
 	fi
 	# Extract version without jq — simple grep
 	grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
@@ -386,13 +406,19 @@ _install_plugin() {
 				ok "Plugin v$target_ver already installed at $target — skipping."
 				return
 			fi
-			# Compare versions: if target > src, skip
-			# Use sort -V when available, else string compare
-			local newer
-			newer=$(printf '%s\n%s\n' "$src_ver" "$target_ver" | sort -V 2>/dev/null | tail -1)
-			if [ "$newer" = "$target_ver" ] && [ "$src_ver" != "$target_ver" ]; then
-				warn "Installed plugin (v$target_ver) is newer than source (v$src_ver) — skipping."
-				return
+			# Compare versions: if target > src, skip.
+			# I5: sort -V gives wrong result for e.g. 0.9 vs 0.10 when unavailable.
+			# If sort -V is not present, warn and skip the comparison (treat as same,
+			# let user decide via the copy/link prompt rather than silently upgrading).
+			if ! sort -V </dev/null >/dev/null 2>&1; then
+				warn "sort -V not available — cannot reliably compare plugin versions; skipping version check."
+			else
+				local newer
+				newer=$(printf '%s\n%s\n' "$src_ver" "$target_ver" | sort -V | tail -1)
+				if [ "$newer" = "$target_ver" ] && [ "$src_ver" != "$target_ver" ]; then
+					warn "Installed plugin (v$target_ver) is newer than source (v$src_ver) — skipping."
+					return
+				fi
 			fi
 			# target is older — prompt for replacement
 			if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
@@ -413,6 +439,16 @@ _install_plugin() {
 		printf 'Install plugin to %s? (c)opy, (l)ink for development, (s)kip [c] ' "$target" >&2
 		read -r _action
 		_action="${_action:-c}"
+	fi
+
+	# C1: Remove any pre-existing symlink or directory at the target before
+	# placing a new copy or symlink.  Without this, cp -r into an existing
+	# symlink would write files into the symlink's target (data corruption), and
+	# ln -s would fail with "File exists".
+	if [ -L "$target" ]; then
+		rm -f "$target"
+	elif [ -d "$target" ]; then
+		rm -rf "$target"
 	fi
 
 	case "$_action" in
