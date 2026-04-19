@@ -439,6 +439,49 @@ assert_exit_zero "T10: --verify exits 0 despite malformed .env line" "$T10_EXIT"
 assert_contains "T10: malformed key warning shown" "$T10_OUT" "malformed .env line"
 assert_contains "T10: all checks still pass" "$T10_OUT" "All checks passed"
 
+# ─── T11: picking 'skip' at install prompt preserves pre-existing plugin ──────
+# Regression: previously, _install_plugin rm'd the target BEFORE the case that
+# picked the action, so picking (s)kip deleted the user's installed plugin
+# without installing anything. Skip must be non-destructive.
+echo ""
+echo "=== T11: picking 'skip' at install prompt preserves pre-existing plugin ==="
+T11="$TMPROOT/t11"
+mkdir -p "$T11/vault" "$T11/plugins" "$T11/home"
+touch "$T11/home/.bashrc"
+make_fakebin "$T11/bin" 200
+T11_SH=$(make_isolated_server "$T11/server")
+
+# Pre-install a plugin dir WITHOUT plugin.json so the version-compare block
+# (needs both src_ver and target_ver non-empty) is skipped and execution
+# reaches the copy/link/skip prompt directly.
+mkdir -p "$T11/plugins/universal-memory"
+echo "user-customized content" > "$T11/plugins/universal-memory/CUSTOM.txt"
+
+# Run interactively (no UM_NONINTERACTIVE), feeding two lines on stdin:
+#   's'  -> skip at the plugin copy/link/skip prompt
+#   'N'  -> decline profile-append prompt (orthogonal to this test)
+T11_EXIT=0
+T11_OUT=$(printf 's\nN\n' | env PATH="$T11/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T11/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T11/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T11/home" \
+  bash "$T11_SH" 2>&1) || T11_EXIT=$?
+
+assert_exit_zero "T11: install exits 0 when user picks skip" "$T11_EXIT"
+assert_contains "T11: skip message shown at plugin prompt" "$T11_OUT" "install manually"
+# The bug: without the fix, the unconditional rm at lines 465-469 deletes the
+# existing target before the case chooses 'skip', so CUSTOM.txt is gone.
+assert_file_exists "T11: pre-existing plugin content preserved on skip" "$T11/plugins/universal-memory/CUSTOM.txt"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -461,15 +461,16 @@ _install_plugin() {
 	# C1: Remove any pre-existing symlink or directory at the target before
 	# placing a new copy or symlink.  Without this, cp -r into an existing
 	# symlink would write files into the symlink's target (data corruption), and
-	# ln -s would fail with "File exists".
-	if [ -L "$target" ]; then
-		rm -f "$target"
-	elif [ -d "$target" ]; then
-		rm -rf "$target"
-	fi
-
+	# ln -s would fail with "File exists".  This MUST happen only inside the
+	# install branches — the (s)kip branch must be non-destructive so that an
+	# existing install is preserved if the user declines to replace it.
 	case "$_action" in
 		[lL]*)
+			if [ -L "$target" ]; then
+				rm -f "$target"
+			elif [ -d "$target" ]; then
+				rm -rf "$target"
+			fi
 			if ln -s "$src" "$target" 2>/dev/null; then
 				ok "Plugin symlinked: $target -> $src"
 			else
@@ -482,6 +483,11 @@ _install_plugin() {
 			return
 			;;
 		*)
+			if [ -L "$target" ]; then
+				rm -f "$target"
+			elif [ -d "$target" ]; then
+				rm -rf "$target"
+			fi
 			cp -r "$src" "$target" && ok "Plugin copied to $target"
 			;;
 	esac
