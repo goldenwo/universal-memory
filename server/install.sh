@@ -268,6 +268,8 @@ _validate_openai_key() {
 	# C3: Write the auth header to a temp file so the key never appears in ps output.
 	_cfg_tmp=$(mktemp)
 	chmod 600 "$_cfg_tmp"
+	# C3 follow-up: RETURN trap guarantees temp cleanup on SIGINT/error.
+	trap 'rm -f "${_cfg_tmp:-}"' RETURN
 	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_cfg_tmp"
 	http_status=$(curl -sfo /dev/null -w "%{http_code}" --max-time 5 \
 		--config "$_cfg_tmp" \
