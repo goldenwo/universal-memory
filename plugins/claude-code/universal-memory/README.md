@@ -62,7 +62,7 @@ After the wizard completes, **restart Claude Code** — the plugin is already in
 bash server/install.sh --verify
 ```
 
-Runs a battery of checks (Docker, health endpoint, plugin presence, env vars, vault, pyyaml, hook smoke test) and reports pass/fail with fix commands.
+Runs a battery of 9 checks (Docker, health endpoint, plugin presence, env vars, vault, pyyaml, hook smoke test, session-end dry-run, cleanup) and reports pass/fail with fix commands.
 
 ### Remote server
 
