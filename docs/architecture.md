@@ -70,6 +70,8 @@ Three things can refresh `state.md`:
 - Age 7–30 days: injected with a prefix noting the last-active date.
 - Age over 30 days: not injected; treated as stale.
 
+Every session also receives a **memory routing rubric** appended to `additionalContext` after `state.md` (or alone when `state.md` is absent). The rubric tells Claude when a "remember this" request should route to `memory_capture` (durable facts, ADRs) versus trusting the session-end pipeline to capture it in `state.md` automatically. The rubric is defined as the `UM_ROUTING_RUBRIC` constant in `session-start.sh` and is injected unconditionally — even when the endpoint is unreachable — so "remember this" behavior is consistent across sessions.
+
 `state.md` is never indexed in mem0. It is read only by direct file access: the SessionStart hook reads it from disk, and the `memory_state` MCP tool performs a server-side file read. There is no vector search path to `state.md`.
 
 ### Pillar 3: Versioning via frontmatter status

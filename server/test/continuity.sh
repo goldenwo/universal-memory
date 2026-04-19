@@ -399,15 +399,22 @@ VALID_JSON=$(echo "$START_OUT" | python3 -c \
 if [ "$VALID_JSON" = "ok" ]; then
   info "Step 8 passed: session-start.sh emitted valid JSON"
 
-  # Soft check: with a live /api/state we'd see state injected; mock returns null
   AC=$(echo "$START_OUT" | python3 -c \
     'import json,sys; d=json.load(sys.stdin); print(d.get("additionalContext",""))' 2>/dev/null || echo "")
+
+  # Hard check: routing rubric must always be present regardless of state presence
+  echo "$AC" | grep -q "memory_capture" \
+    || fail "Step 8: additionalContext missing 'memory_capture' (routing rubric not injected)"
+  echo "$AC" | grep -q "Memory routing" \
+    || fail "Step 8: additionalContext missing 'Memory routing' heading (routing rubric not injected)"
+  info "  routing rubric present in additionalContext (hard check passed)"
+
+  # Soft check: with a live /api/state we'd see state injected; mock returns null
   if [ -n "$AC" ]; then
     info "  additionalContext present (length=$(echo "$AC" | wc -c | tr -d ' ') chars)"
     echo "$AC" | grep -q "State of play" && info "  contains 'State of play' heading"
   else
-    warn "Step 8: additionalContext empty — mock /api/state returns null (expected in mock mode)"
-    warn "  In live mode with server running, state.md would be injected"
+    warn "Step 8: additionalContext empty — unexpected (rubric should always be present)"
   fi
 else
   fail "Step 8: session-start.sh did not emit valid JSON (got: ${START_OUT:0:200})"

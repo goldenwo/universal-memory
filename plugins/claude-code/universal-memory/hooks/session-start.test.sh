@@ -173,7 +173,16 @@ Working on close-continuity-gap feature.
 - Implement catchup branch"
 
 # ---------------------------------------------------------------------------
-# Test 1: UM_ENDPOINT unset → emit '{}', exit 0
+# Shared helper: assert rubric is present in additionalContext
+# ---------------------------------------------------------------------------
+assert_rubric_present() {
+  local ac="$1" label_prefix="${2:-}"
+  assert_contains "${label_prefix}additionalContext contains 'memory_capture'" "$ac" "memory_capture"
+  assert_contains "${label_prefix}additionalContext contains 'Memory routing'" "$ac" "Memory routing"
+}
+
+# ---------------------------------------------------------------------------
+# Test 1: UM_ENDPOINT unset → rubric-only additionalContext, exit 0
 # ---------------------------------------------------------------------------
 printf '\nTest 1: UM_ENDPOINT unset\n'
 {
@@ -182,13 +191,13 @@ printf '\nTest 1: UM_ENDPOINT unset\n'
     bash "$SESSION_START" 2>/dev/null)
   exit_code=$?
   assert_eq "exit 0 when UM_ENDPOINT unset" "$exit_code" "0"
-  # Should output {} (empty JSON or empty additionalContext)
+  # Rubric should still be injected even when endpoint unset
   ac=$(extract_additional_context "$output")
-  assert_empty "additionalContext empty when endpoint unset" "$ac"
+  assert_rubric_present "$ac" "T1: "
 }
 
 # ---------------------------------------------------------------------------
-# Test 2: state:null from API → additionalContext absent/empty
+# Test 2: state:null from API → rubric-only additionalContext
 # ---------------------------------------------------------------------------
 printf '\nTest 2: state:null from API\n'
 {
@@ -197,7 +206,8 @@ printf '\nTest 2: state:null from API\n'
     UM_VAULT_DIR="$UM_VAULT_DIR" CLAUDE_CWD="$CLAUDE_CWD" \
     bash "$SESSION_START" 2>/dev/null)
   ac=$(extract_additional_context "$output")
-  assert_empty "additionalContext empty when state is null" "$ac"
+  assert_rubric_present "$ac" "T2: "
+  assert_not_contains "T2: no State of play heading when state is null" "$ac" "State of play"
 }
 
 # ---------------------------------------------------------------------------
@@ -223,6 +233,7 @@ MOCK
   assert_not_empty "additionalContext non-empty for fresh state" "$ac"
   assert_contains "body injected verbatim (contains focus)" "$ac" "Current focus"
   assert_not_contains "no staleness prefix for fresh state" "$ac" "may be outdated"
+  assert_rubric_present "$ac" "T3: "
 }
 
 # ---------------------------------------------------------------------------
@@ -249,6 +260,7 @@ MOCK
   assert_contains "staleness prefix present" "$ac" "may be outdated"
   assert_contains "last-active date in prefix" "$ac" "$date_str"
   assert_contains "body content still present" "$ac" "Current focus"
+  assert_rubric_present "$ac" "T4: "
 }
 
 # ---------------------------------------------------------------------------
@@ -270,7 +282,8 @@ MOCK
     UM_VAULT_DIR="$UM_VAULT_DIR" CLAUDE_CWD="$CLAUDE_CWD" \
     bash "$SESSION_START" 2>/dev/null)
   ac=$(extract_additional_context "$output")
-  assert_empty "additionalContext empty for >30-day-old state" "$ac"
+  assert_rubric_present "$ac" "T5: "
+  assert_not_contains "T5: no State of play when state is >30 days" "$ac" "State of play"
 }
 
 # ---------------------------------------------------------------------------
@@ -310,6 +323,7 @@ MEND
 
   ac=$(extract_additional_context "$output")
   assert_not_empty "read branch still injects state when no orphans" "$ac"
+  assert_rubric_present "$ac" "T6: "
 }
 
 # ---------------------------------------------------------------------------
@@ -434,6 +448,25 @@ MOCK
   else
     fail "return time exceeded 500ms (${elapsed}ms)"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: state.md missing + endpoint reachable → rubric injected, no state section
+# ---------------------------------------------------------------------------
+printf '\nTest 9: state missing + endpoint reachable → rubric-only context\n'
+{
+  rm -rf "$UM_VAULT_DIR"
+  mkdir -p "$UM_VAULT_DIR"
+
+  write_mock_curl '{"ok":true,"project":"testproject","state":null}'
+
+  output=$(PATH="$MOCK_BIN:$PATH" UM_ENDPOINT="http://localhost:19999" \
+    UM_VAULT_DIR="$UM_VAULT_DIR" CLAUDE_CWD="$CLAUDE_CWD" \
+    bash "$SESSION_START" 2>/dev/null)
+  ac=$(extract_additional_context "$output")
+  assert_rubric_present "$ac" "T9: "
+  assert_not_contains "T9: no State of play section when state missing" "$ac" "State of play"
+  assert_not_contains "T9: no 'Current focus' when state missing" "$ac" "Current focus"
 }
 
 # ---------------------------------------------------------------------------

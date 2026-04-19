@@ -24,6 +24,19 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
+# Memory routing rubric — appended to every session's additionalContext so
+# Claude's "remember this" behavior is predictable across sessions.
+# Keep under ~500 chars; fits comfortably within the 1-2k token budget.
+UM_ROUTING_RUBRIC='## Memory routing (universal-memory)
+
+When the user says "remember", "note that", or similar:
+- Project-scoped active work (current focus, in-flight tasks, open questions, decisions made today): no immediate action needed — the session-end pipeline will capture it in state.md and the session summary automatically.
+- Durable facts the user will want later ("I prefer X", "my address is Y", "the API rotates quarterly"): call `memory_capture` with `type: fact` and `project: global` (cross-project) or `project: <current-project>` (project-scoped).
+- Architecture decisions worth auditing later: call `memory_capture` with `type: adr` and `project: <current>`.
+- Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
+
+When uncertain, prefer `memory_capture` over trusting session-end — durable docs are easier to search than buried state.md entries.'
+
 # shellcheck disable=SC1091
 source "$LIB_DIR/vault.sh"
 
@@ -36,10 +49,11 @@ if [ -x "$AUTO_START_SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Bail if endpoint unset — no state injection possible
+# 2. Bail if endpoint unset — emit rubric-only additionalContext
 # ---------------------------------------------------------------------------
 if [ -z "${UM_ENDPOINT:-}" ]; then
-  echo '{}'
+  python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
+    "$UM_ROUTING_RUBRIC" 2>/dev/null || echo '{}'
   exit 0
 fi
 
@@ -96,22 +110,31 @@ response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
 
 # Single Python invocation: parse state, apply staleness rules, emit JSON output.
 # Combining parse + JSON encode avoids a second python3 startup (~200ms on Windows).
+# UM_ROUTING_RUBRIC is passed via env so it is always appended to additionalContext.
+export UM_ROUTING_RUBRIC
 printf '%s' "$response" | python3 -c '
-import json, sys, re
+import json, sys, re, os
 from datetime import datetime, timezone
 
-def emit_empty():
-    sys.stdout.write("{}\n")
+rubric = os.environ.get("UM_ROUTING_RUBRIC", "")
+
+def emit_rubric_only():
+    sys.stdout.write(json.dumps({"additionalContext": rubric}) + "\n")
     sys.exit(0)
+
+def with_rubric(body_out):
+    if rubric:
+        return body_out + "\n\n" + rubric
+    return body_out
 
 try:
     data = json.load(sys.stdin)
 except Exception:
-    emit_empty()
+    emit_rubric_only()
 
 state = data.get("state")
 if not state:
-    emit_empty()
+    emit_rubric_only()
 
 body = state.get("body", "") or ""
 # valid_from: check state.frontmatter first, then state, then top-level data
@@ -122,7 +145,7 @@ if not valid_from:
 
 if not valid_from:
     # No age info — treat as fresh, inject verbatim
-    sys.stdout.write(json.dumps({"additionalContext": body}) + "\n")
+    sys.stdout.write(json.dumps({"additionalContext": with_rubric(body)}) + "\n")
     sys.exit(0)
 
 # Compute age in days
@@ -135,7 +158,7 @@ except Exception:
     age_days = 0  # unknown age — treat as fresh
 
 if age_days > 30:
-    emit_empty()  # stale, skip injection
+    emit_rubric_only()  # state stale, but rubric still injected
 elif age_days > 7:
     try:
         date_str = vf_dt.strftime("%Y-%m-%d")
@@ -148,7 +171,7 @@ elif age_days > 7:
 else:
     body_out = body
 
-sys.stdout.write(json.dumps({"additionalContext": body_out}) + "\n")
+sys.stdout.write(json.dumps({"additionalContext": with_rubric(body_out)}) + "\n")
 ' 2>/dev/null || printf '{}\n'
 
 # ---------------------------------------------------------------------------
