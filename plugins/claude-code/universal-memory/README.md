@@ -39,41 +39,34 @@ If `UM_ENDPOINT` is unset, all hooks exit silently — safe default.
 
 ## Install
 
-### 1. Start a universal-memory server
-
-Easiest (local Docker):
+### One-command setup
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory
 cd universal-memory/server
-./install.sh      # interactive wizard: sets env, brings stack up
+./install.sh
 ```
 
-For remote hosting, deploy the server image (`ghcr.io/goldenwo/universal-memory-server`) and point `UM_ENDPOINT` at it.
+The wizard handles everything:
+1. Collects your OpenAI API key, validates it against `/v1/models`, and writes `server/.env`
+2. Copies (or symlinks) the plugin into `$HOME/.claude/plugins/universal-memory`
+3. Appends `export UM_OPENAI_API_KEY=...` to your shell profile (`~/.bashrc` or `~/.zshrc`)
+4. Pulls and starts the Docker stack
+5. Polls the health endpoint until the server is ready
 
-### 2. Register this plugin in Claude Code
+After the wizard completes, **restart Claude Code** — the plugin is already installed.
 
-Add to your `.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "universal-memory": {
-      "source": { "source": "github", "repo": "goldenwo/universal-memory" }
-    }
-  }
-}
-```
-
-Enable the plugin from the plugin list. Reload Claude Code.
-
-Set your env vars (e.g. in `~/.bashrc`, `~/.zshenv`, or a per-project `.envrc`):
+### Post-install check
 
 ```bash
-export UM_ENDPOINT=http://localhost:6335
-export UM_VAULT_DIR=$HOME/.um/vault
-export UM_OPENAI_API_KEY=sk-...
+bash server/install.sh --verify
 ```
+
+Runs a battery of checks (Docker, health endpoint, plugin presence, env vars, vault, pyyaml, hook smoke test) and reports pass/fail with fix commands.
+
+### Remote server
+
+Deploy the server image (`ghcr.io/goldenwo/universal-memory-server`) and set `UM_ENDPOINT` in your env to point at it. You can then skip the Docker wizard but still run `install.sh` for the plugin-install and shell-profile steps.
 
 ## Verify it works
 
