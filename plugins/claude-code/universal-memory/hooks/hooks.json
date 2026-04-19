@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh\"",
+            "async": false
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -19,6 +31,18 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh\"",
             "async": false
           }
         ]
