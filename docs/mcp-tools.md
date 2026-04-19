@@ -402,3 +402,5 @@ Before enabling writes, do one of:
 3. **Restrict to a private overlay network** — Tailscale, WireGuard, ZeroTier.
 
 Without one of these, any device on your current network can read and write your entire memory vault.
+
+The server refuses to index or write through symlinks inside the vault.

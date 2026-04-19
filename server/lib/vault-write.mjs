@@ -60,6 +60,20 @@ export async function writeVaultFile(relPath, content) {
   const dir = path.dirname(abs);
   const tmp = abs + '.tmp';
 
+  // Refuse to write when the target path is already a symlink. The atomic
+  // rename would replace the symlink, but a clear refusal is safer than
+  // implicit overwrite and defends against TOCTOU races where a symlink
+  // appears between listVaultFiles and writeVaultFile.
+  let existing = null;
+  try {
+    existing = await fs.lstat(abs);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (existing && existing.isSymbolicLink()) {
+    throw new Error('Refusing to write through symlink: ' + relPath);
+  }
+
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(tmp, content, 'utf8');
   try {

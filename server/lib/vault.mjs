@@ -129,6 +129,15 @@ export async function listVaultFiles(subdir) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const abs = path.join(dir, entry.name);
+      // Defense in depth: never follow symlinks inside the vault. Dirent.isFile()
+      // already returns false for symlinks on most filesystems, but explicit
+      // lstat guards against exotic filesystems and future refactors.
+      const lst = await fs.lstat(abs);
+      if (lst.isSymbolicLink()) {
+        const rel = path.relative(vault, abs).replace(/\\/g, '/');
+        process.stderr.write(`[vault] skipping symlink in vault: ${rel}\n`);
+        continue;
+      }
       if (entry.isDirectory()) {
         await walkDir(abs, _base, acc);
       } else if (entry.isFile() && entry.name.endsWith('.md')) {

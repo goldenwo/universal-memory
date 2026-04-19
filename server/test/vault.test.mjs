@@ -23,6 +23,10 @@ import {
   statVaultFile,
   slugify,
 } from '../lib/vault.mjs';
+import {
+  writeVaultFile,
+  findDocByIdInVault,
+} from '../lib/vault-write.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -452,6 +456,103 @@ test('C2: listVaultFiles("../outside") throws traversal error', async () => {
     );
   } finally {
     await fs.rm(vault, { recursive: true, force: true });
+    if (original === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 6. Symlink hardening — listVaultFiles / findDocByIdInVault / writeVaultFile
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to create a symlink; return true if successful, false if the platform
+ * doesn't allow it (Windows without Developer Mode / admin).
+ */
+async function trySymlink(target, linkPath) {
+  try {
+    await fs.symlink(target, linkPath, 'file');
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'UNKNOWN' || err.code === 'ENOSYS') {
+      return false;
+    }
+    throw err;
+  }
+}
+
+test('security: listVaultFiles skips symlinks; findDocByIdInVault returns null for symlinked id', async (t) => {
+  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-list-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-out-'));
+  const original = process.env.UM_VAULT_DIR;
+  try {
+    process.env.UM_VAULT_DIR = vault;
+
+    // Target file outside the vault (e.g. stand-in for /etc/passwd).
+    const outsideFile = path.join(outside, 'secret.md');
+    await fs.writeFile(outsideFile, '# secret', 'utf8');
+
+    // A real file inside the vault.
+    await writeFixture(vault, 'authored/proj/real.md', '# real');
+
+    // A symlink inside the vault pointing outside.
+    const linkPath = path.join(vault, 'authored', 'proj', 'fake.md');
+    const created = await trySymlink(outsideFile, linkPath);
+    if (!created) {
+      t.skip('symlink creation not permitted on this platform (Windows without Developer Mode?)');
+      return;
+    }
+
+    const files = await listVaultFiles('authored');
+    assert.ok(
+      files.some((p) => p.endsWith('real.md')),
+      `real.md should be present: ${JSON.stringify(files)}`
+    );
+    assert.ok(
+      !files.some((p) => p.endsWith('fake.md')),
+      `fake.md (symlink) should be skipped: ${JSON.stringify(files)}`
+    );
+
+    const found = await findDocByIdInVault('fake');
+    assert.equal(found, null, `findDocByIdInVault('fake') should return null, got: ${found}`);
+  } finally {
+    await fs.rm(vault, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+    if (original === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = original;
+  }
+});
+
+test('security: writeVaultFile refuses to write when target is a symlink', async (t) => {
+  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-write-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-write-out-'));
+  const original = process.env.UM_VAULT_DIR;
+  try {
+    process.env.UM_VAULT_DIR = vault;
+
+    const outsideFile = path.join(outside, 'secret.md');
+    await fs.writeFile(outsideFile, '# original', 'utf8');
+
+    // Create parent dir, then plant a symlink at the target path.
+    await fs.mkdir(path.join(vault, 'authored', 'proj'), { recursive: true });
+    const linkPath = path.join(vault, 'authored', 'proj', 'fake.md');
+    const created = await trySymlink(outsideFile, linkPath);
+    if (!created) {
+      t.skip('symlink creation not permitted on this platform (Windows without Developer Mode?)');
+      return;
+    }
+
+    await assert.rejects(
+      () => writeVaultFile('authored/proj/fake.md', '# new content'),
+      (err) => /symlink/i.test(err.message)
+    );
+
+    // Outside file must be untouched.
+    const outsideContent = await fs.readFile(outsideFile, 'utf8');
+    assert.equal(outsideContent, '# original');
+  } finally {
+    await fs.rm(vault, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
     if (original === undefined) delete process.env.UM_VAULT_DIR;
     else process.env.UM_VAULT_DIR = original;
   }
