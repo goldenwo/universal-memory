@@ -5,18 +5,59 @@
  * Endpoints:
  *   GET  /health              liveness + memory count
  *   POST /mcp                 JSON-RPC (MCP clients)
- *   POST /api/search          { query, limit? } -> top-K atomic facts
+ *   POST /api/search          { query, limit?, include_superseded? } -> { results: [...] }
+ *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
- *   DELETE /api/:id           remove a memory
+ *   GET  /api/state/:project  read $VAULT/state/<project>/state.md directly (no mem0)
+ *   DELETE /api/:id           remove a memory (by mem0 UUID via URL param)
+ *   POST /api/delete          { metadata: { id } } or { id: <uuid> } -> delete by metadata.id or UUID
+ *   POST /api/reindex         { path } -> read vault file, upsert to mem0 with frontmatter metadata
  *
  * Required env: OPENAI_API_KEY, MEM0_USER_ID
  * Optional env: MEM0_MCP_PORT (default 6335), QDRANT_HOST, QDRANT_PORT,
- *               QDRANT_COLLECTION, MEM0_EMBEDDER_MODEL, MEM0_LLM_MODEL
+ *               QDRANT_COLLECTION, MEM0_EMBEDDER_MODEL, MEM0_LLM_MODEL,
+ *               UM_MCP_WRITE_ENABLED (default false)
+ *
+ * Search filter (default, disable with include_superseded=true):
+ *   Excludes docs where status === 'superseded'|'deprecated'|'rejected'
+ *   or invalidated_at is non-null. Legacy docs with no metadata are treated
+ *   as current. Note: limit is applied before filtering, so callers may
+ *   receive fewer results than requested when some are excluded.
+ *
+ * MCP write tools (memory_capture, memory_forget, memory_supersede):
+ *   Gated on UM_MCP_WRITE_ENABLED=true. Off by default. When enabled, the
+ *   server writes directly to the vault (writer-ownership exception — MCP
+ *   clients such as Claude.ai/Desktop cannot write to the host filesystem).
+ *   Vault mount mode must be rw when writes are enabled (UM_MOUNT_MODE=rw
+ *   in docker-compose). See docs/mcp-tools.md for full tool reference.
  */
 
 import { createServer } from 'http';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { Memory } from 'mem0ai/oss';
+import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
+import { readVaultFile, vaultPath } from './lib/vault.mjs';
+import { applyTemporalDecay } from './lib/ranking.mjs';
+import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+
+// ---------------------------------------------------------------------------
+// Slug validation — C1: id/project fields used as filename components must be safe
+// ---------------------------------------------------------------------------
+
+const SAFE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * Throws if value is not a string matching SAFE_NAME_RE.
+ * @param {string} field  - Human-readable field name for error messages
+ * @param {string} value  - The value to validate
+ */
+function validateSafeName(field, value) {
+  if (typeof value !== 'string' || !SAFE_NAME_RE.test(value)) {
+    throw new Error(`${field} must match ${SAFE_NAME_RE.source}`);
+  }
+}
 
 function requireEnv(name) {
 	const v = process.env[name];
@@ -77,24 +118,220 @@ async function initMemory() {
 }
 
 const TOOLS = [
-	{ name: 'memory_search', description: 'Search memories by semantic similarity', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } },
-	{ name: 'memory_add', description: 'Add a fact to long-term memory', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
-	{ name: 'memory_list', description: 'List all stored memories', inputSchema: { type: 'object', properties: {} } },
-	{ name: 'memory_delete', description: 'Delete a memory by ID', inputSchema: { type: 'object', properties: { memoryId: { type: 'string' } }, required: ['memoryId'] } },
+	// ── Original 4 tools ────────────────────────────────────────────────────
+	{
+		name: 'memory_search',
+		description: 'Search memories by semantic similarity with optional status filters',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				query: { type: 'string', description: 'Semantic search query' },
+				limit: { type: 'number', description: 'Max results (default 5, max 100)' },
+				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs (default false)' },
+				filters: {
+					type: 'object',
+					description: 'Optional metadata filters',
+					properties: {
+						project: { type: 'string', description: 'Filter by project name' },
+						type: { type: 'string', description: 'Filter by document type (e.g. session_summary, authored)' },
+					},
+				},
+			},
+			required: ['query'],
+		},
+	},
+	{
+		name: 'memory_add',
+		description: 'Add a fact to long-term memory',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				text: { type: 'string' },
+				metadata: { type: 'object', description: 'Optional key-value metadata to attach to the memory' },
+			},
+			required: ['text'],
+		},
+	},
+	{
+		name: 'memory_list',
+		description: 'List all stored memories',
+		inputSchema: { type: 'object', properties: {} },
+	},
+	{
+		name: 'memory_delete',
+		description: 'Delete a memory by ID',
+		inputSchema: {
+			type: 'object',
+			properties: { memoryId: { type: 'string' } },
+			required: ['memoryId'],
+		},
+	},
+	// ── Task 10: 6 new tools ────────────────────────────────────────────────
+	{
+		name: 'memory_state',
+		description: 'Fetch the state.md for a project (current state-of-play, not from mem0)',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: { type: 'string', description: 'Project name (must match ^[a-zA-Z0-9._-]+$)' },
+			},
+			required: ['project'],
+		},
+	},
+	{
+		name: 'memory_recent',
+		description: 'Fetch recent session_summary documents for a project',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: { type: 'string', description: 'Project name filter (optional)' },
+				limit: { type: 'number', description: 'Max results (default 5)' },
+			},
+		},
+	},
+	{
+		name: 'memory_capture',
+		description: 'Write a new authored document to the vault and reindex it (requires UM_MCP_WRITE_ENABLED=true)',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				content: { type: 'string', description: 'Markdown body of the document (no frontmatter — metadata arg supplies that)' },
+				metadata: {
+					type: 'object',
+					description: 'Frontmatter fields. Required: type, id, title. Optional: project, status, valid_from, and any other fields.',
+					properties: {
+						type: { type: 'string' },
+						id: { type: 'string', description: 'Filename stem — must be unique in the vault' },
+						title: { type: 'string' },
+						project: { type: 'string' },
+					},
+					required: ['type', 'id', 'title'],
+				},
+			},
+			required: ['content', 'metadata'],
+		},
+	},
+	{
+		name: 'memory_checkpoint',
+		description: 'Force a session summary + state update (stub, v0.3) — not yet implemented server-side; use /um-checkpoint in Claude Code instead',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: { type: 'string', description: 'Project to checkpoint (optional)' },
+			},
+		},
+	},
+	{
+		name: 'memory_forget',
+		description: 'Deprecate a document by ID — sets status=deprecated and invalidated_at in its frontmatter (requires UM_MCP_WRITE_ENABLED=true)',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				id: { type: 'string', description: 'Document ID (filename stem without .md)' },
+			},
+			required: ['id'],
+		},
+	},
+	{
+		name: 'memory_supersede',
+		description: 'Replace an existing document with a new one — old doc gets status=superseded, new doc is created (requires UM_MCP_WRITE_ENABLED=true)',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				old_id: { type: 'string', description: 'ID of the document to supersede' },
+				new_doc: {
+					type: 'object',
+					description: 'New document to create',
+					properties: {
+						type: { type: 'string' },
+						id: { type: 'string', description: 'New document ID (filename stem)' },
+						title: { type: 'string' },
+						content: { type: 'string', description: 'Markdown body of the new document' },
+						project: { type: 'string' },
+					},
+					required: ['type', 'id', 'title', 'content'],
+				},
+			},
+			required: ['old_id', 'new_doc'],
+		},
+	},
 ];
+
+// ---------------------------------------------------------------------------
+// Write-gating helper
+// ---------------------------------------------------------------------------
+
+function mcpWriteEnabled() {
+	return process.env.UM_MCP_WRITE_ENABLED === 'true';
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper: delete all mem0 entries matching a metadata.id value
+// Returns the count of deleted entries.
+// ---------------------------------------------------------------------------
+
+async function deleteByMetadataId(targetId) {
+	// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
+	const allMemories = await memory.getAll({ userId: USER_ID });
+	const allItems = allMemories?.results || allMemories || [];
+	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
+	for (const item of existingItems) {
+		await memory.delete(item.id);
+	}
+	return existingItems.length;
+}
+
+// ---------------------------------------------------------------------------
+// Internal reindex helper (POST /api/reindex equivalent, called server-side)
+// ---------------------------------------------------------------------------
+
+async function reindexDoc(relPath) {
+	const fileText = await readVaultFile(relPath);
+	const { frontmatter: fm, body } = parseFrontmatter(fileText);
+	if (!fm.type || !fm.id || !fm.title) {
+		const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
+		throw new Error(`Missing required frontmatter fields: ${missing.join(', ')}`);
+	}
+	// C2: state.md documents must never be indexed into mem0 (they are served
+	// directly via /api/state and the memory_state MCP tool).
+	if (fm.type === 'state') {
+		throw new Error('state.md documents must not be indexed into mem0');
+	}
+	const targetId = fm.id;
+	await deleteByMetadataId(targetId);
+	const metadata = { schema_version: 1, ...fm };
+	const docText = `${fm.title}\n\n${body.trim()}`;
+	await memory.add(docText, { userId: USER_ID, metadata, infer: false });
+	return { ok: true, path: relPath, id: targetId, indexed: true };
+}
+
+// ---------------------------------------------------------------------------
+// handleToolCall
+// ---------------------------------------------------------------------------
 
 async function handleToolCall(name, args) {
 	switch (name) {
+		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
-			const results = await memory.search(args.query, { userId: USER_ID, limit: args.limit || 5 });
-			const items = results?.results || results || [];
-			return items.map((r) => {
-				const pct = r.score != null ? (r.score * 100).toFixed(0) : '--';
-				return `[${pct}%] ${r.memory} (id: ${r.id})`;
-			}).join('\n') || 'No results found.';
+			const limit = args.limit || 5;
+			const includeSup = args.include_superseded === true;
+			const searchResult = await doSearch(args.query, limit, includeSup);
+			let items = searchResult.results;
+
+			// Apply optional metadata filters (project, type)
+			if (args.filters) {
+				if (args.filters.project) {
+					items = items.filter((r) => (r.metadata || {}).project === args.filters.project);
+				}
+				if (args.filters.type) {
+					items = items.filter((r) => (r.metadata || {}).type === args.filters.type);
+				}
+			}
+
+			return JSON.stringify({ results: items });
 		}
 		case 'memory_add': {
-			const result = await memory.add(args.text, { userId: USER_ID });
+			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
@@ -107,6 +344,241 @@ async function handleToolCall(name, args) {
 			await memory.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
 		}
+
+		// ── Task 10: 6 new tools ──────────────────────────────────────────────
+		case 'memory_state': {
+			const project = args.project;
+			if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
+				throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+			}
+			const relPath = `state/${project}/state.md`;
+			let fileText;
+			try {
+				fileText = await readVaultFile(relPath);
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+				}
+				throw err;
+			}
+			const { frontmatter, body } = parseFrontmatter(fileText);
+			const validFrom = frontmatter.valid_from || null;
+			return JSON.stringify({ ok: true, project, state: { frontmatter, body }, valid_from: validFrom });
+		}
+
+		case 'memory_recent': {
+			const limit = args.limit || 5;
+			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
+			const searchLimit = Math.min(limit * 3, 100);
+			// Search using a broad session-summary query, then filter by type
+			const searchResult = await doSearch('session_summary', searchLimit, false);
+			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
+			// Sort by valid_from descending (most recent first)
+			items.sort((a, b) => {
+				const ta = new Date((a.metadata || {}).valid_from || 0).getTime();
+				const tb = new Date((b.metadata || {}).valid_from || 0).getTime();
+				return tb - ta;
+			});
+			// Apply project filter if provided
+			if (args.project) {
+				items = items.filter((r) => (r.metadata || {}).project === args.project);
+			}
+			items = items.slice(0, limit);
+			return JSON.stringify({ results: items });
+		}
+
+		case 'memory_capture': {
+			const { content, metadata } = args;
+			if (!metadata || !metadata.type || !metadata.id || !metadata.title) {
+				throw new Error('metadata must include: type, id, title');
+			}
+			// C1: validate filename-path components before any path construction
+			validateSafeName('metadata.id', metadata.id);
+			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
+			const project = metadata.project || 'default';
+			const id = metadata.id;
+			const relPath = `authored/${project}/${id}.md`;
+
+			// Build document: frontmatter + body
+			const fm = {
+				schema_version: 1,
+				status: 'current',
+				valid_from: new Date().toISOString(),
+				...metadata,
+			};
+			const docText = serializeFrontmatter(fm, `\n${content}`);
+
+			await writeVaultFile(relPath, docText);
+			console.log(`[mem0-mcp] memory_capture: wrote ${relPath}`);
+
+			// Reindex
+			let indexed = false;
+			try {
+				await reindexDoc(relPath);
+				indexed = true;
+			} catch (err) {
+				console.error(`[mem0-mcp] memory_capture: reindex failed: ${err.message}`);
+			}
+
+			return JSON.stringify({ ok: true, path: relPath, id, indexed });
+		}
+
+		case 'memory_checkpoint': {
+			// STUB (v0.3) — session-end.sh runs on the host with filesystem + env access;
+			// driving it from inside the container requires hook-in-container infrastructure
+			// planned for v0.3. Full MCP-driven implementation deferred.
+			return JSON.stringify({
+				ok: false,
+				error: 'memory_checkpoint is not implemented server-side in v0.2.0 — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
+			});
+		}
+
+		case 'memory_forget': {
+			const { id } = args;
+			if (!id) throw new Error('id is required');
+			// C1: validate id before using as path component
+			validateSafeName('id', id);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
+
+			const relPath = await findDocByIdInVault(id);
+			if (!relPath) throw new Error(`Document not found in vault: ${id}`);
+
+			// Read + parse
+			const fileText = await readVaultFile(relPath);
+			const { frontmatter: fm, body } = parseFrontmatter(fileText);
+
+			// I3: idempotency — if already deprecated, return early without overwriting invalidated_at
+			if (fm.status === 'deprecated' && fm.invalidated_at) {
+				return JSON.stringify({ ok: true, id, path: relPath, status: 'deprecated', already_deprecated: true });
+			}
+
+			// Mutate frontmatter
+			fm.status = 'deprecated';
+			fm.invalidated_at = new Date().toISOString();
+
+			// Write back atomically
+			const updated = serializeFrontmatter(fm, body);
+			await writeVaultFile(relPath, updated);
+			console.log(`[mem0-mcp] memory_forget: deprecated ${relPath}`);
+
+			// Reindex so mem0 sees the updated status
+			try {
+				await reindexDoc(relPath);
+			} catch (err) {
+				console.error(`[mem0-mcp] memory_forget: reindex failed: ${err.message}`);
+			}
+
+			return JSON.stringify({ ok: true, id, path: relPath, status: 'deprecated' });
+		}
+
+		case 'memory_supersede': {
+			const { old_id, new_doc } = args;
+			if (!old_id) throw new Error('old_id is required');
+			if (!new_doc || !new_doc.type || !new_doc.id || !new_doc.title || !new_doc.content) {
+				throw new Error('new_doc must include: type, id, title, content');
+			}
+			// C1: validate all filename-path components before any path construction
+			validateSafeName('old_id', old_id);
+			validateSafeName('new_doc.id', new_doc.id);
+			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
+
+			// 1. Find old doc
+			const oldRelPath = await findDocByIdInVault(old_id);
+			if (!oldRelPath) throw new Error(`Document not found in vault: ${old_id}`);
+
+			const newId = new_doc.id;
+			const newProject = new_doc.project || 'default';
+			const newRelPath = `authored/${newProject}/${newId}.md`;
+			const now = new Date().toISOString();
+
+			// C1: guard against self-supersede (old and new resolve to the same path)
+			if (oldRelPath === newRelPath) {
+				throw new Error('old_id and new_doc resolve to the same path; cannot supersede a doc with itself');
+			}
+
+			// C1: guard against clobbering an existing unrelated doc at the new path
+			try {
+				await fs.access(path.join(vaultPath(), newRelPath));
+				// If we get here, the file exists — this is a collision
+				throw new Error(`new_doc target path already exists: ${newRelPath}`);
+			} catch (e) {
+				if (e.code === 'ENOENT') {
+					// Expected: new path does not exist yet — safe to proceed
+				} else if (e.message && e.message.startsWith('new_doc target path already exists')) {
+					throw e;
+				} else {
+					throw e;
+				}
+			}
+
+			// 2. Create new doc
+			const newFm = {
+				schema_version: 1,
+				status: 'current',
+				valid_from: now,
+				...new_doc,
+				supersedes: [old_id],
+			};
+			// Remove content from frontmatter — it belongs in the body
+			const newContent = new_doc.content;
+			delete newFm.content;
+			const newDocText = serializeFrontmatter(newFm, `\n${newContent}`);
+			await writeVaultFile(newRelPath, newDocText);
+			console.log(`[mem0-mcp] memory_supersede: created new doc ${newRelPath}`);
+
+			// 3. Mutate old doc frontmatter
+			// I1: if the old-doc mutation fails, roll back the new doc we just wrote
+			// to avoid leaving the vault in an inconsistent state (two current docs,
+			// no supersedes linkage on the old doc).
+			try {
+				const oldFileText = await readVaultFile(oldRelPath);
+				const { frontmatter: oldFm, body: oldBody } = parseFrontmatter(oldFileText);
+				oldFm.status = 'superseded';
+				oldFm.superseded_by = newId;
+				oldFm.invalidated_at = now;
+				const updatedOld = serializeFrontmatter(oldFm, oldBody);
+				await writeVaultFile(oldRelPath, updatedOld);
+				console.log(`[mem0-mcp] memory_supersede: superseded old doc ${oldRelPath}`);
+			} catch (err) {
+				// Rollback: remove the new doc we wrote in step 2 (best-effort)
+				try { await fs.unlink(path.join(vaultPath(), newRelPath)); } catch {}
+				throw err;
+			}
+
+			// 4. Reindex both
+			let newIndexed = false;
+			let oldIndexed = false;
+			try {
+				await reindexDoc(newRelPath);
+				newIndexed = true;
+			} catch (err) {
+				console.error(`[mem0-mcp] memory_supersede: new doc reindex failed: ${err.message}`);
+			}
+			try {
+				await reindexDoc(oldRelPath);
+				oldIndexed = true;
+			} catch (err) {
+				console.error(`[mem0-mcp] memory_supersede: old doc reindex failed: ${err.message}`);
+			}
+
+			return JSON.stringify({
+				ok: true,
+				old_id,
+				new_id: newId,
+				old_status: 'superseded',
+				new_status: 'current',
+				indexed: { old: oldIndexed, new: newIndexed },
+			});
+		}
+
 		default:
 			throw new Error(`Unknown tool: ${name}`);
 	}
@@ -115,7 +587,7 @@ async function handleToolCall(name, args) {
 function handleMcpMessage(msg) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
-		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.1.0' }, capabilities: { tools: {} } } };
+		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.2.0' }, capabilities: { tools: {} } } };
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {
@@ -137,6 +609,37 @@ function readBody(req) {
 		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
 		req.on('error', reject);
 	});
+}
+
+/**
+ * Shared search handler — called by both POST and GET /api/search.
+ * Returns { results: [...] }.
+ * Default filter excludes superseded/deprecated/rejected docs and docs with
+ * invalidated_at set. Pass includeSuperseded=true to skip all filtering.
+ */
+async function doSearch(query, limit, includeSuperseded) {
+	const raw = await memory.search(query, { userId: USER_ID, limit: limit || 5 });
+	let items = raw?.results || raw || [];
+	if (!includeSuperseded) {
+		items = items.filter((r) => {
+			const md = r.metadata || {};
+			const excluded =
+				md.status === 'superseded' ||
+				md.status === 'deprecated' ||
+				md.status === 'rejected' ||
+				(md.invalidated_at != null);
+			return !excluded;
+		});
+	}
+	// Optional temporal decay re-ranking (off by default).
+	// Set UM_TEMPORAL_DECAY=true to enable; UM_DECAY_HALF_LIFE_DAYS controls
+	// the decay rate (default: 30 days). Applied after status filter so only
+	// allowed results are re-ranked.
+	if (process.env.UM_TEMPORAL_DECAY === 'true') {
+		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
+		items = applyTemporalDecay(items, halfLife);
+	}
+	return { results: items };
 }
 
 const server = createServer(async (req, res) => {
@@ -165,15 +668,50 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit } = JSON.parse(await readBody(req));
-			const results = await memory.search(query, { userId: USER_ID, limit: limit || 5 });
+			const { query, limit = 5, include_superseded = false, filters } = JSON.parse(await readBody(req));
+			if (!query || typeof query !== 'string' || !query.trim()) {
+				res.writeHead(400, {'Content-Type': 'application/json'});
+				res.end(JSON.stringify({error: 'query is required'}));
+				return;
+			}
+			const includeSup = include_superseded === true;
+			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
+			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			let response = await doSearch(query, clampedLimitPost, includeSup);
+			// Optional metadata filters (project, type) — post-filter after mem0 recall
+			if (filters && typeof filters === 'object') {
+				let items = response.results;
+				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
+				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
+				response = { results: items };
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(results?.results || results || []));
+			res.end(JSON.stringify(response));
+			return;
+		}
+		if (url.pathname === '/api/search' && req.method === 'GET') {
+			const q = url.searchParams.get('q') || '';
+			const rawLimit = parseInt(url.searchParams.get('limit') || '5', 10);
+			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
+			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+			const typeFilter = url.searchParams.get('type') || null;
+			if (!q) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'q parameter is required' }));
+				return;
+			}
+			let response = await doSearch(q, limit, includeSuperseded);
+			if (typeFilter) {
+				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
+				response = { results: items };
+			}
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(response));
 			return;
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
-			const { text } = JSON.parse(await readBody(req));
-			const result = await memory.add(text, { userId: USER_ID });
+			const { text, metadata } = JSON.parse(await readBody(req));
+			const result = await memory.add(text, { userId: USER_ID, ...(metadata && { metadata }) });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(result));
 			return;
@@ -183,6 +721,168 @@ const server = createServer(async (req, res) => {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(all?.results || all || []));
 			return;
+		}
+		// GET /api/state/:project — direct file read, does NOT touch mem0
+		if (url.pathname.startsWith('/api/state/') && req.method === 'GET') {
+			const projectSegment = url.pathname.slice('/api/state/'.length);
+			// Reject empty or multi-segment paths (no nested slashes allowed)
+			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'Invalid project name: must match ^[a-zA-Z0-9._-]+$' }));
+				return;
+			}
+			const relPath = `state/${projectSegment}/state.md`;
+			let fileText;
+			try {
+				fileText = await readVaultFile(relPath);
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, project: projectSegment, state: null, valid_from: null }));
+					return;
+				}
+				throw err;
+			}
+			const { frontmatter, body } = parseFrontmatter(fileText);
+			const validFrom = frontmatter.valid_from || null;
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ ok: true, project: projectSegment, state: { frontmatter, body }, valid_from: validFrom }));
+			return;
+		}
+		if (url.pathname === '/api/reindex' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, {'Content-Type': 'application/json'});
+				res.end(JSON.stringify({error: 'invalid JSON body'}));
+				return;
+			}
+			const { path: relPath } = reqBody;
+
+			// 1. path present
+			if (!relPath || typeof relPath !== 'string' || !relPath.trim()) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'path is required' }));
+				return;
+			}
+
+			// 2. read file (throws on traversal or ENOENT)
+			let fileText;
+			try {
+				fileText = await readVaultFile(relPath);
+			} catch (err) {
+				if (err.code === 'ENOENT') {
+					res.writeHead(404, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: `File not found: ${relPath}` }));
+					return;
+				}
+				if (err.message && err.message.includes('traversal')) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: `Path traversal detected: ${relPath}` }));
+					return;
+				}
+				throw err;
+			}
+
+			// 3. parse once, destructure both frontmatter and body
+			const { frontmatter: fm, body } = parseFrontmatter(fileText);
+
+			// 4. required fields
+			if (!fm.type || !fm.id || !fm.title) {
+				const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: `Missing required frontmatter fields: ${missing.join(', ')}` }));
+				return;
+			}
+
+			// 5. state type rejected
+			if (fm.type === 'state') {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'state.md is never reindexed — use /api/state (Task 10)' }));
+				return;
+			}
+
+			// 6. filename stem must match metadata.id
+			const stem = path.basename(relPath, '.md');
+			if (stem !== fm.id) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: `id mismatch: frontmatter id "${fm.id}" does not match filename stem "${stem}"` }));
+				return;
+			}
+
+			// 7. upsert: delete all existing entries with this metadata.id, then add
+			const targetId = fm.id;
+			// TODO(v0.3): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
+			await deleteByMetadataId(targetId);
+
+			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
+			const metadata = {
+				schema_version: 1,
+				...fm,
+			};
+
+			// Compose a meaningful text to add to mem0 (title + body excerpt)
+			const docText = `${fm.title}\n\n${body.trim()}`;
+			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
+			await memory.add(docText, { userId: USER_ID, metadata, infer: false });
+
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
+			return;
+		}
+		if (url.pathname === '/api/delete' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const hasMetadata = reqBody.metadata !== undefined;
+			const hasId = reqBody.id !== undefined;
+			if (hasMetadata && hasId) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'provide either metadata.id or id, not both' }));
+				return;
+			}
+			if (!hasMetadata && !hasId) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'provide either metadata.id (Shape A) or id (Shape B)' }));
+				return;
+			}
+			if (hasMetadata) {
+				// Shape A: delete by metadata.id
+				const targetId = reqBody.metadata?.id;
+				if (!targetId || typeof targetId !== 'string' || !targetId.trim()) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'metadata.id is required and must be a non-empty string' }));
+					return;
+				}
+				const deleted = await deleteByMetadataId(targetId);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ ok: true, deleted, query: `metadata.id=${targetId}` }));
+				return;
+			} else {
+				// Shape B: delete by mem0 UUID directly
+				const uuid = reqBody.id;
+				if (!uuid || typeof uuid !== 'string' || !uuid.trim()) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'id is required and must be a non-empty string' }));
+					return;
+				}
+				try {
+					await memory.delete(uuid);
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, deleted: 1, query: `id=${uuid}` }));
+				} catch (err) {
+					// mem0 may throw if UUID not found — treat as 0 deleted
+					res.writeHead(200, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ ok: true, deleted: 0, query: `id=${uuid}` }));
+				}
+				return;
+			}
 		}
 		if (url.pathname.startsWith('/api/') && req.method === 'DELETE') {
 			const id = url.pathname.split('/api/')[1];

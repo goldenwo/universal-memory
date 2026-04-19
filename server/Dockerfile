@@ -10,6 +10,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY mem0-mcp-http.mjs ./
+COPY lib/ ./lib/
 EXPOSE 6335
 USER node
 CMD ["node", "mem0-mcp-http.mjs"]

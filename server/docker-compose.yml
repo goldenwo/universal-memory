@@ -9,13 +9,16 @@ services:
 
   memory-server:
     build: .
-    image: universal-memory-server:0.1.0
+    image: universal-memory-server:0.2.0
     restart: unless-stopped
     env_file: .env
     environment:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
+      UM_VAULT_DIR: /vault
+    volumes:
+      - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
     ports:
-      - "${MEM0_MCP_PORT:-6335}:6335"
+      - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"
     depends_on:
       - qdrant
