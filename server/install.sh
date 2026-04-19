@@ -22,6 +22,21 @@ ok()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[install]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# ─── Temp file cleanup ───────────────────────────────────────────────────────
+# Script-level cleanup guarantees we never leak secrets (API keys) in /tmp,
+# even on SIGINT (Ctrl-C), SIGTERM, or errexit. Works across bash 3.2 / 4.x /
+# Git Bash. To register a temp file, assign its path to _UM_TMP_KEYFILE (the
+# only secret-bearing temp file in the script today). If more arrive later,
+# extend to an array.
+_UM_TMP_KEYFILE=""
+_um_cleanup() {
+	if [ -n "${_UM_TMP_KEYFILE:-}" ]; then
+		rm -f "$_UM_TMP_KEYFILE" 2>/dev/null || true
+		_UM_TMP_KEYFILE=""
+	fi
+}
+trap _um_cleanup EXIT INT TERM
+
 # ─── --verify mode ───────────────────────────────────────────────────────────
 if [ "${1:-}" = "--verify" ]; then
   _vpass() { printf '\033[1;32m[verify]\033[0m %-30s \xe2\x9c\x85  %s\n' "$1" "${2:-}"; }
@@ -264,17 +279,17 @@ fi
 _validate_openai_key() {
 	local key="$1"
 	info "Validating OpenAI API key (GET /v1/models, 5s timeout)..."
-	local http_status _cfg_tmp
+	local http_status
 	# C3: Write the auth header to a temp file so the key never appears in ps output.
-	_cfg_tmp=$(mktemp)
-	chmod 600 "$_cfg_tmp"
-	# C3 follow-up: RETURN trap guarantees temp cleanup on SIGINT/error.
-	trap 'rm -f "${_cfg_tmp:-}"' RETURN
-	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_cfg_tmp"
+	# Path is registered in script-level _UM_TMP_KEYFILE so the EXIT/INT/TERM
+	# trap above guarantees cleanup on any exit path, including Ctrl-C.
+	_UM_TMP_KEYFILE=$(mktemp)
+	chmod 600 "$_UM_TMP_KEYFILE"
+	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_UM_TMP_KEYFILE"
 	http_status=$(curl -sfo /dev/null -w "%{http_code}" --max-time 5 \
-		--config "$_cfg_tmp" \
+		--config "$_UM_TMP_KEYFILE" \
 		https://api.openai.com/v1/models 2>/dev/null || echo "000")
-	rm -f "$_cfg_tmp"
+	_um_cleanup
 	case "$http_status" in
 		200) ok "OpenAI API key validated." ;;
 		401) return 1 ;;  # caller handles retry or fail
