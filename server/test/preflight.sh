@@ -6,8 +6,14 @@
 #   Env: UM_OPENAI_API_KEY or OPENAI_API_KEY  — required for Section A (skip with WARN if absent)
 #        UM_ENDPOINT                           — default http://localhost:6335
 #        UM_VAULT_DIR                          — read from .env if not set
+#        UM_PREFLIGHT_SKIP_REBUILD=1           — skip the Section-A-0 image rebuild + recreate step
+#                                               (use when server code hasn't changed and you want
+#                                               faster iteration)
 #
 # Requires: Docker stack running on $UM_ENDPOINT; .env at defaults (writes disabled, mount ro).
+# Section A automatically rebuilds the server image from the current source tree and recreates
+# the container before running live-integration tests — so A exercises the code you're about to
+# ship, not whatever stale image happens to be running. Set UM_PREFLIGHT_SKIP_REBUILD=1 to bypass.
 #
 # Exit 0 iff ALL tests pass.
 
@@ -209,6 +215,45 @@ SKIP_A=0
 if [ -z "$OPENAI_KEY" ]; then
   warn "UM_OPENAI_API_KEY / OPENAI_API_KEY not set — skipping Section A"
   SKIP_A=1
+fi
+
+# ─── A0. Rebuild server image from current source, then recreate container ──
+# Ensures Section A tests exercise the code in the working tree (not a stale
+# image). Set UM_PREFLIGHT_SKIP_REBUILD=1 to bypass for fast iteration when
+# server code hasn't changed.
+#
+# Caught regression class: D1 added server/openapi.mjs but the Dockerfile COPY
+# list didn't include it; local `node mem0-mcp-http.mjs` worked fine but the
+# container build shipped without the file and crashed with ERR_MODULE_NOT_FOUND
+# on startup. Only the release PR's smoke CI surfaced it.
+if [ "$SKIP_A" = "0" ] && [ "${UM_PREFLIGHT_SKIP_REBUILD:-0}" != "1" ]; then
+  info "A0: rebuilding server image from current source..."
+  if ! (cd "$SERVER_DIR" && \
+        unset UM_VAULT_DIR UM_MOUNT_MODE UM_MCP_WRITE_ENABLED && \
+        docker compose build memory-server) >/dev/null 2>&1; then
+    echo ""
+    echo "FATAL: A0 rebuild failed — 'docker compose build memory-server' errored."
+    echo "Check: cd $SERVER_DIR && docker compose build memory-server"
+    exit 1
+  fi
+  info "A0: recreating memory-server container with fresh image..."
+  if ! (cd "$SERVER_DIR" && \
+        unset UM_VAULT_DIR UM_MOUNT_MODE UM_MCP_WRITE_ENABLED && \
+        docker compose up -d --force-recreate memory-server) >/dev/null 2>&1; then
+    echo ""
+    echo "FATAL: A0 container recreate failed."
+    echo "Check: cd $SERVER_DIR && docker compose up -d --force-recreate memory-server"
+    exit 1
+  fi
+  if ! wait_for_server 60; then
+    echo ""
+    echo "FATAL: A0 server did not become healthy within 120s after rebuild."
+    echo "Check: docker compose -f $SERVER_DIR/docker-compose.yml logs memory-server"
+    exit 1
+  fi
+  info "A0: rebuild + recreate complete; server healthy on current-branch image."
+elif [ "$SKIP_A" = "0" ]; then
+  info "A0: skipping rebuild per UM_PREFLIGHT_SKIP_REBUILD=1 (server assumed current)"
 fi
 
 # ─── A1. Real-LLM session-end pipeline ─────────────────────────────────────
