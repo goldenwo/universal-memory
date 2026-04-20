@@ -1,8 +1,8 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.2.2**. Runtime behavior unchanged from v0.2.1; v0.2.2 adds adoption conveniences (/um-preview, first-session welcome, --yes installer flag, curl | bash bootstrap).
+> **Version:** This document describes **v0.3.0-alpha**. Extends v0.2.x to four surfaces (Claude Code + Codex CLI via MCP + ChatGPT Desktop + Claude.ai + ChatGPT Custom GPT + OpenAI Assistants SDK). Claude Code remains the only surface with hook-driven raw capture + session summaries; other surfaces speak MCP (recall + writes) via a tunneled UM server.
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.2.2** (supersedes v0.2.1, which was tagged 2026-04-20). Update this file when the behavior changes.
+Source-of-truth description of what universal-memory does on this machine today. Written against **v0.3.0-alpha** (supersedes v0.2.2, which was tagged 2026-04-20). Update this file when the behavior changes.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 
@@ -25,7 +25,7 @@ Three pillars:
 
 ## Where things live on this machine
 
-Resolved paths as of v0.2.2:
+Resolved paths as of v0.3.0-alpha:
 
 | Thing | Path |
 |---|---|
@@ -33,7 +33,7 @@ Resolved paths as of v0.2.2:
 | Vault (default) | `$HOME/.um/vault/` — i.e. `C:/Users/wogol/.um/vault/` |
 | Plugin installed | `C:/Users/wogol/.claude/plugins/universal-memory/` |
 | Server docker stack | `E:/Projects/universal-memory/server/docker-compose.yml` |
-| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.2.2` |
+| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.3.0-alpha` |
 | MCP endpoint | `http://localhost:6335/mcp` (bound to `127.0.0.1` only) |
 | Qdrant data | `E:/Projects/universal-memory/server/data/qdrant/` |
 | Cost log | `$VAULT/.telemetry/cost-log.csv` |
@@ -395,16 +395,19 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ## Version state (snapshot — 2026-04-20)
 
-- **v0.3.0-alpha adds Codex CLI support** via a config-only plugin at `plugins/codex/universal-memory/` — recall through MCP tools only; no hook-driven capture (three upstream gaps in Codex v0.121 block that path, tracked in [docs/codex-integration-notes.md](codex-integration-notes.md)).
-- **Tag:** `v0.2.2` — Phase B of the v0.3 plan (adoption-friction reduction); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.2.2` (amd64 + arm64)
-- **What's new in 0.2.2 (Phase B of the v0.3 plan):**
-  - `/um-preview` slash command + `bin/um-preview` CLI — dry-run merge of `state.md` without writing
-  - First-session welcome banner on empty-vault `session-start`
-  - `install.sh --yes` non-interactive flag with sensible defaults
-  - `installer/install.sh` curl | bash bootstrap with prereq checks + `--dry-run` mode
-  - No breaking changes; runtime behavior unchanged from v0.2.1
-- **Previous release:** `v0.2.1` — Phase A: pluggable summarizer (`UM_SUMMARIZER`), canonical rubric, recursive-hook guard
-- **Tests passing:** 140+ unit assertions across 8 hook test files; install.test.sh 71/71; summarize.test.sh 42/42; update-state.test.sh 48/48 (T7/T8 for `--stdout`); um-preview.test.sh 7/7 (new); session-start.test.sh 39/39 (Test 8 threshold bumped 500→800ms for Windows stability); installer/install.test.sh 8/8 (new). Preflight A.5 claude-agent-sdk live dispatch verified (1023-byte summary) against Docker stack.
+- **Tag:** `v0.3.0-alpha` — cross-platform release (Phases A–F of the v0.3 plan); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.3.0-alpha` (amd64 + arm64)
+- **What's new in 0.3.0-alpha (across Phases A–F):**
+  - **Codex CLI plugin** at `plugins/codex/universal-memory/` — config-only plugin that points Codex at UM's MCP server. Recall-only in v0.3; automatic session capture + summarization is still CC-only (three upstream Codex gaps tracked in [docs/codex-integration-notes.md](codex-integration-notes.md))
+  - **ChatGPT Desktop + Claude.ai + Claude Desktop connection guides** at `docs/connecting-chatgpt-desktop.md` + `docs/connecting-claude-ai.md` — MCP connector setup with tunnel options, rubric paste-in, works/doesn't-work matrices (closes #4)
+  - **ChatGPT Custom GPT scaffold** at `plugins/chatgpt-custom-gpt/universal-memory/` — system prompt + trimmed OpenAPI spec + setup guide
+  - **OpenAPI 3.1 spec** at `GET /openapi.yaml` and `/openapi.yaml?gpt=1` (trimmed) — generated programmatically from `server/openapi.mjs`, validated against `@apidevtools/swagger-parser`
+  - **`um-tunnel` CLI** at `plugins/claude-code/universal-memory/bin/um-tunnel` — one-command remote MCP exposure (auto-detects cloudflared/tailscale/ngrok; prints URL + rubric + context-aware security warning)
+  - **OpenAI Assistants API example** at `examples/openai-assistants/` — Node + Python, smoke-tested, documents Assistants deprecation + Responses API migration path
+  - **Pluggable summarizer via `UM_SUMMARIZER`** (from Phase A / v0.2.1): `openai` (default) | `claude-agent-sdk` (zero-cost for CC users, auto-detected by install.sh) | `ollama` (stub for v0.4)
+  - **Adoption conveniences (from Phase B / v0.2.2):** `/um-preview` slash command, first-session welcome banner, `install.sh --yes` flag, `curl | bash` bootstrap
+- **Explicitly deferred to v0.4:** vault web UI (`D.5.2–D.5.4`), Codex lifecycle hooks (no SessionEnd, plugins can't bundle hooks, Windows unsupported upstream), OpenAI Agents SDK example (Responses API variant is the likelier shape), `@universal-memory/client` npm package, `memory_append_turn` (issue #6), server-side `memory_checkpoint` (issue #5)
+- **Previous release:** `v0.2.2` — Phase B: adoption-friction reduction
+- **Tests passing:** 140+ unit assertions across 8 hook test files; install.test.sh 82/82 (adds T13 Codex-present, T19 Codex-absent); openapi.test.mjs 5/5; um-tunnel.test.sh 17/17; summarize.test.sh 42/42; full server suite 58/58. Preflight A.5 claude-agent-sdk live dispatch verified (1023-byte summary) against Docker stack (v0.2.2).
 
 ## Minor deviations from the plan
 
@@ -420,6 +423,7 @@ Nothing else deviates from the plan's "Done when" checklist.
 
 ## Revision log
 
+- **2026-04-20** — v0.3.0-alpha landed: Codex MCP plugin + ChatGPT Desktop/Claude.ai/Custom GPT docs + OpenAPI 3.1 surface + um-tunnel + OpenAI Assistants example. First release with four agent surfaces. Phase D.5 vault UI + Phase E Codex hooks + Phase F Agents SDK all deferred to v0.4.
 - **2026-04-20** — v0.2.2 Phase B landed: /um-preview CLI + slash command, first-session welcome banner, install.sh --yes flag, curl | bash bootstrap. Adoption-friction reduction; no runtime behavior changes.
 - **2026-04-20** — v0.2.1 Phase A landed: pluggable summarizer (UM_SUMMARIZER), canonical rubric, recursive-hook guard. No breaking changes.
 - **2026-04-19** — First version. v0.2.0-alpha tagged + GHCR published.
