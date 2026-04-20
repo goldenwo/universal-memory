@@ -83,17 +83,24 @@ At any point during a session, run:
 
 This immediately refreshes `state.md` from accumulated captures. Useful after a significant decision you want captured before continuing.
 
-### 5. From Claude.ai — connect and capture
+### 5. From Claude.ai or ChatGPT Desktop — connect and capture
 
-Connect the MCP server to Claude.ai via the connector URL (`http://your-host:6335/mcp`). Once connected:
+Connect the MCP server to any MCP-capable surface via the connector URL (`http://your-host:6335/mcp`, or a tunnel URL for remote surfaces). Once connected:
 
 ```
-memory_state("my-project")    # loads current state.md from Claude.ai
+memory_state("my-project")    # loads current state.md from the remote surface
 memory_search("query")        # semantic search across all indexed documents
-memory_capture(...)           # write a new document to the vault from Claude.ai
+memory_capture(...)           # write a new document to the vault from the remote surface
 ```
 
-Captures made from Claude.ai are visible in Claude Code sessions and vice versa.
+Captures made from any surface are visible in Claude Code sessions and vice versa.
+
+Surface-specific guides:
+- **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
+- **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
+- **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
+- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall only in v0.3** — Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
+- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end. OpenAI Agents SDK variant [deferred to v0.4](examples/openai-agents-sdk/DEFERRED.md).
 
 ---
 
@@ -124,7 +131,9 @@ Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`. See [docs/mcp-to
 universal-memory/
 ├── server/                      Self-hostable backend (Qdrant + mem0 + MCP endpoint)
 ├── plugins/
-│   └── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
+│   ├── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
+│   ├── codex/                   Codex CLI plugin (config-only MCP connector, v0.3)
+│   └── chatgpt-custom-gpt/      ChatGPT Custom GPT recipe (Actions + system prompt)
 ├── docs/
 │   ├── architecture.md          Two-tier design, three pillars, MCP surface
 │   ├── state-of-play.md         state.md concept reference

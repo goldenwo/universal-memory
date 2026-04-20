@@ -4,6 +4,7 @@
  *
  * Endpoints:
  *   GET  /health              liveness + memory count
+ *   GET  /openapi.yaml        OpenAPI 3.1 spec for this server (YAML)
  *   POST /mcp                 JSON-RPC (MCP clients)
  *   POST /api/search          { query, limit?, include_superseded? } -> { results: [...] }
  *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
@@ -41,6 +42,7 @@ import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // Slug validation — C1: id/project fields used as filename components must be safe
@@ -587,7 +589,7 @@ async function handleToolCall(name, args) {
 function handleMcpMessage(msg) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
-		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.2.2' }, capabilities: { tools: {} } } };
+		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.3.0-alpha' }, capabilities: { tools: {} } } };
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {
@@ -658,6 +660,16 @@ const server = createServer(async (req, res) => {
 		if (url.pathname === '/health' && req.method === 'GET') {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, memories: (await memory.getAll({ userId: USER_ID }))?.results?.length || 0 }));
+			return;
+		}
+		if (url.pathname === '/openapi.yaml' && req.method === 'GET') {
+			// Self-describing spec — served as YAML for ChatGPT Custom GPT Actions (Phase D)
+			// and any tooling that prefers an authoritative spec URL.
+			// ?gpt=1 returns the trimmed Custom GPT Actions subset (4 routes, renamed
+			// operationIds, 5xx stripped, schemas pruned) — see plugins/chatgpt-custom-gpt.
+			const gptMode = url.searchParams.get('gpt') === '1';
+			res.writeHead(200, { 'Content-Type': 'application/yaml' });
+			res.end(gptMode ? generateCustomGPTActionsSpec() : generateOpenAPISpec());
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
@@ -903,5 +915,5 @@ const server = createServer(async (req, res) => {
 await initMemory();
 server.listen(PORT, '0.0.0.0', () => {
 	console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
-	console.log('[mem0-mcp] Endpoints: /health, /mcp (JSON-RPC), /api/*');
+	console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
 });

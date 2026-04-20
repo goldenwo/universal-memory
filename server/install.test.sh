@@ -824,6 +824,92 @@ else
   fail_test "T12b: .bashrc missing UM_SUMMARIZER=openai" ".bashrc content: $(cat "$T12B/home/.bashrc" 2>/dev/null)"
 fi
 
+# ─── T13: Codex detected → Codex plugin installed ────────────────────────────
+# v0.3 Phase E: install.sh auto-detects a Codex CLI install by the presence of
+# ~/.codex and drops plugins/codex/universal-memory into ~/.codex/plugins/.
+# Install is idempotent and config-only (no hooks — v0.4 boundary).
+echo ""
+echo "=== T13: Codex detected → Codex plugin installed ==="
+T13="$TMPROOT/t13"
+mkdir -p "$T13/vault" "$T13/plugins" "$T13/home" "$T13/home/.codex"
+touch "$T13/home/.bashrc"
+make_fakebin "$T13/bin" 200
+T13_SH=$(make_isolated_server "$T13/server")
+
+T13_EXIT=0
+T13_OUT=$(run_install "$T13/bin" "$T13_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T13/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T13/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T13/home") || T13_EXIT=$?
+
+assert_exit_zero "T13: install exits 0 when Codex present" "$T13_EXIT"
+assert_contains "T13: Codex detection message in output" "$T13_OUT" "Codex CLI detected"
+assert_file_exists "T13: Codex plugin dir created" "$T13/home/.codex/plugins/universal-memory"
+assert_file_exists "T13: Codex plugin manifest landed" "$T13/home/.codex/plugins/universal-memory/.codex-plugin/plugin.json"
+assert_file_exists "T13: Codex .mcp.json landed" "$T13/home/.codex/plugins/universal-memory/.mcp.json"
+assert_file_exists "T13: Codex plugin README landed" "$T13/home/.codex/plugins/universal-memory/README.md"
+# Idempotency: a second run with the same version should report "already installed".
+T13B_EXIT=0
+T13B_OUT=$(run_install "$T13/bin" "$T13_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T13/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T13/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T13/home") || T13B_EXIT=$?
+assert_exit_zero "T13: second run (idempotency) exits 0" "$T13B_EXIT"
+assert_contains "T13: second run reports already installed" "$T13B_OUT" "already installed"
+
+# ─── T19: Codex absent → Codex plugin skipped (silent, does not fail install) ─
+# Original spec called this T14, but T14 is already used for the CC rubric copy.
+# Using T19 (next available) to preserve the unrelated T14 semantics.
+echo ""
+echo "=== T19: Codex absent → Codex plugin skip path (does not fail install) ==="
+T19="$TMPROOT/t19"
+mkdir -p "$T19/vault" "$T19/plugins" "$T19/home"  # no .codex dir
+touch "$T19/home/.bashrc"
+make_fakebin "$T19/bin" 200
+T19_SH=$(make_isolated_server "$T19/server")
+
+T19_EXIT=0
+T19_OUT=$(run_install "$T19/bin" "$T19_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T19/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T19/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T19/home") || T19_EXIT=$?
+
+assert_exit_zero "T19: install exits 0 when Codex absent" "$T19_EXIT"
+assert_contains "T19: skip message for absent Codex" "$T19_OUT" "Codex CLI not detected"
+# The Codex plugin dir must NOT have been created — the whole point of the skip.
+if [ ! -e "$T19/home/.codex" ]; then
+  pass "T19: ~/.codex not created when Codex absent"
+else
+  fail_test "T19: ~/.codex unexpectedly created" "$(ls -la "$T19/home/.codex" 2>/dev/null)"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
