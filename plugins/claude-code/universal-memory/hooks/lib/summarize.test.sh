@@ -408,6 +408,66 @@ fi
 rm -rf "$A3_2_TMP"
 unset CLAUDE_CWD
 
+# ─── Test A3.3: claude prints partial output then exits non-zero → fall back ──
+echo ""
+echo "=== A3.3: UM_SUMMARIZER=claude-agent-sdk with claude exit != 0 falls back ==="
+tmp=$(mktemp -d)
+mkdir -p "$tmp/bin"
+# Fake claude that emits partial content then exits 1
+cat > "$tmp/bin/claude" <<'BIN'
+#!/bin/bash
+echo "partial output before failure"
+exit 1
+BIN
+chmod +x "$tmp/bin/claude"
+
+# Fake curl that serves the openai fallback fixture
+make_fake_curl() {
+  local bindir="$1"
+  cat > "$bindir/curl" <<'CURLMOCK'
+#!/usr/bin/env bash
+# Mock curl — returns fixture openai response from $FAKE_CURL_RESPONSE.
+# Logs argv to $FAKE_CURL_ARGS if set.
+if [ -n "${FAKE_CURL_ARGS:-}" ]; then
+  printf '%s\n' "$*" >> "$FAKE_CURL_ARGS"
+fi
+if [ -n "${FAKE_CURL_RESPONSE:-}" ] && [ -f "$FAKE_CURL_RESPONSE" ]; then
+  cat "$FAKE_CURL_RESPONSE"
+else
+  printf '{"choices":[{"message":{"content":"fallback"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+fi
+printf '\n__UM_HTTP_CODE__200'
+CURLMOCK
+  chmod +x "$bindir/curl"
+}
+make_fake_curl "$tmp/bin"
+cat > "$tmp/response.json" <<'JSON'
+{"choices":[{"message":{"content":"openai-recovered-after-claude-error."}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}
+JSON
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a3_3_proj"
+A3_3_OUT=$(FAKE_CURL_ARGS="$tmp/args" FAKE_CURL_RESPONSE="$tmp/response.json" \
+  PATH="$tmp/bin:$(path_without_claude)" UM_SUMMARIZER=claude-agent-sdk UM_OPENAI_API_KEY=sk-fake \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1) || true
+
+if echo "$A3_3_OUT" | grep -q "claude -p failed\|exit 1"; then
+  pass "A3.3: warns on non-zero claude exit"
+else
+  fail "A3.3: no warning about claude failure (got: $A3_3_OUT)"
+fi
+if echo "$A3_3_OUT" | grep -q "openai-recovered-after-claude-error"; then
+  pass "A3.3: openai fallback ran after claude failure"
+else
+  fail "A3.3: openai fallback did not run (got: $A3_3_OUT)"
+fi
+if ! echo "$A3_3_OUT" | grep -q "partial output before failure"; then
+  pass "A3.3: partial claude output not leaked to stdout as summary"
+else
+  fail "A3.3: partial output leaked (claude exit was non-zero but output emitted)"
+fi
+rm -rf "$tmp"
+unset CLAUDE_CWD
+
 # ============================================================
 # Test 6: Live smoke test (optional, token-gated)
 # Skipped unless UM_SUMMARIZE_ALLOW_LIVE=1 AND UM_OPENAI_API_KEY is set.

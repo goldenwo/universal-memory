@@ -39,11 +39,17 @@ case "$SUMMARIZER" in
       # the nested `claude` process's own hooks (if any) exit immediately via
       # the guard added to all 4 CC hooks — prevents infinite recursion
       # between summarize.sh and the hooks it indirectly triggers.
+      #
+      # Note: only the RHS env-var assignment matters for recursion prevention.
+      # The LHS of the pipe is a bash builtin (`printf`) whose env doesn't
+      # propagate anywhere meaningful — only the `claude` child process on the
+      # RHS needs the sentinel to short-circuit its hooks.
       STDIN_CONTENT=$(cat)
-      SUMMARY=$(UM_IN_SUMMARIZER_SUBPROCESS=1 printf '%s' "$STDIN_CONTENT" | \
-                UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null || true)
-      if [ -z "$SUMMARY" ]; then
-        echo "[um-summarize] claude -p returned empty — falling back to openai" >&2
+      SUMMARY=$(printf '%s' "$STDIN_CONTENT" | \
+                UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null)
+      claude_rc=$?
+      if [ "$claude_rc" -ne 0 ] || [ -z "$SUMMARY" ]; then
+        echo "[um-summarize] claude -p failed (exit $claude_rc) or returned empty — falling back to openai" >&2
         # Re-feed stdin for the openai path below (which reads stdin via `cat`)
         exec <<< "$STDIN_CONTENT"
         SUMMARIZER=openai

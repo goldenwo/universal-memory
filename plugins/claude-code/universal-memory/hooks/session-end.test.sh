@@ -12,6 +12,11 @@
 #   5. Reindex POST fails → summary on disk; warning logged; exit 0
 #   6. Lock held → state update skipped; summary still written
 
+# Prevent environment leakage from the developer's shell — if a prior test run
+# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
+# would exit 0 and assertions would falsely pass.
+unset UM_IN_SUMMARIZER_SUBPROCESS
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

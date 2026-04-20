@@ -13,6 +13,11 @@
 #   6. Third prompt → still empty, counter = 3
 #   7. Very long prompt (10k chars) → truncated before sending, still works
 
+# Prevent environment leakage from the developer's shell — if a prior test run
+# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
+# would exit 0 and assertions would falsely pass.
+unset UM_IN_SUMMARIZER_SUBPROCESS
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

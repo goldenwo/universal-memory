@@ -14,6 +14,11 @@
 #   7. Orphans exist → detached fork triggers; marker file appears within 5s
 #   8. Return time — full script (with mocked curl) completes in <500ms
 
+# Prevent environment leakage from the developer's shell — if a prior test run
+# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
+# would exit 0 and assertions would falsely pass.
+unset UM_IN_SUMMARIZER_SUBPROCESS
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
