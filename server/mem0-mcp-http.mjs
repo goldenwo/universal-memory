@@ -37,12 +37,18 @@
 import { createServer } from 'http';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+
+// True when this module is the entry point (invoked via `node mem0-mcp-http.mjs`
+// or the Docker CMD), false when imported by tests. Gates the bootstrap block
+// at the bottom of the file so test imports don't start a real server.
+const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Slug validation — C1: id/project fields used as filename components must be safe
@@ -71,8 +77,11 @@ function requireEnv(name) {
 }
 
 const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
-const USER_ID = requireEnv('MEM0_USER_ID');
-requireEnv('OPENAI_API_KEY');
+// When run as main, env vars must be set — fail fast. When imported for tests,
+// fall back to harmless defaults so the module loads (tests don't hit initMemory
+// and provide their own memoryClient mocks).
+const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
+if (IS_MAIN) requireEnv('OPENAI_API_KEY');
 
 let memory;
 async function initMemory() {
@@ -619,8 +628,21 @@ function readBody(req) {
  * Default filter excludes superseded/deprecated/rejected docs and docs with
  * invalidated_at set. Pass includeSuperseded=true to skip all filtering.
  */
-async function doSearch(query, limit, includeSuperseded) {
-	const raw = await memory.search(query, { userId: USER_ID, limit: limit || 5 });
+/**
+ * Run a search against the vector store with optional status-filter + decay re-rank.
+ *
+ * Extracted as an exported function (rather than inlined in the route handler)
+ * so `server/test/decay-integration.test.mjs` can exercise the decay wiring
+ * with a mocked memory client — without spinning up a full server + container.
+ *
+ * @param {string} query
+ * @param {number} limit
+ * @param {boolean} includeSuperseded
+ * @param {{search: Function}} [memoryClient] — dependency injection for tests;
+ *   defaults to the module-level `memory` binding used by real requests.
+ */
+export async function doSearch(query, limit, includeSuperseded, memoryClient = memory) {
+	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
 	let items = raw?.results || raw || [];
 	if (!includeSuperseded) {
 		items = items.filter((r) => {
@@ -912,8 +934,12 @@ const server = createServer(async (req, res) => {
 	}
 });
 
-await initMemory();
-server.listen(PORT, '0.0.0.0', () => {
-	console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
-	console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
-});
+// Bootstrap — only runs when this file is invoked directly (not when imported
+// for tests). IS_MAIN is computed at the top of the file; see its comment.
+if (IS_MAIN) {
+	await initMemory();
+	server.listen(PORT, '0.0.0.0', () => {
+		console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
+		console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
+	});
+}
