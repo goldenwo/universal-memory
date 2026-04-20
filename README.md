@@ -98,6 +98,7 @@ Captures made from any surface are visible in Claude Code sessions and vice vers
 Surface-specific guides:
 - **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
 - **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
+- **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
 
 ---
 
@@ -128,7 +129,8 @@ Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`. See [docs/mcp-to
 universal-memory/
 ├── server/                      Self-hostable backend (Qdrant + mem0 + MCP endpoint)
 ├── plugins/
-│   └── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
+│   ├── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
+│   └── chatgpt-custom-gpt/      ChatGPT Custom GPT recipe (Actions + system prompt)
 ├── docs/
 │   ├── architecture.md          Two-tier design, three pillars, MCP surface
 │   ├── state-of-play.md         state.md concept reference

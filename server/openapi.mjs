@@ -10,7 +10,11 @@
  * Downstream consumer: ChatGPT Custom GPT Actions (Phase D Task D2).
  *
  * Exports:
- *   - generateOpenAPISpec(): string   -> YAML text
+ *   - generateOpenAPISpec(): string             -> YAML text (full spec)
+ *   - generateCustomGPTActionsSpec(): string    -> YAML text (trimmed subset
+ *     for ChatGPT Custom GPT Actions — only /api/search (POST), /api/state/{project},
+ *     /api/add, /api/delete; no /mcp, no /health, no 5xx responses, schemas pruned to
+ *     only those referenced by the 4 kept routes.)
  */
 
 import YAML from 'yaml';
@@ -714,4 +718,138 @@ function buildSpec() {
 export function generateOpenAPISpec() {
   const spec = buildSpec();
   return YAML.stringify(spec);
+}
+
+// ---------------------------------------------------------------------------
+// Custom GPT Actions (trimmed) spec — Phase D Task D2
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip 5xx responses from an operation object in-place. ChatGPT Custom GPT
+ * Actions validators flag server-error schemas on several action types; only
+ * 2xx and 4xx responses should reach the imported spec.
+ */
+function strip5xxResponses(operation) {
+  if (!operation || !operation.responses) return;
+  for (const code of Object.keys(operation.responses)) {
+    if (/^5\d\d$/.test(code)) {
+      delete operation.responses[code];
+    }
+  }
+}
+
+/**
+ * Return a deep-cloned operation with the given `operationId` and all 5xx
+ * responses removed. Used to derive Custom-GPT-ready operations from the
+ * same per-path builders as the full spec (single source of truth for
+ * request/response shapes).
+ */
+function cloneAndRewriteOperation(operation, operationId) {
+  const clone = JSON.parse(JSON.stringify(operation));
+  clone.operationId = operationId;
+  strip5xxResponses(clone);
+  return clone;
+}
+
+/**
+ * Walk a JSON value and collect every `#/components/schemas/<Name>` reference.
+ * Used to prune `components.schemas` down to only what the trimmed paths
+ * actually reference (transitively).
+ */
+function collectRefs(node, acc) {
+  if (node == null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectRefs(item, acc);
+    return;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === '$ref' && typeof v === 'string') {
+      const m = v.match(/^#\/components\/schemas\/(.+)$/);
+      if (m) acc.add(m[1]);
+    } else {
+      collectRefs(v, acc);
+    }
+  }
+}
+
+/**
+ * Generate the trimmed OpenAPI 3.1 spec for ChatGPT Custom GPT Actions.
+ * Only the 4 routes the GPT needs (search/state/add/delete), operationIds
+ * renamed to the MCP-tool-style names ChatGPT surfaces to the model, all
+ * 5xx responses stripped, and `components.schemas` pruned to only those
+ * schemas still referenced by the kept paths.
+ *
+ * Output is YAML text. Served from GET /openapi.yaml?gpt=1 and also shipped
+ * as the static file plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml.
+ */
+export function generateCustomGPTActionsSpec() {
+  // Re-use the per-path builders rather than going through buildSpec() so
+  // we don't widen the internal-export surface area just for this.
+  const searchPath = pathSearch();
+  const statePath = pathState();
+  const addPath = pathAdd();
+  const deletePath = pathDelete();
+
+  // POST /api/search only (drop GET; POST has richer filter support)
+  const trimmedSearch = {
+    post: cloneAndRewriteOperation(searchPath.post, 'memory_search'),
+  };
+  // GET /api/state/{project}
+  const trimmedState = {
+    get: cloneAndRewriteOperation(statePath.get, 'memory_state'),
+  };
+  // POST /api/add
+  const trimmedAdd = {
+    post: cloneAndRewriteOperation(addPath.post, 'memory_add'),
+  };
+  // POST /api/delete
+  const trimmedDelete = {
+    post: cloneAndRewriteOperation(deletePath.post, 'memory_delete'),
+  };
+
+  const paths = {
+    '/api/search': trimmedSearch,
+    '/api/state/{project}': trimmedState,
+    '/api/add': trimmedAdd,
+    '/api/delete': trimmedDelete,
+  };
+
+  // Prune components.schemas to only those transitively referenced by the
+  // trimmed paths. Start from the direct refs in `paths`, then expand
+  // through each included schema until the set stops growing.
+  const kept = new Set();
+  collectRefs(paths, kept);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const name of Array.from(kept)) {
+      const schema = SCHEMAS[name];
+      if (!schema) continue;
+      const before = kept.size;
+      collectRefs(schema, kept);
+      if (kept.size !== before) changed = true;
+    }
+  }
+  const trimmedSchemas = {};
+  for (const name of kept) {
+    if (SCHEMAS[name]) trimmedSchemas[name] = SCHEMAS[name];
+  }
+
+  // Re-use info/servers from the full spec but drop tags (the trimmed
+  // spec's 4 operations don't need them and several Custom-GPT validators
+  // flag unknown tags).
+  const full = buildSpec();
+  const trimmed = {
+    openapi: full.openapi,
+    info: {
+      ...full.info,
+      description:
+        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 4 routes a Custom GPT needs (search, state, add, delete). Full spec at /openapi.yaml.',
+    },
+    servers: full.servers,
+    paths,
+    components: { schemas: trimmedSchemas },
+  };
+
+  return YAML.stringify(trimmed);
 }

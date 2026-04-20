@@ -42,7 +42,7 @@ import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
-import { generateOpenAPISpec } from './openapi.mjs';
+import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // Slug validation — C1: id/project fields used as filename components must be safe
@@ -665,8 +665,11 @@ const server = createServer(async (req, res) => {
 		if (url.pathname === '/openapi.yaml' && req.method === 'GET') {
 			// Self-describing spec — served as YAML for ChatGPT Custom GPT Actions (Phase D)
 			// and any tooling that prefers an authoritative spec URL.
+			// ?gpt=1 returns the trimmed Custom GPT Actions subset (4 routes, renamed
+			// operationIds, 5xx stripped, schemas pruned) — see plugins/chatgpt-custom-gpt.
+			const gptMode = url.searchParams.get('gpt') === '1';
 			res.writeHead(200, { 'Content-Type': 'application/yaml' });
-			res.end(generateOpenAPISpec());
+			res.end(gptMode ? generateCustomGPTActionsSpec() : generateOpenAPISpec());
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
