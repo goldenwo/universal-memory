@@ -577,6 +577,70 @@ _install_plugin() {
 info "Installing Claude Code plugin..."
 _install_plugin
 
+# ─── Codex CLI plugin install (v0.3 — config-only, recall via MCP) ───────────
+# Detect a Codex CLI install by the presence of its config dir. If absent,
+# skip silently — Codex is not a hard dependency and most users will never
+# have it. Install is idempotent (same version → skip; different version →
+# replace).  No hooks are installed in v0.3 (see docs/codex-integration-notes.md
+# for the three upstream gaps blocking a hook-driven port).
+_CODEX_PLUGIN_SRC="$REPO_ROOT/plugins/codex/universal-memory"
+_CODEX_CONFIG_DIR="${CODEX_CONFIG_DIR:-$HOME/.codex}"
+_CODEX_PLUGIN_TARGET_BASE="${CODEX_PLUGINS_DIR:-$_CODEX_CONFIG_DIR/plugins}"
+_CODEX_PLUGIN_TARGET="$_CODEX_PLUGIN_TARGET_BASE/universal-memory"
+
+_install_codex_plugin() {
+	local src="$_CODEX_PLUGIN_SRC"
+	local target="$_CODEX_PLUGIN_TARGET"
+
+	# Skip if the plugin source isn't checked out (partial clones, old tags).
+	if [ ! -d "$src" ]; then
+		info "Codex plugin source not found at $src — skipping."
+		return
+	fi
+
+	# Skip silently if Codex is not installed on this host.
+	if [ ! -d "$_CODEX_CONFIG_DIR" ]; then
+		info "Codex CLI not detected (~/.codex missing) — skipping Codex plugin install."
+		return
+	fi
+
+	info "Codex CLI detected at $_CODEX_CONFIG_DIR — installing Codex plugin to $target"
+
+	if ! mkdir -p "$_CODEX_PLUGIN_TARGET_BASE" 2>/dev/null; then
+		warn "Could not create Codex plugin directory $_CODEX_PLUGIN_TARGET_BASE — skipping."
+		return
+	fi
+
+	# Idempotent: same version already installed → no-op.
+	if [ -d "$target" ] && [ ! -L "$target" ]; then
+		local src_ver target_ver
+		src_ver=$(_read_plugin_version "$src")
+		target_ver=$(_read_plugin_version "$target")
+		if [ -n "$src_ver" ] && [ -n "$target_ver" ] && [ "$src_ver" = "$target_ver" ]; then
+			ok "Codex plugin v$target_ver already installed at $target — skipping."
+			return
+		fi
+		# Different version → replace without prompting. Codex plugin is
+		# config-only (two small JSON files + README + NOTES) so there is no
+		# meaningful user customization to preserve.
+		rm -rf "$target"
+	elif [ -L "$target" ]; then
+		# Pre-existing symlink → remove before copying over.
+		rm -f "$target"
+	fi
+
+	if ! cp -r "$src" "$target" 2>/dev/null; then
+		warn "Codex plugin copy failed ($src -> $target) — install manually per plugins/codex/universal-memory/README.md"
+		return
+	fi
+
+	local installed_ver
+	installed_ver=$(_read_plugin_version "$target")
+	ok "Codex plugin installed (v${installed_ver:-?}). See $target/README.md for rubric paste-in + verification steps."
+}
+
+_install_codex_plugin
+
 # ─── P0-2: Shell profile export ──────────────────────────────────────────────
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
 _UM_MARKER_END="# --- end universal-memory ---"

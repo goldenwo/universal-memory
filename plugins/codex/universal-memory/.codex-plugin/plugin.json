@@ -1,0 +1,14 @@
+{
+  "name": "universal-memory",
+  "version": "0.3.0-alpha",
+  "description": "Cross-session memory for Codex CLI via MCP. Recall-only in v0.3 — for full session capture + summarization, use Claude Code.",
+  "author": {
+    "name": "goldenwo",
+    "url": "https://github.com/goldenwo"
+  },
+  "homepage": "https://github.com/goldenwo/universal-memory",
+  "repository": "https://github.com/goldenwo/universal-memory",
+  "license": "MIT",
+  "keywords": ["memory", "mem0", "context", "cross-session", "self-hosted", "markdown", "mcp"],
+  "mcpServers": "./.mcp.json"
+}

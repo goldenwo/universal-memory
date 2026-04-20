@@ -395,6 +395,7 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ## Version state (snapshot — 2026-04-20)
 
+- **v0.3.0-alpha adds Codex CLI support** via a config-only plugin at `plugins/codex/universal-memory/` — recall through MCP tools only; no hook-driven capture (three upstream gaps in Codex v0.121 block that path, tracked in [docs/codex-integration-notes.md](codex-integration-notes.md)).
 - **Tag:** `v0.2.2` — Phase B of the v0.3 plan (adoption-friction reduction); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.2.2` (amd64 + arm64)
 - **What's new in 0.2.2 (Phase B of the v0.3 plan):**
   - `/um-preview` slash command + `bin/um-preview` CLI — dry-run merge of `state.md` without writing
