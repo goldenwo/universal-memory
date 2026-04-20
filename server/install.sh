@@ -532,6 +532,16 @@ _install_plugin
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
 _UM_MARKER_END="# --- end universal-memory ---"
 
+# Detect summarizer default — prefer claude CLI (zero-cost) if available.
+# Probed BEFORE writing the profile so the detected value is the one written.
+if command -v claude >/dev/null 2>&1; then
+	_um_summarizer_default="claude-agent-sdk"
+	info "Claude CLI detected — defaulting UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"
+else
+	_um_summarizer_default="openai"
+	info "Claude CLI not detected — defaulting UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)"
+fi
+
 _detect_profile() {
 	local shell_name
 	shell_name=$(basename "${SHELL:-bash}")
@@ -544,11 +554,13 @@ _detect_profile() {
 
 _append_to_profile() {
 	local profile="$1"
-	local key_value="$2"  # literal key string
+	local key_value="$2"       # literal key string
+	local summarizer="$3"      # auto-detected summarizer default
 
 	if [ -z "$profile" ]; then
 		warn "Unknown shell; cannot auto-append UM_OPENAI_API_KEY. Add manually:"
 		warn "  export UM_OPENAI_API_KEY='<your-key>'"
+		warn "  export UM_SUMMARIZER='$summarizer'"
 		return
 	fi
 
@@ -573,20 +585,23 @@ _append_to_profile() {
 		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add UM_OPENAI_API_KEY manually."; return; }
 	fi
 
-	# Append marker block — use printf to avoid value interpolation
+	# Append marker block — use printf to avoid value interpolation.
+	# UM_SUMMARIZER is included in the same marker block so uninstall/re-install
+	# paths manage both together.
 	{
 		printf '\n%s\n' "$_UM_MARKER_START"
 		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
+		printf "export UM_SUMMARIZER='%s'\n" "$summarizer"
 		printf '%s\n' "$_UM_MARKER_END"
 	} >> "$profile"
 
-	ok "UM_OPENAI_API_KEY appended to $profile"
+	ok "UM_OPENAI_API_KEY and UM_SUMMARIZER appended to $profile"
 	info "Reload your shell or run: source $profile"
 }
 
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
-_append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY"
+_append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
 info "Pulling / building images..."

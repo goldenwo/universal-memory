@@ -574,6 +574,85 @@ else
   pass "T15: repo source tree has no stray rubric.md after --link"
 fi
 
+# ─── T16: UM_SUMMARIZER auto-detect — claude absent → openai ────────────────
+# A4: when `claude` CLI is not in PATH, install.sh writes UM_SUMMARIZER=openai
+# to the profile alongside UM_OPENAI_API_KEY in the same marker block.
+echo ""
+echo "=== T16: UM_SUMMARIZER=openai written when claude CLI absent ==="
+T16="$TMPROOT/t16"
+mkdir -p "$T16/vault" "$T16/plugins" "$T16/home"
+touch "$T16/home/.bashrc"
+# make_fakebin deliberately does NOT include a fake `claude` → PATH has no claude.
+make_fakebin "$T16/bin" 200
+T16_SH=$(make_isolated_server "$T16/server")
+
+T16_EXIT=0
+# Build a PATH that contains ONLY our fakebin (so real `claude` on the host
+# cannot leak in and flip the detection branch). Include a minimal set of
+# coreutils paths so `bash`, `python3`, `mkdir`, etc. still resolve.
+T16_PATH="$T16/bin:/usr/bin:/bin"
+T16_OUT=$(env -i PATH="$T16_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T16/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T16/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T16/home" \
+  bash "$T16_SH" 2>&1) || T16_EXIT=$?
+
+assert_exit_zero "T16: install exits 0 with claude absent" "$T16_EXIT"
+assert_contains "T16: detection message for claude absent" "$T16_OUT" "Claude CLI not detected"
+assert_contains "T16: UM_SUMMARIZER=openai in profile" "$(cat "$T16/home/.bashrc")" "export UM_SUMMARIZER='openai'"
+assert_contains "T16: UM_OPENAI_API_KEY also in profile" "$(cat "$T16/home/.bashrc")" "export UM_OPENAI_API_KEY"
+assert_contains "T16: UM_SUMMARIZER inside marker block" "$(cat "$T16/home/.bashrc")" "universal-memory (auto-added"
+
+# ─── T17: UM_SUMMARIZER auto-detect — claude present → claude-agent-sdk ─────
+# A4: when a `claude` CLI is in PATH, install.sh writes UM_SUMMARIZER=claude-agent-sdk.
+echo ""
+echo "=== T17: UM_SUMMARIZER=claude-agent-sdk written when claude CLI present ==="
+T17="$TMPROOT/t17"
+mkdir -p "$T17/vault" "$T17/plugins" "$T17/home"
+touch "$T17/home/.bashrc"
+make_fakebin "$T17/bin" 200
+# Add a fake `claude` to the fakebin so `command -v claude` succeeds.
+cat > "$T17/bin/claude" <<'FAKE'
+#!/usr/bin/env bash
+# fake claude CLI for T17 — detection-only, never invoked during install.
+exit 0
+FAKE
+chmod +x "$T17/bin/claude"
+T17_SH=$(make_isolated_server "$T17/server")
+
+T17_EXIT=0
+# Pin PATH to fakebin + minimal coreutils so detection sees our fake claude.
+T17_PATH="$T17/bin:/usr/bin:/bin"
+T17_OUT=$(env -i PATH="$T17_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T17/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T17/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T17/home" \
+  bash "$T17_SH" 2>&1) || T17_EXIT=$?
+
+assert_exit_zero "T17: install exits 0 with fake claude in PATH" "$T17_EXIT"
+assert_contains "T17: detection message for claude present" "$T17_OUT" "Claude CLI detected"
+assert_contains "T17: UM_SUMMARIZER=claude-agent-sdk in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='claude-agent-sdk'"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

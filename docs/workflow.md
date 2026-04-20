@@ -306,6 +306,7 @@ Optional mem0 tuning: `MEM0_EMBEDDER_MODEL`, `MEM0_LLM_MODEL`, `QDRANT_HOST/PORT
 | `UM_VAULT_DIR` | `$HOME/.um/vault` | Host vault path hooks write to |
 | `UM_OPENAI_API_KEY` | *(required for summarize)* | Hooks use this for session-end summarization |
 | `UM_SUMMARY_ENABLED` | `true` | Set `false` to disable session-end LLM entirely |
+| `UM_SUMMARIZER` | auto-detect | `openai` \| `claude-agent-sdk` \| `ollama`. See [docs/summarizer-choice.md](summarizer-choice.md). |
 | `UM_TEMPORAL_DECAY` | `false` | Honored by search ranking |
 | `UM_SKIP_KEY_VALIDATION` | *(unset)* | `1` to skip install.sh's live OpenAI probe |
 | `UM_DETACH` | *(unset)* | Internal — set by session-start when forking catchup |
