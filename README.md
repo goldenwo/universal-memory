@@ -97,7 +97,7 @@ Captures made from any surface are visible in Claude Code sessions and vice vers
 
 Surface-specific guides:
 - **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
-- **Claude.ai / Claude Desktop:** same connector URL; no custom instructions needed for Claude surfaces.
+- **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
 
 ---
 
