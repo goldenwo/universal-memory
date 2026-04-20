@@ -320,6 +320,30 @@ except Exception:
 }
 
 # ---------------------------------------------------------------------------
+# Test 8: Recursive-hook guard — UM_IN_SUMMARIZER_SUBPROCESS=1 exits silently
+# ---------------------------------------------------------------------------
+# Critical for A3's claude-agent-sdk backend: the nested `claude -p` process
+# inherits UM_IN_SUMMARIZER_SUBPROCESS=1 in its env, and its own hooks (which
+# source this file via the plugin) must exit immediately to prevent infinite
+# recursion.
+printf '\nTest 8: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1)\n'
+{
+  GUARD_OUT=$(UM_IN_SUMMARIZER_SUBPROCESS=1 \
+    UM_ENDPOINT="http://localhost:19999" \
+    UM_VAULT_DIR="$UM_VAULT_DIR" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>&1)
+  GUARD_EXIT=$?
+  assert_eq "T8: guard exits 0 when UM_IN_SUMMARIZER_SUBPROCESS=1" "$GUARD_EXIT" "0"
+  if [ -z "$GUARD_OUT" ] || [ "$GUARD_OUT" = "{}" ]; then
+    pass "T8: guard emits no output (or empty JSON {})"
+  else
+    fail "T8: guard should emit empty output, got: $GUARD_OUT"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 printf '\n---\n'

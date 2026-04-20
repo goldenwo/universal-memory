@@ -30,8 +30,28 @@ case "$SUMMARIZER" in
     : # proceed with existing OpenAI logic below
     ;;
   claude-agent-sdk)
-    echo "[um-summarize] UM_SUMMARIZER=claude-agent-sdk — not yet implemented, falling back to openai" >&2
-    SUMMARIZER=openai
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "[um-summarize] UM_SUMMARIZER=claude-agent-sdk requires 'claude' CLI in PATH — falling back to openai" >&2
+      SUMMARIZER=openai
+    else
+      # Read stdin (the prompt/transcript) and pipe to `claude -p` in
+      # non-interactive mode. CRITICAL: set UM_IN_SUMMARIZER_SUBPROCESS=1 so
+      # the nested `claude` process's own hooks (if any) exit immediately via
+      # the guard added to all 4 CC hooks — prevents infinite recursion
+      # between summarize.sh and the hooks it indirectly triggers.
+      STDIN_CONTENT=$(cat)
+      SUMMARY=$(UM_IN_SUMMARIZER_SUBPROCESS=1 printf '%s' "$STDIN_CONTENT" | \
+                UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null || true)
+      if [ -z "$SUMMARY" ]; then
+        echo "[um-summarize] claude -p returned empty — falling back to openai" >&2
+        # Re-feed stdin for the openai path below (which reads stdin via `cat`)
+        exec <<< "$STDIN_CONTENT"
+        SUMMARIZER=openai
+      else
+        printf '%s\n' "$SUMMARY"
+        exit 0
+      fi
+    fi
     ;;
   ollama)
     echo "[um-summarize] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
