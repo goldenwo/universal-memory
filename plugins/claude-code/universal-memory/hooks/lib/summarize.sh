@@ -14,6 +14,30 @@
 
 set -uo pipefail
 
+# ─── UM_SUMMARIZER dispatch (A2) ──────────────────────────────────────────────
+# Selects which summarizer backend to use. Default: openai.
+# Options: openai (curl OpenAI chat/completions), claude-agent-sdk (stub - A3),
+# ollama (stub - v0.4). Unknown values fall back to openai with a warning.
+SUMMARIZER="${UM_SUMMARIZER:-openai}"
+case "$SUMMARIZER" in
+  openai)
+    : # proceed with existing OpenAI logic below
+    ;;
+  claude-agent-sdk)
+    echo "[summarize] UM_SUMMARIZER=claude-agent-sdk — not yet implemented, falling back to openai" >&2
+    SUMMARIZER=openai
+    ;;
+  ollama)
+    echo "[summarize] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
+    SUMMARIZER=openai
+    ;;
+  *)
+    echo "[summarize] UM_SUMMARIZER='$SUMMARIZER' unknown — falling back to openai" >&2
+    SUMMARIZER=openai
+    ;;
+esac
+# Rest of script assumes SUMMARIZER=openai from here on.
+
 # Source vault.sh for vault_path and project_name
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f vault_path >/dev/null 2>&1; then

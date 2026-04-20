@@ -179,6 +179,125 @@ fi
 unset CLAUDE_CWD
 
 # ============================================================
+# Test A2: UM_SUMMARIZER dispatch
+#
+# Verifies the pluggable summarizer interface introduced in A2:
+#   - openai (default / explicit) → existing OpenAI path runs
+#   - claude-agent-sdk → stub warning + fallback to openai
+#   - ollama → stub warning + fallback to openai
+#   - unknown value → warning + fallback to openai
+#
+# Reuses the mock_bin/curl setup from T5 so no real HTTP is made.
+# ============================================================
+
+# Shared mock curl setup (identical to T5 fixture, returns a fresh fixture
+# response so each A2 test sees a predictable summary body).
+A2_MOCK_BIN="$TMPDIR_ROOT/a2_mock_bin"
+mkdir -p "$A2_MOCK_BIN"
+cat > "$A2_MOCK_BIN/curl" <<'A2_MOCK_EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"choices":[{"message":{"content":"A2 dispatch canned summary."}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}'
+printf '\n__UM_HTTP_CODE__200'
+A2_MOCK_EOF
+chmod +x "$A2_MOCK_BIN/curl"
+A2_PATH="$A2_MOCK_BIN:$PATH"
+
+# Each A2 test uses its own project name so the daily-cap counter is fresh.
+
+# ============================================================
+# Test A2.1: UM_SUMMARIZER=openai (explicit) dispatches to OpenAI
+# ============================================================
+echo "=== Test A2.1: UM_SUMMARIZER=openai (explicit) ==="
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a2_openai_proj"
+A2_1_STDOUT=$(PATH="$A2_PATH" UM_SUMMARIZER=openai \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>/dev/null)
+A2_1_STDERR=$(PATH="$A2_PATH" UM_SUMMARIZER=openai \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1 >/dev/null)
+
+assert_contains "A2.1: openai path returns canned summary" "$A2_1_STDOUT" "A2 dispatch canned summary."
+# Should NOT emit a fallback warning on explicit openai
+if [[ "$A2_1_STDERR" == *"falling back"* ]] || [[ "$A2_1_STDERR" == *"not yet implemented"* ]]; then
+  fail "A2.1: unexpected fallback warning on explicit openai (stderr='$A2_1_STDERR')"
+else
+  pass "A2.1: no fallback warning on explicit openai"
+fi
+unset CLAUDE_CWD
+
+# ============================================================
+# Test A2.2: UM_SUMMARIZER unset (default) dispatches to OpenAI
+# ============================================================
+echo "=== Test A2.2: UM_SUMMARIZER unset (default → openai) ==="
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a2_default_proj"
+A2_2_STDOUT=$(env -u UM_SUMMARIZER PATH="$A2_PATH" \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>/dev/null)
+assert_contains "A2.2: default path returns canned summary" "$A2_2_STDOUT" "A2 dispatch canned summary."
+unset CLAUDE_CWD
+
+# ============================================================
+# Test A2.3: UM_SUMMARIZER=claude-agent-sdk → stub warning + fallback
+# ============================================================
+echo "=== Test A2.3: UM_SUMMARIZER=claude-agent-sdk (stub) ==="
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a2_cas_proj"
+A2_3_STDOUT=$(PATH="$A2_PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>/dev/null)
+A2_3_STDERR=$(PATH="$A2_PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1 >/dev/null)
+
+assert_contains "A2.3: stub warning shown (not yet implemented / falling back)" "$A2_3_STDERR" "claude-agent-sdk"
+if [[ "$A2_3_STDERR" == *"not yet implemented"* ]] || [[ "$A2_3_STDERR" == *"falling back"* ]]; then
+  pass "A2.3: claude-agent-sdk stub warning present"
+else
+  fail "A2.3: no stub warning (stderr='$A2_3_STDERR')"
+fi
+assert_contains "A2.3: [summarize] prefix used" "$A2_3_STDERR" "[summarize]"
+assert_contains "A2.3: openai fallback actually ran" "$A2_3_STDOUT" "A2 dispatch canned summary."
+unset CLAUDE_CWD
+
+# ============================================================
+# Test A2.4: UM_SUMMARIZER=ollama → stub warning + fallback
+# ============================================================
+echo "=== Test A2.4: UM_SUMMARIZER=ollama (stub) ==="
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a2_ollama_proj"
+A2_4_STDOUT=$(PATH="$A2_PATH" UM_SUMMARIZER=ollama \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>/dev/null)
+A2_4_STDERR=$(PATH="$A2_PATH" UM_SUMMARIZER=ollama \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1 >/dev/null)
+
+assert_contains "A2.4: stub warning mentions ollama" "$A2_4_STDERR" "ollama"
+if [[ "$A2_4_STDERR" == *"not yet implemented"* ]] || [[ "$A2_4_STDERR" == *"falling back"* ]]; then
+  pass "A2.4: ollama stub warning present"
+else
+  fail "A2.4: no stub warning (stderr='$A2_4_STDERR')"
+fi
+assert_contains "A2.4: [summarize] prefix used" "$A2_4_STDERR" "[summarize]"
+assert_contains "A2.4: openai fallback actually ran" "$A2_4_STDOUT" "A2 dispatch canned summary."
+unset CLAUDE_CWD
+
+# ============================================================
+# Test A2.5: UM_SUMMARIZER=garbage → unknown-value warning + fallback
+# ============================================================
+echo "=== Test A2.5: UM_SUMMARIZER=garbage (unknown) ==="
+
+export CLAUDE_CWD="$TMPDIR_ROOT/a2_garbage_proj"
+A2_5_STDOUT=$(PATH="$A2_PATH" UM_SUMMARIZER=garbage \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>/dev/null)
+A2_5_STDERR=$(PATH="$A2_PATH" UM_SUMMARIZER=garbage \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1 >/dev/null)
+
+if [[ "$A2_5_STDERR" == *"unknown"* ]] || [[ "$A2_5_STDERR" == *"falling back"* ]]; then
+  pass "A2.5: unknown-value warning present"
+else
+  fail "A2.5: no unknown-value warning (stderr='$A2_5_STDERR')"
+fi
+assert_contains "A2.5: [summarize] prefix used" "$A2_5_STDERR" "[summarize]"
+assert_contains "A2.5: openai fallback actually ran" "$A2_5_STDOUT" "A2 dispatch canned summary."
+unset CLAUDE_CWD
+
+# ============================================================
 # Test 6: Live smoke test (optional, token-gated)
 # Skipped unless UM_SUMMARIZE_ALLOW_LIVE=1 AND UM_OPENAI_API_KEY is set.
 # ============================================================
