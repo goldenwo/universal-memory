@@ -57,6 +57,20 @@ jobs:
         working-directory: server
         run: bash ./test/smoke.sh
 
+      # Continuity pipeline test: exercises stop → session-end → state.md →
+      # session-start catchup + inject, end-to-end against the live server.
+      # Uses UM_CONTINUITY_LIVE=1 so the OpenAI summarizer path runs for real
+      # (the secret is already in scope from the install step above).
+      # Adds ~1¢/run of API cost on top of the existing smoke test, worth
+      # the cross-section coverage. See issue #7.
+      - name: Run continuity test
+        working-directory: server
+        env:
+          UM_CONTINUITY_LIVE: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UM_ENDPOINT: http://localhost:6335
+        run: bash ./test/continuity.sh
+
       - name: Dump logs on failure
         if: failure()
         working-directory: server
