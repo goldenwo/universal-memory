@@ -25,6 +25,8 @@ Before starting, you should have:
 
 ## 2. Tunnel options
 
+**Recommended entry:** run [`bin/um-tunnel`](../plugins/claude-code/universal-memory/bin/um-tunnel) for a one-command setup — it auto-detects your installed tunnel CLI, starts the tunnel, and prints the URL + rubric block ready to paste. See [`docs/um-tunnel.md`](um-tunnel.md) for details. The manual instructions below still work for anyone who prefers to run the tunnel CLI directly.
+
 Three common choices. All three expose `http://localhost:6335` at a public HTTPS URL. For full exposure-model context see the [Security section of `docs/mcp-tools.md`](mcp-tools.md#security--mcp-write-tools-expose-the-vault-over-http) — **write mode exposes your entire vault to anyone who can hit the tunnel URL**, so prefer an auth-aware tunnel when writes are enabled.
 
 ### Tailscale Funnel (recommended for personal use)
