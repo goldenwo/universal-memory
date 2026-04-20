@@ -7,7 +7,12 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 | Version | What | Evidence |
 |---|---|---|
 | [v0.1.0](https://github.com/goldenwo/universal-memory/releases/tag/v0.1.0) | Memory server — Docker Compose + lifted mem0 HTTP server, vector-only, smoke-tested | Commit `58ad82d` on `main` |
+| v0.1.1 | Install wizard (`server/install.sh`) — interactive prompts, writes `.env`, runs compose, polls `/health` | Tag `v0.1.1` |
 | v0.1.3 | Claude Code plugin (manifest + hooks registration + auto-start probe) | Commit on main, tagged v0.1.3 |
+| [v0.2.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.2.0-alpha) | Session-continuity layer — Stop hook raw capture, LLM-synthesized session summaries, per-project `state.md`, memory versioning (forget/supersede), 10-tool MCP surface (Path B's three pillars land: summaries + state-of-play + versioning) | Commit `1877ba6` on `main`, tagged v0.2.0-alpha |
+| [v0.2.1](https://github.com/goldenwo/universal-memory/releases/tag/v0.2.1) | Pluggable summarizer (`UM_SUMMARIZER=openai\|claude-agent-sdk\|ollama`), canonical routing rubric at `docs/memory-routing-rubric.md`, recursive-hook guard for CC hooks — Phase A of the v0.3 plan | Commit `c79f6b3` on `main`, tagged v0.2.1 |
+| [v0.2.2](https://github.com/goldenwo/universal-memory/releases/tag/v0.2.2) | Adoption quickwins — `/um-preview` slash command + `bin/um-preview` CLI, first-session welcome banner, `install.sh --yes` non-interactive flag, `curl \| bash` bootstrap installer — Phase B of the v0.3 plan | Commit `5b053b8` on `main`, tagged v0.2.2 |
+| [v0.3.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.3.0-alpha) | Cross-platform release — Codex CLI plugin (MCP recall), ChatGPT Desktop + Claude.ai + Claude Desktop connection guides, ChatGPT Custom GPT scaffold, OpenAPI 3.1 at `GET /openapi.yaml` (+ `?gpt=1` trimmed), `um-tunnel` CLI, OpenAI Assistants API example. Phases C–G of the v0.3 plan | Commit `bae2b5f` on `main`, tagged v0.3.0-alpha |
 
 Foundations shipped alongside v0.1.0:
 
