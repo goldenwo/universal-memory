@@ -394,11 +394,17 @@ _read_plugin_version() {
 # Copy the canonical routing rubric into an installed plugin so
 # session-start.sh can read it via the sibling-copy fallback when the
 # repo is not reachable (e.g. installed-plugin copy outside the checkout).
+# On failure warn visibly — a silent failure would make a missing rubric
+# indistinguishable from a successful install.
 _copy_rubric_to_target() {
 	local target="$1"
 	local src_rubric="$REPO_ROOT/docs/memory-routing-rubric.md"
-	if [ -r "$src_rubric" ]; then
-		cp "$src_rubric" "$target/rubric.md" 2>/dev/null || true
+	if [ ! -r "$src_rubric" ]; then
+		warn "Rubric source missing at $src_rubric — session-start will use inline fallback."
+		return
+	fi
+	if ! cp "$src_rubric" "$target/rubric.md" 2>/dev/null; then
+		warn "Could not copy rubric.md to $target — session-start will use inline fallback."
 	fi
 }
 
@@ -484,7 +490,11 @@ _install_plugin() {
 			fi
 			if ln -s "$src" "$target" 2>/dev/null; then
 				ok "Plugin symlinked: $target -> $src"
-				_copy_rubric_to_target "$target"
+				# Do NOT copy rubric into $target here — it would resolve
+				# through the symlink and pollute the repo source tree with
+				# an untracked rubric.md. session-start.sh's canonical-path
+				# lookup ($SCRIPT_DIR/../../../../docs/memory-routing-rubric.md)
+				# already resolves correctly through the symlink.
 			else
 				warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
 				if cp -r "$src" "$target"; then

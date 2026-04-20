@@ -511,6 +511,69 @@ T14_OUT=$(env PATH="$T14/bin:$PATH" \
 assert_exit_zero "T14: install exits 0" "$T14_EXIT"
 assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
 
+# ─── T15: symlink mode must not pollute repo source tree with rubric.md ──────
+# Review fix: previously _install_plugin called _copy_rubric_to_target after
+# a successful ln -s, which resolved through the symlink and wrote
+# rubric.md into the repo source tree (appearing as untracked in git status
+# for every dev running install.sh --link). The fix skips that copy in the
+# symlink success branch because session-start.sh's canonical-path lookup
+# resolves correctly through the symlink anyway.
+echo ""
+echo "=== T15: symlink mode does not create rubric.md in the repo source tree ==="
+T15="$TMPROOT/t15"
+mkdir -p "$T15/vault" "$T15/plugins" "$T15/home"
+touch "$T15/home/.bashrc"
+make_fakebin "$T15/bin" 200
+
+# We must NOT modify the real repo, so copy the plugin source into an
+# isolated location and point _UM_REPO_ROOT at a fake repo root whose
+# plugins/claude-code/universal-memory mirrors the real one. We also need
+# a docs/ dir with the rubric so _copy_rubric_to_target would find source.
+T15_REPO="$T15/repo"
+mkdir -p "$T15_REPO/docs" "$T15_REPO/plugins/claude-code"
+cp "$REPO_ROOT/docs/memory-routing-rubric.md" "$T15_REPO/docs/memory-routing-rubric.md"
+cp -r "$PLUGIN_SRC" "$T15_REPO/plugins/claude-code/universal-memory"
+T15_SRC_PLUGIN="$T15_REPO/plugins/claude-code/universal-memory"
+
+# Copy install.sh + helpers into isolated server dir, but REPO_ROOT points
+# at the fake repo so symlink resolution ends up at $T15_SRC_PLUGIN.
+T15_SH=$(make_isolated_server "$T15/server")
+
+T15_EXIT=0
+# Feed 'l' to select link at the copy/link/skip prompt, then 'N' to decline
+# the profile append prompt (orthogonal to this test).
+T15_OUT=$(printf 'l\nN\n' | env PATH="$T15/bin:$PATH" \
+  _UM_REPO_ROOT="$T15_REPO" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T15/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T15/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T15/home" \
+  bash "$T15_SH" 2>&1) || T15_EXIT=$?
+
+assert_exit_zero "T15: install exits 0 in link mode" "$T15_EXIT"
+
+# Core invariant: the repo source tree must NEVER contain rubric.md after
+# a --link install, regardless of whether ln -s creates a real symlink
+# (Unix / Windows Developer Mode) or silently falls back to a plain copy
+# (Windows Git Bash emulates ln -s differently on different versions).
+# Before the fix, the symlink-success branch wrote rubric.md into $target,
+# which resolved through the symlink into $T15_SRC_PLUGIN. After the fix,
+# only the cp -r fallback branch copies — and that branch writes into the
+# real directory at $target, never into the source tree.
+if [ -f "$T15_SRC_PLUGIN/rubric.md" ]; then
+  fail_test "T15: repo source tree clean after --link install" \
+    "$T15_SRC_PLUGIN/rubric.md exists — symlink mode polluted the repo"
+else
+  pass "T15: repo source tree has no stray rubric.md after --link"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
