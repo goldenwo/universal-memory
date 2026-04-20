@@ -43,7 +43,7 @@ The index is a semantic search cache over authored documents and session summari
 
 ---
 
-## Three pillars of v0.2.0
+## Three pillars of v0.2.x
 
 ### Pillar 1: Session summaries
 

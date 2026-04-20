@@ -1,6 +1,8 @@
 # Universal-memory — workflow reference
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.2.0-alpha** (tagged 2026-04-19). Update this file when the behavior changes.
+> **Version:** This document describes **v0.2.1**. Historical references to v0.2.0-alpha throughout describe behavior unchanged in v0.2.1 unless noted.
+
+Source-of-truth description of what universal-memory does on this machine today. Written against **v0.2.1** (supersedes v0.2.0-alpha, which was tagged 2026-04-19). Update this file when the behavior changes.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 
@@ -23,7 +25,7 @@ Three pillars:
 
 ## Where things live on this machine
 
-Resolved paths as of v0.2.0-alpha:
+Resolved paths as of v0.2.1:
 
 | Thing | Path |
 |---|---|
@@ -31,7 +33,7 @@ Resolved paths as of v0.2.0-alpha:
 | Vault (default) | `$HOME/.um/vault/` — i.e. `C:/Users/wogol/.um/vault/` |
 | Plugin installed | `C:/Users/wogol/.claude/plugins/universal-memory/` |
 | Server docker stack | `E:/Projects/universal-memory/server/docker-compose.yml` |
-| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.2.0-alpha` |
+| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.2.1` |
 | MCP endpoint | `http://localhost:6335/mcp` (bound to `127.0.0.1` only) |
 | Qdrant data | `E:/Projects/universal-memory/server/data/qdrant/` |
 | Cost log | `$VAULT/.telemetry/cost-log.csv` |
@@ -237,7 +239,7 @@ Versioned replace.
 - Hooks fire automatically (4 of them)
 - state.md injection + rubric via `additionalContext`
 - MCP tools optional — server reachable via `http://localhost:6335/mcp` if registered in `~/.claude.json`
-- If UM MCP is *not* registered but another mem0 MCP is (e.g. `mem0-pi`), Claude uses that for explicit `remember` requests. v0.2.0 rubric says "call memory_capture" — but PR [#9](https://github.com/goldenwo/universal-memory/pull/9) adds a `memory_add` fallback clause for this setup.
+- If UM MCP is *not* registered but another mem0 MCP is (e.g. `mem0-pi`), Claude uses that for explicit `remember` requests. The v0.2.x rubric says "call memory_capture" — but PR [#9](https://github.com/goldenwo/universal-memory/pull/9) adds a `memory_add` fallback clause for this setup.
 
 ### Claude.ai / Claude Desktop (read-capable, limited write)
 
@@ -255,7 +257,7 @@ These gaps are tracked:
 
 ## MCP tool surface
 
-10 tools at `POST http://localhost:6335/mcp`. 9 work in v0.2.0-alpha; 1 is a documented stub.
+10 tools at `POST http://localhost:6335/mcp`. 9 work in v0.2.x; 1 is a documented stub.
 
 ### Mem0-index tools (always available — bypass write gate)
 
@@ -277,7 +279,7 @@ These gaps are tracked:
 | `memory_forget(id)` | Mutate frontmatter to `status: deprecated` + reindex |
 | `memory_supersede(old_id, new_doc)` | Versioned replace — old `status: superseded`, new `supersedes: [old_id]` |
 
-**Security note:** with writes enabled and the default Docker port binding, the server accepts unauthenticated writes from any host that can reach port 6335. v0.2.0-alpha defaults to `127.0.0.1:6335` (localhost only) for that reason. Opening to LAN/WAN needs a reverse proxy or overlay network. See [docs/mcp-tools.md:391+](mcp-tools.md#L391) Security section.
+**Security note:** with writes enabled and the default Docker port binding, the server accepts unauthenticated writes from any host that can reach port 6335. v0.2.x defaults to `127.0.0.1:6335` (localhost only) for that reason. Opening to LAN/WAN needs a reverse proxy or overlay network. See [docs/mcp-tools.md:391+](mcp-tools.md#L391) Security section.
 
 ---
 
@@ -306,6 +308,7 @@ Optional mem0 tuning: `MEM0_EMBEDDER_MODEL`, `MEM0_LLM_MODEL`, `QDRANT_HOST/PORT
 | `UM_VAULT_DIR` | `$HOME/.um/vault` | Host vault path hooks write to |
 | `UM_OPENAI_API_KEY` | *(required for summarize)* | Hooks use this for session-end summarization |
 | `UM_SUMMARY_ENABLED` | `true` | Set `false` to disable session-end LLM entirely |
+| `UM_SUMMARIZER` | auto-detect | `openai` \| `claude-agent-sdk` \| `ollama`. See [docs/summarizer-choice.md](summarizer-choice.md). |
 | `UM_TEMPORAL_DECAY` | `false` | Honored by search ranking |
 | `UM_SKIP_KEY_VALIDATION` | *(unset)* | `1` to skip install.sh's live OpenAI probe |
 | `UM_DETACH` | *(unset)* | Internal — set by session-start when forking catchup |
@@ -382,21 +385,24 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 |---|---|
 | [#9](https://github.com/goldenwo/universal-memory/pull/9) | Rubric fallback to `memory_add` when `memory_capture` isn't registered |
 
-### v0.2.0 → v0.2.0-alpha → GA transition
+### v0.2.0-alpha → v0.2.1 transition
 
-- Tagged `v0.2.0-alpha` because: tested (61/61 preflight, 150+ unit assertions, CI green) but limited real-world exposure.
-- Promotion to `v0.2.0`: after 1–2 weeks of use without regressions surfacing. No explicit dogfood phase scheduled — passive use during UM work is the validation.
-- If issues surface → patch as `v0.2.1-alpha`, don't promote yet.
+- `v0.2.0-alpha` (2026-04-19): session-continuity pipeline + 10-tool MCP surface + plug-and-play install. Tested (61/61 preflight, 150+ unit assertions, CI green).
+- `v0.2.1` (pending merge of Phase A): pluggable summarizer (`UM_SUMMARIZER`), canonical rubric at `docs/memory-routing-rubric.md`, recursive-hook guard for `claude-agent-sdk` backend. No breaking changes.
+- Validation strategy: passive use during UM work rather than an explicit dogfood phase. If issues surface → patch as `v0.2.2`.
 
 ---
 
-## Version state (snapshot — 2026-04-19)
+## Version state (snapshot — 2026-04-20)
 
-- **Tag:** `v0.2.0-alpha` — pushed to origin, GHCR image published at `ghcr.io/goldenwo/universal-memory-server:0.2.0-alpha` (amd64 + arm64)
-- **Main HEAD:** `1877ba6` — squash commit of PR #3 (48 feature commits) + 3 cherry-picks (d4b27e1, 655ad6b, afe2af8)
-- **Plugin version:** `0.2.0` (per `plugin.json`)
-- **Previous release:** `v0.1.3` — plugin manifest + auto-start hook
-- **Tests passing:** smoke (6 sections, all green), continuity.sh (local — not yet in CI per #7), preflight (A+B, 61/61), unit suites across 5 libs + hooks libs
+- **Tag:** `v0.2.1` — pending merge of Phase A PR; GHCR image will publish as `ghcr.io/goldenwo/universal-memory-server:0.2.1` (amd64 + arm64)
+- **What's new in 0.2.1 (Phase A of the v0.3 plan):**
+  - `UM_SUMMARIZER` env var — choose backend: `openai` (default when no claude CLI), `claude-agent-sdk` (zero-cost for CC users, auto-detected by install.sh), `ollama` (stub for v0.4)
+  - Routing rubric extracted to canonical `docs/memory-routing-rubric.md` — referenced by hooks and (future) cross-platform integrations
+  - Recursive-hook guard (`UM_IN_SUMMARIZER_SUBPROCESS=1` sentinel) in all 4 CC hooks — required for `claude-agent-sdk` to prevent infinite loop
+  - `docs/summarizer-choice.md` — comparison matrix
+- **Previous release:** `v0.2.0-alpha` — session continuity pipeline, MCP surface (10 tools), plug-and-play install
+- **Tests passing:** 140+ unit assertions across 7 hook test files; install.test.sh 63/63 (includes T18 re-install backfill regression); summarize.test.sh 42/42. Full preflight (A+B) run pending Docker availability at merge time.
 
 ## Minor deviations from the plan
 
@@ -412,4 +418,5 @@ Nothing else deviates from the plan's "Done when" checklist.
 
 ## Revision log
 
+- **2026-04-20** — v0.2.1 Phase A landed: pluggable summarizer (UM_SUMMARIZER), canonical rubric, recursive-hook guard. No breaking changes.
 - **2026-04-19** — First version. v0.2.0-alpha tagged + GHCR published.

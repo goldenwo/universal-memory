@@ -14,6 +14,11 @@
 #   7. Orphans exist → detached fork triggers; marker file appears within 5s
 #   8. Return time — full script (with mocked curl) completes in <500ms
 
+# Prevent environment leakage from the developer's shell — if a prior test run
+# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
+# would exit 0 and assertions would falsely pass.
+unset UM_IN_SUMMARIZER_SUBPROCESS
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -467,6 +472,92 @@ printf '\nTest 9: state missing + endpoint reachable → rubric-only context\n'
   assert_rubric_present "$ac" "T9: "
   assert_not_contains "T9: no State of play section when state missing" "$ac" "State of play"
   assert_not_contains "T9: no 'Current focus' when state missing" "$ac" "Current focus"
+}
+
+# ---------------------------------------------------------------------------
+# Test 10: Inline fallback must match canonical docs/memory-routing-rubric.md
+# ---------------------------------------------------------------------------
+# Divergence guard — if a developer edits the canonical file but forgets to
+# update the inline fallback in session-start.sh, the two will silently drift
+# and users hitting the third-tier fallback (both canonical + sibling copy
+# missing) will get stale routing guidance.
+printf '\nTest 10: inline fallback matches canonical rubric\n'
+{
+  REPO_ROOT_FOR_TEST="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+  CANONICAL="$REPO_ROOT_FOR_TEST/docs/memory-routing-rubric.md"
+  if [ ! -r "$CANONICAL" ]; then
+    printf '  SKIP: canonical file not found at %s\n' "$CANONICAL"
+  else
+    # Extract inline fallback rubric from session-start.sh. It is the last
+    # UM_ROUTING_RUBRIC='...' block (the earlier occurrences only appear in
+    # comments/heredocs; there's currently just the one `=...` assignment, but
+    # we take the last match to be robust to future additions above it).
+    # Read the file via stdin so Python doesn't need to parse an MSYS path
+    # ("/e/Projects/..." from Git Bash is not understood by Windows Python).
+    inline=$(cat "$SCRIPT_DIR/session-start.sh" | python3 -c "
+import re, sys
+text = sys.stdin.read()
+matches = re.findall(r\"UM_ROUTING_RUBRIC='([^']*(?:''[^']*)*)'\", text, flags=re.DOTALL)
+if not matches:
+    sys.exit(1)
+sys.stdout.write(matches[-1])
+")
+
+    if [ -z "$inline" ]; then
+      fail "could not extract inline rubric from session-start.sh"
+    else
+      # Strip HTML comment block from canonical (same as hook does at runtime).
+      canonical=$(sed '/^<!--/,/-->$/d' "$CANONICAL")
+
+      # Normalize: strip leading and trailing blank lines from both so trivial
+      # whitespace around the payload does not cause false diffs. We compare
+      # the substantive byte content.
+      normalize=$(cat <<'PYEOF'
+import sys
+s = sys.stdin.read()
+# Strip leading/trailing whitespace-only lines but preserve internal whitespace
+lines = s.split('\n')
+while lines and lines[0].strip() == '':
+    lines.pop(0)
+while lines and lines[-1].strip() == '':
+    lines.pop()
+sys.stdout.write('\n'.join(lines))
+PYEOF
+)
+      inline_norm=$(printf '%s' "$inline" | python3 -c "$normalize")
+      canonical_norm=$(printf '%s' "$canonical" | python3 -c "$normalize")
+
+      if [ "$inline_norm" = "$canonical_norm" ]; then
+        pass "inline fallback matches canonical rubric byte-for-byte"
+      else
+        fail "inline fallback diverges from canonical rubric"
+        printf '    inline (first 200 chars):\n      %s\n' "$(printf '%s' "$inline_norm" | head -c 200)"
+        printf '    canonical (first 200 chars):\n      %s\n' "$(printf '%s' "$canonical_norm" | head -c 200)"
+      fi
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 11: Recursive-hook guard — UM_IN_SUMMARIZER_SUBPROCESS=1 exits silently
+# ---------------------------------------------------------------------------
+# Critical for A3's claude-agent-sdk backend: the nested `claude -p` process
+# inherits UM_IN_SUMMARIZER_SUBPROCESS=1 in its env, and its own hooks (which
+# source this file via the plugin) must exit immediately to prevent infinite
+# recursion.
+printf '\nTest 11: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1)\n'
+{
+  GUARD_OUT=$(UM_IN_SUMMARIZER_SUBPROCESS=1 \
+    UM_ENDPOINT="http://localhost:19999" \
+    UM_VAULT_DIR="$UM_VAULT_DIR" CLAUDE_CWD="$CLAUDE_CWD" \
+    bash "$SESSION_START" 2>&1)
+  GUARD_EXIT=$?
+  assert_eq "T11: guard exits 0 when UM_IN_SUMMARIZER_SUBPROCESS=1" "$GUARD_EXIT" "0"
+  if [ -z "$GUARD_OUT" ] || [ "$GUARD_OUT" = "{}" ]; then
+    pass "T11: guard emits no output (or empty JSON {})"
+  else
+    fail "T11: guard should emit empty output, got: $GUARD_OUT"
+  fi
 }
 
 # ---------------------------------------------------------------------------

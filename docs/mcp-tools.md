@@ -269,7 +269,7 @@ Force a session summary and state update. **(stub, v0.3 — not implemented serv
 { "project": "string (optional)" }
 ```
 
-**Response:** `{ "ok": false, "error": "memory_checkpoint is not implemented server-side in v0.2.0 — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3." }`
+**Response:** `{ "ok": false, "error": "memory_checkpoint is not implemented server-side in v0.2.x — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3." }`
 
 This tool is advertised in the tools list so MCP clients can discover it. The server-side implementation is deferred to v0.3 because `session-end.sh` requires host filesystem access and env vars (`UM_OPENAI_API_KEY`) that are not available inside the container.
 
