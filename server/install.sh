@@ -552,6 +552,35 @@ _detect_profile() {
 	esac
 }
 
+# Write a fresh marker block with all managed env vars to the end of $profile.
+# Caller must ensure any existing block has already been removed.
+_write_marker_block() {
+	local profile="$1"
+	local key_value="$2"
+	local summarizer="$3"
+	{
+		printf '\n%s\n' "$_UM_MARKER_START"
+		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
+		printf "export UM_SUMMARIZER='%s'\n" "$summarizer"
+		printf '%s\n' "$_UM_MARKER_END"
+	} >> "$profile"
+}
+
+# Strip any existing marker block from the profile. Idempotent: no-op if absent.
+# Uses a sed script that deletes lines from the start marker through the end
+# marker inclusive. We anchor on literal marker strings (no regex specials).
+_strip_marker_block() {
+	local profile="$1"
+	# Quick exit if no block present
+	grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null || return 0
+	# sed -i with .bak backup for portability (GNU sed and BSD/macOS sed agree
+	# when a backup suffix is supplied). The .bak file is removed after.
+	# Marker strings contain no sed metacharacters (no /, \, &, etc.), but
+	# if that ever changes, switch to a different delimiter here.
+	sed -i.bak "\|$_UM_MARKER_START|,\|$_UM_MARKER_END|d" "$profile"
+	rm -f "$profile.bak" 2>/dev/null || true
+}
+
 _append_to_profile() {
 	local profile="$1"
 	local key_value="$2"       # literal key string
@@ -564,9 +593,33 @@ _append_to_profile() {
 		return
 	fi
 
-	# Check existing export line
+	# Case 1: marker block already exists → this is a re-install.
+	# We need to decide: does the existing block have a matching key?
+	#   - If yes: rewrite the block declaratively so every managed var is
+	#     up-to-date (UM_SUMMARIZER might be new since the last install).
+	#   - If no: warn about the conflict and leave everything alone (user's
+	#     custom key wins; they should update manually).
+	if grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null; then
+		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
+		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
+		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
+			# Matching key inside existing marker block — rewrite block so
+			# UM_SUMMARIZER (and any future managed vars) are included.
+			ok "UM_OPENAI_API_KEY already present in $profile with matching value — refreshing managed block."
+			_strip_marker_block "$profile"
+			_write_marker_block "$profile" "$key_value" "$summarizer"
+			ok "Managed block refreshed in $profile (UM_OPENAI_API_KEY + UM_SUMMARIZER)."
+			info "Reload your shell or run: source $profile"
+			return
+		else
+			warn "Found existing UM_OPENAI_API_KEY in $profile with different value; please update manually."
+			return
+		fi
+	fi
+
+	# Case 2: no marker block, but a bare UM_OPENAI_API_KEY export exists
+	# somewhere in the profile (user-managed, outside our block). Respect it.
 	if grep -q 'export UM_OPENAI_API_KEY' "$profile" 2>/dev/null; then
-		# Check if value matches
 		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
 		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
 		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
@@ -577,7 +630,7 @@ _append_to_profile() {
 		return
 	fi
 
-	# Prompt
+	# Case 3: fresh install — prompt, then write the block.
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Append UM_OPENAI_API_KEY to %s? [Y/n] ' "$profile" >&2
 		read -r _ans
@@ -588,12 +641,7 @@ _append_to_profile() {
 	# Append marker block — use printf to avoid value interpolation.
 	# UM_SUMMARIZER is included in the same marker block so uninstall/re-install
 	# paths manage both together.
-	{
-		printf '\n%s\n' "$_UM_MARKER_START"
-		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
-		printf "export UM_SUMMARIZER='%s'\n" "$summarizer"
-		printf '%s\n' "$_UM_MARKER_END"
-	} >> "$profile"
+	_write_marker_block "$profile" "$key_value" "$summarizer"
 
 	ok "UM_OPENAI_API_KEY and UM_SUMMARIZER appended to $profile"
 	info "Reload your shell or run: source $profile"

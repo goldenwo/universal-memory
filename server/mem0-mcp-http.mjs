@@ -432,7 +432,7 @@ async function handleToolCall(name, args) {
 			// planned for v0.3. Full MCP-driven implementation deferred.
 			return JSON.stringify({
 				ok: false,
-				error: 'memory_checkpoint is not implemented server-side in v0.2.0 — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
+				error: 'memory_checkpoint is not implemented server-side in v0.2.x — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
 			});
 		}
 

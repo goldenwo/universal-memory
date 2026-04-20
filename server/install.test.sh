@@ -653,6 +653,93 @@ assert_exit_zero "T17: install exits 0 with fake claude in PATH" "$T17_EXIT"
 assert_contains "T17: detection message for claude present" "$T17_OUT" "Claude CLI detected"
 assert_contains "T17: UM_SUMMARIZER=claude-agent-sdk in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='claude-agent-sdk'"
 
+# ─── T18: v0.2.0-alpha → v0.2.1 re-install backfills UM_SUMMARIZER ──────────
+# Cross-cutting review C1: a user upgrading from v0.2.0-alpha has a marker
+# block that pre-dates UM_SUMMARIZER. Re-running install.sh must backfill
+# the missing var, not silently skip it. The fix declaratively rewrites
+# the whole managed block on every run when the key matches.
+echo ""
+echo "=== T18: re-install backfills UM_SUMMARIZER into legacy marker block ==="
+T18="$TMPROOT/t18"
+mkdir -p "$T18/vault" "$T18/plugins" "$T18/home"
+make_fakebin "$T18/bin" 200
+# Add a fake `claude` so install.sh auto-detects claude-agent-sdk.
+cat > "$T18/bin/claude" <<'FAKE'
+#!/usr/bin/env bash
+exit 0
+FAKE
+chmod +x "$T18/bin/claude"
+T18_SH=$(make_isolated_server "$T18/server")
+
+# Pre-populate profile with a legacy v0.2.0-alpha marker block containing
+# ONLY UM_OPENAI_API_KEY (no UM_SUMMARIZER) — this is what an existing
+# alpha user's .bashrc looks like before they upgrade.
+{
+  printf 'export PATH=/usr/local/bin:$PATH\n'
+  printf '\n'
+  printf '# --- universal-memory (auto-added by install.sh) ---\n'
+  printf "export UM_OPENAI_API_KEY='sk-testkey12345'\n"
+  printf '# --- end universal-memory ---\n'
+  printf '\n'
+  printf '# user-added content below\n'
+  printf 'alias ll="ls -la"\n'
+} > "$T18/home/.bashrc"
+
+T18_EXIT=0
+# Pin PATH so detection sees our fake claude.
+T18_PATH="$T18/bin:/usr/bin:/bin"
+T18_OUT=$(env -i PATH="$T18_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T18/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T18/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T18/home" \
+  bash "$T18_SH" 2>&1) || T18_EXIT=$?
+
+assert_exit_zero "T18: upgrade re-install exits 0" "$T18_EXIT"
+T18_BASHRC=$(cat "$T18/home/.bashrc")
+# Block was refreshed, so both managed vars must now be present.
+assert_contains "T18: UM_OPENAI_API_KEY still present after upgrade" "$T18_BASHRC" "export UM_OPENAI_API_KEY='sk-testkey12345'"
+assert_contains "T18: UM_SUMMARIZER backfilled after upgrade" "$T18_BASHRC" "export UM_SUMMARIZER='claude-agent-sdk'"
+# Exactly one marker block (no duplicates).
+T18_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
+T18_END_COUNT=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
+assert_eq "T18: exactly one marker-start line" "$T18_START_COUNT" "1"
+assert_eq "T18: exactly one marker-end line" "$T18_END_COUNT" "1"
+# User-added content (outside the block) survives the rewrite.
+assert_contains "T18: user-added PATH line preserved" "$T18_BASHRC" "export PATH=/usr/local/bin:\$PATH"
+assert_contains "T18: user-added alias preserved" "$T18_BASHRC" 'alias ll="ls -la"'
+# Running install a THIRD time must remain idempotent — no duplicate blocks.
+T18B_EXIT=0
+T18B_OUT=$(env -i PATH="$T18_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T18/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T18/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T18/home" \
+  bash "$T18_SH" 2>&1) || T18B_EXIT=$?
+assert_exit_zero "T18: third run (idempotency) exits 0" "$T18B_EXIT"
+T18_START_COUNT2=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
+T18_END_COUNT2=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
+assert_eq "T18: still exactly one marker-start after third run" "$T18_START_COUNT2" "1"
+assert_eq "T18: still exactly one marker-end after third run" "$T18_END_COUNT2" "1"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
