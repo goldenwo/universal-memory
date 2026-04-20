@@ -18,21 +18,27 @@ set -uo pipefail
 # Selects which summarizer backend to use. Default: openai.
 # Options: openai (curl OpenAI chat/completions), claude-agent-sdk (stub - A3),
 # ollama (stub - v0.4). Unknown values fall back to openai with a warning.
+#
+# Note: the local $SUMMARIZER variable is cosmetic below this block — the
+# existing OpenAI code path reads UM_OPENAI_API_KEY directly, not $SUMMARIZER.
+# The coercion to "openai" in fallback arms documents intent; it is not a
+# runtime gate. When A3 implements claude-agent-sdk, it should `exit 0` on
+# success inside its case arm rather than relying on the coercion.
 SUMMARIZER="${UM_SUMMARIZER:-openai}"
 case "$SUMMARIZER" in
   openai)
     : # proceed with existing OpenAI logic below
     ;;
   claude-agent-sdk)
-    echo "[summarize] UM_SUMMARIZER=claude-agent-sdk — not yet implemented, falling back to openai" >&2
+    echo "[um-summarize] UM_SUMMARIZER=claude-agent-sdk — not yet implemented, falling back to openai" >&2
     SUMMARIZER=openai
     ;;
   ollama)
-    echo "[summarize] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
+    echo "[um-summarize] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
     SUMMARIZER=openai
     ;;
   *)
-    echo "[summarize] UM_SUMMARIZER='$SUMMARIZER' unknown — falling back to openai" >&2
+    echo "[um-summarize] UM_SUMMARIZER='$SUMMARIZER' unknown — falling back to openai" >&2
     SUMMARIZER=openai
     ;;
 esac

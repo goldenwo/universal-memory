@@ -252,7 +252,7 @@ if [[ "$A2_3_STDERR" == *"not yet implemented"* ]] || [[ "$A2_3_STDERR" == *"fal
 else
   fail "A2.3: no stub warning (stderr='$A2_3_STDERR')"
 fi
-assert_contains "A2.3: [summarize] prefix used" "$A2_3_STDERR" "[summarize]"
+assert_contains "A2.3: [um-summarize] prefix used" "$A2_3_STDERR" "[um-summarize]"
 assert_contains "A2.3: openai fallback actually ran" "$A2_3_STDOUT" "A2 dispatch canned summary."
 unset CLAUDE_CWD
 
@@ -273,7 +273,7 @@ if [[ "$A2_4_STDERR" == *"not yet implemented"* ]] || [[ "$A2_4_STDERR" == *"fal
 else
   fail "A2.4: no stub warning (stderr='$A2_4_STDERR')"
 fi
-assert_contains "A2.4: [summarize] prefix used" "$A2_4_STDERR" "[summarize]"
+assert_contains "A2.4: [um-summarize] prefix used" "$A2_4_STDERR" "[um-summarize]"
 assert_contains "A2.4: openai fallback actually ran" "$A2_4_STDOUT" "A2 dispatch canned summary."
 unset CLAUDE_CWD
 
@@ -293,7 +293,7 @@ if [[ "$A2_5_STDERR" == *"unknown"* ]] || [[ "$A2_5_STDERR" == *"falling back"* 
 else
   fail "A2.5: no unknown-value warning (stderr='$A2_5_STDERR')"
 fi
-assert_contains "A2.5: [summarize] prefix used" "$A2_5_STDERR" "[summarize]"
+assert_contains "A2.5: [um-summarize] prefix used" "$A2_5_STDERR" "[um-summarize]"
 assert_contains "A2.5: openai fallback actually ran" "$A2_5_STDOUT" "A2 dispatch canned summary."
 unset CLAUDE_CWD
 
