@@ -1,8 +1,8 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.2.1**. Historical references to v0.2.0-alpha throughout describe behavior unchanged in v0.2.1 unless noted.
+> **Version:** This document describes **v0.2.2**. Runtime behavior unchanged from v0.2.1; v0.2.2 adds adoption conveniences (/um-preview, first-session welcome, --yes installer flag, curl | bash bootstrap).
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.2.1** (supersedes v0.2.0-alpha, which was tagged 2026-04-19). Update this file when the behavior changes.
+Source-of-truth description of what universal-memory does on this machine today. Written against **v0.2.2** (supersedes v0.2.1, which was tagged 2026-04-20). Update this file when the behavior changes.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 
@@ -25,7 +25,7 @@ Three pillars:
 
 ## Where things live on this machine
 
-Resolved paths as of v0.2.1:
+Resolved paths as of v0.2.2:
 
 | Thing | Path |
 |---|---|
@@ -33,7 +33,7 @@ Resolved paths as of v0.2.1:
 | Vault (default) | `$HOME/.um/vault/` — i.e. `C:/Users/wogol/.um/vault/` |
 | Plugin installed | `C:/Users/wogol/.claude/plugins/universal-memory/` |
 | Server docker stack | `E:/Projects/universal-memory/server/docker-compose.yml` |
-| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.2.1` |
+| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.2.2` |
 | MCP endpoint | `http://localhost:6335/mcp` (bound to `127.0.0.1` only) |
 | Qdrant data | `E:/Projects/universal-memory/server/data/qdrant/` |
 | Cost log | `$VAULT/.telemetry/cost-log.csv` |
@@ -395,14 +395,15 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ## Version state (snapshot — 2026-04-20)
 
-- **Tag:** `v0.2.1` — pending merge of Phase A PR; GHCR image will publish as `ghcr.io/goldenwo/universal-memory-server:0.2.1` (amd64 + arm64)
-- **What's new in 0.2.1 (Phase A of the v0.3 plan):**
-  - `UM_SUMMARIZER` env var — choose backend: `openai` (default when no claude CLI), `claude-agent-sdk` (zero-cost for CC users, auto-detected by install.sh), `ollama` (stub for v0.4)
-  - Routing rubric extracted to canonical `docs/memory-routing-rubric.md` — referenced by hooks and (future) cross-platform integrations
-  - Recursive-hook guard (`UM_IN_SUMMARIZER_SUBPROCESS=1` sentinel) in all 4 CC hooks — required for `claude-agent-sdk` to prevent infinite loop
-  - `docs/summarizer-choice.md` — comparison matrix
-- **Previous release:** `v0.2.0-alpha` — session continuity pipeline, MCP surface (10 tools), plug-and-play install
-- **Tests passing:** 140+ unit assertions across 7 hook test files; install.test.sh 63/63 (includes T18 re-install backfill regression); summarize.test.sh 42/42. Full preflight (A+B) run pending Docker availability at merge time.
+- **Tag:** `v0.2.2` — Phase B of the v0.3 plan (adoption-friction reduction); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.2.2` (amd64 + arm64)
+- **What's new in 0.2.2 (Phase B of the v0.3 plan):**
+  - `/um-preview` slash command + `bin/um-preview` CLI — dry-run merge of `state.md` without writing
+  - First-session welcome banner on empty-vault `session-start`
+  - `install.sh --yes` non-interactive flag with sensible defaults
+  - `installer/install.sh` curl | bash bootstrap with prereq checks + `--dry-run` mode
+  - No breaking changes; runtime behavior unchanged from v0.2.1
+- **Previous release:** `v0.2.1` — Phase A: pluggable summarizer (`UM_SUMMARIZER`), canonical rubric, recursive-hook guard
+- **Tests passing:** 140+ unit assertions across 8 hook test files; install.test.sh 71/71; summarize.test.sh 42/42; update-state.test.sh 48/48 (T7/T8 for `--stdout`); um-preview.test.sh 7/7 (new); session-start.test.sh 39/39 (Test 8 threshold bumped 500→800ms for Windows stability); installer/install.test.sh 8/8 (new). Preflight A.5 claude-agent-sdk live dispatch verified (1023-byte summary) against Docker stack.
 
 ## Minor deviations from the plan
 
@@ -418,5 +419,6 @@ Nothing else deviates from the plan's "Done when" checklist.
 
 ## Revision log
 
+- **2026-04-20** — v0.2.2 Phase B landed: /um-preview CLI + slash command, first-session welcome banner, install.sh --yes flag, curl | bash bootstrap. Adoption-friction reduction; no runtime behavior changes.
 - **2026-04-20** — v0.2.1 Phase A landed: pluggable summarizer (UM_SUMMARIZER), canonical rubric, recursive-hook guard. No breaking changes.
 - **2026-04-19** — First version. v0.2.0-alpha tagged + GHCR published.
