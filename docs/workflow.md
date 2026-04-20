@@ -391,13 +391,16 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ---
 
-## Version state (snapshot — 2026-04-19)
+## Version state (snapshot — 2026-04-20)
 
-- **Tag:** `v0.2.0-alpha` — pushed to origin, GHCR image published at `ghcr.io/goldenwo/universal-memory-server:0.2.0-alpha` (amd64 + arm64)
-- **Main HEAD:** `1877ba6` — squash commit of PR #3 (48 feature commits) + 3 cherry-picks (d4b27e1, 655ad6b, afe2af8)
-- **Plugin version:** `0.2.0` (per `plugin.json`)
-- **Previous release:** `v0.1.3` — plugin manifest + auto-start hook
-- **Tests passing:** smoke (6 sections, all green), continuity.sh (local — not yet in CI per #7), preflight (A+B, 61/61), unit suites across 5 libs + hooks libs
+- **Tag:** `v0.2.1` — pending merge of Phase A PR; GHCR image will publish as `ghcr.io/goldenwo/universal-memory-server:0.2.1` (amd64 + arm64)
+- **What's new in 0.2.1 (Phase A of the v0.3 plan):**
+  - `UM_SUMMARIZER` env var — choose backend: `openai` (default when no claude CLI), `claude-agent-sdk` (zero-cost for CC users, auto-detected by install.sh), `ollama` (stub for v0.4)
+  - Routing rubric extracted to canonical `docs/memory-routing-rubric.md` — referenced by hooks and (future) cross-platform integrations
+  - Recursive-hook guard (`UM_IN_SUMMARIZER_SUBPROCESS=1` sentinel) in all 4 CC hooks — required for `claude-agent-sdk` to prevent infinite loop
+  - `docs/summarizer-choice.md` — comparison matrix
+- **Previous release:** `v0.2.0-alpha` — session continuity pipeline, MCP surface (10 tools), plug-and-play install
+- **Tests passing:** 140+ unit assertions across 7 hook test files; install.test.sh 53/53; summarize.test.sh 42/42. Full preflight (A+B) run pending Docker availability at merge time.
 
 ## Minor deviations from the plan
 
@@ -413,4 +416,5 @@ Nothing else deviates from the plan's "Done when" checklist.
 
 ## Revision log
 
+- **2026-04-20** — v0.2.1 Phase A landed: pluggable summarizer (UM_SUMMARIZER), canonical rubric, recursive-hook guard. No breaking changes.
 - **2026-04-19** — First version. v0.2.0-alpha tagged + GHCR published.
