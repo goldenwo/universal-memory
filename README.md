@@ -83,17 +83,21 @@ At any point during a session, run:
 
 This immediately refreshes `state.md` from accumulated captures. Useful after a significant decision you want captured before continuing.
 
-### 5. From Claude.ai — connect and capture
+### 5. From Claude.ai or ChatGPT Desktop — connect and capture
 
-Connect the MCP server to Claude.ai via the connector URL (`http://your-host:6335/mcp`). Once connected:
+Connect the MCP server to any MCP-capable surface via the connector URL (`http://your-host:6335/mcp`, or a tunnel URL for remote surfaces). Once connected:
 
 ```
-memory_state("my-project")    # loads current state.md from Claude.ai
+memory_state("my-project")    # loads current state.md from the remote surface
 memory_search("query")        # semantic search across all indexed documents
-memory_capture(...)           # write a new document to the vault from Claude.ai
+memory_capture(...)           # write a new document to the vault from the remote surface
 ```
 
-Captures made from Claude.ai are visible in Claude Code sessions and vice versa.
+Captures made from any surface are visible in Claude Code sessions and vice versa.
+
+Surface-specific guides:
+- **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
+- **Claude.ai / Claude Desktop:** same connector URL; no custom instructions needed for Claude surfaces.
 
 ---
 
