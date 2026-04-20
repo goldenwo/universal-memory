@@ -91,4 +91,4 @@ ls "$UM_VAULT_DIR/captures/<project>/raw/"
 ## Version compatibility
 
 - Claude Code v2.1.59+ required.
-- Plugin version: 0.2.1. See [ROADMAP.md](../../../ROADMAP.md) for planned features.
+- Plugin version: 0.2.2. See [ROADMAP.md](../../../ROADMAP.md) for planned features.

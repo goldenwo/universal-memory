@@ -70,11 +70,60 @@ if [ -x "$AUTO_START_SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# First-session welcome banner detection
+# ---------------------------------------------------------------------------
+# "First-ever session" = vault has no prior activity: no files exist under
+# state/, captures/, or sessions/. Subdirs may exist (a fresh install creates
+# them) but must be empty of actual content.
+#
+# When detected, prepend a welcome banner to additionalContext so a
+# just-installed user gets a one-time primer on what UM does and how to
+# preview state.md.
+UM_WELCOME_BANNER=""
+UM_VAULT_ROOT=$(vault_path)
+has_activity=false
+for subdir in state captures sessions; do
+  if [ -d "$UM_VAULT_ROOT/$subdir" ] && \
+     find "$UM_VAULT_ROOT/$subdir" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+    has_activity=true
+    break
+  fi
+done
+if [ "$has_activity" = false ]; then
+  UM_WELCOME_BANNER='## Welcome to universal-memory
+
+This is your first session. What happens from here:
+- Every turn is captured (cheaply) to `$VAULT/captures/<project>/raw/<date>.md`
+- When this session ends cleanly, a summary will be written and state.md will appear
+- Next session, state.md will be auto-injected for context
+
+You can run `/um-preview` anytime to see what state.md would look like right now.
+Cost: ~$0.0003 per session end (claude-agent-sdk = $0).
+'
+fi
+
+# Helper: compose additionalContext with optional welcome banner prepended.
+# Called from both the endpoint-unset bail branch and the Python block below.
+um_compose_with_welcome() {
+  local body="$1"
+  if [ -n "$UM_WELCOME_BANNER" ]; then
+    if [ -n "$body" ]; then
+      printf '%s\n%s' "$UM_WELCOME_BANNER" "$body"
+    else
+      printf '%s' "$UM_WELCOME_BANNER"
+    fi
+  else
+    printf '%s' "$body"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 2. Bail if endpoint unset — emit rubric-only additionalContext
 # ---------------------------------------------------------------------------
 if [ -z "${UM_ENDPOINT:-}" ]; then
+  ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
   python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
-    "$UM_ROUTING_RUBRIC" 2>/dev/null || echo '{}'
+    "$ac_out" 2>/dev/null || echo '{}'
   exit 0
 fi
 
@@ -131,16 +180,26 @@ response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
 
 # Single Python invocation: parse state, apply staleness rules, emit JSON output.
 # Combining parse + JSON encode avoids a second python3 startup (~200ms on Windows).
-# UM_ROUTING_RUBRIC is passed via env so it is always appended to additionalContext.
+# UM_ROUTING_RUBRIC and UM_WELCOME_BANNER are passed via env so they are always
+# composed into additionalContext.
 export UM_ROUTING_RUBRIC
+export UM_WELCOME_BANNER
 printf '%s' "$response" | python3 -c '
 import json, sys, re, os
 from datetime import datetime, timezone
 
 rubric = os.environ.get("UM_ROUTING_RUBRIC", "")
+welcome = os.environ.get("UM_WELCOME_BANNER", "")
+
+def with_welcome(body_out):
+    if welcome and body_out:
+        return welcome + "\n" + body_out
+    if welcome:
+        return welcome
+    return body_out
 
 def emit_rubric_only():
-    sys.stdout.write(json.dumps({"additionalContext": rubric}) + "\n")
+    sys.stdout.write(json.dumps({"additionalContext": with_welcome(rubric)}) + "\n")
     sys.exit(0)
 
 def with_rubric(body_out):
@@ -166,7 +225,7 @@ if not valid_from:
 
 if not valid_from:
     # No age info — treat as fresh, inject verbatim
-    sys.stdout.write(json.dumps({"additionalContext": with_rubric(body)}) + "\n")
+    sys.stdout.write(json.dumps({"additionalContext": with_welcome(with_rubric(body))}) + "\n")
     sys.exit(0)
 
 # Compute age in days
@@ -192,7 +251,7 @@ elif age_days > 7:
 else:
     body_out = body
 
-sys.stdout.write(json.dumps({"additionalContext": with_rubric(body_out)}) + "\n")
+sys.stdout.write(json.dumps({"additionalContext": with_welcome(with_rubric(body_out))}) + "\n")
 ' 2>/dev/null || printf '{}\n'
 
 # ---------------------------------------------------------------------------

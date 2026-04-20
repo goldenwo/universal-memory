@@ -387,6 +387,86 @@ assert_eq "T6: exit code 0 on missing separators" "$T6_EXIT" "0"
 assert_empty "T6: empty stdout on missing separators" "$T6_OUT"
 assert_contains "T6: stderr mentions missing separator" "$T6_STDERR" "missing"
 
+# ============================================================
+# Test 7: --stdout mode (B1a) — renders merge without side effects
+#   - Writes merged content to stdout (same as default)
+#   - Does NOT append to cost-log.csv telemetry
+#   - Existing state.md on disk is never read or written by this script
+#     (session-end.sh owns that), but we still assert no telemetry side
+#     effect occurs in the vault.
+# ============================================================
+echo "=== Test 7: --stdout mode — renders merge, skips telemetry ==="
+
+write_mock_curl "$MOCK_BIN" "$FIXTURE_STATE_UPDATED_FILE"
+
+# Use an isolated vault for this test so we can observe telemetry side effects
+T7_VAULT="$TMPDIR_ROOT/vault_t7"
+mkdir -p "$T7_VAULT/state/testproject"
+printf 'old state content' > "$T7_VAULT/state/testproject/state.md"
+
+T7_INPUT=$(make_stdin "$SAMPLE_OLD_STATE" "$SAMPLE_SUMMARY")
+T7_PATH="$MOCK_BIN:$PATH"
+
+T7_OUT=$(UM_VAULT_DIR="$T7_VAULT" PATH="$T7_PATH" \
+  bash "$UPDATE_STATE" --stdout --project testproject <<< "$T7_INPUT" 2>/dev/null)
+T7_EXIT=$?
+
+assert_eq "T7: --stdout exit code 0" "$T7_EXIT" "0"
+assert_not_empty "T7: --stdout stdout is non-empty" "$T7_OUT"
+assert_contains "T7: --stdout has frontmatter" "$T7_OUT" "---"
+assert_contains "T7: --stdout has Current focus header" "$T7_OUT" "## Current focus"
+assert_contains "T7: --stdout has In flight header" "$T7_OUT" "## In flight"
+assert_contains "T7: --stdout has Recent decisions header" "$T7_OUT" "## Recent decisions"
+assert_contains "T7: --stdout has Next actions header" "$T7_OUT" "## Next actions"
+assert_contains "T7: --stdout has Open questions header" "$T7_OUT" "## Open questions"
+assert_contains "T7: --stdout has Environment header" "$T7_OUT" "## Environment"
+
+# Original state.md must remain unchanged (script never writes it anyway,
+# but this is the contract callers rely on)
+T7_STATE_AFTER=$(cat "$T7_VAULT/state/testproject/state.md")
+assert_eq "T7: --stdout preserves state.md verbatim" "$T7_STATE_AFTER" "old state content"
+
+# Telemetry (cost-log.csv) must NOT have been created/appended
+if [ -f "$T7_VAULT/.telemetry/cost-log.csv" ]; then
+  fail "T7: --stdout should not write cost-log.csv telemetry"
+else
+  pass "T7: --stdout skips cost-log.csv telemetry"
+fi
+
+# No lockdir created by the script (it doesn't create one anyway, but assert)
+if [ -d "$T7_VAULT/state/testproject/state.md.lockdir" ]; then
+  fail "T7: --stdout should not create a lockdir"
+else
+  pass "T7: --stdout creates no lockdir"
+fi
+
+# ============================================================
+# Test 8: --stdout default-mode parity — confirm non-stdout call still
+#   writes telemetry (regression guard for existing callers)
+# ============================================================
+echo "=== Test 8: default mode still writes cost-log.csv (regression guard) ==="
+
+write_mock_curl "$MOCK_BIN" "$FIXTURE_STATE_UPDATED_FILE"
+
+T8_VAULT="$TMPDIR_ROOT/vault_t8"
+mkdir -p "$T8_VAULT"
+
+T8_INPUT=$(make_stdin "$SAMPLE_OLD_STATE" "$SAMPLE_SUMMARY")
+T8_PATH="$MOCK_BIN:$PATH"
+
+T8_OUT=$(UM_VAULT_DIR="$T8_VAULT" PATH="$T8_PATH" UM_PROJECT="testproject" \
+  bash "$UPDATE_STATE" <<< "$T8_INPUT" 2>/dev/null)
+T8_EXIT=$?
+
+assert_eq "T8: default-mode exit code 0" "$T8_EXIT" "0"
+assert_not_empty "T8: default-mode stdout is non-empty" "$T8_OUT"
+
+if [ -f "$T8_VAULT/.telemetry/cost-log.csv" ]; then
+  pass "T8: default mode writes cost-log.csv (regression guard)"
+else
+  fail "T8: default mode must still write cost-log.csv"
+fi
+
 unset CLAUDE_CWD
 
 # ============================================================

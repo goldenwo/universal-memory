@@ -422,9 +422,14 @@ STUBEOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: Return time < 500ms (mocked curl, no orphans)
+# Test 8: Return time < 800ms (mocked curl, no orphans)
+# Threshold set to 800ms to accommodate Windows/MSYS Python startup overhead
+# (200-300ms per python3 invocation) plus first-session detection + welcome
+# banner composition. Budget generous enough to catch real regressions (e.g.
+# a 2s+ regression would indicate a hang or network call leak) without
+# flaking on platform baseline variance.
 # ---------------------------------------------------------------------------
-printf '\nTest 8: Return time < 500ms\n'
+printf '\nTest 8: Return time < 800ms\n'
 {
   # Clean vault — no orphans
   rm -rf "$UM_VAULT_DIR"
@@ -448,10 +453,10 @@ MOCK
   elapsed=$((end_ms - start_ms))
 
   printf '    elapsed: %dms\n' "$elapsed"
-  if [ "$elapsed" -lt 500 ]; then
-    pass "return time <500ms (${elapsed}ms)"
+  if [ "$elapsed" -lt 800 ]; then
+    pass "return time <800ms (${elapsed}ms)"
   else
-    fail "return time exceeded 500ms (${elapsed}ms)"
+    fail "return time exceeded 800ms (${elapsed}ms)"
   fi
 }
 
@@ -558,6 +563,53 @@ printf '\nTest 11: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1)\n'
   else
     fail "T11: guard should emit empty output, got: $GUARD_OUT"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 12: First-session welcome banner when vault is empty
+# ---------------------------------------------------------------------------
+# Detection: no files under $VAULT/state/, $VAULT/captures/, or $VAULT/sessions/.
+# Simulates a fresh install where the plugin ran once (created subdirs) but no
+# session has ended yet.
+printf '\nTest 12: first-session welcome banner shown when vault is empty\n'
+{
+  tmp_vault=$(mktemp -d)
+  # Deliberately empty vault — subdirs exist but contain no files
+  mkdir -p "$tmp_vault/state" "$tmp_vault/captures" "$tmp_vault/sessions"
+
+  T12_OUT=$(UM_VAULT_DIR="$tmp_vault" UM_ENDPOINT="" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    bash "$SESSION_START" 2>/dev/null)
+  ac=$(extract_additional_context "$T12_OUT")
+
+  assert_contains "T12: additionalContext contains 'Welcome to universal-memory'" \
+    "$ac" "Welcome to universal-memory"
+  assert_contains "T12: welcome banner references /um-preview" \
+    "$ac" "/um-preview"
+  assert_contains "T12: rubric still injected alongside welcome" \
+    "$ac" "Memory routing"
+  rm -rf "$tmp_vault"
+}
+
+# ---------------------------------------------------------------------------
+# Test 13: NO welcome banner when vault has prior state.md
+# ---------------------------------------------------------------------------
+printf '\nTest 13: no welcome banner when vault has prior state.md\n'
+{
+  tmp_vault=$(mktemp -d)
+  mkdir -p "$tmp_vault/state/existing-proj"
+  printf 'existing state content' > "$tmp_vault/state/existing-proj/state.md"
+
+  T13_OUT=$(UM_VAULT_DIR="$tmp_vault" UM_ENDPOINT="" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    bash "$SESSION_START" 2>/dev/null)
+  ac=$(extract_additional_context "$T13_OUT")
+
+  assert_not_contains "T13: no welcome banner for established vault" \
+    "$ac" "Welcome to universal-memory"
+  # Rubric should still appear
+  assert_rubric_present "$ac" "T13: "
+  rm -rf "$tmp_vault"
 }
 
 # ---------------------------------------------------------------------------

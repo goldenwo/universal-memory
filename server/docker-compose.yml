@@ -9,7 +9,7 @@ services:
 
   memory-server:
     build: .
-    image: universal-memory-server:0.2.1
+    image: universal-memory-server:0.2.2
     restart: unless-stopped
     env_file: .env
     environment:

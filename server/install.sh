@@ -2,6 +2,8 @@
 # install.sh — universal-memory server interactive installer.
 # Usage: ./install.sh          (interactive)
 #        ./install.sh --verify (post-install sanity check only)
+#        ./install.sh --yes    (non-interactive, accept all defaults)
+#        ./install.sh -y       (alias for --yes)
 #        UM_NONINTERACTIVE=1 ./install.sh  (read all values from env, no prompts)
 #
 # Exits non-zero on any error. Prints what it does. Never installs Docker
@@ -187,6 +189,49 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 fi
 
+# ─── CLI arg parsing (--yes / -y) ────────────────────────────────────────────
+# --yes/-y is a user-facing shortcut for "run non-interactively with sensible
+# defaults." It implies UM_NONINTERACTIVE=1 but is friendlier:
+#   - default vault dir to $HOME/.um/vault if UM_VAULT_DIR unset
+#   - use env OPENAI_API_KEY if present; if absent AND no `claude` CLI,
+#     proceed with a warning (UM_SUMMARIZER=openai) instead of failing
+#   - accept "copy" for plugin install without asking
+#   - append to shell profile without confirmation
+# --verify is already handled above (early exit); do not re-parse it here.
+for _arg in "$@"; do
+	case "$_arg" in
+		--yes|-y)
+			UM_YES=1
+			UM_NONINTERACTIVE=1
+			;;
+		--verify)
+			# Handled above; reaching here means the user combined flags.
+			# Honor the --verify early-exit behavior by rejecting the combo.
+			fail "--verify must be the sole argument; do not combine with --yes."
+			;;
+	esac
+done
+
+# When --yes is set, backfill any missing required vars with defaults so the
+# UM_NONINTERACTIVE strict-check below does not `:?` abort. This is the one
+# place where `--yes` diverges from `UM_NONINTERACTIVE=1`: it tolerates a
+# missing OPENAI_API_KEY and falls back to an empty string (no summaries).
+if [ "${UM_YES:-0}" = "1" ]; then
+	: "${UM_VAULT_DIR:=$HOME/.um/vault}"
+	# Allow OPENAI_API_KEY to be empty — we handle the fallback path below.
+	: "${OPENAI_API_KEY:=}"
+	# MEM0_USER_ID: if absent, use a safe default namespace. Users can override
+	# later by editing server/.env.
+	: "${MEM0_USER_ID:=default}"
+	: "${MEM0_MCP_PORT:=6335}"
+	: "${UM_SUMMARY_ENABLED:=true}"
+	: "${UM_TEMPORAL_DECAY:=false}"
+	# UM_OPENAI_API_KEY falls back to OPENAI_API_KEY (which may itself be empty).
+	: "${UM_OPENAI_API_KEY:=$OPENAI_API_KEY}"
+	export UM_VAULT_DIR OPENAI_API_KEY MEM0_USER_ID MEM0_MCP_PORT \
+		UM_SUMMARY_ENABLED UM_TEMPORAL_DECAY UM_OPENAI_API_KEY
+fi
+
 # ─── Prereq checks ───────────────────────────────────────────────────────────
 command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
@@ -238,8 +283,12 @@ prompt() {
 }
 
 if [ "${UM_NONINTERACTIVE:-0}" = "1" ]; then
-	: "${OPENAI_API_KEY:?UM_NONINTERACTIVE=1 but OPENAI_API_KEY is not set}"
-	: "${MEM0_USER_ID:?UM_NONINTERACTIVE=1 but MEM0_USER_ID is not set}"
+	# --yes mode pre-populates defaults (including empty OPENAI_API_KEY) above.
+	# Only the stricter UM_NONINTERACTIVE=1 (without --yes) requires a real key.
+	if [ "${UM_YES:-0}" != "1" ]; then
+		: "${OPENAI_API_KEY:?UM_NONINTERACTIVE=1 but OPENAI_API_KEY is not set}"
+		: "${MEM0_USER_ID:?UM_NONINTERACTIVE=1 but MEM0_USER_ID is not set}"
+	fi
 	MEM0_MCP_PORT="${MEM0_MCP_PORT:-6335}"
 	UM_VAULT_DIR="${UM_VAULT_DIR:-$HOME/.um/vault}"
 	UM_SUMMARY_ENABLED="${UM_SUMMARY_ENABLED:-true}"
@@ -540,6 +589,14 @@ if command -v claude >/dev/null 2>&1; then
 else
 	_um_summarizer_default="openai"
 	info "Claude CLI not detected — defaulting UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)"
+	# B3: In --yes mode with no key AND no claude CLI, the user will have no
+	# working summarizer. Don't fail (the install is otherwise useful — raw
+	# captures still work), but warn loudly so they know summaries are off
+	# until they set UM_OPENAI_API_KEY or install the claude CLI.
+	if [ "${UM_YES:-0}" = "1" ] && [ -z "${UM_OPENAI_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+		warn "No OPENAI_API_KEY and no claude CLI detected — summaries will be skipped."
+		warn "To enable: set UM_OPENAI_API_KEY in your shell, or install the claude CLI, then re-run install.sh."
+	fi
 fi
 
 _detect_profile() {

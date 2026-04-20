@@ -24,6 +24,45 @@ if ! declare -f vault_path >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Argument parsing (B1a): --stdout renders merge without side effects
+# ---------------------------------------------------------------------------
+# Modes:
+#   write  (default) — render merged state, write telemetry, echo to stdout
+#   stdout           — render merged state, skip telemetry, echo to stdout
+# Note: this script never writes state.md or acquires a lockdir itself —
+#       session-end.sh owns the atomic write + lock. The only side effect
+#       gated by --stdout is the cost-log.csv telemetry append.
+UM_MODE="write"
+_um_remaining=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --stdout)
+      UM_MODE="stdout"
+      shift
+      ;;
+    --project)
+      if [ $# -lt 2 ]; then
+        echo "[um-update-state] --project requires a value" >&2
+        exit 0
+      fi
+      export UM_PROJECT="$2"
+      shift 2
+      ;;
+    --) shift; while [ $# -gt 0 ]; do _um_remaining+=("$1"); shift; done; break ;;
+    *)
+      _um_remaining+=("$1")
+      shift
+      ;;
+  esac
+done
+# Restore any non-flag args (currently unused by this script, but forward-compat).
+if [ ${#_um_remaining[@]} -gt 0 ]; then
+  set -- "${_um_remaining[@]}"
+else
+  set --
+fi
+
+# ---------------------------------------------------------------------------
 # Config / defaults
 # ---------------------------------------------------------------------------
 UM_STATE_MODEL="${UM_STATE_MODEL:-gpt-4o-mini}"
@@ -131,8 +170,11 @@ fi
 
 # ---------------------------------------------------------------------------
 # Resolve project name and current timestamp
+# UM_PROJECT (set by --project flag or by callers like session-end.sh) wins
+# over the cwd-derived project_name(). Falls through to project_name() so
+# existing stdin-only callers behave unchanged.
 # ---------------------------------------------------------------------------
-project=$(project_name)
+project="${UM_PROJECT:-$(project_name)}"
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Determine if old state is empty (initial state case)
@@ -343,23 +385,28 @@ fi
 
 # ---------------------------------------------------------------------------
 # Telemetry
+#   In --stdout mode we still log to stderr (useful for preview cost signal)
+#   but skip the persistent cost-log.csv append so preview calls don't
+#   pollute cumulative usage stats.
 # ---------------------------------------------------------------------------
 tokens_in=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("prompt_tokens",0))')
 tokens_out=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("completion_tokens",0))')
 cost=$(python3 -c "print(f'{($tokens_in * 0.00015 + $tokens_out * 0.0006) / 1000:.6f}')")
 
-echo "[um-update-state] tokens_in=$tokens_in tokens_out=$tokens_out cost_estimate_usd=$cost" >&2
+echo "[um-update-state] tokens_in=$tokens_in tokens_out=$tokens_out cost_estimate_usd=$cost mode=$UM_MODE" >&2
 
-# Append to cost-log.csv
-vault=$(vault_path)
-cost_log="$vault/.telemetry/cost-log.csv"
-mkdir -p "$(dirname "$cost_log")"
-if [ ! -f "$cost_log" ]; then
-  echo "timestamp,project,model,tokens_in,tokens_out,cost_usd" > "$cost_log"
+if [ "$UM_MODE" != "stdout" ]; then
+  # Append to cost-log.csv (write mode only — preview must not bump counters)
+  vault=$(vault_path)
+  cost_log="$vault/.telemetry/cost-log.csv"
+  mkdir -p "$(dirname "$cost_log")"
+  if [ ! -f "$cost_log" ]; then
+    echo "timestamp,project,model,tokens_in,tokens_out,cost_usd" > "$cost_log"
+  fi
+  echo "${timestamp},${project},${UM_STATE_MODEL},${tokens_in},${tokens_out},${cost}" >> "$cost_log"
 fi
-echo "${timestamp},${project},${UM_STATE_MODEL},${tokens_in},${tokens_out},${cost}" >> "$cost_log"
 
 # ---------------------------------------------------------------------------
-# Write updated state.md to stdout
+# Write updated state.md to stdout (same in both modes)
 # ---------------------------------------------------------------------------
 printf '%s' "$state_doc"

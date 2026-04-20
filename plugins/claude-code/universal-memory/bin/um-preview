@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# um-preview — generate a draft state.md for the current session, print to stdout, do not write
+#
+# Usage: um-preview [--project <name>]
+#
+# Reads today's raw captures from $VAULT/captures/<project>/raw/YYYY-MM-DD.md,
+# summarizes them via summarize.sh, then merges into a draft state.md via
+# update-state.sh --stdout. The draft is printed to stdout.
+#
+# This command is READ-ONLY with respect to the vault:
+#   - does NOT write $VAULT/state/<project>/state.md
+#   - does NOT touch cost-log.csv (update-state.sh --stdout suppresses telemetry)
+#   - does NOT acquire a lockdir
+#   - does NOT reindex
+#
+# If you like the preview and want to commit it, run `/um-checkpoint` (which
+# invokes session-end.sh, the canonical write path).
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/../hooks/lib"
+
+# shellcheck source=../hooks/lib/vault.sh
+source "$LIB_DIR/vault.sh"
+
+# ---------------------------------------------------------------------------
+# Parse args
+# ---------------------------------------------------------------------------
+PROJECT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project)
+      if [ $# -lt 2 ]; then
+        echo "um-preview: --project requires a value" >&2
+        exit 2
+      fi
+      PROJECT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: um-preview [--project <name>]
+
+Reads today's raw captures, summarizes them, and outputs a draft state.md
+to stdout. Does NOT modify any files in the vault. Use /um-checkpoint if
+you want to actually write the state.
+
+Env vars:
+  UM_VAULT_DIR        - vault root (default: \$HOME/.um/vault)
+  UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY)
+  UM_SUMMARIZER       - summarizer backend (default: openai)
+  CLAUDE_CWD          - override for project name inference
+EOF
+      exit 0
+      ;;
+    *)
+      echo "um-preview: unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Resolve project + vault + today's raw capture path
+# ---------------------------------------------------------------------------
+PROJECT="${PROJECT:-$(project_name)}"
+VAULT=$(vault_path)
+TODAY=$(date -u +%Y-%m-%d)
+RAW_FILE="$VAULT/captures/$PROJECT/raw/$TODAY.md"
+
+if [ ! -f "$RAW_FILE" ]; then
+  echo "um-preview: no captures for today at $RAW_FILE — run a CC session first, then try again." >&2
+  exit 1
+fi
+
+RAW_CONTENT=$(cat "$RAW_FILE")
+if [ -z "$RAW_CONTENT" ]; then
+  echo "um-preview: today's raw capture ($RAW_FILE) is empty — nothing to preview." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: summarize raw captures → session_summary text
+# Call summarize.sh the same way session-end.sh does.
+# ---------------------------------------------------------------------------
+SUMMARY=$(printf '%s' "$RAW_CONTENT" | UM_PROJECT="$PROJECT" bash "$LIB_DIR/summarize.sh" 2>/dev/null || true)
+
+if [ -z "$SUMMARY" ]; then
+  echo "um-preview: summarize.sh returned empty — cannot produce preview." >&2
+  echo "um-preview: likely causes: missing UM_OPENAI_API_KEY, daily cap hit, transcript <50 chars, or LLM API error." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 2: read current state.md if any, build separated stdin for update-state.sh
+# Input format (must match session-end.sh exactly):
+#   ===UM-OLD-STATE===
+#   <old state.md content, may be empty>
+#   ===UM-SESSION-SUMMARY===
+#   <summary body>
+#   ===UM-END===
+# ---------------------------------------------------------------------------
+OLD_STATE_FILE="$VAULT/state/$PROJECT/state.md"
+OLD_STATE=""
+if [ -f "$OLD_STATE_FILE" ]; then
+  OLD_STATE=$(cat "$OLD_STATE_FILE" 2>/dev/null || true)
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: pipe into update-state.sh --stdout for merge + render
+# --stdout suppresses telemetry append; this script never writes to the vault.
+# ---------------------------------------------------------------------------
+{
+  printf '===UM-OLD-STATE===\n%s\n' "$OLD_STATE"
+  printf '===UM-SESSION-SUMMARY===\n%s\n' "$SUMMARY"
+  printf '===UM-END===\n'
+} | bash "$LIB_DIR/update-state.sh" --stdout --project "$PROJECT"
