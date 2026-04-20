@@ -19,15 +19,32 @@
 #
 # Exits silently (exit 0) on any failure — never block session start.
 
+# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
+# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
+# this, the nested `claude` process would re-trigger this hook, causing
+# duplicate captures at best and infinite loop at worst.
+if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-# Memory routing rubric — appended to every session's additionalContext so
-# Claude's "remember this" behavior is predictable across sessions.
-# ~1100 chars (~275 tokens) — within the 1-2k token additionalContext budget.
-UM_ROUTING_RUBRIC='## Memory routing (universal-memory)
+# Memory routing rubric — sourced from docs/memory-routing-rubric.md
+# (canonical location; all platforms reference it).
+# Strip HTML comments so the rubric injects cleanly.
+RUBRIC_PATH="$SCRIPT_DIR/../../../../docs/memory-routing-rubric.md"
+if [ -r "$RUBRIC_PATH" ]; then
+  UM_ROUTING_RUBRIC=$(sed '/^<!--/,/-->$/d' "$RUBRIC_PATH")
+else
+  # Plugin-installed copy (not repo-relative) — look at sibling rubric.md
+  RUBRIC_PATH="$SCRIPT_DIR/../rubric.md"
+  if [ -r "$RUBRIC_PATH" ]; then
+    UM_ROUTING_RUBRIC=$(sed '/^<!--/,/-->$/d' "$RUBRIC_PATH")
+  else
+    # Fallback: full inline rubric if BOTH canonical file and sibling copy missing.
+    # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
+    UM_ROUTING_RUBRIC='## Memory routing (universal-memory)
 
 Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
 
@@ -38,6 +55,8 @@ When the user says "remember", "note that", or similar:
 - Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.'
+  fi
+fi
 
 # shellcheck disable=SC1091
 source "$LIB_DIR/vault.sh"

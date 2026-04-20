@@ -14,6 +14,62 @@
 
 set -uo pipefail
 
+# ─── UM_SUMMARIZER dispatch (A2) ──────────────────────────────────────────────
+# Selects which summarizer backend to use. Default: openai.
+# Options: openai (curl OpenAI chat/completions), claude-agent-sdk (stub - A3),
+# ollama (stub - v0.4). Unknown values fall back to openai with a warning.
+#
+# Note: the local $SUMMARIZER variable is cosmetic below this block — the
+# existing OpenAI code path reads UM_OPENAI_API_KEY directly, not $SUMMARIZER.
+# The coercion to "openai" in fallback arms documents intent; it is not a
+# runtime gate. When A3 implements claude-agent-sdk, it should `exit 0` on
+# success inside its case arm rather than relying on the coercion.
+SUMMARIZER="${UM_SUMMARIZER:-openai}"
+case "$SUMMARIZER" in
+  openai)
+    : # proceed with existing OpenAI logic below
+    ;;
+  claude-agent-sdk)
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "[um-summarize] UM_SUMMARIZER=claude-agent-sdk requires 'claude' CLI in PATH — falling back to openai" >&2
+      SUMMARIZER=openai
+    else
+      # Read stdin (the prompt/transcript) and pipe to `claude -p` in
+      # non-interactive mode. CRITICAL: set UM_IN_SUMMARIZER_SUBPROCESS=1 so
+      # the nested `claude` process's own hooks (if any) exit immediately via
+      # the guard added to all 4 CC hooks — prevents infinite recursion
+      # between summarize.sh and the hooks it indirectly triggers.
+      #
+      # Note: only the RHS env-var assignment matters for recursion prevention.
+      # The LHS of the pipe is a bash builtin (`printf`) whose env doesn't
+      # propagate anywhere meaningful — only the `claude` child process on the
+      # RHS needs the sentinel to short-circuit its hooks.
+      STDIN_CONTENT=$(cat)
+      SUMMARY=$(printf '%s' "$STDIN_CONTENT" | \
+                UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null)
+      claude_rc=$?
+      if [ "$claude_rc" -ne 0 ] || [ -z "$SUMMARY" ]; then
+        echo "[um-summarize] claude -p failed (exit $claude_rc) or returned empty — falling back to openai" >&2
+        # Re-feed stdin for the openai path below (which reads stdin via `cat`)
+        exec <<< "$STDIN_CONTENT"
+        SUMMARIZER=openai
+      else
+        printf '%s\n' "$SUMMARY"
+        exit 0
+      fi
+    fi
+    ;;
+  ollama)
+    echo "[um-summarize] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
+    SUMMARIZER=openai
+    ;;
+  *)
+    echo "[um-summarize] UM_SUMMARIZER='$SUMMARIZER' unknown — falling back to openai" >&2
+    SUMMARIZER=openai
+    ;;
+esac
+# Rest of script assumes SUMMARIZER=openai from here on.
+
 # Source vault.sh for vault_path and project_name
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f vault_path >/dev/null 2>&1; then

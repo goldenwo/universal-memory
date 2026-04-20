@@ -391,6 +391,23 @@ _read_plugin_version() {
 	grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
 }
 
+# Copy the canonical routing rubric into an installed plugin so
+# session-start.sh can read it via the sibling-copy fallback when the
+# repo is not reachable (e.g. installed-plugin copy outside the checkout).
+# On failure warn visibly — a silent failure would make a missing rubric
+# indistinguishable from a successful install.
+_copy_rubric_to_target() {
+	local target="$1"
+	local src_rubric="$REPO_ROOT/docs/memory-routing-rubric.md"
+	if [ ! -r "$src_rubric" ]; then
+		warn "Rubric source missing at $src_rubric — session-start will use inline fallback."
+		return
+	fi
+	if ! cp "$src_rubric" "$target/rubric.md" 2>/dev/null; then
+		warn "Could not copy rubric.md to $target — session-start will use inline fallback."
+	fi
+}
+
 _install_plugin() {
 	local src="$_PLUGIN_SRC"
 	local target="$_PLUGIN_TARGET"
@@ -473,9 +490,17 @@ _install_plugin() {
 			fi
 			if ln -s "$src" "$target" 2>/dev/null; then
 				ok "Plugin symlinked: $target -> $src"
+				# Do NOT copy rubric into $target here — it would resolve
+				# through the symlink and pollute the repo source tree with
+				# an untracked rubric.md. session-start.sh's canonical-path
+				# lookup ($SCRIPT_DIR/../../../../docs/memory-routing-rubric.md)
+				# already resolves correctly through the symlink.
 			else
 				warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
-				cp -r "$src" "$target" && ok "Plugin copied to $target (copy fallback)."
+				if cp -r "$src" "$target"; then
+					ok "Plugin copied to $target (copy fallback)."
+					_copy_rubric_to_target "$target"
+				fi
 			fi
 			;;
 		[sS]*)
@@ -488,7 +513,10 @@ _install_plugin() {
 			elif [ -d "$target" ]; then
 				rm -rf "$target"
 			fi
-			cp -r "$src" "$target" && ok "Plugin copied to $target"
+			if cp -r "$src" "$target"; then
+				ok "Plugin copied to $target"
+				_copy_rubric_to_target "$target"
+			fi
 			;;
 	esac
 
@@ -504,6 +532,16 @@ _install_plugin
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
 _UM_MARKER_END="# --- end universal-memory ---"
 
+# Detect summarizer default — prefer claude CLI (zero-cost) if available.
+# Probed BEFORE writing the profile so the detected value is the one written.
+if command -v claude >/dev/null 2>&1; then
+	_um_summarizer_default="claude-agent-sdk"
+	info "Claude CLI detected — defaulting UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"
+else
+	_um_summarizer_default="openai"
+	info "Claude CLI not detected — defaulting UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)"
+fi
+
 _detect_profile() {
 	local shell_name
 	shell_name=$(basename "${SHELL:-bash}")
@@ -514,19 +552,74 @@ _detect_profile() {
 	esac
 }
 
+# Write a fresh marker block with all managed env vars to the end of $profile.
+# Caller must ensure any existing block has already been removed.
+_write_marker_block() {
+	local profile="$1"
+	local key_value="$2"
+	local summarizer="$3"
+	{
+		printf '\n%s\n' "$_UM_MARKER_START"
+		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
+		printf "export UM_SUMMARIZER='%s'\n" "$summarizer"
+		printf '%s\n' "$_UM_MARKER_END"
+	} >> "$profile"
+}
+
+# Strip any existing marker block from the profile. Idempotent: no-op if absent.
+# Uses a sed script that deletes lines from the start marker through the end
+# marker inclusive. We anchor on literal marker strings (no regex specials).
+_strip_marker_block() {
+	local profile="$1"
+	# Quick exit if no block present
+	grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null || return 0
+	# sed -i with .bak backup for portability (GNU sed and BSD/macOS sed agree
+	# when a backup suffix is supplied). The .bak file is removed after.
+	# Marker strings contain no sed metacharacters (no /, \, &, etc.), but
+	# if that ever changes, switch to a different delimiter here.
+	sed -i.bak "\|$_UM_MARKER_START|,\|$_UM_MARKER_END|d" "$profile"
+	rm -f "$profile.bak" 2>/dev/null || true
+}
+
 _append_to_profile() {
 	local profile="$1"
-	local key_value="$2"  # literal key string
+	local key_value="$2"       # literal key string
+	local summarizer="$3"      # auto-detected summarizer default
 
 	if [ -z "$profile" ]; then
 		warn "Unknown shell; cannot auto-append UM_OPENAI_API_KEY. Add manually:"
 		warn "  export UM_OPENAI_API_KEY='<your-key>'"
+		warn "  export UM_SUMMARIZER='$summarizer'"
 		return
 	fi
 
-	# Check existing export line
+	# Case 1: marker block already exists → this is a re-install.
+	# We need to decide: does the existing block have a matching key?
+	#   - If yes: rewrite the block declaratively so every managed var is
+	#     up-to-date (UM_SUMMARIZER might be new since the last install).
+	#   - If no: warn about the conflict and leave everything alone (user's
+	#     custom key wins; they should update manually).
+	if grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null; then
+		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
+		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
+		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
+			# Matching key inside existing marker block — rewrite block so
+			# UM_SUMMARIZER (and any future managed vars) are included.
+			ok "UM_OPENAI_API_KEY already present in $profile with matching value — refreshing managed block."
+			_strip_marker_block "$profile"
+			_write_marker_block "$profile" "$key_value" "$summarizer"
+			ok "Managed block refreshed in $profile (UM_OPENAI_API_KEY + UM_SUMMARIZER)."
+			info "Reload your shell or run: source $profile"
+			return
+		else
+			warn "Found existing UM_OPENAI_API_KEY in $profile with different value; please update manually."
+			return
+		fi
+	fi
+
+	# Case 2: no marker block, but a bare UM_OPENAI_API_KEY export exists
+	# somewhere in the profile (user-managed, outside our block). Respect it.
 	if grep -q 'export UM_OPENAI_API_KEY' "$profile" 2>/dev/null; then
-		# Check if value matches
 		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
 		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
 		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
@@ -537,7 +630,7 @@ _append_to_profile() {
 		return
 	fi
 
-	# Prompt
+	# Case 3: fresh install — prompt, then write the block.
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Append UM_OPENAI_API_KEY to %s? [Y/n] ' "$profile" >&2
 		read -r _ans
@@ -545,20 +638,18 @@ _append_to_profile() {
 		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add UM_OPENAI_API_KEY manually."; return; }
 	fi
 
-	# Append marker block — use printf to avoid value interpolation
-	{
-		printf '\n%s\n' "$_UM_MARKER_START"
-		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
-		printf '%s\n' "$_UM_MARKER_END"
-	} >> "$profile"
+	# Append marker block — use printf to avoid value interpolation.
+	# UM_SUMMARIZER is included in the same marker block so uninstall/re-install
+	# paths manage both together.
+	_write_marker_block "$profile" "$key_value" "$summarizer"
 
-	ok "UM_OPENAI_API_KEY appended to $profile"
+	ok "UM_OPENAI_API_KEY and UM_SUMMARIZER appended to $profile"
 	info "Reload your shell or run: source $profile"
 }
 
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
-_append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY"
+_append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
 info "Pulling / building images..."

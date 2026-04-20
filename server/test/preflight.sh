@@ -187,7 +187,7 @@ wait_for_server() {
 # ---------------------------------------------------------------------------
 # Check prerequisites
 # ---------------------------------------------------------------------------
-info "Preflight v0.2.0 — $(date -u)"
+info "Preflight v0.2.1 — $(date -u)"
 info "Endpoint: $ENDPOINT"
 info "Vault: $VAULT"
 info "Project: $PREFLIGHT_PROJECT"
@@ -969,6 +969,61 @@ for _kw in "Memory routing" "memory_capture" "project-scoped" "durable docs"; do
   fi
 done
 
+# ─── A5. UM_SUMMARIZER=claude-agent-sdk live dispatch ───────────────────────
+section "A5. UM_SUMMARIZER=claude-agent-sdk live dispatch"
+
+if ! command -v claude >/dev/null 2>&1; then
+  t_skip "A5: claude CLI not installed — skipping UM_SUMMARIZER=claude-agent-sdk test"
+  t_skip "A5: claude-agent-sdk summary has non-trivial content"
+else
+  # Isolated temp vault — matches A1 pattern, keeps the live server's vault clean
+  A5_VAULT=$(mktemp -d)
+  A5_PROJECT="preflight-a5-${TS}"
+  mkdir -p "$A5_VAULT/.telemetry"
+
+  # Reuse the A1 transcript fixtures so summarize has real content to work with
+  A5_TRANSCRIPT=$(cat "$FIXTURES_DIR/sample-transcript-1.jsonl"; echo; cat "$FIXTURES_DIR/sample-transcript-2.jsonl")
+
+  # Write raw capture via stop.sh so session-end has something to summarize
+  printf '%s' "$A5_TRANSCRIPT" | \
+    UM_PROJECT="$A5_PROJECT" CLAUDE_CWD="/fake/$A5_PROJECT" \
+    UM_VAULT_DIR="$A5_VAULT" \
+    bash "$HOOKS_DIR/stop.sh" 2>/dev/null || true
+
+  # Invoke session-end.sh with UM_SUMMARIZER=claude-agent-sdk — this exercises
+  # the real `claude -p` CLI, not the openai path (the fallback key below is
+  # deliberately invalid so a silent fall-through to openai would produce no
+  # summary and the assertion below would catch it).
+  UM_SUMMARIZER=claude-agent-sdk \
+  UM_PROJECT="$A5_PROJECT" \
+  UM_VAULT_DIR="$A5_VAULT" \
+  UM_OPENAI_API_KEY="sk-not-used-because-claude-agent-sdk" \
+  UM_SUMMARY_ENABLED=true \
+  UM_ENDPOINT="http://localhost:99999" \
+  CLAUDE_CWD="/fake/$A5_PROJECT" \
+    timeout 120 bash "$HOOKS_DIR/session-end.sh" \
+      >"$A5_VAULT/.telemetry/a5-claude-agent-sdk.log" 2>&1 || true
+
+  # Assert: a summary file appeared under sessions/$A5_PROJECT/
+  A5_SUMMARY=$(find "$A5_VAULT/sessions/$A5_PROJECT" -name '*.md' -type f 2>/dev/null | head -1)
+  if [ -n "$A5_SUMMARY" ] && [ -f "$A5_SUMMARY" ]; then
+    t_pass "A5: claude-agent-sdk produced a summary file"
+    A5_SIZE=$(wc -c < "$A5_SUMMARY" | tr -d ' ')
+    if [ "$A5_SIZE" -gt 100 ]; then
+      t_pass "A5: claude-agent-sdk summary has non-trivial content (${A5_SIZE} bytes > 100)"
+    else
+      t_fail "A5: claude-agent-sdk summary has non-trivial content (${A5_SIZE} bytes <= 100; see $A5_VAULT/.telemetry/a5-claude-agent-sdk.log)"
+    fi
+  else
+    A5_LOG_TAIL=$(tail -5 "$A5_VAULT/.telemetry/a5-claude-agent-sdk.log" 2>/dev/null | tr '\n' ' ' | cut -c 1-300)
+    t_fail "A5: claude-agent-sdk produced a summary file (log tail: ${A5_LOG_TAIL})"
+    t_fail "A5: claude-agent-sdk summary has non-trivial content (no summary file)"
+  fi
+
+  # Cleanup temp vault
+  rm -rf "$A5_VAULT" 2>/dev/null || true
+fi
+
 # ============================================================================
 #  SECTION B — FAULT INJECTION
 # ============================================================================
@@ -1536,7 +1591,7 @@ echo ""
 
 if [ "$TOTAL_FAIL" -eq 0 ]; then
   echo "✅ ALL CHECKS PASSED — branch is verification-complete."
-  echo "Next step: tag v0.2.0-alpha (or v0.2.0 if skipping alpha)."
+  echo "Next step: tag v0.2.1 and publish GHCR image."
   exit 0
 else
   echo "❌ $TOTAL_FAIL failure(s) — see output above."

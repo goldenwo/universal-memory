@@ -14,6 +14,12 @@
 #
 # Exit 0 on any outcome (fail-soft).
 
+# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
+# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
+# this, the nested `claude` process would re-trigger this hook, causing
+# duplicate captures at best and infinite loop at worst.
+if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

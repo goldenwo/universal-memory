@@ -482,6 +482,264 @@ assert_contains "T11: skip message shown at plugin prompt" "$T11_OUT" "install m
 # existing target before the case chooses 'skip', so CUSTOM.txt is gone.
 assert_file_exists "T11: pre-existing plugin content preserved on skip" "$T11/plugins/universal-memory/CUSTOM.txt"
 
+# ─── T14: plugin install copies rubric to target ─────────────────────────────
+echo ""
+echo "=== T14: plugin install copies rubric.md to target ==="
+T14="$TMPROOT/t14"
+mkdir -p "$T14/vault" "$T14/plugins" "$T14/home"
+touch "$T14/home/.bashrc"
+make_fakebin "$T14/bin" 200
+T14_SH=$(make_isolated_server "$T14/server")
+
+T14_EXIT=0
+T14_OUT=$(env PATH="$T14/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T14/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T14/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T14/home" \
+  UM_NONINTERACTIVE=1 \
+  bash "$T14_SH" 2>&1) || T14_EXIT=$?
+
+assert_exit_zero "T14: install exits 0" "$T14_EXIT"
+assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
+
+# ─── T15: symlink mode must not pollute repo source tree with rubric.md ──────
+# Review fix: previously _install_plugin called _copy_rubric_to_target after
+# a successful ln -s, which resolved through the symlink and wrote
+# rubric.md into the repo source tree (appearing as untracked in git status
+# for every dev running install.sh --link). The fix skips that copy in the
+# symlink success branch because session-start.sh's canonical-path lookup
+# resolves correctly through the symlink anyway.
+echo ""
+echo "=== T15: symlink mode does not create rubric.md in the repo source tree ==="
+T15="$TMPROOT/t15"
+mkdir -p "$T15/vault" "$T15/plugins" "$T15/home"
+touch "$T15/home/.bashrc"
+make_fakebin "$T15/bin" 200
+
+# We must NOT modify the real repo, so copy the plugin source into an
+# isolated location and point _UM_REPO_ROOT at a fake repo root whose
+# plugins/claude-code/universal-memory mirrors the real one. We also need
+# a docs/ dir with the rubric so _copy_rubric_to_target would find source.
+T15_REPO="$T15/repo"
+mkdir -p "$T15_REPO/docs" "$T15_REPO/plugins/claude-code"
+cp "$REPO_ROOT/docs/memory-routing-rubric.md" "$T15_REPO/docs/memory-routing-rubric.md"
+cp -r "$PLUGIN_SRC" "$T15_REPO/plugins/claude-code/universal-memory"
+T15_SRC_PLUGIN="$T15_REPO/plugins/claude-code/universal-memory"
+
+# Copy install.sh + helpers into isolated server dir, but REPO_ROOT points
+# at the fake repo so symlink resolution ends up at $T15_SRC_PLUGIN.
+T15_SH=$(make_isolated_server "$T15/server")
+
+T15_EXIT=0
+# Feed 'l' to select link at the copy/link/skip prompt, then 'N' to decline
+# the profile append prompt (orthogonal to this test).
+T15_OUT=$(printf 'l\nN\n' | env PATH="$T15/bin:$PATH" \
+  _UM_REPO_ROOT="$T15_REPO" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T15/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T15/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T15/home" \
+  bash "$T15_SH" 2>&1) || T15_EXIT=$?
+
+assert_exit_zero "T15: install exits 0 in link mode" "$T15_EXIT"
+
+# Core invariant: the repo source tree must NEVER contain rubric.md after
+# a --link install, regardless of whether ln -s creates a real symlink
+# (Unix / Windows Developer Mode) or silently falls back to a plain copy
+# (Windows Git Bash emulates ln -s differently on different versions).
+# Before the fix, the symlink-success branch wrote rubric.md into $target,
+# which resolved through the symlink into $T15_SRC_PLUGIN. After the fix,
+# only the cp -r fallback branch copies — and that branch writes into the
+# real directory at $target, never into the source tree.
+if [ -f "$T15_SRC_PLUGIN/rubric.md" ]; then
+  fail_test "T15: repo source tree clean after --link install" \
+    "$T15_SRC_PLUGIN/rubric.md exists — symlink mode polluted the repo"
+else
+  pass "T15: repo source tree has no stray rubric.md after --link"
+fi
+
+# ─── T16: UM_SUMMARIZER auto-detect — claude absent → openai ────────────────
+# A4: when `claude` CLI is not in PATH, install.sh writes UM_SUMMARIZER=openai
+# to the profile alongside UM_OPENAI_API_KEY in the same marker block.
+echo ""
+echo "=== T16: UM_SUMMARIZER=openai written when claude CLI absent ==="
+T16="$TMPROOT/t16"
+mkdir -p "$T16/vault" "$T16/plugins" "$T16/home"
+touch "$T16/home/.bashrc"
+# make_fakebin deliberately does NOT include a fake `claude` → PATH has no claude.
+make_fakebin "$T16/bin" 200
+T16_SH=$(make_isolated_server "$T16/server")
+
+T16_EXIT=0
+# Build a PATH that contains ONLY our fakebin (so real `claude` on the host
+# cannot leak in and flip the detection branch). Include a minimal set of
+# coreutils paths so `bash`, `python3`, `mkdir`, etc. still resolve.
+T16_PATH="$T16/bin:/usr/bin:/bin"
+T16_OUT=$(env -i PATH="$T16_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T16/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T16/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T16/home" \
+  bash "$T16_SH" 2>&1) || T16_EXIT=$?
+
+assert_exit_zero "T16: install exits 0 with claude absent" "$T16_EXIT"
+assert_contains "T16: detection message for claude absent" "$T16_OUT" "Claude CLI not detected"
+assert_contains "T16: UM_SUMMARIZER=openai in profile" "$(cat "$T16/home/.bashrc")" "export UM_SUMMARIZER='openai'"
+assert_contains "T16: UM_OPENAI_API_KEY also in profile" "$(cat "$T16/home/.bashrc")" "export UM_OPENAI_API_KEY"
+assert_contains "T16: UM_SUMMARIZER inside marker block" "$(cat "$T16/home/.bashrc")" "universal-memory (auto-added"
+
+# ─── T17: UM_SUMMARIZER auto-detect — claude present → claude-agent-sdk ─────
+# A4: when a `claude` CLI is in PATH, install.sh writes UM_SUMMARIZER=claude-agent-sdk.
+echo ""
+echo "=== T17: UM_SUMMARIZER=claude-agent-sdk written when claude CLI present ==="
+T17="$TMPROOT/t17"
+mkdir -p "$T17/vault" "$T17/plugins" "$T17/home"
+touch "$T17/home/.bashrc"
+make_fakebin "$T17/bin" 200
+# Add a fake `claude` to the fakebin so `command -v claude` succeeds.
+cat > "$T17/bin/claude" <<'FAKE'
+#!/usr/bin/env bash
+# fake claude CLI for T17 — detection-only, never invoked during install.
+exit 0
+FAKE
+chmod +x "$T17/bin/claude"
+T17_SH=$(make_isolated_server "$T17/server")
+
+T17_EXIT=0
+# Pin PATH to fakebin + minimal coreutils so detection sees our fake claude.
+T17_PATH="$T17/bin:/usr/bin:/bin"
+T17_OUT=$(env -i PATH="$T17_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T17/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T17/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T17/home" \
+  bash "$T17_SH" 2>&1) || T17_EXIT=$?
+
+assert_exit_zero "T17: install exits 0 with fake claude in PATH" "$T17_EXIT"
+assert_contains "T17: detection message for claude present" "$T17_OUT" "Claude CLI detected"
+assert_contains "T17: UM_SUMMARIZER=claude-agent-sdk in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='claude-agent-sdk'"
+
+# ─── T18: v0.2.0-alpha → v0.2.1 re-install backfills UM_SUMMARIZER ──────────
+# Cross-cutting review C1: a user upgrading from v0.2.0-alpha has a marker
+# block that pre-dates UM_SUMMARIZER. Re-running install.sh must backfill
+# the missing var, not silently skip it. The fix declaratively rewrites
+# the whole managed block on every run when the key matches.
+echo ""
+echo "=== T18: re-install backfills UM_SUMMARIZER into legacy marker block ==="
+T18="$TMPROOT/t18"
+mkdir -p "$T18/vault" "$T18/plugins" "$T18/home"
+make_fakebin "$T18/bin" 200
+# Add a fake `claude` so install.sh auto-detects claude-agent-sdk.
+cat > "$T18/bin/claude" <<'FAKE'
+#!/usr/bin/env bash
+exit 0
+FAKE
+chmod +x "$T18/bin/claude"
+T18_SH=$(make_isolated_server "$T18/server")
+
+# Pre-populate profile with a legacy v0.2.0-alpha marker block containing
+# ONLY UM_OPENAI_API_KEY (no UM_SUMMARIZER) — this is what an existing
+# alpha user's .bashrc looks like before they upgrade.
+{
+  printf 'export PATH=/usr/local/bin:$PATH\n'
+  printf '\n'
+  printf '# --- universal-memory (auto-added by install.sh) ---\n'
+  printf "export UM_OPENAI_API_KEY='sk-testkey12345'\n"
+  printf '# --- end universal-memory ---\n'
+  printf '\n'
+  printf '# user-added content below\n'
+  printf 'alias ll="ls -la"\n'
+} > "$T18/home/.bashrc"
+
+T18_EXIT=0
+# Pin PATH so detection sees our fake claude.
+T18_PATH="$T18/bin:/usr/bin:/bin"
+T18_OUT=$(env -i PATH="$T18_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T18/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T18/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T18/home" \
+  bash "$T18_SH" 2>&1) || T18_EXIT=$?
+
+assert_exit_zero "T18: upgrade re-install exits 0" "$T18_EXIT"
+T18_BASHRC=$(cat "$T18/home/.bashrc")
+# Block was refreshed, so both managed vars must now be present.
+assert_contains "T18: UM_OPENAI_API_KEY still present after upgrade" "$T18_BASHRC" "export UM_OPENAI_API_KEY='sk-testkey12345'"
+assert_contains "T18: UM_SUMMARIZER backfilled after upgrade" "$T18_BASHRC" "export UM_SUMMARIZER='claude-agent-sdk'"
+# Exactly one marker block (no duplicates).
+T18_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
+T18_END_COUNT=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
+assert_eq "T18: exactly one marker-start line" "$T18_START_COUNT" "1"
+assert_eq "T18: exactly one marker-end line" "$T18_END_COUNT" "1"
+# User-added content (outside the block) survives the rewrite.
+assert_contains "T18: user-added PATH line preserved" "$T18_BASHRC" "export PATH=/usr/local/bin:\$PATH"
+assert_contains "T18: user-added alias preserved" "$T18_BASHRC" 'alias ll="ls -la"'
+# Running install a THIRD time must remain idempotent — no duplicate blocks.
+T18B_EXIT=0
+T18B_OUT=$(env -i PATH="$T18_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T18/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T18/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T18/home" \
+  bash "$T18_SH" 2>&1) || T18B_EXIT=$?
+assert_exit_zero "T18: third run (idempotency) exits 0" "$T18B_EXIT"
+T18_START_COUNT2=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
+T18_END_COUNT2=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
+assert_eq "T18: still exactly one marker-start after third run" "$T18_START_COUNT2" "1"
+assert_eq "T18: still exactly one marker-end after third run" "$T18_END_COUNT2" "1"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

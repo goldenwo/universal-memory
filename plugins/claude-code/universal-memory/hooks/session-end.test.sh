@@ -12,6 +12,11 @@
 #   5. Reindex POST fails → summary on disk; warning logged; exit 0
 #   6. Lock held → state update skipped; summary still written
 
+# Prevent environment leakage from the developer's shell — if a prior test run
+# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
+# would exit 0 and assertions would falsely pass.
+unset UM_IN_SUMMARIZER_SUBPROCESS
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -521,6 +526,25 @@ assert_file_missing "T6: state.md not written when lock held" "$T6_STATE_FILE"
 
 # Stderr should mention lock failure
 assert_contains "T6: stderr warns about lock failure" "$T6_STDERR" "could not acquire lock"
+
+# ===========================================================================
+# Test 7: Recursive-hook guard — UM_IN_SUMMARIZER_SUBPROCESS=1 exits silently
+# ===========================================================================
+# Critical for A3's claude-agent-sdk backend: the nested `claude -p` process
+# inherits UM_IN_SUMMARIZER_SUBPROCESS=1 in its env, and its own hooks (which
+# source this file via the plugin) must exit immediately to prevent infinite
+# recursion.
+echo "=== Test 7: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1) ==="
+
+T7_GUARD_OUT=$(UM_IN_SUMMARIZER_SUBPROCESS=1 bash "$SESSION_END" 2>&1)
+T7_GUARD_EXIT=$?
+
+assert_eq "T7: guard exits 0 when UM_IN_SUMMARIZER_SUBPROCESS=1" "$T7_GUARD_EXIT" "0"
+if [ -z "$T7_GUARD_OUT" ] || [ "$T7_GUARD_OUT" = "{}" ]; then
+  pass "T7: guard emits no output (or empty JSON {})"
+else
+  fail "T7: guard should emit empty output, got: $T7_GUARD_OUT"
+fi
 
 # ===========================================================================
 # Summary
