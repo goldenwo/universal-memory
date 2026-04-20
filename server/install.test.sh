@@ -482,6 +482,35 @@ assert_contains "T11: skip message shown at plugin prompt" "$T11_OUT" "install m
 # existing target before the case chooses 'skip', so CUSTOM.txt is gone.
 assert_file_exists "T11: pre-existing plugin content preserved on skip" "$T11/plugins/universal-memory/CUSTOM.txt"
 
+# ─── T14: plugin install copies rubric to target ─────────────────────────────
+echo ""
+echo "=== T14: plugin install copies rubric.md to target ==="
+T14="$TMPROOT/t14"
+mkdir -p "$T14/vault" "$T14/plugins" "$T14/home"
+touch "$T14/home/.bashrc"
+make_fakebin "$T14/bin" 200
+T14_SH=$(make_isolated_server "$T14/server")
+
+T14_EXIT=0
+T14_OUT=$(env PATH="$T14/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T14/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T14/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T14/home" \
+  UM_NONINTERACTIVE=1 \
+  bash "$T14_SH" 2>&1) || T14_EXIT=$?
+
+assert_exit_zero "T14: install exits 0" "$T14_EXIT"
+assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

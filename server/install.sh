@@ -391,6 +391,17 @@ _read_plugin_version() {
 	grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
 }
 
+# Copy the canonical routing rubric into an installed plugin so
+# session-start.sh can read it via the sibling-copy fallback when the
+# repo is not reachable (e.g. installed-plugin copy outside the checkout).
+_copy_rubric_to_target() {
+	local target="$1"
+	local src_rubric="$REPO_ROOT/docs/memory-routing-rubric.md"
+	if [ -r "$src_rubric" ]; then
+		cp "$src_rubric" "$target/rubric.md" 2>/dev/null || true
+	fi
+}
+
 _install_plugin() {
 	local src="$_PLUGIN_SRC"
 	local target="$_PLUGIN_TARGET"
@@ -473,9 +484,13 @@ _install_plugin() {
 			fi
 			if ln -s "$src" "$target" 2>/dev/null; then
 				ok "Plugin symlinked: $target -> $src"
+				_copy_rubric_to_target "$target"
 			else
 				warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
-				cp -r "$src" "$target" && ok "Plugin copied to $target (copy fallback)."
+				if cp -r "$src" "$target"; then
+					ok "Plugin copied to $target (copy fallback)."
+					_copy_rubric_to_target "$target"
+				fi
 			fi
 			;;
 		[sS]*)
@@ -488,7 +503,10 @@ _install_plugin() {
 			elif [ -d "$target" ]; then
 				rm -rf "$target"
 			fi
-			cp -r "$src" "$target" && ok "Plugin copied to $target"
+			if cp -r "$src" "$target"; then
+				ok "Plugin copied to $target"
+				_copy_rubric_to_target "$target"
+			fi
 			;;
 	esac
 
