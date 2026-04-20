@@ -4,6 +4,7 @@
  *
  * Endpoints:
  *   GET  /health              liveness + memory count
+ *   GET  /openapi.yaml        OpenAPI 3.1 spec for this server (YAML)
  *   POST /mcp                 JSON-RPC (MCP clients)
  *   POST /api/search          { query, limit?, include_superseded? } -> { results: [...] }
  *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
@@ -41,6 +42,7 @@ import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+import { generateOpenAPISpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // Slug validation — C1: id/project fields used as filename components must be safe
@@ -660,6 +662,13 @@ const server = createServer(async (req, res) => {
 			res.end(JSON.stringify({ ok: true, memories: (await memory.getAll({ userId: USER_ID }))?.results?.length || 0 }));
 			return;
 		}
+		if (url.pathname === '/openapi.yaml' && req.method === 'GET') {
+			// Self-describing spec — served as YAML for ChatGPT Custom GPT Actions (Phase D)
+			// and any tooling that prefers an authoritative spec URL.
+			res.writeHead(200, { 'Content-Type': 'application/yaml' });
+			res.end(generateOpenAPISpec());
+			return;
+		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
 			const body = JSON.parse(await readBody(req));
 			const result = await handleMcpMessage(body);
@@ -903,5 +912,5 @@ const server = createServer(async (req, res) => {
 await initMemory();
 server.listen(PORT, '0.0.0.0', () => {
 	console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
-	console.log('[mem0-mcp] Endpoints: /health, /mcp (JSON-RPC), /api/*');
+	console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
 });
