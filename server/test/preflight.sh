@@ -187,7 +187,7 @@ wait_for_server() {
 # ---------------------------------------------------------------------------
 # Check prerequisites
 # ---------------------------------------------------------------------------
-info "Preflight v0.2.1 — $(date -u)"
+info "Preflight v0.2.2 — $(date -u)"
 info "Endpoint: $ENDPOINT"
 info "Vault: $VAULT"
 info "Project: $PREFLIGHT_PROJECT"
@@ -1591,7 +1591,7 @@ echo ""
 
 if [ "$TOTAL_FAIL" -eq 0 ]; then
   echo "✅ ALL CHECKS PASSED — branch is verification-complete."
-  echo "Next step: tag v0.2.1 and publish GHCR image."
+  echo "Next step: tag v0.2.2 and publish GHCR image."
   exit 0
 else
   echo "❌ $TOTAL_FAIL failure(s) — see output above."

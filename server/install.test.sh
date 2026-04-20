@@ -740,6 +740,90 @@ T18_END_COUNT2=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
 assert_eq "T18: still exactly one marker-start after third run" "$T18_START_COUNT2" "1"
 assert_eq "T18: still exactly one marker-end after third run" "$T18_END_COUNT2" "1"
 
+# ─── T12: --yes non-interactive with all defaults ─────────────────────────────
+# B3: a single `--yes`/`-y` flag should accept every default (vault path,
+# plugin copy, shell profile append) without prompting and without requiring
+# UM_NONINTERACTIVE=1 to be set manually.
+echo ""
+echo "=== T12: --yes accepts all defaults ==="
+T12="$TMPROOT/t12"
+mkdir -p "$T12/vault" "$T12/plugins" "$T12/home"
+touch "$T12/home/.bashrc"
+make_fakebin "$T12/bin" 200
+T12_SH=$(make_isolated_server "$T12/server")
+
+T12_EXIT=0
+T12_OUT=$(env PATH="$T12/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T12/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T12/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T12/home" \
+  bash "$T12_SH" --yes 2>&1) || T12_EXIT=$?
+
+assert_exit_zero "T12: --yes exits 0" "$T12_EXIT"
+assert_contains "T12: plugin copied message" "$T12_OUT" "Plugin copied"
+assert_file_exists "T12: plugin installed to default target" "$T12/plugins/universal-memory/.claude-plugin/plugin.json"
+if grep -q "UM_OPENAI_API_KEY" "$T12/home/.bashrc" 2>/dev/null; then
+  pass "T12: UM_OPENAI_API_KEY written to .bashrc"
+else
+  fail_test "T12: .bashrc missing UM_OPENAI_API_KEY" ".bashrc content: $(cat "$T12/home/.bashrc" 2>/dev/null)"
+fi
+if grep -q "UM_SUMMARIZER" "$T12/home/.bashrc" 2>/dev/null; then
+  pass "T12: UM_SUMMARIZER written to .bashrc"
+else
+  fail_test "T12: .bashrc missing UM_SUMMARIZER" ".bashrc content: $(cat "$T12/home/.bashrc" 2>/dev/null)"
+fi
+
+# ─── T12b: --yes with NO key and NO claude CLI — proceeds with warning ─────────
+# B3: when OPENAI_API_KEY is absent and `claude` is not on PATH, --yes must
+# still complete (exit 0), warn the user that summaries are disabled, and
+# write UM_SUMMARIZER=openai as the fallback default so a later key-set can
+# re-enable summaries without re-running install.sh.
+echo ""
+echo "=== T12b: --yes without key still completes with warning ==="
+T12B="$TMPROOT/t12b"
+mkdir -p "$T12B/vault" "$T12B/plugins" "$T12B/home" "$T12B/empty-bin"
+touch "$T12B/home/.bashrc"
+# Pin PATH to empty-bin + minimal sys so `claude` is NOT findable.
+# We still need fake tools (docker, python3, curl), so populate empty-bin
+# with the standard fakebin — make_fakebin does NOT install a fake `claude`.
+make_fakebin "$T12B/empty-bin" 200
+# Belt-and-suspenders: ensure no `claude` snuck in.
+rm -f "$T12B/empty-bin/claude"
+T12B_SH=$(make_isolated_server "$T12B/server")
+
+T12B_EXIT=0
+# env -i scrubs inherited env (no host PATH, no host OPENAI_API_KEY leakage).
+T12B_OUT=$(env -i PATH="$T12B/empty-bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T12B/vault" \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T12B/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T12B/home" \
+  bash "$T12B_SH" --yes 2>&1) || T12B_EXIT=$?
+
+assert_exit_zero "T12b: --yes without key exits 0" "$T12B_EXIT"
+assert_contains "T12b: warning about skipped summaries" "$T12B_OUT" "summaries will be skipped"
+if grep -q "UM_SUMMARIZER='openai'" "$T12B/home/.bashrc" 2>/dev/null \
+   || grep -q "UM_SUMMARIZER=openai" "$T12B/home/.bashrc" 2>/dev/null; then
+  pass "T12b: UM_SUMMARIZER=openai written (no claude CLI)"
+else
+  fail_test "T12b: .bashrc missing UM_SUMMARIZER=openai" ".bashrc content: $(cat "$T12B/home/.bashrc" 2>/dev/null)"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
