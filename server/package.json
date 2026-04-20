@@ -16,5 +16,8 @@
     "mem0ai": "^2.4.5",
     "yaml": "^2.8.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^12.1.0"
+  }
 }

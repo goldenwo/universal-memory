@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: universal-memory
+  version: 0.3.0-alpha
+  description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
+    subset of the full spec — only the 4 routes a Custom GPT needs (search,
+    state, add, delete). Full spec at /openapi.yaml.
+  license:
+    name: MIT
+    url: https://github.com/goldenwo/universal-memory/blob/main/LICENSE
+servers:
+  - url: http://localhost:6335
+    description: Local dev — default MEM0_MCP_PORT
+paths:
+  /api/search:
+    post:
+      operationId: memory_search
+      summary: Semantic search
+      description: Body form. Applies default status filter (excludes
+        superseded/deprecated/rejected, and any doc with invalidated_at set)
+        unless `include_superseded=true`. Optional `filters.project` /
+        `filters.type` are applied after mem0 recall.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          description: Missing or invalid `query`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/state/{project}:
+    get:
+      operationId: memory_state
+      summary: Read state.md for a project
+      description: "Direct vault read of `$VAULT/state/<project>/state.md`. Does NOT
+        hit mem0. When the file does not exist, returns `{ ok: true, project,
+        state: null, valid_from: null }` with status 200 (not 404)."
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-zA-Z0-9._-]+$
+          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+      responses:
+        "200":
+          description: "State file contents (or `state: null` when the file does not exist
+            for this project)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateResponse"
+        "400":
+          description: Invalid project name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/add:
+    post:
+      operationId: memory_add
+      summary: Extract facts and store via mem0
+      description: Passes `text` through mem0's LLM fact extractor and persists the
+        resulting atomic memories. Optional `metadata` is attached to every
+        extracted fact.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRequest"
+      responses:
+        "200":
+          description: Facts extracted and stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddResponse"
+  /api/delete:
+    post:
+      operationId: memory_delete
+      summary: Delete by metadata.id or mem0 UUID
+      description: "Two shapes — send exactly one of: `{ metadata: { id } }` to delete
+        every entry matching metadata.id, or `{ id }` to delete one entry by
+        mem0 UUID. Missing or both-present produces 400."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteRequest"
+      responses:
+        "200":
+          description: Delete completed (may have deleted 0 entries)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
+        "400":
+          description: Invalid JSON, both shapes provided, or missing id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    SearchRequest:
+      type: object
+      required:
+        - query
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+          description: Semantic search query (non-empty)
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 5
+          description: Max results. Clamped to [1, 100]; default 5.
+        include_superseded:
+          type: boolean
+          default: false
+          description: If true, return results regardless of status/invalidated_at.
+            Default false (exclude superseded/deprecated/rejected and anything
+            with invalidated_at).
+        filters:
+          $ref: "#/components/schemas/SearchFilters"
+    SearchResponse:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryResult"
+    ErrorResponse:
+      type: object
+      description: "Error envelope returned on any non-2xx HTTP response. Always
+        contains the `error` field. Some write-gated MCP tools additionally
+        return `{ ok: false, error }` inside a 200 JSON-RPC body; that shape is
+        represented by `McpWriteGatedResponse`."
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+      required:
+        - error
+    StateResponse:
+      type: object
+      required:
+        - ok
+        - project
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+        project:
+          type: string
+        state:
+          oneOf:
+            - type: object
+              required:
+                - frontmatter
+                - body
+              properties:
+                frontmatter:
+                  type: object
+                  additionalProperties: true
+                body:
+                  type: string
+            - type: "null"
+        valid_from:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    AddRequest:
+      type: object
+      required:
+        - text
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: Raw text to extract facts from and store.
+        metadata:
+          $ref: "#/components/schemas/MemoryMetadata"
+    AddResponse:
+      type: object
+      description: Raw mem0 add() return shape. `results` is the list of
+        extracted/upserted atomic facts.
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+              memory:
+                type: string
+              event:
+                type: string
+                description: ADD | UPDATE | DELETE | NONE
+    DeleteRequest:
+      description: "Two shapes: A) `{ metadata: { id } }` to delete every mem0 entry
+        whose metadata.id matches; B) `{ id }` to delete a single entry by mem0
+        UUID."
+      oneOf:
+        - type: object
+          title: DeleteByMetadataId
+          required:
+            - metadata
+          additionalProperties: false
+          properties:
+            metadata:
+              type: object
+              required:
+                - id
+              properties:
+                id:
+                  type: string
+                  minLength: 1
+        - type: object
+          title: DeleteByUuid
+          required:
+            - id
+          additionalProperties: false
+          properties:
+            id:
+              type: string
+              minLength: 1
+              description: mem0 UUID
+    DeleteResponse:
+      type: object
+      required:
+        - ok
+        - deleted
+        - query
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+        deleted:
+          type: integer
+          minimum: 0
+          description: Count of entries actually removed
+        query:
+          type: string
+          description: Echo of the delete criterion, e.g. metadata.id=foo
+    SearchFilters:
+      type: object
+      description: Optional post-filters applied after mem0 recall.
+      additionalProperties: false
+      properties:
+        project:
+          type: string
+          description: Keep only results whose metadata.project matches
+        type:
+          type: string
+          description: Keep only results whose metadata.type matches
+    MemoryResult:
+      type: object
+      description: A single memory record returned by search/list endpoints.
+      properties:
+        id:
+          type: string
+          description: mem0 UUID (not the metadata.id)
+        memory:
+          type: string
+          description: The stored text
+        score:
+          type: number
+          description: Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed
+            score (original * exp(-age/halfLife)).
+        metadata:
+          $ref: "#/components/schemas/MemoryMetadata"
+        hash:
+          type: string
+        created_at:
+          type:
+            - string
+            - "null"
+        updated_at:
+          type:
+            - string
+            - "null"
+        user_id:
+          type: string
+    MemoryMetadata:
+      type: object
+      description: Arbitrary metadata attached to a mem0 document. Fields follow UM
+        vault frontmatter conventions. All fields are optional; callers may add
+        custom keys.
+      additionalProperties: true
+      properties:
+        schema_version:
+          type: integer
+          description: UM metadata schema version (always 1 in v0.3)
+        type:
+          type: string
+          description: Document type (e.g. session_summary, authored, state)
+        id:
+          type: string
+          description: Stable document id — filename stem without .md. Must match
+            ^[a-zA-Z0-9._-]+$.
+        title:
+          type: string
+        project:
+          type: string
+          description: Owning project slug (matches ^[a-zA-Z0-9._-]+$)
+        status:
+          type: string
+          enum:
+            - current
+            - superseded
+            - deprecated
+            - rejected
+          description: Document lifecycle state. Search excludes
+            superseded/deprecated/rejected by default.
+        valid_from:
+          type: string
+          format: date-time
+        invalidated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When set, the doc is filtered out of search by default.
+        superseded_by:
+          type: string
+        supersedes:
+          type: array
+          items:
+            type: string

@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# um-tunnel — one-command tunnel onboarding for universal-memory.
+#
+# Detects the first available tunnel CLI (cloudflared → tailscale → ngrok),
+# starts a tunnel forwarding to localhost:${UM_PORT:-6335}, extracts the
+# public URL from the CLI's output, then prints a formatted panel with:
+#   - The MCP connector URL (${URL}/mcp)
+#   - The OpenAPI spec URL (${URL}/openapi.yaml)
+#   - The routing rubric body (paste into MCP client custom instructions)
+#   - A contextual security warning based on UM_MCP_WRITE_ENABLED
+#
+# The tunnel subprocess stays alive until Ctrl+C. On SIGINT/SIGTERM/EXIT,
+# the tunnel subprocess is killed cleanly.
+#
+# Usage:
+#   um-tunnel                               # auto-detect CLI
+#   UM_TUNNEL_CLI=cloudflared um-tunnel     # force a specific CLI
+#   UM_PORT=6336 um-tunnel                  # forward a non-default port
+#
+# Env vars:
+#   UM_PORT                  Local port to forward (default: 6335)
+#   UM_TUNNEL_CLI            Force CLI: cloudflared | tailscale | ngrok
+#   UM_TUNNEL_LOG            Log path (default: /tmp/um-tunnel-output.log)
+#   UM_MCP_WRITE_ENABLED     If "true", prints a security warning
+#   UM_TUNNEL_DRY_RUN        If "1", skip the blocking wait (for tests)
+#
+# See docs/um-tunnel.md for the full guide.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+PORT="${UM_PORT:-6335}"
+LOG_PATH="${UM_TUNNEL_LOG:-/tmp/um-tunnel-output.log}"
+TUNNEL_PID=""
+
+# ---------------------------------------------------------------------------
+# Cleanup trap — always set, even if we exit early. Guarded by empty-check so
+# the trap is safe before TUNNEL_PID is assigned.
+# ---------------------------------------------------------------------------
+cleanup() {
+  if [ -n "$TUNNEL_PID" ]; then
+    if kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      kill "$TUNNEL_PID" 2>/dev/null || true
+      # Give the subprocess a moment to shut down, then SIGKILL if still alive.
+      sleep 0.2
+      if kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        kill -9 "$TUNNEL_PID" 2>/dev/null || true
+      fi
+    fi
+  fi
+}
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Resolve tunnel CLI — env override takes priority, else auto-detect.
+# ---------------------------------------------------------------------------
+TUNNEL_CLI=""
+if [ -n "${UM_TUNNEL_CLI:-}" ]; then
+  if ! command -v "$UM_TUNNEL_CLI" >/dev/null 2>&1; then
+    printf '[um-tunnel] ERROR: UM_TUNNEL_CLI=%s but binary not found in PATH.\n' "$UM_TUNNEL_CLI" >&2
+    exit 1
+  fi
+  TUNNEL_CLI="$UM_TUNNEL_CLI"
+else
+  for candidate in cloudflared tailscale ngrok; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      TUNNEL_CLI="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$TUNNEL_CLI" ]; then
+  cat >&2 <<'HINT'
+[um-tunnel] ERROR: No tunnel CLI found in PATH.
+
+Install one of:
+  - cloudflared (recommended — free, no account required):
+      https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+  - tailscale (if you already use Tailscale):
+      https://tailscale.com/download
+  - ngrok (free tier, account required):
+      https://ngrok.com/download
+
+Or set UM_TUNNEL_CLI=<binary> to force a specific one.
+HINT
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Build the command for the chosen CLI
+# ---------------------------------------------------------------------------
+case "$TUNNEL_CLI" in
+  cloudflared)
+    TUNNEL_CMD=(cloudflared tunnel --url "http://localhost:$PORT")
+    ;;
+  tailscale)
+    TUNNEL_CMD=(tailscale funnel "$PORT")
+    ;;
+  ngrok)
+    TUNNEL_CMD=(ngrok http "$PORT" --log=stdout)
+    ;;
+  *)
+    # Unknown but user-forced — try passing the port as-is.
+    TUNNEL_CMD=("$TUNNEL_CLI" "$PORT")
+    ;;
+esac
+
+printf '[um-tunnel] Using %s to forward localhost:%s\n' "$TUNNEL_CLI" "$PORT" >&2
+printf '[um-tunnel] Log: %s\n' "$LOG_PATH" >&2
+
+# ---------------------------------------------------------------------------
+# Start the tunnel; merge stdout + stderr into the log so URL extraction
+# catches output from either stream (cloudflared logs to stderr; tailscale
+# and ngrok vary).
+# ---------------------------------------------------------------------------
+: > "$LOG_PATH"
+"${TUNNEL_CMD[@]}" >"$LOG_PATH" 2>&1 &
+TUNNEL_PID=$!
+
+# ---------------------------------------------------------------------------
+# Poll the log for a public URL (up to 10s, 0.5s poll).
+# ---------------------------------------------------------------------------
+URL=""
+URL_REGEX='https?://[A-Za-z0-9.-]+\.(trycloudflare\.com|ts\.net|ngrok[-a-z0-9.]*\.(app|io|dev))[A-Za-z0-9./_-]*'
+for _ in $(seq 1 20); do
+  if kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    :
+  else
+    # Subprocess died before we got a URL.
+    break
+  fi
+  URL=$(grep -Eo "$URL_REGEX" "$LOG_PATH" 2>/dev/null | head -1 || true)
+  if [ -n "$URL" ]; then
+    break
+  fi
+  sleep 0.5
+done
+
+if [ -z "$URL" ]; then
+  printf '[um-tunnel] ERROR: could not extract public URL from %s within 10s.\n' "$TUNNEL_CLI" >&2
+  printf '[um-tunnel] See log: %s\n' "$LOG_PATH" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve the rubric file. Two layouts:
+#   1. Repo checkout: bin/ → docs/ is 4 parents up.
+#   2. Installed plugin: bin/ → rubric.md is 1 parent up (when the plugin is
+#      shipped as a single dir with rubric.md alongside hooks/ and bin/).
+# Use an explicit if-elif-else chain for readability.
+# ---------------------------------------------------------------------------
+RUBRIC_REPO="$SCRIPT_DIR/../../../../docs/memory-routing-rubric.md"
+RUBRIC_INSTALLED="$SCRIPT_DIR/../rubric.md"
+
+read_rubric() {
+  if [ -f "$RUBRIC_REPO" ]; then
+    # Strip leading HTML comments (rubric file has a `<!-- ... -->` header).
+    sed '/^<!--/,/-->$/d' "$RUBRIC_REPO" | sed '/./,$!d'
+  elif [ -f "$RUBRIC_INSTALLED" ]; then
+    sed '/^<!--/,/-->$/d' "$RUBRIC_INSTALLED" | sed '/./,$!d'
+  else
+    printf '%s\n' "(routing rubric file not found — see docs/memory-routing-rubric.md in the universal-memory repo)"
+  fi
+}
+
+RUBRIC_BODY=$(read_rubric)
+
+# ---------------------------------------------------------------------------
+# Print the panel
+# ---------------------------------------------------------------------------
+cat <<PANEL
+
+================================================================================
+  universal-memory tunnel is up
+================================================================================
+
+Public URL:       $URL
+MCP connector URL:  $URL/mcp
+OpenAPI spec URL:   $URL/openapi.yaml
+
+Paste this MCP connector URL into your client:
+  - ChatGPT Desktop: Settings → Connectors → Add connector → URL: $URL/mcp
+  - Claude.ai:       Settings → Connectors → Add connector → URL: $URL/mcp
+  - Custom GPT:      Actions → Import from URL: $URL/openapi.yaml
+
+--------------------------------------------------------------------------------
+  Routing rubric (paste into your MCP client's custom instructions)
+--------------------------------------------------------------------------------
+
+$RUBRIC_BODY
+
+PANEL
+
+# ---------------------------------------------------------------------------
+# Contextual security warning
+# ---------------------------------------------------------------------------
+if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ]; then
+  cat <<'WARN'
+--------------------------------------------------------------------------------
+  ⚠️  SECURITY WARNING — UM_MCP_WRITE_ENABLED=true + public tunnel
+--------------------------------------------------------------------------------
+
+Your MCP write tools are enabled AND your vault is now reachable at a public
+URL. This is world-writable: anyone who guesses the URL can write to your
+vault.
+
+Before leaving this running, front the tunnel with auth:
+  - Cloudflare Access   (cloudflared + Zero Trust policy)
+  - Tailscale ACL       (tailscale serve instead of funnel, or per-device ACL)
+  - ngrok basic-auth    (ngrok http 6335 --basic-auth=user:pass)
+
+For single-machine use, you probably want MEM0_MCP_PORT=127.0.0.1:6335 and
+no tunnel at all. See docs/mcp-tools.md §Security for the full model.
+WARN
+else
+  cat <<'NOTE'
+--------------------------------------------------------------------------------
+  Write-mode status: UM_MCP_WRITE_ENABLED=false (writes are disabled)
+--------------------------------------------------------------------------------
+
+Read-only mode: remote clients can read your vault but cannot persist captures.
+Safe for exposing via a public tunnel. To allow writes, set
+UM_MCP_WRITE_ENABLED=true in server/.env and restart the server — but read
+docs/mcp-tools.md §Security first (public writes = world-writable vault).
+NOTE
+fi
+
+printf '\n'
+printf '[um-tunnel] Tunnel is running (PID %s). Press Ctrl+C to stop.\n' "$TUNNEL_PID" >&2
+
+# ---------------------------------------------------------------------------
+# Block until the user stops the tunnel (or tests skip).
+# ---------------------------------------------------------------------------
+if [ "${UM_TUNNEL_DRY_RUN:-0}" = "1" ]; then
+  # Test mode — kill the tunnel and exit 0 so tests can assert on output.
+  cleanup
+  trap - EXIT INT TERM
+  exit 0
+fi
+
+wait "$TUNNEL_PID"
