@@ -24,7 +24,9 @@ Install is handled by the Phase D installer (`installer/install-cli.sh`). After 
 
 - `um` is placed on `$PATH` (typically `~/.local/bin/um`).
 - A config block is appended to `~/.bashrc` / `~/.zshrc` by the installer; this block sets
-  `UM_SERVER_URL` and optionally `UM_OPENAI_API_KEY` as last-resort defaults.
+  `UM_OPENAI_API_KEY` and `UM_SUMMARIZER`. For remote-server installations, set `UM_SERVER_URL`
+  manually or in `.um/config`. Phase D's `install-cli.sh` will extend the marker block to
+  include `UM_SERVER_URL`.
 - Per-repo config is read from `.um/config` (KEY=value) at runtime; see [Config](#config).
 
 ---
