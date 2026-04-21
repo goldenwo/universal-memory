@@ -281,7 +281,7 @@ test('doList returns compact shape (id, title, snippet; no body, no score) by de
     { id: 'mem0-uuid-2', memory: 'body B '.repeat(50), score: 1,
       metadata: { id: 'item-b', title: 'Item B', type: 'adr' } },
   ];
-  const result = await doList(false, buildFakeMemoryGetAll(fakeResults));
+  const result = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
   assert.ok(Array.isArray(result), 'doList must return a raw array (not an envelope)');
   assert.strictEqual(result.length, 2, 'length must match fakeResults');
   for (const r of result) {
@@ -304,7 +304,7 @@ test('doList returns raw mem0 items when full=true', async () => {
     { id: 'mem0-uuid-1', memory: 'Full body text.', score: 1,
       metadata: { id: 'item-a', title: 'Item A' } },
   ];
-  const result = await doList(true, buildFakeMemoryGetAll(fakeResults));
+  const result = await doList(true, null, buildFakeMemoryGetAll(fakeResults));
   assert.ok(Array.isArray(result), 'full=true result must be a raw array');
   assert.strictEqual(result.length, 1);
   // Full shape: raw mem0 items (backward compat — pre-B.1 callers expect this shape)
@@ -317,15 +317,32 @@ test('doList compact shape id falls back to mem0 UUID when metadata.id absent', 
     { id: 'mem0-uuid-fallback', memory: 'body', score: 1,
       metadata: {} },  // no metadata.id
   ];
-  const result = await doList(false, buildFakeMemoryGetAll(fakeResults));
+  const result = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
   assert.strictEqual(result[0].id, 'mem0-uuid-fallback',
     'id must fall back to mem0 UUID when metadata.id absent');
 });
 
 test('doList returns empty array when vault has no memories', async () => {
-  const result = await doList(false, buildFakeMemoryGetAll([]));
+  const result = await doList(false, null, buildFakeMemoryGetAll([]));
   assert.ok(Array.isArray(result));
   assert.strictEqual(result.length, 0);
+});
+
+test('doList honors limit parameter (IMPORTANT-3)', async () => {
+  const fakeResults = Array.from({ length: 10 }, (_, i) => ({
+    id: `mem0-uuid-${i}`,
+    memory: `body ${i}`,
+    score: 1,
+    metadata: { id: `item-${i}`, title: `Item ${i}` },
+  }));
+  const all = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
+  assert.strictEqual(all.length, 10, 'limit=null returns all items');
+
+  const limited = await doList(false, 3, buildFakeMemoryGetAll(fakeResults));
+  assert.strictEqual(limited.length, 3, 'limit=3 must return only 3 items');
+
+  const limited1 = await doList(false, 1, buildFakeMemoryGetAll(fakeResults));
+  assert.strictEqual(limited1.length, 1, 'limit=1 must return only 1 item');
 });
 
 // ---------------------------------------------------------------------------
@@ -403,7 +420,7 @@ function countTiktoken(str) {
 // The token-baseline.json documents this proxy choice and applies the looser * 1.3 ceiling.
 async function measurePost(fixture) {
   if (fixture.category === 'recent') {
-    const items = await doList(false, buildFakeListMemory());
+    const items = await doList(false, null, buildFakeListMemory());
     return countTiktoken(JSON.stringify(items));
   }
   // All other categories route to doSearch

@@ -207,6 +207,7 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
+				limit: { type: 'number', description: 'Max results to return (default: unlimited, max 1000)' },
 			},
 		},
 	},
@@ -445,10 +446,11 @@ async function handleToolCall(name, args) {
 		}
 		case 'memory_list': {
 			const clientFull = args.full === true;
+			const listLimit = args.limit != null ? Math.min(parseInt(args.limit, 10) || 0, 1000) : null;
 			// Delegate to doList which handles compact/full projection.
 			// When full=true: raw mem0 items (backward compat shape) serialized as JSON.
 			// When full=false (default): compact { id, title, snippet } items.
-			const items = await doList(clientFull);
+			const items = await doList(clientFull, listLimit);
 			if (items.length === 0) return 'No memories.';
 			if (clientFull) {
 				// Full shape: return as JSON so body/metadata fields are accessible
@@ -929,18 +931,20 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
  * Changing to {results:[...]} would be a breaking API change beyond "compact shape" scope.
  *
  * @param {boolean} [full=false] - false → compact shape; true → raw mem0 items
+ * @param {number|null} [limit=null] - max items to return; null = unlimited
  * @param {{getAll: Function}} [memoryClient] - DI for tests; defaults to module `memory`
  * @returns {Promise<Array>} flat array of memory items
  */
-export async function doList(full = false, memoryClient = memory) {
+export async function doList(full = false, limit = null, memoryClient = memory) {
   const all = await memoryClient.getAll({ userId: USER_ID });
   const items = all?.results || all || [];
+  const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   if (full) {
-    return items;
+    return sliced;
   }
   // Compact projection — consistent shape with doSearch compact items (minus score,
   // which is search-specific). id and title use the same fallback logic as doSearch.
-  return items.map((r) => {
+  return sliced.map((r) => {
     const id = r.metadata?.id ?? r.id;
     const title = r.metadata?.title ?? r.metadata?.id ?? r.id ?? '(untitled)';
     const snippet = buildSnippet(title, r.memory);
@@ -1064,7 +1068,9 @@ const server = createServer(async (req, res) => {
 			// B.1.4b: compact shape by default; ?full=1 returns raw mem0 items.
 			// Preserves raw-array envelope (not {results:[...]}) for backward compat.
 			const full = url.searchParams.get('full') === '1';
-			const items = await doList(full);
+			const limitStr = url.searchParams.get('limit');
+			const limit = limitStr ? Math.min(parseInt(limitStr, 10) || 0, 1000) : null;
+			const items = await doList(full, limit);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(items));
 			return;
