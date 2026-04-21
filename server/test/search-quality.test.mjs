@@ -38,7 +38,7 @@ const SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = SNIPPET_DESIGN.snippet.N;
 
-import { doRecent, doSearch, doList } from '../mem0-mcp-http.mjs';
+import { doRecent, doSearch, doList, TOOLS } from '../mem0-mcp-http.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,4 +326,35 @@ test('doList returns empty array when vault has no memories', async () => {
   const result = await doList(false, buildFakeMemoryGetAll([]));
   assert.ok(Array.isArray(result));
   assert.strictEqual(result.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// MCP tool schema tests (B.1.5) — assert full: boolean in inputSchema
+// ---------------------------------------------------------------------------
+
+test('MCP memory_search tool schema has optional full: boolean', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_search');
+  assert.ok(tool, 'memory_search tool must exist in TOOLS');
+  assert.ok(tool.inputSchema.properties.full, 'full property must be defined in memory_search schema');
+  assert.strictEqual(tool.inputSchema.properties.full.type, 'boolean');
+  assert.strictEqual(tool.inputSchema.properties.full.default, false);
+  assert.ok(!(tool.inputSchema.required || []).includes('full'), 'full must be optional (not in required)');
+});
+
+test('MCP memory_list tool schema has optional full: boolean', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_list');
+  assert.ok(tool, 'memory_list tool must exist in TOOLS');
+  assert.ok(tool.inputSchema.properties.full, 'full property must be defined in memory_list schema');
+  assert.strictEqual(tool.inputSchema.properties.full.type, 'boolean');
+  assert.strictEqual(tool.inputSchema.properties.full.default, false);
+  assert.ok(!(tool.inputSchema.required || []).includes('full'), 'full must be optional (not in required)');
+});
+
+test('MCP memory_recent tool schema has optional full: boolean', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_recent');
+  assert.ok(tool, 'memory_recent tool must exist in TOOLS');
+  assert.ok(tool.inputSchema.properties.full, 'full property must be defined in memory_recent schema');
+  assert.strictEqual(tool.inputSchema.properties.full.type, 'boolean');
+  assert.strictEqual(tool.inputSchema.properties.full.default, false);
+  assert.ok(!(tool.inputSchema.required || []).includes('full'), 'full must be optional (not in required)');
 });

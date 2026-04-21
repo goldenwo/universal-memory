@@ -168,7 +168,7 @@ export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
-		description: 'Search memories by semantic similarity with optional status filters',
+		description: 'Search memories by semantic similarity with optional status filters. Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -183,6 +183,7 @@ export const TOOLS = [
 						type: { type: 'string', description: 'Filter by document type (e.g. session_summary, authored)' },
 					},
 				},
+				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + score + snippet). Default false.', default: false },
 			},
 			required: ['query'],
 		},
@@ -201,8 +202,13 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_list',
-		description: 'List all stored memories',
-		inputSchema: { type: 'object', properties: {} },
+		description: 'List all stored memories. Returns compact shape (id, title, snippet) by default; pass full=true for raw mem0 items.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + snippet). Default false.', default: false },
+			},
+		},
 	},
 	{
 		name: 'memory_delete',
@@ -227,12 +233,13 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_recent',
-		description: 'Fetch recent session_summary documents for a project',
+		description: 'Fetch recent session_summary documents for a project. Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				project: { type: 'string', description: 'Project name filter (optional)' },
 				limit: { type: 'number', description: 'Max results (default 5)' },
+				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + snippet). Default false.', default: false },
 			},
 		},
 	},
@@ -362,8 +369,10 @@ async function handleToolCall(name, args) {
 		case 'memory_search': {
 			const limit = args.limit || 5;
 			const includeSup = args.include_superseded === true;
-			// MCP tools return full items (body + metadata) for LLM consumption.
-			// B.1.5 will formally add full param to the schema; tolerate args.full now.
+			const clientFull = args.full === true;
+			// Always call doSearch(full=true) internally so metadata is preserved for
+			// post-filtering (project, type). Then project to compact shape at the end
+			// unless the MCP client explicitly requested full bodies (args.full=true).
 			const searchResult = await doSearch(args.query, limit, includeSup, true);
 			let items = searchResult.results;
 
@@ -377,6 +386,16 @@ async function handleToolCall(name, args) {
 				}
 			}
 
+			// Project to compact shape unless client requested full bodies.
+			if (!clientFull) {
+				items = items.map((r) => ({
+					id: r.id,
+					title: r.title,
+					score: r.score,
+					snippet: buildSnippet(r.title, r.body),
+				}));
+			}
+
 			return JSON.stringify({ results: items });
 		}
 		case 'memory_add': {
@@ -385,11 +404,18 @@ async function handleToolCall(name, args) {
 			return events;
 		}
 		case 'memory_list': {
-			// MCP tools return full items for LLM consumption (text format expected).
-			// B.1.5 will formally add full param to the schema; tolerate args.full now.
-			const all = await memory.getAll({ userId: USER_ID });
-			const items = all?.results || all || [];
-			return items.map((r) => `- ${r.memory} (id: ${r.id})`).join('\n') || 'No memories.';
+			const clientFull = args.full === true;
+			// Delegate to doList which handles compact/full projection.
+			// When full=true: raw mem0 items (backward compat shape) serialized as JSON.
+			// When full=false (default): compact { id, title, snippet } items.
+			const items = await doList(clientFull);
+			if (items.length === 0) return 'No memories.';
+			if (clientFull) {
+				// Full shape: return as JSON so body/metadata fields are accessible
+				return JSON.stringify(items);
+			}
+			// Compact shape: human-readable text format consistent with prior MCP behavior
+			return items.map((r) => `- ${r.snippet} (id: ${r.id})`).join('\n');
 		}
 		case 'memory_delete': {
 			await memory.delete(args.memoryId);
@@ -405,10 +431,13 @@ async function handleToolCall(name, args) {
 
 		case 'memory_recent': {
 			const limit = args.limit || 5;
+			const clientFull = args.full === true;
 			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
 			const searchLimit = Math.min(limit * 3, 100);
 			// Search using a broad session-summary query, then filter by type.
-			// full=true: metadata preserved so the type/valid_from/project filters below work.
+			// Always call doSearch(full=true) internally so metadata is preserved for
+			// post-filtering (type, valid_from, project). Project to compact at the end
+			// unless the MCP client explicitly requested full bodies (args.full=true).
 			const searchResult = await doSearch('session_summary', searchLimit, false, true);
 			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
 			// Sort by valid_from descending (most recent first)
@@ -422,6 +451,16 @@ async function handleToolCall(name, args) {
 				items = items.filter((r) => (r.metadata || {}).project === args.project);
 			}
 			items = items.slice(0, limit);
+
+			// Project to compact shape unless client requested full bodies.
+			if (!clientFull) {
+				items = items.map((r) => ({
+					id: r.id,
+					title: r.title,
+					snippet: buildSnippet(r.title, r.body),
+				}));
+			}
+
 			return JSON.stringify({ results: items });
 		}
 
