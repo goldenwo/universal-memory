@@ -1265,9 +1265,10 @@ const server = createServer(async (req, res) => {
 		res.writeHead(404);
 		res.end('Not Found');
 	} catch (err) {
-		console.error('[mem0-mcp] Error:', err.message);
+		console.error('[mem0-mcp] Unhandled error:', err.stack);
+		const userMsg = process.env.NODE_ENV === 'production' ? 'internal_error' : err.message;
 		res.writeHead(500, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ error: err.message }));
+		res.end(JSON.stringify({ error: userMsg }));
 	}
 });
 
