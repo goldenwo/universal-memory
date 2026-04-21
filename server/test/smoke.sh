@@ -762,7 +762,7 @@ fi
 
 # T10-D: memory_recent — returns {results:[...]} shape
 echo "[smoke]     T10-D: memory_recent shape check"
-T10D_RESP=$(mcp_call 104 memory_recent '{"limit":3}')
+T10D_RESP=$(mcp_call 104 memory_recent '{"project":"smoke-t10d","limit":3}')
 echo "$T10D_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -1033,7 +1033,7 @@ fi
 
 # T10-J: memory_recent with large limit stays within bounds (I2)
 echo "[smoke]     T10-J: memory_recent with limit=50 — capped internally, no error"
-T10J_RESP=$(mcp_call 140 memory_recent '{"limit":50}')
+T10J_RESP=$(mcp_call 140 memory_recent '{"project":"smoke-t10j","limit":50}')
 echo "$T10J_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
