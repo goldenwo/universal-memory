@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false  # don't cancel a release build mid-way
 
 permissions:
-  contents: read
+  contents: write     # needed to upload release assets
   packages: write     # needed to push to GHCR
 
 jobs:
@@ -61,3 +61,10 @@ jobs:
           # acceptable for v0.1.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Upload install-cli.sh as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/install-cli.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
