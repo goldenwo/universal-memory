@@ -190,6 +190,24 @@ else
 fi
 rm -rf "$fake_wd8"
 
+# ─── T9: UM_LIB_DIR health check — nonexistent dir → exits non-zero ──────────
+echo "=== T9: UM_LIB_DIR=/nonexistent → --version exits non-zero with clear error ==="
+UM_TEST_DIR9=$(mktemp -d)
+cp "$REAL_UM" "$UM_TEST_DIR9/um"
+chmod +x "$UM_TEST_DIR9/um"
+out9=$(HOME="$fake_home" UM_NO_USAGE_LOG=1 UM_LIB_DIR=/nonexistent/path bash "$UM_TEST_DIR9/um" --version 2>&1) && rc9=0 || rc9=$?
+if [ "$rc9" -ne 0 ]; then
+  pass "T9: UM_LIB_DIR=/nonexistent/path → --version exits $rc9 (expected non-zero)"
+else
+  fail "T9: expected non-zero exit, got 0 (output: $out9)"
+fi
+if echo "$out9" | grep -qi "missing\|not found\|library"; then
+  pass "T9: error message mentions missing libraries"
+else
+  fail "T9: error message unclear: $out9"
+fi
+rm -rf "$UM_TEST_DIR9"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

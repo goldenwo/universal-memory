@@ -5,6 +5,26 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PLUGIN_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 LIB_DIR="${UM_LIB_DIR:-$PLUGIN_DIR/hooks/lib}"
 
+# ── UM_LIB_DIR health check (spec §8.1) ─────────────────────────────────────
+# Verify critical library files are readable before sourcing anything.
+# Called at init and also from --version for explicit diagnostic feedback.
+_um_verify_lib_dir() {
+  local required=("config.sh" "resolve-project.sh" "vault.sh")
+  local missing=()
+  for f in "${required[@]}"; do
+    [ -r "$LIB_DIR/$f" ] || missing+=("$f")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "um: UM_LIB_DIR health check FAILED" >&2
+    echo "    UM_LIB_DIR=$LIB_DIR" >&2
+    echo "    Missing libraries: ${missing[*]}" >&2
+    echo "    Reinstall via: bash installer/install-cli.sh   # or server/install.sh" >&2
+    return 1
+  fi
+  return 0
+}
+_um_verify_lib_dir || exit 1
+
 # shellcheck source=../hooks/lib/config.sh
 source "$LIB_DIR/config.sh"
 # shellcheck source=../hooks/lib/resolve-project.sh
@@ -58,6 +78,7 @@ EOF
     exit 0
     ;;
   -v|--version)
+    _um_verify_lib_dir || exit 1
     PLUGIN_JSON="$PLUGIN_DIR/.claude-plugin/plugin.json"
     if [ ! -r "$PLUGIN_JSON" ]; then
       echo "um: plugin.json not found at $PLUGIN_JSON" >&2
