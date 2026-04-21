@@ -188,7 +188,7 @@ else
     etype=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('type',''))" 2>/dev/null \
       || echo "$line" | sed -nE 's/.*"type":"([^"]*)".*/\1/p')
     body=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('body',''))" 2>/dev/null \
-      || echo "$line" | sed -nE 's/.*"body":"(.*)"\}/\1/p' | sed 's/\\n/\n/g; s/\\"/"/g; s/\\\\/\\/g')
+      || echo "$line" | sed -nE 's/.*"body":"(.*)"\}/\1/p' | sed 's/\\\\/\\/g; s/\\"/"/g; s/\\n/\n/g')
     printf '[%s] type=%s\n%s\n---\n' "$captured" "$etype" "$body"
   done
 fi
