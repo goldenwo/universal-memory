@@ -38,7 +38,7 @@ const SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = SNIPPET_DESIGN.snippet.N;
 
-import { doRecent, doSearch } from '../mem0-mcp-http.mjs';
+import { doRecent, doSearch, doList } from '../mem0-mcp-http.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -257,4 +257,73 @@ test('doSearch handles missing metadata.title (fallback to metadata.id)', async 
     'title must have a defined fallback when metadata.title absent');
   assert.strictEqual(result.results[0].title, 'result-a',
     'title fallback must be metadata.id');
+});
+
+// ---------------------------------------------------------------------------
+// doList tests (B.1.4b) — DI-injected fake memoryClient, no live server
+//
+// Scope decision (Step 1, option b): compact shape only, list scope as-is.
+// /api/list remains a full-user listing (not per-project filtered). Adding a
+// project arg would require B.1.5 MCP tool schema changes. doList(full=false)
+// emits compact shape; doList(full=true) returns raw mem0 items (backward compat).
+// ---------------------------------------------------------------------------
+
+function buildFakeMemoryGetAll(results) {
+  return {
+    getAll: async (_opts) => ({ results }),
+  };
+}
+
+test('doList returns compact shape (id, title, snippet; no body, no score) by default', async () => {
+  const fakeResults = [
+    { id: 'mem0-uuid-1', memory: 'body A '.repeat(50), score: 1,
+      metadata: { id: 'item-a', title: 'Item A', type: 'fact' } },
+    { id: 'mem0-uuid-2', memory: 'body B '.repeat(50), score: 1,
+      metadata: { id: 'item-b', title: 'Item B', type: 'adr' } },
+  ];
+  const result = await doList(false, buildFakeMemoryGetAll(fakeResults));
+  assert.ok(Array.isArray(result), 'doList must return a raw array (not an envelope)');
+  assert.strictEqual(result.length, 2, 'length must match fakeResults');
+  for (const r of result) {
+    assert.ok(r.id, 'id must be present');
+    assert.ok(r.title, 'title must be present');
+    assert.ok(r.snippet, 'snippet must be present');
+    assert.strictEqual(typeof r.snippet, 'string', 'snippet must be a string');
+    assert.ok(!('body' in r), 'body must NOT be present without full=true');
+    assert.ok(!('score' in r), 'score must NOT be present (search-specific)');
+    assert.ok(!('memory' in r), 'raw memory field must NOT be present');
+    assert.ok(!('metadata' in r), 'raw metadata must NOT be present');
+  }
+  // id must be metadata.id, not mem0 UUID
+  assert.strictEqual(result[0].id, 'item-a');
+  assert.notStrictEqual(result[0].id, 'mem0-uuid-1');
+});
+
+test('doList returns raw mem0 items when full=true', async () => {
+  const fakeResults = [
+    { id: 'mem0-uuid-1', memory: 'Full body text.', score: 1,
+      metadata: { id: 'item-a', title: 'Item A' } },
+  ];
+  const result = await doList(true, buildFakeMemoryGetAll(fakeResults));
+  assert.ok(Array.isArray(result), 'full=true result must be a raw array');
+  assert.strictEqual(result.length, 1);
+  // Full shape: raw mem0 items (backward compat — pre-B.1 callers expect this shape)
+  assert.ok('memory' in result[0], 'memory field must be present with full=true');
+  assert.strictEqual(result[0].memory, 'Full body text.');
+});
+
+test('doList compact shape id falls back to mem0 UUID when metadata.id absent', async () => {
+  const fakeResults = [
+    { id: 'mem0-uuid-fallback', memory: 'body', score: 1,
+      metadata: {} },  // no metadata.id
+  ];
+  const result = await doList(false, buildFakeMemoryGetAll(fakeResults));
+  assert.strictEqual(result[0].id, 'mem0-uuid-fallback',
+    'id must fall back to mem0 UUID when metadata.id absent');
+});
+
+test('doList returns empty array when vault has no memories', async () => {
+  const result = await doList(false, buildFakeMemoryGetAll([]));
+  assert.ok(Array.isArray(result));
+  assert.strictEqual(result.length, 0);
 });

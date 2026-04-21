@@ -385,6 +385,8 @@ async function handleToolCall(name, args) {
 			return events;
 		}
 		case 'memory_list': {
+			// MCP tools return full items for LLM consumption (text format expected).
+			// B.1.5 will formally add full param to the schema; tolerate args.full now.
 			const all = await memory.getAll({ userId: USER_ID });
 			const items = all?.results || all || [];
 			return items.map((r) => `- ${r.memory} (id: ${r.id})`).join('\n') || 'No memories.';
@@ -396,23 +398,9 @@ async function handleToolCall(name, args) {
 
 		// ── Task 10: 6 new tools ──────────────────────────────────────────────
 		case 'memory_state': {
-			const project = args.project;
-			if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-				throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
-			}
-			const relPath = `state/${project}/state.md`;
-			let fileText;
-			try {
-				fileText = await readVaultFile(relPath);
-			} catch (err) {
-				if (err.code === 'ENOENT') {
-					return JSON.stringify({ ok: true, project, state: null, valid_from: null });
-				}
-				throw err;
-			}
-			const { frontmatter, body } = parseFrontmatter(fileText);
-			const validFrom = frontmatter.valid_from || null;
-			return JSON.stringify({ ok: true, project, state: { frontmatter, body }, valid_from: validFrom });
+			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
+			// doState validates the project name and throws on invalid input.
+			return await doState(args.project);
 		}
 
 		case 'memory_recent': {
@@ -732,6 +720,48 @@ export async function doSearch(query, limit, includeSuperseded, full = false, me
 	return { results: mapped };
 }
 
+// ---------------------------------------------------------------------------
+// doState — extracted for DI testability (B.1.4b Step 0a)
+// Called by both the MCP handler (memory_state) and the REST handler
+// (GET /api/state/:project). Returns a JSON string for MCP parity; the REST
+// handler writes the same string directly to the response body.
+//
+// Validation is defense-in-depth: doState throws on invalid project names.
+// The REST handler ALSO keeps its own pre-validation that returns HTTP 400
+// before doState runs, so REST never hits the throw path. Both checks pass the
+// same regex — the duplication is intentional belt-and-suspenders.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the state.md for a project and return it as a JSON string.
+ * Returns { ok, project, state: { frontmatter, body }, valid_from } or
+ * { ok, project, state: null, valid_from: null } when the file does not exist.
+ *
+ * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
+ * @returns {Promise<string>} JSON string
+ */
+export async function doState(project) {
+  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
+    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  }
+  const relPath = `state/${project}/state.md`;
+  try {
+    const fileText = await readVaultFile(relPath);
+    const { frontmatter, body } = parseFrontmatter(fileText);
+    return JSON.stringify({
+      ok: true,
+      project,
+      state: { frontmatter, body },
+      valid_from: frontmatter.valid_from || null,
+    });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+    }
+    throw err;
+  }
+}
+
 /**
  * List the most recently modified vault documents for a project.
  *
@@ -807,6 +837,50 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
   const results = resultsRaw.filter(Boolean);
 
   return { results };
+}
+
+// ---------------------------------------------------------------------------
+// doList — extracted for DI testability and compact-shape support (B.1.4b)
+//
+// Step 1 scope decision: option (b) — compact shape only, keep list scope as-is.
+// Rationale: /api/list today is a vault listing (all memories for MEM0_USER_ID),
+// not per-project filtered in the way /api/search is. Adding a project arg now
+// would also require updating the MCP tool schema (B.1.5 territory) and changing
+// existing listing semantics. Option (b) is minimal: doList(full=false) +
+// compact-shape projection. If B.1.5 needs a project arg, decide there.
+// ---------------------------------------------------------------------------
+
+/**
+ * List all stored memories for MEM0_USER_ID.
+ *
+ * Compact shape (full=false, default): { id, title, snippet }
+ *   - id    = metadata.id (filename stem) if present, else mem0 UUID
+ *   - title = metadata.title if present; falls back to metadata.id, then mem0 UUID
+ *   - snippet = buildSnippet(title, memory body)
+ * Full shape (full=true): raw mem0 result objects (backward compat with pre-B.1 callers)
+ *
+ * Returns a raw array (not an envelope) to preserve backward compatibility with
+ * the existing /api/list contract — the current handler returns `all?.results || all || []`.
+ * Changing to {results:[...]} would be a breaking API change beyond "compact shape" scope.
+ *
+ * @param {boolean} [full=false] - false → compact shape; true → raw mem0 items
+ * @param {{getAll: Function}} [memoryClient] - DI for tests; defaults to module `memory`
+ * @returns {Promise<Array>} flat array of memory items
+ */
+export async function doList(full = false, memoryClient = memory) {
+  const all = await memoryClient.getAll({ userId: USER_ID });
+  const items = all?.results || all || [];
+  if (full) {
+    return items;
+  }
+  // Compact projection — consistent shape with doSearch compact items (minus score,
+  // which is search-specific). id and title use the same fallback logic as doSearch.
+  return items.map((r) => {
+    const id = r.metadata?.id ?? r.id;
+    const title = r.metadata?.title ?? r.metadata?.id ?? r.id ?? '(untitled)';
+    const snippet = buildSnippet(title, r.memory);
+    return { id, title, snippet };
+  });
 }
 
 const server = createServer(async (req, res) => {
@@ -922,9 +996,12 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/list' && req.method === 'GET') {
-			const all = await memory.getAll({ userId: USER_ID });
+			// B.1.4b: compact shape by default; ?full=1 returns raw mem0 items.
+			// Preserves raw-array envelope (not {results:[...]}) for backward compat.
+			const full = url.searchParams.get('full') === '1';
+			const items = await doList(full);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(all?.results || all || []));
+			res.end(JSON.stringify(items));
 			return;
 		}
 		// GET /api/recent/:project — list recent authored docs by filesystem mtime, compact shape
@@ -952,28 +1029,20 @@ const server = createServer(async (req, res) => {
 		// GET /api/state/:project — direct file read, does NOT touch mem0
 		if (url.pathname.startsWith('/api/state/') && req.method === 'GET') {
 			const projectSegment = url.pathname.slice('/api/state/'.length);
-			// Reject empty or multi-segment paths (no nested slashes allowed)
+			// Belt-and-suspenders: REST handler pre-validates and returns HTTP 400
+			// before doState() runs, so REST never hits doState's throw path.
+			// Both checks use the same regex — intentional duplication.
 			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'Invalid project name: must match ^[a-zA-Z0-9._-]+$' }));
 				return;
 			}
-			const relPath = `state/${projectSegment}/state.md`;
-			let fileText;
-			try {
-				fileText = await readVaultFile(relPath);
-			} catch (err) {
-				if (err.code === 'ENOENT') {
-					res.writeHead(200, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ ok: true, project: projectSegment, state: null, valid_from: null }));
-					return;
-				}
-				throw err;
-			}
-			const { frontmatter, body } = parseFrontmatter(fileText);
-			const validFrom = frontmatter.valid_from || null;
+			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
+			// R5-L1: preserve Content-Type header — ChatGPT Custom GPT actions and
+			// other REST clients expect application/json; Node's autodetection would
+			// fall back to text/plain and break downstream callers.
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, project: projectSegment, state: { frontmatter, body }, valid_from: validFrom }));
+			res.end(await doState(projectSegment));
 			return;
 		}
 		if (url.pathname === '/api/reindex' && req.method === 'POST') {
