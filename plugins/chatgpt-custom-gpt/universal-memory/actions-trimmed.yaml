@@ -373,7 +373,8 @@ components:
       properties:
         id:
           type: string
-          description: mem0 UUID (not the metadata.id)
+          description: Filename stem from metadata.id when present; falls back to mem0
+            UUID only when metadata.id is absent
         title:
           type: string
           description: Document title from metadata.title
@@ -391,7 +392,8 @@ components:
       properties:
         id:
           type: string
-          description: mem0 UUID (not the metadata.id)
+          description: Filename stem from metadata.id when present; falls back to mem0
+            UUID only when metadata.id is absent
         memory:
           type: string
           description: The stored text

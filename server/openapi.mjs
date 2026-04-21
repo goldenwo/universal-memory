@@ -117,7 +117,7 @@ const SCHEMAS = {
     type: 'object',
     description: 'A single memory record returned by search/list endpoints (full shape, ?full=1).',
     properties: {
-      id: { type: 'string', description: 'mem0 UUID (not the metadata.id)' },
+      id: { type: 'string', description: 'Filename stem from metadata.id when present; falls back to mem0 UUID only when metadata.id is absent' },
       memory: { type: 'string', description: 'The stored text' },
       score: {
         type: 'number',
@@ -138,7 +138,7 @@ const SCHEMAS = {
       'Compact memory record returned by default (without ?full=1) from search, list, and recent endpoints. Contains only the most commonly needed fields. Use ?full=1 to get the full MemoryResult shape.',
     required: ['id', 'title', 'snippet'],
     properties: {
-      id: { type: 'string', description: 'mem0 UUID (not the metadata.id)' },
+      id: { type: 'string', description: 'Filename stem from metadata.id when present; falls back to mem0 UUID only when metadata.id is absent' },
       title: { type: 'string', description: 'Document title from metadata.title' },
       snippet: {
         type: 'string',
