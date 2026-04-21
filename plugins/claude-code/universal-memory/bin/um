@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PLUGIN_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+LIB_DIR="$PLUGIN_DIR/hooks/lib"
+
+# shellcheck source=../hooks/lib/config.sh
+source "$LIB_DIR/config.sh"
+# shellcheck source=../hooks/lib/resolve-project.sh
+source "$LIB_DIR/resolve-project.sh"
+
+# Load config files: repo-local FIRST, then user-global. Env already wins via precedence.
+_um_load_config "./.um/config"
+_um_load_config "$HOME/.um/config"
+
+# Usage log (respects UM_NO_USAGE_LOG=1 + .no-log sentinel)
+if [ -z "${UM_NO_USAGE_LOG:-}" ] && [ ! -f "$HOME/.local/share/um/.no-log" ]; then
+  mkdir -p "$HOME/.local/share/um"
+  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-$(id -un 2>/dev/null || echo unknown)}" "$*" >> "$HOME/.local/share/um/usage.log" 2>/dev/null || :
+fi
+
+# Flag / subcommand parsing
+if [ $# -eq 0 ]; then
+  cat >&2 <<EOF
+um: no subcommand given
+
+Usage: um <subcommand> [args]
+
+Subcommands:
+  search <query>        — search memories
+  state <project>       — read project state.md
+  recent <project>      — recent memories
+  list                  — list all memories
+  capture               — append raw capture (stdin or --text)
+  tail [N]              — batch tail of raw captures
+  forget <id>           — forget a memory
+  supersede <old> <new> — supersede one memory with another
+  --help | -h           — this help
+  --version | -v        — version info
+
+See docs/um-cli.md for full contract.
+EOF
+  exit 2
+fi
+
+case "$1" in
+  -h|--help)
+    cat <<EOF
+Usage: um <subcommand> [args]
+
+Subcommands:
+  search, state, recent, list, capture, tail, forget, supersede
+
+See docs/um-cli.md for full contract.
+EOF
+    exit 0
+    ;;
+  -v|--version)
+    PLUGIN_JSON="$PLUGIN_DIR/.claude-plugin/plugin.json"
+    if [ ! -r "$PLUGIN_JSON" ]; then
+      echo "um: plugin.json not found at $PLUGIN_JSON" >&2
+      exit 1
+    fi
+    # Use jq if available, else grep/sed
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.version // .plugin_version // "unknown"' "$PLUGIN_JSON"
+    else
+      grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$PLUGIN_JSON" | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+    fi
+    exit 0
+    ;;
+  search|state|recent|list|capture|tail)
+    SUBCMD_SH="$SCRIPT_DIR/um-$1.sh"
+    if [ ! -x "$SUBCMD_SH" ]; then
+      echo "um: subcommand script missing or not executable: $SUBCMD_SH" >&2
+      exit 1
+    fi
+    exec "$SUBCMD_SH" "${@:2}"
+    ;;
+  forget|supersede)
+    # Delegate to pre-existing binaries (no .sh suffix)
+    SUBCMD_BIN="$SCRIPT_DIR/um-$1"
+    if [ ! -x "$SUBCMD_BIN" ]; then
+      echo "um: pre-existing binary missing: $SUBCMD_BIN" >&2
+      exit 1
+    fi
+    exec "$SUBCMD_BIN" "${@:2}"
+    ;;
+  *)
+    echo "um: unknown subcommand: $1" >&2
+    echo "Run 'um --help' for usage." >&2
+    exit 2
+    ;;
+esac
