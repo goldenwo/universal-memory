@@ -107,8 +107,8 @@ mv "$TMP" "$RELPATH" || {
 }
 
 # Reindex best-effort
-ENDPOINT="${UM_ENDPOINT:-http://localhost:6335}"
-curl -sfm 5 -X POST "$ENDPOINT/api/reindex" \
+ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
+curl -fSsm 5 -X POST "$ENDPOINT/api/reindex" \
   -H 'Content-Type: application/json' \
   -d "{\"path\":\"$REL\"}" >/dev/null 2>&1 || \
   echo "um-forget: reindex POST failed (server may be down). Doc is deprecated on disk." >&2
