@@ -281,6 +281,34 @@ assert_contains "T6: continue path fires safely" "$T6_SNIPPET_OUT" "continue_ok"
 T6_SRC_FIX=$(grep -c '_sh="${SHELL:-}"' "$INSTALL_CLI" || true)
 assert_eq "T6: _sh safe-default present in install-cli.sh" "$T6_SRC_FIX" "1"
 
+# ─── T7: single-quote in UM_LIB_DIR does not break the written rc file ────────
+# CRIT-5: path values containing a single-quote (e.g. /home/bob's data) must be
+# escaped as '\'', otherwise the written export line is invalid bash.
+# The fix adds _marker_escape_sq() to marker-block.sh.
+echo ""
+echo "=== T7: single-quote in value does not corrupt written rc file ==="
+T7="$TMPROOT/t7"
+T7_HOME="$T7/home"
+# Path with a literal single-quote — valid on Linux, must be escaped in rc.
+T7_SQ_LIB="$T7_HOME/.local/share/it's-um/lib"
+mkdir -p "$T7_HOME" "$T7_SQ_LIB"
+touch "$T7_HOME/.bashrc"
+make_fakepython3 "$T7/bin"
+_BASH_BIN7="$(command -v bash)"
+
+T7_EXIT=0
+T7_OUT=$(env PATH="$T7/bin:$PATH" HOME="$T7_HOME" \
+  UM_LIB_DIR="$T7_SQ_LIB" \
+  "$_BASH_BIN7" "$INSTALL_CLI" --yes 2>&1) || T7_EXIT=$?
+
+assert_exit_zero "T7: install exits 0 with single-quote in UM_LIB_DIR" "$T7_EXIT"
+
+# The written rc file must source cleanly and UM_LIB_DIR must round-trip correctly.
+T7_SOURCE_OUT=$(bash -c "source '$T7_HOME/.bashrc'; printf '%s' \"\$UM_LIB_DIR\"" 2>&1)
+T7_SOURCE_EXIT=$?
+assert_exit_zero "T7: rc file sources cleanly after single-quote value written" "$T7_SOURCE_EXIT"
+assert_eq "T7: UM_LIB_DIR round-trips through rc correctly" "$T7_SOURCE_OUT" "$T7_SQ_LIB"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

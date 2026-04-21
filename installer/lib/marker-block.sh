@@ -13,6 +13,18 @@
 #
 # This file is sourced (not executed directly). It defines only _write_marker_block.
 
+# _marker_escape_sq <value>
+# Escapes single-quote characters in <value> using the standard bash technique
+# of ending the single-quoted string, inserting a literal quote, then
+# resuming: foo'bar → foo'\''bar.
+# Required because any of the five user-controlled values (key, summarizer,
+# server URL, lib dir, CLI dir) may legally contain single quotes on Linux
+# (e.g. /home/bob's data), which would otherwise produce invalid bash in the
+# written rc file.
+_marker_escape_sq() {
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+
 _write_marker_block() {
   local profile="$1"
   local key_value="$2"       # UM_OPENAI_API_KEY value (may be empty for CLI-only)
@@ -33,15 +45,15 @@ _write_marker_block() {
     ' "$profile" > "$tmp"
   fi
 
-  # Append canonical-superset block
-  # Single-quoted values for key/summarizer match the historic format tests expect.
-  # New superset vars (SERVER_URL, LIB_DIR, CLI_DIR, PATH guard) use ${VAR:-default}
-  # expansion from the caller's env at write time.
-  local _key="${key_value:-${UM_OPENAI_API_KEY:-}}"
-  local _sum="${summarizer:-${UM_SUMMARIZER:-openai}}"
-  local _srv="${UM_SERVER_URL:-http://localhost:6335}"
-  local _lib="${UM_LIB_DIR:-$HOME/.local/share/um/lib}"
-  local _cli="${UM_CLI_DIR:-$HOME/.local/share/um/cli}"
+  # Append canonical-superset block.
+  # All five user-controlled values are passed through _marker_escape_sq so
+  # a value containing a single-quote character does not produce invalid bash.
+  # The PATH guard line has no user-value interpolation and is left as-is.
+  local _key; _key=$(_marker_escape_sq "${key_value:-${UM_OPENAI_API_KEY:-}}")
+  local _sum; _sum=$(_marker_escape_sq "${summarizer:-${UM_SUMMARIZER:-openai}}")
+  local _srv; _srv=$(_marker_escape_sq "${UM_SERVER_URL:-http://localhost:6335}")
+  local _lib; _lib=$(_marker_escape_sq "${UM_LIB_DIR:-$HOME/.local/share/um/lib}")
+  local _cli; _cli=$(_marker_escape_sq "${UM_CLI_DIR:-$HOME/.local/share/um/cli}")
   {
     printf '\n%s\n' "$marker_start"
     printf "export UM_OPENAI_API_KEY='%s'\n" "$_key"
