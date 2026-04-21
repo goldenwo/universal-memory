@@ -208,6 +208,31 @@ else
 fi
 rm -rf "$UM_TEST_DIR9"
 
+# ─── T10: partial UM_LIB_DIR (missing frontmatter.sh) → health check fails ──
+echo "=== T10: partial UM_LIB_DIR missing frontmatter.sh → health check fails clearly ==="
+UM_TEST_DIR10=$(mktemp -d)
+cp "$REAL_UM" "$UM_TEST_DIR10/um"
+chmod +x "$UM_TEST_DIR10/um"
+# Create a partial lib dir with all files except frontmatter.sh
+PARTIAL_LIB="$UM_TEST_DIR10/lib"
+mkdir -p "$PARTIAL_LIB"
+for f in config.sh resolve-project.sh vault.sh summarize.sh update-state.sh; do
+  touch "$PARTIAL_LIB/$f"
+done
+# frontmatter.sh intentionally absent
+out10=$(HOME="$fake_home" UM_NO_USAGE_LOG=1 UM_LIB_DIR="$PARTIAL_LIB" bash "$UM_TEST_DIR10/um" --version 2>&1) && rc10=0 || rc10=$?
+if [ "$rc10" -ne 0 ]; then
+  pass "T10: partial lib (missing frontmatter.sh) → exits non-zero"
+else
+  fail "T10: expected non-zero exit, got 0 (output: $out10)"
+fi
+if echo "$out10" | grep -q "frontmatter.sh"; then
+  pass "T10: error message names the missing file (frontmatter.sh)"
+else
+  fail "T10: error message does not name missing file: $out10"
+fi
+rm -rf "$UM_TEST_DIR10"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

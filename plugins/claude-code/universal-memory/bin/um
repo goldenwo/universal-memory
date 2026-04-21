@@ -9,7 +9,7 @@ LIB_DIR="${UM_LIB_DIR:-$PLUGIN_DIR/hooks/lib}"
 # Verify critical library files are readable before sourcing anything.
 # Called at init and also from --version for explicit diagnostic feedback.
 _um_verify_lib_dir() {
-  local required=("config.sh" "resolve-project.sh" "vault.sh")
+  local required=("config.sh" "resolve-project.sh" "vault.sh" "frontmatter.sh" "summarize.sh" "update-state.sh")
   local missing=()
   for f in "${required[@]}"; do
     [ -r "$LIB_DIR/$f" ] || missing+=("$f")
