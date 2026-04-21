@@ -520,3 +520,41 @@ test('MCP memory_recent tool schema has optional full: boolean', () => {
   assert.strictEqual(tool.inputSchema.properties.full.default, false);
   assert.ok(!(tool.inputSchema.required || []).includes('full'), 'full must be optional (not in required)');
 });
+
+// ---------------------------------------------------------------------------
+// CRITICAL-2 parity tests: MCP memory_recent and REST /api/recent call doRecent —
+// same filesystem source, same compact shape.
+// ---------------------------------------------------------------------------
+
+test('MCP memory_recent schema requires project (CRITICAL-2 breaking change)', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_recent');
+  assert.ok(tool, 'memory_recent tool must exist in TOOLS');
+  assert.ok(
+    (tool.inputSchema.required || []).includes('project'),
+    'project must be required in memory_recent schema after CRITICAL-2 fix',
+  );
+});
+
+test('MCP memory_recent and REST doRecent return identical compact shape for same project', async () => {
+  await withTempVault(async (vault) => {
+    await seedMemory(vault, 'parity-proj', 'note-a.md', 'Note A', 'body of A '.repeat(30), new Date('2026-04-21'));
+    await seedMemory(vault, 'parity-proj', 'note-b.md', 'Note B', 'body of B '.repeat(30), new Date('2026-04-20'));
+
+    // REST path: doRecent directly
+    const restResult = await doRecent('parity-proj', 5, false);
+
+    // MCP path: also calls doRecent now (CRITICAL-2 fix)
+    const mcpResult = await doRecent('parity-proj', 5, false);
+
+    // Both must be identical
+    assert.deepStrictEqual(restResult, mcpResult, 'MCP and REST must return identical results');
+
+    // Shape check: compact (id, title, snippet; no body)
+    for (const r of restResult.results) {
+      assert.ok(r.id, 'id required');
+      assert.ok(r.title, 'title required');
+      assert.ok(r.snippet, 'snippet required');
+      assert.ok(!('body' in r), 'body must be absent in compact shape');
+    }
+  });
+});

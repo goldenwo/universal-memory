@@ -233,14 +233,15 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_recent',
-		description: 'Fetch recent session_summary documents. Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
+		description: 'Fetch recent authored documents for a project by filesystem mtime (not from mem0). Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				project: { type: 'string', description: 'Filter by project name' },
-				limit: { type: 'number', description: 'Max results (default 5)' },
+				project: { type: 'string', description: 'Project name (must match ^[a-zA-Z0-9._-]+$)' },
+				limit: { type: 'number', description: 'Max results (default 10)' },
 				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
+			required: ['project'],
 		},
 	},
 	{
@@ -472,38 +473,15 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_recent': {
-			const limit = args.limit || 5;
-			const clientFull = args.full === true;
-			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
-			const searchLimit = Math.min(limit * 3, 100);
-			// Search using a broad session-summary query, then filter by type.
-			// Always call doSearch(full=true) internally so metadata is preserved for
-			// post-filtering (type, valid_from, project). Project to compact at the end
-			// unless the MCP client explicitly requested full bodies (args.full=true).
-			const searchResult = await doSearch('session_summary', searchLimit, false, true);
-			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
-			// Sort by valid_from descending (most recent first)
-			items.sort((a, b) => {
-				const ta = new Date((a.metadata || {}).valid_from || 0).getTime();
-				const tb = new Date((b.metadata || {}).valid_from || 0).getTime();
-				return tb - ta;
-			});
-			// Apply project filter if provided
-			if (args.project) {
-				items = items.filter((r) => (r.metadata || {}).project === args.project);
-			}
-			items = items.slice(0, limit);
-
-			// Project to compact shape unless client requested full bodies.
-			if (!clientFull) {
-				items = items.map((r) => ({
-					id: r.id,
-					title: r.title,
-					snippet: buildSnippet(r.title, r.body),
-				}));
-			}
-
-			return JSON.stringify({ results: items });
+			// CRITICAL-2 fix: delegate to doRecent (filesystem, mtime-sorted) to match
+			// REST /api/recent/:project semantics. Previous impl called doSearch (mem0
+			// vector-store) which is a different data source and different ordering.
+			// BREAKING CHANGE (v0.4 alpha): project is now required (was optional).
+			const project = args.project;
+			const limit = args.limit ?? 10;
+			const full = args.full === true;
+			const result = await doRecent(project, limit, full);
+			return JSON.stringify(result);
 		}
 
 		case 'memory_capture': {
