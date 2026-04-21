@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-LIB_DIR="$SCRIPT_DIR/../hooks/lib"
+LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # shellcheck source=../hooks/lib/resolve-project.sh
 source "$LIB_DIR/resolve-project.sh"

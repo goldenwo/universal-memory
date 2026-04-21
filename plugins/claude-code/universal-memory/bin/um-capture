@@ -17,7 +17,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$SCRIPT_DIR/../hooks/lib"
+LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # shellcheck source=../hooks/lib/vault.sh
 source "$LIB_DIR/vault.sh"

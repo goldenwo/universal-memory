@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PLUGIN_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-LIB_DIR="$PLUGIN_DIR/hooks/lib"
+LIB_DIR="${UM_LIB_DIR:-$PLUGIN_DIR/hooks/lib}"
 
 # shellcheck source=../hooks/lib/config.sh
 source "$LIB_DIR/config.sh"
