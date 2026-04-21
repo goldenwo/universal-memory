@@ -34,8 +34,12 @@ _write_marker_block() {
   local marker_end='# --- end universal-memory ---'
 
   # Idempotent: remove existing block, write fresh. Atomic via temp file.
+  # I1+I2: Use same-directory mktemp so mv is a true rename (atomic, not cross-fs cp+rm).
+  # Trap cleans up temp on early exit (INT/TERM/RETURN).
   local tmp
-  tmp=$(mktemp)
+  tmp=$(mktemp "$(dirname "$profile")/.um-marker.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp'" RETURN INT TERM
   if [ -f "$profile" ]; then
     awk -v s="$marker_start" -v e="$marker_end" '
       BEGIN { inblock=0 }
@@ -65,5 +69,6 @@ _write_marker_block() {
     printf '%s\n' "$marker_end"
   } >> "$tmp"
 
+  chmod 644 "$tmp"
   mv "$tmp" "$profile"
 }
