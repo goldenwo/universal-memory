@@ -715,28 +715,18 @@ _append_to_profile() {
 		return
 	fi
 
-	# Case 1: marker block already exists → this is a re-install.
-	# We need to decide: does the existing block have a matching key?
-	#   - If yes: rewrite the block declaratively so every managed var is
-	#     up-to-date (UM_SUMMARIZER might be new since the last install).
-	#   - If no: warn about the conflict and leave everything alone (user's
-	#     custom key wins; they should update manually).
+	# Case 1: marker block already exists → env-sourced contract: always strip and
+	# rewrite with the caller's current environment. No key-match check.
+	# Rationale (plan RH6): install-cli.sh may have written the block first with an
+	# empty key; when install.sh later runs with a real key in env, the old block must
+	# be replaced unconditionally so the real key lands in the profile.
 	if grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null; then
-		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
-		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
-		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
-			# Matching key inside existing marker block — rewrite block so
-			# UM_SUMMARIZER (and any future managed vars) are included.
-			ok "UM_OPENAI_API_KEY already present in $profile with matching value — refreshing managed block."
-			_strip_marker_block "$profile"
-			_write_marker_block "$profile" "$key_value" "$summarizer"
-			ok "Managed block refreshed in $profile (UM_OPENAI_API_KEY + UM_SUMMARIZER)."
-			info "Reload your shell or run: source $profile"
-			return
-		else
-			warn "Found existing UM_OPENAI_API_KEY in $profile with different value; please update manually."
-			return
-		fi
+		ok "Managed block found in $profile — rewriting with current environment (env-sourced contract)."
+		_strip_marker_block "$profile"
+		_write_marker_block "$profile" "$key_value" "$summarizer"
+		ok "Managed block refreshed in $profile."
+		info "Reload your shell or run: source $profile"
+		return
 	fi
 
 	# Case 2: no marker block, but a bare UM_OPENAI_API_KEY export exists

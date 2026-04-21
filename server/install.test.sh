@@ -183,6 +183,43 @@ assert_contains "T1b: PATH guard in block"          "$T1B_BASHRC" '.local/bin'
 assert_contains "T1b: block start marker"           "$T1B_BASHRC" "universal-memory (auto-added"
 assert_contains "T1b: block end marker"             "$T1B_BASHRC" "end universal-memory"
 
+# ─── T1c: install-cli.sh first (empty key) → install.sh later (real key) ───────
+# Regression for CRIT-1 / plan RH6: when install-cli.sh runs first it writes a
+# marker block with an empty UM_OPENAI_API_KEY. A subsequent server install.sh
+# with a real UM_OPENAI_API_KEY in env MUST overwrite the block and land the real
+# key — it must not warn-and-return because the stored key is different.
+echo ""
+echo "=== T1c: install-cli then install.sh — real key lands in block ==="
+T1C="$TMPROOT/t1c"
+mkdir -p "$T1C/vault" "$T1C/plugins" "$T1C/home"
+make_fakebin "$T1C/bin" 200
+T1C_SH=$(make_isolated_server "$T1C/server")
+
+# Simulate what install-cli.sh writes: marker block with empty UM_OPENAI_API_KEY
+printf '\n# --- universal-memory (auto-added by install.sh) ---\nexport UM_OPENAI_API_KEY=%s\nexport UM_SUMMARIZER=%sopenai%s\n# --- end universal-memory ---\n' \
+  "''" "'" "'" >> "$T1C/home/.bashrc"
+
+T1C_EXIT=0
+T1C_OUT=$(run_install "$T1C/bin" "$T1C_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-real-key999 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T1C/vault" \
+  UM_OPENAI_API_KEY=sk-real-key999 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T1C/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T1C/home") || T1C_EXIT=$?
+
+assert_exit_zero "T1c: server install exits 0 after cli install" "$T1C_EXIT"
+assert_contains "T1c: real key lands in profile" "$(cat "$T1C/home/.bashrc")" "sk-real-key999"
+# Exactly one block (no duplicates after rewrite)
+T1C_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T1C/home/.bashrc")
+assert_eq "T1c: exactly one marker-start line" "$T1C_START_COUNT" "1"
+
 # ─── T2: Re-install — same version plugin already installed ───────────────────
 echo ""
 echo "=== T2: Re-install (plugin same version, profile entry already present) ==="
@@ -215,7 +252,7 @@ T2_OUT=$(run_install "$T2/bin" "$T2_SH" \
 
 assert_exit_zero "T2: re-install exits 0" "$T2_EXIT"
 assert_contains "T2: skip message for same-version plugin" "$T2_OUT" "already installed"
-assert_contains "T2: skip message for matching profile key" "$T2_OUT" "matching value"
+assert_contains "T2: profile block rewritten with current env" "$T2_OUT" "Managed block found in"
 
 # ─── T3: Non-interactive mode ─────────────────────────────────────────────────
 echo ""
