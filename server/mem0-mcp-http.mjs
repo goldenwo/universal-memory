@@ -312,11 +312,47 @@ export const TOOLS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Write-gating helper
+// Write-gating helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Names of MCP tools that mutate state. Exported so tests can import the
+ * canonical set without duplicating it.
+ *
+ * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 10 so
+ * the runtime can still execute write tools when UM_MCP_WRITE_ENABLED=true.
+ */
+export const WRITE_TOOL_NAMES = new Set([
+	'memory_add', 'memory_delete', 'memory_capture',
+	'memory_checkpoint', 'memory_forget', 'memory_supersede',
+]);
+
+/**
+ * Returns true if UM_MCP_WRITE_ENABLED is set to 'true' or '1'.
+ * Unset, 'false', '0', or any other value → false (writes disabled).
+ */
+export function isWriteEnabled() {
+	const v = process.env.UM_MCP_WRITE_ENABLED;
+	return v === 'true' || v === '1';
+}
+
+/**
+ * Returns the tools visible to MCP clients given the current write-enabled state.
+ * When writeEnabled is true (or omitted and env var is true/1), all 10 tools are returned.
+ * When false (default when UM_MCP_WRITE_ENABLED is unset), write tools are filtered out.
+ *
+ * @param {boolean} [writeEnabled] — if omitted, reads process.env.UM_MCP_WRITE_ENABLED
+ * @returns {Array} subset of TOOLS
+ */
+export function getVisibleTools(writeEnabled) {
+	const enabled = writeEnabled !== undefined ? writeEnabled : isWriteEnabled();
+	if (enabled) return TOOLS;
+	return TOOLS.filter(t => !WRITE_TOOL_NAMES.has(t.name));
+}
+
+/** @deprecated Use isWriteEnabled() instead */
 function mcpWriteEnabled() {
-	return process.env.UM_MCP_WRITE_ENABLED === 'true';
+	return isWriteEnabled();
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +435,9 @@ async function handleToolCall(name, args) {
 			return JSON.stringify({ results: items });
 		}
 		case 'memory_add': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
 			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
@@ -418,6 +457,9 @@ async function handleToolCall(name, args) {
 			return items.map((r) => `- ${r.snippet} (id: ${r.id})`).join('\n');
 		}
 		case 'memory_delete': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
 			await memory.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
 		}
@@ -504,6 +546,9 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_checkpoint': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
 			// STUB (v0.3) — session-end.sh runs on the host with filesystem + env access;
 			// driving it from inside the container requires hook-in-container infrastructure
 			// planned for v0.3. Full MCP-driven implementation deferred.
@@ -668,7 +713,7 @@ function handleMcpMessage(msg) {
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {
-		return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+		return { jsonrpc: '2.0', id, result: { tools: getVisibleTools() } };
 	} else if (method === 'tools/call') {
 		return handleToolCall(params.name, params.arguments || {})
 			.then((text) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } }))
