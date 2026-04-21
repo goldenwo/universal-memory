@@ -23,6 +23,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Verify installer asset exists
+        run: |
+          [ -f installer/install-cli.sh ] || {
+            echo "::error::installer/install-cli.sh missing — cannot proceed with release" >&2
+            exit 1
+          }
+
       - name: Set up QEMU (for cross-arch builds)
         uses: docker/setup-qemu-action@v4
 
@@ -63,7 +70,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Upload install-cli.sh as release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@01570a1f39cb168c169c802c3bceb9e93fb10974  # v2.1.0 (SHA-pinned for supply-chain hygiene)
         with:
           files: installer/install-cli.sh
         env:
