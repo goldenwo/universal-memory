@@ -269,7 +269,7 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_checkpoint',
-		description: 'Force a session summary + state update (stub, v0.3) — not yet implemented server-side; use /um-checkpoint in Claude Code instead',
+		description: 'Force a session summary + state update (server-side stub — currently delegates to `/um-checkpoint` slash command in Claude Code)',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -529,12 +529,12 @@ export async function handleToolCall(name, args) {
 			if (!isWriteEnabled()) {
 				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
 			}
-			// STUB (v0.3) — session-end.sh runs on the host with filesystem + env access;
+			// Server-side stub — session-end.sh runs on the host with filesystem + env access;
 			// driving it from inside the container requires hook-in-container infrastructure
-			// planned for v0.3. Full MCP-driven implementation deferred.
+			// not yet implemented. Use /um-checkpoint in Claude Code instead.
 			return JSON.stringify({
 				ok: false,
-				error: 'memory_checkpoint is not implemented server-side in v0.2.x — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
+				error: 'memory_checkpoint is not yet implemented server-side; use `/um-checkpoint` in Claude Code instead.',
 			});
 		}
 
