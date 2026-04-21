@@ -89,7 +89,65 @@ UM's session-start.sh injection (~998/1067 tokens for state.md body) is the **on
 
 ## 4. ETag feasibility
 
-_To be filled by Task 0.5._
+### §4.1 Question
+Would serving ETag / 304 responses on `/api/state/{project}` meaningfully reduce SessionStart token cost?
+
+### §4.2 Server-side capability (experiment)
+Throwaway branch `phase-0-etag-experiment` (based on `1523c01`) added ETag = sha1(mtime:size) + 304 handling to the `/api/state/:project` handler in `server/mem0-mcp-http.mjs`.
+
+Changes:
+- Import `createHash` from `node:crypto` and `statVaultFile` from `./lib/vault.mjs`
+- Before reading the file: `stat` → `sha1("${mtime.getTime()}:${size}")` → `ETag: "<hash>"`
+- If `If-None-Match` matches: return `304` with no body
+- If no match (or no file): return `200` with `ETag` header set
+
+Server-side logic was verified via a standalone Node unit test (live server start was not performed due to the server requiring OPENAI_API_KEY + Qdrant warmup before `server.listen()` is called — the `/api/state` handler does not touch mem0, but the bootstrap sequence gates server startup on mem0 init). Unit test output:
+
+```
+File mtime: 2026-04-21T12:36:19.422Z
+File size: 147 bytes
+ETag: "233006fab0ec62f13fdc0996f4ff15b090bf2b08"
+ETag matches (deterministic): true
+Different mtime → different ETag: true
+Matching If-None-Match → HTTP 304
+Mismatched If-None-Match → HTTP 200
+
+All ETag logic verified correctly.
+```
+
+The server-side code is correct: ETag is emitted on 200, 304 is returned when `If-None-Match` matches.
+
+### §4.3 Client-side reality
+`plugins/claude-code/universal-memory/hooks/session-start.sh` uses:
+
+```bash
+response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
+```
+
+Flags: `-s` (silent), `-f` (fail on HTTP error), `-m 3` (3-second timeout). Grep for `If-None-Match`, `etag`, `ETag`, `cache`, or `conditional` in the script: **no matches**. The client never sends a conditional request and has no mechanism to store or re-send an ETag value between sessions. Any server-side ETag is emitted but never consumed.
+
+### §4.4 CC internal HTTP layer (`additionalContext`)
+
+Best-effort investigation — 4 targeted searches performed.
+
+**Search 1:** Web search `"claude Code hooks additionalContext HTTP ETag If-None-Match 304 caching 2026"` → returned the Claude Code hooks reference page and RFC/MDN ETag docs. The hooks reference was not found to discuss ETag/304/caching at all.
+
+**Search 2:** WebFetch of `https://code.claude.com/docs/en/hooks` with ETag/caching prompt → The hooks doc shows HTTP hook invocations as fire-and-forget POST requests. Response handling covers only 2xx (JSON body parsed) vs non-2xx (non-blocking error). No mention of ETag, If-None-Match, 304, or HTTP cache validation anywhere in the spec.
+
+**Search 3:** Web search `"claude code" additionalContext HTTP cache conditional request hook optimization` → Results surfaced issues about Anthropic **API-level prompt caching** (KV cache/5-minute TTL) — a completely different caching system from HTTP ETag. No mention of HTTP conditional requests in hook execution.
+
+**Search 4:** Web search `site:github.com anthropics/claude-code additionalContext ETag cache hook response` → Results were all about `additionalContext` field behavior (injection ordering, duplication bug, PreToolUse support). Zero hits for ETag, If-None-Match, or HTTP-layer caching in CC's hook execution path.
+
+**Finding:** No public evidence found that Claude Code's internal HTTP layer caches hook responses via ETag / If-None-Match / 304. The hooks documentation explicitly describes each HTTP hook call as a fresh request with simple 2xx/non-2xx error handling. Treat as non-caching for v0.4 feasibility purposes.
+
+### §4.5 Conclusion
+ETag is not productive in v0.4. The injection path is a shell `curl` in `session-start.sh` without conditional-request support, and there is no public signal that CC's internal HTTP layer caches hook responses via ETag. The server-side implementation is correct and functional, but it would sit permanently unused given the current client.
+
+Defer to ROADMAP v0.5+; revisit only if:
+- `session-start.sh` is rewritten to store the last ETag on disk and send `If-None-Match` on subsequent requests, OR
+- CC adopts a cached-hook-response model with ETag support upstream.
+
+Throwaway branch `phase-0-etag-experiment` deleted (Step 5).
 
 ## 5. Code-exec-with-MCP spike
 
