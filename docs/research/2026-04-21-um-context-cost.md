@@ -159,7 +159,20 @@ _To be filled by Task 0.6._
 
 ## 6b. Vault-as-git signal — A.9 conditional gate
 
-_To be filled by Task 0.5b._
+### §6b.1 Signal check
+
+Ran `[ -d "$UM_VAULT_DIR/.git" ] && echo PRESENT || echo ABSENT` on the authoring machine:
+
+- Resolved `$UM_VAULT_DIR` path: `/c/Users/wogol/.um/vault` (source: `$UM_VAULT_DIR` unset; derived via `vault.sh` default `$HOME/.um/vault`)
+- Vault directory exists: YES (contains `authored/`, `captures/`, `sessions/`, `state/`)
+- Result: **ABSENT**
+
+### §6b.2 Decision
+
+- **PRESENT:** A.9 `um validate` SHIPS as the 8th daily-use subcommand. Phase A headline: 8 subcommands.
+- **ABSENT / VAULT_NOT_FOUND:** A.9 `um validate` DROPS. Phase A headline: 7 subcommands. Plan orientation "outcome 2" updated accordingly.
+
+**Locked call for v0.4:** DROPS — the authoring vault at `/c/Users/wogol/.um/vault` has no `.git` directory. The vault-as-git signal is ABSENT; `um validate` has no meaningful git-aware semantic to expose. Phase A ships 7 subcommands.
 
 ## 7. Phase 0 decisions — go/no-go per downstream gate
 
