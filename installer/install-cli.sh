@@ -90,6 +90,10 @@ for script in um um-capture um-search.sh um-state.sh um-recent.sh um-list.sh um-
     COPIED_SCRIPTS=$((COPIED_SCRIPTS + 1))
   fi
 done
+if [ "$COPIED_SCRIPTS" -lt 3 ]; then
+  echo "install-cli.sh: subcommand script copy failed — only $COPIED_SCRIPTS scripts in $CLI_DIR" >&2
+  exit 1
+fi
 ok "CLI scripts installed: $COPIED_SCRIPTS scripts to $CLI_DIR"
 
 # --- copy dispatcher + plugin.json into BIN_DIR ---
