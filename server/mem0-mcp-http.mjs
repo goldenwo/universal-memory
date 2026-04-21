@@ -820,7 +820,10 @@ export async function doState(project) {
     if (err.code === 'ENOENT') {
       return JSON.stringify({ ok: true, project, state: null, valid_from: null });
     }
-    throw err;
+    // RACE TOLERANCE: partial reads, EBUSY, ETXTBSY and similar transient I/O errors
+    // must not 500 the request. Log and return state:null so callers can retry cleanly.
+    console.error('[mem0-mcp] doState race/IO error:', relPath, err.message);
+    return JSON.stringify({ ok: true, project, state: null, valid_from: null });
   }
 }
 
