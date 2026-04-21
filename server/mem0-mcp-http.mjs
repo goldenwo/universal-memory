@@ -1099,7 +1099,7 @@ const server = createServer(async (req, res) => {
 		}
 		// GET /api/state/:project — direct file read, does NOT touch mem0
 		if (url.pathname.startsWith('/api/state/') && req.method === 'GET') {
-			const projectSegment = url.pathname.slice('/api/state/'.length);
+			const projectSegment = decodeURIComponent(url.pathname.slice('/api/state/'.length));
 			// Belt-and-suspenders: REST handler pre-validates and returns HTTP 400
 			// before doState() runs, so REST never hits doState's throw path.
 			// Both checks use the same regex — intentional duplication.
