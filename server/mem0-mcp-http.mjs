@@ -10,6 +10,7 @@
  *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
+ *   GET  /api/recent/:project recent authored docs by mtime desc, compact shape (no mem0)
  *   GET  /api/state/:project  read $VAULT/state/<project>/state.md directly (no mem0)
  *   DELETE /api/:id           remove a memory (by mem0 UUID via URL param)
  *   POST /api/delete          { metadata: { id } } or { id: <uuid> } -> delete by metadata.id or UUID
@@ -37,13 +38,27 @@
 import { createServer } from 'http';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
-import { readVaultFile, vaultPath } from './lib/vault.mjs';
+import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+
+// ---------------------------------------------------------------------------
+// Snippet design fixture — single source of truth for compact-shape N.
+// Both the server (doRecent) and tests read this file so there is zero drift.
+// TODO(v0.5): consider promoting to server/config/ if more runtime fixtures land here.
+// ---------------------------------------------------------------------------
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const _SNIPPET_DESIGN = JSON.parse(readFileSync(
+  path.resolve(__dirname, 'test/fixtures/snippet-design.json'),
+  'utf8'
+));
+const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
+const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
 
 // True when this module is the entry point (invoked via `node mem0-mcp-http.mjs`
 // or the Docker CMD), false when imported by tests. Gates the bootstrap block
@@ -666,6 +681,71 @@ export async function doSearch(query, limit, includeSuperseded, memoryClient = m
 	return { results: items };
 }
 
+/**
+ * List the most recently modified vault documents for a project.
+ *
+ * Reads from the vault filesystem (authored/<project>/*.md) and sorts by mtime
+ * descending — the natural recency signal, no mem0 vector-store round-trip needed.
+ *
+ * Returns compact shape by default: { id, title, snippet }.
+ * Pass full=true for { id, title, snippet, body }.
+ * Snippet format: title + " — " + first SNIPPET_N chars of body (+ ellipsis if truncated).
+ *
+ * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
+ * @param {number} [limit=10] - Max results to return
+ * @param {boolean} [full=false] - Include body in response
+ * @param {*} [_memoryClient] - Unused; accepted for DI signature parity with doSearch
+ * @returns {Promise<{ results: Array<{id, title, snippet, body?}> }>}
+ */
+export async function doRecent(project, limit = 10, full = false, _memoryClient = memory) {
+  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
+    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  }
+
+  const subdir = `authored/${project}`;
+  const relPaths = await listVaultFiles(subdir);
+
+  if (relPaths.length === 0) {
+    return { results: [] };
+  }
+
+  // Stat all files to get mtime, then sort descending (newest first)
+  const withStats = await Promise.all(
+    relPaths.map(async (relPath) => {
+      const { mtime } = await statVaultFile(relPath);
+      return { relPath, mtime };
+    })
+  );
+  withStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+  // Take top `limit` files and build the compact (or full) shape
+  const topFiles = withStats.slice(0, limit);
+  const results = await Promise.all(
+    topFiles.map(async ({ relPath }) => {
+      const fileText = await readVaultFile(relPath);
+      const { frontmatter: fm, body } = parseFrontmatter(fileText);
+      const stem = path.basename(relPath, '.md');
+      const id = fm.id || stem;
+      const title = fm.title || stem;
+
+      // Compact snippet: title + separator + first SNIPPET_N chars of body
+      const trimmedBody = body.trim();
+      const bodyExcerpt = trimmedBody.length > SNIPPET_N
+        ? trimmedBody.slice(0, SNIPPET_N) + SNIPPET_ELLIPSIS
+        : trimmedBody;
+      const snippet = `${title} — ${bodyExcerpt}`;
+
+      const record = { id, title, snippet };
+      if (full) {
+        record.body = body;
+      }
+      return record;
+    })
+  );
+
+  return { results };
+}
+
 const server = createServer(async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -754,6 +834,27 @@ const server = createServer(async (req, res) => {
 			const all = await memory.getAll({ userId: USER_ID });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(all?.results || all || []));
+			return;
+		}
+		// GET /api/recent/:project — list recent authored docs by filesystem mtime, compact shape
+		if (url.pathname.startsWith('/api/recent/') && req.method === 'GET') {
+			const projectSegment = decodeURIComponent(url.pathname.slice('/api/recent/'.length));
+			const rawLimit = parseInt(url.searchParams.get('limit') || '10', 10);
+			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10;
+			const full = url.searchParams.get('full') === '1';
+			try {
+				const result = await doRecent(projectSegment, limit, full);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(result));
+			} catch (err) {
+				if (/Invalid project name/.test(err.message)) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: err.message }));
+				} else {
+					res.writeHead(500, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'internal_error' }));
+				}
+			}
 			return;
 		}
 		// GET /api/state/:project — direct file read, does NOT touch mem0
