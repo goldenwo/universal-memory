@@ -136,9 +136,12 @@ mkdir -p "$RAW_DIR"
 # ---------------------------------------------------------------------------
 CAPTURED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-printf -- '---\ncaptured_at: %s\ntype: %s\n---\n%s\n\n' \
+if ! printf -- '---\ncaptured_at: %s\ntype: %s\n---\n%s\n\n' \
   "$CAPTURED_AT" \
   "$CAPTURE_TYPE" \
-  "$BODY" >> "$RAW_FILE"
+  "$BODY" >> "$RAW_FILE"; then
+  echo "um-capture: write failed: $RAW_FILE" >&2
+  exit 1
+fi
 
 exit 0
