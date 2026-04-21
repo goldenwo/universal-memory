@@ -136,3 +136,31 @@ test('snippet honors N from snippet-design.json fixture', async () => {
       `snippet length ${snippet.length} should be ~≤ N+title+ellipsis`);
   });
 });
+
+test('doRecent snippet does not split surrogate pairs (supplementary-plane unicode safe)', async () => {
+  await withTempVault(async (vault) => {
+    // Body is 'x' + many emoji — slice(0, 240) on UTF-16 code units would split an emoji
+    // surrogate pair at the boundary. The fix uses [...str] (code-point-aware iteration).
+    const body = 'x' + '😀'.repeat(200);
+    await seedMemory(vault, 'test-proj', 'unicode.md', 'Unicode Memory', body, new Date());
+    const result = await doRecent('test-proj', 1, false);
+    assert.strictEqual(result.results.length, 1);
+    const snippet = result.results[0].snippet;
+    // Validate no lone surrogates by round-tripping through JSON
+    const roundTripped = JSON.parse(JSON.stringify(snippet));
+    assert.strictEqual(roundTripped, snippet, 'snippet must round-trip cleanly through JSON');
+    // Validate surrogate pairs are always complete
+    for (let i = 0; i < snippet.length; i++) {
+      const code = snippet.charCodeAt(i);
+      if (code >= 0xD800 && code <= 0xDBFF) {
+        // High surrogate — next must be low surrogate
+        assert.ok(i + 1 < snippet.length, 'high surrogate at end of string');
+        const next = snippet.charCodeAt(i + 1);
+        assert.ok(next >= 0xDC00 && next <= 0xDFFF, 'high surrogate not followed by low surrogate');
+        i++; // skip the low surrogate
+      } else if (code >= 0xDC00 && code <= 0xDFFF) {
+        assert.fail('lone low surrogate in snippet');
+      }
+    }
+  });
+});

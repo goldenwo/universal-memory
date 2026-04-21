@@ -709,39 +709,58 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
     return { results: [] };
   }
 
-  // Stat all files to get mtime, then sort descending (newest first)
-  const withStats = await Promise.all(
+  // Stat all files to get mtime, tolerating ENOENT (file deleted between list and stat).
+  // Any other I/O error is logged and the file is dropped from results — one bad file
+  // must not 500 the entire request (real race on Linux under concurrent vault writes).
+  const withStatsRaw = await Promise.all(
     relPaths.map(async (relPath) => {
-      const { mtime } = await statVaultFile(relPath);
-      return { relPath, mtime };
+      try {
+        const { mtime } = await statVaultFile(relPath);
+        return { relPath, mtime };
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // deleted between list and stat — skip
+        console.error('[mem0-mcp] doRecent: skipping stat for', relPath, err.message);
+        return null;
+      }
     })
   );
+  const withStats = withStatsRaw.filter(Boolean);
   withStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
-  // Take top `limit` files and build the compact (or full) shape
+  // Take top `limit` files and build the compact (or full) shape, tolerating ENOENT.
   const topFiles = withStats.slice(0, limit);
-  const results = await Promise.all(
+  const resultsRaw = await Promise.all(
     topFiles.map(async ({ relPath }) => {
-      const fileText = await readVaultFile(relPath);
-      const { frontmatter: fm, body } = parseFrontmatter(fileText);
-      const stem = path.basename(relPath, '.md');
-      const id = fm.id || stem;
-      const title = fm.title || stem;
+      try {
+        const fileText = await readVaultFile(relPath);
+        const { frontmatter: fm, body } = parseFrontmatter(fileText);
+        const stem = path.basename(relPath, '.md');
+        const id = fm.id || stem;
+        const title = fm.title || stem;
 
-      // Compact snippet: title + separator + first SNIPPET_N chars of body
-      const trimmedBody = body.trim();
-      const bodyExcerpt = trimmedBody.length > SNIPPET_N
-        ? trimmedBody.slice(0, SNIPPET_N) + SNIPPET_ELLIPSIS
-        : trimmedBody;
-      const snippet = `${title} — ${bodyExcerpt}`;
+        // Compact snippet: title + separator + first SNIPPET_N code points of body.
+        // Use [...str] (string iterator, code-point-aware) rather than slice(0, N) which
+        // operates on UTF-16 code units and can split a surrogate pair at the boundary.
+        const trimmedBody = body.trim();
+        const codePoints = [...trimmedBody];
+        const bodyExcerpt = codePoints.length > SNIPPET_N
+          ? codePoints.slice(0, SNIPPET_N).join('') + SNIPPET_ELLIPSIS
+          : trimmedBody;
+        const snippet = `${title} — ${bodyExcerpt}`;
 
-      const record = { id, title, snippet };
-      if (full) {
-        record.body = body;
+        const record = { id, title, snippet };
+        if (full) {
+          record.body = body;
+        }
+        return record;
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // deleted between stat and read — skip
+        console.error('[mem0-mcp] doRecent: skipping read for', relPath, err.message);
+        return null;
       }
-      return record;
     })
   );
+  const results = resultsRaw.filter(Boolean);
 
   return { results };
 }
@@ -851,6 +870,7 @@ const server = createServer(async (req, res) => {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ error: err.message }));
 				} else {
+					console.error('[mem0-mcp] /api/recent error:', err.message);
 					res.writeHead(500, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ error: 'internal_error' }));
 				}
