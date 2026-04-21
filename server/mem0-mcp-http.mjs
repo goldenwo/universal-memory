@@ -401,7 +401,7 @@ async function reindexDoc(relPath) {
 // handleToolCall
 // ---------------------------------------------------------------------------
 
-async function handleToolCall(name, args) {
+export async function handleToolCall(name, args) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {

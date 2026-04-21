@@ -38,7 +38,7 @@ const SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = SNIPPET_DESIGN.snippet.N;
 
-import { doRecent, doSearch, doList, TOOLS } from '../mem0-mcp-http.mjs';
+import { doRecent, doSearch, doList, TOOLS, handleToolCall } from '../mem0-mcp-http.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -557,14 +557,15 @@ test('MCP memory_recent and REST doRecent return identical compact shape for sam
     await seedMemory(vault, 'parity-proj', 'note-a.md', 'Note A', 'body of A '.repeat(30), new Date('2026-04-21'));
     await seedMemory(vault, 'parity-proj', 'note-b.md', 'Note B', 'body of B '.repeat(30), new Date('2026-04-20'));
 
-    // REST path: doRecent directly
+    // REST path: call doRecent directly (the /api/recent/:project handler)
     const restResult = await doRecent('parity-proj', 5, false);
 
-    // MCP path: also calls doRecent now (CRITICAL-2 fix)
-    const mcpResult = await doRecent('parity-proj', 5, false);
+    // MCP path: call handleToolCall (the tools/call dispatcher) and parse text response
+    const mcpText = await handleToolCall('memory_recent', { project: 'parity-proj', limit: 5, full: false });
+    const mcpResult = JSON.parse(mcpText);
 
-    // Both must be identical
-    assert.deepStrictEqual(restResult, mcpResult, 'MCP and REST must return identical results');
+    // Both must be identical — proves MCP and REST share the same doRecent code path
+    assert.deepStrictEqual(mcpResult, restResult, 'MCP and REST must return identical results');
 
     // Shape check: compact (id, title, snippet; no body)
     for (const r of restResult.results) {
