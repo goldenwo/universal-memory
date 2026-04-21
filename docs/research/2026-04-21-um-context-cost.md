@@ -155,7 +155,138 @@ _To be filled by Task 0.7._
 
 ## 6. CLI canonical name decision
 
-_To be filled by Task 0.6._
+### §6.1 Targets checked
+
+**Target A — Git Bash (Windows 11, this machine):**
+
+```
+=== which um ===
+which: no um in (/c/Users/wogol/bin:/mingw64/bin:/usr/local/bin:/usr/bin:/bin:...)
+exit: 1
+
+=== type um ===
+bash: type: um: not found
+exit: 1
+
+=== command -v um ===
+(no output)
+exit: 1
+
+=== um --version ===
+bash: um: command not found
+exit: 127
+```
+
+Result: **no `um` binary found** anywhere on the Git Bash PATH (surveyed ~40 entries including system32, nvm, Docker, GitHub CLI, Tailscale, Claude plugins, etc.).
+
+---
+
+**Target B — Ubuntu (via Docker):**
+
+Ubuntu 24.04 (`docker run --rm ubuntu:24.04`):
+
+```
+--- which ---
+exit: 1
+--- type ---
+bash: type: um: not found
+exit: 1
+--- command -v ---
+exit: 1
+--- um --version ---
+bash: um: command not found
+exit: 127
+--- apt-cache search (^um$, default repos) ---
+(no output)
+```
+
+Ubuntu 22.04 (`docker run --rm ubuntu:22.04`):
+
+```
+--- which ---
+exit: 1
+--- type ---
+exit: 1
+--- command -v ---
+exit: 1
+--- um --version ---
+bash: um: command not found
+exit: 127
+--- apt-cache search (^um$, universe + multiverse enabled) ---
+(no output — no package literally named 'um' exists)
+```
+
+Additional apt investigation (22.04 with universe + multiverse enabled): `apt-cache search "^um$"` returns nothing. There is a `umview` package ("View-OS in user space") in universe, but:
+1. The binary is `umview`, not `um`.
+2. It is NOT installed by default on any Ubuntu image.
+3. It is a completely separate project (user-mode virtual filesystem).
+
+Result: **no default-installed `um` binary** on Ubuntu 22.04 or 24.04. No apt package named `um` in default or universe/multiverse repos.
+
+---
+
+**Target C — macOS (via Homebrew formulae API):**
+
+```
+=== formula (https://formulae.brew.sh/api/formula/um.json) ===
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 3408
+
+curl exit: 0
+
+Formula details:
+  name: um
+  full_name: um
+  tap: homebrew/core
+  desc: Command-line utility for creating and maintaining personal man pages
+  homepage: https://github.com/sinclairtarget/um
+  versions: stable=4.2.0
+  keg_only: False
+  dependencies: [ruby]
+  install analytics (30d/90d/365d): 9 / 12 / 42
+
+=== cask (https://formulae.brew.sh/api/cask/um.json) ===
+HTTP/1.1 404 Not Found
+
+curl exit: 22
+```
+
+A Homebrew formula named `um` EXISTS in `homebrew/core` (v4.2.0, "Command-line utility for creating and maintaining personal man pages"). It is a Ruby CLI for managing personal man pages (a different project from Universal Memory). It is:
+- NOT default-installed on macOS (requires explicit `brew install um`)
+- Very low usage: 42 installs over 365 days
+- NOT keg-only (would land on PATH if installed)
+
+macOS default tools at `/usr/bin/`, `/bin/`, `/usr/local/bin/`: no `um` binary ships with any macOS version (well-known Apple utility list does not include `um`).
+
+Result: **no default-installed `um` binary on macOS**. Latent conflict exists (Homebrew formula with 42 installs/year) but is NOT install-by-default.
+
+---
+
+### §6.2 Conflict analysis
+
+| Target | Default installed? | Apt/Brew available? | Conflict type |
+|--------|-------------------|---------------------|---------------|
+| Git Bash (Windows 11) | NO | N/A | None |
+| Ubuntu 22.04 (Docker) | NO | NO (no package named `um`) | None |
+| Ubuntu 24.04 (Docker) | NO | NO (no package named `um`) | None |
+| macOS (Homebrew) | NO | YES (`homebrew/core`, 42 installs/yr) | Latent only |
+
+Summary: `um` is not installed by default on any of the three targets. The only potential friction is the existing `homebrew/core` formula `um` (personal man pages CLI), which a small number of macOS users (~42/year) install explicitly. Users who install Universal Memory alongside that formula would have a PATH collision they'd need to resolve by uninstalling the other `um` or using explicit paths.
+
+This is a known and acceptable risk for a short CLI name. It is not a default conflict.
+
+### §6.3 Decision
+
+**Locked canonical name: `um`**
+
+Rationale:
+1. No default-installed binary named `um` exists on any checked target (Windows/Git Bash, Ubuntu 22.04, Ubuntu 24.04, macOS).
+2. The Homebrew formula `um` (personal man pages) is a latent conflict only — 42 installs in the past 365 days across all Homebrew users. The realistic overlap between that user base and Universal Memory CLI users is near zero. Users who do have both installed can `brew uninstall um` or alias to resolve.
+3. Per the task spec: "A package being AVAILABLE but not installed-by-default does NOT count as a conflict." This applies to the Homebrew formula.
+4. `um` is the correct canonical name. No rename to `umem` is needed.
+
+N/A: name-propagation enumeration (MEDIUM punchlist item) — only required if `umem` is chosen.
 
 ## 6b. Vault-as-git signal — A.9 conditional gate
 
