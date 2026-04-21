@@ -151,7 +151,50 @@ Throwaway branch `phase-0-etag-experiment` deleted (Step 5).
 
 ## 5. Code-exec-with-MCP spike
 
-_To be filled by Task 0.7._
+### §5.1 Anthropic article reference
+
+Spec §2.3 references Anthropic's code-exec-with-MCP article: [https://www.anthropic.com/engineering/code-execution-with-mcp](https://www.anthropic.com/engineering/code-execution-with-mcp).
+
+Article's actual argument: agents should write code that calls MCP tools rather than calling tools directly — enabling progressive tool discovery, in-environment data filtering, and state persistence inside the execution environment. The article's headline result (150K → 2K tokens, 98.7% reduction) came from a Google-Drive-to-Salesforce workflow where large data payloads previously passed through the model context twice; code execution let that filtering happen in the exec environment. The article does not advocate for collapsing multiple MCP tools into a single "exec" schema entry to save schema-listing tokens.
+
+**Applicability to UM v0.4:** The article targets a different problem (data-plane efficiency inside agent-authored code) than UM's schema-token budget. Collapsing UM's 6 write tools into a single `memory_exec` would be a schema-trimming strategy the article doesn't actually advocate. The article's recommended pattern (agent writes code → code calls individual MCP tools) preserves the individual tool schemas and explicitly loads them on demand — the opposite of schema consolidation.
+
+### §5.2 Write-tool schema token math
+
+Measured from `server/test/token-cost-baseline.txt` (Task 0.3):
+
+| Tool | tiktoken | anthropic |
+|---|---|---|
+| memory_add | 49 | 51 |
+| memory_delete | 30 | 30 |
+| memory_capture | 149 | 156 |
+| memory_forget | 64 | 68 |
+| memory_supersede | 152 | 161 |
+| memory_checkpoint | 58 | 59 |
+| **Sum (writes)** | **502** | **525** |
+
+(Compare: spec §5.2.2 estimate of ~2.3 KB character-size; measured tiktoken sum is 502 tokens ≈ ~2.0 KB at ~4 chars/token. Spec estimate is consistent with the measured figure.)
+
+### §5.3 Hypothetical memory_exec schema cost
+
+A replacement `memory_exec(operation, args)` schema would describe an `operation` enum with ~6 values (add, delete, capture, forget, supersede, checkpoint) plus a generic `args` object. Estimated cost: ~100–150 tiktoken (~0.5 KB char-size). Using 125 tiktoken as the midpoint estimate.
+
+### §5.4 Net savings analysis
+
+- **Writes-enabled mode (opt-in):** savings = sum(writes) − memory_exec = 502 − 125 ≈ **377 tiktoken (~1.5 KB)**. (Spec estimated ~1.8 KB char-size; measured tiktoken math gives a consistent result.)
+- **Writes-disabled mode (default after B.3):** savings = **0** — B.3 removes write schemas from listTools entirely, so there are no write-tool schemas present to consolidate.
+
+### §5.5 Conclusion
+
+**B.2 does NOT ship in v0.4.** Rationale:
+
+- In the default configuration (writes-disabled after B.3), there is nothing to save — write schemas are already absent from listTools.
+- In the opt-in writes-enabled configuration, the ~377-token (~1.5 KB) savings is real but small, and it benefits only users who explicitly enabled writes.
+- The complexity cost of designing and validating `memory_exec` is non-trivial: operation dispatch, argument validation, error surface, and schema documentation all need work.
+- B.3 schema-hygiene captures the realistic win for the default path; users who need writes can tolerate the current 6-tool surface.
+- The Anthropic article cited in §2.3 does not support this approach — its pattern preserves individual tool schemas and uses code to call them selectively.
+
+**`memory_exec` remains a post-v0.4 option** if Phase 0 discovers a surprise use case (unlikely) or if the writes-enabled surface becomes common enough to justify the schema collapse.
 
 ## 6. CLI canonical name decision
 
