@@ -97,6 +97,12 @@ if [ -z "$CAPTURE_TYPE" ]; then
   exit 2
 fi
 
+# Validate --type: must be a safe slug (no newlines, no frontmatter injection)
+if [[ ! "$CAPTURE_TYPE" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  echo "um-capture: invalid --type value: '$CAPTURE_TYPE' (must match ^[a-zA-Z0-9._-]+\$)" >&2
+  exit 2
+fi
+
 # ---------------------------------------------------------------------------
 # Resolve project
 # ---------------------------------------------------------------------------

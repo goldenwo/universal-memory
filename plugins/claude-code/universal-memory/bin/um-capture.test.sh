@@ -161,6 +161,48 @@ else
 fi
 rm -rf "$tmp7"
 
+# ─── T8: path-traversal via --project "../evil" → exit 2 ────────────────────
+echo ""
+echo "=== T8: path-traversal via --project '../evil' ==="
+tmp8=$(mktemp -d)
+export UM_VAULT_DIR="$tmp8/vault"
+unset UM_PROJECT 2>/dev/null || true
+
+out8=$(cd "$tmp8" && echo "body" | bash "$BIN" --project "../evil" --type note 2>&1) || rc8=$?
+rc8=${rc8:-0}
+if [ "$rc8" = "2" ]; then
+  pass "T8: --project '../evil' exits with code 2"
+else
+  fail "T8: expected exit 2 for path-traversal project, got $rc8 (out: $out8)"
+fi
+if echo "$out8" | grep -q 'invalid project slug'; then
+  pass "T8: error message mentions 'invalid project slug'"
+else
+  fail "T8: expected 'invalid project slug' in output (got: $out8)"
+fi
+rm -rf "$tmp8"
+
+# ─── T9: frontmatter injection via --type "note\n---\ninjected: true" → exit 2
+echo ""
+echo "=== T9: frontmatter injection via --type with newline ==="
+tmp9=$(mktemp -d)
+export UM_VAULT_DIR="$tmp9/vault"
+unset UM_PROJECT 2>/dev/null || true
+
+out9=$(cd "$tmp9" && echo "body" | bash "$BIN" --project myproj --type $'note\n---\ninjected: true' 2>&1) || rc9=$?
+rc9=${rc9:-0}
+if [ "$rc9" = "2" ]; then
+  pass "T9: --type with newline exits with code 2"
+else
+  fail "T9: expected exit 2 for invalid type, got $rc9 (out: $out9)"
+fi
+if echo "$out9" | grep -q 'invalid --type'; then
+  pass "T9: error message mentions 'invalid --type'"
+else
+  fail "T9: expected 'invalid --type' in output (got: $out9)"
+fi
+rm -rf "$tmp9"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
