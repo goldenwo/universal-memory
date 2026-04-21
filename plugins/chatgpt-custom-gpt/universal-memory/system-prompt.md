@@ -24,4 +24,6 @@ Tool mapping (Custom GPT Actions → UM endpoints):
 - `memory_add` → POST /api/add
 - `memory_delete` → POST /api/delete
 
+**Response shape (v0.4+):** `memory_search` and `memory_list` return compact results by default — each item has `id`, `title`, `score`, and `snippet` (first ~240 chars of body). Use the snippet to answer most questions. To retrieve the full body of a specific document, append `?full=1` to the search or list request. Prefer compact (default) unless the snippet clearly lacks the needed detail.
+
 For every new conversation, call `memory_state` early to load the current snapshot.

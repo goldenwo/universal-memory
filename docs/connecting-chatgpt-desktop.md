@@ -171,6 +171,18 @@ If all four pass, ChatGPT Desktop is reading and writing the same vault Claude C
 
 ---
 
+## After v0.4 upgrade
+
+If you previously connected a ChatGPT Custom GPT to UM, the deployed GPT is pinned to an old `actions-trimmed.yaml`. After upgrading UM to v0.4:
+
+1. Open the Custom GPT editor on ChatGPT.
+2. Under "Actions," click "Import from file" and re-upload the new `plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml` (includes the new `/api/recent/{project}` endpoint + compact-shape response schema).
+3. Save.
+
+Existing chats will continue to use the previous action definitions until the GPT is updated.
+
+---
+
 ## Troubleshooting
 
 - **Tools don't appear after adding connector.** Check the tunnel URL resolves from outside your network (test from a phone on cellular). Confirm the `/mcp` path suffix is present.
