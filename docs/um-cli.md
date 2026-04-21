@@ -145,7 +145,7 @@ List all memory entries visible to the server (all projects).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--limit N` | `50` | Maximum results |
+| `--limit N` | unlimited (server clamps to 1000) | Maximum results |
 | `--full` | off | Include full `body` field |
 | `--server URL` | config/env | Override `UM_SERVER_URL` |
 
