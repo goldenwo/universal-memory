@@ -329,6 +329,168 @@ test('doList returns empty array when vault has no memories', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// B.1.8 Token-cost assertion harness
+//
+// Asserts two invariants against the pre-B.1 baseline in token-baseline.json:
+//
+//   1. Regression ceiling (all 20 fixtures): post ≤ pre * 1.1 per-fixture, and
+//      aggregate post ≤ aggregate pre * 1.1.
+//      Recent-category fixtures use a looser ceiling (pre * 1.3) to reflect the
+//      /api/list → /api/recent proxy-gap tolerance documented in token-baseline.json.
+//
+//   2. ≥30% reduction floor (single-hop recall subset): post_aggregate ≤ pre_aggregate * 0.7.
+//      This is the headline B.1 success criterion (spec §11.1). Failing this is
+//      BLOCKING — do not proceed to Phase B.3 until resolved.
+//
+// Approach B baseline note: All /api/search fixtures share tokens_pre=884 (flat
+// per-category), and all /api/list (recent-proxy) fixtures share tokens_pre=1386.
+// Post-B.1 measurements use the same fake response-samples.json fixture, so post
+// tokens are also flat per category. The aggregate ratio is a reliable proxy for
+// the per-query ratio. This is documented in token-baseline.json.
+//
+// Multi-hop Step 2 simplification: This harness omits Step 2's double-weighting
+// for multi-hop fixtures. Each fixture is measured as a single compact call. The
+// ≥30% floor only applies to single-hop recall fixtures, so multi-hop weighting
+// would not affect the BLOCKING assertion. The * 1.1 ceiling is a guard against
+// gross regression, not a strict performance target. Documented here per plan guidance.
+// ---------------------------------------------------------------------------
+
+const QUERIES = JSON.parse(readFileSync(
+  path.resolve(__dirname, 'fixtures/quality-queries.json'), 'utf8'
+)).queries;
+const BASELINE = JSON.parse(readFileSync(
+  path.resolve(__dirname, 'fixtures/token-baseline.json'), 'utf8'
+));
+const RESPONSE_SAMPLES = JSON.parse(readFileSync(
+  path.resolve(__dirname, 'fixtures/response-samples.json'), 'utf8'
+));
+
+// Fake memoryClient for search (doSearch DI) — returns the Phase 0 canonical
+// pre-B.1 memory_search response shape. Same data as the pre-B.1 baseline.
+function buildFakeSearchMemory() {
+  return {
+    search: async (_query, _opts) => RESPONSE_SAMPLES.memory_search,
+  };
+}
+
+// Fake memoryClient for list (doList DI) — returns the Phase 0 canonical
+// pre-B.1 memory_list response shape. doList reads getAll().results || getAll().
+function buildFakeListMemory() {
+  return {
+    getAll: async (_opts) => ({ results: RESPONSE_SAMPLES.memory_list }),
+  };
+}
+
+// Count tokens using tiktoken o200k_base — one encoder per call, freed in finally.
+// Uses get_encoding imported from tiktoken (already used in token-cost.test.mjs).
+import { get_encoding } from 'tiktoken';
+
+function countTiktoken(str) {
+  const enc = get_encoding('o200k_base');
+  try { return enc.encode(str).length; }
+  finally { enc.free(); }
+}
+
+// Route a fixture through the appropriate doX function and return token count.
+//
+// Category routing:
+//   recall, state, write-routing, supersede-chain, edge  → doSearch
+//   recent                                               → doList (proxy for /api/recent)
+//
+// recent-category rationale: /api/recent reads the filesystem (vault), not memoryClient.
+// For the harness, doList with the same fake data approximates the same compact-shape
+// projection (id, title, snippet) with the same underlying buildSnippet() logic.
+// The token-baseline.json documents this proxy choice and applies the looser * 1.3 ceiling.
+async function measurePost(fixture) {
+  if (fixture.category === 'recent') {
+    const items = await doList(false, buildFakeListMemory());
+    return countTiktoken(JSON.stringify(items));
+  }
+  // All other categories route to doSearch
+  const result = await doSearch(fixture.query || '', 5, false, false, buildFakeSearchMemory());
+  return countTiktoken(JSON.stringify(result));
+}
+
+test('B.1 regression ceiling: per-fixture and aggregate post ≤ pre * 1.1 (recent: * 1.3)', async () => {
+  // Approach B: all search fixtures share the same fake response → same post tokens.
+  // All list/recent fixtures also share the same fake response → same post tokens.
+  // The per-fixture assertion still runs to verify the ceiling per fixture id and
+  // document actual ratios. The aggregate assertion is the binding guard.
+  const rows = [];
+  let postAggregate = 0;
+  const preAggregate = BASELINE.aggregates.all_fixtures_pre_total;
+
+  for (const fixture of QUERIES) {
+    const baselineEntry = BASELINE.per_fixture.find((e) => e.id === fixture.id);
+    assert.ok(baselineEntry, `No baseline entry for fixture id=${fixture.id}`);
+
+    const postTokens = await measurePost(fixture);
+    const isRecentProxy = baselineEntry.baseline_endpoint === '/api/list-as-recent-proxy';
+    const ceilingMultiplier = isRecentProxy ? 1.3 : 1.1;
+    const ceiling = baselineEntry.tokens_pre * ceilingMultiplier;
+
+    rows.push({
+      id: fixture.id,
+      pre: baselineEntry.tokens_pre,
+      post: postTokens,
+      ratio: (postTokens / baselineEntry.tokens_pre).toFixed(3),
+      ceiling: ceiling.toFixed(0),
+    });
+
+    assert.ok(
+      postTokens <= ceiling,
+      `${fixture.id}: post=${postTokens} > ceiling=${ceiling.toFixed(0)} (pre=${baselineEntry.tokens_pre}, multiplier=${ceilingMultiplier})`,
+    );
+
+    postAggregate += postTokens;
+  }
+
+  console.log('B.1 regression ceiling — per-fixture:');
+  for (const row of rows) {
+    console.log(`  ${row.id.padEnd(16)}: pre=${row.pre}  post=${row.post}  ratio=${row.ratio}  ceiling=${row.ceiling}`);
+  }
+  console.log(`B.1 regression ceiling — aggregate: pre=${preAggregate}, post=${postAggregate}, ratio=${(postAggregate / preAggregate).toFixed(3)}`);
+
+  assert.ok(
+    postAggregate <= preAggregate * 1.1,
+    `B.1 regression ceiling FAILED: aggregate post=${postAggregate} > pre*1.1=${(preAggregate * 1.1).toFixed(0)} ` +
+    `(actual ratio=${(postAggregate / preAggregate).toFixed(3)})`,
+  );
+});
+
+test('B.1 ≥30% reduction floor: single-hop recall aggregate post ≤ pre * 0.7 (spec §11.1)', async () => {
+  // Filter to single-hop recall fixtures — the headline B.1 success criterion.
+  // Spec §7.1 requires ≥5 such fixtures. The current fixture set has 5 (recall-01..05).
+  const subset = QUERIES.filter((q) => q.category === 'recall' && q.hopCount === 'single');
+  assert.ok(
+    subset.length >= 5,
+    `Minimum 5 single-hop recall fixtures required per spec §7.1, found ${subset.length}`,
+  );
+
+  let postAggregate = 0;
+  const preAggregate = BASELINE.aggregates.recall_single_hop_pre_total;
+
+  for (const fixture of subset) {
+    const postTokens = await measurePost(fixture);
+    postAggregate += postTokens;
+  }
+
+  const actualRatio = postAggregate / preAggregate;
+  const actualReduction = ((1 - actualRatio) * 100).toFixed(1);
+  console.log(
+    `B.1 ≥30% floor — single-hop recall: pre=${preAggregate}, post=${postAggregate}, ` +
+    `ratio=${actualRatio.toFixed(3)}, reduction=${actualReduction}% (floor requires ≥30%)`,
+  );
+
+  assert.ok(
+    postAggregate <= preAggregate * 0.7,
+    `B.1 ≥30% reduction floor FAILED: post_aggregate=${postAggregate} > pre_aggregate*0.7=${(preAggregate * 0.7).toFixed(0)}. ` +
+    `Actual reduction: ${actualReduction}%. Need ≥30%. ` +
+    `Investigate: snippet N too large? pre baseline atypically small? Check compact JSON output shape.`,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // MCP tool schema tests (B.1.5) — assert full: boolean in inputSchema
 // ---------------------------------------------------------------------------
 
