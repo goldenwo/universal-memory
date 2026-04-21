@@ -64,13 +64,13 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   Note: system prompt has NO runtime placeholders (measured as-is);
         user message includes the transcript (variable; see per-char estimate below).
 
-  system prompt (template-only):  tiktoken=   211  anthropic=   229
+  system prompt (template-only):  tiktoken=   136  anthropic=   152
   user prompt (no transcript):    tiktoken=    14  anthropic=    17
-  combined (no transcript fill):  tiktoken=   225  anthropic=   247
+  combined (no transcript fill):  tiktoken=   150  anthropic=   170
 
   transcript tokens/char (approx): tiktoken=0.125  anthropic=0.125
   at UM_SUMMARY_MAX_CHARS=24000 chars, transcript adds ~tiktoken=3000  anthropic=3000
-  TOTAL prompt at max transcript:  tiktoken=~3225  anthropic=~3247
+  TOTAL prompt at max transcript:  tiktoken=~3150  anthropic=~3170
   (prod choice depends on UM_SUMMARIZER: openai→tiktoken matters; claude-agent-sdk→anthropic matters)
 
 ---
