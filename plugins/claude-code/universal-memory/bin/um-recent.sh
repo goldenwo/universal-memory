@@ -69,8 +69,9 @@ fi
 URL="$SERVER/api/recent/$project?limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
-response=$(curl -sfm 10 "$URL" 2>&1) || {
-  echo "um recent: server error or timeout: $response" >&2
+response=$(curl -fSsm 10 "$URL" 2>&1) || {
+  curl_rc=$?
+  echo "um recent: curl exit $curl_rc: $response" >&2
   exit 3
 }
 

@@ -87,8 +87,9 @@ URL="$SERVER/api/search?q=$Q_ENC&limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
 # Fetch
-response=$(curl -sfm 10 "$URL" 2>&1) || {
-  echo "um search: server error or timeout: $response" >&2
+response=$(curl -fSsm 10 "$URL" 2>&1) || {
+  curl_rc=$?
+  echo "um search: curl exit $curl_rc: $response" >&2
   exit 3
 }
 
