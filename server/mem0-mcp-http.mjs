@@ -168,22 +168,22 @@ export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
-		description: 'Search memories by semantic similarity with optional status filters. Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
+		description: 'Semantic search with optional status/metadata filters. Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				query: { type: 'string', description: 'Semantic search query' },
 				limit: { type: 'number', description: 'Max results (default 5, max 100)' },
-				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs (default false)' },
+				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs' },
 				filters: {
 					type: 'object',
-					description: 'Optional metadata filters',
+					description: 'Metadata filters',
 					properties: {
-						project: { type: 'string', description: 'Filter by project name' },
-						type: { type: 'string', description: 'Filter by document type (e.g. session_summary, authored)' },
+						project: { type: 'string', description: 'Filter by project' },
+						type: { type: 'string', description: 'Filter by doc type (e.g. session_summary)' },
 					},
 				},
-				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + score + snippet). Default false.', default: false },
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
 			required: ['query'],
 		},
@@ -202,11 +202,11 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_list',
-		description: 'List all stored memories. Returns compact shape (id, title, snippet) by default; pass full=true for raw mem0 items.',
+		description: 'List all stored memories. Returns compact shape (id, title, snippet) by default; pass full=true for full bodies.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + snippet). Default false.', default: false },
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
 		},
 	},
@@ -233,13 +233,13 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_recent',
-		description: 'Fetch recent session_summary documents for a project. Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
+		description: 'Fetch recent session_summary documents. Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				project: { type: 'string', description: 'Project name filter (optional)' },
+				project: { type: 'string', description: 'Filter by project name' },
 				limit: { type: 'number', description: 'Max results (default 5)' },
-				full: { type: 'boolean', description: 'When true, return full memory bodies instead of the default compact shape (id + title + snippet). Default false.', default: false },
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
 		},
 	},

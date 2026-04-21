@@ -30,23 +30,42 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_search
 
-Semantic search with optional status and metadata filters.
+Semantic search over stored memories using vector similarity, with optional status and metadata filters. Returns compact shape `{ id, title, score, snippet }` by default (snippet = title + first 240 chars of body). Pass `full=true` to get full document bodies.
 
-**Input schema:**
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `query` | string | — (required) | Semantic search query |
+| `limit` | number | 5 | Max results (max 100) |
+| `include_superseded` | boolean | false | Include docs with status: superseded/deprecated/rejected |
+| `filters.project` | string | — | Filter by project name |
+| `filters.type` | string | — | Filter by doc type (e.g. `session_summary`, `authored`, `state`) |
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
 
 ```json
 {
-  "query": "string (required)",
-  "limit": "number (optional, default 5, max 100)",
-  "include_superseded": "boolean (optional, default false)",
-  "filters": {
-    "project": "string (optional)",
-    "type": "string (optional)"
-  }
+  "results": [
+    { "id": "arch-decision-v2", "title": "Architecture decision v2", "score": 0.92, "snippet": "Architecture decision v2\n\nWe chose Qdrant for vector sto..." }
+  ]
 }
 ```
 
-**Example:**
+**Full response (`full=true`):**
+
+```json
+{
+  "results": [
+    { "id": "arch-decision-v2", "title": "Architecture decision v2", "score": 0.92, "body": "# Architecture decision v2\n\nFull content here...", "metadata": { "type": "authored", "project": "universal-memory", "status": "current", "valid_from": "2026-04-17T14:00:00Z" } }
+  ]
+}
+```
+
+**When to use `full=true`:** When you need to read the actual content of matched documents — for example, to summarize decisions or extract details. For deciding *which* documents exist or scoring relevance, compact shape is sufficient and cheaper.
+
+**Example — compact search:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
@@ -64,7 +83,23 @@ curl -s http://localhost:6335/mcp \
   }'
 ```
 
-**Response:** `{ "results": [ { "id": "...", "memory": "...", "score": 0.87, "metadata": {...} } ] }`
+**Example — full bodies for session summaries:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,"method":"tools/call",
+    "params": {
+      "name": "memory_search",
+      "arguments": {
+        "query": "v0.4 hybrid rebalance progress",
+        "filters": { "type": "session_summary", "project": "universal-memory" },
+        "full": true
+      }
+    }
+  }'
+```
 
 ---
 
@@ -99,16 +134,36 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_list
 
-List all stored memories.
+List all stored memories. Returns compact shape `{ id, title, snippet }` by default. Pass `full=true` to get full document bodies including all metadata.
 
-**Input schema:** `{}` (no parameters)
+**Parameters:**
 
-**Example:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
+
+```json
+{ "results": [ { "id": "arch-decision-v2", "title": "Architecture decision v2", "snippet": "Architecture decision v2\n\nWe chose Qdrant..." } ] }
+```
+
+**When to use `full=true`:** Use compact for browsing/discovery (much cheaper for large vaults). Use `full=true` only when you need to read actual document bodies — e.g., a bulk export or vault-wide audit.
+
+**Example — compact list:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_list","arguments":{}}}'
+```
+
+**Example — full bodies:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_list","arguments":{"full":true}}}'
 ```
 
 ---
@@ -138,13 +193,13 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_state
 
-Fetch the `state.md` for a project (direct file read, does not touch mem0).
+Fetch the `state.md` for a project — direct file read from the vault, does not touch mem0. Use this to get the current state-of-play for a project at session start.
 
-**Input schema:**
+**Parameters:**
 
-```json
-{ "project": "string (required, pattern: ^[a-zA-Z0-9._-]+$)" }
-```
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `project` | string | — (required) | Project name. Pattern: `^[a-zA-Z0-9._-]+$` |
 
 **Example:**
 
@@ -177,22 +232,31 @@ curl -s http://localhost:6335/mcp \
 { "ok": true, "project": "universal-memory", "state": null, "valid_from": null }
 ```
 
+**Note:** `valid_from` is hoisted from frontmatter to the top-level response for quick age checks without parsing the body.
+
 ---
 
 ### memory_recent
 
-Fetch recent `session_summary` documents, optionally filtered by project.
+Fetch recent `session_summary` documents, optionally filtered by project. Sorted by `valid_from` descending (newest first). Returns compact shape `{ id, title, snippet }` by default; pass `full=true` for full bodies.
 
-**Input schema:**
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `project` | string | — | Filter by project name |
+| `limit` | number | 5 | Max results |
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
 
 ```json
-{
-  "project": "string (optional)",
-  "limit": "number (optional, default 5)"
-}
+{ "results": [ { "id": "session-2026-04-21", "title": "Session 2026-04-21", "snippet": "Session 2026-04-21\n\nCompleted B.3.1a: write-tool filtering..." } ] }
 ```
 
-**Example:**
+**When to use `full=true`:** Use compact to see which recent sessions exist. Use `full=true` to actually read the summaries — for example, to orient at session start or answer questions about recent progress.
+
+**Example — compact recent sessions:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
@@ -206,7 +270,19 @@ curl -s http://localhost:6335/mcp \
   }'
 ```
 
-**Response:** `{ "results": [ ... ] }` — sorted by `valid_from` descending.
+**Example — full bodies for last 2 sessions:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":6,"method":"tools/call",
+    "params": {
+      "name": "memory_recent",
+      "arguments": { "project": "universal-memory", "limit": 2, "full": true }
+    }
+  }'
+```
 
 ---
 
