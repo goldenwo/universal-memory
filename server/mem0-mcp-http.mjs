@@ -822,10 +822,14 @@ export async function doState(project) {
     if (err.code === 'ENOENT') {
       return JSON.stringify({ ok: true, project, state: null, valid_from: null });
     }
-    // RACE TOLERANCE: partial reads, EBUSY, ETXTBSY and similar transient I/O errors
-    // must not 500 the request. Log and return state:null so callers can retry cleanly.
-    console.error('[mem0-mcp] doState race/IO error:', relPath, err.message);
-    return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+    // Transient I/O errors: log + treat as state-unavailable so callers can retry cleanly.
+    // Whitelisted codes only — permission/config errors must bubble so ops can fix them.
+    if (['EBUSY', 'ETXTBSY', 'EMFILE', 'ENFILE', 'EAGAIN'].includes(err.code)) {
+      console.error('[mem0-mcp] doState transient I/O error:', relPath, err.message);
+      return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+    }
+    // Config/permission errors (EACCES, EPERM, etc.): bubble so ops can fix
+    throw err;
   }
 }
 
