@@ -50,7 +50,7 @@ create_stub_sh() {
 echo "um-CMDNAME stub called with: $*"
 echo "UM_SERVER_URL=${UM_SERVER_URL:-UNSET}"
 STUBEOF
-  sed -i "s/CMDNAME/$cmd/" "$target"
+  sed "s/CMDNAME/$cmd/" "$target" > "$target.tmp" && mv "$target.tmp" "$target"
   chmod +x "$target"
 }
 
