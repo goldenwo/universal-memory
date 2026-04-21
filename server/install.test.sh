@@ -168,6 +168,21 @@ assert_contains "T1: marker block present in profile" "$(cat "$T1/home/.bashrc")
 assert_contains "T1: banner says restart CC" "$T1_OUT" "Restart Claude Code"
 assert_contains "T1: banner says source profile" "$T1_OUT" "source"
 
+# ─── T1b: canonical-superset vars in managed block ───────────────────────────
+# Verifies that the shared marker-block helper writes all six managed vars plus
+# the PATH guard — not just UM_OPENAI_API_KEY + UM_SUMMARIZER (old format).
+echo ""
+echo "=== T1b: canonical-superset managed block contains all required vars ==="
+T1B_BASHRC="$(cat "$T1/home/.bashrc")"
+assert_contains "T1b: UM_OPENAI_API_KEY in block"  "$T1B_BASHRC" "UM_OPENAI_API_KEY"
+assert_contains "T1b: UM_SUMMARIZER in block"       "$T1B_BASHRC" "UM_SUMMARIZER"
+assert_contains "T1b: UM_SERVER_URL in block"       "$T1B_BASHRC" "UM_SERVER_URL"
+assert_contains "T1b: UM_LIB_DIR in block"          "$T1B_BASHRC" "UM_LIB_DIR"
+assert_contains "T1b: UM_CLI_DIR in block"          "$T1B_BASHRC" "UM_CLI_DIR"
+assert_contains "T1b: PATH guard in block"          "$T1B_BASHRC" '.local/bin'
+assert_contains "T1b: block start marker"           "$T1B_BASHRC" "universal-memory (auto-added"
+assert_contains "T1b: block end marker"             "$T1B_BASHRC" "end universal-memory"
+
 # ─── T2: Re-install — same version plugin already installed ───────────────────
 echo ""
 echo "=== T2: Re-install (plugin same version, profile entry already present) ==="
@@ -530,9 +545,10 @@ make_fakebin "$T15/bin" 200
 # plugins/claude-code/universal-memory mirrors the real one. We also need
 # a docs/ dir with the rubric so _copy_rubric_to_target would find source.
 T15_REPO="$T15/repo"
-mkdir -p "$T15_REPO/docs" "$T15_REPO/plugins/claude-code"
+mkdir -p "$T15_REPO/docs" "$T15_REPO/plugins/claude-code" "$T15_REPO/installer/lib"
 cp "$REPO_ROOT/docs/memory-routing-rubric.md" "$T15_REPO/docs/memory-routing-rubric.md"
 cp -r "$PLUGIN_SRC" "$T15_REPO/plugins/claude-code/universal-memory"
+cp "$REPO_ROOT/installer/lib/marker-block.sh" "$T15_REPO/installer/lib/marker-block.sh"
 T15_SRC_PLUGIN="$T15_REPO/plugins/claude-code/universal-memory"
 
 # Copy install.sh + helpers into isolated server dir, but REPO_ROOT points

@@ -673,19 +673,20 @@ _detect_profile() {
 	esac
 }
 
-# Write a fresh marker block with all managed env vars to the end of $profile.
-# Caller must ensure any existing block has already been removed.
-_write_marker_block() {
-	local profile="$1"
-	local key_value="$2"
-	local summarizer="$3"
-	{
-		printf '\n%s\n' "$_UM_MARKER_START"
-		printf "export UM_OPENAI_API_KEY='%s'\n" "$key_value"
-		printf "export UM_SUMMARIZER='%s'\n" "$summarizer"
-		printf '%s\n' "$_UM_MARKER_END"
-	} >> "$profile"
-}
+# Shared marker-block writer — canonical superset of managed vars.
+# Sourced from installer/lib/marker-block.sh so install.sh and install-cli.sh
+# write the identical block. Whichever installer runs last is authoritative.
+# Resolve via REPO_ROOT (already computed above) so this works both in the
+# real checkout and when install.sh is copied to a temp dir by the test harness.
+# Falls back to script-dir-relative path in case tests pass a minimal REPO_ROOT
+# that doesn't include installer/lib/ (e.g. T15 fake-repo scenario).
+# shellcheck source=../installer/lib/marker-block.sh
+_UM_MARKER_LIB="$REPO_ROOT/installer/lib/marker-block.sh"
+if [ ! -f "$_UM_MARKER_LIB" ]; then
+  _UM_MARKER_LIB="$(dirname "${BASH_SOURCE[0]}")/../installer/lib/marker-block.sh"
+fi
+source "$_UM_MARKER_LIB"
+unset _UM_MARKER_LIB
 
 # Strip any existing marker block from the profile. Idempotent: no-op if absent.
 # Uses a sed script that deletes lines from the start marker through the end
