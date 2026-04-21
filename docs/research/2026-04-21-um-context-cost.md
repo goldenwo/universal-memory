@@ -416,3 +416,29 @@ Ran `[ -d "$UM_VAULT_DIR/.git" ] && echo PRESENT || echo ABSENT` on the authorin
 | Aggregate savings >2K threshold (Phase 0 gate) | **MET** | B.1 compaction targets multi-K per-call savings on response payloads (L2 = 884–1,453 tokens per call, compounding). B.3 removes ~502 write tokens from default schema budget across all MCP surfaces. Combined savings easily exceeds the 2K raw / 2.5K effective threshold. | v0.4 proceeds past Phase 0. B.2 drop does not affect the gate — B.1 alone clears it. |
 
 **Phase 0 complete. Proceed to Phase B.1.**
+
+## 8. Phase B.1 prep — snippet design + id-shape (Task B.1.1 lock)
+
+### §8.1 Snippet N lock
+
+Candidate values tested: 150 / 240 / 350.
+
+Validation corpus: 3 sample memories from `server/test/fixtures/response-samples.json` — ids `adr-hybrid-rebalance`, `fact-phase0-token-methodology`, `fact-scalability-default` (body lengths: 273 / 362 / 313 chars).
+
+Observations per candidate:
+
+- **N=150:** Cuts mid-URL in sample 1 (disorienting), drops tokenizer-methodology detail in sample 2, truncates mid-word ("injecti...") in sample 3. Insufficient signal for relevance judgment in all three cases.
+- **N=240:** Captures the main decision + research-doc ref + start of trigger condition (sample 1); all 6 measurement locations + tokenizer selection opening (sample 2); DI + version-contracts + quality-bar statement (sample 3). Delivers enough signal to decide "fetch full body" vs "irrelevant" in all cases.
+- **N=350:** Exceeds or nearly equals full body for two of three samples (273-char and 313-char bodies). At that point the snippet is no longer a compact signal — it effectively replaces the full fetch for most memories in this corpus, defeating the compaction goal.
+
+**Locked N = 240.** Rationale: at N=150 short-to-medium memories (300–400 chars, typical for this corpus) lose their key decision or rationale; at N=350, the majority of memories in this range are nearly fully exposed, making the snippet indistinguishable from a full fetch. N=240 preserves the "decision + first reason + context anchor" pattern while keeping snippets meaningfully shorter than full bodies.
+
+Open question (deferred to B.1.4a): what does the snippet look like for a titleless memory (no `metadata.title`)? Fallback behaviour — emit body-only snippet, or use the `id` as a stand-in title — is an edge case for the implementation task, not a design-lock decision here.
+
+### §8.2 Id shape lock
+
+Locked: `metadata.id` (filename stem). Rationale: mem0 UUIDs (the top-level `id` field in a search result) would force an extra roundtrip for follow-up `memory_forget` / `memory_supersede` calls, because those write tools address memories by their vault filename stem, not by the ephemeral UUID assigned by the mem0 backend. Filename stems are stable, human-readable, and directly addressable by all downstream write-tools without an additional lookup.
+
+### §8.3 Fixture
+
+Committed source of truth: `server/test/fixtures/snippet-design.json`. Downstream tasks (B.1.3, B.1.4a, B.1.4b, B.1.5) import this fixture rather than hardcoding constants — re-running B.1.1 with an updated N propagates the change to all downstream test fixtures automatically.
