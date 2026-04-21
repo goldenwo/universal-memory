@@ -12,6 +12,7 @@ COPY package.json ./
 COPY mem0-mcp-http.mjs ./
 COPY openapi.mjs ./
 COPY lib/ ./lib/
+COPY config/ ./config/
 EXPOSE 6335
 USER node
 CMD ["node", "mem0-mcp-http.mjs"]

@@ -49,12 +49,12 @@ import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs
 
 // ---------------------------------------------------------------------------
 // Snippet design fixture — single source of truth for compact-shape N.
-// Both the server (doRecent) and tests read this file so there is zero drift.
-// TODO(v0.5): consider promoting to server/config/ if more runtime fixtures land here.
+// Lives in server/config/ so it survives the Docker build (test/ is excluded
+// by .dockerignore; config/ is COPY'd by the Dockerfile).
 // ---------------------------------------------------------------------------
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const _SNIPPET_DESIGN = JSON.parse(readFileSync(
-  path.resolve(__dirname, 'test/fixtures/snippet-design.json'),
+  path.resolve(__dirname, 'config/snippet-design.json'),
   'utf8'
 ));
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240

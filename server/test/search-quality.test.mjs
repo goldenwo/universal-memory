@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SNIPPET_DESIGN = JSON.parse(readFileSync(
-  path.resolve(__dirname, 'fixtures/snippet-design.json'),
+  path.resolve(__dirname, '..', 'config/snippet-design.json'),
   'utf8'
 ));
 const SNIPPET_N = SNIPPET_DESIGN.snippet.N;
