@@ -60,6 +60,27 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
 
+/**
+ * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
+ * Uses [...str] (code-point-aware iteration) rather than slice(0, N) which operates on
+ * UTF-16 code units and can split a surrogate pair at the boundary.
+ * Shared by doRecent and doSearch so snippet format is guaranteed identical.
+ *
+ * Title fallback convention (matches doRecent): if title is empty/null, returns only the excerpt.
+ *
+ * @param {string} title
+ * @param {string} body
+ * @returns {string}
+ */
+function buildSnippet(title, body) {
+  const trimmedBody = (body || '').trim();
+  const codePoints = [...trimmedBody];
+  const bodyExcerpt = codePoints.length > SNIPPET_N
+    ? codePoints.slice(0, SNIPPET_N).join('') + SNIPPET_ELLIPSIS
+    : trimmedBody;
+  return title ? `${title} — ${bodyExcerpt}` : bodyExcerpt;
+}
+
 // True when this module is the entry point (invoked via `node mem0-mcp-http.mjs`
 // or the Docker CMD), false when imported by tests. Gates the bootstrap block
 // at the bottom of the file so test imports don't start a real server.
@@ -341,7 +362,9 @@ async function handleToolCall(name, args) {
 		case 'memory_search': {
 			const limit = args.limit || 5;
 			const includeSup = args.include_superseded === true;
-			const searchResult = await doSearch(args.query, limit, includeSup);
+			// MCP tools return full items (body + metadata) for LLM consumption.
+			// B.1.5 will formally add full param to the schema; tolerate args.full now.
+			const searchResult = await doSearch(args.query, limit, includeSup, true);
 			let items = searchResult.results;
 
 			// Apply optional metadata filters (project, type)
@@ -396,8 +419,9 @@ async function handleToolCall(name, args) {
 			const limit = args.limit || 5;
 			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
 			const searchLimit = Math.min(limit * 3, 100);
-			// Search using a broad session-summary query, then filter by type
-			const searchResult = await doSearch('session_summary', searchLimit, false);
+			// Search using a broad session-summary query, then filter by type.
+			// full=true: metadata preserved so the type/valid_from/project filters below work.
+			const searchResult = await doSearch('session_summary', searchLimit, false, true);
 			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
 			// Sort by valid_from descending (most recent first)
 			items.sort((a, b) => {
@@ -650,13 +674,20 @@ function readBody(req) {
  * so `server/test/decay-integration.test.mjs` can exercise the decay wiring
  * with a mocked memory client — without spinning up a full server + container.
  *
+ * Compact shape (full=false, default): { id, title, score, snippet }
+ *   - id   = metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
+ *   - title fallback: metadata.id if title absent (matches doRecent convention)
+ *   - snippet = buildSnippet(title, memory body)
+ * Full shape (full=true): compact shape + { body } (raw memory text)
+ *
  * @param {string} query
  * @param {number} limit
  * @param {boolean} includeSuperseded
+ * @param {boolean} [full=false] — false → compact shape; true → add body field
  * @param {{search: Function}} [memoryClient] — dependency injection for tests;
  *   defaults to the module-level `memory` binding used by real requests.
  */
-export async function doSearch(query, limit, includeSuperseded, memoryClient = memory) {
+export async function doSearch(query, limit, includeSuperseded, full = false, memoryClient = memory) {
 	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
 	let items = raw?.results || raw || [];
 	if (!includeSuperseded) {
@@ -678,7 +709,27 @@ export async function doSearch(query, limit, includeSuperseded, memoryClient = m
 		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
 		items = applyTemporalDecay(items, halfLife);
 	}
-	return { results: items };
+	// Project to compact or full shape.
+	// - id:    metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
+	// - title: metadata.title if present; falls back to metadata.id (matches doRecent convention)
+	// - score: from mem0 result (may be decay-adjusted above)
+	// - compact (full=false): { id, title, score, snippet } — snippet via buildSnippet()
+	// - full   (full=true):   { id, title, score, body, metadata } — body = raw memory text;
+	//                         metadata preserved for internal callers (MCP handlers) that
+	//                         post-filter on metadata.type / metadata.project / metadata.valid_from.
+	const mapped = items.map((r) => {
+		const id = r.metadata?.id ?? r.id;
+		const title = r.metadata?.title ?? r.metadata?.id ?? '(untitled)';
+		const base = { id, title, score: r.score };
+		if (full) {
+			base.body = r.memory;
+			base.metadata = r.metadata; // preserve for internal MCP callers that filter on metadata
+		} else {
+			base.snippet = buildSnippet(title, r.memory);
+		}
+		return base;
+	});
+	return { results: mapped };
 }
 
 /**
@@ -738,15 +789,8 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
         const id = fm.id || stem;
         const title = fm.title || stem;
 
-        // Compact snippet: title + separator + first SNIPPET_N code points of body.
-        // Use [...str] (string iterator, code-point-aware) rather than slice(0, N) which
-        // operates on UTF-16 code units and can split a surrogate pair at the boundary.
-        const trimmedBody = body.trim();
-        const codePoints = [...trimmedBody];
-        const bodyExcerpt = codePoints.length > SNIPPET_N
-          ? codePoints.slice(0, SNIPPET_N).join('') + SNIPPET_ELLIPSIS
-          : trimmedBody;
-        const snippet = `${title} — ${bodyExcerpt}`;
+        // Compact snippet — delegate to shared buildSnippet() for consistent format.
+        const snippet = buildSnippet(title, body);
 
         const record = { id, title, snippet };
         if (full) {
@@ -801,7 +845,7 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false, filters } = JSON.parse(await readBody(req));
+			const { query, limit = 5, include_superseded = false, filters, full: fullBody } = JSON.parse(await readBody(req));
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify({error: 'query is required'}));
@@ -810,13 +854,27 @@ const server = createServer(async (req, res) => {
 			const includeSup = include_superseded === true;
 			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
 			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
-			let response = await doSearch(query, clampedLimitPost, includeSup);
+			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
+			// Always fetch full results (metadata preserved) so metadata post-filters work,
+			// then project to compact shape at the end if the client did not request full.
+			let response = await doSearch(query, clampedLimitPost, includeSup, true);
 			// Optional metadata filters (project, type) — post-filter after mem0 recall
 			if (filters && typeof filters === 'object') {
 				let items = response.results;
 				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
 				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
 				response = { results: items };
+			}
+			// Project to compact shape unless caller explicitly requested full.
+			if (!fullReq) {
+				response = {
+					results: response.results.map((r) => ({
+						id: r.id,
+						title: r.title,
+						score: r.score,
+						snippet: buildSnippet(r.title, r.body),
+					})),
+				};
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
@@ -828,15 +886,29 @@ const server = createServer(async (req, res) => {
 			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
 			const typeFilter = url.searchParams.get('type') || null;
+			const fullReq = url.searchParams.get('full') === '1';
 			if (!q) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'q parameter is required' }));
 				return;
 			}
-			let response = await doSearch(q, limit, includeSuperseded);
+			// Always fetch full results (metadata preserved) so metadata typeFilter works,
+			// then project to compact shape at the end if the client did not request full.
+			let response = await doSearch(q, limit, includeSuperseded, true);
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
 				response = { results: items };
+			}
+			// Project to compact shape unless caller explicitly requested full.
+			if (!fullReq) {
+				response = {
+					results: response.results.map((r) => ({
+						id: r.id,
+						title: r.title,
+						score: r.score,
+						snippet: buildSnippet(r.title, r.body),
+					})),
+				};
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
