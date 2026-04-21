@@ -126,10 +126,18 @@ fake_home6=$(mktemp -d)
 FAKE_HOME_DIRS+=("$fake_home6")
 HOME="$fake_home6" bash "$UM" search logtest 2>/dev/null || true
 logfile="$fake_home6/.local/share/um/usage.log"
-if [ -f "$logfile" ] && grep -q "logtest" "$logfile"; then
-  pass "T6a: usage log appended when UM_NO_USAGE_LOG unset"
+# Log format: {iso8601_timestamp}\t{subcommand}\t{arg_count} — no query text (spec §11.3)
+if [ -f "$logfile" ] && grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$logfile" && grep -q "$(printf '\tsearch\t')" "$logfile"; then
+  pass "T6a: usage log appended with subcommand+argcount format (no query text)"
 else
-  fail "T6a: usage log not written (logfile='$logfile', exists=$([ -f "$logfile" ] && echo yes || echo no))"
+  fail "T6a: usage log not written or wrong format (logfile='$logfile', exists=$([ -f "$logfile" ] && echo yes || echo no), content=$(cat "$logfile" 2>/dev/null || echo MISSING))"
+fi
+
+# Also verify query text NOT present in log (PII check)
+if ! grep -q "logtest" "$logfile" 2>/dev/null; then
+  pass "T6a-pii: query text absent from usage log"
+else
+  fail "T6a-pii: query text found in usage log (PII leak)"
 fi
 
 # ─── T6b: usage log skipped when UM_NO_USAGE_LOG=1 ──────────────────────────

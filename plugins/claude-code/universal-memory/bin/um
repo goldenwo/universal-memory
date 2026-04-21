@@ -14,12 +14,6 @@ source "$LIB_DIR/resolve-project.sh"
 _um_load_config "./.um/config"
 _um_load_config "$HOME/.um/config"
 
-# Usage log (respects UM_NO_USAGE_LOG=1 + .no-log sentinel)
-if [ -z "${UM_NO_USAGE_LOG:-}" ] && [ ! -f "$HOME/.local/share/um/.no-log" ]; then
-  mkdir -p "$HOME/.local/share/um"
-  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-$(id -un 2>/dev/null || echo unknown)}" "$*" >> "$HOME/.local/share/um/usage.log" 2>/dev/null || :
-fi
-
 # Flag / subcommand parsing
 if [ $# -eq 0 ]; then
   cat >&2 <<EOF
@@ -42,6 +36,13 @@ Subcommands:
 See docs/um-cli.md for full contract.
 EOF
   exit 2
+fi
+
+# Usage log: log subcommand + arg count only (no query text / PII — spec §11.3)
+# TODO(v0.5): implement log rotation at 10 MB
+if [ -z "${UM_NO_USAGE_LOG:-}" ] && [ ! -f "$HOME/.local/share/um/.no-log" ]; then
+  mkdir -p "$HOME/.local/share/um"
+  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$(($# - 1))" >> "$HOME/.local/share/um/usage.log" 2>/dev/null || :
 fi
 
 case "$1" in
