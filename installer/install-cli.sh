@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install-cli.sh — standalone UM CLI installer (no server required)
+# install-cli.sh — standalone UM CLI installer (repo-local, NOT curl|bash)
 #
-# Public install URL (pinned per release tag):
-#   curl -fsSL https://github.com/goldenwo/universal-memory/releases/download/<TAG>/install-cli.sh | bash
-# Latest stable linked from README "Install" section.
+# Requires a full repo clone on disk. Run from the repo root:
+#   bash installer/install-cli.sh [--yes]
+#
+# A future release may add self-bootstrap for curl|bash. Until then, clone first.
 #
 # Canonical managed block (env-sourced per RH5 R2-round):
 #   - UM_OPENAI_API_KEY (empty when CLI-only; set if summaries wanted)
@@ -14,6 +15,7 @@
 #   - PATH guard for $HOME/.local/bin
 
 set -euo pipefail
+: "${HOME:?HOME is not set; set HOME and re-run}"
 
 # --- script location ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -112,14 +114,17 @@ fi
 source "$REPO_ROOT/installer/lib/marker-block.sh"
 
 _RC_UPDATED=0
+_sh="${SHELL:-}"
 for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
-  # Only write if the rc file already exists OR matches the user's default shell
+  # Only write if the rc file already exists OR matches the user's default shell.
+  # Use _sh (default-empty) instead of ${SHELL##*/} to avoid "unbound variable"
+  # abort under set -u when SHELL is unset (cron, systemd-run, minimal containers).
   case "$rc" in
     "${HOME}/.bashrc")
-      [ -f "$rc" ] || [ "${SHELL##*/}" = "bash" ] || continue
+      [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || continue
       ;;
     "${HOME}/.zshrc")
-      [ -f "$rc" ] || [ "${SHELL##*/}" = "zsh" ] || continue
+      [ -f "$rc" ] || [ "${_sh##*/}" = "zsh" ] || continue
       ;;
   esac
   touch "$rc"

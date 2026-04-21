@@ -250,6 +250,37 @@ T5_BASHRC="$(cat "$T5_HOME/.bashrc")"
 assert_contains "T5: PATH guard present in bashrc" "$T5_BASHRC" 'case ":$PATH:"'
 assert_contains "T5: PATH guard adds .local/bin" "$T5_BASHRC" ".local/bin"
 
+# ─── T6: SHELL unset — no crash under set -u ─────────────────────────────────
+# CRIT-2: when SHELL is unset (cron, systemd-run, minimal containers), the
+# previous ${SHELL##*/} triggered "unbound variable" under set -u and aborted
+# the script before reaching any warn/fallback path.
+# Fix: _sh="${SHELL:-}" ensures an empty string, not an error.
+#
+# Note: bash always re-exports SHELL=<self> in child processes, so we cannot
+# test the "script runs with SHELL truly unset" scenario by launching a child
+# bash process.  Instead we verify two things:
+#   (a) The helper snippet itself does not crash under set -u when SHELL is unset
+#       (inline evaluation — SHELL genuinely absent in THIS shell's env).
+#   (b) The fix (_sh="${SHELL:-}") is present in the installer source.
+echo ""
+echo "=== T6: SHELL unset — rc-detection snippet does not crash under set -u ==="
+
+# (a) Run the shell-detection snippet with SHELL genuinely unset in this process.
+T6_SNIPPET_EXIT=0
+T6_SNIPPET_OUT=$(bash -c '
+  set -euo pipefail
+  unset SHELL
+  _sh="${SHELL:-}"
+  rc="/nonexistent/.bashrc"
+  [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || echo "continue_ok"
+' 2>&1) || T6_SNIPPET_EXIT=$?
+assert_exit_zero "T6: snippet exits 0 with SHELL unset" "$T6_SNIPPET_EXIT"
+assert_contains "T6: continue path fires safely" "$T6_SNIPPET_OUT" "continue_ok"
+
+# (b) Verify that the fix is present in the source — _sh="${SHELL:-}" must appear.
+T6_SRC_FIX=$(grep -c '_sh="${SHELL:-}"' "$INSTALL_CLI" || true)
+assert_eq "T6: _sh safe-default present in install-cli.sh" "$T6_SRC_FIX" "1"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
