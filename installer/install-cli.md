@@ -19,7 +19,7 @@ Pass `--yes` (or `-y`) to skip confirmation prompts.
 ### Why git clone (not curl|bash)
 
 `install-cli.sh` needs the full repo layout — it copies library files from
-`installer/um-cli/lib/` and subcommand scripts from
+`plugins/claude-code/universal-memory/hooks/lib/` and subcommand scripts from
 `plugins/claude-code/universal-memory/bin/`.  A single-file
 `curl ... | bash` install would have no source files to copy, and
 `${BASH_SOURCE[0]}` is empty when bash reads from stdin, breaking the

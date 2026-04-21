@@ -66,16 +66,19 @@ CLI_DIR="${UM_CLI_DIR:-$DATA_DIR/cli}"
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$CLI_DIR"
 
 # --- copy libs ---
-if [ -d "$REPO_ROOT/installer/um-cli/lib" ]; then
-  cp -p "$REPO_ROOT/installer/um-cli/lib/"*.sh "$LIB_DIR/" 2>/dev/null || true
-  ok "Libraries installed to: $LIB_DIR"
-elif [ -d "$REPO_ROOT/plugins/claude-code/universal-memory/hooks/lib" ]; then
-  # Fallback to plugin-embedded libs if installer/um-cli/ not present
-  cp -p "$REPO_ROOT/plugins/claude-code/universal-memory/hooks/lib/"*.sh "$LIB_DIR/" 2>/dev/null || true
-  ok "Libraries installed to: $LIB_DIR (from hooks/lib fallback)"
-else
-  fail "Cannot find library source (installer/um-cli/lib or plugins/.../hooks/lib)"
+# Single source of truth: always copy from plugins/.../hooks/lib.
+# installer/um-cli/lib/ was removed (SCALE-3) — it was a byte-copy that silently went stale.
+PLUGIN_LIB_SRC="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/lib"
+if [ ! -d "$PLUGIN_LIB_SRC" ]; then
+  fail "Cannot find library source: $PLUGIN_LIB_SRC (is this a full repo clone?)"
 fi
+cp -p "$PLUGIN_LIB_SRC/"*.sh "$LIB_DIR/"
+copied_count=$(ls -1 "$LIB_DIR"/*.sh 2>/dev/null | wc -l)
+if [ "$copied_count" -lt 3 ]; then
+  echo "install-cli.sh: library copy failed — only $copied_count files in $LIB_DIR" >&2
+  exit 1
+fi
+ok "Libraries installed to: $LIB_DIR ($copied_count files)"
 
 # --- copy CLI subcommand scripts ---
 PLUGIN_BIN="$REPO_ROOT/plugins/claude-code/universal-memory/bin"
