@@ -6,17 +6,7 @@ Installs the `um` CLI tool without requiring the UM server Docker image. Use thi
 
 ## Install
 
-### Public install URL (pinned per release)
-
-```bash
-curl -fsSL https://github.com/goldenwo/universal-memory/releases/download/v0.4.0-alpha/install-cli.sh | bash
-```
-
-**Latest stable release** is linked from the README "Install" section.
-
-**Pinning:** the URL above points at a specific release tag. To install a different version, replace `v0.4.0-alpha` with the target tag. The installer script for each release is pinned as a GitHub release asset (immutable; not affected by post-release edits to `main`).
-
-### Local install (from repo clone)
+### Primary method (git clone)
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory.git
@@ -25,6 +15,18 @@ bash installer/install-cli.sh
 ```
 
 Pass `--yes` (or `-y`) to skip confirmation prompts.
+
+### Why git clone (not curl|bash)
+
+`install-cli.sh` needs the full repo layout — it copies library files from
+`installer/um-cli/lib/` and subcommand scripts from
+`plugins/claude-code/universal-memory/bin/`.  A single-file
+`curl ... | bash` install would have no source files to copy, and
+`${BASH_SOURCE[0]}` is empty when bash reads from stdin, breaking the
+`SCRIPT_DIR` / `REPO_ROOT` derivation.
+
+A future release may ship a self-bootstrapping bundle (clone-to-tempdir
+pattern); for v0.4-alpha, clone the repo first.
 
 ## Prerequisites
 
