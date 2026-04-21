@@ -238,14 +238,14 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_recent
 
-Fetch recent `session_summary` documents, optionally filtered by project. Sorted by `valid_from` descending (newest first). Returns compact shape `{ id, title, snippet }` by default; pass `full=true` for full bodies.
+Fetch recent memories from a project's `authored/` directory, sorted by filesystem mtime descending (newest file first). Returns compact shape `{ id, title, snippet }` by default; pass `full=true` for full bodies including `body` and `metadata` fields.
 
 **Parameters:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `project` | string | — | Filter by project name |
-| `limit` | number | 5 | Max results |
+| `project` | string | **required** | Project name (must match `^[a-zA-Z0-9._-]+$`) |
+| `limit` | number | 10 | Max results |
 | `full` | boolean | false | Return full bodies instead of compact shape |
 
 **Compact response (default):**
@@ -254,7 +254,13 @@ Fetch recent `session_summary` documents, optionally filtered by project. Sorted
 { "results": [ { "id": "session-2026-04-21", "title": "Session 2026-04-21", "snippet": "Session 2026-04-21\n\nCompleted B.3.1a: write-tool filtering..." } ] }
 ```
 
-**When to use `full=true`:** Use compact to see which recent sessions exist. Use `full=true` to actually read the summaries — for example, to orient at session start or answer questions about recent progress.
+**Full response (`full=true`):**
+
+```json
+{ "results": [ { "id": "session-2026-04-21", "title": "Session 2026-04-21", "snippet": "...", "body": "# Session 2026-04-21\n\nFull body text..." } ] }
+```
+
+**When to use `full=true`:** Use compact to see which recent documents exist. Use `full=true` to actually read the content — for example, to orient at session start or answer questions about recent progress.
 
 **Example — compact recent sessions:**
 
