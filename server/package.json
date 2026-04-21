@@ -18,6 +18,8 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@apidevtools/swagger-parser": "^12.1.0"
+    "@anthropic-ai/tokenizer": "^0.0.4",
+    "@apidevtools/swagger-parser": "^12.1.0",
+    "tiktoken": "^1.0.0"
   }
 }

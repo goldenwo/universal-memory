@@ -128,7 +128,7 @@ async function initMemory() {
 	}
 }
 
-const TOOLS = [
+export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
