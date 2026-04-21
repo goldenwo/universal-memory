@@ -388,8 +388,15 @@ Project is resolved in the following order (highest priority first):
 exercises step 5 — no project flag, no `UM_PROJECT` env var, no `.um/config`, and no git
 repo — and asserts exit code 2 with the exact error message above.
 
-The subcommands that perform project resolution are: `um search`, `um state`, `um recent`,
-`um list`, `um capture`, and `um tail`.
+The subcommands that perform project resolution are: `um state`, `um recent`,
+`um capture`, and `um tail`.
+
+`um search` is vault-wide by default and does not perform project resolution. The server
+supports an optional `filters.project` parameter via POST, but the CLI does not expose
+this filter today.
+
+`um list` is vault-wide by design (B.1.4b decision) and does not perform project
+resolution. A positional project arg is accepted but ignored with a warning.
 
 ---
 
