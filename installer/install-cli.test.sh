@@ -310,6 +310,47 @@ T7_SOURCE_EXIT=$?
 assert_exit_zero "T7: rc file sources cleanly after single-quote value written" "$T7_SOURCE_EXIT"
 assert_eq "T7: UM_LIB_DIR round-trips through rc correctly" "$T7_SOURCE_OUT" "$T7_SQ_LIB"
 
+# ─── T8: re-running installer is idempotent (no bashrc growth, no duplicate blocks) ─
+# Regression: in v0.4.0-alpha, marker-block.sh prepended a leading '\n' on every
+# run but awk didn't strip the preceding blank line from prior runs → unbounded
+# bashrc growth (1 extra blank line per re-run). Fix: awk buffers blank lines and
+# discards the buffer when it sees the marker-start sentinel.
+T8=$(mktemp -d -p "$TMPROOT" "t8.XXXXXX")
+T8_HOME="$T8/home"
+T8_LIB="$T8_HOME/.local/share/um/lib"
+mkdir -p "$T8_HOME" "$T8_LIB"
+
+# Seed bashrc with non-trivial pre-existing content
+cat > "$T8_HOME/.bashrc" <<'BASHRC_T8'
+export EDITOR=vim
+export PATH="$HOME/.local/bin:$PATH"
+alias ll='ls -la'
+BASHRC_T8
+
+T8_LINES_BEFORE=$(wc -l < "$T8_HOME/.bashrc")
+make_fakepython3 "$T8/bin"
+_BASH_BIN8="$(command -v bash)"
+
+# Run installer 3 times
+for i in 1 2 3; do
+  env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
+    "$_BASH_BIN8" "$INSTALL_CLI" --yes >/dev/null 2>&1
+done
+
+T8_LINES_AFTER=$(wc -l < "$T8_HOME/.bashrc")
+T8_MARKER_COUNT=$(grep -cE '^# --- universal-memory \(auto-added' "$T8_HOME/.bashrc" 2>/dev/null || echo 0)
+
+# After N runs, we expect exactly 1 marker block and a stable line count.
+# Acceptable delta after the first run: up to ~12 lines (the managed block + 1
+# separator blank). Key invariant: after run #2 and #3, size MUST NOT grow.
+assert_eq "T8: exactly one marker block after 3 re-runs" "$T8_MARKER_COUNT" "1"
+
+# Run once more and check the size doesn't grow between run-3 and run-4.
+env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
+  "$_BASH_BIN8" "$INSTALL_CLI" --yes >/dev/null 2>&1
+T8_LINES_AFTER_4=$(wc -l < "$T8_HOME/.bashrc")
+assert_eq "T8: bashrc line count stable between run 3 and run 4" "$T8_LINES_AFTER_4" "$T8_LINES_AFTER"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

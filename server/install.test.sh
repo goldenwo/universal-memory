@@ -792,6 +792,29 @@ T18_START_COUNT2=$(grep -cF "# --- universal-memory (auto-added by install.sh) -
 T18_END_COUNT2=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
 assert_eq "T18: still exactly one marker-start after third run" "$T18_START_COUNT2" "1"
 assert_eq "T18: still exactly one marker-end after third run" "$T18_END_COUNT2" "1"
+# Regression: v0.4.0-alpha marker-block.sh prepended '\n' on every run without
+# stripping the preceding blank line from prior runs → unbounded bashrc growth.
+# Run a fourth time and assert no line-count growth between runs 3 and 4.
+T18_LINES_3=$(wc -l < "$T18/home/.bashrc")
+T18C_EXIT=0
+T18C_OUT=$(env -i PATH="$T18_PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T18/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T18/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$T18/home" \
+  bash "$T18_SH" 2>&1) || T18C_EXIT=$?
+assert_exit_zero "T18: fourth run (idempotency) exits 0" "$T18C_EXIT"
+T18_LINES_4=$(wc -l < "$T18/home/.bashrc")
+assert_eq "T18: bashrc line count stable between run 3 and run 4" "$T18_LINES_4" "$T18_LINES_3"
 
 # ─── T12: --yes non-interactive with all defaults ─────────────────────────────
 # B3: a single `--yes`/`-y` flag should accept every default (vault path,
