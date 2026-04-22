@@ -41,11 +41,17 @@ _write_marker_block() {
   # shellcheck disable=SC2064
   trap "rm -f '$tmp'" RETURN INT TERM
   if [ -f "$profile" ]; then
+    # Strip the existing marker block AND any blank lines immediately preceding
+    # the start sentinel (so a prior run's leading '\n' separator does not
+    # accumulate — cf. monotonic-bashrc-growth bug found in v0.4 VM smoke test).
+    # Buffered-blanks technique: hold blank lines until we see a non-blank; if
+    # that non-blank is the marker start, discard the buffer instead of emitting.
     awk -v s="$marker_start" -v e="$marker_end" '
-      BEGIN { inblock=0 }
-      $0 == s { inblock=1; next }
+      BEGIN { inblock=0; pending="" }
+      $0 == s { inblock=1; pending=""; next }
       $0 == e { inblock=0; next }
-      !inblock { print }
+      !inblock && $0 ~ /^[[:space:]]*$/ { pending = pending $0 "\n"; next }
+      !inblock { printf "%s%s\n", pending, $0; pending="" }
     ' "$profile" > "$tmp"
   fi
 
