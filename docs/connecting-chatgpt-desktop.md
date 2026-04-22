@@ -16,7 +16,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing the 10 tools.
+  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A **publicly reachable URL** for the MCP endpoint. ChatGPT Desktop runs in OpenAI's cloud and cannot reach your `localhost:6335` directly — even though it's a desktop app, the MCP connector calls originate from OpenAI's backend. You need a tunnel. See [Tunnel options](#2-tunnel-options) below.
 - ChatGPT Desktop with a plan that supports custom MCP connectors. `<TBD: confirm exact plan tier required during verification — Plus / Pro / Business>`.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want ChatGPT to write memories, not just read. Read-only is safer for first connection.
@@ -94,7 +94,7 @@ Step-by-step UI clicks. The ChatGPT Desktop UI evolves, so screenshots will be c
 
 5. Click **`<TBD: "Save" / "Add" / "Connect">`**. ChatGPT Desktop should perform the MCP handshake and list the available tools.
 
-   ![TBD: screenshot showing the 10 UM tools discovered](screenshots/chatgpt-desktop-tools-discovered.png)
+   ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/chatgpt-desktop-tools-discovered.png)
 
 6. Enable the connector in a new chat (`<TBD: confirm whether it's on by default or needs a per-chat toggle>`).
 
@@ -133,7 +133,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Ch
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected: ChatGPT lists the 10 UM tools (`memory_search`, `memory_add`, `memory_list`, `memory_delete`, `memory_state`, `memory_recent`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`). If it lists fewer or the wrong ones, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.4 default): ChatGPT lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."
@@ -159,15 +159,28 @@ If all four pass, ChatGPT Desktop is reading and writing the same vault Claude C
 ## 6. What works vs what doesn't
 
 ### Works
-- All 10 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — reads unconditionally, writes when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`.
+- All 10 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — 4 reads (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible by default; 6 writes gated behind `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` (and filtered out of `tools/list` when unset).
+- Read responses use compact shape by default in v0.4 (`{id, title, score, snippet}`, ~200 bytes per hit). Pass `full: true` for full document bodies.
 - Captures written from ChatGPT Desktop appear in your Claude Code sessions at next session start (indexed by mem0, readable via `memory_search` / `memory_state` / `memory_recent`).
 - The rubric pasted into Custom Instructions steers ChatGPT to call `memory_capture` on explicit "remember" requests, same as Claude Code hook-injected rubric does.
 
 ### Doesn't work (yet)
 - **No session-end hook.** ChatGPT Desktop has no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture → session-summary → state.md pipeline does not run from ChatGPT sessions. Only Claude Code sessions produce state.md updates.
-- **No state.md regen from ChatGPT sessions** until v0.4 server-side checkpoint lands — tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant ChatGPT session.
-- **No raw turn capture** until v0.4's `memory_append_turn` MCP tool — tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6). ChatGPT conversations stay ephemeral on the UM side; only explicit `memory_capture` calls persist.
+- **No state.md regen from ChatGPT sessions** until a future release ships the server-side checkpoint body — tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant ChatGPT session.
+- **No raw turn capture** until a future release adds `memory_append_turn` — tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6). ChatGPT conversations stay ephemeral on the UM side; only explicit `memory_capture` calls persist.
 - **Rubric drift risk.** Custom Instructions are static — if the canonical rubric in [`docs/memory-routing-rubric.md`](memory-routing-rubric.md) changes, you need to re-paste. No auto-sync.
+
+---
+
+## After v0.4 upgrade
+
+If you previously connected a ChatGPT Custom GPT to UM, the deployed GPT is pinned to an old `actions-trimmed.yaml`. After upgrading UM to v0.4:
+
+1. Open the Custom GPT editor on ChatGPT.
+2. Under "Actions," click "Import from file" and re-upload the new `plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml` (includes the new `/api/recent/{project}` endpoint + compact-shape response schema).
+3. Save.
+
+Existing chats will continue to use the previous action definitions until the GPT is updated.
 
 ---
 

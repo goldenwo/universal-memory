@@ -20,7 +20,7 @@ EOF
 fi
 
 # Source shared libs
-LIB_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../hooks/lib"
+LIB_DIR="${UM_LIB_DIR:-$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../hooks/lib}"
 source "$LIB_DIR/vault.sh"  # also sources frontmatter.sh
 
 VAULT=$(vault_path)
@@ -107,8 +107,8 @@ mv "$TMP" "$RELPATH" || {
 }
 
 # Reindex best-effort
-ENDPOINT="${UM_ENDPOINT:-http://localhost:6335}"
-curl -sfm 5 -X POST "$ENDPOINT/api/reindex" \
+ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
+curl -fSsm 5 -X POST "$ENDPOINT/api/reindex" \
   -H 'Content-Type: application/json' \
   -d "{\"path\":\"$REL\"}" >/dev/null 2>&1 || \
   echo "um-forget: reindex POST failed (server may be down). Doc is deprecated on disk." >&2

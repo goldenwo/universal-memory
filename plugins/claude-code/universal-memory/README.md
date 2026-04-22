@@ -6,7 +6,9 @@ structured markdown, synthesizes it into searchable summaries and a per-project
 
 ## What this plugin does
 
-Four hooks + one slash command + two CLIs:
+Four hooks + one slash command + the `um` CLI (7 subcommands) + two legacy management CLIs (`um-forget`, `um-supersede`):
+
+> See [`docs/um-cli.md`](../../../docs/um-cli.md) for the standalone `um` CLI — the same UM server, accessed from shell scripts / cron / pipelines without going through the Claude Code plugin surface.
 
 | Component | When it runs | What it does |
 |---|---|---|
@@ -36,6 +38,10 @@ If `UM_ENDPOINT` is unset, all hooks exit silently — safe default.
 - **pyyaml**: the `um-forget` and `um-supersede` CLIs use Python 3 + `pyyaml` for frontmatter mutation. Install with `pip install pyyaml` (or `pip3 install pyyaml`).
 - Bash 4+ on PATH. On macOS, the system `/bin/bash` is version 3 — install `bash` via Homebrew.
 - Windows: Git Bash or WSL required (native PowerShell not yet supported).
+
+## The `um` CLI
+
+v0.4 adds a standalone `um` CLI with 7 subcommands (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for power-user workflows — shell scripts, cron jobs, grep/awk/jq pipelines. Install independently of this plugin via `installer/install-cli.sh`; it talks to the same UM server. See [`installer/install-cli.md`](../../../installer/install-cli.md) and [`docs/um-cli.md`](../../../docs/um-cli.md).
 
 ## Install
 
@@ -91,4 +97,4 @@ ls "$UM_VAULT_DIR/captures/<project>/raw/"
 ## Version compatibility
 
 - Claude Code v2.1.59+ required.
-- Plugin version: 0.3.0-alpha. See [ROADMAP.md](../../../ROADMAP.md) for planned features.
+- Plugin version: 0.4.0-alpha. See [ROADMAP.md](../../../ROADMAP.md) for planned features.

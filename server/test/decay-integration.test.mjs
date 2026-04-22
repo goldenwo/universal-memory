@@ -95,7 +95,7 @@ test('decay: off by default — mem0 order preserved', async () => {
 	const mock = mockMemory(canned);
 
 	await withEnv({ UM_TEMPORAL_DECAY: undefined }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results.length, 2);
 		assert.equal(results[0].id, 'old-high', 'old doc should stay first — no decay applied');
 		assert.equal(results[0].score, 0.9, 'score unchanged when decay off');
@@ -110,7 +110,7 @@ test('decay: on — recent doc outranks older doc with higher mem0 score', async
 	const mock = mockMemory(canned);
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		// After 4 half-lives, old doc's 0.9 decays to ~0.056. Recent doc's 0.3
 		// barely decays at 1 day — stays near 0.29. Recent wins.
 		const recent = results.find((r) => r.id === 'recent-low');
@@ -133,12 +133,12 @@ test('decay: UM_DECAY_HALF_LIFE_DAYS is honored', async () => {
 	let shortHalfLifeScore;
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '90' }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		longHalfLifeScore = results[0].score;
 	});
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '5' }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		shortHalfLifeScore = results[0].score;
 	});
 
@@ -159,7 +159,7 @@ test('filter + decay: status filter applies BEFORE decay (superseded doc exclude
 	const mock = mockMemory(canned);
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results.length, 1, 'superseded doc filtered out');
 		assert.equal(results[0].id, 'current-old', 'only current doc remains');
 	});
@@ -172,7 +172,7 @@ test('filter: invalidated_at doc excluded by default', async () => {
 	];
 	const mock = mockMemory(canned);
 
-	const { results } = await doSearch('q', 5, false, mock);
+	const { results } = await doSearch('q', 5, false, false, mock);
 	assert.equal(results.length, 1);
 	assert.equal(results[0].id, 'alive');
 });
@@ -187,7 +187,7 @@ test('includeSuperseded=true bypasses all status/invalidation filtering', async 
 	];
 	const mock = mockMemory(canned);
 
-	const { results } = await doSearch('q', 10, true, mock);
+	const { results } = await doSearch('q', 10, true, false, mock);
 	assert.equal(results.length, 5, 'all docs returned when includeSuperseded=true');
 });
 
@@ -201,7 +201,7 @@ test('decay does NOT crash on docs with missing valid_from (graceful fallback)',
 	const mock = mockMemory(canned);
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true' }, async () => {
-		const { results } = await doSearch('q', 5, false, mock);
+		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results.length, 2, 'both docs survive decay pass');
 	});
 });

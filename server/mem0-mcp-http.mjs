@@ -10,6 +10,7 @@
  *   GET  /api/search          ?q=...&limit=5&include_superseded=true -> { results: [...] }
  *   POST /api/add             { text } -> mem0 extraction + store
  *   GET  /api/list            all memories for MEM0_USER_ID
+ *   GET  /api/recent/:project recent authored docs by mtime desc, compact shape (no mem0)
  *   GET  /api/state/:project  read $VAULT/state/<project>/state.md directly (no mem0)
  *   DELETE /api/:id           remove a memory (by mem0 UUID via URL param)
  *   POST /api/delete          { metadata: { id } } or { id: <uuid> } -> delete by metadata.id or UUID
@@ -37,13 +38,48 @@
 import { createServer } from 'http';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
-import { readVaultFile, vaultPath } from './lib/vault.mjs';
+import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+
+// ---------------------------------------------------------------------------
+// Snippet design fixture — single source of truth for compact-shape N.
+// Lives in server/config/ so it survives the Docker build (test/ is excluded
+// by .dockerignore; config/ is COPY'd by the Dockerfile).
+// ---------------------------------------------------------------------------
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const _SNIPPET_DESIGN = JSON.parse(readFileSync(
+  path.resolve(__dirname, 'config/snippet-design.json'),
+  'utf8'
+));
+const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
+const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
+
+/**
+ * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
+ * Uses [...str] (code-point-aware iteration) rather than slice(0, N) which operates on
+ * UTF-16 code units and can split a surrogate pair at the boundary.
+ * Shared by doRecent and doSearch so snippet format is guaranteed identical.
+ *
+ * Title fallback convention (matches doRecent): if title is empty/null, returns only the excerpt.
+ *
+ * @param {string} title
+ * @param {string} body
+ * @returns {string}
+ */
+function buildSnippet(title, body) {
+  const trimmedBody = (body || '').trim();
+  const codePoints = [...trimmedBody];
+  const bodyExcerpt = codePoints.length > SNIPPET_N
+    ? codePoints.slice(0, SNIPPET_N).join('') + SNIPPET_ELLIPSIS
+    : trimmedBody;
+  return title ? `${title} — ${bodyExcerpt}` : bodyExcerpt;
+}
 
 // True when this module is the entry point (invoked via `node mem0-mcp-http.mjs`
 // or the Docker CMD), false when imported by tests. Gates the bootstrap block
@@ -128,25 +164,26 @@ async function initMemory() {
 	}
 }
 
-const TOOLS = [
+export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
-		description: 'Search memories by semantic similarity with optional status filters',
+		description: 'Semantic search with optional status/metadata filters. Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				query: { type: 'string', description: 'Semantic search query' },
 				limit: { type: 'number', description: 'Max results (default 5, max 100)' },
-				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs (default false)' },
+				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs' },
 				filters: {
 					type: 'object',
-					description: 'Optional metadata filters',
+					description: 'Metadata filters',
 					properties: {
-						project: { type: 'string', description: 'Filter by project name' },
-						type: { type: 'string', description: 'Filter by document type (e.g. session_summary, authored)' },
+						project: { type: 'string', description: 'Filter by project' },
+						type: { type: 'string', description: 'Filter by doc type (e.g. session_summary)' },
 					},
 				},
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
 			required: ['query'],
 		},
@@ -165,8 +202,14 @@ const TOOLS = [
 	},
 	{
 		name: 'memory_list',
-		description: 'List all stored memories',
-		inputSchema: { type: 'object', properties: {} },
+		description: 'List all stored memories. Returns compact shape (id, title, snippet) by default; pass full=true for full bodies.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
+				limit: { type: 'number', description: 'Max results to return (default: unlimited, max 1000)' },
+			},
+		},
 	},
 	{
 		name: 'memory_delete',
@@ -191,13 +234,15 @@ const TOOLS = [
 	},
 	{
 		name: 'memory_recent',
-		description: 'Fetch recent session_summary documents for a project',
+		description: 'Fetch recent authored documents for a project by filesystem mtime (not from mem0). Returns compact shape (id, title, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				project: { type: 'string', description: 'Project name filter (optional)' },
-				limit: { type: 'number', description: 'Max results (default 5)' },
+				project: { type: 'string', description: 'Project name (must match ^[a-zA-Z0-9._-]+$)' },
+				limit: { type: 'number', description: 'Max results (default 10)' },
+				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
 			},
+			required: ['project'],
 		},
 	},
 	{
@@ -224,7 +269,7 @@ const TOOLS = [
 	},
 	{
 		name: 'memory_checkpoint',
-		description: 'Force a session summary + state update (stub, v0.3) — not yet implemented server-side; use /um-checkpoint in Claude Code instead',
+		description: 'Force a session summary + state update (server-side stub — currently delegates to `/um-checkpoint` slash command in Claude Code)',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -269,11 +314,47 @@ const TOOLS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Write-gating helper
+// Write-gating helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Names of MCP tools that mutate state. Exported so tests can import the
+ * canonical set without duplicating it.
+ *
+ * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 10 so
+ * the runtime can still execute write tools when UM_MCP_WRITE_ENABLED=true.
+ */
+export const WRITE_TOOL_NAMES = new Set([
+	'memory_add', 'memory_delete', 'memory_capture',
+	'memory_checkpoint', 'memory_forget', 'memory_supersede',
+]);
+
+/**
+ * Returns true if UM_MCP_WRITE_ENABLED is set to 'true' or '1'.
+ * Unset, 'false', '0', or any other value → false (writes disabled).
+ */
+export function isWriteEnabled() {
+	const v = process.env.UM_MCP_WRITE_ENABLED;
+	return v === 'true' || v === '1';
+}
+
+/**
+ * Returns the tools visible to MCP clients given the current write-enabled state.
+ * When writeEnabled is true (or omitted and env var is true/1), all 10 tools are returned.
+ * When false (default when UM_MCP_WRITE_ENABLED is unset), write tools are filtered out.
+ *
+ * @param {boolean} [writeEnabled] — if omitted, reads process.env.UM_MCP_WRITE_ENABLED
+ * @returns {Array} subset of TOOLS
+ */
+export function getVisibleTools(writeEnabled) {
+	const enabled = writeEnabled !== undefined ? writeEnabled : isWriteEnabled();
+	if (enabled) return TOOLS;
+	return TOOLS.filter(t => !WRITE_TOOL_NAMES.has(t.name));
+}
+
+/** @deprecated Use isWriteEnabled() instead */
 function mcpWriteEnabled() {
-	return process.env.UM_MCP_WRITE_ENABLED === 'true';
+	return isWriteEnabled();
 }
 
 // ---------------------------------------------------------------------------
@@ -320,13 +401,17 @@ async function reindexDoc(relPath) {
 // handleToolCall
 // ---------------------------------------------------------------------------
 
-async function handleToolCall(name, args) {
+export async function handleToolCall(name, args) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
 			const limit = args.limit || 5;
 			const includeSup = args.include_superseded === true;
-			const searchResult = await doSearch(args.query, limit, includeSup);
+			const clientFull = args.full === true;
+			// Always call doSearch(full=true) internally so metadata is preserved for
+			// post-filtering (project, type). Then project to compact shape at the end
+			// unless the MCP client explicitly requested full bodies (args.full=true).
+			const searchResult = await doSearch(args.query, limit, includeSup, true);
 			let items = searchResult.results;
 
 			// Apply optional metadata filters (project, type)
@@ -339,63 +424,66 @@ async function handleToolCall(name, args) {
 				}
 			}
 
+			// Project to compact shape unless client requested full bodies.
+			if (!clientFull) {
+				items = items.map((r) => ({
+					id: r.id,
+					title: r.title,
+					score: r.score,
+					snippet: buildSnippet(r.title, r.body),
+				}));
+			}
+
 			return JSON.stringify({ results: items });
 		}
 		case 'memory_add': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
 			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
 		case 'memory_list': {
-			const all = await memory.getAll({ userId: USER_ID });
-			const items = all?.results || all || [];
-			return items.map((r) => `- ${r.memory} (id: ${r.id})`).join('\n') || 'No memories.';
+			const clientFull = args.full === true;
+			const listLimit = args.limit != null ? Math.min(parseInt(args.limit, 10) || 0, 1000) : null;
+			// Delegate to doList which handles compact/full projection.
+			// When full=true: raw mem0 items (backward compat shape) serialized as JSON.
+			// When full=false (default): compact { id, title, snippet } items.
+			const items = await doList(clientFull, listLimit);
+			if (items.length === 0) return 'No memories.';
+			if (clientFull) {
+				// Full shape: return as JSON so body/metadata fields are accessible
+				return JSON.stringify(items);
+			}
+			// Compact shape: human-readable text format consistent with prior MCP behavior
+			return items.map((r) => `- ${r.snippet} (id: ${r.id})`).join('\n');
 		}
 		case 'memory_delete': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
 			await memory.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
 		}
 
 		// ── Task 10: 6 new tools ──────────────────────────────────────────────
 		case 'memory_state': {
-			const project = args.project;
-			if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-				throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
-			}
-			const relPath = `state/${project}/state.md`;
-			let fileText;
-			try {
-				fileText = await readVaultFile(relPath);
-			} catch (err) {
-				if (err.code === 'ENOENT') {
-					return JSON.stringify({ ok: true, project, state: null, valid_from: null });
-				}
-				throw err;
-			}
-			const { frontmatter, body } = parseFrontmatter(fileText);
-			const validFrom = frontmatter.valid_from || null;
-			return JSON.stringify({ ok: true, project, state: { frontmatter, body }, valid_from: validFrom });
+			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
+			// doState validates the project name and throws on invalid input.
+			return await doState(args.project);
 		}
 
 		case 'memory_recent': {
-			const limit = args.limit || 5;
-			// I2: cap the over-fetch multiplier to avoid unbounded mem0 queries
-			const searchLimit = Math.min(limit * 3, 100);
-			// Search using a broad session-summary query, then filter by type
-			const searchResult = await doSearch('session_summary', searchLimit, false);
-			let items = searchResult.results.filter((r) => (r.metadata || {}).type === 'session_summary');
-			// Sort by valid_from descending (most recent first)
-			items.sort((a, b) => {
-				const ta = new Date((a.metadata || {}).valid_from || 0).getTime();
-				const tb = new Date((b.metadata || {}).valid_from || 0).getTime();
-				return tb - ta;
-			});
-			// Apply project filter if provided
-			if (args.project) {
-				items = items.filter((r) => (r.metadata || {}).project === args.project);
-			}
-			items = items.slice(0, limit);
-			return JSON.stringify({ results: items });
+			// CRITICAL-2 fix: delegate to doRecent (filesystem, mtime-sorted) to match
+			// REST /api/recent/:project semantics. Previous impl called doSearch (mem0
+			// vector-store) which is a different data source and different ordering.
+			// BREAKING CHANGE (v0.4 alpha): project is now required (was optional).
+			const project = args.project;
+			const limit = args.limit ?? 10;
+			const full = args.full === true;
+			const result = await doRecent(project, limit, full);
+			return JSON.stringify(result);
 		}
 
 		case 'memory_capture': {
@@ -438,12 +526,15 @@ async function handleToolCall(name, args) {
 		}
 
 		case 'memory_checkpoint': {
-			// STUB (v0.3) — session-end.sh runs on the host with filesystem + env access;
+			if (!isWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+			}
+			// Server-side stub — session-end.sh runs on the host with filesystem + env access;
 			// driving it from inside the container requires hook-in-container infrastructure
-			// planned for v0.3. Full MCP-driven implementation deferred.
+			// not yet implemented. Use /um-checkpoint in Claude Code instead.
 			return JSON.stringify({
 				ok: false,
-				error: 'memory_checkpoint is not implemented server-side in v0.2.x — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3.',
+				error: 'memory_checkpoint is not yet implemented server-side; use `/um-checkpoint` in Claude Code instead.',
 			});
 		}
 
@@ -598,11 +689,11 @@ async function handleToolCall(name, args) {
 function handleMcpMessage(msg) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
-		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.3.0-alpha' }, capabilities: { tools: {} } } };
+		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.4.0-alpha' }, capabilities: { tools: {} } } };
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {
-		return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+		return { jsonrpc: '2.0', id, result: { tools: getVisibleTools() } };
 	} else if (method === 'tools/call') {
 		return handleToolCall(params.name, params.arguments || {})
 			.then((text) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } }))
@@ -635,13 +726,20 @@ function readBody(req) {
  * so `server/test/decay-integration.test.mjs` can exercise the decay wiring
  * with a mocked memory client — without spinning up a full server + container.
  *
+ * Compact shape (full=false, default): { id, title, score, snippet }
+ *   - id   = metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
+ *   - title fallback: metadata.id if title absent (matches doRecent convention)
+ *   - snippet = buildSnippet(title, memory body)
+ * Full shape (full=true): compact shape + { body } (raw memory text)
+ *
  * @param {string} query
  * @param {number} limit
  * @param {boolean} includeSuperseded
+ * @param {boolean} [full=false] — false → compact shape; true → add body field
  * @param {{search: Function}} [memoryClient] — dependency injection for tests;
  *   defaults to the module-level `memory` binding used by real requests.
  */
-export async function doSearch(query, limit, includeSuperseded, memoryClient = memory) {
+export async function doSearch(query, limit, includeSuperseded, full = false, memoryClient = memory) {
 	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
 	let items = raw?.results || raw || [];
 	if (!includeSuperseded) {
@@ -663,7 +761,199 @@ export async function doSearch(query, limit, includeSuperseded, memoryClient = m
 		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
 		items = applyTemporalDecay(items, halfLife);
 	}
-	return { results: items };
+	// Project to compact or full shape.
+	// - id:    metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
+	// - title: metadata.title if present; falls back to metadata.id (matches doRecent convention)
+	// - score: from mem0 result (may be decay-adjusted above)
+	// - compact (full=false): { id, title, score, snippet } — snippet via buildSnippet()
+	// - full   (full=true):   { id, title, score, body, metadata } — body = raw memory text;
+	//                         metadata preserved for internal callers (MCP handlers) that
+	//                         post-filter on metadata.type / metadata.project / metadata.valid_from.
+	const mapped = items.map((r) => {
+		const id = r.metadata?.id ?? r.id;
+		const title = r.metadata?.title ?? r.metadata?.id ?? '(untitled)';
+		const base = { id, title, score: r.score };
+		if (full) {
+			base.body = r.memory;
+			base.metadata = r.metadata; // preserve for internal MCP callers that filter on metadata
+		} else {
+			base.snippet = buildSnippet(title, r.memory);
+		}
+		return base;
+	});
+	return { results: mapped };
+}
+
+// ---------------------------------------------------------------------------
+// doState — extracted for DI testability (B.1.4b Step 0a)
+// Called by both the MCP handler (memory_state) and the REST handler
+// (GET /api/state/:project). Returns a JSON string for MCP parity; the REST
+// handler writes the same string directly to the response body.
+//
+// Validation is defense-in-depth: doState throws on invalid project names.
+// The REST handler ALSO keeps its own pre-validation that returns HTTP 400
+// before doState runs, so REST never hits the throw path. Both checks pass the
+// same regex — the duplication is intentional belt-and-suspenders.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the state.md for a project and return it as a JSON string.
+ * Returns { ok, project, state: { frontmatter, body }, valid_from } or
+ * { ok, project, state: null, valid_from: null } when the file does not exist.
+ *
+ * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
+ * @returns {Promise<string>} JSON string
+ */
+export async function doState(project) {
+  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
+    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  }
+  const relPath = `state/${project}/state.md`;
+  try {
+    const fileText = await readVaultFile(relPath);
+    const { frontmatter, body } = parseFrontmatter(fileText);
+    return JSON.stringify({
+      ok: true,
+      project,
+      state: { frontmatter, body },
+      valid_from: frontmatter.valid_from || null,
+    });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+    }
+    // Transient I/O errors: log + treat as state-unavailable so callers can retry cleanly.
+    // Whitelisted codes only — permission/config errors must bubble so ops can fix them.
+    if (['EBUSY', 'ETXTBSY', 'EMFILE', 'ENFILE', 'EAGAIN'].includes(err.code)) {
+      console.error('[mem0-mcp] doState transient I/O error:', relPath, err.message);
+      return JSON.stringify({ ok: true, project, state: null, valid_from: null });
+    }
+    // Config/permission errors (EACCES, EPERM, etc.): bubble so ops can fix
+    throw err;
+  }
+}
+
+/**
+ * List the most recently modified vault documents for a project.
+ *
+ * Reads from the vault filesystem (authored/<project>/*.md) and sorts by mtime
+ * descending — the natural recency signal, no mem0 vector-store round-trip needed.
+ *
+ * Returns compact shape by default: { id, title, snippet }.
+ * Pass full=true for { id, title, snippet, body }.
+ * Snippet format: title + " — " + first SNIPPET_N chars of body (+ ellipsis if truncated).
+ *
+ * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
+ * @param {number} [limit=10] - Max results to return
+ * @param {boolean} [full=false] - Include body in response
+ * @param {*} [_memoryClient] - Unused; accepted for DI signature parity with doSearch
+ * @returns {Promise<{ results: Array<{id, title, snippet, body?}> }>}
+ */
+export async function doRecent(project, limit = 10, full = false, _memoryClient = memory) {
+  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
+    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  }
+
+  const subdir = `authored/${project}`;
+  const relPaths = await listVaultFiles(subdir);
+
+  if (relPaths.length === 0) {
+    return { results: [] };
+  }
+
+  // Stat all files to get mtime, tolerating ENOENT (file deleted between list and stat).
+  // Any other I/O error is logged and the file is dropped from results — one bad file
+  // must not 500 the entire request (real race on Linux under concurrent vault writes).
+  const withStatsRaw = await Promise.all(
+    relPaths.map(async (relPath) => {
+      try {
+        const { mtime } = await statVaultFile(relPath);
+        return { relPath, mtime };
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // deleted between list and stat — skip
+        console.error('[mem0-mcp] doRecent: skipping stat for', relPath, err.message);
+        return null;
+      }
+    })
+  );
+  const withStats = withStatsRaw.filter(Boolean);
+  withStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+  // Take top `limit` files and build the compact (or full) shape, tolerating ENOENT.
+  const topFiles = withStats.slice(0, limit);
+  const resultsRaw = await Promise.all(
+    topFiles.map(async ({ relPath }) => {
+      try {
+        const fileText = await readVaultFile(relPath);
+        const { frontmatter: fm, body } = parseFrontmatter(fileText);
+        const stem = path.basename(relPath, '.md');
+        const id = fm.id || stem;
+        const title = fm.title || stem;
+
+        // Compact snippet — delegate to shared buildSnippet() for consistent format.
+        const snippet = buildSnippet(title, body);
+
+        const record = { id, title, snippet };
+        if (full) {
+          record.body = body;
+        }
+        return record;
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // deleted between stat and read — skip
+        console.error('[mem0-mcp] doRecent: skipping read for', relPath, err.message);
+        return null;
+      }
+    })
+  );
+  const results = resultsRaw.filter(Boolean);
+
+  return { results };
+}
+
+// ---------------------------------------------------------------------------
+// doList — extracted for DI testability and compact-shape support (B.1.4b)
+//
+// Step 1 scope decision: option (b) — compact shape only, keep list scope as-is.
+// Rationale: /api/list today is a vault listing (all memories for MEM0_USER_ID),
+// not per-project filtered in the way /api/search is. Adding a project arg now
+// would also require updating the MCP tool schema (B.1.5 territory) and changing
+// existing listing semantics. Option (b) is minimal: doList(full=false) +
+// compact-shape projection. If B.1.5 needs a project arg, decide there.
+// ---------------------------------------------------------------------------
+
+/**
+ * List all stored memories for MEM0_USER_ID.
+ *
+ * Compact shape (full=false, default): { id, title, snippet }
+ *   - id    = metadata.id (filename stem) if present, else mem0 UUID
+ *   - title = metadata.title if present; falls back to metadata.id, then mem0 UUID
+ *   - snippet = buildSnippet(title, memory body)
+ * Full shape (full=true): raw mem0 result objects (backward compat with pre-B.1 callers)
+ *
+ * Returns a raw array (not an envelope) to preserve backward compatibility with
+ * the existing /api/list contract — the current handler returns `all?.results || all || []`.
+ * Changing to {results:[...]} would be a breaking API change beyond "compact shape" scope.
+ *
+ * @param {boolean} [full=false] - false → compact shape; true → raw mem0 items
+ * @param {number|null} [limit=null] - max items to return; null = unlimited
+ * @param {{getAll: Function}} [memoryClient] - DI for tests; defaults to module `memory`
+ * @returns {Promise<Array>} flat array of memory items
+ */
+export async function doList(full = false, limit = null, memoryClient = memory) {
+  const all = await memoryClient.getAll({ userId: USER_ID });
+  const items = all?.results || all || [];
+  const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
+  if (full) {
+    return sliced;
+  }
+  // Compact projection — consistent shape with doSearch compact items (minus score,
+  // which is search-specific). id and title use the same fallback logic as doSearch.
+  return sliced.map((r) => {
+    const id = r.metadata?.id ?? r.id;
+    const title = r.metadata?.title ?? r.metadata?.id ?? r.id ?? '(untitled)';
+    const snippet = buildSnippet(title, r.memory);
+    return { id, title, snippet };
+  });
 }
 
 const server = createServer(async (req, res) => {
@@ -702,7 +992,7 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false, filters } = JSON.parse(await readBody(req));
+			const { query, limit = 5, include_superseded = false, filters, full: fullBody } = JSON.parse(await readBody(req));
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify({error: 'query is required'}));
@@ -711,13 +1001,27 @@ const server = createServer(async (req, res) => {
 			const includeSup = include_superseded === true;
 			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
 			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
-			let response = await doSearch(query, clampedLimitPost, includeSup);
+			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
+			// Always fetch full results (metadata preserved) so metadata post-filters work,
+			// then project to compact shape at the end if the client did not request full.
+			let response = await doSearch(query, clampedLimitPost, includeSup, true);
 			// Optional metadata filters (project, type) — post-filter after mem0 recall
 			if (filters && typeof filters === 'object') {
 				let items = response.results;
 				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
 				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
 				response = { results: items };
+			}
+			// Project to compact shape unless caller explicitly requested full.
+			if (!fullReq) {
+				response = {
+					results: response.results.map((r) => ({
+						id: r.id,
+						title: r.title,
+						score: r.score,
+						snippet: buildSnippet(r.title, r.body),
+					})),
+				};
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
@@ -729,15 +1033,29 @@ const server = createServer(async (req, res) => {
 			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
 			const typeFilter = url.searchParams.get('type') || null;
+			const fullReq = url.searchParams.get('full') === '1';
 			if (!q) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'q parameter is required' }));
 				return;
 			}
-			let response = await doSearch(q, limit, includeSuperseded);
+			// Always fetch full results (metadata preserved) so metadata typeFilter works,
+			// then project to compact shape at the end if the client did not request full.
+			let response = await doSearch(q, limit, includeSuperseded, true);
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
 				response = { results: items };
+			}
+			// Project to compact shape unless caller explicitly requested full.
+			if (!fullReq) {
+				response = {
+					results: response.results.map((r) => ({
+						id: r.id,
+						title: r.title,
+						score: r.score,
+						snippet: buildSnippet(r.title, r.body),
+					})),
+				};
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
@@ -751,36 +1069,55 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/list' && req.method === 'GET') {
-			const all = await memory.getAll({ userId: USER_ID });
+			// B.1.4b: compact shape by default; ?full=1 returns raw mem0 items.
+			// Preserves raw-array envelope (not {results:[...]}) for backward compat.
+			const full = url.searchParams.get('full') === '1';
+			const limitStr = url.searchParams.get('limit');
+			const limit = limitStr ? Math.min(parseInt(limitStr, 10) || 0, 1000) : null;
+			const items = await doList(full, limit);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(all?.results || all || []));
+			res.end(JSON.stringify(items));
+			return;
+		}
+		// GET /api/recent/:project — list recent authored docs by filesystem mtime, compact shape
+		if (url.pathname.startsWith('/api/recent/') && req.method === 'GET') {
+			const projectSegment = decodeURIComponent(url.pathname.slice('/api/recent/'.length));
+			const rawLimit = parseInt(url.searchParams.get('limit') || '10', 10);
+			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10;
+			const full = url.searchParams.get('full') === '1';
+			try {
+				const result = await doRecent(projectSegment, limit, full);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(result));
+			} catch (err) {
+				if (/Invalid project name/.test(err.message)) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: err.message }));
+				} else {
+					console.error('[mem0-mcp] /api/recent error:', err.message);
+					res.writeHead(500, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'internal_error' }));
+				}
+			}
 			return;
 		}
 		// GET /api/state/:project — direct file read, does NOT touch mem0
 		if (url.pathname.startsWith('/api/state/') && req.method === 'GET') {
-			const projectSegment = url.pathname.slice('/api/state/'.length);
-			// Reject empty or multi-segment paths (no nested slashes allowed)
+			const projectSegment = decodeURIComponent(url.pathname.slice('/api/state/'.length));
+			// Belt-and-suspenders: REST handler pre-validates and returns HTTP 400
+			// before doState() runs, so REST never hits doState's throw path.
+			// Both checks use the same regex — intentional duplication.
 			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'Invalid project name: must match ^[a-zA-Z0-9._-]+$' }));
 				return;
 			}
-			const relPath = `state/${projectSegment}/state.md`;
-			let fileText;
-			try {
-				fileText = await readVaultFile(relPath);
-			} catch (err) {
-				if (err.code === 'ENOENT') {
-					res.writeHead(200, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ ok: true, project: projectSegment, state: null, valid_from: null }));
-					return;
-				}
-				throw err;
-			}
-			const { frontmatter, body } = parseFrontmatter(fileText);
-			const validFrom = frontmatter.valid_from || null;
+			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
+			// R5-L1: preserve Content-Type header — ChatGPT Custom GPT actions and
+			// other REST clients expect application/json; Node's autodetection would
+			// fall back to text/plain and break downstream callers.
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, project: projectSegment, state: { frontmatter, body }, valid_from: validFrom }));
+			res.end(await doState(projectSegment));
 			return;
 		}
 		if (url.pathname === '/api/reindex' && req.method === 'POST') {
@@ -928,9 +1265,10 @@ const server = createServer(async (req, res) => {
 		res.writeHead(404);
 		res.end('Not Found');
 	} catch (err) {
-		console.error('[mem0-mcp] Error:', err.message);
+		console.error('[mem0-mcp] Unhandled error:', err.stack);
+		const userMsg = process.env.NODE_ENV === 'production' ? 'internal_error' : err.message;
 		res.writeHead(500, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ error: err.message }));
+		res.end(JSON.stringify({ error: userMsg }));
 	}
 });
 
