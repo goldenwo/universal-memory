@@ -19,6 +19,30 @@ Foundations shipped alongside v0.1.0:
 
 - Architecture doc ([docs/architecture.md](docs/architecture.md)) — source/synthesis/index role-based frame
 
+## Planned
+
+The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
+
+### v0.5 — cross-env first-class (active, ~3 weeks)
+Close the gap where Claude.ai / ChatGPT Desktop / Codex conversations stay ephemeral: ship `memory_append_turn` (raw-capture writes from any MCP client) + `memory_checkpoint` server-side body (non-CC surfaces can trigger session-summary + state.md refresh) + modular install flags with an interactive wizard for first-time users + I4 summarizer-prompt fix (silent quality regression from v0.4 review). After v0.5, no surface is second-class for capture.
+
+**Closes:** #5 (server-side memory_checkpoint), #6 (memory_append_turn raw-capture bridge)
+**Spec:** `docs/plans/2026-04-22-v0.5-design.md`
+
+### v0.6 — ecosystem integrations (~3–4 weeks)
+UM becomes the "union vault" across adjacent memory tools: OpenClaw plugin (UM usable in Discord-side openclaw deployment), Claude-mem bridge (one-way ingest of claude-mem's local SQLite export; bidirectional if demand appears), cross-device sync (resolves an open architectural decision: Syncthing vs git vs daemon), plus ride-along `/api/list` envelope unification with `/api/search`/`/api/recent` and a tool-count consolidation pass (`memory_delete` + `memory_forget` → `memory_delete(mode)`).
+
+**Candidate items:** OpenClaw integration addon (ROADMAP §Capture path), Claude-mem bridge (ROADMAP §Capture path), cross-device markdown sync (ROADMAP §Capture path), `/api/list` envelope unification (v0.4 deferred), tool-count consolidation (v0.5 deferred).
+
+### v0.7 — multi-provider + launch-ready (~3 weeks)
+Provider neutrality: embeddings + summarizer + fact-extraction swappable via env flag between OpenAI / Anthropic / Google / Ollama (no mem0-YAML editing). Plus: self-bootstrap `curl | bash` installer (tarball + stdin-detection pattern), operational debt batch (Qdrant v1.13.x pin, image size reduction, history DB persistence), v0.4 review Minor findings M1–M10 cleanup, Windows CI matrix, and public-repo-prep checklist (ROADMAP's pre-public gate).
+
+### v1.0
+Stable API, externally usable, publicly announced. No new features — the combination of v0.5 + v0.6 + v0.7 reaches the bar defined in [Distribution / release](#distribution--release).
+
+### post-v1.0
+Working examples / demos bundle for adoption (OpenAI Agents SDK, LangChain-style integrations, provider-specific examples, npm client as reference implementation). Plus the power-user enrichment tier: vault web UI (#16), Kuzu graph memory + bi-temporal metadata, synthesis Layer 2 passes (workspace-dream skill, cross-project compile, ADR topic compile), Codex lifecycle hooks (#17 — upstream-gated regardless of timeline).
+
 ## Near-term — plug-and-play arc
 
 Three ordered plans that collectively eliminate manual `docker compose` invocation for the end user. Each is independent and ships value on its own.
