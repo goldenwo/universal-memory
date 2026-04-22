@@ -15,9 +15,26 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
   by 1 blank line (unbounded over many runs). Fix: awk now buffers blank lines
   and discards the buffer when it sees the marker-start sentinel. Regression
   tests added to `installer/install-cli.test.sh` (T8) and `server/install.test.sh`
-  (T18 extended). Surfaced by a post-release VM smoke test; fixed on `main` but
-  not back-ported to the `v0.4.0-alpha` tag — users who re-install from the tag
-  hit the bug; users cloning `main` get the fix. See commit `46e8700`.
+  (T18 extended). Surfaced by a post-release VM smoke test. See commit `46e8700`.
+- **`um` dispatcher standalone-install fallback** — `um --version` failed
+  the 6-lib health check whenever `UM_LIB_DIR` was unset (e.g. running from a
+  non-interactive shell that hadn't sourced `~/.bashrc`). The fallback path
+  `$PLUGIN_DIR/hooks/lib` assumes plugin context; for standalone installs at
+  `~/.local/bin/um` with libs at `~/.local/share/um/lib`, it resolved to a
+  non-existent `~/.local/hooks/lib`. Fix: two-tier fallback — env var first,
+  then standalone-install layout, then plugin-context layout. Regression test
+  T11 added to `plugins/claude-code/universal-memory/bin/um.test.sh` (16 total;
+  was 14). Resolves CI's "Real install + um --version sanity" failure on
+  ubuntu-latest + macos-latest. See commit `7c0b026`.
+- **`server/test/smoke.sh` T10-E broadened** — `memory_checkpoint` is in
+  `WRITE_TOOL_NAMES` so the writes-gate error fires before the stub error
+  when `UM_MCP_WRITE_ENABLED=false`. The assertion now accepts either error
+  message. See commit `5b2cd6c`.
+
+**Note:** These fixes are on `main` but not back-ported to the `v0.4.0-alpha`
+tag. The tag remains at `bb7b65e`; users who re-install from the tag hit the
+bugs. Next tagged release will include the fixes. For alpha with no external
+users yet, this is acceptable.
 
 ## [0.4.0-alpha] — 2026-04-21
 
