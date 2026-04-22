@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: false  # don't cancel a release build mid-way
 
 permissions:
+  contents: read      # needed for actions/checkout to fetch the tag
   packages: write     # needed to push to GHCR
 
 jobs:
