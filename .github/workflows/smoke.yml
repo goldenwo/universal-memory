@@ -101,6 +101,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # macOS runners don't ship pyyaml; install-cli.sh preflight checks for it.
+      # ubuntu-latest has python3-yaml out of the box; skip on Linux.
+      - name: Ensure pyyaml (macOS)
+        if: matrix.os == 'macos-latest'
+        run: pip3 install --break-system-packages pyyaml 2>/dev/null || pip3 install pyyaml
       # Sandbox tests first
       - run: bash installer/install-cli.test.sh
       - run: bash server/install.test.sh
