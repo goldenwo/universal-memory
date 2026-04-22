@@ -3,7 +3,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PLUGIN_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-LIB_DIR="${UM_LIB_DIR:-$PLUGIN_DIR/hooks/lib}"
+
+# LIB_DIR resolution (precedence: env > standalone-install default > plugin-local):
+#   1. $UM_LIB_DIR if set (installer writes this into ~/.bashrc managed block)
+#   2. $HOME/.local/share/um/lib if it exists (standalone install layout; picked up
+#      even without sourcing the shell rc — needed for CI "Real install sanity" and
+#      for users who launch `um` from a non-interactive shell post-install)
+#   3. $PLUGIN_DIR/hooks/lib (plugin-context: dispatcher running from the
+#      checked-in plugin tree inside ~/.claude/plugins/universal-memory/)
+if [ -n "${UM_LIB_DIR:-}" ]; then
+  LIB_DIR="$UM_LIB_DIR"
+elif [ -r "$HOME/.local/share/um/lib/config.sh" ]; then
+  LIB_DIR="$HOME/.local/share/um/lib"
+else
+  LIB_DIR="$PLUGIN_DIR/hooks/lib"
+fi
 
 # ── UM_LIB_DIR health check (spec §8.1) ─────────────────────────────────────
 # Verify critical library files are readable before sourcing anything.

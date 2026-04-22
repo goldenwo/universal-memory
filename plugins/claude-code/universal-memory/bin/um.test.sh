@@ -233,6 +233,44 @@ else
 fi
 rm -rf "$UM_TEST_DIR10"
 
+# ─── T11: standalone-install fallback — UM_LIB_DIR unset, $HOME/.local/share/um/lib exists ─
+# Regression: the dispatcher's lib-path fallback used to be
+# `$PLUGIN_DIR/hooks/lib`, which is wrong when the dispatcher is a standalone
+# install at `$HOME/.local/bin/um` and libs live at `$HOME/.local/share/um/lib`.
+# Previously `um --version` would fail whenever the user ran it without first
+# sourcing ~/.bashrc (e.g. in a non-interactive shell, or CI). Fix: a two-tier
+# fallback tries the standalone layout before the plugin-context layout.
+echo "=== T11: standalone-install fallback without UM_LIB_DIR ==="
+UM_TEST_DIR11=$(mktemp -d)
+# Lay out a standalone install matching what installer/install-cli.sh produces:
+#   dispatcher at ~/.local/bin/um
+#   libs at   ~/.local/share/um/lib
+#   plugin.json at ~/.local/.claude-plugin/plugin.json
+T11_HOME="$UM_TEST_DIR11/home"
+T11_BIN="$T11_HOME/.local/bin"
+T11_LIB="$T11_HOME/.local/share/um/lib"
+T11_PLUG="$T11_HOME/.local/.claude-plugin"
+mkdir -p "$T11_BIN" "$T11_LIB" "$T11_PLUG"
+cp "$UM" "$T11_BIN/um"
+chmod +x "$T11_BIN/um"
+for f in config.sh resolve-project.sh vault.sh frontmatter.sh summarize.sh update-state.sh; do
+  cp "$REAL_LIB_DIR/$f" "$T11_LIB/$f"
+done
+cp "$REAL_PLUGIN_DIR/.claude-plugin/plugin.json" "$T11_PLUG/plugin.json"
+# Run WITHOUT setting UM_LIB_DIR — the dispatcher must find libs at the standalone path
+out11=$(HOME="$T11_HOME" UM_NO_USAGE_LOG=1 env -u UM_LIB_DIR bash "$T11_BIN/um" --version 2>&1) && rc11=0 || rc11=$?
+if [ "$rc11" -eq 0 ]; then
+  pass "T11: um --version exits 0 without UM_LIB_DIR (standalone fallback)"
+else
+  fail "T11: um --version failed ($rc11): $out11"
+fi
+if echo "$out11" | grep -qE "0\.4\.0-alpha|0\.[0-9]+\.[0-9]+"; then
+  pass "T11: um --version prints version via standalone fallback"
+else
+  fail "T11: version string not printed: $out11"
+fi
+rm -rf "$UM_TEST_DIR11"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
