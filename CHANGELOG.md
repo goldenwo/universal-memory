@@ -6,7 +6,18 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(Add unreleased changes here — remove before tagging.)
+### Fixed
+
+- **`installer/lib/marker-block.sh` idempotency** — re-running `install.sh` or
+  `install-cli.sh` now leaves `~/.bashrc` at a stable line count. In v0.4.0-alpha
+  the helper prepended a leading `\n` on every write but awk didn't strip the
+  blank line that the prior run had written, so each re-install grew the bashrc
+  by 1 blank line (unbounded over many runs). Fix: awk now buffers blank lines
+  and discards the buffer when it sees the marker-start sentinel. Regression
+  tests added to `installer/install-cli.test.sh` (T8) and `server/install.test.sh`
+  (T18 extended). Surfaced by a post-release VM smoke test; fixed on `main` but
+  not back-ported to the `v0.4.0-alpha` tag — users who re-install from the tag
+  hit the bug; users cloning `main` get the fix. See commit `46e8700`.
 
 ## [0.4.0-alpha] — 2026-04-21
 
