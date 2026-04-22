@@ -1,8 +1,8 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.3.0-alpha**. Extends v0.2.x to four surfaces (Claude Code + Codex CLI via MCP + ChatGPT Desktop + Claude.ai + ChatGPT Custom GPT + OpenAI Assistants SDK). Claude Code remains the only surface with hook-driven raw capture + session summaries; other surfaces speak MCP (recall + writes) via a tunneled UM server.
+> **Version:** This document describes **v0.4.0-alpha**. Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT), REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and the standalone `um` CLI (7 subcommands). Progressive disclosure on reads: responses default to compact snippets; full bodies via `?full=1` / `full: true`.
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.3.0-alpha** (supersedes v0.2.2, which was tagged 2026-04-20). Update this file when the behavior changes.
+Source-of-truth description of what universal-memory does on this machine today. Written against **v0.4.0-alpha** (supersedes v0.3.0-alpha, which was tagged 2026-04-20). Update this file when the behavior changes.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 
@@ -23,9 +23,21 @@ Three pillars:
 
 ---
 
+## Three surfaces, one vault
+
+Every v0.4 feature is addressable through three equal-peer surfaces reading/writing the same vault:
+
+- **MCP** — `http://localhost:6335/mcp` — every Claude surface (Code, Desktop, Claude.ai), Codex, and bridges into Claude Desktop's Custom GPT. Default `tools/list` exposes 4 reads; 6 writes gated behind `UM_MCP_WRITE_ENABLED=true` (and the vault mount must be `rw` for the writes to actually succeed).
+- **REST** — OpenAPI 3.1 at `GET /openapi.yaml`; used by ChatGPT Custom GPT Actions (`?gpt=1` trimmed variant), the OpenAI Responses API, and any HTTP client. New in v0.4: `GET /api/recent/{project}` for mtime-sorted session summaries.
+- **CLI (`um`)** — 7 subcommands: `um search`, `um state`, `um recent`, `um list`, `um capture`, `um tail`, `um --version`. Install standalone via `installer/install-cli.sh`; configure via `UM_ENDPOINT` + optional `~/.um/config` (KEY=value, parsed by `hooks/lib/config.sh`; env > file precedence).
+
+All three default to compact-shape reads (`{id, title, score, snippet}`, ~200 bytes per hit). Ask for full bodies explicitly with `?full=1` (REST), `full: true` (MCP), or `--full` (CLI where supported).
+
+---
+
 ## Where things live on this machine
 
-Resolved paths as of v0.3.0-alpha:
+Resolved paths as of v0.4.0-alpha:
 
 | Thing | Path |
 |---|---|
@@ -33,7 +45,7 @@ Resolved paths as of v0.3.0-alpha:
 | Vault (default) | `$HOME/.um/vault/` — i.e. `C:/Users/wogol/.um/vault/` |
 | Plugin installed | `C:/Users/wogol/.claude/plugins/universal-memory/` |
 | Server docker stack | `E:/Projects/universal-memory/server/docker-compose.yml` |
-| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.3.0-alpha` |
+| Server container image | `ghcr.io/goldenwo/universal-memory-server:0.4.0-alpha` |
 | MCP endpoint | `http://localhost:6335/mcp` (bound to `127.0.0.1` only) |
 | Qdrant data | `E:/Projects/universal-memory/server/data/qdrant/` |
 | Cost log | `$VAULT/.telemetry/cost-log.csv` |
@@ -239,47 +251,70 @@ Versioned replace.
 - Hooks fire automatically (4 of them)
 - state.md injection + rubric via `additionalContext`
 - MCP tools optional — server reachable via `http://localhost:6335/mcp` if registered in `~/.claude.json`
-- If UM MCP is *not* registered but another mem0 MCP is (e.g. `mem0-pi`), Claude uses that for explicit `remember` requests. The v0.2.x rubric says "call memory_capture" — but PR [#9](https://github.com/goldenwo/universal-memory/pull/9) adds a `memory_add` fallback clause for this setup.
+- If UM MCP is *not* registered but another mem0 MCP is (e.g. `mem0-pi`), Claude uses that for explicit `remember` requests. The rubric has a `memory_add` fallback clause for this setup (shipped via PR #9).
+
+### Standalone CLI (`um`)
+
+- **No plugin required** — installs via `installer/install-cli.sh` against any reachable UM server. The full-server wizard (`installer/install.sh`) also drops `um` into `$PATH`, so if you've run that you already have it.
+- **Surfaces:** `um search`, `um state`, `um recent`, `um list`, `um capture`, `um tail` (plus `um --version` / `--help`). `um forget` and `um supersede` delegate to the pre-existing `bin/um-forget` / `bin/um-supersede` binaries.
+- **Config:** `UM_ENDPOINT` env var (URL of the UM server), optional `~/.um/config` (KEY=value lines; parsed by `hooks/lib/config.sh`). Precedence is env > repo-local `./.um/config` > user-global `~/.um/config`.
+- **What it DOES:** ad-hoc querying, shell scripting, cron jobs, power-user `jq` pipelines over `--json` output.
+- **What it DOESN'T do:** no `SessionStart` / `Stop` / `SessionEnd` hooks — purely ad-hoc query/capture. If you want the session-continuity pipeline, run Claude Code with the CC plugin, or invoke `hooks/session-end.sh` manually.
+- **Reference:** see [docs/um-cli.md](um-cli.md) for per-subcommand flags and JSON output contracts.
+
+### Codex CLI (MCP only)
+
+- **MCP-only surface.** Install the config-only plugin at `plugins/codex/universal-memory/` and Codex points at the UM server's `/mcp` endpoint.
+- **Recall works:** `memory_search`, `memory_state`, `memory_recent`, `memory_list` are available by default.
+- **Writes work when gated open:** flip `UM_MCP_WRITE_ENABLED=true` server-side and the 6 write tools appear.
+- **No hook-driven capture pipeline:** Codex has three upstream gaps (no SessionEnd hook, plugins can't bundle hooks, Windows unsupported). Those are tracked in [docs/codex-integration-notes.md](codex-integration-notes.md) and deferred to v0.5+. Consequence: Codex conversations don't flow into raw captures → session summaries → state.md. Call `memory_capture` explicitly from the conversation if you want a write.
+
+### ChatGPT Desktop / Custom GPT Actions
+
+- **ChatGPT Desktop (MCP connector):** exposes the UM server as a remote MCP connector via a tunnel (`um-tunnel` handles the plumbing). Same read/write gating as Claude.ai — see the connection guide at [docs/connecting-chatgpt-desktop.md](connecting-chatgpt-desktop.md).
+- **Custom GPT Actions (REST):** hits the OpenAPI spec at `/openapi.yaml?gpt=1` (trimmed variant — omits MCP routes + any tools the GPT builder can't render). Scaffold lives at `plugins/chatgpt-custom-gpt/universal-memory/`. Same vault, just different protocol.
+- **Neither has hooks.** Same caveat as Claude.ai: the conversation itself isn't in raw captures, so state.md only reflects CC work unless you explicitly call `memory_capture`.
 
 ### Claude.ai / Claude Desktop (read-capable, limited write)
 
 - **No hooks** — Claude.ai has no local filesystem access. No automatic state.md injection, no Stop hook captures, no SessionEnd pipeline.
-- **MCP reads work** — configure the UM server as an HTTP MCP connector at a publicly reachable URL (ngrok / Tailscale Funnel / Cloudflare Tunnel). Then `memory_state`, `memory_search`, `memory_recent`, `memory_list` all work.
+- **MCP reads work** — configure the UM server as an HTTP MCP connector at a publicly reachable URL (ngrok / Tailscale Funnel / Cloudflare Tunnel / `um-tunnel`). Then `memory_state`, `memory_search`, `memory_recent`, `memory_list` all work.
 - **MCP writes work when enabled** — `memory_capture`, `memory_forget`, `memory_supersede` require `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` on the server.
 - **But:** Claude.ai conversations don't feed the state.md pipeline. You can ask "what's my state on project X" and it works (reads state.md). You can say "remember Y" and it creates an authored doc. But Claude.ai's conversation itself doesn't append to raw captures, so next day's state.md won't reflect Claude.ai work — only CC work.
 
-These gaps are tracked:
-- **[#4](https://github.com/goldenwo/universal-memory/issues/4)** — deliver routing rubric to Claude.ai via a connection guide
-- **[#5](https://github.com/goldenwo/universal-memory/issues/5)** — server-side `memory_checkpoint` so Claude.ai can trigger state refresh
-- **[#6](https://github.com/goldenwo/universal-memory/issues/6)** — `memory_append_turn` MCP tool so Claude.ai conversations feed captures
+These Claude.ai / Desktop / remote-surface gaps are tracked:
+- **[#5](https://github.com/goldenwo/universal-memory/issues/5)** — server-side `memory_checkpoint` so remote surfaces can trigger state refresh (still deferred to v0.5+)
+- **[#6](https://github.com/goldenwo/universal-memory/issues/6)** — `memory_append_turn` MCP tool so remote-surface conversations feed captures (still deferred to v0.5+)
 
 ---
 
 ## MCP tool surface
 
-10 tools at `POST http://localhost:6335/mcp`. 9 work in v0.2.x; 1 is a documented stub.
+10 tools at `POST http://localhost:6335/mcp`. The default `tools/list` response exposes the **4 read tools** below; the **6 write tools** only appear when `UM_MCP_WRITE_ENABLED=true` (implemented by `getVisibleTools()` in `server/mem0-mcp-http.mjs`). `memory_checkpoint` is a documented stub that returns an actionable error pointing at `/um-checkpoint` or direct `hooks/session-end.sh` invocation.
 
-### Mem0-index tools (always available — bypass write gate)
-
-| Tool | What it does |
-|---|---|
-| `memory_search(query, limit?, include_superseded?, filters?)` | Vector search with optional status + metadata filters |
-| `memory_add(text, metadata?)` | Add to mem0 via extraction pipeline (generic mem0 behavior) |
-| `memory_list()` | List all stored memories |
-| `memory_delete(memoryId)` | Delete by mem0 UUID |
-| `memory_state(project)` | Direct file read of `state/<project>/state.md` |
-| `memory_recent(project?, limit?)` | Recent session summaries by valid_from desc |
-
-### Vault write tools (require `UM_MCP_WRITE_ENABLED=true` + `UM_MOUNT_MODE=rw`)
+### Read tools (visible by default in `tools/list`)
 
 | Tool | What it does |
 |---|---|
-| `memory_capture(content, metadata)` | Write authored doc to vault + reindex |
-| `memory_checkpoint(project?)` | **Stub (v0.3).** Returns actionable error pointing at `/um-checkpoint` or direct `hooks/session-end.sh` invocation |
-| `memory_forget(id)` | Mutate frontmatter to `status: deprecated` + reindex |
-| `memory_supersede(old_id, new_doc)` | Versioned replace — old `status: superseded`, new `supersedes: [old_id]` |
+| `memory_search(query, limit?, include_superseded?, filters?, full?)` | Vector search with optional status + metadata filters. Returns compact `{id, title, score, snippet}` by default; pass `full: true` for full bodies. |
+| `memory_list(limit?, full?)` | List all stored memories. Returns compact `{id, title, snippet}` by default; pass `full: true` for full bodies. |
+| `memory_state(project)` | Direct file read of `state/<project>/state.md` (never from mem0). |
+| `memory_recent(project, limit?, full?)` | Recent authored docs for a project by **filesystem mtime desc** (wraps `doRecent`; parity with new REST `/api/recent/{project}`). Compact shape by default; `full: true` for full bodies. **Breaking in v0.4:** `project` is now required (was optional). |
 
-**Security note:** with writes enabled and the default Docker port binding, the server accepts unauthenticated writes from any host that can reach port 6335. v0.2.x defaults to `127.0.0.1:6335` (localhost only) for that reason. Opening to LAN/WAN needs a reverse proxy or overlay network. See [docs/mcp-tools.md:391+](mcp-tools.md#L391) Security section.
+### Write tools (gated — require `UM_MCP_WRITE_ENABLED=true` to appear in `tools/list`; writes also require `UM_MOUNT_MODE=rw`)
+
+| Tool | What it does |
+|---|---|
+| `memory_add(text, metadata?)` | Add to mem0 via extraction pipeline (generic mem0 behavior). **Note:** in v0.4 `memory_add` is classified as a write and hidden by default; flip `UM_MCP_WRITE_ENABLED` to surface it. |
+| `memory_delete(memoryId)` | Delete by mem0 UUID. |
+| `memory_capture(content, metadata)` | Write authored doc to vault + reindex. |
+| `memory_checkpoint(project?)` | **Stub (v0.4).** Returns actionable error pointing at `/um-checkpoint` or direct `hooks/session-end.sh` invocation. Server-side checkpoint body still deferred ([#5](https://github.com/goldenwo/universal-memory/issues/5)). |
+| `memory_forget(id)` | Mutate frontmatter to `status: deprecated` + reindex. |
+| `memory_supersede(old_id, new_doc)` | Versioned replace — old `status: superseded`, new `supersedes: [old_id]`. |
+
+The canonical write-tool set is exported as `WRITE_TOOL_NAMES` in `server/mem0-mcp-http.mjs` (imported by tests so the visible/gated split doesn't drift).
+
+**Security note:** with writes enabled and the default Docker port binding, the server accepts unauthenticated writes from any host that can reach port 6335. Defaults bind to `127.0.0.1:6335` (localhost only) for that reason. Opening to LAN/WAN needs `um-tunnel` or a reverse proxy with its own auth layer. See [docs/mcp-tools.md:391+](mcp-tools.md#L391) Security section.
 
 ---
 
@@ -364,32 +399,50 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ---
 
-## Known gaps (tracked, deferred to v0.3)
+## Known gaps (deferred to v0.5+)
 
 | Issue | Scope | Effort |
 |---|---|---|
-| [#4](https://github.com/goldenwo/universal-memory/issues/4) | Claude.ai / Desktop connection guide with copy-paste rubric | Low |
-| [#5](https://github.com/goldenwo/universal-memory/issues/5) | Server-side `memory_checkpoint` — let remote surfaces trigger state refresh | Medium |
-| [#6](https://github.com/goldenwo/universal-memory/issues/6) | `memory_append_turn` MCP — let Claude.ai conversations feed captures | Medium-high |
+| [#5](https://github.com/goldenwo/universal-memory/issues/5) | Server-side `memory_checkpoint` body — let remote surfaces trigger state refresh | Medium |
+| [#6](https://github.com/goldenwo/universal-memory/issues/6) | `memory_append_turn` MCP — let Claude.ai / Codex / ChatGPT conversations feed captures | Medium-high |
+| [#16](https://github.com/goldenwo/universal-memory/issues/16) | Vault web UI (deferred from v0.4 — revisit when multi-user/shared-host direction clarifies) | High |
+| Codex lifecycle | Three upstream Codex gaps blocking hook-driven capture (see [docs/codex-integration-notes.md](codex-integration-notes.md)) | Blocked upstream |
 
-### Test-infra hygiene (not blocking — tracked unmilestoned)
+### Test-infra hygiene (tracked unmilestoned)
 
 | Issue | Scope | Effort |
 |---|---|---|
 | [#7](https://github.com/goldenwo/universal-memory/issues/7) | Wire `continuity.sh` into CI workflow | ~30 min |
 | [#8](https://github.com/goldenwo/universal-memory/issues/8) | Decay-on integration smoke (math is unit-tested; env plumbing is not) | ~1–2 hrs |
 
-### Pending in flight
-
-| PR | What |
-|---|---|
-| [#9](https://github.com/goldenwo/universal-memory/pull/9) | Rubric fallback to `memory_add` when `memory_capture` isn't registered |
-
 ### v0.2.0-alpha → v0.2.1 transition
 
 - `v0.2.0-alpha` (2026-04-19): session-continuity pipeline + 10-tool MCP surface + plug-and-play install. Tested (61/61 preflight, 150+ unit assertions, CI green).
 - `v0.2.1` (pending merge of Phase A): pluggable summarizer (`UM_SUMMARIZER`), canonical rubric at `docs/memory-routing-rubric.md`, recursive-hook guard for `claude-agent-sdk` backend. No breaking changes.
 - Validation strategy: passive use during UM work rather than an explicit dogfood phase. If issues surface → patch as `v0.2.2`.
+
+---
+
+## Version state (snapshot — 2026-04-21)
+
+- **Tag:** `v0.4.0-alpha` — HYBRID-REBALANCE release (Phases 0, B.1, B.3, A, D, E of the v0.4 plan); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.4.0-alpha` (amd64 + arm64); installer release asset at TBD.
+- **What's new in 0.4.0-alpha (across phases 0/B/A/D/E):**
+  - **Progressive disclosure on reads (Phase B.1)** — `/api/search`, `/api/list`, `/api/recent/{project}`, MCP `memory_search` / `memory_list` / `memory_recent` return `{id, title, score, snippet}` by default. `?full=1` / `full: true` opts into full bodies. 41.9% single-hop context reduction measured against v0.3 baseline.
+  - **New `/api/recent/{project}` REST endpoint** — filesystem mtime-sorted authored docs (parity with the corrected `memory_recent` MCP tool, which now wraps `doRecent` instead of reusing `doSearch`).
+  - **Schema hygiene (Phase B.3)** — default `tools/list` exposes 4 reads (`memory_search`, `memory_list`, `memory_state`, `memory_recent`); 6 writes (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) only appear when `UM_MCP_WRITE_ENABLED=true`. Summarizer prompt compressed 35.5%.
+  - **`um` CLI (Phase A)** — 7 subcommands: `search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`. Dispatcher at `plugins/claude-code/universal-memory/bin/um` + KEY=value config loader at `hooks/lib/config.sh`. One subcommand (`um validate`) was dropped per the Phase 0.5b vault-as-git signal check.
+  - **Standalone CLI installer (Phase D)** — `installer/install-cli.sh` with shared `installer/lib/marker-block.sh` helper; CI matrix covers Ubuntu + macOS. Full-server wizard at `installer/install.sh` still also installs `um`.
+  - **Docs capstone (Phase E)** — README + plugin READMEs + workflow.md + CHANGELOG + MIGRATION.md updated. "Three surfaces, one vault" framing landed.
+- **Explicitly deferred to v0.5+:** `memory_append_turn` (issue [#6](https://github.com/goldenwo/universal-memory/issues/6)), server-side `memory_checkpoint` body (issue [#5](https://github.com/goldenwo/universal-memory/issues/5)), vault web UI (issue [#16](https://github.com/goldenwo/universal-memory/issues/16)), Codex lifecycle hooks (3 upstream gaps unresolved), response envelope unification (`/api/list` raw-array → `{results:[...]}`), ETag caching on reads, self-bootstrap `curl | bash` installer.
+- **Previous release:** `v0.3.0-alpha` (below).
+- **Tests passing:** 103/103 server + 93/93 server/install + 33/33 install-cli + 14/14 um-dispatcher + 150+ additional bash assertions across 8 um-* test files. 2 pre-existing Windows-symlink skips unrelated to v0.4.
+
+## Minor deviations from the v0.4 plan
+
+- **B.2 (write-tool consolidation) DROPPED** per Phase 0 gate — schema hygiene math showed <2K aggregate savings.
+- **A.9 (`um validate`) DROPPED** per Phase 0.5b — vault-as-git signal ABSENT.
+- **`/api/list` envelope stays raw-array** (inconsistent with `/api/search` / `/api/recent` envelopes). Locked for v0.4 per B.1.4b backward-compat; revisit v0.5.
+- **No pre-v0.4 migration logic** — no external users yet.
 
 ---
 
@@ -423,6 +476,7 @@ Nothing else deviates from the plan's "Done when" checklist.
 
 ## Revision log
 
+- **2026-04-21** — v0.4.0-alpha landed: HYBRID-REBALANCE. Progressive disclosure on reads (41.9% context reduction), `um` CLI (7 subcommands, standalone installer), `/api/recent/{project}` REST endpoint, schema-hygiene listTools filter, docs capstone. Phase 0 + B.1 + B.3 + A + D + E of the v0.4 plan. Three surfaces, one vault.
 - **2026-04-20** — v0.3.0-alpha landed: Codex MCP plugin + ChatGPT Desktop/Claude.ai/Custom GPT docs + OpenAPI 3.1 surface + um-tunnel + OpenAI Assistants example. First release with four agent surfaces. Phase D.5 vault UI + Phase E Codex hooks + Phase F Agents SDK all deferred to v0.4.
 - **2026-04-20** — v0.2.2 Phase B landed: /um-preview CLI + slash command, first-session welcome banner, install.sh --yes flag, curl | bash bootstrap. Adoption-friction reduction; no runtime behavior changes.
 - **2026-04-20** — v0.2.1 Phase A landed: pluggable summarizer (UM_SUMMARIZER), canonical rubric, recursive-hook guard. No breaking changes.
