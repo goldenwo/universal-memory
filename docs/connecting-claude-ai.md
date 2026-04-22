@@ -98,7 +98,7 @@ Step-by-step UI clicks. The Claude.ai settings UI evolves, so screenshots will b
 
 5. Click **`<TBD: "Save" / "Add" / "Connect">`**. Claude.ai should perform the MCP handshake and list the discovered tools.
 
-   ![TBD: screenshot showing the 10 UM tools discovered](screenshots/claude-ai-5.png)
+   ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/claude-ai-5.png)
 
 6. Enable the connector in a new chat (`<TBD: confirm whether it's on by default or needs a per-chat / per-project toggle>`).
 
@@ -184,7 +184,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Cl
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected: Claude lists the 10 UM tools (`memory_search`, `memory_add`, `memory_list`, `memory_delete`, `memory_state`, `memory_recent`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`). If it lists fewer or the wrong ones, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.4 default): Claude lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."

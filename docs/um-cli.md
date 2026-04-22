@@ -36,12 +36,22 @@ Seven subcommands ship in v0.4 (A.9 `um validate` was dropped per Task 0.5b):
 |---|---|---|
 | `um search <query>` | Search memories | `/api/search` |
 | `um state <project>` | Read project state.md | `/api/state/{project}` |
-| `um recent <project>` | Recent memories | `/api/recent/{project}` |
+| `um recent <project>` | Recent authored docs (fs mtime) | `/api/recent/{project}` |
 | `um list` | List all memories | `/api/list` |
 | `um capture` | Append raw capture (fs-direct, no server) | — |
 | `um tail [N]` | Batch tail of raw captures | — |
-| `um forget <id>` | Delegate to `bin/um-forget` | — |
-| `um supersede <old> <new>` | Delegate to `bin/um-supersede` | — |
+| `um --version` | Print the CLI version + verify lib path | — |
+
+### Legacy CLIs dispatched by `um`
+
+`um` also forwards two legacy subcommands to the pre-v0.4 standalone binaries shipped by the Claude Code plugin. They are not part of the seven new subcommands above but are reachable through the dispatcher for convenience:
+
+| Command | Delegates to | Notes |
+|---|---|---|
+| `um forget <id>` | `bin/um-forget` | Soft-delete (status → `deprecated`) + reindex |
+| `um supersede <old> <new>` | `bin/um-supersede` | Versioned replace + reindex |
+
+See the [Claude Code plugin README](../plugins/claude-code/universal-memory/README.md) for the standalone-binary reference.
 
 ---
 

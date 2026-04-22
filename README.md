@@ -141,10 +141,10 @@ Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) ret
 | `memory_search` | read | Semantic search over indexed documents |
 | `memory_list` | read | List all indexed memories |
 | `memory_state` | read | Load `state.md` for a project |
-| `memory_recent` | read | Recent session summaries, date-sorted |
+| `memory_recent` | read | Recent authored docs for a project, filesystem-mtime-sorted (`project` required) |
 | `memory_add` | write | Add a fact to the index |
 | `memory_capture` | write | Write a new authored document to the vault |
-| `memory_checkpoint` | write | Force session summary + state refresh **(stub, v0.3)** |
+| `memory_checkpoint` | write | Force session summary + state refresh **(stub — returns actionable error pointing at `/um-checkpoint`)** |
 | `memory_forget` | write | Deprecate a document by ID |
 | `memory_supersede` | write | Replace a document; preserves audit chain |
 | `memory_delete` | write | Remove a memory from the index |
@@ -163,7 +163,7 @@ universal-memory/
 │   └── install-cli.sh           Standalone `um` CLI install (no server required)
 ├── plugins/
 │   ├── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
-│   ├── codex/                   Codex CLI plugin (config-only MCP connector, v0.3)
+│   ├── codex/                   Codex CLI plugin (config-only MCP connector)
 │   └── chatgpt-custom-gpt/      ChatGPT Custom GPT recipe (Actions + system prompt)
 ├── docs/
 │   ├── architecture.md          Two-tier design, three pillars, MCP surface

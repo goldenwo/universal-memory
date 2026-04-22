@@ -425,7 +425,7 @@ bash E:/Projects/universal-memory/server/install.sh --verify
 
 ## Version state (snapshot — 2026-04-21)
 
-- **Tag:** `v0.4.0-alpha` — HYBRID-REBALANCE release (Phases 0, B.1, B.3, A, D, E of the v0.4 plan); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.4.0-alpha` (amd64 + arm64); installer release asset at TBD.
+- **Tag:** `v0.4.0-alpha` — HYBRID-REBALANCE release (Phases 0, B.1, B.3, A, D, E of the v0.4 plan); GHCR image `ghcr.io/goldenwo/universal-memory-server:0.4.0-alpha` (amd64 + arm64). Install method is `git clone + bash installer/install-cli.sh` (CLI-only) or `installer/install.sh` (full server). No release-asset curl|bash URL — see `installer/install-cli.md` for why.
 - **What's new in 0.4.0-alpha (across phases 0/B/A/D/E):**
   - **Progressive disclosure on reads (Phase B.1)** — `/api/search`, `/api/list`, `/api/recent/{project}`, MCP `memory_search` / `memory_list` / `memory_recent` return `{id, title, score, snippet}` by default. `?full=1` / `full: true` opts into full bodies. 41.9% single-hop context reduction measured against v0.3 baseline.
   - **New `/api/recent/{project}` REST endpoint** — filesystem mtime-sorted authored docs (parity with the corrected `memory_recent` MCP tool, which now wraps `doRecent` instead of reusing `doSearch`).

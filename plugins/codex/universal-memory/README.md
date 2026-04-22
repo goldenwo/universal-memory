@@ -37,7 +37,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing the 10 tools.
+  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`.
 - Codex CLI installed. `<TBD: confirm minimum version >= 0.121.0 during verification — earlier versions predate plugin support>`.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want Codex to write memories, not just read. Read-only is safer for first connection.
 - For a **remote** UM server (Codex on a different host from UM), you need a tunnel. See [`docs/um-tunnel.md`](../../../docs/um-tunnel.md).
@@ -149,7 +149,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Co
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected: Codex lists the 10 UM tools (`memory_search`, `memory_add`, `memory_list`, `memory_delete`, `memory_state`, `memory_recent`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`). If it lists fewer or the wrong ones, the MCP server didn't register — re-check `~/.codex/config.toml` or the plugin `.mcp.json`, and confirm UM is reachable.
+   Expected (v0.4 default): Codex lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4** or the wrong ones, the MCP server didn't register — re-check `~/.codex/config.toml` or the plugin `.mcp.json`, and confirm UM is reachable.
 
    You can also run `codex mcp list` directly at the shell to confirm `universal-memory` shows up.
 
