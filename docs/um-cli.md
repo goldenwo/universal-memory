@@ -20,14 +20,11 @@
 
 ## Install
 
-Install is handled by the Phase D installer (`installer/install-cli.sh`). After installation:
+Install is handled by `installer/install-cli.sh` (the standalone CLI installer shipped in v0.4). See [`installer/install-cli.md`](../installer/install-cli.md) for the step-by-step. After installation:
 
 - `um` is placed on `$PATH` (typically `~/.local/bin/um`).
-- A config block is appended to `~/.bashrc` / `~/.zshrc` by the installer; this block sets
-  `UM_OPENAI_API_KEY` and `UM_SUMMARIZER`. For remote-server installations, set `UM_SERVER_URL`
-  manually or in `.um/config`. Phase D's `install-cli.sh` will extend the marker block to
-  include `UM_SERVER_URL`.
-- Per-repo config is read from `.um/config` (KEY=value) at runtime; see [Config](#config).
+- A managed block is appended to `~/.bashrc` / `~/.zshrc` by the installer, sourcing the caller's current env — typically `UM_OPENAI_API_KEY`, `UM_SUMMARIZER`, and `UM_SERVER_URL` (set in the shell before running the installer so the values flow into the block).
+- Config is read from `.um/config` (repo-local, `KEY=value`) at runtime; then `$HOME/.um/config` (user-global, same format); env vars take highest precedence. See [Config](#config) for the full precedence chain.
 
 ---
 

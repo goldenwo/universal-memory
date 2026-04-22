@@ -16,7 +16,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing the 10 tools.
+  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A **publicly reachable URL** for the MCP endpoint. ChatGPT Desktop runs in OpenAI's cloud and cannot reach your `localhost:6335` directly — even though it's a desktop app, the MCP connector calls originate from OpenAI's backend. You need a tunnel. See [Tunnel options](#2-tunnel-options) below.
 - ChatGPT Desktop with a plan that supports custom MCP connectors. `<TBD: confirm exact plan tier required during verification — Plus / Pro / Business>`.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want ChatGPT to write memories, not just read. Read-only is safer for first connection.

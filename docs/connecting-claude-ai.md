@@ -18,7 +18,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing the 10 tools.
+  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A reachable URL for the MCP endpoint:
   - **Claude.ai (web)** runs in Anthropic's cloud and cannot reach your `localhost:6335`. You need a **publicly reachable HTTPS tunnel** — see [Tunnel options](#2-tunnel-options) below.
   - **Claude Desktop (app)** can reach `http://localhost:6335` directly via its MCP config file — no tunnel required for local-only use. If you want Claude Desktop to reach a UM server running on a different host, you still need a tunnel (or LAN/VPN reachability).
