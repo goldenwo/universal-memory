@@ -1,6 +1,6 @@
 # universal-memory — Codex CLI plugin
 
-Config-only plugin — recall via MCP tools only. For full session capture (raw turns → LLM-synthesized summary → `state.md`), use the Claude Code plugin at [`plugins/claude-code/universal-memory/`](../../claude-code/universal-memory/). Hooks-based capture in Codex is deferred to v0.4 (see [`docs/codex-integration-notes.md`](../../../docs/codex-integration-notes.md) for the 3 upstream gaps).
+Config-only plugin — recall via MCP tools only. For full session capture (raw turns → LLM-synthesized summary → `state.md`), use the Claude Code plugin at [`plugins/claude-code/universal-memory/`](../../claude-code/universal-memory/). Hooks-based capture in Codex is **deferred to v0.5+** (still blocked on Codex upstream; see [`docs/codex-integration-notes.md`](../../../docs/codex-integration-notes.md) for the 3 upstream gaps).
 
 Audience: a user who already has universal-memory running locally (via `server/install.sh` + `docker compose up -d`) and wants OpenAI's Codex CLI to share the same memory store. Assumes basic familiarity with UM's tool surface — see [`docs/workflow.md`](../../../docs/workflow.md) and [`docs/mcp-tools.md`](../../../docs/mcp-tools.md) for the runtime reference.
 
@@ -11,17 +11,19 @@ Audience: a user who already has universal-memory running locally (via `server/i
 This plugin wires Codex CLI to a locally running UM server via MCP. The plugin itself is two small config files — no scripts, no hooks, no daemons. See [`NOTES.md`](NOTES.md) for the schema TBDs that the v0.3 alpha carries.
 
 ### Works
-- All 10 MCP tools listed at [`docs/mcp-tools.md`](../../../docs/mcp-tools.md) — reads unconditionally, writes when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` on the server.
+- All 10 MCP tools listed at [`docs/mcp-tools.md`](../../../docs/mcp-tools.md) (4 reads visible by default; 6 writes opt-in via `UM_MCP_WRITE_ENABLED=true` + `UM_MOUNT_MODE=rw`). As of v0.4, the MCP server's default `listTools` response exposes only the 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`); the 6 write tools (`memory_add`, `memory_capture`, `memory_delete`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when both gates are set on the server.
 - Memories captured from Codex sessions (via explicit `memory_capture` calls) show up in your Claude Code sessions at next session start, indexed by mem0, readable via `memory_search` / `memory_state` / `memory_recent`.
 - The rubric pasted into Codex's custom-instructions equivalent (see §4) steers Codex to call `memory_capture` on explicit "remember" requests — same behavior as Claude Code's hook-injected rubric or ChatGPT Desktop's pasted rubric.
 
-### Doesn't work (yet — tracked for v0.4)
+### Doesn't work (yet — tracked for v0.5+)
 - **No automatic raw-capture pipeline.** Codex v0.121 does not emit a `SessionEnd` event, and its plugin manifest has no `hooks` field to bundle lifecycle scripts. Codex sessions do not append to `captures/<project>/raw/<date>.md`.
 - **No automatic `state.md` regen from Codex sessions.** Without `SessionEnd`, the synthesis pipeline (raw → LLM summary → state merge → reindex) does not run from Codex. Only Claude Code sessions refresh `state.md` today.
 - **No hook-based context injection on session start.** Codex has a `SessionStart` hook, but plugins can't bundle hook scripts in v0.121 — users would need to hand-edit `~/.codex/hooks.json`. Deferred pending plugin-bundled hook support.
 - **Windows hook support is disabled upstream** in Codex v0.121 — one of the three blockers for a hook-driven port.
 
 **Workaround for important conversations:** manually call `memory_capture` with `type: session_summary` at the end of a notable Codex session. There is no automatic synthesis — you write what you want preserved.
+
+**Power-user alternative:** for scripting / cron / one-off queries outside a Codex session, install the standalone `um` CLI (see [`installer/install-cli.md`](../../../installer/install-cli.md)). It queries the same UM server without going through MCP — useful when you don't have a Codex session open.
 
 ---
 
@@ -114,7 +116,7 @@ This skips the plugin layer entirely — Codex will launch the MCP connection at
 
 ## 4. Routing rubric paste-in
 
-Codex needs UM's memory-routing rubric to decide when to call `memory_capture` vs letting session-end catch state. Unlike Claude Code (where `session-start.sh` injects the rubric automatically), Codex in v0.3 has no hook-based injection, so the rubric must live in Codex's equivalent of custom instructions.
+Codex needs UM's memory-routing rubric to decide when to call `memory_capture` vs letting session-end catch state. Unlike Claude Code (where `session-start.sh` injects the rubric automatically), Codex in v0.3 and v0.4 has no hook-based injection, so the rubric must live in Codex's equivalent of custom instructions.
 
 Paste the block below into `<TBD: confirm exact surface during verification — likely AGENTS.md at your workspace root, or the "custom instructions" / "system prompt" field in Codex's equivalent settings panel>`. See also [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md) for the canonical source.
 
@@ -136,7 +138,7 @@ When uncertain, prefer a capture call over trusting session-end — durable docs
 
 This block is the canonical rubric — the source lives at [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md). If the repo version is updated, re-paste this block.
 
-**Caveat for Codex specifically:** the rubric references "the session-end pipeline will capture it". In Codex, there *is no session-end pipeline in v0.3* — so the guidance "no immediate action needed" effectively means the note is lost unless the user manually captures it. For important project work in Codex, err toward calling `memory_capture` regardless.
+**Caveat for Codex specifically:** the rubric references "the session-end pipeline will capture it". In Codex, there *is no session-end pipeline in v0.3 or v0.4* — so the guidance "no immediate action needed" effectively means the note is lost unless the user manually captures it. For important project work in Codex, err toward calling `memory_capture` regardless.
 
 ---
 
