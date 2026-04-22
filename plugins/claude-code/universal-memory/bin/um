@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PLUGIN_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+LIB_DIR="${UM_LIB_DIR:-$PLUGIN_DIR/hooks/lib}"
+
+# ── UM_LIB_DIR health check (spec §8.1) ─────────────────────────────────────
+# Verify critical library files are readable before sourcing anything.
+# Called at init and also from --version for explicit diagnostic feedback.
+_um_verify_lib_dir() {
+  local required=("config.sh" "resolve-project.sh" "vault.sh" "frontmatter.sh" "summarize.sh" "update-state.sh")
+  local missing=()
+  for f in "${required[@]}"; do
+    [ -r "$LIB_DIR/$f" ] || missing+=("$f")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "um: UM_LIB_DIR health check FAILED" >&2
+    echo "    UM_LIB_DIR=$LIB_DIR" >&2
+    echo "    Missing libraries: ${missing[*]}" >&2
+    echo "    Reinstall via: bash installer/install-cli.sh   # or server/install.sh" >&2
+    return 1
+  fi
+  return 0
+}
+_um_verify_lib_dir || exit 1
+
+# shellcheck source=../hooks/lib/config.sh
+source "$LIB_DIR/config.sh"
+# shellcheck source=../hooks/lib/resolve-project.sh
+source "$LIB_DIR/resolve-project.sh"
+
+# Load config files: repo-local FIRST, then user-global. Env already wins via precedence.
+_um_load_config "./.um/config"
+_um_load_config "$HOME/.um/config"
+
+# Flag / subcommand parsing
+if [ $# -eq 0 ]; then
+  cat >&2 <<EOF
+um: no subcommand given
+
+Usage: um <subcommand> [args]
+
+Subcommands:
+  search <query>        — search memories
+  state <project>       — read project state.md
+  recent <project>      — recent memories
+  list                  — list all memories
+  capture               — append raw capture (stdin or --text)
+  tail [N]              — batch tail of raw captures
+  forget <id>           — forget a memory
+  supersede <old> <new> — supersede one memory with another
+  --help | -h           — this help
+  --version | -v        — version info
+
+See docs/um-cli.md for full contract.
+EOF
+  exit 2
+fi
+
+# Usage log: log subcommand + arg count only (no query text / PII — spec §11.3)
+# TODO(v0.5): implement log rotation at 10 MB
+if [ -z "${UM_NO_USAGE_LOG:-}" ] && [ ! -f "$HOME/.local/share/um/.no-log" ]; then
+  mkdir -p "$HOME/.local/share/um"
+  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$(($# - 1))" >> "$HOME/.local/share/um/usage.log" 2>/dev/null || :
+fi
+
+case "$1" in
+  -h|--help)
+    cat <<EOF
+Usage: um <subcommand> [args]
+
+Subcommands:
+  search, state, recent, list, capture, tail, forget, supersede
+
+See docs/um-cli.md for full contract.
+EOF
+    exit 0
+    ;;
+  -v|--version)
+    _um_verify_lib_dir || exit 1
+    PLUGIN_JSON="$PLUGIN_DIR/.claude-plugin/plugin.json"
+    if [ ! -r "$PLUGIN_JSON" ]; then
+      echo "um: plugin.json not found at $PLUGIN_JSON" >&2
+      exit 1
+    fi
+    # Use jq if available, else grep/sed
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.version // .plugin_version // "unknown"' "$PLUGIN_JSON"
+    else
+      grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$PLUGIN_JSON" | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+    fi
+    exit 0
+    ;;
+  search|state|recent|list|capture|tail)
+    SUBCMD_SH="$SCRIPT_DIR/um-$1.sh"
+    if [ ! -x "$SUBCMD_SH" ]; then
+      echo "um: subcommand script missing or not executable: $SUBCMD_SH" >&2
+      exit 1
+    fi
+    exec "$SUBCMD_SH" "${@:2}"
+    ;;
+  forget|supersede)
+    # Delegate to pre-existing binaries (no .sh suffix)
+    SUBCMD_BIN="$SCRIPT_DIR/um-$1"
+    if [ ! -x "$SUBCMD_BIN" ]; then
+      echo "um: pre-existing binary missing: $SUBCMD_BIN" >&2
+      exit 1
+    fi
+    exec "$SUBCMD_BIN" "${@:2}"
+    ;;
+  *)
+    echo "um: unknown subcommand: $1" >&2
+    echo "Run 'um --help' for usage." >&2
+    exit 2
+    ;;
+esac

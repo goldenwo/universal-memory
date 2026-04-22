@@ -86,3 +86,30 @@ jobs:
         if: always()
         working-directory: server
         run: docker compose down --volumes || true
+
+  installer-test:
+    name: Installer cross-platform (${{ matrix.os }})
+    needs: [smoke]
+    # Mirror the skip-on-fork pattern from the smoke job above.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # Sandbox tests first
+      - run: bash installer/install-cli.test.sh
+      - run: bash server/install.test.sh
+      # Real-install leg — validates end-to-end
+      - name: Real install + um --version sanity
+        run: |
+          bash installer/install-cli.sh --yes
+          export PATH="$HOME/.local/bin:$PATH"
+          which um
+          um --version
+        env:
+          HOME: ${{ runner.temp }}/um-real-install

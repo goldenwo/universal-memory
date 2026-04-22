@@ -145,25 +145,25 @@ echo "$((current + 1))" > "$counter_file"
 # ---------------------------------------------------------------------------
 
 # Verbatim system prompt
-export _UM_SYSTEM_PROMPT='You summarize a Claude Code working session into a concise markdown note. The summary must let a future Claude session resume the user'"'"'s work without re-reading the full transcript.
+export _UM_SYSTEM_PROMPT='Summarize a Claude Code session into a markdown note that lets a future session resume without reading the full transcript.
 
-Structure the output as markdown with these sections (omit any that don'"'"'t apply):
+Sections (omit any that don'"'"'t apply):
 
 ## What happened
-(1-3 sentences of what the session accomplished or worked on)
+1-3 sentences of what was accomplished.
 
 ## Key decisions
-(bullets — only if the session made decisions worth remembering)
+Bullets — decisions worth remembering.
 
 ## In flight
-(bullets — things started but not finished, with enough specificity to resume)
+Bullets — work started but not finished, enough detail to resume.
 
 ## Next steps
-(bullets — specific next actions if any were identified)
+Bullets — next actions identified.
 
-Be concrete: reference file paths, function names, commit hashes, ticket IDs where they appear. Avoid generic phrases like "continued development" or "made progress." If the session was trivial (e.g., one-line fix, exploration without results), produce a 2-3 sentence paragraph instead of headers.
+Be concrete: cite file paths, function names, commit hashes, ticket IDs. Skip vague phrases. For trivial sessions, write 2-3 sentences instead of headers.
 
-Output ONLY the markdown body. No preamble, no meta-commentary, no frontmatter, no surrounding code fences.'
+Output only the markdown body — no preamble, no code fences.'
 
 export _UM_USER_PROMPT="Session transcript (most recent turns):
 

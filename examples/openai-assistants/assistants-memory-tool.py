@@ -60,7 +60,11 @@ TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Semantic search over the universal-memory vault. Returns up to "
                 "`limit` documents ranked by relevance to `query`. Use this to "
-                "recall past decisions, session summaries, or authored knowledge."
+                "recall past decisions, session summaries, or authored knowledge. "
+                "Default response is compact: each result has `id`, `title`, `score`, "
+                "and `snippet` (first ~240 chars of body). The snippet is usually "
+                "enough to answer the question — only use `?full=1` (append to the "
+                "URL) when you need the complete document body."
             ),
             "parameters": {
                 "type": "object",

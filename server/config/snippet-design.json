@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "snippet": {
+    "format": "title + first N chars of body",
+    "N": 240,
+    "ellipsis": "…"
+  },
+  "id": {
+    "source": "metadata.id",
+    "notes": "filename stem, NOT mem0 UUID — avoids extra roundtrip for follow-up forget/supersede calls (spec §5.2.1)"
+  },
+  "locked_at": "2026-04-21",
+  "spec_ref": "§5.2.1"
+}

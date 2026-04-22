@@ -651,12 +651,19 @@ mcp_call() {
 		-d "{\"jsonrpc\":\"2.0\",\"id\":$id,\"method\":\"tools/call\",\"params\":{\"name\":\"$name\",\"arguments\":$args}}"
 }
 
-# T10-A: tools/list — all 10 tools advertised
-echo "[smoke]     T10-A: tools/list advertises all 10 tools"
-TOOLS_RESP=$(curl -sf -X POST "$ENDPOINT/mcp" \
-	-H 'Content-Type: application/json' \
-	-d '{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}')
-echo "$TOOLS_RESP" | python3 -c "
+# T10-A: tools/list — tool visibility branches on UM_MCP_WRITE_ENABLED
+# When UM_MCP_WRITE_ENABLED=true|1 : all 10 tools (reads + writes)
+# When unset, =false, or =0       : 4 read-only tools (writes filtered)
+# NOTE: plan spec said "5 tools (reads only)" — actual code path yields 4:
+#   reads  = { memory_search, memory_list, memory_state, memory_recent }
+#   writes = { memory_add, memory_delete, memory_capture, memory_checkpoint, memory_forget, memory_supersede }
+#   10 - 6 = 4 read tools. The plan numeric is superseded by the actual code path.
+if [ "${UM_MCP_WRITE_ENABLED:-}" = "true" ] || [ "${UM_MCP_WRITE_ENABLED:-}" = "1" ]; then
+	echo "[smoke]     T10-A: tools/list advertises all 10 tools (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED})"
+	TOOLS_RESP=$(curl -sf -X POST "$ENDPOINT/mcp" \
+		-H 'Content-Type: application/json' \
+		-d '{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}')
+	echo "$TOOLS_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 tools = [t['name'] for t in data.get('result', {}).get('tools', [])]
@@ -667,8 +674,33 @@ missing = [t for t in expected if t not in tools]
 if missing:
     print('FAIL: missing tools:', missing)
     sys.exit(1)
-print(f'OK T10-A: all 10 tools advertised: {tools}')
-" || { echo "FAIL: T10-A tools/list check failed"; exit 1; }
+print(f'OK T10-A: all 10 tools advertised (writes enabled): {tools}')
+" || { echo "FAIL: T10-A tools/list check failed (writes enabled)"; exit 1; }
+else
+	echo "[smoke]     T10-A: tools/list advertises 4 read-only tools (UM_MCP_WRITE_ENABLED unset/false)"
+	TOOLS_RESP=$(curl -sf -X POST "$ENDPOINT/mcp" \
+		-H 'Content-Type: application/json' \
+		-d '{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}')
+	echo "$TOOLS_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+tools = [t['name'] for t in data.get('result', {}).get('tools', [])]
+read_tools = ['memory_search','memory_list','memory_state','memory_recent']
+write_tools = ['memory_add','memory_delete','memory_capture','memory_checkpoint','memory_forget','memory_supersede']
+missing_reads = [t for t in read_tools if t not in tools]
+present_writes = [t for t in write_tools if t in tools]
+if missing_reads:
+    print('FAIL: read tools missing from list:', missing_reads)
+    sys.exit(1)
+if present_writes:
+    print('FAIL: write tools must be filtered when writes disabled, but found:', present_writes)
+    sys.exit(1)
+if len(tools) != 4:
+    print(f'FAIL: expected 4 read tools, got {len(tools)}: {tools}')
+    sys.exit(1)
+print(f'OK T10-A: 4 read-only tools advertised (writes filtered): {tools}')
+" || { echo "FAIL: T10-A tools/list check failed (writes disabled)"; exit 1; }
+fi
 
 # T10-B: memory_search with filters — returns {results:[...]} shape
 echo "[smoke]     T10-B: memory_search with filters"
@@ -730,7 +762,7 @@ fi
 
 # T10-D: memory_recent — returns {results:[...]} shape
 echo "[smoke]     T10-D: memory_recent shape check"
-T10D_RESP=$(mcp_call 104 memory_recent '{"limit":3}')
+T10D_RESP=$(mcp_call 104 memory_recent '{"project":"smoke-t10d","limit":3}')
 echo "$T10D_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -1001,7 +1033,7 @@ fi
 
 # T10-J: memory_recent with large limit stays within bounds (I2)
 echo "[smoke]     T10-J: memory_recent with limit=50 — capped internally, no error"
-T10J_RESP=$(mcp_call 140 memory_recent '{"limit":50}')
+T10J_RESP=$(mcp_call 140 memory_recent '{"project":"smoke-t10j","limit":50}')
 echo "$T10J_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)

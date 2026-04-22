@@ -13,8 +13,8 @@
  *   - generateOpenAPISpec(): string             -> YAML text (full spec)
  *   - generateCustomGPTActionsSpec(): string    -> YAML text (trimmed subset
  *     for ChatGPT Custom GPT Actions — only /api/search (POST), /api/state/{project},
- *     /api/add, /api/delete; no /mcp, no /health, no 5xx responses, schemas pruned to
- *     only those referenced by the 4 kept routes.)
+ *     /api/add, /api/delete, /api/recent/{project}; no /mcp, no /health, no 5xx
+ *     responses, schemas pruned to only those referenced by the 5 kept routes.)
  */
 
 import YAML from 'yaml';
@@ -115,9 +115,9 @@ const SCHEMAS = {
 
   MemoryResult: {
     type: 'object',
-    description: 'A single memory record returned by search/list endpoints.',
+    description: 'A single memory record returned by search/list endpoints (full shape, ?full=1).',
     properties: {
-      id: { type: 'string', description: 'mem0 UUID (not the metadata.id)' },
+      id: { type: 'string', description: 'Filename stem from metadata.id when present; falls back to mem0 UUID only when metadata.id is absent' },
       memory: { type: 'string', description: 'The stored text' },
       score: {
         type: 'number',
@@ -129,6 +129,35 @@ const SCHEMAS = {
       created_at: { type: ['string', 'null'] },
       updated_at: { type: ['string', 'null'] },
       user_id: { type: 'string' },
+    },
+  },
+
+  CompactMemoryResult: {
+    type: 'object',
+    description:
+      'Compact memory record returned by default (without ?full=1) from search, list, and recent endpoints. Contains only the most commonly needed fields. Use ?full=1 to get the full MemoryResult shape.',
+    required: ['id', 'title', 'snippet'],
+    properties: {
+      id: { type: 'string', description: 'Filename stem from metadata.id when present; falls back to mem0 UUID only when metadata.id is absent' },
+      title: { type: 'string', description: 'Document title from metadata.title' },
+      snippet: {
+        type: 'string',
+        description: 'Short text excerpt from the stored memory body',
+      },
+      score: {
+        type: 'number',
+        description:
+          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score.',
+      },
+    },
+  },
+
+  CompactSearchResponse: {
+    type: 'object',
+    description: 'Default search/list/recent response (compact shape). Use ?full=1 for MemoryResult[].',
+    required: ['results'],
+    properties: {
+      results: { type: 'array', items: ref('CompactMemoryResult') },
     },
   },
 
@@ -167,6 +196,17 @@ const SCHEMAS = {
 
   SearchResponse: {
     type: 'object',
+    description:
+      'Default response shape for /api/search (compact). Add ?full=1 to get MemoryResult[] instead.',
+    required: ['results'],
+    properties: {
+      results: { type: 'array', items: ref('CompactMemoryResult') },
+    },
+  },
+
+  SearchResponseFull: {
+    type: 'object',
+    description: 'Full response shape for /api/search when ?full=1 is provided.',
     required: ['results'],
     properties: {
       results: { type: 'array', items: ref('MemoryResult') },
@@ -383,7 +423,16 @@ function pathSearch() {
       operationId: 'searchMemories',
       summary: 'Semantic search',
       description:
-        'Body form. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+        'Body form. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+      parameters: [
+        {
+          name: 'full',
+          in: 'query',
+          required: false,
+          schema: { type: 'boolean', default: false },
+          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+        },
+      ],
       requestBody: {
         required: true,
         content: {
@@ -392,8 +441,14 @@ function pathSearch() {
       },
       responses: {
         200: {
-          description: 'Search succeeded',
-          content: { 'application/json': { schema: ref('SearchResponse') } },
+          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          content: {
+            'application/json': {
+              schema: {
+                oneOf: [ref('SearchResponse'), ref('SearchResponseFull')],
+              },
+            },
+          },
         },
         400: {
           ...ERROR_RESPONSE,
@@ -406,7 +461,7 @@ function pathSearch() {
       operationId: 'searchMemoriesByQueryString',
       summary: 'Semantic search (query-string form)',
       description:
-        'Mirror of POST /api/search. Accepts `q`, `limit`, `include_superseded`, `type` via query string. The query-string form does not support `filters.project`; use POST for that.',
+        'Mirror of POST /api/search. Accepts `q`, `limit`, `include_superseded`, `type`, `full` via query string. The query-string form does not support `filters.project`; use POST for that.',
       parameters: [
         {
           name: 'q',
@@ -434,11 +489,24 @@ function pathSearch() {
           schema: { type: 'string' },
           description: 'Post-filter by metadata.type',
         },
+        {
+          name: 'full',
+          in: 'query',
+          required: false,
+          schema: { type: 'boolean', default: false },
+          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+        },
       ],
       responses: {
         200: {
-          description: 'Search succeeded',
-          content: { 'application/json': { schema: ref('SearchResponse') } },
+          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          content: {
+            'application/json': {
+              schema: {
+                oneOf: [ref('SearchResponse'), ref('SearchResponseFull')],
+              },
+            },
+          },
         },
         400: {
           ...ERROR_RESPONSE,
@@ -479,13 +547,28 @@ function pathList() {
     get: {
       operationId: 'listMemories',
       summary: 'List all memories for MEM0_USER_ID',
-      description: 'Returns the unfiltered list of every memory for the server\'s configured user.',
+      description:
+        'Returns the unfiltered list of every memory for the server\'s configured user. Returns compact shape by default; add `?full=1` for full MemoryResult[].',
+      parameters: [
+        {
+          name: 'full',
+          in: 'query',
+          required: false,
+          schema: { type: 'boolean', default: false },
+          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+        },
+      ],
       responses: {
         200: {
-          description: 'Memory list',
+          description: 'Memory list. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
           content: {
             'application/json': {
-              schema: { type: 'array', items: ref('MemoryResult') },
+              schema: {
+                oneOf: [
+                  ref('CompactSearchResponse'),
+                  { type: 'array', items: ref('MemoryResult') },
+                ],
+              },
             },
           },
         },
@@ -549,6 +632,57 @@ function pathState() {
           description:
             'State file contents (or `state: null` when the file does not exist for this project)',
           content: { 'application/json': { schema: ref('StateResponse') } },
+        },
+        400: {
+          ...ERROR_RESPONSE,
+          description: 'Invalid project name',
+        },
+        ...RESP_500,
+      },
+    },
+  };
+}
+
+function pathRecent() {
+  return {
+    get: {
+      operationId: 'getRecentByProject',
+      summary: 'Most-recent memories for a project',
+      description:
+        'Returns the N most-recently indexed memories for the given project slug. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Results are sorted newest-first by updated_at.',
+      parameters: [
+        {
+          name: 'project',
+          in: 'path',
+          required: true,
+          schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]+$' },
+          description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+        },
+        {
+          name: 'limit',
+          in: 'query',
+          required: false,
+          schema: { type: 'integer', minimum: 1, maximum: 100, default: 10 },
+          description: 'Max results to return. Clamped to [1, 100]; default 10.',
+        },
+        {
+          name: 'full',
+          in: 'query',
+          required: false,
+          schema: { type: 'boolean', default: false },
+          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+        },
+      ],
+      responses: {
+        200: {
+          description: 'Recent memories. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          content: {
+            'application/json': {
+              schema: {
+                oneOf: [ref('CompactSearchResponse'), ref('SearchResponseFull')],
+              },
+            },
+          },
         },
         400: {
           ...ERROR_RESPONSE,
@@ -672,7 +806,7 @@ function buildSpec() {
     openapi: '3.1.0',
     info: {
       title: 'universal-memory',
-      version: '0.3.0-alpha',
+      version: '0.4.0-alpha',
       description:
         'HTTP API for universal-memory session continuity layer. Markdown-first vault + vector index via mem0. Exposes REST endpoints under /api/* and an MCP (JSON-RPC 2.0) endpoint at /mcp.',
       license: {
@@ -701,6 +835,7 @@ function buildSpec() {
       '/api/list': pathList(),
       '/api/reindex': pathReindex(),
       '/api/state/{project}': pathState(),
+      '/api/recent/{project}': pathRecent(),
       '/api/delete': pathDelete(),
       '/api/{id}': pathDeleteById(),
       '/mcp': pathMcp(),
@@ -774,7 +909,7 @@ function collectRefs(node, acc) {
 
 /**
  * Generate the trimmed OpenAPI 3.1 spec for ChatGPT Custom GPT Actions.
- * Only the 4 routes the GPT needs (search/state/add/delete), operationIds
+ * Only the 5 routes the GPT needs (search/state/add/delete/recent), operationIds
  * renamed to the MCP-tool-style names ChatGPT surfaces to the model, all
  * 5xx responses stripped, and `components.schemas` pruned to only those
  * schemas still referenced by the kept paths.
@@ -789,6 +924,7 @@ export function generateCustomGPTActionsSpec() {
   const statePath = pathState();
   const addPath = pathAdd();
   const deletePath = pathDelete();
+  const recentPath = pathRecent();
 
   // POST /api/search only (drop GET; POST has richer filter support)
   const trimmedSearch = {
@@ -806,12 +942,17 @@ export function generateCustomGPTActionsSpec() {
   const trimmedDelete = {
     post: cloneAndRewriteOperation(deletePath.post, 'memory_delete'),
   };
+  // GET /api/recent/{project}
+  const trimmedRecent = {
+    get: cloneAndRewriteOperation(recentPath.get, 'memory_recent'),
+  };
 
   const paths = {
     '/api/search': trimmedSearch,
     '/api/state/{project}': trimmedState,
     '/api/add': trimmedAdd,
     '/api/delete': trimmedDelete,
+    '/api/recent/{project}': trimmedRecent,
   };
 
   // Prune components.schemas to only those transitively referenced by the
@@ -836,7 +977,7 @@ export function generateCustomGPTActionsSpec() {
   }
 
   // Re-use info/servers from the full spec but drop tags (the trimmed
-  // spec's 4 operations don't need them and several Custom-GPT validators
+  // spec's 5 operations don't need them and several Custom-GPT validators
   // flag unknown tags).
   const full = buildSpec();
   const trimmed = {
@@ -844,12 +985,13 @@ export function generateCustomGPTActionsSpec() {
     info: {
       ...full.info,
       description:
-        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 4 routes a Custom GPT needs (search, state, add, delete). Full spec at /openapi.yaml.',
+        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 5 routes a Custom GPT needs (search, state, add, delete, recent). Full spec at /openapi.yaml.',
     },
     servers: full.servers,
     paths,
     components: { schemas: trimmedSchemas },
   };
 
-  return YAML.stringify(trimmed);
+  const yaml = YAML.stringify(trimmed);
+  return yaml.endsWith('\n') ? yaml : yaml + '\n';
 }

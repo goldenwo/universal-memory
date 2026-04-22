@@ -468,6 +468,65 @@ fi
 rm -rf "$tmp"
 unset CLAUDE_CWD
 
+# ─── Test B3.2: summarize.sh propagates UM_IN_SUMMARIZER_SUBPROCESS=1 to spawned claude ───
+#
+# Regression gate for Task B.3.3 (prompt compression): any edit to the
+# claude-agent-sdk branch of summarize.sh must keep this test green.
+# If the sentinel export is accidentally dropped, the spawned claude's hooks
+# won't early-exit, enabling infinite recursion.
+echo ""
+echo "=== Test B3.2: UM_IN_SUMMARIZER_SUBPROCESS=1 propagated to spawned claude ==="
+
+B3_2_TMP=$(mktemp -d)
+mkdir -p "$B3_2_TMP/bin"
+
+# Mock claude binary: records its environment to $B3_2_ENV_FILE, emits a
+# minimal plain-text response so summarize.sh's claude-agent-sdk branch
+# accepts it and exits 0 (no openai fallback triggered).
+cat > "$B3_2_TMP/bin/claude" <<'BIN'
+#!/bin/bash
+# Record env vars that start with UM_ so the test can inspect them.
+env | grep '^UM_' > "$B3_2_ENV_FILE"
+# Emit a non-empty plain-text summary so the claude-agent-sdk branch
+# treats this as success (non-zero exit or empty output triggers fallback).
+echo "B3.2 mock summary from claude -p"
+exit 0
+BIN
+chmod +x "$B3_2_TMP/bin/claude"
+
+export B3_2_ENV_FILE="$B3_2_TMP/claude-env"
+export CLAUDE_CWD="$TMPDIR_ROOT/b3_2_proj"
+
+B3_2_OUT=$(B3_2_ENV_FILE="$B3_2_TMP/claude-env" \
+  PATH="$B3_2_TMP/bin:$PATH" \
+  UM_SUMMARIZER=claude-agent-sdk \
+  bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" 2>&1) || true
+
+unset B3_2_ENV_FILE CLAUDE_CWD
+
+# Primary assertion: the sentinel must appear in the mock claude's environment.
+if [ -f "$B3_2_TMP/claude-env" ] && grep -q '^UM_IN_SUMMARIZER_SUBPROCESS=1$' "$B3_2_TMP/claude-env"; then
+  pass "B3.2: UM_IN_SUMMARIZER_SUBPROCESS=1 propagated to spawned claude"
+else
+  echo "  [debug] mock claude env file contents:"
+  if [ -f "$B3_2_TMP/claude-env" ]; then
+    cat "$B3_2_TMP/claude-env"
+  else
+    echo "  (env file not created — mock claude may not have been invoked)"
+    echo "  summarize.sh combined output: $B3_2_OUT"
+  fi
+  fail "B3.2: UM_IN_SUMMARIZER_SUBPROCESS=1 NOT propagated to spawned claude"
+fi
+
+# Secondary: confirm summarize.sh returned the mock summary (not a fallback path)
+if echo "$B3_2_OUT" | grep -q "B3.2 mock summary"; then
+  pass "B3.2: mock claude output returned (claude-agent-sdk path ran, no openai fallback)"
+else
+  fail "B3.2: mock claude output not present — openai fallback may have run instead (got: $B3_2_OUT)"
+fi
+
+rm -rf "$B3_2_TMP"
+
 # ============================================================
 # Test 6: Live smoke test (optional, token-gated)
 # Skipped unless UM_SUMMARIZE_ALLOW_LIVE=1 AND UM_OPENAI_API_KEY is set.

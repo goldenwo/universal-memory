@@ -45,7 +45,7 @@ find_orphans() {
     local vf
     vf=$(fm_read "$state_file" "valid_from")
     if [ -n "$vf" ]; then
-      state_valid_from=$(date -d "$vf" +%s 2>/dev/null || echo 0)
+      state_valid_from=$(date -d "$vf" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$vf" +%s 2>/dev/null || echo 0)
     fi
   fi
 
@@ -70,7 +70,7 @@ find_orphans() {
         summary_vf=$(fm_read "$summary" "valid_from")
         if [ -n "$summary_vf" ]; then
           local summary_epoch
-          summary_epoch=$(date -d "$summary_vf" +%s 2>/dev/null || echo 0)
+          summary_epoch=$(date -d "$summary_vf" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$summary_vf" +%s 2>/dev/null || echo 0)
           if [ "$summary_epoch" -gt "$raw_mtime" ]; then
             covered=1
             break

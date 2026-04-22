@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# um-capture — fs-direct writer for raw session captures
+#
+# Usage: um-capture --project <name> --type <type> [--text "..."]
+#        echo "turn content" | um-capture --project <name> --type <type>
+#
+# Reads content from --text flag or stdin.
+# Appends a frontmatter-prefixed entry to captures/<project>/raw/YYYY-MM-DD.md
+# (UTC date). Creates parent directories automatically on first use.
+#
+# Project resolution order:
+#   1. --project <p>
+#   2. $UM_PROJECT env var
+#   3. git repo name (basename of git rev-parse --show-toplevel)
+#   4. exit 2 with helpful message
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
+
+# shellcheck source=../hooks/lib/vault.sh
+source "$LIB_DIR/vault.sh"
+# shellcheck source=../hooks/lib/resolve-project.sh
+source "$LIB_DIR/resolve-project.sh"
+
+# ---------------------------------------------------------------------------
+# Parse args
+# ---------------------------------------------------------------------------
+CLI_PROJECT=""
+CAPTURE_TYPE=""
+TEXT_ARG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project)
+      if [ $# -lt 2 ]; then
+        echo "um-capture: --project requires a value" >&2
+        exit 2
+      fi
+      CLI_PROJECT="$2"
+      shift 2
+      ;;
+    --type)
+      if [ $# -lt 2 ]; then
+        echo "um-capture: --type requires a value" >&2
+        exit 2
+      fi
+      CAPTURE_TYPE="$2"
+      shift 2
+      ;;
+    --text)
+      if [ $# -lt 2 ]; then
+        echo "um-capture: --text requires a value" >&2
+        exit 2
+      fi
+      TEXT_ARG="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: um-capture --project <name> --type <type> [--text "..."]
+       echo "content" | um-capture --project <name> --type <type>
+
+Appends a frontmatter-prefixed capture entry to:
+  \$UM_VAULT_DIR/captures/<project>/raw/YYYY-MM-DD.md  (UTC date)
+
+Creates parent directories automatically on first use.
+
+Flags:
+  --project <p>   Project name (overrides UM_PROJECT env and git inference)
+  --type <t>      Capture type (e.g. note, session, decision, error)
+  --text "..."    Capture body as a flag (alternative to stdin)
+
+Project resolution order:
+  1. --project flag
+  2. \$UM_PROJECT env var
+  3. git repo name
+  4. exit 2
+
+Env vars:
+  UM_VAULT_DIR    Vault root (default: \$HOME/.um/vault)
+  UM_PROJECT      Default project name
+EOF
+      exit 0
+      ;;
+    *)
+      echo "um-capture: unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Require --type
+if [ -z "$CAPTURE_TYPE" ]; then
+  echo "um-capture: --type is required" >&2
+  exit 2
+fi
+
+# Validate --type: must be a safe slug (no newlines, no frontmatter injection)
+if [[ ! "$CAPTURE_TYPE" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  echo "um-capture: invalid --type value: '$CAPTURE_TYPE' (must match ^[a-zA-Z0-9._-]+\$)" >&2
+  exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve project
+# ---------------------------------------------------------------------------
+PROJECT="$(resolve_project "$CLI_PROJECT")" || exit $?
+
+# ---------------------------------------------------------------------------
+# Resolve vault path
+# ---------------------------------------------------------------------------
+VAULT="$(vault_path)"
+
+# ---------------------------------------------------------------------------
+# Read capture body from --text or stdin
+# ---------------------------------------------------------------------------
+if [ -n "$TEXT_ARG" ]; then
+  BODY="$TEXT_ARG"
+else
+  BODY="$(cat)"
+fi
+
+# ---------------------------------------------------------------------------
+# Build output path — ensure parent dirs exist
+# ---------------------------------------------------------------------------
+TODAY="$(date -u +%Y-%m-%d)"
+RAW_DIR="$VAULT/captures/$PROJECT/raw"
+RAW_FILE="$RAW_DIR/$TODAY.md"
+
+mkdir -p "$RAW_DIR"
+
+# ---------------------------------------------------------------------------
+# Compose frontmatter + body, then APPEND to raw file
+# ---------------------------------------------------------------------------
+CAPTURED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if ! printf -- '---\ncaptured_at: %s\ntype: %s\n---\n%s\n\n' \
+  "$CAPTURED_AT" \
+  "$CAPTURE_TYPE" \
+  "$BODY" >> "$RAW_FILE"; then
+  echo "um-capture: write failed: $RAW_FILE" >&2
+  exit 1
+fi
+
+exit 0

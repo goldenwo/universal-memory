@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "id": "recall-01",
+      "category": "recall",
+      "hopCount": "single",
+      "query": "what did we decide about the PostgreSQL vs MongoDB choice?",
+      "expectedTopIds": ["postgres-vs-mongo-decision"],
+      "tolerance": "exact"
+    },
+    {
+      "id": "recall-02",
+      "category": "recall",
+      "hopCount": "single",
+      "query": "what is the MCP vs API/CLI architectural decision?",
+      "expectedTopIds": ["mcp-vs-api-cli-decision"],
+      "tolerance": "exact"
+    },
+    {
+      "id": "recall-03",
+      "category": "recall",
+      "hopCount": "single",
+      "query": "why did we choose the hybrid-rebalance approach for v0.4?",
+      "expectedTopIds": ["v0.4-hybrid-rebalance-rationale"],
+      "tolerance": "exact"
+    },
+    {
+      "id": "recall-04",
+      "category": "recall",
+      "hopCount": "single",
+      "query": "what snippet design decisions were locked for phase B.1?",
+      "expectedTopIds": ["phase-b1-snippet-design-lock"],
+      "tolerance": "topN:2"
+    },
+    {
+      "id": "recall-05",
+      "category": "recall",
+      "hopCount": "single",
+      "query": "what was the reasoning behind deferring the vault web UI?",
+      "expectedTopIds": ["vault-web-ui-deferral-decision"],
+      "tolerance": "exact"
+    },
+    {
+      "id": "state-01",
+      "category": "state",
+      "hopCount": "single",
+      "query": "what is the current status of the v0.4 hybrid-rebalance project?",
+      "expectedTopIds": ["v0.4-project-state", "v0.4-hybrid-rebalance-decision"],
+      "tolerance": "topN:2"
+    },
+    {
+      "id": "state-02",
+      "category": "state",
+      "hopCount": "two-hop",
+      "query": "what was the project state before the last checkpoint was applied?",
+      "expectedTopIds": ["state-pre-checkpoint-v0.3.0", "checkpoint-v0.3.0"],
+      "tolerance": "set"
+    },
+    {
+      "id": "state-03",
+      "category": "state",
+      "hopCount": "two-hop",
+      "query": "what phases were completed before we entered Phase B.1 and what did each accomplish?",
+      "expectedTopIds": ["phase-0-complete", "phase-a-complete", "v0.4-phase-plan"],
+      "tolerance": "set"
+    },
+    {
+      "id": "recent-01",
+      "category": "recent",
+      "hopCount": "single",
+      "query": "show me memories added in the last 7 days",
+      "expectedTopIds": [],
+      "tolerance": "set"
+    },
+    {
+      "id": "recent-02",
+      "category": "recent",
+      "hopCount": "single",
+      "query": "what decisions or notes were captured since the v0.4 worktree was created?",
+      "expectedTopIds": ["v0.4-worktree-setup", "phase-b1-snippet-design-lock"],
+      "tolerance": "set"
+    },
+    {
+      "id": "recent-03",
+      "category": "recent",
+      "hopCount": "two-hop",
+      "query": "what changed between the most recent two session summaries?",
+      "expectedTopIds": ["session-summary-latest", "session-summary-previous"],
+      "tolerance": "set"
+    },
+    {
+      "id": "write-01",
+      "category": "write-routing",
+      "hopCount": "single",
+      "query": "capture this: the N=240 snippet window was chosen to balance context density against token budget",
+      "expectedTopIds": ["snippet-window-n240-rationale"],
+      "tolerance": "set"
+    },
+    {
+      "id": "write-02",
+      "category": "write-routing",
+      "hopCount": "two-hop",
+      "query": "forget the old auth preflight check note and capture the new one that replaces it",
+      "expectedTopIds": ["auth-preflight-check-note", "auth-preflight-check-note-v2"],
+      "tolerance": "set"
+    },
+    {
+      "id": "write-03",
+      "category": "write-routing",
+      "hopCount": "two-hop",
+      "query": "supersede the v0.3 routing decision with the new hybrid-rebalance routing strategy",
+      "expectedTopIds": ["v0.3-routing-decision", "v0.4-hybrid-rebalance-routing"],
+      "tolerance": "set"
+    },
+    {
+      "id": "write-04",
+      "category": "write-routing",
+      "hopCount": "two-hop",
+      "query": "update the search quality baseline: first forget the stale pre-B.1 baseline, then capture the new post-B.1 measurements",
+      "expectedTopIds": ["search-quality-baseline-pre-b1", "search-quality-baseline-post-b1"],
+      "tolerance": "set"
+    },
+    {
+      "id": "write-05",
+      "category": "write-routing",
+      "hopCount": "three-hop",
+      "query": "capture the auth middleware ADR, then supersede the legacy auth ADR that referenced it, and forget the irrelevant preflight check note from 2025",
+      "expectedTopIds": ["auth-middleware-adr", "auth-legacy-adr", "preflight-check-note-2025"],
+      "tolerance": "set"
+    },
+    {
+      "id": "supersede-01",
+      "category": "supersede-chain",
+      "hopCount": "two-hop",
+      "query": "which decisions were superseded as part of the v0.3 to v0.4 rewrite?",
+      "expectedTopIds": ["v0.3-arch-decision", "v0.4-hybrid-rebalance-decision"],
+      "tolerance": "set"
+    },
+    {
+      "id": "supersede-02",
+      "category": "supersede-chain",
+      "hopCount": "two-hop",
+      "query": "trace the full supersede chain for the memory-routing architecture from v0.2 through v0.4",
+      "expectedTopIds": ["memory-routing-v0.2", "memory-routing-v0.3", "memory-routing-v0.4"],
+      "tolerance": "set"
+    },
+    {
+      "id": "edge-01",
+      "category": "edge",
+      "hopCount": "single",
+      "query": "",
+      "expectedTopIds": [],
+      "tolerance": "set"
+    },
+    {
+      "id": "edge-02",
+      "category": "edge",
+      "hopCount": "two-hop",
+      "query": "¿Cuáles decisiones de arquitectura se tomaron durante el sprint de integración MCP y cómo afectan el diseño del vault en múltiples proyectos simultáneos con usuarios concurrentes y namespaces compartidos entre instancias de ChatGPT y Claude Code al mismo tiempo?",
+      "expectedTopIds": ["mcp-integration-sprint-decisions", "vault-multi-project-design"],
+      "tolerance": "set"
+    }
+  ]
+}

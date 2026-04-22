@@ -1,7 +1,7 @@
 {
   "name": "universal-memory",
   "description": "Cross-session, cross-device memory for Claude Code. Markdown-first captures, vector-backed recall. Points at any universal-memory server — local Docker, remote self-hosted, or cloud-backed. Auto-starts the server on demand when configured to.",
-  "version": "0.3.0-alpha",
+  "version": "0.4.0-alpha",
   "author": {
     "name": "goldenwo"
   },
