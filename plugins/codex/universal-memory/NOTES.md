@@ -68,7 +68,7 @@ alpha.
 2. Confirm `~/.codex/plugins/universal-memory/` is picked up at session start.
 3. Confirm the MCP server from `.mcp.json` is launched — check
    `codex mcp list` shows `universal-memory`.
-4. Confirm tool list contains all 10 UM tools via "what tools do you have?".
+4. Confirm tool list contains the 4 default UM read tools via "what tools do you have?" (plus the 6 writes when `UM_MCP_WRITE_ENABLED=true` on the server).
 5. Run `memory_state(project: "test")` — returns `null` or state body.
 6. Confirm the rubric paste-in surface the README recommends actually steers
    Codex. If not, file a follow-up to ship rubric as AGENTS.md or to wait for

@@ -18,7 +18,8 @@ Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decisio
 ## What you get
 
 - **Session continuity** — a `state.md` file per project is injected at the start of every session. Current focus, in-flight work, recent decisions, next actions — all there without manual setup.
-- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 10 MCP tools. Work captured in Claude Code is visible from Claude.ai the same day.
+- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 10 MCP tools (4 read tools visible by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Progressive disclosure: read responses return compact snippets by default; opt into full bodies via `?full=1` or `full: true`. Work captured in Claude Code is visible from Claude.ai the same day.
+- **Command-line toolkit** — 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts, cron jobs, and power-user workflows. Composable with grep / awk / jq. Installs standalone via `installer/install-cli.sh` against any reachable UM server.
 - **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default.
 - **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
 
@@ -46,6 +47,18 @@ Anyone who uses Claude across multiple sessions and wants continuity. This is no
 
 ---
 
+## Three surfaces, one vault
+
+universal-memory exposes the same vault through three equal-peer interfaces:
+
+- **MCP** — every Claude surface (Code, Desktop, Claude.ai) + Codex + Custom GPT via the [Model Context Protocol](https://modelcontextprotocol.io). Progressive disclosure: read responses default to compact snippets; request full bodies explicitly.
+- **REST** — OpenAPI 3.1 at `/openapi.yaml`. Use from ChatGPT Custom GPT Actions, the OpenAI Responses API, or any HTTP client. Same compact-shape defaults.
+- **CLI (`um`)** — 7-subcommand shell toolkit for scripting, cron, and power-user flows. Composable with grep / awk / jq.
+
+All three read and write the same markdown vault. Pick whichever fits the moment; switch freely.
+
+---
+
 ## Quickstart
 
 ### 1. Start the memory server
@@ -58,6 +71,18 @@ docker compose up -d
 ```
 
 Or use the one-command install wizard — see [docs/quickstart.md](docs/quickstart.md).
+
+### 1b. (Optional) Install the `um` CLI
+
+For shell scripting, cron jobs, or power-user flows, install the CLI independently of the server. Point it at any reachable UM server (local or remote):
+
+```bash
+git clone https://github.com/goldenwo/universal-memory
+cd universal-memory
+bash installer/install-cli.sh
+```
+
+See [installer/install-cli.md](installer/install-cli.md) for full details, and [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference.
 
 ### 2. First Claude Code session with the UM plugin
 
@@ -99,29 +124,32 @@ Surface-specific guides:
 - **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
 - **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
 - **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
-- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall only in v0.3** — Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
-- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end. OpenAI Agents SDK variant [deferred to v0.4](examples/openai-agents-sdk/DEFERRED.md).
+- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall-only through v0.4** — Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
+- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end. OpenAI Agents SDK variant [deferred to a future release](examples/openai-agents-sdk/DEFERRED.md).
+- **CLI (`um`):** see [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`).
 
 ---
 
 ## MCP tool surface
 
-10 tools available to any MCP client:
+10 tools total — 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible to any MCP client by default; 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) visible only when `UM_MCP_WRITE_ENABLED=true`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
+
+Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) return compact snippets by default (~200 bytes per hit); pass `full: true` to retrieve full bodies.
 
 | Tool | Type | What it does |
 |---|---|---|
 | `memory_search` | read | Semantic search over indexed documents |
 | `memory_list` | read | List all indexed memories |
 | `memory_state` | read | Load `state.md` for a project |
-| `memory_recent` | read | Recent session summaries, date-sorted |
+| `memory_recent` | read | Recent authored docs for a project, filesystem-mtime-sorted (`project` required) |
 | `memory_add` | write | Add a fact to the index |
 | `memory_capture` | write | Write a new authored document to the vault |
-| `memory_checkpoint` | write | Force session summary + state refresh **(stub, v0.3)** |
+| `memory_checkpoint` | write | Force session summary + state refresh **(stub — returns actionable error pointing at `/um-checkpoint`)** |
 | `memory_forget` | write | Deprecate a document by ID |
 | `memory_supersede` | write | Replace a document; preserves audit chain |
 | `memory_delete` | write | Remove a memory from the index |
 
-Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
+Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`.
 
 ---
 
@@ -130,15 +158,19 @@ Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`. See [docs/mcp-to
 ```
 universal-memory/
 ├── server/                      Self-hostable backend (Qdrant + mem0 + MCP endpoint)
+├── installer/
+│   ├── install.sh               Full server install wizard (docker compose + env)
+│   └── install-cli.sh           Standalone `um` CLI install (no server required)
 ├── plugins/
 │   ├── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
-│   ├── codex/                   Codex CLI plugin (config-only MCP connector, v0.3)
+│   ├── codex/                   Codex CLI plugin (config-only MCP connector)
 │   └── chatgpt-custom-gpt/      ChatGPT Custom GPT recipe (Actions + system prompt)
 ├── docs/
 │   ├── architecture.md          Two-tier design, three pillars, MCP surface
 │   ├── state-of-play.md         state.md concept reference
 │   ├── frontmatter-schema.md    Document schema and versioning reference
 │   ├── mcp-tools.md             Full MCP tool reference with examples
+│   ├── um-cli.md                `um` CLI subcommand reference
 │   └── quickstart.md            Install walkthroughs
 └── .github/workflows/           CI smoke tests and release pipeline
 ```

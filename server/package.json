@@ -1,6 +1,6 @@
 {
   "name": "universal-memory-server",
-  "version": "0.1.0",
+  "version": "0.4.0-alpha",
   "description": "Memory server for universal-memory — wraps mem0 OSS, exposes REST + MCP HTTP endpoints",
   "type": "module",
   "private": true,
@@ -18,6 +18,8 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@apidevtools/swagger-parser": "^12.1.0"
+    "@anthropic-ai/tokenizer": "^0.0.4",
+    "@apidevtools/swagger-parser": "^12.1.0",
+    "tiktoken": "^1.0.0"
   }
 }

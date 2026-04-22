@@ -24,29 +24,57 @@ curl -s http://localhost:6335/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
+**Default visibility (v0.4):** `tools/list` returns the 4 read tools
+(`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6
+write tools (`memory_add`, `memory_delete`, `memory_capture`,
+`memory_checkpoint`, `memory_forget`, `memory_supersede`) are filtered out
+unless `UM_MCP_WRITE_ENABLED=true` is set on the server — see
+[Write tools — enabling](#write-tools--enabling). This schema-hygiene filter
+keeps the default context footprint small without hiding capability from
+operators who opt in.
+
 ---
 
 ## Tools
 
 ### memory_search
 
-Semantic search with optional status and metadata filters.
+Semantic search over stored memories using vector similarity, with optional status and metadata filters. Returns compact shape `{ id, title, score, snippet }` by default (snippet = title + first 240 chars of body). Pass `full=true` to get full document bodies.
 
-**Input schema:**
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `query` | string | — (required) | Semantic search query |
+| `limit` | number | 5 | Max results (max 100) |
+| `include_superseded` | boolean | false | Include docs with status: superseded/deprecated/rejected |
+| `filters.project` | string | — | Filter by project name |
+| `filters.type` | string | — | Filter by doc type (e.g. `session_summary`, `authored`, `state`) |
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
 
 ```json
 {
-  "query": "string (required)",
-  "limit": "number (optional, default 5, max 100)",
-  "include_superseded": "boolean (optional, default false)",
-  "filters": {
-    "project": "string (optional)",
-    "type": "string (optional)"
-  }
+  "results": [
+    { "id": "arch-decision-v2", "title": "Architecture decision v2", "score": 0.92, "snippet": "Architecture decision v2\n\nWe chose Qdrant for vector sto..." }
+  ]
 }
 ```
 
-**Example:**
+**Full response (`full=true`):**
+
+```json
+{
+  "results": [
+    { "id": "arch-decision-v2", "title": "Architecture decision v2", "score": 0.92, "body": "# Architecture decision v2\n\nFull content here...", "metadata": { "type": "authored", "project": "universal-memory", "status": "current", "valid_from": "2026-04-17T14:00:00Z" } }
+  ]
+}
+```
+
+**When to use `full=true`:** When you need to read the actual content of matched documents — for example, to summarize decisions or extract details. For deciding *which* documents exist or scoring relevance, compact shape is sufficient and cheaper.
+
+**Example — compact search:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
@@ -64,7 +92,23 @@ curl -s http://localhost:6335/mcp \
   }'
 ```
 
-**Response:** `{ "results": [ { "id": "...", "memory": "...", "score": 0.87, "metadata": {...} } ] }`
+**Example — full bodies for session summaries:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":1,"method":"tools/call",
+    "params": {
+      "name": "memory_search",
+      "arguments": {
+        "query": "v0.4 hybrid rebalance progress",
+        "filters": { "type": "session_summary", "project": "universal-memory" },
+        "full": true
+      }
+    }
+  }'
+```
 
 ---
 
@@ -99,16 +143,36 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_list
 
-List all stored memories.
+List all stored memories. Returns compact shape `{ id, title, snippet }` by default. Pass `full=true` to get full document bodies including all metadata.
 
-**Input schema:** `{}` (no parameters)
+**Parameters:**
 
-**Example:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
+
+```json
+{ "results": [ { "id": "arch-decision-v2", "title": "Architecture decision v2", "snippet": "Architecture decision v2\n\nWe chose Qdrant..." } ] }
+```
+
+**When to use `full=true`:** Use compact for browsing/discovery (much cheaper for large vaults). Use `full=true` only when you need to read actual document bodies — e.g., a bulk export or vault-wide audit.
+
+**Example — compact list:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_list","arguments":{}}}'
+```
+
+**Example — full bodies:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_list","arguments":{"full":true}}}'
 ```
 
 ---
@@ -138,13 +202,13 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_state
 
-Fetch the `state.md` for a project (direct file read, does not touch mem0).
+Fetch the `state.md` for a project — direct file read from the vault, does not touch mem0. Use this to get the current state-of-play for a project at session start.
 
-**Input schema:**
+**Parameters:**
 
-```json
-{ "project": "string (required, pattern: ^[a-zA-Z0-9._-]+$)" }
-```
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `project` | string | — (required) | Project name. Pattern: `^[a-zA-Z0-9._-]+$` |
 
 **Example:**
 
@@ -177,22 +241,37 @@ curl -s http://localhost:6335/mcp \
 { "ok": true, "project": "universal-memory", "state": null, "valid_from": null }
 ```
 
+**Note:** `valid_from` is hoisted from frontmatter to the top-level response for quick age checks without parsing the body.
+
 ---
 
 ### memory_recent
 
-Fetch recent `session_summary` documents, optionally filtered by project.
+Fetch recent memories from a project's `authored/` directory, sorted by filesystem mtime descending (newest file first). Returns compact shape `{ id, title, snippet }` by default; pass `full=true` for full bodies including `body` and `metadata` fields.
 
-**Input schema:**
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `project` | string | **required** | Project name (must match `^[a-zA-Z0-9._-]+$`) |
+| `limit` | number | 10 | Max results |
+| `full` | boolean | false | Return full bodies instead of compact shape |
+
+**Compact response (default):**
 
 ```json
-{
-  "project": "string (optional)",
-  "limit": "number (optional, default 5)"
-}
+{ "results": [ { "id": "session-2026-04-21", "title": "Session 2026-04-21", "snippet": "Session 2026-04-21\n\nCompleted B.3.1a: write-tool filtering..." } ] }
 ```
 
-**Example:**
+**Full response (`full=true`):**
+
+```json
+{ "results": [ { "id": "session-2026-04-21", "title": "Session 2026-04-21", "snippet": "...", "body": "# Session 2026-04-21\n\nFull body text..." } ] }
+```
+
+**When to use `full=true`:** Use compact to see which recent documents exist. Use `full=true` to actually read the content — for example, to orient at session start or answer questions about recent progress.
+
+**Example — compact recent sessions:**
 
 ```bash
 curl -s http://localhost:6335/mcp \
@@ -206,7 +285,19 @@ curl -s http://localhost:6335/mcp \
   }'
 ```
 
-**Response:** `{ "results": [ ... ] }` — sorted by `valid_from` descending.
+**Example — full bodies for last 2 sessions:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":6,"method":"tools/call",
+    "params": {
+      "name": "memory_recent",
+      "arguments": { "project": "universal-memory", "limit": 2, "full": true }
+    }
+  }'
+```
 
 ---
 
@@ -369,7 +460,8 @@ curl -s http://localhost:6335/mcp \
 
 ## Write tools — enabling
 
-To enable the write tools (`memory_capture`, `memory_forget`, `memory_supersede`), set in your `.env`:
+To enable the 6 write tools (`memory_add`, `memory_delete`, `memory_capture`,
+`memory_checkpoint`, `memory_forget`, `memory_supersede`), set in your `.env`:
 
 ```env
 UM_MCP_WRITE_ENABLED=true
@@ -382,15 +474,20 @@ Then restart the container:
 docker compose restart memory-server
 ```
 
-The vault mount mode must be `rw` for writes to persist. When `UM_MCP_WRITE_ENABLED=false`
-(the default), the vault stays read-only to the server and write tools return a 
-`{ ok: false, error: "MCP writes disabled" }` response rather than an error.
+The vault mount mode must be `rw` for writes to persist. When
+`UM_MCP_WRITE_ENABLED=false` (the default), two things happen:
+1. `tools/list` filters the 6 write tools out entirely — clients see only the 4 reads.
+2. Direct `tools/call` against a write tool returns `{ ok: false, error: "MCP writes disabled" }` rather than throwing.
+
+The second behavior is intentional: clients that discovered the writes from
+an older `tools/list` response (or via the OpenAPI schema) get a graceful
+error, not an HTTP 500.
 
 ---
 
-## Security — MCP write tools expose the vault over HTTP
+## Security
 
-**Security — MCP write tools expose the vault over HTTP**
+### MCP write tools expose the vault over HTTP
 
 With `UM_MCP_WRITE_ENABLED=true` and the default Docker port mapping, the MCP server accepts unauthenticated write requests from any host that can reach port 6335. This includes:
 - Other devices on your LAN (hotel Wi-Fi, coffee-shop Wi-Fi, office network)
@@ -404,3 +501,17 @@ Before enabling writes, do one of:
 Without one of these, any device on your current network can read and write your entire memory vault.
 
 The server refuses to index or write through symlinks inside the vault.
+
+### `GET /openapi.yaml` is intentionally unauthenticated
+
+The server exposes its OpenAPI 3.1 schema at `GET /openapi.yaml` (plus a
+trimmed Custom-GPT-friendly subset at `GET /openapi.yaml?gpt=1`). Both
+endpoints are **intentionally unauthenticated and non-sensitive** — they
+describe the public HTTP surface (routes, parameter shapes, response schemas)
+only, and expose no vault contents, no memory IDs, no user data. Treat the
+schema like the HTML of a public login page: it advertises what the server
+will accept, not what the vault contains.
+
+If you front the server with a reverse proxy, you can still optionally
+gate `/openapi.yaml` behind auth — but doing so breaks ChatGPT Custom GPT's
+"Import from URL" flow, which requires unauthenticated schema fetch.

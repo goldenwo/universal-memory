@@ -1,0 +1,138 @@
+{
+  "memory_search": {
+    "results": [
+      {
+        "id": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a5b",
+        "memory": "v0.4 HYBRID-REBALANCE plan: MCP transport for Claude Code, REST/OpenAPI for Codex/ChatGPT surfaces. Decision made 2026-04-20 after research in docs/research/2026-04-20-mcp-vs-api-cli.md. Trigger to revisit: if Codex ships native MCP support or CC drops HTTP plugin support.",
+        "score": 0.91,
+        "metadata": {
+          "schema_version": 1,
+          "type": "adr",
+          "id": "adr-hybrid-rebalance",
+          "title": "ADR: Hybrid transport rebalance — MCP for CC, REST for Codex/ChatGPT",
+          "project": "universal-memory",
+          "status": "current",
+          "valid_from": "2026-04-20T15:00:00Z"
+        }
+      },
+      {
+        "id": "a1b2c3d4-0002-4e5f-8a9b-0c1d2e3f4a5b",
+        "memory": "Token-cost baseline measurement plan (Phase 0): 6 locations — MCP tool schemas, memory_search response payloads, memory_list response payloads, SessionStart injection (state.md only), summarizer prompt. Tokenizer methodology: tiktoken o200k_base primary for mixed surfaces, @anthropic-ai/tokenizer secondary; emphasize Anthropic numbers for CC-consumed surfaces.",
+        "score": 0.87,
+        "metadata": {
+          "schema_version": 1,
+          "type": "fact",
+          "id": "fact-phase0-token-methodology",
+          "title": "Phase-0 token cost measurement methodology",
+          "project": "universal-memory",
+          "status": "current",
+          "valid_from": "2026-04-21T09:00:00Z"
+        }
+      },
+      {
+        "id": "a1b2c3d4-0003-4e5f-8a9b-0c1d2e3f4a5b",
+        "memory": "Vault web UI (D.5.2–D.5.4) deferred to v0.4+, tracked in GH issue #16 since 2026-04-21. Decision: multi-user and shared-host requirements unclear; revisit when direction clarifies. Plugin approach confirmed as the short-term path for all surfaces.",
+        "score": 0.82,
+        "metadata": {
+          "schema_version": 1,
+          "type": "fact",
+          "id": "fact-vault-ui-deferred",
+          "title": "Vault web UI deferred to v0.4+",
+          "project": "universal-memory",
+          "status": "current",
+          "valid_from": "2026-04-21T08:30:00Z"
+        }
+      },
+      {
+        "id": "a1b2c3d4-0004-4e5f-8a9b-0c1d2e3f4a5b",
+        "memory": "Use Opus-pair reviews for all design-depth plans, specs, and architecture docs. Two Opus reviewers with different lenses (e.g. one for correctness, one for scalability). Sonnet misses design gaps in plan review. Established as a standing workflow preference after v0.3.0-alpha planning sessions.",
+        "score": 0.78,
+        "metadata": {
+          "schema_version": 1,
+          "type": "fact",
+          "id": "fact-opus-review-process",
+          "title": "Use Opus-pair reviews for design-depth plans",
+          "project": "universal-memory",
+          "status": "current",
+          "valid_from": "2026-04-20T20:00:00Z"
+        }
+      },
+      {
+        "id": "a1b2c3d4-0005-4e5f-8a9b-0c1d2e3f4a5b",
+        "memory": "All code in universal-memory must default to scalable, generic-enough-for-future-extensibility designs: data-driven over hardcoded, dependency injection at module boundaries, version contracts in all storage formats. This is an in-scope quality bar, not scope expansion — applies to every task in v0.4 and beyond.",
+        "score": 0.74,
+        "metadata": {
+          "schema_version": 1,
+          "type": "fact",
+          "id": "fact-scalability-default",
+          "title": "Scalable + extensible by default (user directive)",
+          "project": "universal-memory",
+          "status": "current",
+          "valid_from": "2026-04-21T10:00:00Z"
+        }
+      }
+    ]
+  },
+  "memory_list": [
+    {
+      "id": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "v0.4 HYBRID-REBALANCE plan: MCP transport for Claude Code, REST/OpenAPI for Codex/ChatGPT surfaces.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "adr", "id": "adr-hybrid-rebalance", "title": "ADR: Hybrid transport rebalance", "project": "universal-memory", "status": "current", "valid_from": "2026-04-20T15:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0002-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Token-cost baseline measurement plan (Phase 0): 6 locations with tiktoken primary, anthropic secondary.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-phase0-token-methodology", "title": "Phase-0 token cost measurement methodology", "project": "universal-memory", "status": "current", "valid_from": "2026-04-21T09:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0003-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Vault web UI (D.5.2–D.5.4) deferred to v0.4+, tracked in GH issue #16.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-vault-ui-deferred", "title": "Vault web UI deferred to v0.4+", "project": "universal-memory", "status": "current", "valid_from": "2026-04-21T08:30:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0004-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Use Opus-pair reviews for all design-depth plans, specs, and architecture docs.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-opus-review-process", "title": "Use Opus-pair reviews for design-depth plans", "project": "universal-memory", "status": "current", "valid_from": "2026-04-20T20:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0005-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "All code must default to scalable, generic-enough-for-future-extensibility designs.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-scalability-default", "title": "Scalable + extensible by default", "project": "universal-memory", "status": "current", "valid_from": "2026-04-21T10:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0006-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Session-end hook writes raw captures to $VAULT/captures/<project>/raw/<date>.md. Summarizer runs async via python3 + openai API. Daily cap default 50 to control costs.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "session_summary", "id": "summary-2026-04-19-universal-memory", "title": "Session 2026-04-19 universal-memory", "project": "universal-memory", "status": "current", "valid_from": "2026-04-19T23:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0007-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "v0.3.0-alpha shipped four surfaces: Claude Code MCP plugin, Codex REST plugin, ChatGPT Custom GPT Actions, um-tunnel reverse proxy. OpenAPI spec served at /openapi.yaml with ?gpt=1 trimmed mode for ChatGPT.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-v030-surfaces", "title": "v0.3.0-alpha surfaces shipped", "project": "universal-memory", "status": "current", "valid_from": "2026-04-15T12:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0008-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Temporal decay re-ranking: UM_TEMPORAL_DECAY=true enables exponential decay with configurable half-life (UM_DECAY_HALF_LIFE_DAYS, default 30). Applied after status filter so superseded docs are excluded before re-ranking.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-temporal-decay-config", "title": "Temporal decay re-ranking configuration", "project": "universal-memory", "status": "current", "valid_from": "2026-04-18T16:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0009-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Docker Compose stack: Qdrant vector store on port 6333, mem0 HTTP server on port 8765. Health check at /health. Stack managed by plugins/docker-compose.yml. Volume: qdrant_data for persistence.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-docker-stack", "title": "Docker Compose stack layout", "project": "universal-memory", "status": "current", "valid_from": "2026-04-10T10:00:00Z" }
+    },
+    {
+      "id": "a1b2c3d4-0010-4e5f-8a9b-0c1d2e3f4a5b",
+      "memory": "Frontmatter schema v1: required fields are schema_version, type, id, title. Optional: project, status (current/superseded/deprecated/rejected), valid_from (ISO-8601), invalidated_at. Parsed by parseFrontmatter() in mem0-mcp-http.mjs.",
+      "score": 1,
+      "metadata": { "schema_version": 1, "type": "fact", "id": "fact-frontmatter-schema", "title": "Frontmatter schema v1 fields", "project": "universal-memory", "status": "current", "valid_from": "2026-04-12T14:00:00Z" }
+    }
+  ]
+}

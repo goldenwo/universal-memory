@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: universal-memory
-  version: 0.3.0-alpha
+  version: 0.4.0-alpha
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
-    subset of the full spec — only the 4 routes a Custom GPT needs (search,
-    state, add, delete). Full spec at /openapi.yaml.
+    subset of the full spec — only the 5 routes a Custom GPT needs (search,
+    state, add, delete, recent). Full spec at /openapi.yaml.
   license:
     name: MIT
     url: https://github.com/goldenwo/universal-memory/blob/main/LICENSE
@@ -16,10 +16,20 @@ paths:
     post:
       operationId: memory_search
       summary: Semantic search
-      description: Body form. Applies default status filter (excludes
+      description: Body form. Returns compact shape by default; add `?full=1` for full
+        MemoryResult[]. Applies default status filter (excludes
         superseded/deprecated/rejected, and any doc with invalidated_at set)
         unless `include_superseded=true`. Optional `filters.project` /
         `filters.type` are applied after mem0 recall.
+      parameters:
+        - name: full
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, return full MemoryResult[] instead of compact
+            CompactMemoryResult[]
       requestBody:
         required: true
         content:
@@ -28,11 +38,14 @@ paths:
               $ref: "#/components/schemas/SearchRequest"
       responses:
         "200":
-          description: Search succeeded
+          description: "Search succeeded. Default: compact CompactMemoryResult[]; with
+            ?full=1: full MemoryResult[]."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SearchResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/SearchResponse"
+                  - $ref: "#/components/schemas/SearchResponseFull"
         "400":
           description: Missing or invalid `query`
           content:
@@ -114,6 +127,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/recent/{project}:
+    get:
+      operationId: memory_recent
+      summary: Most-recent memories for a project
+      description: Returns the N most-recently indexed memories for the given project
+        slug. Returns compact shape by default; add `?full=1` for full
+        MemoryResult[]. Results are sorted newest-first by updated_at.
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-zA-Z0-9._-]+$
+          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          description: Max results to return. Clamped to [1, 100]; default 10.
+        - name: full
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, return full MemoryResult[] instead of compact
+            CompactMemoryResult[]
+      responses:
+        "200":
+          description: "Recent memories. Default: compact CompactMemoryResult[]; with
+            ?full=1: full MemoryResult[]."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CompactSearchResponse"
+                  - $ref: "#/components/schemas/SearchResponseFull"
+        "400":
+          description: Invalid project name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     SearchRequest:
@@ -141,6 +202,18 @@ components:
           $ref: "#/components/schemas/SearchFilters"
     SearchResponse:
       type: object
+      description: Default response shape for /api/search (compact). Add ?full=1 to
+        get MemoryResult[] instead.
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompactMemoryResult"
+    SearchResponseFull:
+      type: object
+      description: Full response shape for /api/search when ?full=1 is provided.
       required:
         - results
       properties:
@@ -266,6 +339,17 @@ components:
         query:
           type: string
           description: Echo of the delete criterion, e.g. metadata.id=foo
+    CompactSearchResponse:
+      type: object
+      description: Default search/list/recent response (compact shape). Use ?full=1
+        for MemoryResult[].
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompactMemoryResult"
     SearchFilters:
       type: object
       description: Optional post-filters applied after mem0 recall.
@@ -277,13 +361,39 @@ components:
         type:
           type: string
           description: Keep only results whose metadata.type matches
-    MemoryResult:
+    CompactMemoryResult:
       type: object
-      description: A single memory record returned by search/list endpoints.
+      description: Compact memory record returned by default (without ?full=1) from
+        search, list, and recent endpoints. Contains only the most commonly
+        needed fields. Use ?full=1 to get the full MemoryResult shape.
+      required:
+        - id
+        - title
+        - snippet
       properties:
         id:
           type: string
-          description: mem0 UUID (not the metadata.id)
+          description: Filename stem from metadata.id when present; falls back to mem0
+            UUID only when metadata.id is absent
+        title:
+          type: string
+          description: Document title from metadata.title
+        snippet:
+          type: string
+          description: Short text excerpt from the stored memory body
+        score:
+          type: number
+          description: Optional relevance score (present on search results; absent on
+            list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score.
+    MemoryResult:
+      type: object
+      description: A single memory record returned by search/list endpoints (full
+        shape, ?full=1).
+      properties:
+        id:
+          type: string
+          description: Filename stem from metadata.id when present; falls back to mem0
+            UUID only when metadata.id is absent
         memory:
           type: string
           description: The stored text

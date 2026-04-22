@@ -18,7 +18,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing the 10 tools.
+  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A reachable URL for the MCP endpoint:
   - **Claude.ai (web)** runs in Anthropic's cloud and cannot reach your `localhost:6335`. You need a **publicly reachable HTTPS tunnel** — see [Tunnel options](#2-tunnel-options) below.
   - **Claude Desktop (app)** can reach `http://localhost:6335` directly via its MCP config file — no tunnel required for local-only use. If you want Claude Desktop to reach a UM server running on a different host, you still need a tunnel (or LAN/VPN reachability).
@@ -98,7 +98,7 @@ Step-by-step UI clicks. The Claude.ai settings UI evolves, so screenshots will b
 
 5. Click **`<TBD: "Save" / "Add" / "Connect">`**. Claude.ai should perform the MCP handshake and list the discovered tools.
 
-   ![TBD: screenshot showing the 10 UM tools discovered](screenshots/claude-ai-5.png)
+   ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/claude-ai-5.png)
 
 6. Enable the connector in a new chat (`<TBD: confirm whether it's on by default or needs a per-chat / per-project toggle>`).
 
@@ -184,7 +184,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Cl
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected: Claude lists the 10 UM tools (`memory_search`, `memory_add`, `memory_list`, `memory_delete`, `memory_state`, `memory_recent`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`). If it lists fewer or the wrong ones, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.4 default): Claude lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."
