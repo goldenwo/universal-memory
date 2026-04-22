@@ -159,14 +159,15 @@ If all four pass, ChatGPT Desktop is reading and writing the same vault Claude C
 ## 6. What works vs what doesn't
 
 ### Works
-- All 10 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — reads unconditionally, writes when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`.
+- All 10 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — 4 reads (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible by default; 6 writes gated behind `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` (and filtered out of `tools/list` when unset).
+- Read responses use compact shape by default in v0.4 (`{id, title, score, snippet}`, ~200 bytes per hit). Pass `full: true` for full document bodies.
 - Captures written from ChatGPT Desktop appear in your Claude Code sessions at next session start (indexed by mem0, readable via `memory_search` / `memory_state` / `memory_recent`).
 - The rubric pasted into Custom Instructions steers ChatGPT to call `memory_capture` on explicit "remember" requests, same as Claude Code hook-injected rubric does.
 
 ### Doesn't work (yet)
 - **No session-end hook.** ChatGPT Desktop has no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture → session-summary → state.md pipeline does not run from ChatGPT sessions. Only Claude Code sessions produce state.md updates.
-- **No state.md regen from ChatGPT sessions** until v0.4 server-side checkpoint lands — tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant ChatGPT session.
-- **No raw turn capture** until v0.4's `memory_append_turn` MCP tool — tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6). ChatGPT conversations stay ephemeral on the UM side; only explicit `memory_capture` calls persist.
+- **No state.md regen from ChatGPT sessions** until a future release ships the server-side checkpoint body — tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant ChatGPT session.
+- **No raw turn capture** until a future release adds `memory_append_turn` — tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6). ChatGPT conversations stay ephemeral on the UM side; only explicit `memory_capture` calls persist.
 - **Rubric drift risk.** Custom Instructions are static — if the canonical rubric in [`docs/memory-routing-rubric.md`](memory-routing-rubric.md) changes, you need to re-paste. No auto-sync.
 
 ---
