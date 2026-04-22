@@ -24,6 +24,15 @@ curl -s http://localhost:6335/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
+**Default visibility (v0.4):** `tools/list` returns the 4 read tools
+(`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6
+write tools (`memory_add`, `memory_delete`, `memory_capture`,
+`memory_checkpoint`, `memory_forget`, `memory_supersede`) are filtered out
+unless `UM_MCP_WRITE_ENABLED=true` is set on the server — see
+[Write tools — enabling](#write-tools--enabling). This schema-hygiene filter
+keeps the default context footprint small without hiding capability from
+operators who opt in.
+
 ---
 
 ## Tools
@@ -451,7 +460,8 @@ curl -s http://localhost:6335/mcp \
 
 ## Write tools — enabling
 
-To enable the write tools (`memory_capture`, `memory_forget`, `memory_supersede`), set in your `.env`:
+To enable the 6 write tools (`memory_add`, `memory_delete`, `memory_capture`,
+`memory_checkpoint`, `memory_forget`, `memory_supersede`), set in your `.env`:
 
 ```env
 UM_MCP_WRITE_ENABLED=true
@@ -464,15 +474,20 @@ Then restart the container:
 docker compose restart memory-server
 ```
 
-The vault mount mode must be `rw` for writes to persist. When `UM_MCP_WRITE_ENABLED=false`
-(the default), the vault stays read-only to the server and write tools return a 
-`{ ok: false, error: "MCP writes disabled" }` response rather than an error.
+The vault mount mode must be `rw` for writes to persist. When
+`UM_MCP_WRITE_ENABLED=false` (the default), two things happen:
+1. `tools/list` filters the 6 write tools out entirely — clients see only the 4 reads.
+2. Direct `tools/call` against a write tool returns `{ ok: false, error: "MCP writes disabled" }` rather than throwing.
+
+The second behavior is intentional: clients that discovered the writes from
+an older `tools/list` response (or via the OpenAPI schema) get a graceful
+error, not an HTTP 500.
 
 ---
 
-## Security — MCP write tools expose the vault over HTTP
+## Security
 
-**Security — MCP write tools expose the vault over HTTP**
+### MCP write tools expose the vault over HTTP
 
 With `UM_MCP_WRITE_ENABLED=true` and the default Docker port mapping, the MCP server accepts unauthenticated write requests from any host that can reach port 6335. This includes:
 - Other devices on your LAN (hotel Wi-Fi, coffee-shop Wi-Fi, office network)
@@ -486,3 +501,17 @@ Before enabling writes, do one of:
 Without one of these, any device on your current network can read and write your entire memory vault.
 
 The server refuses to index or write through symlinks inside the vault.
+
+### `GET /openapi.yaml` is intentionally unauthenticated
+
+The server exposes its OpenAPI 3.1 schema at `GET /openapi.yaml` (plus a
+trimmed Custom-GPT-friendly subset at `GET /openapi.yaml?gpt=1`). Both
+endpoints are **intentionally unauthenticated and non-sensitive** — they
+describe the public HTTP surface (routes, parameter shapes, response schemas)
+only, and expose no vault contents, no memory IDs, no user data. Treat the
+schema like the HTML of a public login page: it advertises what the server
+will accept, not what the vault contains.
+
+If you front the server with a reverse proxy, you can still optionally
+gate `/openapi.yaml` behind auth — but doing so breaks ChatGPT Custom GPT's
+"Import from URL" flow, which requires unauthenticated schema fetch.
