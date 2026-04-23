@@ -160,3 +160,52 @@ _install_plugin() {
 
 info "Installing Claude Code plugin..."
 _install_plugin
+
+# ─── Prompt-file distribution ─────────────────────────────────────────────────
+# NEW in v0.5: distribute canonical prompts to plugin-local dir so
+# hooks/lib/summarize.sh + update-state.sh can resolve them at runtime
+# without a server round-trip.
+_install_prompts() {
+  local prompt_src="$REPO_ROOT/server/config/prompts"
+  local prompt_dst="$_PLUGIN_TARGET/hooks/lib/prompts"
+  if [[ -d "$prompt_src" ]]; then
+    mkdir -p "$prompt_dst"
+    cp "$prompt_src/"*.txt "$prompt_dst/"
+    info "Prompts installed to: $prompt_dst"
+  else
+    warn "server/config/prompts/ not found — hooks will fall back to their inlined prompts"
+  fi
+}
+_install_prompts
+
+# ─── Write UM_PROMPT_DIR to shell rc files ────────────────────────────────────
+_write_prompt_dir_to_rc() {
+  local _UM_PROMPT_DIR_VALUE="$_PLUGIN_TARGET/hooks/lib/prompts"
+  # Source marker-block.sh from the same lib dir this script lives in.
+  local _lib_dir
+  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+  # shellcheck source=installer/lib/marker-block.sh
+  source "$_lib_dir/marker-block.sh"
+
+  local _RC_UPDATED=0
+  local _sh="${SHELL:-}"
+  for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+    case "$rc" in
+      "${HOME}/.bashrc")
+        [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || continue
+        ;;
+      "${HOME}/.zshrc")
+        [ -f "$rc" ] || [ "${_sh##*/}" = "zsh" ] || continue
+        ;;
+    esac
+    touch "$rc"
+    UM_PROMPT_DIR="$_UM_PROMPT_DIR_VALUE" _write_marker_block "$rc" "" ""
+    ok "Shell profile updated with UM_PROMPT_DIR: $rc"
+    _RC_UPDATED=$((_RC_UPDATED + 1))
+  done
+
+  if [ "$_RC_UPDATED" -eq 0 ]; then
+    warn "Could not detect shell rc file — add manually: export UM_PROMPT_DIR='$_UM_PROMPT_DIR_VALUE'"
+  fi
+}
+_write_prompt_dir_to_rc

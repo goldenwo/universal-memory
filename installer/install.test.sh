@@ -244,6 +244,61 @@ TF15_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
 if echo "$TF15_OUT" | grep -qiE "wizard|coming soon|--all|--help"; then pass "T-FLAGS-15: wizard stub prints hint"; else fail "T-FLAGS-15: expected wizard hint (got: $TF15_OUT)"; fi
 rm -rf "$TF15"
 
+# ─── T-PCC-1: --plugin-cc copies prompt files to plugin-local prompts dir ─────
+echo ""
+echo "=== T-PCC-1: install-plugin-cc.sh copies prompts to \$PLUGIN_DIR/hooks/lib/prompts/ ==="
+TPCC1=$(mktemp -d)
+# Set up a fake plugin source with the required structure
+mkdir -p "$TPCC1/repo/plugins/claude-code/universal-memory/.claude-plugin"
+cat > "$TPCC1/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json" <<'JSON'
+{"name":"universal-memory","version":"0.5.0"}
+JSON
+mkdir -p "$TPCC1/repo/plugins/claude-code/universal-memory/hooks/lib"
+# Create canonical prompts in expected server/config/prompts/ location
+mkdir -p "$TPCC1/repo/server/config/prompts"
+echo "summarize prompt" > "$TPCC1/repo/server/config/prompts/summarize.txt"
+echo "update-state prompt" > "$TPCC1/repo/server/config/prompts/update-state.txt"
+
+TPCC1_HOME="$TPCC1/home"
+mkdir -p "$TPCC1_HOME/.claude/plugins"
+# Pre-create .bashrc so the rc-writer finds it (rc writer skips non-existent files)
+touch "$TPCC1_HOME/.bashrc"
+TPCC1_OUT=$(
+  _UM_REPO_ROOT="$TPCC1/repo" \
+  CLAUDE_PLUGINS_DIR="$TPCC1_HOME/.claude/plugins" \
+  HOME="$TPCC1_HOME" \
+  UM_NONINTERACTIVE=1 \
+  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes 2>&1
+) && TPCC1_EXIT=0 || TPCC1_EXIT=$?
+
+TPCC1_PLUGIN_DIR="$TPCC1_HOME/.claude/plugins/universal-memory"
+if [ -f "$TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt" ]; then
+  pass "T-PCC-1: summarize.txt copied to plugin prompts dir"
+else
+  fail "T-PCC-1: summarize.txt not found at $TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt (out: $TPCC1_OUT)"
+fi
+
+# ─── T-PCC-2: --plugin-cc writes UM_PROMPT_DIR to .bashrc ────────────────────
+echo ""
+echo "=== T-PCC-2: install-plugin-cc.sh writes UM_PROMPT_DIR= to shell rc ==="
+# Re-use the same run from T-PCC-1 (same temp dir)
+TPCC1_BASHRC="$TPCC1_HOME/.bashrc"
+if grep -q "UM_PROMPT_DIR" "$TPCC1_BASHRC" 2>/dev/null; then
+  pass "T-PCC-2: UM_PROMPT_DIR present in .bashrc"
+else
+  fail "T-PCC-2: UM_PROMPT_DIR not found in $TPCC1_BASHRC (out: $TPCC1_OUT)"
+fi
+
+# ─── T-PCC-3: UM_PROMPT_DIR value points to plugin-local prompts dir ─────────
+echo ""
+echo "=== T-PCC-3: UM_PROMPT_DIR value in .bashrc points to plugin-local prompts dir ==="
+if grep -q "UM_PROMPT_DIR=.*plugins/universal-memory/hooks/lib/prompts" "$TPCC1_BASHRC" 2>/dev/null; then
+  pass "T-PCC-3: UM_PROMPT_DIR points to plugin-local prompts path"
+else
+  fail "T-PCC-3: UM_PROMPT_DIR path incorrect in $TPCC1_BASHRC"
+fi
+rm -rf "$TPCC1"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
