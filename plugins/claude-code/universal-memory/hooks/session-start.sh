@@ -32,15 +32,21 @@ LIB_DIR="$SCRIPT_DIR/lib"
 
 # Memory routing rubric — sourced from docs/memory-routing-rubric.md
 # (canonical location; all platforms reference it).
-# Strip HTML comments so the rubric injects cleanly.
+# As of v0.5 the canonical and mirror rubrics are delimited by
+# CANONICAL-RUBRIC-START/END marker comments. Extract just the content between
+# those markers so injection is clean regardless of other HTML comments in the
+# file (header comments, mirror-drift notes, etc.).
 RUBRIC_PATH="$SCRIPT_DIR/../../../../docs/memory-routing-rubric.md"
+_extract_rubric() {
+  awk '/CANONICAL-RUBRIC-START/{p=1;next} /CANONICAL-RUBRIC-END/{p=0} p' "$1"
+}
 if [ -r "$RUBRIC_PATH" ]; then
-  UM_ROUTING_RUBRIC=$(sed '/^<!--/,/-->$/d' "$RUBRIC_PATH")
+  UM_ROUTING_RUBRIC=$(_extract_rubric "$RUBRIC_PATH")
 else
   # Plugin-installed copy (not repo-relative) — look at sibling rubric.md
   RUBRIC_PATH="$SCRIPT_DIR/../rubric.md"
   if [ -r "$RUBRIC_PATH" ]; then
-    UM_ROUTING_RUBRIC=$(sed '/^<!--/,/-->$/d' "$RUBRIC_PATH")
+    UM_ROUTING_RUBRIC=$(_extract_rubric "$RUBRIC_PATH")
   else
     # Fallback: full inline rubric if BOTH canonical file and sibling copy missing.
     # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
@@ -53,6 +59,7 @@ When the user says "remember", "note that", or similar:
 - Durable facts the user will want later ("I prefer X", "my address is Y", "the API rotates quarterly"): call `memory_capture` with `type: fact` and `project: global` (cross-project) or `project: <current-project>` (project-scoped).
 - Architecture decisions worth auditing later: call `memory_capture` with `type: adr` and `project: <current>`.
 - Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
+- **Conversational context worth preserving across surfaces** (e.g. "track this conversation", a significant exchange you'\''ll revisit from Claude Code later, the current turn on its own): call `memory_append_turn` with `role` (user/assistant/system) + `content` + `project`. Unlike `memory_capture` (which writes a stable authored doc with structured frontmatter), `memory_append_turn` appends a raw turn that the NEXT session-end summary will consume. Use both when appropriate — a durable decision gets `memory_capture`; the context around the decision gets `memory_append_turn`.
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.'
   fi
