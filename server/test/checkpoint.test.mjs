@@ -428,6 +428,37 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
   }
 });
 
+// 11. systemPrompt is passed to summarizeFn (Fix 1 — post-review integration bug)
+test('checkpoint: systemPrompt is passed to summarizeFn', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nSome work done.');
+
+  let capturedCtx = null;
+  const spySummarizeFn = async (transcript, ctx) => {
+    capturedCtx = ctx;
+    return { summary: 'Captured summary.', costUsd: 0.001, tokensIn: 50, tokensOut: 25 };
+  };
+
+  await doCheckpoint(
+    { project: 'myproj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: spySummarizeFn,
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.ok(capturedCtx !== null, 'summarizeFn should have been called');
+  assert.ok(
+    typeof capturedCtx.systemPrompt === 'string' && capturedCtx.systemPrompt.length > 0,
+    `systemPrompt should be a non-empty string, got: ${JSON.stringify(capturedCtx?.systemPrompt)}`,
+  );
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
 // ---------- REST handler unit tests (Task 2.6) ----------
 
 test('POST /api/checkpoint 200 happy path (writesEnabled:true) → ok:true, schema_version:1', async () => {

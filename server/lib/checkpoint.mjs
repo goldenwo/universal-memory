@@ -21,6 +21,7 @@ import { updateState as defaultUpdateState } from './update-state.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'server/config/checkpoint.json');
+const DEFAULT_SUMMARIZE_PROMPT_PATH = path.join(REPO_ROOT, 'server/config/prompts/summarize.txt');
 
 const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
 
@@ -65,6 +66,16 @@ export async function doCheckpoint(args, ctx = {}) {
   const updateStateFn = ctx.updateStateFn ?? defaultUpdateState;
   const reindexFn = ctx.reindexFn ?? (async () => {});
 
+  // Load summarize system prompt (mirrors update-state.mjs prompt-resolution priority)
+  let systemPrompt = ctx.systemPrompt;
+  if (!systemPrompt) {
+    const promptDir = process.env.UM_PROMPT_DIR;
+    const promptPath = promptDir
+      ? path.join(promptDir, 'summarize.txt')
+      : DEFAULT_SUMMARIZE_PROMPT_PATH;
+    systemPrompt = await fs.readFile(promptPath, 'utf8');
+  }
+
   const t0 = Date.now();
 
   // Acquire lockdir (atomic via EEXIST)
@@ -102,10 +113,11 @@ export async function doCheckpoint(args, ctx = {}) {
       transcript += await fs.readFile(path.join(rawDir, f), 'utf8') + '\n\n';
     }
 
-    // Summarize
+    // Summarize (pass systemPrompt so the curated UM format is used, not generic output)
     const { summary, costUsd, tokensIn, tokensOut } = await summarizeFn(transcript, {
       backend: process.env.UM_SUMMARIZER,
       model: ctx.model ?? config.summary_model,
+      systemPrompt,
     });
 
     // Write session summary file
