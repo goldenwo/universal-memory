@@ -1,8 +1,8 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.4.0-alpha**. Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT), REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and the standalone `um` CLI (7 subcommands). Progressive disclosure on reads: responses default to compact snippets; full bodies via `?full=1` / `full: true`.
+> **Version:** This document describes **v0.5.0-alpha**. Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT), REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and the standalone `um` CLI (7 subcommands). Progressive disclosure on reads: responses default to compact snippets; full bodies via `?full=1` / `full: true`.
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.4.0-alpha** (supersedes v0.3.0-alpha, which was tagged 2026-04-20). Update this file when the behavior changes.
+Source-of-truth description of what universal-memory does on this machine today. Written against **v0.5.0-alpha** (supersedes v0.4.0-alpha, which was tagged 2026-04-21). Update this file when the behavior changes.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 
