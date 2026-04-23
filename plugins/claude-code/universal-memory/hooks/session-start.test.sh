@@ -502,17 +502,24 @@ printf '\nTest 10: inline fallback matches canonical rubric\n'
     inline=$(cat "$SCRIPT_DIR/session-start.sh" | python3 -c "
 import re, sys
 text = sys.stdin.read()
-matches = re.findall(r\"UM_ROUTING_RUBRIC='([^']*(?:''[^']*)*)'\", text, flags=re.DOTALL)
+# Bash single-quoted strings escape apostrophes as '\\'' — extract the full
+# UM_ROUTING_RUBRIC='...' assignment by matching a single-quoted string that
+# may contain '\\'' escape sequences, then reconstitute the literal string.
+matches = re.findall(r\"UM_ROUTING_RUBRIC='((?:[^']|'\\\\'')*)'\", text, flags=re.DOTALL)
 if not matches:
     sys.exit(1)
-sys.stdout.write(matches[-1])
+# Bash '\\'' → literal '
+sys.stdout.write(matches[-1].replace(\"'\\\\''\", \"'\"))
 ")
 
     if [ -z "$inline" ]; then
       fail "could not extract inline rubric from session-start.sh"
     else
-      # Strip HTML comment block from canonical (same as hook does at runtime).
-      canonical=$(sed '/^<!--/,/-->$/d' "$CANONICAL")
+      # Extract canonical rubric body between CANONICAL-RUBRIC-START/END markers
+      # (matches the runtime extraction that session-start.sh now performs; the
+      # prior sed-range approach deleted the rubric content itself because the
+      # start/end markers are both <!-- ... --> single-line comments).
+      canonical=$(awk '/CANONICAL-RUBRIC-START/{p=1;next} /CANONICAL-RUBRIC-END/{p=0} p' "$CANONICAL")
 
       # Normalize: strip leading and trailing blank lines from both so trivial
       # whitespace around the payload does not cause false diffs. We compare
