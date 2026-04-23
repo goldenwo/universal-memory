@@ -299,6 +299,31 @@ else
 fi
 rm -rf "$TPCC1"
 
+# ─── T-FLAGS-16: --server alone with ~/.claude present → plugin-cc NOT triggered
+echo ""
+echo "=== T-FLAGS-16: --server with ~/.claude present → plugin-cc NOT delegated ==="
+TF16=$(mktemp -d)
+make_stubs "$TF16/bin"
+mkdir -p "$TF16/fakehome/.claude"
+TF16_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF16/repo" \
+  env PATH="$TF16/bin:/usr/bin:/bin" HOME="$TF16/fakehome" bash "$INSTALLER" --server 2>&1) && TF16_EXIT=0 || TF16_EXIT=$?
+if [ "$TF16_EXIT" -eq 0 ]; then pass "T-FLAGS-16: exit 0"; else fail "T-FLAGS-16: exit $TF16_EXIT (out: $TF16_OUT)"; fi
+if ! echo "$TF16_OUT" | grep -q "delegate: installer/install-plugin-cc.sh"; then pass "T-FLAGS-16: plugin-cc NOT triggered by --server alone"; else fail "T-FLAGS-16: plugin-cc incorrectly triggered (got: $TF16_OUT)"; fi
+rm -rf "$TF16"
+
+# ─── T-FLAGS-17: --yes alone (no other flags, non-TTY) = --all back-compat ───
+echo ""
+echo "=== T-FLAGS-17: --yes alone (non-TTY) → treated as --all ==="
+TF17=$(mktemp -d)
+make_stubs "$TF17/bin"
+# Use a fake HOME with no .claude or .codex so plugins are skipped
+TF17_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF17/repo" \
+  env PATH="$TF17/bin:/usr/bin:/bin" HOME="$TF17/fakehome" bash "$INSTALLER" --yes 2>&1 </dev/null) && TF17_EXIT=0 || TF17_EXIT=$?
+if [ "$TF17_EXIT" -eq 0 ]; then pass "T-FLAGS-17: exit 0"; else fail "T-FLAGS-17: exit $TF17_EXIT (out: $TF17_OUT)"; fi
+if echo "$TF17_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-17: --yes alone triggers server (--all back-compat)"; else fail "T-FLAGS-17: server not triggered (got: $TF17_OUT)"; fi
+if echo "$TF17_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-17: --yes alone triggers cli (--all back-compat)"; else fail "T-FLAGS-17: cli not triggered (got: $TF17_OUT)"; fi
+rm -rf "$TF17"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
