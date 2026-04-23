@@ -764,16 +764,21 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
 		return;
 	}
-	const { project, content, role, timestamp, conversation_id } = req.body || {};
-	const result = await doAppendTurn(
-		{ project, content, role, timestamp, conversation_id },
-		{ vaultDir: ctx.vaultDir },
-	);
-	if (!result.ok) {
-		res.status(400).json(result);
-		return;
+	try {
+		const { project, content, role, timestamp, conversation_id } = req.body || {};
+		const result = await doAppendTurn(
+			{ project, content, role, timestamp, conversation_id },
+			{ vaultDir: ctx.vaultDir },
+		);
+		if (!result.ok) {
+			res.status(400).json(result);
+			return;
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
+		res.status(500).json({ ok: false, error: 'internal server error' });
 	}
-	res.status(200).json(result);
 }
 
 /**
@@ -789,17 +794,22 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
 		return;
 	}
-	const { project, since, until, skip_state_merge } = req.body || {};
-	const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
-	const result = await checkpointFn(
-		{ project, since, until, skip_state_merge },
-		{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
-	);
-	if (!result.ok) {
-		res.status(400).json(result);
-		return;
+	try {
+		const { project, since, until, skip_state_merge } = req.body || {};
+		const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
+		const result = await checkpointFn(
+			{ project, since, until, skip_state_merge },
+			{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
+		);
+		if (!result.ok) {
+			res.status(400).json(result);
+			return;
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
+		res.status(500).json({ ok: false, error: 'internal server error' });
 	}
-	res.status(200).json(result);
 }
 
 /**
