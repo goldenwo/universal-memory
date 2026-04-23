@@ -53,7 +53,7 @@ test('doAppendTurn requires role', async () => {
     // role omitted
   }, { vaultDir: vault });
   assert.equal(result.ok, false);
-  assert.match(result.error, /role.*required|role.*missing/i);
+  assert.match(result.error, /role.*required/i);
 });
 
 test('doAppendTurn enforces 8192-char content cap', async () => {
@@ -64,7 +64,7 @@ test('doAppendTurn enforces 8192-char content cap', async () => {
     role: 'user',
   }, { vaultDir: vault });
   assert.equal(result.ok, false);
-  assert.match(result.error, /content.*too large|exceeds/i);
+  assert.match(result.error, /exceeds/i);
 });
 
 // ---------- role enum ----------
@@ -155,23 +155,22 @@ test('doAppendTurn returns correct bytes_written', async () => {
 
 // ---------- filesystem-direct ----------
 
-test('doAppendTurn writes only to the raw-capture file (no mem0 side-effect)', async () => {
+test('doAppendTurn writes only to the raw-capture file (no spurious files)', async () => {
   const vault = await makeTempVault();
-  let mem0Called = false;
-  const fakeMem0 = { add: () => { mem0Called = true; } };
 
   const result = await doAppendTurn({
     project: 'fsdirect',
     content: 'no mem0',
     role: 'user',
-  }, { vaultDir: vault, _mem0: fakeMem0 });
+  }, { vaultDir: vault });
 
   assert.equal(result.ok, true);
-  assert.equal(mem0Called, false, 'mem0 must not be called');
 
-  // Only one file written under vault (plus .lock sibling)
+  // Only the raw .md file (and its .lock sibling) should exist under the project dir
   const files = await fs.readdir(path.join(vault, 'captures/fsdirect/raw'));
-  assert.ok(files.some((f) => f.endsWith('.md')), 'raw .md file present');
+  const nonLock = files.filter((f) => !f.endsWith('.lock'));
+  assert.equal(nonLock.length, 1, 'exactly one non-lock file written');
+  assert.ok(nonLock[0].endsWith('.md'), 'raw .md file present');
 });
 
 // ---------- schema_version ----------
@@ -204,6 +203,23 @@ test('doAppendTurn is flock-safe under concurrent writes', async () => {
   const date = new Date().toISOString().slice(0, 10);
   const disk = await fs.readFile(path.join(vault, `captures/p/raw/${date}.md`), 'utf8');
   for (let i = 0; i < 20; i++) {
-    assert.match(disk, new RegExp(`concurrent-${i}-x+`), `turn-${i} survived`);
+    assert.match(disk, new RegExp(`concurrent-${i}-xxx`), `turn-${i} survived`);
   }
+  const matches = disk.match(/concurrent-\d+-/g) || [];
+  assert.equal(matches.length, 20, `expected 20 turn markers, got ${matches.length}`);
+});
+
+// ---------- lock exhaustion (contract preservation) ----------
+
+test('doAppendTurn returns ok=false when lock acquire fails (contract preserved, ctx.lockfile DI)', async () => {
+  const vault = await makeTempVault();
+  const fakeLockfile = {
+    lock: async () => { const e = new Error('fake ELOCKED'); e.code = 'ELOCKED'; throw e; },
+  };
+  const result = await doAppendTurn(
+    { project: 'p', content: 'c', role: 'user' },
+    { vaultDir: vault, lockfile: fakeLockfile }
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /lock_acquire_failed.*ELOCKED/);
 });

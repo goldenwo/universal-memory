@@ -13,8 +13,8 @@ export async function doAppendTurn(args, ctx = {}) {
   if (!vaultDir) return { ok: false, error: 'UM_VAULT_DIR not set' };
 
   const { project, content, role, timestamp, conversation_id } = args;
-  if (!project || !PROJECT_SLUG_RE.test(project)) {
-    return { ok: false, error: `invalid project slug: ${project}` };
+  if (!project || typeof project !== 'string' || !PROJECT_SLUG_RE.test(project)) {
+    return { ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
   }
   if (!content || typeof content !== 'string') {
     return { ok: false, error: 'content is required and must be a string' };
@@ -42,16 +42,24 @@ export async function doAppendTurn(args, ctx = {}) {
     : `## ${now.toISOString()} ${role}`;
   const payload = `${header}\n${content}\n\n`;
 
-  // Advisory cross-process lock via sibling `.lock` file — matches the pattern
-  // stop.sh uses (Task 1.1: perl-Fcntl::flock on "$RAW_FILE.lock"). Both writers
-  // agree on the lock target, so bash flock(2) on FD and proper-lockfile point at
-  // the same path. Note: proper-lockfile creates <path>.lock as a directory
-  // internally, so they are complementary not identical — see design note in plan.
+  // Advisory lock via sibling `.lock` file. Note that within-node and within-bash
+  // concurrency are each protected (node via proper-lockfile mkdir-based mutex,
+  // bash via perl Fcntl::flock — see plugins/claude-code/universal-memory/hooks/stop.sh),
+  // but cross-process bash↔node races are NOT coordinated in v0.5: proper-lockfile
+  // uses a lock-directory (`<file>.lock.lock`) while bash's flock(2) is a kernel FD
+  // lock — different mechanisms. Practical corruption risk is low because stop.sh
+  // writes <10KB in <10ms and rarely overlaps with live MCP append-turn calls.
+  // Cross-process coordination is a known v0.6 hardening item.
   const lockfilePath = absPath + '.lock';
   // Ensure the lockfile exists (proper-lockfile requires the target to exist)
   await fs.writeFile(lockfilePath, '', { flag: 'a' });
 
-  const release = await lockAcquire(lockfilePath, ctx);
+  let release;
+  try {
+    release = await lockAcquire(lockfilePath, ctx);
+  } catch (err) {
+    return { ok: false, error: `lock_acquire_failed: ${err.code ?? err.message}` };
+  }
   try {
     await fs.appendFile(absPath, payload);
   } finally {
