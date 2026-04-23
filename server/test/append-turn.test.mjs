@@ -1,0 +1,209 @@
+// server/test/append-turn.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { doAppendTurn } from '../lib/append-turn.mjs';
+
+async function makeTempVault() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-'));
+  await fs.mkdir(path.join(dir, 'captures'), { recursive: true });
+  return dir;
+}
+
+// ---------- core write ----------
+
+test('doAppendTurn writes to captures/<project>/raw/<date>.md', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'test-proj',
+    content: 'Hello from unit test',
+    role: 'user',
+  }, { vaultDir: vault, clock: () => new Date('2026-04-22T12:00:00Z') });
+
+  assert.equal(result.ok, true);
+  assert.match(result.path, /^captures\/test-proj\/raw\/2026-04-22\.md$/);
+  assert.equal(result.appended, true);
+
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /user/);
+  assert.match(on_disk, /Hello from unit test/);
+});
+
+// ---------- validation ----------
+
+test('doAppendTurn rejects invalid project slug', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: '../evil',
+    content: 'payload',
+    role: 'user',
+  }, { vaultDir: vault });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /invalid project/i);
+});
+
+test('doAppendTurn requires role', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    // role omitted
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /role.*required|role.*missing/i);
+});
+
+test('doAppendTurn enforces 8192-char content cap', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'x'.repeat(8193),
+    role: 'user',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /content.*too large|exceeds/i);
+});
+
+// ---------- role enum ----------
+
+test('doAppendTurn accepts role=assistant', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'assistant reply',
+    role: 'assistant',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /assistant/);
+});
+
+test('doAppendTurn accepts role=system', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'system prompt',
+    role: 'system',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /system/);
+});
+
+test('doAppendTurn rejects unknown role', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'bot',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /invalid role/i);
+});
+
+// ---------- timestamp + conversation_id ----------
+
+test('doAppendTurn honors explicit timestamp arg', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'ts-proj',
+    content: 'explicit ts',
+    role: 'user',
+    timestamp: '2025-01-15T08:30:00Z',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  assert.match(result.path, /2025-01-15\.md$/);
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /2025-01-15T08:30:00\.000Z/);
+});
+
+test('doAppendTurn stores conversation_id in turn header', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'cid-proj',
+    content: 'with cid',
+    role: 'user',
+    conversation_id: 'conv-abc-123',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /conversation_id: conv-abc-123/);
+});
+
+// ---------- bytes_written ----------
+
+test('doAppendTurn returns correct bytes_written', async () => {
+  const vault = await makeTempVault();
+  const content = 'count my bytes';
+  const ts = '2026-04-22T09:00:00.000Z';
+  const result = await doAppendTurn({
+    project: 'bytes-proj',
+    content,
+    role: 'user',
+    timestamp: ts,
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  // bytes_written should match what was appended (entire payload)
+  const expected = Buffer.byteLength(`## ${ts} user\n${content}\n\n`, 'utf8');
+  assert.equal(result.bytes_written, expected);
+});
+
+// ---------- filesystem-direct ----------
+
+test('doAppendTurn writes only to the raw-capture file (no mem0 side-effect)', async () => {
+  const vault = await makeTempVault();
+  let mem0Called = false;
+  const fakeMem0 = { add: () => { mem0Called = true; } };
+
+  const result = await doAppendTurn({
+    project: 'fsdirect',
+    content: 'no mem0',
+    role: 'user',
+  }, { vaultDir: vault, _mem0: fakeMem0 });
+
+  assert.equal(result.ok, true);
+  assert.equal(mem0Called, false, 'mem0 must not be called');
+
+  // Only one file written under vault (plus .lock sibling)
+  const files = await fs.readdir(path.join(vault, 'captures/fsdirect/raw'));
+  assert.ok(files.some((f) => f.endsWith('.md')), 'raw .md file present');
+});
+
+// ---------- schema_version ----------
+
+test('doAppendTurn response includes schema_version=1', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'sv',
+    content: 'schema check',
+    role: 'user',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  assert.equal(result.schema_version, 1);
+});
+
+// ---------- concurrent writes (flock-safe) ----------
+
+test('doAppendTurn is flock-safe under concurrent writes', async () => {
+  const vault = await makeTempVault();
+  const base = { project: 'p', role: 'user' };
+  const ctx = { vaultDir: vault };
+
+  const turns = Array.from({ length: 20 }, (_, i) => ({
+    ...base,
+    content: `concurrent-${i}-${'x'.repeat(500)}`,
+  }));
+  const results = await Promise.all(turns.map((args) => doAppendTurn(args, ctx)));
+  assert.ok(results.every((r) => r.ok));
+
+  const date = new Date().toISOString().slice(0, 10);
+  const disk = await fs.readFile(path.join(vault, `captures/p/raw/${date}.md`), 'utf8');
+  for (let i = 0; i < 20; i++) {
+    assert.match(disk, new RegExp(`concurrent-${i}-x+`), `turn-${i} survived`);
+  }
+});
