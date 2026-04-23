@@ -27,7 +27,7 @@ Three pillars:
 
 Every v0.4 feature is addressable through three equal-peer surfaces reading/writing the same vault:
 
-- **MCP** — `http://localhost:6335/mcp` — every Claude surface (Code, Desktop, Claude.ai), Codex, and bridges into Claude Desktop's Custom GPT. Default `tools/list` exposes 4 reads; 6 writes gated behind `UM_MCP_WRITE_ENABLED=true` (and the vault mount must be `rw` for the writes to actually succeed).
+- **MCP** — `http://localhost:6335/mcp` — every Claude surface (Code, Desktop, Claude.ai), Codex, and bridges into Claude Desktop's Custom GPT. Default `tools/list` exposes 4 reads; 7 writes gated behind `UM_MCP_WRITE_ENABLED=true` (and the vault mount must be `rw` for the writes to actually succeed).
 - **REST** — OpenAPI 3.1 at `GET /openapi.yaml`; used by ChatGPT Custom GPT Actions (`?gpt=1` trimmed variant), the OpenAI Responses API, and any HTTP client. New in v0.4: `GET /api/recent/{project}` for mtime-sorted session summaries.
 - **CLI (`um`)** — 7 subcommands: `um search`, `um state`, `um recent`, `um list`, `um capture`, `um tail`, `um --version`. Install standalone via `installer/install-cli.sh`; configure via `UM_ENDPOINT` + optional `~/.um/config` (KEY=value, parsed by `hooks/lib/config.sh`; env > file precedence).
 
@@ -266,7 +266,7 @@ Versioned replace.
 
 - **MCP-only surface.** Install the config-only plugin at `plugins/codex/universal-memory/` and Codex points at the UM server's `/mcp` endpoint.
 - **Recall works:** `memory_search`, `memory_state`, `memory_recent`, `memory_list` are available by default.
-- **Writes work when gated open:** flip `UM_MCP_WRITE_ENABLED=true` server-side and the 6 write tools appear.
+- **Writes work when gated open:** flip `UM_MCP_WRITE_ENABLED=true` server-side and the 7 write tools appear.
 - **No hook-driven capture pipeline:** Codex has three upstream gaps (no SessionEnd hook, plugins can't bundle hooks, Windows unsupported). Those are tracked in [docs/codex-integration-notes.md](codex-integration-notes.md) and deferred to v0.5+. Consequence: Codex conversations don't flow into raw captures → session summaries → state.md. Call `memory_capture` explicitly from the conversation if you want a write.
 
 ### ChatGPT Desktop / Custom GPT Actions
@@ -290,7 +290,7 @@ These Claude.ai / Desktop / remote-surface gaps are tracked:
 
 ## MCP tool surface
 
-10 tools at `POST http://localhost:6335/mcp`. The default `tools/list` response exposes the **4 read tools** below; the **6 write tools** only appear when `UM_MCP_WRITE_ENABLED=true` (implemented by `getVisibleTools()` in `server/mem0-mcp-http.mjs`). `memory_checkpoint` is a documented stub that returns an actionable error pointing at `/um-checkpoint` or direct `hooks/session-end.sh` invocation.
+11 tools at `POST http://localhost:6335/mcp`. The default `tools/list` response exposes the **4 read tools** below; the **7 write tools** only appear when `UM_MCP_WRITE_ENABLED=true` (implemented by `getVisibleTools()` in `server/mem0-mcp-http.mjs`). `memory_checkpoint` now has a real server-side implementation (v0.5); the v0.4 stub has been dropped.
 
 ### Read tools (visible by default in `tools/list`)
 
@@ -308,9 +308,10 @@ These Claude.ai / Desktop / remote-surface gaps are tracked:
 | `memory_add(text, metadata?)` | Add to mem0 via extraction pipeline (generic mem0 behavior). **Note:** in v0.4 `memory_add` is classified as a write and hidden by default; flip `UM_MCP_WRITE_ENABLED` to surface it. |
 | `memory_delete(memoryId)` | Delete by mem0 UUID. |
 | `memory_capture(content, metadata)` | Write authored doc to vault + reindex. |
-| `memory_checkpoint(project?)` | **Stub (v0.4).** Returns actionable error pointing at `/um-checkpoint` or direct `hooks/session-end.sh` invocation. Server-side checkpoint body still deferred ([#5](https://github.com/goldenwo/universal-memory/issues/5)). |
+| `memory_checkpoint(project?, since?, until?, skip_state_merge?)` | Trigger full session-end pipeline (summary → state merge → reindex). Real implementation in v0.5; drops v0.4 stub. |
 | `memory_forget(id)` | Mutate frontmatter to `status: deprecated` + reindex. |
 | `memory_supersede(old_id, new_doc)` | Versioned replace — old `status: superseded`, new `supersedes: [old_id]`. |
+| `memory_append_turn(project, content, role, timestamp?, conversation_id?)` | Append a conversation turn to the raw-capture pipeline. Enables non-CC surfaces to feed captures. |
 
 The canonical write-tool set is exported as `WRITE_TOOL_NAMES` in `server/mem0-mcp-http.mjs` (imported by tests so the visible/gated split doesn't drift).
 

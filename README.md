@@ -18,7 +18,8 @@ Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decisio
 ## What you get
 
 - **Session continuity** — a `state.md` file per project is injected at the start of every session. Current focus, in-flight work, recent decisions, next actions — all there without manual setup.
-- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 10 MCP tools (4 read tools visible by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Progressive disclosure: read responses return compact snippets by default; opt into full bodies via `?full=1` or `full: true`. Work captured in Claude Code is visible from Claude.ai the same day.
+- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 11 MCP tools (4 read tools visible by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Progressive disclosure: read responses return compact snippets by default; opt into full bodies via `?full=1` or `full: true`. Work captured in Claude Code is visible from Claude.ai the same day.
+- **Cross-env first-class capture** (new in v0.5) — it's no longer Claude Code-only. Claude.ai, ChatGPT Desktop, and Codex can now use `memory_append_turn` to feed conversation turns directly into the raw-capture pipeline, and `memory_checkpoint` to trigger session summaries and `state.md` refresh — the same pipeline that Claude Code's Stop/SessionEnd hooks drive automatically.
 - **Command-line toolkit** — 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts, cron jobs, and power-user workflows. Composable with grep / awk / jq. Installs standalone via `installer/install-cli.sh` against any reachable UM server.
 - **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default.
 - **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
@@ -132,7 +133,7 @@ Surface-specific guides:
 
 ## MCP tool surface
 
-10 tools total — 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible to any MCP client by default; 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) visible only when `UM_MCP_WRITE_ENABLED=true`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
+11 tools total — 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible to any MCP client by default; 7 write tools (`memory_add`, `memory_capture`, `memory_checkpoint`, `memory_delete`, `memory_forget`, `memory_supersede`, `memory_append_turn`) visible only when `UM_MCP_WRITE_ENABLED=true`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
 
 Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) return compact snippets by default (~200 bytes per hit); pass `full: true` to retrieve full bodies.
 
@@ -147,6 +148,7 @@ Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) ret
 | `memory_checkpoint` | write | Trigger session summary + state refresh |
 | `memory_forget` | write | Deprecate a document by ID |
 | `memory_supersede` | write | Replace a document; preserves audit chain |
+| `memory_append_turn` | write | Append a conversation turn to raw-capture pipeline (non-CC surfaces) |
 | `memory_delete` | write | Remove a memory from the index |
 
 Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`.
