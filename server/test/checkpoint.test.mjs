@@ -500,3 +500,56 @@ test('POST /api/checkpoint 403 when writes disabled → ok:false, statusCode 403
   assert.equal(res.statusCode, 403);
   assert.equal(res.jsonBody.ok, false);
 });
+
+// Fix 1: reindexFn wiring — doCheckpoint must call reindexFn with {path, project}
+test('checkpoint: reindexFn spy receives {path, project} args (Fix 1 integration-bug regression)', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'reindex-proj', '2026-01-01T00.md', '# Session\nReindex wiring test.');
+
+  const reindexCalls = [];
+  const result = await doCheckpoint(
+    { project: 'reindex-proj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async (args) => { reindexCalls.push(args); },
+    },
+  );
+
+  assert.equal(result.ok, true, 'checkpoint should succeed');
+  assert.equal(reindexCalls.length, 1, 'reindexFn must be called exactly once');
+  const call = reindexCalls[0];
+  assert.ok(typeof call.path === 'string' && call.path.startsWith('sessions/'),
+    `reindexFn path should start with sessions/, got: ${call.path}`);
+  assert.equal(call.project, 'reindex-proj',
+    `reindexFn project should be 'reindex-proj', got: ${call.project}`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Fix 1: handleCheckpointRequest wires reindexFn to doCheckpoint (not the no-op default)
+test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint', async () => {
+  const reindexCalls = [];
+  const req = { body: { project: 'rest-reindex-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    writesEnabled: true,
+    _doCheckpoint: async (args, ctx) => {
+      // Invoke the injected reindexFn so the test can spy on it
+      await ctx.reindexFn({ path: `sessions/${args.project}/test.md`, project: args.project });
+      return {
+        schema_version: 1, ok: true, summary_id: 'spy-id',
+        summary_path: `sessions/${args.project}/test.md`,
+        state_updated: true, state_path: `state/${args.project}/state.md`,
+        cost_usd: 0, tokens_in: 0, tokens_out: 0, duration_ms: 1,
+      };
+    },
+    _reindexFn: async (args) => { reindexCalls.push(args); },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(reindexCalls.length, 1, 'reindexFn should be forwarded and called');
+  assert.equal(reindexCalls[0].project, 'rest-reindex-proj');
+});

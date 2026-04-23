@@ -548,7 +548,7 @@ export async function handleToolCall(name, args) {
 			if (!isWriteEnabled()) {
 				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
 			}
-			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR }));
+			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc }));
 		}
 
 		case 'memory_forget': {
@@ -775,7 +775,7 @@ export async function handleCheckpointRequest(req, res, ctx) {
 	const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
 	const result = await checkpointFn(
 		{ project, since, until, skip_state_merge },
-		{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR },
+		{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
 	);
 	if (!result.ok) {
 		res.status(400).json(result);
