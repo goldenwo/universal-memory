@@ -1055,6 +1055,41 @@ assert len(result['results']) <= 50, 'FAIL: got more results than limit: ' + str
 print(f'OK T10-J: memory_recent limit=50 returned {len(result[\"results\"])} result(s), no error')
 " || { echo "FAIL: T10-J memory_recent large-limit check failed"; exit 1; }
 
+# T10-K: memory_append_turn round-trip
+echo "[smoke]     T10-K: memory_append_turn round-trip"
+if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ]; then
+	T10K_RESP=$(mcp_call 108 memory_append_turn '{"project":"smoke-proj","content":"Smoke T10-K content","role":"user"}')
+	echo "$T10K_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert 'path' in result, 'expected path in result: ' + result_text
+assert result.get('appended') is True, 'expected appended:true: ' + result_text
+print('OK T10-K: memory_append_turn returns ok + path')
+" || { echo "FAIL: T10-K memory_append_turn round-trip failed"; exit 1; }
+	# Verify on-disk
+	DATE=$(date -u +%Y-%m-%d)
+	CAP_FILE="${UM_VAULT_DIR}/captures/smoke-proj/raw/$DATE.md"
+	if grep -q "Smoke T10-K content" "$CAP_FILE"; then
+		echo "OK T10-K: content visible in captures file"
+	else
+		echo "FAIL: T10-K content not found in $CAP_FILE"; exit 1
+	fi
+else
+	T10K_RESP=$(mcp_call 108 memory_append_turn '{"project":"smoke-proj","content":"Smoke T10-K content","role":"user"}')
+	echo "$T10K_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
+assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+print('OK T10-K: memory_append_turn returns writes-disabled error (expected)')
+" || { echo "FAIL: T10-K memory_append_turn did not return expected disabled error"; exit 1; }
+fi
+
 echo "[smoke]     Task 10 MCP surface tests passed"
 
 # 4g/5 Task 2.5 gate: POST /api/delete — delete by metadata.id
