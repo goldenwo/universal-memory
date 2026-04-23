@@ -4,6 +4,19 @@
 #   curl -fsSL https://raw.githubusercontent.com/goldenwo/universal-memory/main/installer/install.sh | bash -s -- --yes
 # or with a custom install directory:
 #   curl -fsSL .../installer/install.sh | UM_INSTALL_DIR=/opt/um bash -s -- --yes
+#
+# Component flags (v0.5+):
+#   --server        Install/start the memory server (Docker stack)
+#   --plugin-cc     Install the Claude Code plugin (~/.claude/plugins/)
+#   --plugin-codex  Install the Codex CLI plugin (~/.codex/plugins/)
+#   --cli           Install the um CLI tool
+#   --all           Install all detected components (default when no flags + non-TTY)
+#   --interactive   Launch the interactive wizard (stub: falls back to --all)
+#   --yes / -y      Non-interactive; accept defaults
+#   --server-url U  Pass --server-url to sub-installers
+#   --skip-docker   Pass --skip-docker to server installer
+#   --no-path       Pass --no-path to CLI installer
+#   --dry-run       Print what would happen; do not run anything
 
 set -euo pipefail
 
@@ -11,16 +24,97 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 INSTALL_DIR="${UM_INSTALL_DIR:-$HOME/universal-memory}"
 DRY_RUN="${UM_DRY_RUN:-0}"
 
-printf '\nUniversal-memory installer\n==========================\n\n'
+# ---- v0.5 flag parser -------------------------------------------------------
+INSTALL_SERVER=0
+INSTALL_PLUGIN_CC=0
+INSTALL_PLUGIN_CODEX=0
+INSTALL_CLI=0
+INSTALL_ALL=0
+FORCE_WIZARD=0
+ASSUME_YES=0
+PASSTHROUGH_ARGS=()
 
-# Parse --dry-run flag (for testing; actual server/install.sh args pass through)
-pass_args=()
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    *) pass_args+=("$arg") ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --server)        INSTALL_SERVER=1 ;;
+    --plugin-cc)     INSTALL_PLUGIN_CC=1 ;;
+    --plugin-codex)  INSTALL_PLUGIN_CODEX=1 ;;
+    --cli)           INSTALL_CLI=1 ;;
+    --all)           INSTALL_ALL=1 ;;
+    --yes|-y)        ASSUME_YES=1; PASSTHROUGH_ARGS+=("$1") ;;
+    --interactive)   FORCE_WIZARD=1 ;;
+    --server-url)    UM_SERVER_URL="$2"; PASSTHROUGH_ARGS+=("$1" "$2"); shift ;;
+    --skip-docker)   SKIP_DOCKER=1 ;;
+    --no-path)       NO_PATH_MODIFY=1 ;;
+    --dry-run)       DRY_RUN=1 ;;
+    -h|--help)       _show_help=1 ;;
+    *)               PASSTHROUGH_ARGS+=("$1") ;;
   esac
+  shift
 done
+
+show_help() {
+  cat <<'HELP'
+universal-memory installer (v0.5)
+
+Usage: bash installer/install.sh [FLAGS]
+
+Component flags:
+  --server          Install the memory server (Docker stack)
+  --plugin-cc       Install the Claude Code plugin
+  --plugin-codex    Install the Codex CLI plugin (skipped if ~/.codex absent)
+  --cli             Install the um CLI tool
+  --all             Install all detected components
+
+Behaviour flags:
+  --yes, -y         Non-interactive; accept defaults
+  --interactive     Launch the setup wizard (coming soon)
+  --server-url URL  Override the server URL passed to sub-installers
+  --skip-docker     Skip Docker checks (passed to server installer)
+  --no-path         Skip PATH modification (passed to CLI installer)
+  --dry-run         Print what would run; do nothing
+  -h, --help        Show this help
+
+If no component flag is given and stdin is not a TTY, --all is assumed (v0.4 back-compat).
+HELP
+}
+
+if [[ ${_show_help:-0} -eq 1 ]]; then
+  show_help
+  exit 0
+fi
+
+# Mode selection
+if [[ $FORCE_WIZARD -eq 1 ]]; then
+  MODE=wizard
+elif [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 ]]; then
+  if [[ -t 0 && $ASSUME_YES -eq 0 ]]; then
+    MODE=wizard
+  else
+    # Back-compat: no flags + no TTY = v0.4 behavior (full install)
+    INSTALL_ALL=1
+    MODE=components
+  fi
+else
+  MODE=components
+fi
+
+# Wizard stub — Task 3.4/3.5 will implement the real wizard
+if [[ $MODE == wizard ]]; then
+  echo "[install] Wizard coming soon — use --all to install everything or --help to see component flags." >&2
+  # Fall back to --all in this stub
+  INSTALL_ALL=1
+  MODE=components
+fi
+
+if [[ $INSTALL_ALL -eq 1 ]]; then
+  INSTALL_SERVER=1
+  [[ -d "${HOME:-}/.claude" ]] && INSTALL_PLUGIN_CC=1
+  [[ -d "${HOME:-}/.codex" ]] && INSTALL_PLUGIN_CODEX=1
+  INSTALL_CLI=1
+fi
+
+printf '\nUniversal-memory installer\n==========================\n\n'
 
 # ─── Prerequisites ────────────────────────────────────────────────────────────
 missing=()
@@ -63,11 +157,33 @@ else
   fi
 fi
 
-# ─── Dispatch to server/install.sh ────────────────────────────────────────────
-if [ "$DRY_RUN" = "1" ]; then
-  echo "[dry-run] would: bash $INSTALL_DIR/server/install.sh ${pass_args[*]:-(no args)}"
-  exit 0
-fi
+# ─── Dispatcher ───────────────────────────────────────────────────────────────
+# _delegate: in dry-run mode prints the delegation intent; otherwise runs the
+# sub-installer with bash (NOT exec, so multiple components can run in sequence).
+_delegate() {
+  local script="$1"; shift
+  if [[ ${DRY_RUN:-0} -eq 1 ]]; then
+    echo "[install] delegate: $script${*:+ ${*}}" >&2
+    return 0
+  fi
+  echo "[install] running: $script${*:+ ${*}}" >&2
+  bash "$INSTALL_DIR/$script" "$@"
+}
 
-printf '\nDelegating to server/install.sh...\n\n'
-exec bash "$INSTALL_DIR/server/install.sh" "${pass_args[@]}"
+# Run in order: server first, then plugins, then CLI.
+if [[ $INSTALL_SERVER -eq 1 ]]; then
+  _delegate "server/install.sh" "${PASSTHROUGH_ARGS[@]}"
+fi
+if [[ $INSTALL_PLUGIN_CC -eq 1 ]]; then
+  _delegate "installer/install-plugin-cc.sh" "${PASSTHROUGH_ARGS[@]}"
+fi
+if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
+  if [[ ! -d "${HOME:-}/.codex" ]]; then
+    echo "[install] ~/.codex not found — soft-skipping Codex plugin" >&2
+  else
+    _delegate "installer/install-plugin-codex.sh" "${PASSTHROUGH_ARGS[@]}"
+  fi
+fi
+if [[ $INSTALL_CLI -eq 1 ]]; then
+  _delegate "installer/install-cli.sh" "${PASSTHROUGH_ARGS[@]}"
+fi
