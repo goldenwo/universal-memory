@@ -6,12 +6,72 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0-alpha] — 2026-04-23
+
+Cross-env first-class release. Non-CC surfaces (Claude.ai, ChatGPT Desktop,
+Codex) can now append turns and trigger session summaries directly via MCP,
+without Claude Code hooks. Modular installer with interactive wizard.
+Shared prompt templates + `UM_PROMPT_DIR`. I4 fix for `claude-agent-sdk`.
+
 ### Added
 
-- **`memory_checkpoint` server-side implementation** — triggers full session-end pipeline (summary + state merge + reindex) from any MCP surface. Drops v0.4 stub; see MIGRATION.md.
+- **`memory_append_turn` MCP tool + `POST /api/append-turn` REST endpoint** —
+  append a conversation turn (`project`, `content`, `role` required;
+  `timestamp`, `conversation_id` optional) directly to the raw-capture pipeline.
+  Enables Claude.ai, ChatGPT Desktop, and Codex to feed turns to the vault
+  without Claude Code's Stop hook. Flock-protected file writes prevent turn
+  corruption under concurrent calls; log-injection guard on project value.
+- **`memory_checkpoint` server-side implementation** — triggers full
+  session-end pipeline (summary + state merge + reindex) from any MCP surface
+  via `POST /api/checkpoint`. Drops v0.4 stub; see MIGRATION.md.
+- **Modular install flags** — `install.sh` is now the unified entry point with
+  composable component flags: `--server`, `--plugin-cc`, `--plugin-codex`,
+  `--cli`, `--all`, plus `--interactive`, `--yes`, `--dry-run`.
+- **Interactive wizard** — `install.sh` auto-triggers a numeric-menu walkthrough
+  when run with no flags in a TTY. `--yes` skips it; `--dry-run` prints without
+  executing.
+- **Shared prompt templates** — `summarize.txt` + `update-state.txt` prompts
+  extracted to `server/config/prompts/` and written to the vault at install time.
+- **`UM_PROMPT_DIR` env var** — installer writes this to the managed block in
+  `~/.bashrc`/`~/.zshrc` for plugin-cc installs. `hooks/lib/summarize.sh` +
+  `update-state.sh` read prompts from this path; fall back to plugin-local
+  `hooks/lib/prompts/` if unset. Eliminates prompt drift between CC plugin and
+  server paths.
+- **Rubric-drift-gate test** — `server/test/rubric-drift.test.mjs` asserts that
+  rubric blocks in all 5 mirror files match the canonical
+  `docs/memory-routing-rubric.md`. 1 pass, 0 fail.
+- **BACKENDS registry in `summarize.mjs`** — groundwork for v0.7
+  provider-neutrality (Anthropic/Google/Ollama swap). Allows adding new
+  summarization backends without touching the dispatch core.
+- **Backend fallback for `claude-agent-sdk` server-side** — when
+  `UM_SUMMARIZER=claude-agent-sdk` is configured in server `.env`,
+  `memory_checkpoint` (server-side) falls back to `openai`/`ollama` with a
+  warning log; Docker cannot spawn a host-side Claude Code process.
+
+### Changed
+
+- **`memory_checkpoint` no longer a stub** — the v0.4 actionable-error response
+  (`"use /um-checkpoint or hooks/session-end.sh"`) is replaced with a real
+  server-side implementation. Existing CC users see no behavior change;
+  Claude.ai / ChatGPT Desktop / Codex users gain the ability to trigger state
+  refresh directly.
+- **`install.sh` is unified entry point** — supports composable component flags.
+  `install-cli.sh` continues as the v0.4 back-compat entry point for CLI-only
+  installs; its behavior is unchanged.
+- **Plugin-copy logic extracted** — refactored from `server/install.sh` into
+  `installer/install-plugin-cc.sh` + `installer/install-plugin-codex.sh`.
+- **`hooks/lib/summarize.sh` + `update-state.sh`** — now read prompts via
+  `$UM_PROMPT_DIR` (falls back to plugin-local `hooks/lib/prompts/`).
 
 ### Fixed
 
+- **I4 (`claude-agent-sdk` system prompt)** — `summarize.sh` now prepends
+  `_UM_SYSTEM_PROMPT` before piping the transcript when using the
+  `claude-agent-sdk` backend. Fixes a silent quality regression where the
+  system prompt was omitted for this non-default config.
+- **`stop.sh` flock-protected** — raw-capture appends use Perl
+  `Fcntl::flock` via a sibling lockfile. No turn corruption under concurrent
+  writes.
 - **`installer/lib/marker-block.sh` idempotency** — re-running `install.sh` or
   `install-cli.sh` now leaves `~/.bashrc` at a stable line count. In v0.4.0-alpha
   the helper prepended a leading `\n` on every write but awk didn't strip the
@@ -19,26 +79,24 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
   by 1 blank line (unbounded over many runs). Fix: awk now buffers blank lines
   and discards the buffer when it sees the marker-start sentinel. Regression
   tests added to `installer/install-cli.test.sh` (T8) and `server/install.test.sh`
-  (T18 extended). Surfaced by a post-release VM smoke test. See commit `46e8700`.
-- **`um` dispatcher standalone-install fallback** — `um --version` failed
-  the 6-lib health check whenever `UM_LIB_DIR` was unset (e.g. running from a
-  non-interactive shell that hadn't sourced `~/.bashrc`). The fallback path
-  `$PLUGIN_DIR/hooks/lib` assumes plugin context; for standalone installs at
-  `~/.local/bin/um` with libs at `~/.local/share/um/lib`, it resolved to a
-  non-existent `~/.local/hooks/lib`. Fix: two-tier fallback — env var first,
-  then standalone-install layout, then plugin-context layout. Regression test
-  T11 added to `plugins/claude-code/universal-memory/bin/um.test.sh` (16 total;
-  was 14). Resolves CI's "Real install + um --version sanity" failure on
-  ubuntu-latest + macos-latest. See commit `7c0b026`.
+  (T18 extended). See commit `46e8700`.
+- **`um` dispatcher standalone-install fallback** — `um --version` failed the
+  6-lib health check whenever `UM_LIB_DIR` was unset for standalone installs.
+  Fix: two-tier fallback — env var first, then standalone layout
+  (`~/.local/share/um/lib`), then plugin-context layout. Regression test T11
+  added to `bin/um.test.sh`. See commit `7c0b026`.
 - **`server/test/smoke.sh` T10-E broadened** — `memory_checkpoint` is in
-  `WRITE_TOOL_NAMES` so the writes-gate error fires before the stub error
-  when `UM_MCP_WRITE_ENABLED=false`. The assertion now accepts either error
-  message. See commit `5b2cd6c`.
+  `WRITE_TOOL_NAMES` so the writes-gate error fires before the stub error when
+  `UM_MCP_WRITE_ENABLED=false`. Assertion now accepts either error message. See
+  commit `5b2cd6c`.
 
-**Note:** These fixes are on `main` but not back-ported to the `v0.4.0-alpha`
-tag. The tag remains at `bb7b65e`; users who re-install from the tag hit the
-bugs. Next tagged release will include the fixes. For alpha with no external
-users yet, this is acceptable.
+### Security
+
+- **Flock-protected raw-capture appends** — concurrent `memory_append_turn` or
+  Stop-hook writes to the same day-file are now serialized via a Perl
+  `Fcntl::flock` sibling lockfile. Prevents partial-write turn corruption.
+- **Log-injection guard in `append-turn.mjs`** — raw project value is sanitized
+  before appearing in error-message log output.
 
 ## [0.4.0-alpha] — 2026-04-21
 
@@ -213,6 +271,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.4.0-alpha...HEAD
+[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...HEAD
+[0.5.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/goldenwo/universal-memory/releases/tag/v0.4.0-alpha
 [0.3.0-alpha]: https://github.com/goldenwo/universal-memory/releases/tag/v0.3.0-alpha
