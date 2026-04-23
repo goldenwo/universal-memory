@@ -502,6 +502,35 @@ Without one of these, any device on your current network can read and write your
 
 The server refuses to index or write through symlinks inside the vault.
 
+---
+
+## Extending
+
+### Adding a new MCP tool
+
+To register a new MCP tool that mutates the vault (write tool):
+
+1. Implement `server/lib/<name>.mjs` exporting a `do<Name>(args, ctx)` function
+   with the DI pattern `{ vaultDir, memoryClient = memory }` so it's
+   unit-testable.
+2. Add a unit test at `server/test/<name>.test.mjs` (fixture-driven per
+   spec §4 principle).
+3. Add the tool name to `WRITE_TOOL_NAMES` in `server/mem0-mcp-http.mjs`.
+4. Add an entry to the `TOOLS` array in the same file — include full
+   `inputSchema` with required/optional fields. Include `schema_version` in
+   the response shape per spec §4 "version your contracts."
+5. Wire `case '<name>':` in the `tools/call` dispatcher to call your
+   `do<Name>`.
+6. Add a REST route `POST /api/<endpoint>` and an OpenAPI path entry in
+   `server/openapi.mjs`. Add request + response components. Include
+   `schema_version` field in the response schema.
+7. Re-run `actions-trimmed.yaml` regen: `( cd server && node -e "..." ) > ...`.
+8. Add a smoke test in `server/test/smoke.sh` at the next free `T10-<letter>`
+   label.
+
+Follow `memory_append_turn` (v0.5) as the reference example. For read-only
+tools, skip step 3 and add routes under the 4-default-visible set instead.
+
 ### `GET /openapi.yaml` is intentionally unauthenticated
 
 The server exposes its OpenAPI 3.1 schema at `GET /openapi.yaml` (plus a

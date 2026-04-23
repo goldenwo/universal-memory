@@ -45,6 +45,7 @@ import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+import { doAppendTurn } from './lib/append-turn.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -311,6 +312,22 @@ export const TOOLS = [
 			required: ['old_id', 'new_doc'],
 		},
 	},
+	// ── v0.5: append-turn tool ────────────────────────────────────────────────
+	{
+		name: 'memory_append_turn',
+		description: 'Write a raw conversation turn to the vault capture log for the given project. Appends to captures/<project>/raw/<date>.md and is consumed by the next session-end summary. Provides MCP parity with POST /api/append-turn. Requires UM_MCP_WRITE_ENABLED=true.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: { type: 'string', description: 'Project name (must match ^[a-zA-Z0-9._-]+$)' },
+				content: { type: 'string', description: 'Turn text content (markdown)', maxLength: 8192 },
+				role: { type: 'string', enum: ['user', 'assistant', 'system'], description: 'Role of the turn author' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO 8601 timestamp (defaults to now)' },
+				conversation_id: { type: 'string', description: 'Optional conversation/session identifier' },
+			},
+			required: ['project', 'content', 'role'],
+		},
+	},
 ];
 
 // ---------------------------------------------------------------------------
@@ -327,6 +344,7 @@ export const TOOLS = [
 export const WRITE_TOOL_NAMES = new Set([
 	'memory_add', 'memory_delete', 'memory_capture',
 	'memory_checkpoint', 'memory_forget', 'memory_supersede',
+	'memory_append_turn',
 ]);
 
 /**
@@ -679,6 +697,14 @@ export async function handleToolCall(name, args) {
 				new_status: 'current',
 				indexed: { old: oldIndexed, new: newIndexed },
 			});
+		}
+
+		case 'memory_append_turn': {
+			if (!mcpWriteEnabled()) {
+				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			}
+			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
+			return JSON.stringify(result);
 		}
 
 		default:

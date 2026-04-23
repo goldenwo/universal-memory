@@ -17,11 +17,12 @@ import { TOOLS, WRITE_TOOL_NAMES, getVisibleTools } from '../mem0-mcp-http.mjs';
 const EXPECTED_WRITE_TOOLS = new Set([
   'memory_add', 'memory_delete', 'memory_capture',
   'memory_checkpoint', 'memory_forget', 'memory_supersede',
+  'memory_append_turn',  // NEW in v0.5
 ]);
 const EXPECTED_READ_TOOLS = ['memory_search', 'memory_list', 'memory_state', 'memory_recent'];
 
-test('TOOLS array contains all 10 tools', () => {
-  assert.strictEqual(TOOLS.length, 10, `expected 10 total tools, got ${TOOLS.length}`);
+test('TOOLS array contains all 11 tools', () => {
+  assert.strictEqual(TOOLS.length, 11, `expected 11 total tools, got ${TOOLS.length}`);
 });
 
 test('WRITE_TOOL_NAMES export matches expected write-tool set', () => {
@@ -32,9 +33,10 @@ test('WRITE_TOOL_NAMES export matches expected write-tool set', () => {
     `WRITE_TOOL_NAMES size mismatch: expected ${EXPECTED_WRITE_TOOLS.size}, got ${WRITE_TOOL_NAMES.size}`);
 });
 
-test('getVisibleTools(true) returns all 10 tools', () => {
+test('tools/list with writes enabled: TOOLS.length', () => {
   const visible = getVisibleTools(true);
-  assert.strictEqual(visible.length, 10, `enabled mode should expose all 10 tools; got ${visible.length}`);
+  assert.strictEqual(visible.length, TOOLS.length,
+    `enabled mode should expose all ${TOOLS.length} tools; got ${visible.length}`);
 });
 
 test('getVisibleTools(false) filters all write tools from list', () => {
@@ -53,40 +55,38 @@ test('getVisibleTools(false) retains all read tools', () => {
   }
 });
 
-test('reads-only count is 4 after filtering 6 writes', () => {
+test('tools/list default visibility: TOOLS.length - WRITE_TOOL_NAMES.size', () => {
   const visible = getVisibleTools(false);
-  // NOTE: plan spec said "5 tools (reads only)" — actual code path yields 4:
-  //   reads = { memory_search, memory_list, memory_state, memory_recent }
-  //   writes = { memory_add, memory_delete, memory_capture, memory_checkpoint, memory_forget, memory_supersede }
-  // 10 - 6 = 4. The plan numeric is superseded by the actual code path.
-  assert.strictEqual(visible.length, 4,
-    `expected 4 read tools after filtering 6 writes; got ${visible.length}`);
+  assert.strictEqual(visible.length, TOOLS.length - WRITE_TOOL_NAMES.size,
+    `expected ${TOOLS.length - WRITE_TOOL_NAMES.size} read tools after filtering ${WRITE_TOOL_NAMES.size} writes; got ${visible.length}`);
 });
 
 test('getVisibleTools with no arg defaults to env-var behavior', () => {
   // When called with no argument, getVisibleTools reads process.env.UM_MCP_WRITE_ENABLED.
   // This test verifies the env-var-reading default (write disabled when unset).
+  const readCount = TOOLS.length - WRITE_TOOL_NAMES.size;
+  const totalCount = TOOLS.length;
   const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
   try {
     delete process.env.UM_MCP_WRITE_ENABLED;
     const visibleDefault = getVisibleTools();
-    assert.strictEqual(visibleDefault.length, 4,
-      `unset env var should behave as disabled (4 tools); got ${visibleDefault.length}`);
+    assert.strictEqual(visibleDefault.length, readCount,
+      `unset env var should behave as disabled (${readCount} tools); got ${visibleDefault.length}`);
 
     process.env.UM_MCP_WRITE_ENABLED = 'true';
     const visibleEnabled = getVisibleTools();
-    assert.strictEqual(visibleEnabled.length, 10,
-      `UM_MCP_WRITE_ENABLED=true should expose all 10 tools; got ${visibleEnabled.length}`);
+    assert.strictEqual(visibleEnabled.length, totalCount,
+      `UM_MCP_WRITE_ENABLED=true should expose all ${totalCount} tools; got ${visibleEnabled.length}`);
 
     process.env.UM_MCP_WRITE_ENABLED = '1';
     const visibleEnabled1 = getVisibleTools();
-    assert.strictEqual(visibleEnabled1.length, 10,
-      `UM_MCP_WRITE_ENABLED=1 should expose all 10 tools; got ${visibleEnabled1.length}`);
+    assert.strictEqual(visibleEnabled1.length, totalCount,
+      `UM_MCP_WRITE_ENABLED=1 should expose all ${totalCount} tools; got ${visibleEnabled1.length}`);
 
     process.env.UM_MCP_WRITE_ENABLED = 'false';
     const visibleFalse = getVisibleTools();
-    assert.strictEqual(visibleFalse.length, 4,
-      `UM_MCP_WRITE_ENABLED=false should filter writes (4 tools); got ${visibleFalse.length}`);
+    assert.strictEqual(visibleFalse.length, readCount,
+      `UM_MCP_WRITE_ENABLED=false should filter writes (${readCount} tools); got ${visibleFalse.length}`);
   } finally {
     if (savedEnv === undefined) {
       delete process.env.UM_MCP_WRITE_ENABLED;
