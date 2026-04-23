@@ -590,6 +590,34 @@ fi
 rm -rf "$TPROMPT_DIR"
 
 # ============================================================
+# Test T-I4: summarize.sh claude-agent-sdk mode passes system prompt to claude
+# ============================================================
+echo "=== T-I4: claude-agent-sdk passes system prompt ==="
+TEST_DIR=$(mktemp -d)
+CAPTURE="$TEST_DIR/claude-pipe-captured.txt"  # tempdir-safe, not /tmp literal
+
+# Stub `claude` binary that captures its entire stdin to the capture file
+cat > "$TEST_DIR/claude" <<STUB
+#!/usr/bin/env bash
+cat > "$CAPTURE"
+echo "stub-summary"
+STUB
+chmod +x "$TEST_DIR/claude"
+
+# Pipe a small transcript; check claude's stdin contains the system prompt opening phrase
+echo "short transcript" | \
+  PATH="$TEST_DIR:$PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash plugins/claude-code/universal-memory/hooks/lib/summarize.sh > /dev/null 2>&1
+
+if grep -qi "Summarize a Claude Code session" "$CAPTURE"; then
+  pass "T-I4: claude-agent-sdk received system prompt"
+else
+  fail "T-I4: system prompt NOT in claude stdin; captured: $(head -5 "$CAPTURE" 2>/dev/null || echo '(empty)')"
+fi
+
+rm -rf "$TEST_DIR"
+
+# ============================================================
 # Summary
 # ============================================================
 
