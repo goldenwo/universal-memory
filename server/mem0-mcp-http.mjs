@@ -725,10 +725,28 @@ function handleMcpMessage(msg) {
 	return null;
 }
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — DoS guard
+
 function readBody(req) {
 	return new Promise((resolve, reject) => {
+		// Reject early if Content-Length header exceeds cap
+		const contentLength = parseInt(req.headers?.['content-length'] || '0', 10);
+		if (contentLength > MAX_BODY_BYTES) {
+			const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
+			req.destroy(err);
+			return reject(err);
+		}
 		const chunks = [];
-		req.on('data', (c) => chunks.push(c));
+		let totalBytes = 0;
+		req.on('data', (c) => {
+			totalBytes += c.length;
+			if (totalBytes > MAX_BODY_BYTES) {
+				const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
+				req.destroy(err);
+				return reject(err);
+			}
+			chunks.push(c);
+		});
 		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
 		req.on('error', reject);
 	});
