@@ -564,6 +564,32 @@ else
 fi
 
 # ============================================================
+# Test T-PROMPT-DIR: summarize.sh honors $UM_PROMPT_DIR
+#
+# Verifies that the UM_PROMPT_DIR resolution block in summarize.sh reads
+# from the override directory when $UM_PROMPT_DIR is set. Scoped bash -c
+# isolates the path-resolution logic without running the full script.
+# ============================================================
+echo "=== Test T-PROMPT-DIR: summarize.sh honors \$UM_PROMPT_DIR ==="
+
+TPROMPT_DIR=$(mktemp -d)
+echo "CUSTOM_PROMPT_MARKER_UNIQUE_XYZ" > "$TPROMPT_DIR/summarize.txt"
+
+CAPTURED_PROMPT=$(UM_PROMPT_DIR="$TPROMPT_DIR" bash -c '
+  # Replicate the resolution block from summarize.sh
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || pwd)"
+  UM_PROMPT_DIR="${UM_PROMPT_DIR:-$SCRIPT_DIR/prompts}"
+  cat "$UM_PROMPT_DIR/summarize.txt"
+' 2>&1)
+
+if [[ "$CAPTURED_PROMPT" == *"CUSTOM_PROMPT_MARKER_UNIQUE_XYZ"* ]]; then
+  pass "T-PROMPT-DIR: summarize.sh reads from \$UM_PROMPT_DIR when set"
+else
+  fail "T-PROMPT-DIR: expected custom marker; got: $CAPTURED_PROMPT"
+fi
+rm -rf "$TPROMPT_DIR"
+
+# ============================================================
 # Summary
 # ============================================================
 

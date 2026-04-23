@@ -24,6 +24,21 @@ if ! declare -f vault_path >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Load system prompt from file (Task 2.1: single source of truth)
+# UM_PROMPT_DIR can be set by the installer's managed-block; defaults to
+# <script-dir>/prompts/ so the plugin works standalone without the installer.
+# ---------------------------------------------------------------------------
+UM_PROMPT_DIR="${UM_PROMPT_DIR:-$SCRIPT_DIR/prompts}"
+_UM_UPDATE_STATE_PROMPT_FILE="$UM_PROMPT_DIR/update-state.txt"
+if [ ! -f "$_UM_UPDATE_STATE_PROMPT_FILE" ]; then
+  echo "[um-update-state] prompt file not found: $_UM_UPDATE_STATE_PROMPT_FILE" >&2
+  exit 0
+fi
+export _UM_SYSTEM_PROMPT
+_UM_SYSTEM_PROMPT=$(cat "$_UM_UPDATE_STATE_PROMPT_FILE")
+unset _UM_UPDATE_STATE_PROMPT_FILE
+
+# ---------------------------------------------------------------------------
 # Argument parsing (B1a): --stdout renders merge without side effects
 # ---------------------------------------------------------------------------
 # Modes:
@@ -187,51 +202,6 @@ fi
 # ---------------------------------------------------------------------------
 # Build JSON payload via python3 (handles all escaping correctly)
 # ---------------------------------------------------------------------------
-
-# Verbatim system prompt from spec
-export _UM_SYSTEM_PROMPT='You maintain a "state of play" document for a Claude Code project. Your job is to merge a new session summary into the existing state document.
-
-Rules:
-- Preserve sections that the session did not affect. Do not rewrite or reformat them.
-- Update Current focus / In flight / Next actions / Open questions when the session materially changed them.
-- Append entries to Recent decisions with date stamps. Keep the last 5-10 decisions; if the list grows beyond 10, drop the oldest.
-- Keep the total document under 3000 characters.
-- Preserve the YAML frontmatter intact, updating only valid_from to the current timestamp.
-- Respect human hand-edits: if a section contains prose that the session summary does not contradict, keep it.
-
-Fixed structure (all sections required even if empty):
-
----
-schema_version: 1
-type: state
-id: state-<project>
-title: State of play — <project>
-status: current
-valid_from: <ISO-8601 UTC>
-project: <project>
----
-
-# State of play — <project>
-
-## Current focus
-(1-2 sentences — what'"'"'s actively worked on)
-
-## In flight
-(bullets — specific tasks mid-completion)
-
-## Recent decisions
-(last 5-10 decisions with dates)
-
-## Next actions
-(sequenced, specific)
-
-## Open questions
-(unresolved items)
-
-## Environment
-(optional — current branch, running processes, notable files)
-
-Output ONLY the complete markdown document (frontmatter + body). No preamble, no code fences, no meta-commentary.'
 
 export _UM_USER_PROMPT="Project: ${project}
 Current timestamp (UTC): ${timestamp}

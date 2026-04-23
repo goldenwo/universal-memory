@@ -78,6 +78,21 @@ if ! declare -f vault_path >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Load system prompt from file (Task 2.1: single source of truth)
+# UM_PROMPT_DIR can be set by the installer's managed-block; defaults to
+# <script-dir>/prompts/ so the plugin works standalone without the installer.
+# ---------------------------------------------------------------------------
+UM_PROMPT_DIR="${UM_PROMPT_DIR:-$SCRIPT_DIR/prompts}"
+_UM_SUMMARIZE_PROMPT_FILE="$UM_PROMPT_DIR/summarize.txt"
+if [ ! -f "$_UM_SUMMARIZE_PROMPT_FILE" ]; then
+  echo "[um-summarize] prompt file not found: $_UM_SUMMARIZE_PROMPT_FILE" >&2
+  exit 0
+fi
+export _UM_SYSTEM_PROMPT
+_UM_SYSTEM_PROMPT=$(cat "$_UM_SUMMARIZE_PROMPT_FILE")
+unset _UM_SUMMARIZE_PROMPT_FILE
+
+# ---------------------------------------------------------------------------
 # I1: honor UM_SUMMARY_ENABLED — skip when disabled
 # ---------------------------------------------------------------------------
 if [ "${UM_SUMMARY_ENABLED:-true}" = "false" ]; then
@@ -143,27 +158,6 @@ echo "$((current + 1))" > "$counter_file"
 # Build JSON payload via python3 (handles all escaping correctly)
 # Prompts are passed via environment variables to avoid shell-quoting issues.
 # ---------------------------------------------------------------------------
-
-# Verbatim system prompt
-export _UM_SYSTEM_PROMPT='Summarize a Claude Code session into a markdown note that lets a future session resume without reading the full transcript.
-
-Sections (omit any that don'"'"'t apply):
-
-## What happened
-1-3 sentences of what was accomplished.
-
-## Key decisions
-Bullets — decisions worth remembering.
-
-## In flight
-Bullets — work started but not finished, enough detail to resume.
-
-## Next steps
-Bullets — next actions identified.
-
-Be concrete: cite file paths, function names, commit hashes, ticket IDs. Skip vague phrases. For trivial sessions, write 2-3 sentences instead of headers.
-
-Output only the markdown body — no preamble, no code fences.'
 
 export _UM_USER_PROMPT="Session transcript (most recent turns):
 
