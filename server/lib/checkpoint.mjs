@@ -16,6 +16,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import lockfile from 'proper-lockfile';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
 
@@ -106,11 +107,24 @@ export async function doCheckpoint(args, ctx = {}) {
     }
 
     // Read raw captures (v0.5: read all; since/until accepted for future use)
+    // Lock each raw file's sibling .lock before reading to ensure consistency
+    // with concurrent writers (stop.sh + append-turn.mjs) that hold the same
+    // <date>.md.lock path via proper-lockfile / perl flock.
     const rawDir = path.join(vaultDir, 'captures', project, 'raw');
     const rawFiles = await fs.readdir(rawDir).catch(() => []);
     let transcript = '';
     for (const f of rawFiles.filter(f => f.endsWith('.md')).sort()) {
-      transcript += await fs.readFile(path.join(rawDir, f), 'utf8') + '\n\n';
+      const rawFilePath = path.join(rawDir, f);
+      const lockPath = rawFilePath + '.lock';
+      // Ensure the .lock file exists (proper-lockfile requires the file to exist)
+      await fs.writeFile(lockPath, '', { flag: 'a' });
+      let release;
+      try {
+        release = await lockfile.lock(lockPath);
+        transcript += await fs.readFile(rawFilePath, 'utf8') + '\n\n';
+      } finally {
+        if (release) await release().catch(() => {});
+      }
     }
 
     // Summarize (pass systemPrompt so the curated UM format is used, not generic output)
