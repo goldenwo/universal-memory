@@ -5,7 +5,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
-import { handleToolCall } from '../mem0-mcp-http.mjs';
+import { handleToolCall, handleCheckpointRequest } from '../mem0-mcp-http.mjs';
+
+// ---------- mock helpers (patterned after append-turn.test.mjs) ----------
+
+function mockRes() {
+  const res = {
+    statusCode: 200,
+    jsonBody: null,
+    status(code) { this.statusCode = code; return this; },
+    json(obj) { this.jsonBody = obj; return this; },
+  };
+  return res;
+}
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -414,4 +426,46 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
     else process.env.UM_VAULT_DIR = origVaultDir;
     await fs.rm(vaultDir, { recursive: true, force: true });
   }
+});
+
+// ---------- REST handler unit tests (Task 2.6) ----------
+
+test('POST /api/checkpoint 200 happy path (writesEnabled:true) → ok:true, schema_version:1', async () => {
+  const vaultDir = await makeVault();
+  // Seed a capture file so doCheckpoint has something to summarize
+  await seedCapture(vaultDir, 'rest-ck-proj', '2026-01-01T00.md', '# Session\nREST checkpoint test.');
+
+  const req = { body: { project: 'rest-ck-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    vaultDir,
+    writesEnabled: true,
+    _doCheckpoint: async (args, ctx) => ({
+      schema_version: 1,
+      ok: true,
+      summary_id: 'test-summary-id',
+      summary_path: 'sessions/rest-ck-proj/2026-01-01.md',
+      state_updated: true,
+      state_path: 'state/rest-ck-proj/state.md',
+      cost_usd: 0.001,
+      tokens_in: 100,
+      tokens_out: 50,
+      duration_ms: 123,
+    }),
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.jsonBody.ok, true);
+  assert.equal(res.jsonBody.schema_version, 1);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('POST /api/checkpoint 403 when writes disabled → ok:false, statusCode 403', async () => {
+  const req = { body: { project: 'some-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, { writesEnabled: false });
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.jsonBody.ok, false);
 });

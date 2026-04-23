@@ -3,8 +3,9 @@ info:
   title: universal-memory
   version: 0.4.0-alpha
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
-    subset of the full spec — only the 6 routes a Custom GPT needs (search,
-    state, add, delete, recent, append-turn). Full spec at /openapi.yaml.
+    subset of the full spec — only the 7 routes a Custom GPT needs (search,
+    state, add, delete, recent, append-turn, checkpoint). Full spec at
+    /openapi.yaml.
   license:
     name: MIT
     url: https://github.com/goldenwo/universal-memory/blob/main/LICENSE
@@ -198,6 +199,40 @@ paths:
                 $ref: "#/components/schemas/AppendTurnResponse"
         "400":
           description: Invalid request (bad slug, missing role, content too large)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Writes disabled (UM_MCP_WRITE_ENABLED not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/checkpoint:
+    post:
+      operationId: memory_checkpoint
+      summary: Force a session checkpoint (summary + state update)
+      description: "Triggers a server-side checkpoint for the given project: reads
+        capture logs, generates a session summary via LLM, and merges it into
+        state.md. Requires UM_MCP_WRITE_ENABLED=true. Parity with MCP tool
+        memory_checkpoint."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckpointRequest"
+      responses:
+        "200":
+          description: Checkpoint completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckpointResponse"
+        "400":
+          description: Soft checkpoint failure (e.g. cost cap hit, invalid project,
+            checkpoint in progress)
           content:
             application/json:
               schema:
@@ -441,6 +476,91 @@ components:
           type: integer
           minimum: 0
           description: Bytes appended to the file
+    CheckpointRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        project:
+          type: string
+          pattern: ^[a-zA-Z0-9._-]+$
+          description: Project slug to checkpoint. Must match ^[a-zA-Z0-9._-]+$.
+        since:
+          type: string
+          format: date-time
+          description: ISO 8601 start of capture window (inclusive). Defaults to all
+            captures.
+        until:
+          type: string
+          format: date-time
+          description: ISO 8601 end of capture window (inclusive). Defaults to now.
+        skip_state_merge:
+          type: boolean
+          default: false
+          description: When true, produce a summary but skip the state.md merge step.
+    CheckpointResponse:
+      description: Result of a successful checkpoint (ok:true) or soft failure (ok:false).
+      oneOf:
+        - type: object
+          title: CheckpointSuccess
+          required:
+            - schema_version
+            - ok
+            - summary_id
+            - summary_path
+            - state_updated
+            - cost_usd
+            - tokens_in
+            - tokens_out
+            - duration_ms
+          properties:
+            schema_version:
+              type: integer
+              enum:
+                - 1
+            ok:
+              type: boolean
+              enum:
+                - true
+            summary_id:
+              type: string
+              description: Filename stem of the written session summary
+            summary_path:
+              type: string
+              description: Vault-relative path of the written session summary
+            state_updated:
+              type: boolean
+              description: Whether state.md was updated
+            state_path:
+              oneOf:
+                - type: string
+                - type: "null"
+              description: Vault-relative path of state.md, or null when skip_state_merge=true
+            cost_usd:
+              type: number
+              description: Total LLM cost in USD for this checkpoint
+            tokens_in:
+              type: integer
+              description: Total input tokens consumed
+            tokens_out:
+              type: integer
+              description: Total output tokens produced
+            duration_ms:
+              type: integer
+              minimum: 0
+              description: Wall-clock duration in milliseconds
+        - type: object
+          title: CheckpointFailure
+          required:
+            - ok
+            - error
+          properties:
+            ok:
+              type: boolean
+              enum:
+                - false
+            error:
+              type: string
+              description: Machine-readable error code or human-readable message
     SearchFilters:
       type: object
       description: Optional post-filters applied after mem0 recall.

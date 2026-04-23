@@ -759,6 +759,32 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 }
 
 /**
+ * Exported handler for POST /api/checkpoint.
+ * Accepts a pre-parsed body via req.body (unit-test friendly).
+ * Supports DI of _doCheckpoint for testing without a real vault/LLM.
+ * @param {{ body: { project?, since?, until?, skip_state_merge? } }} req
+ * @param {{ status(code): this, json(obj): this }} res
+ * @param {{ vaultDir?: string, writesEnabled: boolean, _doCheckpoint?: Function }} ctx
+ */
+export async function handleCheckpointRequest(req, res, ctx) {
+	if (!ctx.writesEnabled) {
+		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
+		return;
+	}
+	const { project, since, until, skip_state_merge } = req.body || {};
+	const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
+	const result = await checkpointFn(
+		{ project, since, until, skip_state_merge },
+		{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR },
+	);
+	if (!result.ok) {
+		res.status(400).json(result);
+		return;
+	}
+	res.status(200).json(result);
+}
+
+/**
  * Shared search handler — called by both POST and GET /api/search.
  * Returns { results: [...] }.
  * Default filter excludes superseded/deprecated/rejected docs and docs with
@@ -1265,6 +1291,30 @@ const server = createServer(async (req, res) => {
 				},
 			};
 			await handleAppendTurnRequest(
+				{ body: reqBody },
+				httpRes,
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+			);
+			return;
+		}
+		if (url.pathname === '/api/checkpoint' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleCheckpointRequest(
 				{ body: reqBody },
 				httpRes,
 				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },

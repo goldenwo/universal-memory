@@ -39,3 +39,9 @@ test('POST /api/append-turn (memory_append_turn) is present in the Custom-GPT sp
   assert.match(spec, /\/api\/append-turn/, '/api/append-turn missing from Custom-GPT spec');
   assert.match(spec, /memory_append_turn/, 'memory_append_turn operationId missing from Custom-GPT spec');
 });
+
+test('POST /api/checkpoint (memory_checkpoint) is present in the Custom-GPT spec', () => {
+  const spec = generateCustomGPTActionsSpec();
+  assert.match(spec, /\/api\/checkpoint/, '/api/checkpoint missing from Custom-GPT spec');
+  assert.match(spec, /memory_checkpoint/, 'memory_checkpoint operationId missing from Custom-GPT spec');
+});
