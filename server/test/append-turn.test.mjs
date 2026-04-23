@@ -5,6 +5,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { doAppendTurn } from '../lib/append-turn.mjs';
+import { handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
+
+function mockRes() {
+  const res = {
+    statusCode: 200,
+    jsonBody: null,
+    status(code) { this.statusCode = code; return this; },
+    json(obj) { this.jsonBody = obj; return this; },
+  };
+  return res;
+}
 
 async function makeTempVault() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-'));
@@ -222,4 +233,26 @@ test('doAppendTurn returns ok=false when lock acquire fails (contract preserved,
   );
   assert.equal(result.ok, false);
   assert.match(result.error, /lock_acquire_failed.*ELOCKED/);
+});
+
+// ---------- REST handler unit tests ----------
+
+test('POST /api/append-turn writes a turn and returns compact shape', async () => {
+  const vault = await makeTempVault();
+  const req = { body: { project: 'rest-test', content: 'via REST', role: 'user' } };
+  const res = mockRes();
+  await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
+  assert.equal(res.statusCode, 200);
+  const body = res.jsonBody;
+  assert.equal(body.ok, true);
+  assert.equal(body.schema_version, 1);
+  assert.match(body.path, /captures\/rest-test\/raw/);
+});
+
+test('POST /api/append-turn returns 403 when writes disabled', async () => {
+  const req = { body: { project: 'p', content: 'c', role: 'user' } };
+  const res = mockRes();
+  await handleAppendTurnRequest(req, res, { writesEnabled: false });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.jsonBody.ok, false);
 });

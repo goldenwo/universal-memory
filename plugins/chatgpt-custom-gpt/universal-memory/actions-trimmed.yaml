@@ -3,8 +3,8 @@ info:
   title: universal-memory
   version: 0.4.0-alpha
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
-    subset of the full spec — only the 5 routes a Custom GPT needs (search,
-    state, add, delete, recent). Full spec at /openapi.yaml.
+    subset of the full spec — only the 6 routes a Custom GPT needs (search,
+    state, add, delete, recent, append-turn). Full spec at /openapi.yaml.
   license:
     name: MIT
     url: https://github.com/goldenwo/universal-memory/blob/main/LICENSE
@@ -171,6 +171,39 @@ paths:
                   - $ref: "#/components/schemas/SearchResponseFull"
         "400":
           description: Invalid project name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/append-turn:
+    post:
+      operationId: memory_append_turn
+      summary: Append a raw conversation turn to a project
+      description: Writes a single turn (user/assistant/system) to
+        captures/<project>/raw/<date>.md. Requires UM_MCP_WRITE_ENABLED=true.
+        Parity with MCP tool memory_append_turn; feeds the session-summary
+        pipeline on next checkpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendTurnRequest"
+      responses:
+        "200":
+          description: Turn appended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppendTurnResponse"
+        "400":
+          description: Invalid request (bad slug, missing role, content too large)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Writes disabled (UM_MCP_WRITE_ENABLED not set)
           content:
             application/json:
               schema:
@@ -350,6 +383,64 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CompactMemoryResult"
+    AppendTurnRequest:
+      type: object
+      required:
+        - project
+        - content
+        - role
+      additionalProperties: false
+      properties:
+        project:
+          type: string
+          pattern: ^[a-zA-Z0-9._-]+$
+          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+        content:
+          type: string
+          maxLength: 8192
+          description: Turn content (max 8 192 chars).
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+            - system
+          description: Speaker role.
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp. Defaults to server clock when omitted.
+        conversation_id:
+          type: string
+          description: Optional conversation identifier stored in the turn header.
+    AppendTurnResponse:
+      type: object
+      required:
+        - schema_version
+        - ok
+        - path
+        - appended
+        - bytes_written
+      properties:
+        schema_version:
+          type: integer
+          enum:
+            - 1
+        ok:
+          type: boolean
+          enum:
+            - true
+        path:
+          type: string
+          description: Vault-relative path written, e.g. captures/<project>/raw/<date>.md
+        appended:
+          type: boolean
+          enum:
+            - true
+        bytes_written:
+          type: integer
+          minimum: 0
+          description: Bytes appended to the file
     SearchFilters:
       type: object
       description: Optional post-filters applied after mem0 recall.

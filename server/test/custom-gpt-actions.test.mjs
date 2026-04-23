@@ -33,3 +33,9 @@ test('GET /api/recent/{project} is present in the Custom-GPT spec (?gpt=1 equiva
   const spec = generateCustomGPTActionsSpec();
   assert.match(spec, /\/api\/recent\/\{project\}/, 'new recent endpoint missing from Custom-GPT spec');
 });
+
+test('POST /api/append-turn (memory_append_turn) is present in the Custom-GPT spec', () => {
+  const spec = generateCustomGPTActionsSpec();
+  assert.match(spec, /\/api\/append-turn/, '/api/append-turn missing from Custom-GPT spec');
+  assert.match(spec, /memory_append_turn/, 'memory_append_turn operationId missing from Custom-GPT spec');
+});

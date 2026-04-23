@@ -740,6 +740,30 @@ function readBody(req) {
 }
 
 /**
+ * Exported handler for POST /api/append-turn.
+ * Accepts a pre-parsed body via req.body (unit-test friendly).
+ * @param {{ body: { project, content, role, timestamp?, conversation_id? } }} req
+ * @param {{ status(code): this, json(obj): this }} res
+ * @param {{ vaultDir?: string, writesEnabled: boolean }} ctx
+ */
+export async function handleAppendTurnRequest(req, res, ctx) {
+	if (!ctx.writesEnabled) {
+		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
+		return;
+	}
+	const { project, content, role, timestamp, conversation_id } = req.body || {};
+	const result = await doAppendTurn(
+		{ project, content, role, timestamp, conversation_id },
+		{ vaultDir: ctx.vaultDir },
+	);
+	if (!result.ok) {
+		res.status(400).json(result);
+		return;
+	}
+	res.status(200).json(result);
+}
+
+/**
  * Shared search handler — called by both POST and GET /api/search.
  * Returns { results: [...] }.
  * Default filter excludes superseded/deprecated/rejected docs and docs with
@@ -1226,6 +1250,30 @@ const server = createServer(async (req, res) => {
 
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
+			return;
+		}
+		if (url.pathname === '/api/append-turn' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleAppendTurnRequest(
+				{ body: reqBody },
+				httpRes,
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+			);
 			return;
 		}
 		if (url.pathname === '/api/delete' && req.method === 'POST') {

@@ -295,6 +295,50 @@ const SCHEMAS = {
     },
   },
 
+  AppendTurnRequest: {
+    type: 'object',
+    required: ['project', 'content', 'role'],
+    additionalProperties: false,
+    properties: {
+      project: {
+        type: 'string',
+        pattern: '^[a-zA-Z0-9._-]+$',
+        description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+      },
+      content: {
+        type: 'string',
+        maxLength: 8192,
+        description: 'Turn content (max 8 192 chars).',
+      },
+      role: {
+        type: 'string',
+        enum: ['user', 'assistant', 'system'],
+        description: 'Speaker role.',
+      },
+      timestamp: {
+        type: 'string',
+        format: 'date-time',
+        description: 'ISO 8601 timestamp. Defaults to server clock when omitted.',
+      },
+      conversation_id: {
+        type: 'string',
+        description: 'Optional conversation identifier stored in the turn header.',
+      },
+    },
+  },
+
+  AppendTurnResponse: {
+    type: 'object',
+    required: ['schema_version', 'ok', 'path', 'appended', 'bytes_written'],
+    properties: {
+      schema_version: { type: 'integer', enum: [1] },
+      ok: { type: 'boolean', enum: [true] },
+      path: { type: 'string', description: 'Vault-relative path written, e.g. captures/<project>/raw/<date>.md' },
+      appended: { type: 'boolean', enum: [true] },
+      bytes_written: { type: 'integer', minimum: 0, description: 'Bytes appended to the file' },
+    },
+  },
+
   DeleteRequest: {
     description:
       'Two shapes: A) `{ metadata: { id } }` to delete every mem0 entry whose metadata.id matches; B) `{ id }` to delete a single entry by mem0 UUID.',
@@ -694,6 +738,38 @@ function pathRecent() {
   };
 }
 
+function pathAppendTurn() {
+  return {
+    post: {
+      operationId: 'appendTurn',
+      summary: 'Append a raw conversation turn to a project',
+      description:
+        'Writes a single turn (user/assistant/system) to captures/<project>/raw/<date>.md. Requires UM_MCP_WRITE_ENABLED=true. Parity with MCP tool memory_append_turn; feeds the session-summary pipeline on next checkpoint.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': { schema: ref('AppendTurnRequest') },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Turn appended',
+          content: { 'application/json': { schema: ref('AppendTurnResponse') } },
+        },
+        400: {
+          ...ERROR_RESPONSE,
+          description: 'Invalid request (bad slug, missing role, content too large)',
+        },
+        403: {
+          ...ERROR_RESPONSE,
+          description: 'Writes disabled (UM_MCP_WRITE_ENABLED not set)',
+        },
+        ...RESP_500,
+      },
+    },
+  };
+}
+
 function pathDelete() {
   return {
     post: {
@@ -836,6 +912,7 @@ function buildSpec() {
       '/api/reindex': pathReindex(),
       '/api/state/{project}': pathState(),
       '/api/recent/{project}': pathRecent(),
+      '/api/append-turn': pathAppendTurn(),
       '/api/delete': pathDelete(),
       '/api/{id}': pathDeleteById(),
       '/mcp': pathMcp(),
@@ -925,6 +1002,7 @@ export function generateCustomGPTActionsSpec() {
   const addPath = pathAdd();
   const deletePath = pathDelete();
   const recentPath = pathRecent();
+  const appendTurnPath = pathAppendTurn();
 
   // POST /api/search only (drop GET; POST has richer filter support)
   const trimmedSearch = {
@@ -946,6 +1024,10 @@ export function generateCustomGPTActionsSpec() {
   const trimmedRecent = {
     get: cloneAndRewriteOperation(recentPath.get, 'memory_recent'),
   };
+  // POST /api/append-turn
+  const trimmedAppendTurn = {
+    post: cloneAndRewriteOperation(appendTurnPath.post, 'memory_append_turn'),
+  };
 
   const paths = {
     '/api/search': trimmedSearch,
@@ -953,6 +1035,7 @@ export function generateCustomGPTActionsSpec() {
     '/api/add': trimmedAdd,
     '/api/delete': trimmedDelete,
     '/api/recent/{project}': trimmedRecent,
+    '/api/append-turn': trimmedAppendTurn,
   };
 
   // Prune components.schemas to only those transitively referenced by the
@@ -985,7 +1068,7 @@ export function generateCustomGPTActionsSpec() {
     info: {
       ...full.info,
       description:
-        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 5 routes a Custom GPT needs (search, state, add, delete, recent). Full spec at /openapi.yaml.',
+        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 6 routes a Custom GPT needs (search, state, add, delete, recent, append-turn). Full spec at /openapi.yaml.',
     },
     servers: full.servers,
     paths,
