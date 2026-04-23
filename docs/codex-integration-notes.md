@@ -183,7 +183,7 @@ Non-blocking gap:
 Rationale:
 - Codex *does* have plugins and MCP, so we are not shut out. A plugin is producible today.
 - But the three blocking gaps (no SessionEnd, hooks not plugin-bundled, no Windows) mean a faithful port of the CC four-hook architecture is not achievable. Forcing it would ship a broken plugin — no session summaries, manual hooks.json editing, and no Windows support.
-- MCP support is stable and well-documented. UM's MCP server already exists (port 6335, 10 tools). Codex users can connect UM as an MCP server via `config.toml` today with zero UM-side code.
+- MCP support is stable and well-documented. UM's MCP server already exists (port 6335, 11 tools). Codex users can connect UM as an MCP server via `config.toml` today with zero UM-side code.
 - The pragmatic v0.3.0 shape for Codex is:
   - `plugins/codex/universal-memory/` directory with a `.codex-plugin/plugin.json` manifest + a `.mcp.json` that points at UM's MCP server. This is a **tiny plugin** — config only, no hooks, no scripts. Installs via the local-marketplace mechanism.
   - `plugins/codex/universal-memory/README.md` with MCP connector setup instructions (analogous to `docs/connecting-chatgpt-desktop.md` and `docs/connecting-claude-ai.md`).

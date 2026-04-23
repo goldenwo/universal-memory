@@ -162,7 +162,7 @@ If all four pass, ChatGPT Desktop is reading and writing the same vault Claude C
 ## 6. What works vs what doesn't
 
 ### Works
-- All 10 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — 4 reads (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible by default; 6 writes gated behind `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` (and filtered out of `tools/list` when unset).
+- All 11 MCP tools listed at [`docs/mcp-tools.md`](mcp-tools.md) — 4 reads (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible by default; 7 writes gated behind `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` (and filtered out of `tools/list` when unset).
 - Read responses use compact shape by default in v0.4 (`{id, title, score, snippet}`, ~200 bytes per hit). Pass `full: true` for full document bodies.
 - Captures written from ChatGPT Desktop appear in your Claude Code sessions at next session start (indexed by mem0, readable via `memory_search` / `memory_state` / `memory_recent`).
 - The rubric pasted into Custom Instructions steers ChatGPT to call `memory_capture` on explicit "remember" requests, same as Claude Code hook-injected rubric does.

@@ -339,7 +339,7 @@ export const TOOLS = [
  * Names of MCP tools that mutate state. Exported so tests can import the
  * canonical set without duplicating it.
  *
- * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 10 so
+ * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 11 so
  * the runtime can still execute write tools when UM_MCP_WRITE_ENABLED=true.
  */
 export const WRITE_TOOL_NAMES = new Set([
@@ -359,7 +359,7 @@ export function isWriteEnabled() {
 
 /**
  * Returns the tools visible to MCP clients given the current write-enabled state.
- * When writeEnabled is true (or omitted and env var is true/1), all 10 tools are returned.
+ * When writeEnabled is true (or omitted and env var is true/1), all 11 tools are returned.
  * When false (default when UM_MCP_WRITE_ENABLED is unset), write tools are filtered out.
  *
  * @param {boolean} [writeEnabled] — if omitted, reads process.env.UM_MCP_WRITE_ENABLED

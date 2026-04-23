@@ -652,14 +652,14 @@ mcp_call() {
 }
 
 # T10-A: tools/list — tool visibility branches on UM_MCP_WRITE_ENABLED
-# When UM_MCP_WRITE_ENABLED=true|1 : all 10 tools (reads + writes)
+# When UM_MCP_WRITE_ENABLED=true|1 : all 11 tools (reads + writes)
 # When unset, =false, or =0       : 4 read-only tools (writes filtered)
 # NOTE: plan spec said "5 tools (reads only)" — actual code path yields 4:
 #   reads  = { memory_search, memory_list, memory_state, memory_recent }
-#   writes = { memory_add, memory_delete, memory_capture, memory_checkpoint, memory_forget, memory_supersede }
-#   10 - 6 = 4 read tools. The plan numeric is superseded by the actual code path.
+#   writes = { memory_add, memory_delete, memory_capture, memory_checkpoint, memory_forget, memory_supersede, memory_append_turn }
+#   11 - 7 = 4 read tools. The plan numeric is superseded by the actual code path.
 if [ "${UM_MCP_WRITE_ENABLED:-}" = "true" ] || [ "${UM_MCP_WRITE_ENABLED:-}" = "1" ]; then
-	echo "[smoke]     T10-A: tools/list advertises all 10 tools (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED})"
+	echo "[smoke]     T10-A: tools/list advertises all 11 tools (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED})"
 	TOOLS_RESP=$(curl -sf -X POST "$ENDPOINT/mcp" \
 		-H 'Content-Type: application/json' \
 		-d '{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}')
@@ -669,12 +669,12 @@ data = json.load(sys.stdin)
 tools = [t['name'] for t in data.get('result', {}).get('tools', [])]
 expected = ['memory_search','memory_add','memory_list','memory_delete',
             'memory_state','memory_recent','memory_capture','memory_checkpoint',
-            'memory_forget','memory_supersede']
+            'memory_forget','memory_supersede','memory_append_turn']
 missing = [t for t in expected if t not in tools]
 if missing:
     print('FAIL: missing tools:', missing)
     sys.exit(1)
-print(f'OK T10-A: all 10 tools advertised (writes enabled): {tools}')
+print(f'OK T10-A: all 11 tools advertised (writes enabled): {tools}')
 " || { echo "FAIL: T10-A tools/list check failed (writes enabled)"; exit 1; }
 else
 	echo "[smoke]     T10-A: tools/list advertises 4 read-only tools (UM_MCP_WRITE_ENABLED unset/false)"
