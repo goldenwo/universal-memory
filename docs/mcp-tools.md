@@ -544,3 +544,18 @@ will accept, not what the vault contains.
 If you front the server with a reverse proxy, you can still optionally
 gate `/openapi.yaml` behind auth — but doing so breaks ChatGPT Custom GPT's
 "Import from URL" flow, which requires unauthenticated schema fetch.
+
+### Adding a summarizer backend
+
+To register a new summarizer backend (e.g. anthropic, google, a custom
+local endpoint):
+
+1. Write an invoke function in `server/lib/summarize.mjs` with the
+   signature `async (transcript, ctx) => ({summary, costUsd, tokensIn, tokensOut})`.
+2. Add a registry entry to `BACKENDS`: `{ name: 'foo', invoke: fooInvoke, requires: ['FOO_KEY'] }`.
+3. Drop an optional fallback: `{ name: 'foo', invoke: null, fallback: 'openai', reason: 'upstream TBD' }`.
+4. Tests in `server/test/summarize.test.mjs` iterate `Object.keys(BACKENDS)` —
+   new backends are auto-covered; add a backend-specific case only if stubbing differs.
+
+v0.7's provider-neutrality theme uses this pattern to add anthropic +
+google + additional ollama variants without touching dispatch logic.
