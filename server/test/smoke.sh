@@ -772,30 +772,44 @@ assert 'results' in result, 'FAIL: memory_recent missing results key: ' + result
 print(f'OK T10-D: memory_recent returns {{results:[...]}} shape ({len(result[\"results\"])} item(s))')
 " || { echo "FAIL: T10-D memory_recent failed"; exit 1; }
 
-# T10-E: memory_checkpoint returns a structured error
-#
-# v0.4 note (Phase B.3 schema hygiene): memory_checkpoint is in WRITE_TOOL_NAMES,
-# so with default UM_MCP_WRITE_ENABLED=false the writes-disabled gate fires
-# BEFORE the stub code path. We accept either error form:
-#   - "MCP writes disabled" (writes gate, default config — v0.4+)
-#   - "not implemented" / "stub" / "/um-checkpoint" (stub path, only when writes enabled)
-# Both are legitimate signals to the caller that the tool isn't going to run
-# the full checkpoint pipeline; the smoke only needs to verify we return a
-# structured error, not a specific one.
-echo "[smoke]     T10-E: memory_checkpoint returns structured error"
-T10E_RESP=$(mcp_call 105 memory_checkpoint '{}')
-echo "$T10E_RESP" | python3 -c "
+# T10-E: memory_checkpoint — real write-path (v0.5) or gate error (writes-disabled)
+echo "[smoke]     T10-E: memory_checkpoint"
+if [ "${UM_MCP_WRITE_ENABLED:-}" = "true" ] && [ -n "${UM_VAULT_DIR:-}" ]; then
+    # Writes enabled — assert full pipeline runs
+    # Seed a raw capture for a test project
+    mcp_call 99 memory_append_turn '{"project":"t10e","content":"Seed turn for checkpoint","role":"user"}' >/dev/null
+    # Now checkpoint — expect summary + state.md written
+    T10E_RESP=$(mcp_call 105 memory_checkpoint '{"project":"t10e"}')
+    echo "$T10E_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
-assert result.get('ok') is False, 'expected ok:false for checkpoint: ' + result_text
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert 'summary_id' in result, 'expected summary_id'
+assert result.get('state_updated') is True, 'expected state_updated'
+print('OK T10-E (writes enabled): memory_checkpoint produced summary + state.md')
+" || { echo "FAIL: T10-E real pipeline failed"; exit 1; }
+    # Verify on-disk
+    compgen -G "$UM_VAULT_DIR/sessions/t10e/"*.md >/dev/null || { echo "FAIL: T10-E session file missing"; exit 1; }
+    [ -f "$UM_VAULT_DIR/state/t10e/state.md" ] || { echo "FAIL: T10-E state.md missing"; exit 1; }
+else
+    # Writes disabled — keep post-v0.4 behavior: accept structured gate error
+    # (matches current smoke.sh T10-E post-fix state)
+    T10E_RESP=$(mcp_call 105 memory_checkpoint '{}')
+    echo "$T10E_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is False, 'expected ok:false for disabled: ' + result_text
 err = result.get('error', '')
-accepted = ('not implemented' in err or 'stub' in err or '/um-checkpoint' in err
-            or 'MCP writes disabled' in err or 'writes disabled' in err.lower())
-assert accepted, 'expected stub OR writes-disabled message, got: ' + result_text
-print('OK T10-E: memory_checkpoint returns expected error (' + err[:60] + '...)')
-" || { echo "FAIL: T10-E memory_checkpoint error check failed"; exit 1; }
+accepted = ('MCP writes disabled' in err or 'writes disabled' in err.lower()
+            or 'not implemented' in err or '/um-checkpoint' in err)
+assert accepted, 'expected writes-disabled or stub error: ' + result_text
+print('OK T10-E (writes disabled): returned structured gate error')
+" || { echo "FAIL: T10-E gate-error assertion failed"; exit 1; }
+fi
 
 # T10-F: write tools disabled (default) — capture/forget/supersede return error
 echo "[smoke]     T10-F: write tools return error when UM_MCP_WRITE_ENABLED not set"
