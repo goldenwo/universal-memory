@@ -74,7 +74,18 @@ export async function doCheckpoint(args, ctx = {}) {
     const promptPath = promptDir
       ? path.join(promptDir, 'summarize.txt')
       : DEFAULT_SUMMARIZE_PROMPT_PATH;
-    systemPrompt = await fs.readFile(promptPath, 'utf8');
+    try {
+      systemPrompt = await fs.readFile(promptPath, 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return {
+          schema_version: 1,
+          ok: false,
+          error: `summarize prompt missing at ${promptPath}; check $UM_PROMPT_DIR or reinstall plugin`,
+        };
+      }
+      throw err;
+    }
   }
 
   const t0 = Date.now();
