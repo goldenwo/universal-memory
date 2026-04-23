@@ -25,6 +25,7 @@ LOCK_FILE="$RAW_FILE.lock"
 # Write truncated transcript to a temp file so perl can read it without
 # conflicting with the heredoc that provides perl's program source.
 _UM_TMP=$(mktemp)
+chmod 600 "$_UM_TMP"   # transcript may contain secrets/PII — restrict before writing
 trap 'rm -f "$_UM_TMP"' EXIT
 printf '%s' "$TRANSCRIPT" | head -c 10000 > "$_UM_TMP"
 
