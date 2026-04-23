@@ -352,19 +352,39 @@ curl -s http://localhost:6335/mcp \
 
 ### memory_checkpoint
 
-Force a session summary and state update. **(stub, v0.3 — not implemented server-side)**
+Trigger a session summary + state refresh for the given project. Pipeline: reads raw captures → LLM-summarizes → writes to `sessions/<project>/` → merges into `state/<project>/state.md` atomically → re-indexes into mem0. Cost-capped per day per project. Parity with `/um-checkpoint` in Claude Code.
 
-**Input schema:**
+**Requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`.**
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `project` | string | — (required) | Project slug |
+| `since` | string (ISO 8601) | last session_summary.valid_from | Catchup lower bound; optional |
+| `until` | string (ISO 8601) | now | Catchup upper bound; optional |
+| `skip_state_merge` | boolean | false | Summary-only run; omit state.md reindex; optional |
+
+**Response (success):**
 
 ```json
-{ "project": "string (optional)" }
+{
+  "schema_version": 1,
+  "ok": true,
+  "summary_id": "session-2026-04-23T14-32-00Z",
+  "summary_path": "sessions/universal-memory/session-2026-04-23T14-32-00Z.md",
+  "state_updated": true,
+  "state_path": "state/universal-memory/state.md",
+  "cost_usd": 0.0023,
+  "tokens_in": 1840,
+  "tokens_out": 412,
+  "duration_ms": 5200
+}
 ```
 
-**Response:** `{ "ok": false, "error": "memory_checkpoint is not implemented server-side in v0.2.x — run /um-checkpoint in Claude Code or execute hooks/session-end.sh directly. Full MCP-driven implementation requires hook-in-container infrastructure planned for v0.3." }`
+**Response (writes disabled):** `{ "ok": false, "error": "MCP writes disabled; set UM_MCP_WRITE_ENABLED=true ..." }`
 
-This tool is advertised in the tools list so MCP clients can discover it. The server-side implementation is deferred to v0.3 because `session-end.sh` requires host filesystem access and env vars (`UM_OPENAI_API_KEY`) that are not available inside the container.
-
-**Use instead:** In Claude Code, run `/um-checkpoint`. From a terminal, execute `hooks/session-end.sh` directly with `UM_PROJECT=<project>`.
+**Note:** If `UM_SUMMARIZER=claude-agent-sdk` is set server-side, it falls back to `openai`/`ollama` with a warning log because Docker cannot spawn a host-side Claude Code process.
 
 ---
 

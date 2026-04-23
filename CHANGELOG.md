@@ -6,6 +6,10 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`memory_checkpoint` server-side implementation** — triggers full session-end pipeline (summary + state merge + reindex) from any MCP surface. Drops v0.4 stub; see MIGRATION.md.
+
 ### Fixed
 
 - **`installer/lib/marker-block.sh` idempotency** — re-running `install.sh` or

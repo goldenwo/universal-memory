@@ -144,7 +144,7 @@ Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) ret
 | `memory_recent` | read | Recent authored docs for a project, filesystem-mtime-sorted (`project` required) |
 | `memory_add` | write | Add a fact to the index |
 | `memory_capture` | write | Write a new authored document to the vault |
-| `memory_checkpoint` | write | Force session summary + state refresh **(stub — returns actionable error pointing at `/um-checkpoint`)** |
+| `memory_checkpoint` | write | Trigger session summary + state refresh |
 | `memory_forget` | write | Deprecate a document by ID |
 | `memory_supersede` | write | Replace a document; preserves audit chain |
 | `memory_delete` | write | Remove a memory from the index |
