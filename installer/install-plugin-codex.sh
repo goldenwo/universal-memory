@@ -53,7 +53,9 @@ fi
 _read_plugin_version() {
   local dir="$1"
   local pjson
-  if [ -f "$dir/.claude-plugin/plugin.json" ]; then
+  if [ -f "$dir/.codex-plugin/plugin.json" ]; then
+    pjson="$dir/.codex-plugin/plugin.json"
+  elif [ -f "$dir/.claude-plugin/plugin.json" ]; then
     pjson="$dir/.claude-plugin/plugin.json"
   elif [ -f "$dir/plugin.json" ]; then
     pjson="$dir/plugin.json"

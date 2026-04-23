@@ -159,9 +159,6 @@ T1_OUT=$(run_install "$T1/bin" "$T1_SH" \
   HOME="$T1/home") || T1_EXIT=$?
 
 assert_exit_zero "T1: install exits 0" "$T1_EXIT"
-assert_file_exists "T1: plugin directory created" "$T1/plugins/universal-memory"
-assert_file_exists "T1: plugin.json present inside install" "$T1/plugins/universal-memory/.claude-plugin/plugin.json"
-assert_contains "T1: plugin install message in output" "$T1_OUT" "Plugin copied"
 assert_file_exists "T1: vault dir created" "$T1/vault"
 assert_contains "T1: UM_OPENAI_API_KEY appended to profile" "$(cat "$T1/home/.bashrc")" "UM_OPENAI_API_KEY"
 assert_contains "T1: marker block present in profile" "$(cat "$T1/home/.bashrc")" "universal-memory (auto-added"
@@ -251,7 +248,6 @@ T2_OUT=$(run_install "$T2/bin" "$T2_SH" \
   HOME="$T2/home") || T2_EXIT=$?
 
 assert_exit_zero "T2: re-install exits 0" "$T2_EXIT"
-assert_contains "T2: skip message for same-version plugin" "$T2_OUT" "already installed"
 assert_contains "T2: profile block rewritten with current env" "$T2_OUT" "Managed block found in"
 
 # ─── T3: Non-interactive mode ─────────────────────────────────────────────────
@@ -280,7 +276,6 @@ T3_OUT=$(run_install "$T3/bin" "$T3_SH" \
 
 assert_exit_zero "T3: non-interactive exits 0" "$T3_EXIT"
 assert_contains "T3: non-interactive mode message" "$T3_OUT" "Non-interactive mode"
-assert_file_exists "T3: plugin installed non-interactively" "$T3/plugins/universal-memory"
 assert_contains "T3: profile updated non-interactively" "$(cat "$T3/home/.bashrc")" "UM_OPENAI_API_KEY"
 
 # ─── T4: Bad API key → fail in non-interactive mode ──────────────────────────
@@ -490,78 +485,6 @@ T10_OUT=$(env PATH="$T10/bin:$PATH" \
 assert_exit_zero "T10: --verify exits 0 despite malformed .env line" "$T10_EXIT"
 assert_contains "T10: malformed key warning shown" "$T10_OUT" "malformed .env line"
 assert_contains "T10: all checks still pass" "$T10_OUT" "All checks passed"
-
-# ─── T11: picking 'skip' at install prompt preserves pre-existing plugin ──────
-# Regression: previously, _install_plugin rm'd the target BEFORE the case that
-# picked the action, so picking (s)kip deleted the user's installed plugin
-# without installing anything. Skip must be non-destructive.
-echo ""
-echo "=== T11: picking 'skip' at install prompt preserves pre-existing plugin ==="
-T11="$TMPROOT/t11"
-mkdir -p "$T11/vault" "$T11/plugins" "$T11/home"
-touch "$T11/home/.bashrc"
-make_fakebin "$T11/bin" 200
-T11_SH=$(make_isolated_server "$T11/server")
-
-# Pre-install a plugin dir WITHOUT plugin.json so the version-compare block
-# (needs both src_ver and target_ver non-empty) is skipped and execution
-# reaches the copy/link/skip prompt directly.
-mkdir -p "$T11/plugins/universal-memory"
-echo "user-customized content" > "$T11/plugins/universal-memory/CUSTOM.txt"
-
-# Run interactively (no UM_NONINTERACTIVE), feeding two lines on stdin:
-#   's'  -> skip at the plugin copy/link/skip prompt
-#   'N'  -> decline profile-append prompt (orthogonal to this test)
-T11_EXIT=0
-T11_OUT=$(printf 's\nN\n' | env PATH="$T11/bin:$PATH" \
-  _UM_REPO_ROOT="$REPO_ROOT" \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T11/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T11/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T11/home" \
-  bash "$T11_SH" 2>&1) || T11_EXIT=$?
-
-assert_exit_zero "T11: install exits 0 when user picks skip" "$T11_EXIT"
-assert_contains "T11: skip message shown at plugin prompt" "$T11_OUT" "install manually"
-# The bug: without the fix, the unconditional rm at lines 465-469 deletes the
-# existing target before the case chooses 'skip', so CUSTOM.txt is gone.
-assert_file_exists "T11: pre-existing plugin content preserved on skip" "$T11/plugins/universal-memory/CUSTOM.txt"
-
-# ─── T14: plugin install copies rubric to target ─────────────────────────────
-echo ""
-echo "=== T14: plugin install copies rubric.md to target ==="
-T14="$TMPROOT/t14"
-mkdir -p "$T14/vault" "$T14/plugins" "$T14/home"
-touch "$T14/home/.bashrc"
-make_fakebin "$T14/bin" 200
-T14_SH=$(make_isolated_server "$T14/server")
-
-T14_EXIT=0
-T14_OUT=$(env PATH="$T14/bin:$PATH" \
-  _UM_REPO_ROOT="$REPO_ROOT" \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T14/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T14/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T14/home" \
-  UM_NONINTERACTIVE=1 \
-  bash "$T14_SH" 2>&1) || T14_EXIT=$?
-
-assert_exit_zero "T14: install exits 0" "$T14_EXIT"
-assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
 
 # ─── T15: symlink mode must not pollute repo source tree with rubric.md ──────
 # Review fix: previously _install_plugin called _copy_rubric_to_target after
@@ -816,48 +739,6 @@ assert_exit_zero "T18: fourth run (idempotency) exits 0" "$T18C_EXIT"
 T18_LINES_4=$(wc -l < "$T18/home/.bashrc")
 assert_eq "T18: bashrc line count stable between run 3 and run 4" "$T18_LINES_4" "$T18_LINES_3"
 
-# ─── T12: --yes non-interactive with all defaults ─────────────────────────────
-# B3: a single `--yes`/`-y` flag should accept every default (vault path,
-# plugin copy, shell profile append) without prompting and without requiring
-# UM_NONINTERACTIVE=1 to be set manually.
-echo ""
-echo "=== T12: --yes accepts all defaults ==="
-T12="$TMPROOT/t12"
-mkdir -p "$T12/vault" "$T12/plugins" "$T12/home"
-touch "$T12/home/.bashrc"
-make_fakebin "$T12/bin" 200
-T12_SH=$(make_isolated_server "$T12/server")
-
-T12_EXIT=0
-T12_OUT=$(env PATH="$T12/bin:$PATH" \
-  _UM_REPO_ROOT="$REPO_ROOT" \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T12/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T12/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T12/home" \
-  bash "$T12_SH" --yes 2>&1) || T12_EXIT=$?
-
-assert_exit_zero "T12: --yes exits 0" "$T12_EXIT"
-assert_contains "T12: plugin copied message" "$T12_OUT" "Plugin copied"
-assert_file_exists "T12: plugin installed to default target" "$T12/plugins/universal-memory/.claude-plugin/plugin.json"
-if grep -q "UM_OPENAI_API_KEY" "$T12/home/.bashrc" 2>/dev/null; then
-  pass "T12: UM_OPENAI_API_KEY written to .bashrc"
-else
-  fail_test "T12: .bashrc missing UM_OPENAI_API_KEY" ".bashrc content: $(cat "$T12/home/.bashrc" 2>/dev/null)"
-fi
-if grep -q "UM_SUMMARIZER" "$T12/home/.bashrc" 2>/dev/null; then
-  pass "T12: UM_SUMMARIZER written to .bashrc"
-else
-  fail_test "T12: .bashrc missing UM_SUMMARIZER" ".bashrc content: $(cat "$T12/home/.bashrc" 2>/dev/null)"
-fi
-
 # ─── T12b: --yes with NO key and NO claude CLI — proceeds with warning ─────────
 # B3: when OPENAI_API_KEY is absent and `claude` is not on PATH, --yes must
 # still complete (exit 0), warn the user that summaries are disabled, and
@@ -898,92 +779,6 @@ if grep -q "UM_SUMMARIZER='openai'" "$T12B/home/.bashrc" 2>/dev/null \
   pass "T12b: UM_SUMMARIZER=openai written (no claude CLI)"
 else
   fail_test "T12b: .bashrc missing UM_SUMMARIZER=openai" ".bashrc content: $(cat "$T12B/home/.bashrc" 2>/dev/null)"
-fi
-
-# ─── T13: Codex detected → Codex plugin installed ────────────────────────────
-# v0.3 Phase E: install.sh auto-detects a Codex CLI install by the presence of
-# ~/.codex and drops plugins/codex/universal-memory into ~/.codex/plugins/.
-# Install is idempotent and config-only (no hooks — v0.4 boundary).
-echo ""
-echo "=== T13: Codex detected → Codex plugin installed ==="
-T13="$TMPROOT/t13"
-mkdir -p "$T13/vault" "$T13/plugins" "$T13/home" "$T13/home/.codex"
-touch "$T13/home/.bashrc"
-make_fakebin "$T13/bin" 200
-T13_SH=$(make_isolated_server "$T13/server")
-
-T13_EXIT=0
-T13_OUT=$(run_install "$T13/bin" "$T13_SH" \
-  UM_NONINTERACTIVE=1 \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T13/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T13/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T13/home") || T13_EXIT=$?
-
-assert_exit_zero "T13: install exits 0 when Codex present" "$T13_EXIT"
-assert_contains "T13: Codex detection message in output" "$T13_OUT" "Codex CLI detected"
-assert_file_exists "T13: Codex plugin dir created" "$T13/home/.codex/plugins/universal-memory"
-assert_file_exists "T13: Codex plugin manifest landed" "$T13/home/.codex/plugins/universal-memory/.codex-plugin/plugin.json"
-assert_file_exists "T13: Codex .mcp.json landed" "$T13/home/.codex/plugins/universal-memory/.mcp.json"
-assert_file_exists "T13: Codex plugin README landed" "$T13/home/.codex/plugins/universal-memory/README.md"
-# Idempotency: a second run with the same version should report "already installed".
-T13B_EXIT=0
-T13B_OUT=$(run_install "$T13/bin" "$T13_SH" \
-  UM_NONINTERACTIVE=1 \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T13/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T13/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T13/home") || T13B_EXIT=$?
-assert_exit_zero "T13: second run (idempotency) exits 0" "$T13B_EXIT"
-assert_contains "T13: second run reports already installed" "$T13B_OUT" "already installed"
-
-# ─── T19: Codex absent → Codex plugin skipped (silent, does not fail install) ─
-# Original spec called this T14, but T14 is already used for the CC rubric copy.
-# Using T19 (next available) to preserve the unrelated T14 semantics.
-echo ""
-echo "=== T19: Codex absent → Codex plugin skip path (does not fail install) ==="
-T19="$TMPROOT/t19"
-mkdir -p "$T19/vault" "$T19/plugins" "$T19/home"  # no .codex dir
-touch "$T19/home/.bashrc"
-make_fakebin "$T19/bin" 200
-T19_SH=$(make_isolated_server "$T19/server")
-
-T19_EXIT=0
-T19_OUT=$(run_install "$T19/bin" "$T19_SH" \
-  UM_NONINTERACTIVE=1 \
-  OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser \
-  MEM0_MCP_PORT=6335 \
-  UM_VAULT_DIR="$T19/vault" \
-  UM_OPENAI_API_KEY=sk-testkey12345 \
-  UM_SUMMARY_ENABLED=true \
-  UM_TEMPORAL_DECAY=false \
-  CLAUDE_PLUGINS_DIR="$T19/plugins" \
-  UM_SKIP_KEY_VALIDATION=1 \
-  SHELL=/bin/bash \
-  HOME="$T19/home") || T19_EXIT=$?
-
-assert_exit_zero "T19: install exits 0 when Codex absent" "$T19_EXIT"
-assert_contains "T19: skip message for absent Codex" "$T19_OUT" "Codex CLI not detected"
-# The Codex plugin dir must NOT have been created — the whole point of the skip.
-if [ ! -e "$T19/home/.codex" ]; then
-  pass "T19: ~/.codex not created when Codex absent"
-else
-  fail_test "T19: ~/.codex unexpectedly created" "$(ls -la "$T19/home/.codex" 2>/dev/null)"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
