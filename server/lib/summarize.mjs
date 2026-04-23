@@ -43,6 +43,10 @@ export async function summarize(transcript, ctx = {}) {
 // DI for tests: per-backend invoke functions accept ctx.openaiClient / ctx.ollamaFetch for stubbing.
 
 async function openaiInvoke(transcript, ctx) {
+  // Friendly error if no API key is configured (avoids SDK's cryptic stack trace)
+  if (!ctx.openaiClient && !process.env.UM_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+    throw new Error('summarize backend=openai requires UM_OPENAI_API_KEY or OPENAI_API_KEY env var');
+  }
   // Lazy-import openai SDK; in ctx, accept a pre-made client for test stubbing
   const client = ctx.openaiClient ?? new (await import('openai')).default({
     apiKey: process.env.UM_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY,
