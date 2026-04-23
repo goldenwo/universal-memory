@@ -1,6 +1,6 @@
-# `um` CLI — v0.4 spec
+# `um` CLI — v0.5 spec
 
-**Version:** v0.4.0-alpha (first release)
+**Version:** v0.5.0-alpha
 **Canonical name:** `um` (per Task 0.6 — no default-installed conflicts on Git Bash / Ubuntu / macOS)
 **Invocation:** `um <subcommand> [flags] [args]`
 
