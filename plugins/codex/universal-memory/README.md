@@ -189,7 +189,7 @@ If all four pass, Codex is reading and writing the same vault that Claude Code u
 
 ## 7. Status and roadmap
 
-- **Version:** 0.4.0-alpha (tracks v0.4 of universal-memory overall; Codex plugin remains config-only).
+- **Version:** 0.5.0-alpha (tracks v0.5 of universal-memory overall; Codex plugin remains config-only).
 - **Scope:** MCP connector only — no lifecycle hooks.
 - **Upstream gaps blocking full parity** (tracked in [`docs/codex-integration-notes.md`](../../../docs/codex-integration-notes.md)):
   1. Codex v0.121 has no `SessionEnd` event.
