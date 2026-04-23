@@ -101,6 +101,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: |
+          sudo apt-get install -y shellcheck 2>/dev/null || brew install shellcheck
+          shellcheck installer/*.sh installer/lib/*.sh \
+                     plugins/claude-code/universal-memory/bin/um \
+                     plugins/claude-code/universal-memory/bin/um-capture \
+                     plugins/claude-code/universal-memory/bin/um-forget \
+                     plugins/claude-code/universal-memory/bin/um-preview \
+                     plugins/claude-code/universal-memory/bin/um-supersede \
+                     plugins/claude-code/universal-memory/bin/um-tunnel \
+                     plugins/claude-code/universal-memory/hooks/*.sh \
+                     plugins/claude-code/universal-memory/hooks/lib/*.sh
       # macOS runners don't ship pyyaml; install-cli.sh preflight checks for it.
       # ubuntu-latest has python3-yaml out of the box; skip on Linux.
       - name: Ensure pyyaml (macOS)

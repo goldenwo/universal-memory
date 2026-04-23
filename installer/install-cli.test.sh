@@ -56,6 +56,9 @@ assert_exit_nonzero() {
 # ─── Temp root ────────────────────────────────────────────────────────────────
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
+# Portable mktemp subdirectory: mktemp -d -p is GNU-only; macOS requires TMPDIR=.
+mktemp_in() { TMPDIR="$1" mktemp -d; }
+mktemp_in_t() { TMPDIR="$1" mktemp -d "${2:-tmp.XXXXXX}"; }
 
 # make_fakepython3 <dest_dir>
 # Creates a fake python3 that succeeds for 'import yaml'.
@@ -315,7 +318,7 @@ assert_eq "T7: UM_LIB_DIR round-trips through rc correctly" "$T7_SOURCE_OUT" "$T
 # run but awk didn't strip the preceding blank line from prior runs → unbounded
 # bashrc growth (1 extra blank line per re-run). Fix: awk buffers blank lines and
 # discards the buffer when it sees the marker-start sentinel.
-T8=$(mktemp -d -p "$TMPROOT" "t8.XXXXXX")
+T8=$(mktemp_in_t "$TMPROOT" "t8.XXXXXX")
 T8_HOME="$T8/home"
 T8_LIB="$T8_HOME/.local/share/um/lib"
 mkdir -p "$T8_HOME" "$T8_LIB"
