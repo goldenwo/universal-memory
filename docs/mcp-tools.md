@@ -24,14 +24,22 @@ curl -s http://localhost:6335/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-**Default visibility (v0.4):** `tools/list` returns the 4 read tools
-(`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6
+**Default visibility (v0.5):** `tools/list` returns the 4 read tools
+(`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 7
 write tools (`memory_add`, `memory_delete`, `memory_capture`,
-`memory_checkpoint`, `memory_forget`, `memory_supersede`) are filtered out
-unless `UM_MCP_WRITE_ENABLED=true` is set on the server — see
+`memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`)
+are filtered out unless `UM_MCP_WRITE_ENABLED=true` is set on the server — see
 [Write tools — enabling](#write-tools--enabling). This schema-hygiene filter
 keeps the default context footprint small without hiding capability from
 operators who opt in.
+
+**Note on `UM_SUMMARIZE_MODEL` config parity:** The summarization model can be
+configured in `server/.env` as `UM_SUMMARIZE_MODEL`. If you also set this in
+your CC shell env (for `claude-agent-sdk` mode), keep the two in sync — the
+server `.env` value is authoritative for server-side summarization, but
+`hooks/lib/summarize.sh` reads from the CC shell env for hook-driven
+summarization. Mismatches result in different model tiers being used for
+server vs hook paths.
 
 ---
 
@@ -350,6 +358,64 @@ curl -s http://localhost:6335/mcp \
 
 ---
 
+### memory_append_turn
+
+Append a conversation turn to the raw-capture pipeline for a project. Enables non-CC surfaces (Claude.ai, ChatGPT Desktop, Codex) to feed raw turns into the vault — the same captures that the Claude Code Stop hook writes automatically. Subsequent `memory_checkpoint` calls will synthesize these turns into session summaries and refresh `state.md`.
+
+Distinct from `memory_add` (mem0 fact extraction, no project structure) and `memory_capture` (authored documents with frontmatter). Use `memory_append_turn` when you want turn-level capture that feeds the session-end pipeline.
+
+**Requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`.**
+
+**Parameters:**
+
+| Arg | Required | Default | Purpose |
+|-----|----------|---------|---------|
+| `project` | yes | — | Project slug (`^[a-zA-Z0-9._-]+$`) |
+| `content` | yes | — | Turn text (max 8192 chars) |
+| `role` | yes | — | `user` / `assistant` / `system` |
+| `timestamp` | no | now-UTC | ISO 8601 timestamp |
+| `conversation_id` | no | — | Optional grouping hint |
+
+**Example request (JSON-RPC via MCP):**
+
+```json
+{ "project": "myproj", "content": "Hello", "role": "user" }
+```
+
+**Example (curl):**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc":"2.0","id":10,"method":"tools/call",
+    "params": {
+      "name": "memory_append_turn",
+      "arguments": {
+        "project": "myproj",
+        "content": "What is the current state of the universal-memory project?",
+        "role": "user"
+      }
+    }
+  }'
+```
+
+**Response (success):**
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "path": "captures/myproj/raw/2026-04-22.md",
+  "appended": true,
+  "bytes_written": 384
+}
+```
+
+**Response (writes disabled):** `{ "ok": false, "error": "MCP writes disabled; set UM_MCP_WRITE_ENABLED=true ..." }`
+
+---
+
 ### memory_checkpoint
 
 Trigger a session summary + state refresh for the given project. Pipeline: reads raw captures → LLM-summarizes → writes to `sessions/<project>/` → merges into `state/<project>/state.md` atomically → re-indexes into mem0. Cost-capped per day per project. Parity with `/um-checkpoint` in Claude Code.
@@ -480,8 +546,8 @@ curl -s http://localhost:6335/mcp \
 
 ## Write tools — enabling
 
-To enable the 6 write tools (`memory_add`, `memory_delete`, `memory_capture`,
-`memory_checkpoint`, `memory_forget`, `memory_supersede`), set in your `.env`:
+To enable the 7 write tools (`memory_add`, `memory_delete`, `memory_capture`,
+`memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`), set in your `.env`:
 
 ```env
 UM_MCP_WRITE_ENABLED=true
@@ -496,7 +562,7 @@ docker compose restart memory-server
 
 The vault mount mode must be `rw` for writes to persist. When
 `UM_MCP_WRITE_ENABLED=false` (the default), two things happen:
-1. `tools/list` filters the 6 write tools out entirely — clients see only the 4 reads.
+1. `tools/list` filters the 7 write tools out entirely — clients see only the 4 reads.
 2. Direct `tools/call` against a write tool returns `{ ok: false, error: "MCP writes disabled" }` rather than throwing.
 
 The second behavior is intentional: clients that discovered the writes from
