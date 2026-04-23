@@ -46,6 +46,7 @@ import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/v
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
+import { doCheckpoint } from './lib/checkpoint.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -547,13 +548,7 @@ export async function handleToolCall(name, args) {
 			if (!isWriteEnabled()) {
 				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
 			}
-			// Server-side stub — session-end.sh runs on the host with filesystem + env access;
-			// driving it from inside the container requires hook-in-container infrastructure
-			// not yet implemented. Use /um-checkpoint in Claude Code instead.
-			return JSON.stringify({
-				ok: false,
-				error: 'memory_checkpoint is not yet implemented server-side; use `/um-checkpoint` in Claude Code instead.',
-			});
+			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR }));
 		}
 
 		case 'memory_forget': {

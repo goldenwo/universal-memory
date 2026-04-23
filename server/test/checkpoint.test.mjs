@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
+import { handleToolCall } from '../mem0-mcp-http.mjs';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -352,4 +353,65 @@ test('checkpoint: invalid project slug returns {ok:false, error} without filesys
   assert.ok(result.error.includes('invalid project'), `error should say invalid project, got: ${result.error}`);
 
   await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// 10. MCP dispatcher wiring: handleToolCall('memory_checkpoint', ...) reaches doCheckpoint, not the stub
+//
+// Strategy: doCheckpoint is the real implementation (no DI hook via handleToolCall), so calling it
+// without a real OPENAI_API_KEY will throw. We catch that throw and confirm it came from inside
+// doCheckpoint (stack mentions 'checkpoint' or 'summarize'), NOT from the v0.4 stub return path.
+// A successfully wired run (with valid API key) would also pass — this test handles both scenarios.
+test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not stub)', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'dispatchproj', '2026-01-01T00.md', '# Session\nDispatcher wiring test.');
+
+  const origWriteEnabled = process.env.UM_MCP_WRITE_ENABLED;
+  const origVaultDir = process.env.UM_VAULT_DIR;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  process.env.UM_VAULT_DIR = vaultDir;
+
+  try {
+    let raw;
+    let caughtError = null;
+    try {
+      raw = await handleToolCall('memory_checkpoint', { project: 'dispatchproj' });
+    } catch (err) {
+      caughtError = err;
+    }
+
+    if (caughtError) {
+      // Threw an error — must NOT be from the stub (stub returns, doesn't throw).
+      // If it's an OpenAI key error or a doCheckpoint error, that proves the stub is gone.
+      const msg = String(caughtError.message ?? caughtError);
+      assert.ok(
+        !msg.includes('not yet implemented'),
+        `got v0.4 stub message in thrown error: ${msg}`,
+      );
+      // Confirm it's a real execution error (LLM key missing or similar), not stub
+      assert.ok(
+        msg.toLowerCase().includes('api') || msg.toLowerCase().includes('key') ||
+        msg.toLowerCase().includes('openai') || msg.toLowerCase().includes('vault') ||
+        msg.toLowerCase().includes('summarize') || msg.toLowerCase().includes('model'),
+        `unexpected error (not from doCheckpoint path): ${msg}`,
+      );
+    } else {
+      // Returned a value — parse and verify it's NOT the v0.4 stub
+      const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      assert.ok(
+        !String(result.error ?? '').includes('not yet implemented'),
+        `got v0.4 stub error: ${result.error}`,
+      );
+      // Full success shape if API key was available
+      if (result.ok) {
+        assert.ok(typeof result.summary_id === 'string' && result.summary_id.length > 0, 'summary_id should be a non-empty string');
+        assert.equal(result.state_updated, true, 'state_updated should be true');
+      }
+    }
+  } finally {
+    if (origWriteEnabled === undefined) delete process.env.UM_MCP_WRITE_ENABLED;
+    else process.env.UM_MCP_WRITE_ENABLED = origWriteEnabled;
+    if (origVaultDir === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = origVaultDir;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
 });
