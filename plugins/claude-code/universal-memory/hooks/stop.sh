@@ -1,5 +1,5 @@
 #!/bin/bash
-# stop.sh — append-only raw capture. No LLM, no state update. <50ms.
+# stop.sh — append-only raw capture. No LLM, no state update. ~200ms (perl spawn).
 
 # Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
 # claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
@@ -30,7 +30,13 @@ printf '%s' "$TRANSCRIPT" | head -c 10000 > "$_UM_TMP"
 
 # Acquire an exclusive advisory lock on the sibling .lock file before appending,
 # so that concurrent stop.sh invocations and the memory_append_turn MCP tool
-# (Task 1.3) do not interleave writes. Both writers lock the same <date>.md.lock path.
+# (server/lib/append-turn.mjs) do not interleave writes. Both writers lock the
+# same <date>.md.lock path.
+#
+# The .lock file is deliberately NOT removed after release: cross-process flock(2)
+# coordination requires a stable inode, so deleting and recreating the sibling
+# file would break locking for any writer that has it open. One .lock file per
+# raw-capture day is an intentional, bounded artifact.
 #
 # Uses perl Fcntl::flock (flock(2) syscall) for portability across Linux, macOS,
 # and Windows Git Bash, where the util-linux `flock` binary may be unavailable.
