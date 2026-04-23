@@ -233,15 +233,15 @@ if [ "$TF14_EXIT" -eq 0 ]; then pass "T-FLAGS-14: exit 0 with --no-path"; else f
 if echo "$TF14_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-14: cli still delegated with --no-path"; else fail "T-FLAGS-14: cli not delegated (got: $TF14_OUT)"; fi
 rm -rf "$TF14"
 
-# ─── T-FLAGS-15: --interactive (wizard) stub → falls back to --all or hint ───
+# ─── T-FLAGS-15: --interactive launches wizard (header + detect env) ─────────
 echo ""
-echo "=== T-FLAGS-15: --interactive (wizard stub) exits non-zero or falls back ==="
+echo "=== T-FLAGS-15: --interactive (real wizard) prints header and detected env ==="
 TF15=$(mktemp -d)
 make_stubs "$TF15/bin"
 TF15_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
   env PATH="$TF15/bin:/usr/bin:/bin" bash "$INSTALLER" --interactive 2>&1) && TF15_EXIT=0 || TF15_EXIT=$?
-# Wizard stub must either: print a hint about wizard, or fall back and delegate server
-if echo "$TF15_OUT" | grep -qiE "wizard|coming soon|--all|--help"; then pass "T-FLAGS-15: wizard stub prints hint"; else fail "T-FLAGS-15: expected wizard hint (got: $TF15_OUT)"; fi
+# Real wizard must print the installer header and detected environment
+if echo "$TF15_OUT" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TF15_OUT)"; fi
 rm -rf "$TF15"
 
 # ─── T-PCC-1: --plugin-cc copies prompt files to plugin-local prompts dir ─────

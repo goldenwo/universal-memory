@@ -99,12 +99,39 @@ else
   MODE=components
 fi
 
-# Wizard stub — Task 3.4/3.5 will implement the real wizard
 if [[ $MODE == wizard ]]; then
-  echo "[install] Wizard coming soon — use --all to install everything or --help to see component flags." >&2
-  # Fall back to --all in this stub
-  INSTALL_ALL=1
-  MODE=components
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=installer/wizard-lib.sh
+  source "$SCRIPT_DIR/wizard-lib.sh"
+  wizard_header
+  wizard_detect_env
+  wizard_menu_main
+
+  case "$WIZARD_CHOICE" in
+    1)  # Everything detected
+        INSTALL_SERVER=$DETECTED_DOCKER
+        INSTALL_PLUGIN_CC=$DETECTED_CC
+        INSTALL_PLUGIN_CODEX=$DETECTED_CODEX
+        INSTALL_CLI=1
+        ;;
+    2)  INSTALL_PLUGIN_CC=1 ;;
+    3)  INSTALL_CLI=1
+        wizard_prompt UM_SERVER_URL "UM server URL" "http://localhost:6335"
+        ;;
+    4)  INSTALL_SERVER=1 ;;
+    5)  # Custom
+        wizard_confirm "Install server stack?" && INSTALL_SERVER=1
+        wizard_confirm "Install Claude Code plugin?" && INSTALL_PLUGIN_CC=1
+        wizard_confirm "Install Codex plugin?" && INSTALL_PLUGIN_CODEX=1
+        wizard_confirm "Install um CLI?" && INSTALL_CLI=1
+        ;;
+  esac
+
+  wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
+  wizard_prompt UM_OPENAI_API_KEY "OpenAI API key" "<paste later into .env>"
+  wizard_summarize
+  wizard_confirm "Proceed?" || { echo "Aborted."; exit 0; }
+  MODE=components  # fall through to dispatcher
 fi
 
 if [[ $INSTALL_ALL -eq 1 ]]; then
