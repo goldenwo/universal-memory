@@ -16,7 +16,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A **publicly reachable URL** for the MCP endpoint. ChatGPT Desktop runs in OpenAI's cloud and cannot reach your `localhost:6335` directly — even though it's a desktop app, the MCP connector calls originate from OpenAI's backend. You need a tunnel. See [Tunnel options](#2-tunnel-options) below.
 - ChatGPT Desktop with a plan that supports custom MCP connectors. `<TBD: confirm exact plan tier required during verification — Plus / Pro / Business>`.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want ChatGPT to write memories, not just read. Read-only is safer for first connection.
@@ -136,7 +136,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Ch
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected (v0.4 default): ChatGPT lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.5 default): ChatGPT lists **4 default read tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. All 7 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."
@@ -168,9 +168,7 @@ If all four pass, ChatGPT Desktop is reading and writing the same vault Claude C
 - The rubric pasted into Custom Instructions steers ChatGPT to call `memory_capture` on explicit "remember" requests, same as Claude Code hook-injected rubric does.
 
 ### Doesn't work (yet)
-- **No session-end hook.** ChatGPT Desktop has no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture → session-summary → state.md pipeline does not run from ChatGPT sessions. Only Claude Code sessions produce state.md updates.
-- **No state.md regen from ChatGPT sessions** until a future release ships the server-side checkpoint body — tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant ChatGPT session.
-- **No raw turn capture** until a future release adds `memory_append_turn` — tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6). ChatGPT conversations stay ephemeral on the UM side; only explicit `memory_capture` calls persist.
+- **No automatic session-end hook.** ChatGPT Desktop has no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture → session-summary → state.md pipeline does not run automatically from ChatGPT sessions. Use `memory_append_turn` (v0.5) to append turns manually during a session, and `memory_checkpoint` to trigger synthesis at the end.
 - **Rubric drift risk.** Custom Instructions are static — if the canonical rubric in [`docs/memory-routing-rubric.md`](memory-routing-rubric.md) changes, you need to re-paste. No auto-sync.
 
 ---

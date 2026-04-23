@@ -18,7 +18,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A reachable URL for the MCP endpoint:
   - **Claude.ai (web)** runs in Anthropic's cloud and cannot reach your `localhost:6335`. You need a **publicly reachable HTTPS tunnel** — see [Tunnel options](#2-tunnel-options) below.
   - **Claude Desktop (app)** can reach `http://localhost:6335` directly via its MCP config file — no tunnel required for local-only use. If you want Claude Desktop to reach a UM server running on a different host, you still need a tunnel (or LAN/VPN reachability).
@@ -187,7 +187,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Cl
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected (v0.4 default): Claude lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.5 default): Claude lists **4 default read tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. All 7 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."
@@ -217,9 +217,8 @@ If all four pass, Claude.ai / Claude Desktop is reading and writing the same vau
 - **Writes when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`**: `memory_capture`, `memory_forget`, `memory_supersede` persist to the same vault. Captures written from Claude.ai or Claude Desktop appear in your Claude Code sessions at next session start.
 - **Rubric routing.** The rubric pasted into the connector's custom instructions (Claude.ai) or the Project / user-level instructions (Claude Desktop) steers Claude to call `memory_capture` on explicit "remember" requests — same behavior as Claude Code's hook-injected rubric.
 
-### Doesn't work (yet)
-- **No state.md regen from Claude.ai / Claude Desktop sessions.** `memory_checkpoint` is a stub — the server-side checkpoint implementation is tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant Claude.ai / Claude Desktop session.
-- **No raw turn capture** from Claude.ai / Claude Desktop conversations. Claude Code's Stop hook appends every turn to the vault automatically; Anthropic's hosted surfaces have no equivalent. Tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6) (`memory_append_turn` MCP tool). Until that lands, only explicit `memory_capture` calls persist — the rest of the conversation stays ephemeral on the UM side.
+### Doesn't work automatically (but now bridgeable with v0.5 tools)
+- **No automatic session-end hook.** Claude.ai / Claude Desktop have no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture pipeline does not run automatically. Use `memory_append_turn` (v0.5) to append turns during a session, and `memory_checkpoint` (v0.5 real implementation) to trigger synthesis and `state.md` refresh at session end.
 - **Rubric drift risk.** Connector custom instructions (Claude.ai) and Project prompts (Claude Desktop) are static. If the canonical rubric in [`docs/memory-routing-rubric.md`](memory-routing-rubric.md) changes, you need to re-paste. No auto-sync.
 
 ---
