@@ -211,16 +211,19 @@ if [ "$TF12_EXIT" -eq 0 ]; then pass "T-FLAGS-12: exit 0"; else fail "T-FLAGS-12
 if echo "$TF12_OUT" | grep -q "delegate: installer/install-cli.sh.*--server-url"; then pass "T-FLAGS-12: --server-url in delegation args"; else fail "T-FLAGS-12: --server-url not propagated (got: $TF12_OUT)"; fi
 rm -rf "$TF12"
 
-# ─── T-FLAGS-13: --skip-docker propagates to delegation args ─────────────────
+# ─── T-FLAGS-13: --skip-docker goes to SERVER delegate ONLY (not CLI) ────────
 echo ""
-echo "=== T-FLAGS-13: --skip-docker propagates to delegation ==="
+echo "=== T-FLAGS-13: --skip-docker → server/install.sh only; NOT to install-cli.sh ==="
 TF13=$(mktemp -d)
 make_stubs "$TF13/bin"
 TF13_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF13/repo" \
-  env PATH="$TF13/bin:/usr/bin:/bin" bash "$INSTALLER" --server --skip-docker 2>&1) && TF13_EXIT=0 || TF13_EXIT=$?
+  env PATH="$TF13/bin:/usr/bin:/bin" bash "$INSTALLER" --server --cli --skip-docker 2>&1) && TF13_EXIT=0 || TF13_EXIT=$?
 if [ "$TF13_EXIT" -eq 0 ]; then pass "T-FLAGS-13: exit 0 with --skip-docker"; else fail "T-FLAGS-13: exit $TF13_EXIT (out: $TF13_OUT)"; fi
 if echo "$TF13_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-13: server still delegated with --skip-docker"; else fail "T-FLAGS-13: server not delegated (got: $TF13_OUT)"; fi
-if echo "$TF13_OUT" | grep -qE "delegate: server/install.sh.*--skip-docker|--skip-docker.*delegate: server/install.sh"; then pass "T-FLAGS-13: --skip-docker propagates in delegation args"; else fail "T-FLAGS-13: --skip-docker not in delegation args (got: $TF13_OUT)"; fi
+# --skip-docker must appear in the server delegation line
+if echo "$TF13_OUT" | grep "delegate: server/install.sh" | grep -q "\-\-skip-docker"; then pass "T-FLAGS-13: --skip-docker in server delegation args"; else fail "T-FLAGS-13: --skip-docker not in server delegation args (got: $TF13_OUT)"; fi
+# --skip-docker must NOT appear in the CLI delegation line
+if ! echo "$TF13_OUT" | grep "delegate: installer/install-cli.sh" | grep -q "\-\-skip-docker"; then pass "T-FLAGS-13: --skip-docker NOT in cli delegation args"; else fail "T-FLAGS-13: --skip-docker leaked to cli delegation (got: $TF13_OUT)"; fi
 rm -rf "$TF13"
 
 # ─── T-FLAGS-14: --no-path propagates to delegation args ─────────────────────
@@ -234,6 +237,31 @@ if [ "$TF14_EXIT" -eq 0 ]; then pass "T-FLAGS-14: exit 0 with --no-path"; else f
 if echo "$TF14_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-14: cli still delegated with --no-path"; else fail "T-FLAGS-14: cli not delegated (got: $TF14_OUT)"; fi
 if echo "$TF14_OUT" | grep -qE "delegate: installer/install-cli.sh.*--no-path|--no-path.*delegate: installer/install-cli.sh"; then pass "T-FLAGS-14: --no-path propagates in delegation args"; else fail "T-FLAGS-14: --no-path not in delegation args (got: $TF14_OUT)"; fi
 rm -rf "$TF14"
+
+# ─── T-FLAGS-13B: --cli --skip-docker succeeds (BUG-3 regression guard) ──────
+echo ""
+echo "=== T-FLAGS-13B: --cli --skip-docker should succeed (--skip-docker must NOT reach install-cli.sh) ==="
+TF13B=$(mktemp -d)
+make_stubs "$TF13B/bin"
+TF13B_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF13B/repo" \
+  env PATH="$TF13B/bin:/usr/bin:/bin" bash "$INSTALLER" --cli --skip-docker 2>&1) && TF13B_EXIT=0 || TF13B_EXIT=$?
+if [ "$TF13B_EXIT" -eq 0 ]; then pass "T-FLAGS-13B: --cli --skip-docker exits 0 (no crash)"; else fail "T-FLAGS-13B: exit $TF13B_EXIT — --skip-docker reached install-cli.sh (out: $TF13B_OUT)"; fi
+if echo "$TF13B_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-13B: cli still delegated"; else fail "T-FLAGS-13B: cli not delegated (got: $TF13B_OUT)"; fi
+if ! echo "$TF13B_OUT" | grep "delegate: installer/install-cli.sh" | grep -q "\-\-skip-docker"; then pass "T-FLAGS-13B: --skip-docker filtered from cli delegation"; else fail "T-FLAGS-13B: --skip-docker leaked to cli (got: $TF13B_OUT)"; fi
+rm -rf "$TF13B"
+
+# ─── T-FLAGS-18: --dry-run propagates to delegation line ─────────────────────
+echo ""
+echo "=== T-FLAGS-18: --dry-run propagates in delegation args ==="
+TF18=$(mktemp -d)
+make_stubs "$TF18/bin"
+TF18_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF18/repo" \
+  env PATH="$TF18/bin:/usr/bin:/bin" bash "$INSTALLER" --server --cli --dry-run 2>&1) && TF18_EXIT=0 || TF18_EXIT=$?
+if [ "$TF18_EXIT" -eq 0 ]; then pass "T-FLAGS-18: exit 0"; else fail "T-FLAGS-18: exit $TF18_EXIT (out: $TF18_OUT)"; fi
+# Both server and cli delegation lines should include --dry-run
+if echo "$TF18_OUT" | grep "delegate: server/install.sh" | grep -q "\-\-dry-run"; then pass "T-FLAGS-18: --dry-run in server delegation"; else fail "T-FLAGS-18: --dry-run not in server delegation (got: $TF18_OUT)"; fi
+if echo "$TF18_OUT" | grep "delegate: installer/install-cli.sh" | grep -q "\-\-dry-run"; then pass "T-FLAGS-18: --dry-run in cli delegation"; else fail "T-FLAGS-18: --dry-run not in cli delegation (got: $TF18_OUT)"; fi
+rm -rf "$TF18"
 
 # ─── T-FLAGS-15: --interactive launches wizard (header + detect env) ─────────
 echo ""

@@ -33,6 +33,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes|-y) YES=1 ;;
     --no-path) NO_PATH=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
     --um-install-dir) DATA_DIR="${2:?--um-install-dir requires a path}"; shift ;;
     --vault-dir) UM_VAULT_DIR="${2:?--vault-dir requires a path}"; shift ;;
@@ -53,6 +54,13 @@ EOF
   esac
   shift
 done
+
+# --- dry-run guard ---
+# When invoked by the parent installer with --dry-run, print intent and exit.
+if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+  info "[dry-run] would install um CLI (libs, dispatcher, shell profile block)"
+  exit 0
+fi
 
 # --- preflight: python3 ---
 if ! command -v python3 >/dev/null 2>&1; then

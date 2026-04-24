@@ -32,7 +32,14 @@ INSTALL_CLI=0
 INSTALL_ALL=0
 FORCE_WIZARD=0
 ASSUME_YES=0
-PASSTHROUGH_ARGS=()
+
+# ---- Per-delegate arg filtering ------------------------------------------------
+# COMMON_ARGS go to every delegate; per-component arrays go only to their target.
+# This prevents --skip-docker (server-only) from reaching install-cli.sh (exit 2).
+COMMON_ARGS=()    # --yes, --dry-run
+SERVER_ARGS=()    # --skip-docker
+CLI_ARGS=()       # --no-path
+PLUGIN_ARGS=()    # (receives COMMON_ARGS + --server-url)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,14 +48,14 @@ while [[ $# -gt 0 ]]; do
     --plugin-codex)  INSTALL_PLUGIN_CODEX=1 ;;
     --cli)           INSTALL_CLI=1 ;;
     --all)           INSTALL_ALL=1 ;;
-    --yes|-y)        ASSUME_YES=1; PASSTHROUGH_ARGS+=("$1") ;;
+    --yes|-y)        ASSUME_YES=1; COMMON_ARGS+=("$1") ;;
     --interactive)   FORCE_WIZARD=1 ;;
-    --server-url)    UM_SERVER_URL="$2"; export UM_SERVER_URL; PASSTHROUGH_ARGS+=("$1" "$2"); shift ;;
-    --skip-docker)   SKIP_DOCKER=1; PASSTHROUGH_ARGS+=("$1") ;;
-    --no-path)       NO_PATH_MODIFY=1; PASSTHROUGH_ARGS+=("$1") ;;
-    --dry-run)       DRY_RUN=1 ;;
+    --server-url)    UM_SERVER_URL="$2"; export UM_SERVER_URL; CLI_ARGS+=("$1" "$2"); PLUGIN_ARGS+=("$1" "$2"); shift ;;
+    --skip-docker)   SKIP_DOCKER=1; SERVER_ARGS+=("$1") ;;
+    --no-path)       NO_PATH_MODIFY=1; CLI_ARGS+=("$1") ;;
+    --dry-run)       DRY_RUN=1; COMMON_ARGS+=("$1") ;;
     -h|--help)       _show_help=1 ;;
-    *)               PASSTHROUGH_ARGS+=("$1") ;;
+    *)               COMMON_ARGS+=("$1") ;;
   esac
   shift
 done
@@ -226,19 +233,20 @@ _delegate() {
 }
 
 # Run in order: server first, then plugins, then CLI.
+# Each delegate receives only the args relevant to it (per-delegate filtering).
 if [[ $INSTALL_SERVER -eq 1 ]]; then
-  _delegate "server/install.sh" "${PASSTHROUGH_ARGS[@]}"
+  _delegate "server/install.sh" "${COMMON_ARGS[@]}" "${SERVER_ARGS[@]}"
 fi
 if [[ $INSTALL_PLUGIN_CC -eq 1 ]]; then
-  _delegate "installer/install-plugin-cc.sh" "${PASSTHROUGH_ARGS[@]}"
+  _delegate "installer/install-plugin-cc.sh" "${COMMON_ARGS[@]}" "${PLUGIN_ARGS[@]}"
 fi
 if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
   if [[ ! -d "${HOME:-}/.codex" ]]; then
     echo "[install] ~/.codex not found — soft-skipping Codex plugin" >&2
   else
-    _delegate "installer/install-plugin-codex.sh" "${PASSTHROUGH_ARGS[@]}"
+    _delegate "installer/install-plugin-codex.sh" "${COMMON_ARGS[@]}" "${PLUGIN_ARGS[@]}"
   fi
 fi
 if [[ $INSTALL_CLI -eq 1 ]]; then
-  _delegate "installer/install-cli.sh" "${PASSTHROUGH_ARGS[@]}"
+  _delegate "installer/install-cli.sh" "${COMMON_ARGS[@]}" "${CLI_ARGS[@]}"
 fi
