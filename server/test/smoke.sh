@@ -1333,18 +1333,21 @@ echo "[smoke]     Task 2.5 type-filter verification passed (state=0, session_sum
 fi  # end UM_VAULT_DIR guard
 
 # 5/5 assert count returned to baseline
-# With UM_MCP_WRITE_ENABLED=true (v0.5+ CI), Task 7/9/10/T25 legitimately create
-# artifacts that span beyond single-test cleanup. Accept up to 10 new records in
-# write-enabled mode — strict baseline check only when writes disabled.
+# With UM_MCP_WRITE_ENABLED=true, cleanup loops now use ?full=1 so they correctly
+# capture mem0 UUIDs and delete test artifacts. Accept up to +3 for intentional
+# residual artifacts: T10-E session summary (session-<date>-<uuid>) and T25
+# session_summary doc (session-summary-smoke-t25-*) which are not cleaned up
+# because they represent the legitimate cross-test session-summary artifact pattern.
+# authored-doc-smoke-b from T7 may also linger if mem0 extraction splits the doc.
 echo "[smoke] 5/5 verify baseline preserved"
 FINAL=$(get_count)
 DELTA=$((FINAL - BASELINE))
 if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ]; then
-	if [ "$DELTA" -gt 10 ]; then
-		echo "FAIL: memory count drifted beyond tolerance — baseline=$BASELINE final=$FINAL (delta=$DELTA > 10)"
+	if [ "$DELTA" -gt 3 ]; then
+		echo "FAIL: memory count drifted beyond tolerance — baseline=$BASELINE final=$FINAL (delta=$DELTA > 3)"
 		exit 1
 	fi
-	echo "[smoke] PASS (baseline=$BASELINE, final=$FINAL; write-enabled mode tolerates +$DELTA artifacts from Task 7/9/10/T25 — TODO(v0.6): add per-test cleanup)"
+	echo "[smoke] PASS (baseline=$BASELINE, final=$FINAL; write-enabled mode tolerates +$DELTA residual session_summary artifacts — expected ≤3)"
 else
 	if [ "$FINAL" -ne "$BASELINE" ]; then
 		echo "FAIL: memory count not restored — baseline=$BASELINE final=$FINAL"
