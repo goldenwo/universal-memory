@@ -5,6 +5,10 @@
 #
 # Run: bash installer/install-plugin-cc.test.sh
 
+# shellcheck disable=SC2034
+# TX_OUT scaffold vars (T3_OUT, T14_OUT) captured for dump-on-fail diagnostics.
+# TODO(v0.6): wire into a _dump_on_fail helper.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

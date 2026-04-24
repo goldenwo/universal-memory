@@ -25,9 +25,11 @@ warn()  { printf '\033[1;33m[install-plugin-codex]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install-plugin-codex]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ─── CLI args ────────────────────────────────────────────────────────────────
+# --yes/-y is accepted for parent-installer passthrough compatibility but this
+# script has no interactive prompts, so it's a no-op here.
 for _arg in "$@"; do
   case "$_arg" in
-    --yes|-y) UM_NONINTERACTIVE=1 ;;
+    --yes|-y) ;;
   esac
 done
 

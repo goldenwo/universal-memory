@@ -153,7 +153,8 @@ _install_plugin() {
       if [ ${#local_only[@]} -gt 5 ]; then
         warn "  ... and $((${#local_only[@]} - 5)) more"
       fi
-      local bak="$tgt_dir.bak-$(date +%s)"
+      local bak
+      bak="$tgt_dir.bak-$(date +%s)"
       warn "Existing dir will be backed up to $bak"
       mv "$tgt_dir" "$bak"
     fi
