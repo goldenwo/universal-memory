@@ -472,10 +472,10 @@ export async function handleToolCall(name, args) {
 		case 'memory_list': {
 			const clientFull = args.full === true;
 			const listLimit = args.limit != null ? Math.min(parseInt(args.limit, 10) || 0, 1000) : null;
-			// Delegate to doList which handles compact/full projection.
-			// When full=true: raw mem0 items (backward compat shape) serialized as JSON.
-			// When full=false (default): compact { id, title, snippet } items.
-			const items = await doList(clientFull, listLimit);
+			// Delegate to doList which returns { results: Array } per spec §4.1 (v0.6).
+			// When full=true: items are raw mem0 objects (body/metadata preserved).
+			// When full=false (default): items are compact { id, title, snippet }.
+			const { results: items } = await doList(clientFull, listLimit);
 			if (items.length === 0) return 'No memories.';
 			if (clientFull) {
 				// Full shape: return as JSON so body/metadata fields are accessible
@@ -1037,11 +1037,13 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
  *   - id    = metadata.id (filename stem) if present, else mem0 UUID
  *   - title = metadata.title if present; falls back to metadata.id, then mem0 UUID
  *   - snippet = buildSnippet(title, memory body)
- * Full shape (full=true): raw mem0 result objects (backward compat with pre-B.1 callers)
+ * Full shape (full=true): raw mem0 result objects inside the results array
+ *   (preserves per-item raw mem0 fields for callers that request full).
  *
- * Returns a raw array (not an envelope) to preserve backward compatibility with
- * the existing /api/list contract — the current handler returns `all?.results || all || []`.
- * Changing to {results:[...]} would be a breaking API change beyond "compact shape" scope.
+ * Returns the unified `{results: Array}` envelope per spec §4.1 (v0.6 breaking
+ * change). Aligns /api/list with /api/search and /api/recent so all three read
+ * endpoints share a consistent response shape. Callers that previously relied
+ * on a bare array must migrate to `response.results` — see MIGRATION.md v0.5→v0.6.
  *
  * @param {boolean} [full=false] - false → compact shape; true → raw mem0 items
  * @param {number|null} [limit=null] - max items to return; null = unlimited
@@ -1049,7 +1051,7 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
  *   Backward compatible: callers that pass a bare memoryClient (object with
  *   `.getAll()`) as the third arg continue to work — see `search-quality.test.mjs`
  *   which still uses that style. Defaults to the module-level `memory` binding.
- * @returns {Promise<Array>} flat array of memory items
+ * @returns {Promise<{results: Array}>} envelope containing the items array
  */
 export async function doList(full = false, limit = null, ctx = {}) {
   // DI resolution: prefer ctx.memory (new convention), then treat ctx itself as a
@@ -1060,16 +1062,17 @@ export async function doList(full = false, limit = null, ctx = {}) {
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   if (full) {
-    return sliced;
+    return { results: sliced };
   }
   // Compact projection — consistent shape with doSearch compact items (minus score,
   // which is search-specific). id and title use the same fallback logic as doSearch.
-  return sliced.map((r) => {
+  const results = sliced.map((r) => {
     const id = r.metadata?.id ?? r.id;
     const title = r.metadata?.title ?? r.metadata?.id ?? r.id ?? '(untitled)';
     const snippet = buildSnippet(title, r.memory);
     return { id, title, snippet };
   });
+  return { results };
 }
 
 const server = createServer(async (req, res) => {
@@ -1185,14 +1188,15 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		if (url.pathname === '/api/list' && req.method === 'GET') {
-			// B.1.4b: compact shape by default; ?full=1 returns raw mem0 items.
-			// Preserves raw-array envelope (not {results:[...]}) for backward compat.
+			// Spec §4.1 (v0.6): returns { results: [...] } envelope — unified with
+			// /api/search and /api/recent. Compact shape by default; ?full=1 returns
+			// raw mem0 items inside the results array.
 			const full = url.searchParams.get('full') === '1';
 			const limitStr = url.searchParams.get('limit');
 			const limit = limitStr ? Math.min(parseInt(limitStr, 10) || 0, 1000) : null;
-			const items = await doList(full, limit);
+			const response = await doList(full, limit);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(items));
+			res.end(JSON.stringify(response));
 			return;
 		}
 		// GET /api/recent/:project — list recent authored docs by filesystem mtime, compact shape
