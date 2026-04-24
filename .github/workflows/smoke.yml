@@ -53,9 +53,20 @@ jobs:
           fi
           bash ./install.sh
 
+      - name: Run server unit tests
+        working-directory: server
+        run: node --test "test/*.test.mjs"
+
       - name: Run smoke test
         working-directory: server
-        run: bash ./test/smoke.sh
+        env:
+          UM_MCP_WRITE_ENABLED: "true"
+          UM_MOUNT_MODE: "rw"
+          UM_VAULT_DIR: "/tmp/um-vault-ci"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          mkdir -p $UM_VAULT_DIR
+          bash ./test/smoke.sh
 
       # Continuity pipeline test: exercises stop → session-end → state.md →
       # session-start catchup + inject, end-to-end against the live server.
