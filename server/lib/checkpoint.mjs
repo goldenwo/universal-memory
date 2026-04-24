@@ -21,9 +21,9 @@ import lockfile from 'proper-lockfile';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'server/config/checkpoint.json');
-const DEFAULT_SUMMARIZE_PROMPT_PATH = path.join(REPO_ROOT, 'server/config/prompts/summarize.txt');
+const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
+const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
+const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/summarize.txt');
 
 const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
@@ -189,7 +189,7 @@ export async function doCheckpoint(args, ctx = {}) {
     let reindexFailed = false;
     let reindexError;
     try {
-      await reindexFn({ path: summaryPath, project });
+      await reindexFn(summaryPath);
     } catch (err) {
       reindexFailed = true;
       reindexError = err?.message ?? String(err);

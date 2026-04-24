@@ -17,8 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { summarize as defaultSummarize } from './summarize.mjs';
 
 const STATE_CAP_CHARS = 3000;
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const DEFAULT_PROMPT_PATH = path.join(REPO_ROOT, 'server/config/prompts/update-state.txt');
+const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
+const DEFAULT_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/update-state.txt');
 
 /**
  * Merge old state.md with a new session summary.
