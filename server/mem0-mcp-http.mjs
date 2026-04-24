@@ -1293,7 +1293,7 @@ const server = createServer(async (req, res) => {
 
 			// 7. upsert: delete all existing entries with this metadata.id, then add
 			const targetId = fm.id;
-			// TODO(v0.3): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
+			// TODO(v0.6): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
 			await deleteByMetadataId(targetId);
 
 			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
