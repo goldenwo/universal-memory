@@ -20,6 +20,13 @@ services:
     # to match the host user so files written into the rw-mounted vault are
     # owned by the host user (avoids cross-user cleanup EACCES). Defaults to
     # "node" (UID 1000 in the node:alpine base image) for production.
+    #
+    # Format: literal "node" OR a numeric <uid>:<gid> pair (both >0). install.sh
+    # rejects root (0:0) — combined with UM_MOUNT_MODE=rw, root inside the
+    # container writes root-owned files into the host vault. Pin it ONCE on
+    # first `docker compose up` and don't change it mid-lifecycle; changing
+    # the UID causes mixed ownership that blocks later overwrites (EACCES).
+    # For CI / local rw-mount installs, use "$(id -u):$(id -g)".
     user: "${UM_CONTAINER_USER:-node}"
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}

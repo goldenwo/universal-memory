@@ -329,6 +329,36 @@ fi
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
 [[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
 
+# ─── v0.5 env-override validation ────────────────────────────────────────────
+# UM_MOUNT_MODE / UM_MCP_WRITE_ENABLED / UM_CONTAINER_USER are advanced env
+# overrides. Validate format + consistency to catch common footguns early.
+if [ -n "${UM_MOUNT_MODE:-}" ]; then
+	[[ "$UM_MOUNT_MODE" =~ ^(ro|rw)$ ]] || fail "UM_MOUNT_MODE must be 'ro' or 'rw'. Got: $UM_MOUNT_MODE"
+fi
+if [ -n "${UM_MCP_WRITE_ENABLED:-}" ]; then
+	[[ "$UM_MCP_WRITE_ENABLED" =~ ^(true|false|1|0)$ ]] || fail "UM_MCP_WRITE_ENABLED must be 'true'/'false'/'1'/'0'. Got: $UM_MCP_WRITE_ENABLED"
+fi
+# Consistency: rw mount without writes-enabled is attack surface with no feature
+# benefit (container can scribble on the vault from a non-MCP path, but the MCP
+# write tool surface is still gated off). Fail fast with a clear message.
+_mount_mode_effective="${UM_MOUNT_MODE:-ro}"
+_writes_effective="${UM_MCP_WRITE_ENABLED:-false}"
+if [ "$_mount_mode_effective" = "rw" ] \
+	&& [ "$_writes_effective" != "true" ] && [ "$_writes_effective" != "1" ]; then
+	fail "UM_MOUNT_MODE=rw requires UM_MCP_WRITE_ENABLED=true. A rw mount without MCP writes is attack surface with no feature benefit — either enable writes explicitly, or leave mount as ro."
+fi
+# UM_CONTAINER_USER: pins the container UID:GID to match the host user for rw-
+# mount installs (avoids cross-user EACCES on vault writes). Accept either the
+# literal 'node' (Dockerfile default, UID 1000 in node:alpine) or a numeric
+# uid:gid pair. Reject root (0:0) — any shell with UM_CONTAINER_USER=0:0 +
+# UM_MOUNT_MODE=rw gets root inside the container writing to the host vault.
+if [ -n "${UM_CONTAINER_USER:-}" ]; then
+	if [[ "$UM_CONTAINER_USER" != "node" ]] \
+		&& ! [[ "$UM_CONTAINER_USER" =~ ^[1-9][0-9]*:[1-9][0-9]*$ ]]; then
+		fail "UM_CONTAINER_USER must be 'node' or a numeric <uid>:<gid> pair with both >0. Got: $UM_CONTAINER_USER. Root (0:0) is rejected — combined with UM_MOUNT_MODE=rw it gets root inside the container writing to the host vault. Use \"\$(id -u):\$(id -g)\" for CI / rw-mount installs."
+	fi
+fi
+
 # ─── P0-3: API key validation ────────────────────────────────────────────────
 # Only probe when the key is freshly entered (not pre-existing in env) and
 # validation is not explicitly skipped.
