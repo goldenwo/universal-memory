@@ -778,9 +778,13 @@ echo "[smoke]     T10-E: memory_checkpoint"
 if [ "${UM_MCP_WRITE_ENABLED:-}" = "true" ] && [ -n "${UM_VAULT_DIR:-}" ]; then
     # Writes enabled — assert full pipeline runs
     # Seed a raw capture for a test project
-    mcp_call 99 memory_append_turn '{"project":"t10e","content":"Seed turn for checkpoint","role":"user"}' >/dev/null
+    T10E_SEED_RESP=$(mcp_call 99 memory_append_turn '{"project":"t10e","content":"Seed turn for checkpoint","role":"user"}')
+    echo "    [diag] append_turn response: $T10E_SEED_RESP"
+    echo "    [diag] UM_VAULT_DIR=$UM_VAULT_DIR; captures dir listing:"
+    ls -laR "$UM_VAULT_DIR/captures/t10e" 2>&1 || echo "    [diag] captures/t10e not found on host"
     # Now checkpoint — expect summary + state.md written
     T10E_RESP=$(mcp_call 105 memory_checkpoint '{"project":"t10e"}')
+    echo "    [diag] checkpoint response: $T10E_RESP"
     echo "$T10E_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
