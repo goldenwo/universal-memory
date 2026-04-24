@@ -14,6 +14,7 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 | [v0.2.2](https://github.com/goldenwo/universal-memory/releases/tag/v0.2.2) | Adoption quickwins — `/um-preview` slash command + `bin/um-preview` CLI, first-session welcome banner, `install.sh --yes` non-interactive flag, `curl \| bash` bootstrap installer — Phase B of the v0.3 plan | Commit `5b053b8` on `main`, tagged v0.2.2 |
 | [v0.3.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.3.0-alpha) | Cross-platform release — Codex CLI plugin (MCP recall), ChatGPT Desktop + Claude.ai + Claude Desktop connection guides, ChatGPT Custom GPT scaffold, OpenAPI 3.1 at `GET /openapi.yaml` (+ `?gpt=1` trimmed), `um-tunnel` CLI, OpenAI Assistants API example. Phases C–G of the v0.3 plan | Commit `bae2b5f` on `main`, tagged v0.3.0-alpha |
 | [v0.4.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.4.0-alpha) | HYBRID-REBALANCE release — progressive disclosure on reads (compact `{id, title, score, snippet}` default; `?full=1` / `full: true` opt-in; 41.9% single-hop context reduction), new `um` CLI (7 subcommands + standalone `installer/install-cli.sh`), new `/api/recent/{project}` REST endpoint, MCP `memory_recent` rewired to filesystem mtime, schema-hygiene `tools/list` filter (4 reads visible by default; 6 writes gated on `UM_MCP_WRITE_ENABLED=true`), new `CHANGELOG.md` + `MIGRATION.md`. Phases 0, B.1, B.3, A, D, E of the v0.4 plan; 3 rounds of dual-Opus design review. | Commit `b59fb19` on `main`, tagged v0.4.0-alpha |
+| [v0.5.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.5.0-alpha) | Cross-env first-class release — `memory_append_turn` (raw-capture writes from any MCP client) + `memory_checkpoint` server-side body (non-CC surfaces can trigger session-summary + state.md refresh) + modular installer with wizard mode + NONINTERACTIVE env overrides (`UM_VAULT_DIR`, `UM_MOUNT_MODE`, `UM_MCP_WRITE_ENABLED`, `UM_CONTAINER_USER` validation) + docker-compose `UM_CONTAINER_USER` override for UID-matched rw-mount installs + I4 summarizer-prompt fix. 101 product commits + 13 CI-unblock commits + 1 post-review hardening commit; 13-round paired-Opus review cycle + 2 post-review Opus passes. Closes #5, #6. | Commit `5141887` on `main`, tagged v0.5.0-alpha |
 
 Foundations shipped alongside v0.1.0:
 
@@ -22,12 +23,6 @@ Foundations shipped alongside v0.1.0:
 ## Planned
 
 The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
-
-### v0.5 (v0.5.0-alpha) — cross-env first-class (active, ~3 weeks)
-Close the gap where Claude.ai / ChatGPT Desktop / Codex conversations stay ephemeral: ship `memory_append_turn` (raw-capture writes from any MCP client) + `memory_checkpoint` server-side body (non-CC surfaces can trigger session-summary + state.md refresh) + modular install flags with an interactive wizard for first-time users + I4 summarizer-prompt fix (silent quality regression from v0.4 review). After v0.5, no surface is second-class for capture.
-
-**Closes:** #5 (server-side memory_checkpoint), #6 (memory_append_turn raw-capture bridge)
-**Spec:** `docs/plans/2026-04-22-v0.5-design.md`
 
 ### v0.6 — ecosystem integrations (~3–4 weeks)
 UM becomes the "union vault" across adjacent memory tools: OpenClaw plugin (UM usable in Discord-side openclaw deployment), Claude-mem bridge (one-way ingest of claude-mem's local SQLite export; bidirectional if demand appears), cross-device sync (resolves an open architectural decision: Syncthing vs git vs daemon), plus ride-along `/api/list` envelope unification with `/api/search`/`/api/recent` and a tool-count consolidation pass (`memory_delete` + `memory_forget` → `memory_delete(mode)`).
