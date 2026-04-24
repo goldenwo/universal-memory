@@ -50,6 +50,9 @@ else
   else
     # Fallback: full inline rubric if BOTH canonical file and sibling copy missing.
     # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
+    # shellcheck disable=SC2089  # single-quoted literal content (backticks, $) is
+    # deliberately not re-evaluated; variable is env-exported (line 192) and read
+    # as-is by python3 via os.environ.get — no word-splitting at use site.
     UM_ROUTING_RUBRIC='## Memory routing (universal-memory)
 
 Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
@@ -189,6 +192,7 @@ response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
 # Combining parse + JSON encode avoids a second python3 startup (~200ms on Windows).
 # UM_ROUTING_RUBRIC and UM_WELCOME_BANNER are passed via env so they are always
 # composed into additionalContext.
+# shellcheck disable=SC2090  # env-export is the use site; python reads via os.environ.
 export UM_ROUTING_RUBRIC
 export UM_WELCOME_BANNER
 printf '%s' "$response" | python3 -c '

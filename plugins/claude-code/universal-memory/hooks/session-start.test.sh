@@ -3,6 +3,10 @@
 #
 # Run: bash session-start.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
+
+# shellcheck disable=SC2034
+# REAL_SESSION_END fixture var is captured at test setup for potential use in
+# teardown / debug printing. TODO(v0.6): wire into dump-on-fail.
 #
 # Scenarios:
 #   1. UM_ENDPOINT unset → emit '{}', exit 0 silently

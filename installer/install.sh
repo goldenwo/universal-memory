@@ -51,8 +51,8 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)        ASSUME_YES=1; COMMON_ARGS+=("$1") ;;
     --interactive)   FORCE_WIZARD=1 ;;
     --server-url)    UM_SERVER_URL="$2"; export UM_SERVER_URL; CLI_ARGS+=("$1" "$2"); PLUGIN_ARGS+=("$1" "$2"); shift ;;
-    --skip-docker)   SKIP_DOCKER=1; SERVER_ARGS+=("$1") ;;
-    --no-path)       NO_PATH_MODIFY=1; CLI_ARGS+=("$1") ;;
+    --skip-docker)   SERVER_ARGS+=("$1") ;;
+    --no-path)       CLI_ARGS+=("$1") ;;
     --dry-run)       DRY_RUN=1; COMMON_ARGS+=("$1") ;;
     -h|--help)       _show_help=1 ;;
     *)               COMMON_ARGS+=("$1") ;;
@@ -160,7 +160,7 @@ printf '\nUniversal-memory installer\n==========================\n\n'
 NEED_GIT=0
 NEED_DOCKER=0
 NEED_PYTHON3=0
-NEED_BASH=1  # Always needed
+# bash is always needed — checked unconditionally below (no NEED_BASH gate).
 
 # Server and plugins need git + docker
 [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && NEED_GIT=1 && NEED_DOCKER=1

@@ -27,16 +27,19 @@ warn()  { printf '\033[1;33m[install-cli]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install-cli]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- flags ---
-YES=0
+# NOTE: --yes/-y and --vault-dir are accepted for parent-installer passthrough
+# (installer/install.sh --cli) but this script has no confirmation prompts and
+# no vault-relevant behavior, so both are intentional no-ops here. We still
+# validate --vault-dir has an arg so malformed invocations fail loudly.
 NO_PATH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --yes|-y) YES=1 ;;
+    --yes|-y) ;;
     --no-path) NO_PATH=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
     --um-install-dir) DATA_DIR="${2:?--um-install-dir requires a path}"; shift ;;
-    --vault-dir) UM_VAULT_DIR="${2:?--vault-dir requires a path}"; shift ;;
+    --vault-dir) : "${2:?--vault-dir requires a path}"; shift ;;
     --help|-h)
       cat <<EOF
 Usage: install-cli.sh [--yes] [--no-path] [--server-url URL]

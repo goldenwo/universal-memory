@@ -5,6 +5,14 @@
 # Tests use a sandboxed $HOME=$(mktemp -d) per test so no real user env is touched.
 # Pattern matches server/install.test.sh for PASS/FAIL conventions.
 
+# shellcheck disable=SC2034
+# Several TX_OUT / TX_EXIT / TX_LINES_BEFORE vars are captured at runtime as
+# test scaffold — the OUT captures are for dump-on-fail diagnostics and the
+# measurement vars are for potential delta comparisons. Not all are currently
+# wired to asserts; TODO(v0.6) add a _dump_on_fail helper + comparison asserts.
+# Disabling SC2034 file-wide keeps the production-code lint posture strict
+# (asserted by CI) while tolerating test-scaffold lifetime in test files.
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -335,7 +343,7 @@ make_fakepython3 "$T8/bin"
 _BASH_BIN8="$(command -v bash)"
 
 # Run installer 3 times
-for i in 1 2 3; do
+for _ in 1 2 3; do
   env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
     "$_BASH_BIN8" "$INSTALL_CLI" --yes >/dev/null 2>&1
 done
