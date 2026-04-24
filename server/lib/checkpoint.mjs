@@ -79,10 +79,11 @@ export async function doCheckpoint(args, ctx = {}) {
       systemPrompt = await fs.readFile(promptPath, 'utf8');
     } catch (err) {
       if (err.code === 'ENOENT') {
+        console.error('[checkpoint] summarize prompt missing at', promptPath);
         return {
           schema_version: 1,
           ok: false,
-          error: `summarize prompt missing at ${promptPath}; check $UM_PROMPT_DIR or reinstall plugin`,
+          error: 'summarize prompt file missing — check $UM_PROMPT_DIR or reinstall plugin',
         };
       }
       throw err;
@@ -176,6 +177,11 @@ export async function doCheckpoint(args, ctx = {}) {
     const summaryPath = `sessions/${project}/${summaryId}.md`;
     const absSummaryPath = path.join(vaultDir, summaryPath);
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
+    // Fix 3: symlink guard on summary write
+    const summaryStatCheck = await fs.lstat(absSummaryPath).catch(() => null);
+    if (summaryStatCheck && summaryStatCheck.isSymbolicLink()) {
+      return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+    }
     await fs.writeFile(absSummaryPath, summary);
 
     // Reindex (non-fatal — orphan summary is recoverable; state.md must still update)
@@ -185,8 +191,8 @@ export async function doCheckpoint(args, ctx = {}) {
       await reindexFn({ path: summaryPath, project });
     } catch (err) {
       reindexFailed = true;
-      reindexError = err.message;
-      console.warn(`[checkpoint] reindex failed for project=${project}: ${err.message}`);
+      reindexError = err?.message ?? String(err);
+      console.warn(`[checkpoint] reindex failed for project=${project}: ${err?.message ?? String(err)}`);
     }
 
     // Optionally merge into state.md
@@ -201,6 +207,11 @@ export async function doCheckpoint(args, ctx = {}) {
         { summarizeFn },
       );
       // Atomic write: .tmp + rename
+      // Fix 3: symlink guard on state.md target before rename
+      const stateSymCheck = await fs.lstat(oldStatePath).catch(() => null);
+      if (stateSymCheck && stateSymCheck.isSymbolicLink()) {
+        return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+      }
       const tmpPath = oldStatePath + '.tmp';
       await fs.writeFile(tmpPath, stateResult.mergedMd);
       await fs.rename(tmpPath, oldStatePath);
