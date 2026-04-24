@@ -80,6 +80,16 @@ Re-install is optional — existing installs continue to work with the fallback.
 
 ---
 
+### Rollback from v0.5 to v0.4
+
+All v0.5 changes are additive — new tool (`memory_append_turn`), new env var (`UM_PROMPT_DIR`), new installer flags, real `memory_checkpoint` body replacing the v0.4 stub. There are NO vault schema changes: `captures/`, `sessions/`, `state/` directories are unchanged.
+
+To rollback: `git checkout v0.4.0-alpha` on the server repo and redeploy the Docker stack. The client plugin at `~/.claude/plugins/universal-memory/` can be reinstalled via `installer/install-cli.sh` from v0.4. Existing vault data stays compatible.
+
+The only consideration: any raw captures written via `memory_append_turn` (v0.5-only tool) will still be present in `captures/<project>/raw/<date>.md` as v0.5-format headers (`## <ISO> <role> [(conversation_id: ...)]`). The v0.4 session-end summarizer treats any `## ` line as a turn header and accepts them. No cleanup needed.
+
+---
+
 ### Closing note for v0.4 → v0.5
 
 No database migrations, no config-file rewrites, no plugin reinstall required.
