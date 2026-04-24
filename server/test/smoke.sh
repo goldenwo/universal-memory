@@ -41,6 +41,34 @@ echo "$HEALTH" | grep -q '"ok":true' || {
 BASELINE=$(get_count)
 echo "[smoke]     baseline memories: $BASELINE"
 
+# /metrics scrape sanity (C.5 — spec §4.2). Confirms the endpoint-class
+# loopback bypass + handler dispatch + counter-finish wiring all line up
+# end-to-end against a running stack. R10-class regression guard for the
+# full middleware chain ordering.
+#
+# Local runs exercise this from 127.0.0.1, so endpoint-class returns
+# bypassAuth+bypassRateLimit and the handler emits text exposition.
+# A non-loopback caller would get 404 (verified by the handler test;
+# can't easily simulate from within the smoke runner since UM_ENDPOINT
+# could be either loopback or remote).
+echo "[smoke]     /metrics scrape sanity"
+METRICS=$(curl -sf "$ENDPOINT/metrics" || true)
+if [ -z "$METRICS" ]; then
+	echo "FAIL: /metrics returned empty/error — expected Prometheus text exposition"
+	echo "      (loopback-only mode? endpoint=$ENDPOINT — non-loopback callers get 404)"
+	exit 1
+fi
+echo "$METRICS" | grep -q '^# HELP um_http_requests_total' || {
+	echo "FAIL: /metrics did not return expected um_http_requests_total HELP line"
+	echo "Got: $(echo "$METRICS" | head -5)"
+	exit 1
+}
+echo "$METRICS" | grep -q '^# TYPE um_http_request_duration_seconds histogram' || {
+	echo "FAIL: /metrics did not return expected histogram TYPE line"
+	exit 1
+}
+echo "[smoke]     OK: /metrics emitted Prometheus text exposition"
+
 # 2/5 add memory — use a name-shaped fact (extracts reliably in mem0's
 # training distribution), capture the returned IDs.
 echo "[smoke] 2/5 add memory and capture IDs"

@@ -54,6 +54,7 @@ import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -1550,12 +1551,35 @@ export function createRequestHandler(ctx = {}) {
 			getLogger().info(obj, 'request');
 		}
 	};
+	// C.5: counter-finish metrics emit. Same callsite as the log emit
+	// so the routeTemplate computation is shared (single source of
+	// truth - log + metric MUST agree on the endpoint label).
+	// Skipped for /metrics itself (recursive scrape artifact). /health
+	// is already opted out above the ALS wrap, so it never reaches
+	// this code path.
+	let metricsEmitted = false;
+	const emitMetrics = () => {
+		if (metricsEmitted) return;
+		metricsEmitted = true;
+		if (url.pathname === '/metrics') return;
+		try {
+			const ms = Date.now() - startedAt;
+			const endpoint = routeTemplate || url.pathname;
+			httpRequestsTotal.inc({ endpoint, status: String(res.statusCode) });
+			httpRequestDurationSeconds.observe({ endpoint }, ms / 1000);
+		} catch (e) {
+			try {
+				getLogger().warn({ err: e?.message }, 'metrics emit failed (non-fatal)');
+			} catch { /* logger is already best-effort */ }
+		}
+	};
 	// Shim res.end so every code path (200, 4xx, 5xx, early-return)
-	// flushes the §5.3 finish log without each route handler having to
-	// remember.
+	// flushes the §5.3 finish log + C.5 metrics emit without each
+	// route handler having to remember.
 	const _origEnd = res.end.bind(res);
 	res.end = function (...args) {
 		try { emitFinishLog(); } catch { /* logging must never break the response */ }
+		try { emitMetrics(); } catch { /* metrics must never break the response */ }
 		return _origEnd(...args);
 	};
 
@@ -1640,7 +1664,7 @@ export function createRequestHandler(ctx = {}) {
 	//   Fires BEFORE JSON-parse or any field-level validator (spec §5.2
 	//   precedence 1).
 	// TODO(Phase C): rate-limit step here (depends on route.bypassRateLimit).
-	// TODO(Phase C): counter-finish (metrics emit) at response send.
+	// C.5: counter-finish metrics emit wired in res.end shim above.
 
 	try {
 		// /health is handled BEFORE the ALS wrap (top of this handler)
@@ -1653,6 +1677,21 @@ export function createRequestHandler(ctx = {}) {
 			const gptMode = url.searchParams.get('gpt') === '1';
 			res.writeHead(200, { 'Content-Type': 'application/yaml' });
 			res.end(gptMode ? generateCustomGPTActionsSpec() : generateOpenAPISpec());
+			return;
+		}
+		// C.5 / spec 4.2: /metrics returns Prometheus text exposition.
+		// Endpoint-class router (B.2) already decided routing policy:
+		//   - loopback-only + loopback IP -> bypass auth + rate-limit
+		//   - loopback-only + non-loopback -> 404 short-circuit (above)
+		//   - public + UM_METRICS_AUTH_REQUIRED=true -> auth required
+		//   - public + UM_METRICS_AUTH_REQUIRED=false -> bypass
+		// /metrics is OUT of the rate-limit path (bypassRateLimit=true on
+		// the loopback branch) so legitimate Prometheus scrapes from
+		// loopback are never 429'd at steady 15s scrape intervals.
+		if (url.pathname === '/metrics' && req.method === 'GET') {
+			const text = await registry.metrics();
+			res.writeHead(200, { 'Content-Type': registry.contentType });
+			res.end(text);
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
