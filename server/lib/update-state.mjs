@@ -47,10 +47,11 @@ export async function updateState(args, ctx = {}) {
     systemPrompt = await fs.readFile(promptPath, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') {
+      console.error('[update-state] prompt missing at', promptPath);
       return {
         schema_version: 1,
         ok: false,
-        error: `update-state prompt missing at ${promptPath}; check $UM_PROMPT_DIR or reinstall plugin`,
+        error: 'update-state prompt file missing — check $UM_PROMPT_DIR or reinstall plugin',
       };
     }
     throw err;
