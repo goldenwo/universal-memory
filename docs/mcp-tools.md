@@ -371,10 +371,15 @@ Distinct from `memory_add` (mem0 fact extraction, no project structure) and `mem
 | Arg | Required | Default | Purpose |
 |-----|----------|---------|---------|
 | `project` | yes | — | Project slug (`^[a-zA-Z0-9._-]+$`) |
-| `content` | yes | — | Turn text (max 8192 chars) |
+| `content` | yes | — | Turn text (max 8192 bytes, UTF-8) |
 | `role` | yes | — | `user` / `assistant` / `system` |
 | `timestamp` | no | now-UTC | ISO 8601 timestamp |
-| `conversation_id` | no | — | Optional grouping hint |
+| `conversation_id` | no | — | Optional grouping hint (max 256 bytes, UTF-8) |
+
+> Note: raw-capture files contain heterogeneous headers — Claude Code's stop.sh
+> writes `## <ISO>\n` (transcript-only, no role); `memory_append_turn` writes
+> `## <ISO> <role> [(conversation_id: ...)]` (always has role). The summarizer
+> accepts both formats.
 
 **Example request (JSON-RPC via MCP):**
 
