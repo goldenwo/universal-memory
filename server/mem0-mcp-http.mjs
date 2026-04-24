@@ -1045,10 +1045,17 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
  *
  * @param {boolean} [full=false] - false → compact shape; true → raw mem0 items
  * @param {number|null} [limit=null] - max items to return; null = unlimited
- * @param {{getAll: Function}} [memoryClient] - DI for tests; defaults to module `memory`
+ * @param {object} [ctx={}] - DI context; preferred shape `{ memory: MemoryClient }`.
+ *   Backward compatible: callers that pass a bare memoryClient (object with
+ *   `.getAll()`) as the third arg continue to work — see `search-quality.test.mjs`
+ *   which still uses that style. Defaults to the module-level `memory` binding.
  * @returns {Promise<Array>} flat array of memory items
  */
-export async function doList(full = false, limit = null, memoryClient = memory) {
+export async function doList(full = false, limit = null, ctx = {}) {
+  // DI resolution: prefer ctx.memory (new convention), then treat ctx itself as a
+  // memoryClient if it exposes getAll (legacy positional pattern), else fall back
+  // to the module-level memory binding used by real requests.
+  const memoryClient = ctx?.memory ?? (typeof ctx?.getAll === 'function' ? ctx : memory);
   const all = await memoryClient.getAll({ userId: USER_ID });
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
