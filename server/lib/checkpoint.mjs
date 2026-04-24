@@ -136,6 +136,30 @@ export async function doCheckpoint(args, ctx = {}) {
       schema_version: 1,
       ok: false,
       error: `invalid project: ${JSON.stringify(String(project ?? '').slice(0, 64))}`,
+      code: 'INPUT_INVALID',
+    };
+  }
+
+  // C.8 (§4.2): typeof-string guard on caller-supplied since/until.
+  // Both are passed to .slice(0, 10) below; non-string inputs (numeric
+  // epoch, boolean, object) either throw TypeError or coerce silently
+  // depending on Node version. Hard-fail at the lib boundary with
+  // stable code:'INPUT_INVALID' so the HTTP layer (handleCheckpointRequest)
+  // maps to 400 via the unified envelope (B.13).
+  if (since !== null && since !== undefined && typeof since !== 'string') {
+    return {
+      schema_version: 1,
+      ok: false,
+      error: `field 'since' must be ISO 8601 string, got ${typeof since}`,
+      code: 'INPUT_INVALID',
+    };
+  }
+  if (until !== null && until !== undefined && typeof until !== 'string') {
+    return {
+      schema_version: 1,
+      ok: false,
+      error: `field 'until' must be ISO 8601 string, got ${typeof until}`,
+      code: 'INPUT_INVALID',
     };
   }
 

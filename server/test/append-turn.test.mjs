@@ -376,6 +376,86 @@ test('doAppendTurn accepts valid short conversation_id', async () => {
   assert.equal(result.ok, true);
 });
 
+// C.8 (§4.2): typeof-string guard on caller-supplied timestamp.
+// Date.parse() coerces numeric inputs to ms-since-epoch which silently shifts
+// the file-date prefix and breaks since/until windowing on Node major upgrades.
+// Hard-fail with code:'INPUT_INVALID' at the lib boundary.
+test('doAppendTurn rejects numeric timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: 1234567890, // numeric epoch — not an ISO string
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID', `expected stable code INPUT_INVALID, got ${result.code}`);
+});
+
+test('doAppendTurn rejects boolean timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: true,
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID');
+});
+
+test('doAppendTurn rejects object timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: { not: 'a string' },
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID');
+});
+
+test('doAppendTurn accepts ISO 8601 string timestamp (positive case, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: '2026-04-24T12:00:00Z',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  assert.match(result.path, /2026-04-24\.md$/);
+});
+
+// C.8 (§4.2): HTTP boundary — numeric timestamp surfaces as 400 INPUT_INVALID
+// in the unified envelope (B.13). The lib-layer code:'INPUT_INVALID' bubbles
+// up through handleAppendTurnRequest's lib-error mapping.
+test('POST /api/append-turn with numeric timestamp returns 400 INPUT_INVALID (§4.2)', async () => {
+  const vault = await makeTempVault();
+  const req = {
+    body: {
+      project: 'http-ts',
+      content: 'numeric ts via REST',
+      role: 'user',
+      timestamp: 1234567890, // numeric, not ISO string
+    },
+  };
+  const res = mockRes();
+  await handleAppendTurnRequest(req, res, {
+    vaultDir: vault,
+    writesEnabled: true,
+    reindexFn: async () => {},
+  });
+  assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}`);
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'INPUT_INVALID');
+  assert.match(res.jsonBody.error.message, /timestamp/i);
+});
+
 // Fix 2 (round-4): ancient negative-year timestamp rejected
 test('doAppendTurn rejects timestamp with year outside 1970-9999', async () => {
   const vault = await makeTempVault();

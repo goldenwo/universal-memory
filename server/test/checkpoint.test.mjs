@@ -386,6 +386,96 @@ test('checkpoint: since/until filter reads only files within window', async () =
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// C.8 (§4.2): typeof-string guard on caller-supplied since/until.
+// `since.slice(...)` and `until.slice(...)` only work on strings; a numeric
+// epoch like 1234567890 either throws TypeError (no .slice) or — in some
+// future Node — could be silently coerced. Hard-fail with INPUT_INVALID at
+// the lib boundary so behavior is stable across Node majors.
+test('checkpoint: rejects numeric `since` (typeof-string guard, §4.2)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: 'p', since: 1234567890 }, // numeric, not ISO string
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /since.*string|must be.*string/i);
+    assert.equal(result.code, 'INPUT_INVALID', `expected stable code INPUT_INVALID, got ${result.code}`);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint: rejects numeric `until` (typeof-string guard, §4.2)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: 'p', until: 9999999999 },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /until.*string|must be.*string/i);
+    assert.equal(result.code, 'INPUT_INVALID');
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint: rejects boolean `since` (typeof-string guard, §4.2)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: 'p', since: true },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error, /since.*string|must be.*string/i);
+    assert.equal(result.code, 'INPUT_INVALID');
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// C.8 (§4.2): HTTP boundary — numeric since surfaces as 400 INPUT_INVALID
+// in the unified envelope (B.13).
+test('POST /api/checkpoint with numeric `since` returns 400 INPUT_INVALID (§4.2)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const req = { body: { project: 'p', since: 1234567890 } };
+    const res = mockRes();
+    await handleCheckpointRequest(req, res, {
+      vaultDir,
+      writesEnabled: true,
+      _doCheckpoint: doCheckpoint,
+      _reindexFn: async () => {},
+    });
+    assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+    assert.equal(res.jsonBody.ok, false);
+    assert.equal(res.jsonBody.error.code, 'INPUT_INVALID');
+    assert.match(res.jsonBody.error.message, /since/i);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
 // 9. Invalid project slug returns error without touching filesystem
 test('checkpoint: invalid project slug returns {ok:false, error} without filesystem ops', async () => {
   const vaultDir = await makeVault();

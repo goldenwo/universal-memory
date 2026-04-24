@@ -59,12 +59,25 @@ export async function doAppendTurn(args, ctx = {}) {
     }
   }
 
+  // C.8 (§4.2): typeof-string guard — Date.parse() coerces numeric/boolean
+  // inputs to ms-since-epoch which silently shifts the date prefix and breaks
+  // since/until windowing across Node major releases. Hard-fail at the lib
+  // boundary with stable code:'INPUT_INVALID' so the HTTP layer maps to 400
+  // via the unified envelope (B.13).
+  if (timestamp !== undefined && timestamp !== null && typeof timestamp !== 'string') {
+    return {
+      schema_version: 1,
+      ok: false,
+      error: `field 'timestamp' must be ISO 8601 string, got ${typeof timestamp}`,
+      code: 'INPUT_INVALID',
+    };
+  }
   const now = timestamp ? new Date(timestamp) : clock();
-  if (Number.isNaN(now.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp' };
+  if (Number.isNaN(now.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp', code: 'INPUT_INVALID' };
   // Fix 2: reject timestamps outside safe year range to prevent dash-prefixed filenames + broken since/until
   const year = now.getUTCFullYear();
   if (year < 1970 || year > 9999) {
-    return { schema_version: 1, ok: false, error: `timestamp year ${year} out of range (1970-9999)` };
+    return { schema_version: 1, ok: false, error: `timestamp year ${year} out of range (1970-9999)`, code: 'INPUT_INVALID' };
   }
 
   const date = now.toISOString().slice(0, 10);
