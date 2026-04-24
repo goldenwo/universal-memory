@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     --all)           INSTALL_ALL=1 ;;
     --yes|-y)        ASSUME_YES=1; PASSTHROUGH_ARGS+=("$1") ;;
     --interactive)   FORCE_WIZARD=1 ;;
-    --server-url)    UM_SERVER_URL="$2"; PASSTHROUGH_ARGS+=("$1" "$2"); shift ;;
+    --server-url)    UM_SERVER_URL="$2"; export UM_SERVER_URL; PASSTHROUGH_ARGS+=("$1" "$2"); shift ;;
     --skip-docker)   SKIP_DOCKER=1; PASSTHROUGH_ARGS+=("$1") ;;
     --no-path)       NO_PATH_MODIFY=1; PASSTHROUGH_ARGS+=("$1") ;;
     --dry-run)       DRY_RUN=1 ;;

@@ -62,7 +62,7 @@ wizard_prompt() {
   # Trim leading/trailing whitespace
   val="${val#"${val%%[![:space:]]*}"}"
   val="${val%"${val##*[![:space:]]}"}"
-  eval "$var=\"\$val\""
+  eval "export $var=\"\$val\""
 }
 
 wizard_validate_openai_key() {

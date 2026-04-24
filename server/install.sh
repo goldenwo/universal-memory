@@ -204,6 +204,9 @@ for _arg in "$@"; do
 			UM_YES=1
 			UM_NONINTERACTIVE=1
 			;;
+		--skip-docker)
+			UM_SKIP_DOCKER=1
+			;;
 		--verify)
 			# Handled above; reaching here means the user combined flags.
 			# Honor the --verify early-exit behavior by rejecting the combo.
@@ -233,9 +236,13 @@ if [ "${UM_YES:-0}" = "1" ]; then
 fi
 
 # ─── Prereq checks ───────────────────────────────────────────────────────────
-command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
-docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
-docker info >/dev/null 2>&1 || fail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
+	info "Skipping docker stack (--skip-docker set)."
+else
+	command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
+	docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
+	docker info >/dev/null 2>&1 || fail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+fi
 
 [ -f "$ENV_EXAMPLE" ] || fail "Not finding $ENV_EXAMPLE — are you running this from the repo's server/ directory or via ./install.sh?"
 [ -f "$COMPOSE_FILE" ] || fail "Not finding $COMPOSE_FILE."
@@ -554,32 +561,38 @@ info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
 _append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
-info "Pulling / building images..."
-docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/[compose] /'
+if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
+	info "Skipping docker stack start (--skip-docker set)."
+else
+	info "Pulling / building images..."
+	docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/[compose] /'
 
-# ─── Poll /health until ready ─────────────────────────────────────────────────
-# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
-# take >90s end-to-end before the server binds. Allow 180s to cover that.
-ENDPOINT="http://localhost:$MEM0_MCP_PORT/health"
-info "Waiting for $ENDPOINT (up to 180s)..."
+	# ─── Poll /health until ready ─────────────────────────────────────────────────
+	# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
+	# take >90s end-to-end before the server binds. Allow 180s to cover that.
+	ENDPOINT="http://localhost:$MEM0_MCP_PORT/health"
+	info "Waiting for $ENDPOINT (up to 180s)..."
 
-READY=0
-for i in $(seq 1 90); do
-	if curl -sf --max-time 3 "$ENDPOINT" >/dev/null 2>&1; then
-		READY=1
-		break
+	READY=0
+	for i in $(seq 1 90); do
+		if curl -sf --max-time 3 "$ENDPOINT" >/dev/null 2>&1; then
+			READY=1
+			break
+		fi
+		sleep 2
+	done
+
+	if [ "$READY" != "1" ]; then
+		warn "Server did not become healthy within 180s."
+		warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
+		exit 1
 	fi
-	sleep 2
-done
-
-if [ "$READY" != "1" ]; then
-	warn "Server did not become healthy within 180s."
-	warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
-	exit 1
 fi
 
-HEALTH=$(curl -sf "$ENDPOINT")
-ok "Server is healthy: $HEALTH"
+if [ "${UM_SKIP_DOCKER:-0}" -ne 1 ]; then
+	HEALTH=$(curl -sf "$ENDPOINT")
+	ok "Server is healthy: $HEALTH"
+fi
 
 # ─── Success banner ──────────────────────────────────────────────────────────
 _profile_hint=""

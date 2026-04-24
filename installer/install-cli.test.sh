@@ -354,6 +354,25 @@ env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
 T8_LINES_AFTER_4=$(wc -l < "$T8_HOME/.bashrc")
 assert_eq "T8: bashrc line count stable between run 3 and run 4" "$T8_LINES_AFTER_4" "$T8_LINES_AFTER"
 
+# ─── T9: --no-path leaves .bashrc clean ───────────────────────────────────────
+T9=$(mktemp_in_t "$TMPROOT" "t9.XXXXXX")
+T9_HOME="$T9/home"
+T9_LIB="$T9_HOME/.local/share/um/lib"
+mkdir -p "$T9_HOME" "$T9_LIB"
+make_fakepython3 "$T9/bin"
+# .bashrc must exist so installer would normally write to it
+touch "$T9_HOME/.bashrc"
+_BASH_BIN9="$(which bash)"
+env PATH="$T9/bin:$PATH" HOME="$T9_HOME" UM_LIB_DIR="$T9_LIB" \
+  "$_BASH_BIN9" "$INSTALL_CLI" --no-path --yes >/dev/null 2>&1 || true
+
+if grep -qE "UM_PROMPT_DIR|UM_SERVER_URL" "$T9_HOME/.bashrc" 2>/dev/null; then
+  fail_test "T9: --no-path: .bashrc modified despite --no-path flag" \
+    "$(grep -E 'UM_PROMPT_DIR|UM_SERVER_URL' "$T9_HOME/.bashrc" | head -2)"
+else
+  pass "T9: --no-path: .bashrc clean"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

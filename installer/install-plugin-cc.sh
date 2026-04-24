@@ -22,10 +22,13 @@ warn()  { printf '\033[1;33m[install-plugin-cc]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install-plugin-cc]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ─── CLI args ────────────────────────────────────────────────────────────────
-for _arg in "$@"; do
-  case "$_arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --yes|-y) UM_NONINTERACTIVE=1 ;;
+    --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
+    *) : ;;  # pass-through unknown flags silently
   esac
+  shift
 done
 
 # ─── Preflight ───────────────────────────────────────────────────────────────
