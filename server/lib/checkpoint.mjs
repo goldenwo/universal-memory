@@ -16,6 +16,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import lockfile from 'proper-lockfile';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
@@ -173,7 +174,7 @@ export async function doCheckpoint(args, ctx = {}) {
     });
 
     // Write session summary file
-    const summaryId = `session-${today}-${Math.random().toString(36).slice(2, 8)}`;
+    const summaryId = `session-${today}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
     const summaryPath = `sessions/${project}/${summaryId}.md`;
     const absSummaryPath = path.join(vaultDir, summaryPath);
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
