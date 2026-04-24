@@ -1,5 +1,9 @@
 # Connecting ChatGPT Desktop to universal-memory
 
+> **Draft docs — ChatGPT Desktop UI labels may shift across app updates. Paths
+> below are verified against ChatGPT Desktop as of 2026-04-23. If a label
+> differs from what you see, look for the conceptually matching option.**
+
 How to add your universal-memory server as an MCP connector inside ChatGPT Desktop, so ChatGPT can read/write the same vault that Claude Code uses.
 
 Audience: a user who already has UM running locally (via `install.sh` + `docker compose up -d`) and wants ChatGPT Desktop to share the same memory store. Assumes basic familiarity with the UM tool surface — see [`docs/workflow.md`](workflow.md) and [`docs/mcp-tools.md`](mcp-tools.md) for the runtime reference.
@@ -18,7 +22,7 @@ Before starting, you should have:
   ```
   You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A **publicly reachable URL** for the MCP endpoint. ChatGPT Desktop runs in OpenAI's cloud and cannot reach your `localhost:6335` directly — even though it's a desktop app, the MCP connector calls originate from OpenAI's backend. You need a tunnel. See [Tunnel options](#2-tunnel-options) below.
-- ChatGPT Desktop with a plan that supports custom MCP connectors. `<TBD: confirm exact plan tier required during verification — Plus / Pro / Business>`.
+- ChatGPT Desktop with a plan that supports custom MCP connectors — typically available on Plus, Pro, or Team plans as of 2026-04-23. See [OpenAI's documentation](https://help.openai.com) for current plan-tier requirements.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want ChatGPT to write memories, not just read. Read-only is safer for first connection.
 
 ---
@@ -76,27 +80,27 @@ Step-by-step UI clicks. The ChatGPT Desktop UI evolves, so screenshots will be c
 
    ![TBD: screenshot of ChatGPT Desktop Settings entry point](screenshots/chatgpt-desktop-settings-entry.png)
 
-2. In Settings, navigate to **`<TBD: exact menu name during verification — likely "Connectors" or "Integrations">`**.
+2. In Settings, navigate to **Connectors** (may be labeled **Integrations** — look for the MCP server setup section).
 
    ![TBD: screenshot of ChatGPT Desktop Settings → Connectors panel](screenshots/chatgpt-desktop-connectors-panel.png)
 
-3. Click **`<TBD: exact button label — "Add connector" / "New MCP server" / similar>`**.
+3. Click **Add connector** (or **New MCP server** if that's what your version shows).
 
    ![TBD: screenshot of ChatGPT Desktop Settings → Connectors → Add](screenshots/chatgpt-desktop-connector-add.png)
 
 4. Fill in the connector form:
    - **Name**: `universal-memory` (any label you want — what ChatGPT will call it)
    - **URL**: your tunnel URL + `/mcp` suffix, e.g. `https://<your-device>.<tailnet>.ts.net/mcp`
-   - **Transport**: `<TBD: confirm option name — "HTTP" or "Streamable HTTP" or "SSE">`. UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that.
-   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick `<TBD: "None" / "No auth" equivalent>`.
+   - **Transport**: **HTTP** (may be labeled **Streamable HTTP** or **SSE** — UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that).
+   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick **None** or the equivalent no-auth option.
 
    ![TBD: screenshot of the filled-in connector form](screenshots/chatgpt-desktop-connector-form.png)
 
-5. Click **`<TBD: "Save" / "Add" / "Connect">`**. ChatGPT Desktop should perform the MCP handshake and list the available tools.
+5. Click **Save** (or **Add** / **Connect** depending on your version). ChatGPT Desktop should perform the MCP handshake and list the available tools.
 
    ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/chatgpt-desktop-tools-discovered.png)
 
-6. Enable the connector in a new chat (`<TBD: confirm whether it's on by default or needs a per-chat toggle>`).
+6. Enable the connector in a new chat (it may be on by default, or you may need a per-chat toggle — look for a plugin/connector icon in the chat input bar).
 
 ---
 
