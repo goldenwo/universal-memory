@@ -55,7 +55,9 @@ jobs:
 
       - name: Run server unit tests
         working-directory: server
-        run: node --test "test/*.test.mjs"
+        # Unquoted glob so bash expands test/*.test.mjs into a file list.
+        # node --test treats quoted "test/*.test.mjs" as a literal path and fails.
+        run: node --test test/*.test.mjs
 
       - name: Run smoke test
         working-directory: server
