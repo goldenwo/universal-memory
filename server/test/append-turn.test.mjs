@@ -257,6 +257,61 @@ test('POST /api/append-turn returns 403 when writes disabled', async () => {
   assert.equal(res.jsonBody.ok, false);
 });
 
+// ---------- boundary tests ----------
+
+test('content at exactly MAX_CONTENT_BYTES (8192) accepted', async () => {
+  const vault = await makeTempVault();
+  // Build a string whose UTF-8 byte length is exactly 8192
+  const content = 'x'.repeat(8192);
+  assert.equal(Buffer.byteLength(content, 'utf8'), 8192);
+  const result = await doAppendTurn({ project: 'p', content, role: 'user' }, { vaultDir: vault });
+  assert.equal(result.ok, true, `expected ok=true at 8192 bytes, got error: ${result.error}`);
+});
+
+test('content at 8191 bytes accepted', async () => {
+  const vault = await makeTempVault();
+  const content = 'x'.repeat(8191);
+  assert.equal(Buffer.byteLength(content, 'utf8'), 8191);
+  const result = await doAppendTurn({ project: 'p', content, role: 'user' }, { vaultDir: vault });
+  assert.equal(result.ok, true, `expected ok=true at 8191 bytes, got error: ${result.error}`);
+});
+
+test('conversation_id at exactly MAX_CONVERSATION_ID_BYTES (256) accepted', async () => {
+  const vault = await makeTempVault();
+  const conversation_id = 'c'.repeat(256);
+  assert.equal(Buffer.byteLength(conversation_id, 'utf8'), 256);
+  const result = await doAppendTurn({ project: 'p', content: 'c', role: 'user', conversation_id }, { vaultDir: vault });
+  assert.equal(result.ok, true, `expected ok=true at 256-byte conversation_id, got error: ${result.error}`);
+});
+
+test('conversation_id at 255 bytes accepted', async () => {
+  const vault = await makeTempVault();
+  const conversation_id = 'c'.repeat(255);
+  assert.equal(Buffer.byteLength(conversation_id, 'utf8'), 255);
+  const result = await doAppendTurn({ project: 'p', content: 'c', role: 'user', conversation_id }, { vaultDir: vault });
+  assert.equal(result.ok, true, `expected ok=true at 255-byte conversation_id, got error: ${result.error}`);
+});
+
+test('timestamp year 1970 accepted (epoch boundary)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn(
+    { project: 'p', content: 'epoch', role: 'user', timestamp: '1970-01-01T00:00:00Z' },
+    { vaultDir: vault },
+  );
+  assert.equal(result.ok, true, `expected ok=true for year 1970, got error: ${result.error}`);
+  assert.match(result.path, /1970-01-01\.md$/);
+});
+
+test('timestamp year 1969 rejected', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn(
+    { project: 'p', content: 'pre-epoch', role: 'user', timestamp: '1969-12-31T23:59:59Z' },
+    { vaultDir: vault },
+  );
+  assert.equal(result.ok, false, 'expected rejection for year 1969');
+  assert.match(result.error, /year.*out of range|out of range/i);
+});
+
 // Fix 3: role trim — 'user ' (trailing space) should be accepted
 test('doAppendTurn trims whitespace from role', async () => {
   const vault = await makeTempVault();
