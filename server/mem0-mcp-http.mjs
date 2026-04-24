@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { listEnvelope } from './lib/envelope.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -459,7 +460,7 @@ export async function handleToolCall(name, args) {
 				}));
 			}
 
-			return JSON.stringify({ results: items });
+			return JSON.stringify(listEnvelope(items));
 		}
 		case 'memory_add': {
 			if (!isWriteEnabled()) {
@@ -890,7 +891,7 @@ export async function doSearch(query, limit, includeSuperseded, full = false, me
 		}
 		return base;
 	});
-	return { results: mapped };
+	return listEnvelope(mapped);
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +968,7 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
   const relPaths = await listVaultFiles(subdir);
 
   if (relPaths.length === 0) {
-    return { results: [] };
+    return listEnvelope([]);
   }
 
   // Stat all files to get mtime, tolerating ENOENT (file deleted between list and stat).
@@ -1016,7 +1017,7 @@ export async function doRecent(project, limit = 10, full = false, _memoryClient 
   );
   const results = resultsRaw.filter(Boolean);
 
-  return { results };
+  return listEnvelope(results);
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,7 +1063,7 @@ export async function doList(full = false, limit = null, ctx = {}) {
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   if (full) {
-    return { results: sliced };
+    return listEnvelope(sliced);
   }
   // Compact projection — consistent shape with doSearch compact items (minus score,
   // which is search-specific). id and title use the same fallback logic as doSearch.
@@ -1072,7 +1073,7 @@ export async function doList(full = false, limit = null, ctx = {}) {
     const snippet = buildSnippet(title, r.memory);
     return { id, title, snippet };
   });
-  return { results };
+  return listEnvelope(results);
 }
 
 const server = createServer(async (req, res) => {
@@ -1129,18 +1130,16 @@ const server = createServer(async (req, res) => {
 				let items = response.results;
 				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
 				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
-				response = { results: items };
+				response = listEnvelope(items);
 			}
 			// Project to compact shape unless caller explicitly requested full.
 			if (!fullReq) {
-				response = {
-					results: response.results.map((r) => ({
-						id: r.id,
-						title: r.title,
-						score: r.score,
-						snippet: buildSnippet(r.title, r.body),
-					})),
-				};
+				response = listEnvelope(response.results.map((r) => ({
+					id: r.id,
+					title: r.title,
+					score: r.score,
+					snippet: buildSnippet(r.title, r.body),
+				})));
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
@@ -1163,18 +1162,16 @@ const server = createServer(async (req, res) => {
 			let response = await doSearch(q, limit, includeSuperseded, true);
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
-				response = { results: items };
+				response = listEnvelope(items);
 			}
 			// Project to compact shape unless caller explicitly requested full.
 			if (!fullReq) {
-				response = {
-					results: response.results.map((r) => ({
-						id: r.id,
-						title: r.title,
-						score: r.score,
-						snippet: buildSnippet(r.title, r.body),
-					})),
-				};
+				response = listEnvelope(response.results.map((r) => ({
+					id: r.id,
+					title: r.title,
+					score: r.score,
+					snippet: buildSnippet(r.title, r.body),
+				})));
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
