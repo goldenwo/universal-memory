@@ -9,3 +9,10 @@
 plugins/**/bin/um text eol=lf
 plugins/**/bin/um-* text eol=lf
 plugins/**/hooks/* text eol=lf
+
+# Test fixtures must be byte-stable across platforms — token-cost.test.mjs
+# and similar tokenizer-based tests depend on exact byte counts. CRLF on
+# Windows inflates counts vs the LF form that CI runs against, producing
+# platform-dependent baseline drift.
+server/test/fixtures/* text eol=lf
+server/test/token-cost-baseline.txt text eol=lf
