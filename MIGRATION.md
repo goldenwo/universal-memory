@@ -66,6 +66,8 @@ bash installer/install.sh --dry-run         # print actions without executing
 Existing v0.4 invocations of `installer/install.sh` with no flags continue to
 work (the wizard fires only when stdin is a TTY and no flags are present).
 
+**After upgrade:** restart Claude Code (quit + relaunch) so the updated plugin loads. CC reads plugin manifests at startup; a running session continues to use the old plugin until restart.
+
 ### 4. `UM_PROMPT_DIR` env var (non-breaking)
 
 The installer now writes a `UM_PROMPT_DIR` export to the managed block in
