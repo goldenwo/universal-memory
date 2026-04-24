@@ -382,11 +382,6 @@ export function getVisibleTools(writeEnabled) {
 	return TOOLS.filter(t => !WRITE_TOOL_NAMES.has(t.name));
 }
 
-/** @deprecated Use isWriteEnabled() instead */
-function mcpWriteEnabled() {
-	return isWriteEnabled();
-}
-
 // ---------------------------------------------------------------------------
 // Shared helper: delete all mem0 entries matching a metadata.id value
 // Returns the count of deleted entries.
@@ -524,7 +519,7 @@ export async function handleToolCall(name, args) {
 			// C1: validate filename-path components before any path construction
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
-			if (!mcpWriteEnabled()) {
+			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const project = metadata.project || 'default';
@@ -567,7 +562,7 @@ export async function handleToolCall(name, args) {
 			if (!id) throw new Error('id is required');
 			// C1: validate id before using as path component
 			validateSafeName('id', id);
-			if (!mcpWriteEnabled()) {
+			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
@@ -612,7 +607,7 @@ export async function handleToolCall(name, args) {
 			validateSafeName('old_id', old_id);
 			validateSafeName('new_doc.id', new_doc.id);
 			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
-			if (!mcpWriteEnabled()) {
+			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
@@ -706,7 +701,7 @@ export async function handleToolCall(name, args) {
 		}
 
 		case 'memory_append_turn': {
-			if (!mcpWriteEnabled()) {
+			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
