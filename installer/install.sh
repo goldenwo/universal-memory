@@ -113,6 +113,7 @@ if [[ $MODE == wizard ]]; then
         INSTALL_PLUGIN_CC=$DETECTED_CC
         INSTALL_PLUGIN_CODEX=$DETECTED_CODEX
         INSTALL_CLI=1
+        [[ $DETECTED_DOCKER -eq 0 ]] && echo "[wizard] WARNING: Docker not detected — 'Everything' choice skips server install. Install Docker and re-run, or choose 4 (Just server) after installing Docker." >&2
         ;;
     2)  INSTALL_PLUGIN_CC=1 ;;
     3)  INSTALL_CLI=1
