@@ -125,10 +125,41 @@ _install_plugin() {
     _action="${_action:-c}"
   fi
 
+  # Before overwriting a directory target, back it up if it has local modifications
+  # (files present in target that are NOT in source indicate local edits).
+  _backup_target_if_modified() {
+    local src_dir="$1"
+    local tgt_dir="$2"
+    if [ ! -d "$tgt_dir" ]; then return; fi
+    local local_only=()
+    while IFS= read -r -d '' f; do
+      local rel="${f#$tgt_dir/}"
+      if [ ! -e "$src_dir/$rel" ]; then
+        local_only+=("$rel")
+      fi
+    done < <(find "$tgt_dir" -type f -print0 2>/dev/null)
+    if [ ${#local_only[@]} -gt 0 ]; then
+      warn "existing plugin dir $tgt_dir has local modifications:"
+      local shown=0
+      for f in "${local_only[@]}"; do
+        if [ $shown -lt 5 ]; then
+          warn "  $f"
+          shown=$((shown + 1))
+        fi
+      done
+      if [ ${#local_only[@]} -gt 5 ]; then
+        warn "  ... and $((${#local_only[@]} - 5)) more"
+      fi
+      local bak="$tgt_dir.bak-$(date +%s)"
+      warn "Existing dir will be backed up to $bak"
+      mv "$tgt_dir" "$bak"
+    fi
+  }
+
   case "$_action" in
     [lL]*)
       if [ -L "$target" ]; then rm -f "$target"
-      elif [ -d "$target" ]; then rm -rf "$target"; fi
+      elif [ -d "$target" ]; then _backup_target_if_modified "$src" "$target"; rm -rf "$target" 2>/dev/null || true; fi
       if ln -s "$src" "$target" 2>/dev/null; then
         ok "Plugin symlinked: $target -> $src"
       else
@@ -145,7 +176,7 @@ _install_plugin() {
       ;;
     *)
       if [ -L "$target" ]; then rm -f "$target"
-      elif [ -d "$target" ]; then rm -rf "$target"; fi
+      elif [ -d "$target" ]; then _backup_target_if_modified "$src" "$target"; rm -rf "$target" 2>/dev/null || true; fi
       if cp -r "$src" "$target"; then
         ok "Plugin copied to $target"
         _copy_rubric_to_target "$target"
