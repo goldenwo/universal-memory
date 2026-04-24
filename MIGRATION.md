@@ -1,5 +1,27 @@
 # Migration guide
 
+## v0.5 → v0.6
+
+### Breaking: `/api/list` response envelope
+
+Before (v0.5): `GET /api/list` returned a bare JSON array.
+
+```bash
+$ curl http://localhost:6335/api/list
+[{"id":"...","text":"...","metadata":{...}}, ...]
+```
+
+After (v0.6): returns `{results: [...]}` matching `/api/search` and `/api/recent`.
+
+```bash
+$ curl http://localhost:6335/api/list
+{"results":[{"id":"...","text":"...","metadata":{...}}, ...]}
+```
+
+Why: consistency across list-shape endpoints; future-proofs for additive top-level siblings (`provider`, `latency_ms` in v0.7+) without another shape change.
+
+---
+
 ## v0.4.0-alpha → v0.5.0-alpha
 
 Four changes worth knowing about. None are breaking for existing Claude Code
