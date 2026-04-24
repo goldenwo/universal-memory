@@ -473,7 +473,8 @@ export async function handleToolCall(name, args, ctx = {}) {
 			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
-			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
+			const memoryClient = ctx?.memory ?? memory;
+			const result = await memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
@@ -483,7 +484,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// Delegate to doList which returns { results: Array } per spec §4.1 (v0.6).
 			// When full=true: items are raw mem0 objects (body/metadata preserved).
 			// When full=false (default): items are compact { id, title, snippet }.
-			const { results: items } = await doList(clientFull, listLimit);
+			const { results: items } = await doList(clientFull, listLimit, ctx);
 			if (items.length === 0) return 'No memories.';
 			if (clientFull) {
 				// Full shape: return as JSON so body/metadata fields are accessible
@@ -496,7 +497,8 @@ export async function handleToolCall(name, args, ctx = {}) {
 			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
-			await memory.delete(args.memoryId);
+			const memoryClient = ctx?.memory ?? memory;
+			await memoryClient.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
 		}
 
@@ -504,7 +506,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 		case 'memory_state': {
 			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
 			// doState validates the project name and throws on invalid input.
-			return await doState(args.project);
+			return await doState(args.project, ctx);
 		}
 
 		case 'memory_recent': {
@@ -515,7 +517,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 			const project = args.project;
 			const limit = args.limit ?? 10;
 			const full = args.full === true;
-			const result = await doRecent(project, limit, full);
+			const result = await doRecent(project, limit, full, ctx);
 			return JSON.stringify(result);
 		}
 
