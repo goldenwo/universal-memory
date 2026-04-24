@@ -376,7 +376,7 @@ assert data.get('id') == 'session-summary-smoke-a', 'unexpected id: ' + str(data
 print('OK Case A: session_summary indexed, ok=True, indexed=True')
 " || { echo "FAIL: Case A reindex session_summary failed"; exit 1; }
 # Capture IDs for cleanup (via /api/list search by metadata.id)
-T7_A_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+T7_A_IDS=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -410,7 +410,7 @@ assert data.get('indexed') is True, 'expected indexed:true, got: ' + json.dumps(
 assert data.get('id') == 'authored-doc-smoke-b', 'unexpected id: ' + str(data.get('id'))
 print('OK Case B: authored doc indexed, ok=True, indexed=True')
 " || { echo "FAIL: Case B reindex authored doc failed"; exit 1; }
-T7_B_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+T7_B_IDS=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -866,7 +866,7 @@ assert result.get('ok') is True, 'expected ok:true: ' + result_text
 assert result.get('id') == '$T10G_CAP_ID', 'wrong id: ' + str(result.get('id'))
 print(f'OK T10-G1: memory_capture created doc {result.get(\"path\")}')
 " || { echo "FAIL: T10-G1 memory_capture failed"; exit 1; }
-	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list" | python3 -c "
+	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -887,7 +887,7 @@ assert result.get('ok') is True, 'expected ok:true: ' + result_text
 assert result.get('status') == 'deprecated', 'expected status=deprecated: ' + result_text
 print(f'OK T10-G2: memory_forget deprecated {result.get(\"id\")}')
 " || { echo "FAIL: T10-G2 memory_forget failed"; exit 1; }
-	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list" | python3 -c "
+	T10G_IDS="$T10G_IDS $(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -922,7 +922,7 @@ print(f'OK T10-G3: memory_supersede created new={result.get(\"new_id\")} superse
 	done
 	# Also cleanup any indexed entries for the new/old IDs
 	for doc_id in "$T10G_CAP_ID" "$T10G_OLD_ID" "$T10G_NEW_ID"; do
-		FOUND_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+		FOUND_IDS=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -1053,7 +1053,7 @@ print('OK T10-I step 3: second forget returned already_deprecated:true (idempote
 	rm -f "${UM_VAULT_DIR}/authored/smoke-t10i/${T10I_ID}.md"
 	rmdir "${UM_VAULT_DIR}/authored/smoke-t10i" 2>/dev/null || true
 	# Remove mem0 entries for T10-I doc (may exist as deprecated)
-	T10I_MEM_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+	T10I_MEM_IDS=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
@@ -1154,7 +1154,7 @@ echo "$DEL_SEARCH_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 items = data.get('results', [])
-found = any((r.get('metadata') or {}).get('id') == '$T_DEL_ID' for r in items)
+found = any(r.get('id') == '$T_DEL_ID' or (r.get('metadata') or {}).get('id') == '$T_DEL_ID' for r in items)
 if found:
     print('OK: doc with metadata.id=$T_DEL_ID found in search results')
 else:
@@ -1187,7 +1187,7 @@ echo "$DEL_SEARCH2" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 items = data.get('results', [])
-remaining = [r for r in items if (r.get('metadata') or {}).get('id') == '$T_DEL_ID']
+remaining = [r for r in items if r.get('id') == '$T_DEL_ID' or (r.get('metadata') or {}).get('id') == '$T_DEL_ID']
 if remaining:
     print(f'FAIL: {len(remaining)} result(s) with metadata.id=$T_DEL_ID still present after delete')
     sys.exit(1)
@@ -1264,11 +1264,12 @@ echo "$T25_STATE_SEARCH" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 results = data.get('results', [])
-state_results = [r for r in results if (r.get('metadata') or {}).get('type') == 'state']
-if len(state_results) != 0:
-    print(f'FAIL: T25 step 2 — expected 0 type=state results, got {len(state_results)}: ' + json.dumps(state_results[:2]))
+# Server already applied filters.type=state server-side; compact shape omits metadata.
+# Trust the server-side filter: zero results means state was excluded.
+if len(results) != 0:
+    print(f'FAIL: T25 step 2 — expected 0 results after server-side filter type=state, got {len(results)}: ' + json.dumps(results[:2]))
     sys.exit(1)
-print(f'OK T25 step 2: type=state search returned 0 results (total {len(results)} results)')
+print(f'OK T25 step 2: type=state search returned 0 results (server-side filter authoritative)')
 " || { echo "FAIL: T25 step 2 type=state search check failed"; exit 1; }
 
 # Step 3: create and reindex a session_summary doc
@@ -1299,7 +1300,7 @@ print('OK T25 step 3: session_summary doc indexed')
 " || { echo "FAIL: T25 step 3 session_summary reindex failed"; exit 1; }
 
 # Capture IDs for cleanup
-T25_CLEANUP_IDS=$(curl -sf "$ENDPOINT/api/list" | python3 -c "
+T25_CLEANUP_IDS=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
 import json, sys
 items = json.load(sys.stdin)
 if isinstance(items, dict): items = items.get('results', [])
