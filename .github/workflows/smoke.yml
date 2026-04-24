@@ -82,13 +82,22 @@ jobs:
       # UM_VAULT_DIR is re-exported here because smoke.sh creates host-side
       # fixtures at $UM_VAULT_DIR/sessions/... that the container reads via
       # its /vault mount.
+      #
+      # umask 000 so host-created fixture dirs under $UM_VAULT_DIR are 0777
+      # and the container's node user (UID 1000) can create its own subdirs
+      # (e.g. /vault/state/t10e for memory_checkpoint writes). Without this,
+      # runner-owned 0755 state/ dir blocks container mkdir with EACCES.
+      # v0.6 follow-up: set docker-compose user: to match host UID so this
+      # cross-user write pattern isn't needed.
       - name: Run smoke test
         working-directory: server
         env:
           UM_MCP_WRITE_ENABLED: "true"
           UM_VAULT_DIR: "/tmp/um-vault-ci"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: bash ./test/smoke.sh
+        run: |
+          umask 000
+          bash ./test/smoke.sh
 
       # Continuity pipeline test: exercises stop → session-end → state.md →
       # session-start catchup + inject, end-to-end against the live server.
