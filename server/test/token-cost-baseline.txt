@@ -28,12 +28,12 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   memory_state        tiktoken=    62  anthropic=    67
   memory_recent       tiktoken=   119  anthropic=   119
   memory_capture      tiktoken=   149  anthropic=   156
-  memory_checkpoint   tiktoken=    52  anthropic=    55
+  memory_checkpoint   tiktoken=   125  anthropic=   133
   memory_forget       tiktoken=    64  anthropic=    68
   memory_supersede    tiktoken=   152  anthropic=   161
   memory_append_turn  tiktoken=   190  anthropic=   200
 
-  TOTAL               tiktoken=  1115  anthropic=  1158
+  TOTAL               tiktoken=  1188  anthropic=  1236
   (11 tools measured)
 
 === LOCATION 2: MCP response payloads ===
