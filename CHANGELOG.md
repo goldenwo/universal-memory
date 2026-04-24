@@ -149,10 +149,10 @@ ten Minor findings are deferred to v0.5.
   `full: true` in tool arguments to opt back in.
 - **BREAKING for MCP listTools consumers**: `tools/list` returns 4 read
   tools by default (`memory_search`, `memory_list`, `memory_state`,
-  `memory_recent`). The 6 write tools (`memory_add`, `memory_delete`,
-  `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`)
-  are filtered out unless `UM_MCP_WRITE_ENABLED=true` on the server. Direct
-  `tools/call` against a filtered tool still returns
+  `memory_recent`). The 7 write tools (`memory_add`, `memory_append_turn`,
+  `memory_capture`, `memory_checkpoint`, `memory_delete`, `memory_forget`,
+  `memory_supersede`) are filtered out unless `UM_MCP_WRITE_ENABLED=true`
+  on the server. Direct `tools/call` against a filtered tool still returns
   `{ ok: false, error: "MCP writes disabled" }` (graceful) — commit
   `0cb912b`.
 - `memory_recent` MCP tool now reads the filesystem directly (mtime-sorted)

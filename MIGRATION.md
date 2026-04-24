@@ -138,10 +138,11 @@ that genuinely need full bodies get them with one extra query param.
 
 1. `memory_search`, `memory_list`, `memory_recent` return compact shape by
    default. Pass `full: true` in tool arguments to opt back in.
-2. `tools/list` returns 4 tools by default — the 4 reads. The 6 write
-   tools (`memory_add`, `memory_delete`, `memory_capture`,
-   `memory_checkpoint`, `memory_forget`, `memory_supersede`) are filtered
-   out of discovery unless `UM_MCP_WRITE_ENABLED=true` on the server.
+2. `tools/list` returns 4 tools by default — the 4 reads. The 7 write
+   tools (`memory_add`, `memory_append_turn`, `memory_capture`,
+   `memory_checkpoint`, `memory_delete`, `memory_forget`, `memory_supersede`)
+   are filtered out of discovery unless `UM_MCP_WRITE_ENABLED=true` on
+   the server.
 
 **Who's affected.**
 
