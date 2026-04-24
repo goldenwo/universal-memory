@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # install.sh in UM_NONINTERACTIVE=1 mode reads the required values
       # from env vars, fails fast if any are missing, and writes .env
