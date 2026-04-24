@@ -177,9 +177,11 @@ test('doAppendTurn writes only to the raw-capture file (no spurious files)', asy
 
   assert.equal(result.ok, true);
 
-  // Only the raw .md file (and its .lock sibling) should exist under the project dir
+  // Only the raw .md file should exist after release — the lockdir is rmdir'd on release.
+  // Defensive filter: accept either .lock (pre-B.9) or .lockdir (post-B.9) siblings in case
+  // of transient residue on some filesystems; the assertion is on the non-lock count.
   const files = await fs.readdir(path.join(vault, 'captures/fsdirect/raw'));
-  const nonLock = files.filter((f) => !f.endsWith('.lock'));
+  const nonLock = files.filter((f) => !f.endsWith('.lock') && !f.endsWith('.lockdir'));
   assert.equal(nonLock.length, 1, 'exactly one non-lock file written');
   assert.ok(nonLock[0].endsWith('.md'), 'raw .md file present');
 });
@@ -221,19 +223,10 @@ test('doAppendTurn is flock-safe under concurrent writes', async () => {
 });
 
 // ---------- lock exhaustion (contract preservation) ----------
-
-test('doAppendTurn returns ok=false when lock acquire fails (contract preserved, ctx.lockfile DI)', async () => {
-  const vault = await makeTempVault();
-  const fakeLockfile = {
-    lock: async () => { const e = new Error('fake ELOCKED'); e.code = 'ELOCKED'; throw e; },
-  };
-  const result = await doAppendTurn(
-    { project: 'p', content: 'c', role: 'user' },
-    { vaultDir: vault, lockfile: fakeLockfile }
-  );
-  assert.equal(result.ok, false);
-  assert.match(result.error, /lock_acquire_failed.*ELOCKED/);
-});
+// NOTE: B.9 migrated from proper-lockfile → lockdir (mkdir-based). The DI hook
+// moved from ctx.lockfile → ctx._acquireLockdir; see the new contract test at
+// the bottom of this file ("doAppendTurn returns ok=false when lockdir acquire
+// fails"). Kept the section header so the regression is easy to locate.
 
 // ---------- REST handler unit tests ----------
 
@@ -241,7 +234,14 @@ test('POST /api/append-turn writes a turn and returns compact shape', async () =
   const vault = await makeTempVault();
   const req = { body: { project: 'rest-test', content: 'via REST', role: 'user' } };
   const res = mockRes();
-  await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
+  // No-op reindexFn so the fire-and-forget reindex doesn't try to hit an
+  // uninitialized mem0 binding. This test covers the 200-response shape;
+  // best-effort reindex semantics are covered by a dedicated test below.
+  await handleAppendTurnRequest(req, res, {
+    vaultDir: vault,
+    writesEnabled: true,
+    reindexFn: async () => {},
+  });
   assert.equal(res.statusCode, 200);
   const body = res.jsonBody;
   assert.equal(body.ok, true);
@@ -444,4 +444,103 @@ test('doAppendTurn error returns include schema_version:1', async () => {
   // missing UM_VAULT_DIR
   const r4 = await doAppendTurn({ project: 'p', content: 'c', role: 'user' }, { vaultDir: undefined });
   assert.equal(r4.schema_version, 1, 'missing vaultDir error should have schema_version:1');
+});
+
+// ---------- B.9: lockdir concurrent-write regression ----------
+// Two parallel appendTurn calls against the same date file via Promise.all must
+// produce two complete, distinct turns in the file — no torn writes, no dropped
+// turns, no duplicate content. Exercises the lockdir migration (B.8 → B.9) directly.
+test('concurrent writes to same date file serialize via lockdir — no torn writes, no duplicate IDs', async () => {
+  const vault = await makeTempVault();
+  const ctx = { vaultDir: vault, clock: () => new Date('2026-04-24T12:00:00Z') };
+  const a = { project: 'concurr', content: 'alpha-body-AAA', role: 'user' };
+  const b = { project: 'concurr', content: 'bravo-body-BBB', role: 'assistant' };
+
+  // Fire both in parallel — lockdir must serialize them.
+  const [rA, rB] = await Promise.all([doAppendTurn(a, ctx), doAppendTurn(b, ctx)]);
+  assert.equal(rA.ok, true, `A should succeed: ${rA.error}`);
+  assert.equal(rB.ok, true, `B should succeed: ${rB.error}`);
+
+  const diskPath = path.join(vault, 'captures/concurr/raw/2026-04-24.md');
+  const disk = await fs.readFile(diskPath, 'utf8');
+
+  // Both bodies must be present exactly once each — no torn/interleaved writes.
+  const alphaMatches = (disk.match(/alpha-body-AAA/g) || []).length;
+  const bravoMatches = (disk.match(/bravo-body-BBB/g) || []).length;
+  assert.equal(alphaMatches, 1, 'alpha body should appear exactly once');
+  assert.equal(bravoMatches, 1, 'bravo body should appear exactly once');
+
+  // Header markers — must be exactly 2 turn headers (one per role).
+  const headers = disk.match(/^## 2026-04-24T12:00:00\.000Z (user|assistant)$/gm) || [];
+  assert.equal(headers.length, 2, `expected 2 turn headers, got ${headers.length}: ${disk}`);
+
+  // Lockdir must be released (rmdir'd) after both turns complete.
+  const lockdirStat = await fs.stat(diskPath + '.lockdir').catch(() => null);
+  assert.equal(lockdirStat, null, 'lockdir should be released after both writes');
+});
+
+// ---------- B.9: best-effort reindex per spec §5.4 ----------
+// memory_append_turn is semantically non-blocking: the turn is captured to disk
+// unconditionally, and any reindex is fire-and-forget with logged errors. The
+// HTTP 200 response does NOT depend on reindex outcome.
+test('/api/append-turn reindex is best-effort — succeeds with 200 even when reindex throws', async () => {
+  const vault = await makeTempVault();
+  let reindexCallCount = 0;
+  let reindexRelPath = null;
+  const reindexFn = async (relPath) => {
+    reindexCallCount += 1;
+    reindexRelPath = relPath;
+    throw new Error('simulated reindex failure (vector store down)');
+  };
+
+  // Capture warnings to assert the best-effort logger output.
+  const origWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+
+  try {
+    const req = { body: { project: 'besteffort', content: 'stays on disk', role: 'user' } };
+    const res = mockRes();
+    await handleAppendTurnRequest(req, res, {
+      vaultDir: vault,
+      writesEnabled: true,
+      reindexFn,
+    });
+
+    // 200 even though reindex threw — turn is on disk, vector index catches up later.
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+    assert.equal(res.jsonBody.ok, true);
+    assert.match(res.jsonBody.path, /captures\/besteffort\/raw/);
+
+    // Turn is durably on disk.
+    const diskContent = await fs.readFile(path.join(vault, res.jsonBody.path), 'utf8');
+    assert.match(diskContent, /stays on disk/);
+
+    // Give the fire-and-forget promise a tick to resolve/reject and hit the .catch handler.
+    await new Promise((r) => setImmediate(r));
+
+    // Reindex was invoked exactly once, on the just-written path.
+    assert.equal(reindexCallCount, 1, 'reindex should be called exactly once');
+    assert.equal(reindexRelPath, res.jsonBody.path, 'reindex called with the capture path');
+
+    // Error was logged (structured logger lands in Phase C; for now console.warn is fine).
+    const reindexWarnings = warnings.filter((w) => /reindex.*(failed|best-effort)/i.test(w));
+    assert.ok(reindexWarnings.length >= 1, `expected a reindex-failure warning, got: ${warnings.join(' | ')}`);
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
+// B.9: DI shape update — legacy ctx.lockfile path is gone (proper-lockfile dropped).
+// The replacement injection point is ctx._acquireLockdir for failure simulation.
+test('doAppendTurn returns ok=false when lockdir acquire fails (contract preserved, ctx._acquireLockdir DI)', async () => {
+  const vault = await makeTempVault();
+  // Inject a fake acquireLockdir that simulates contention — returns false (timeout).
+  const fakeAcquire = async () => false;
+  const result = await doAppendTurn(
+    { project: 'p', content: 'c', role: 'user' },
+    { vaultDir: vault, _acquireLockdir: fakeAcquire },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /lock_acquire_failed/);
 });

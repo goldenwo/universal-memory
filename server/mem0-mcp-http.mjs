@@ -718,6 +718,16 @@ export async function handleToolCall(name, args, ctx = {}) {
 				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
+			// B.9 (spec §5.4): fire-and-forget reindex for MCP parity with the
+			// REST endpoint. Errors logged, never propagated — the turn is
+			// already on disk and will reindex on the next successful pass.
+			if (result.ok && result.path) {
+				reindexDoc(result.path).catch((err) => {
+					console.warn(
+						`[mem0-mcp] memory_append_turn reindex failed (best-effort): ${err?.message ?? err} path=${result.path}`
+					);
+				});
+			}
 			return JSON.stringify(result);
 		}
 
@@ -821,9 +831,20 @@ function readBody(req, maxBytes = _currentMaxBodyBytes()) {
 /**
  * Exported handler for POST /api/append-turn.
  * Accepts a pre-parsed body via req.body (unit-test friendly).
+ *
+ * Reindex semantics (spec §5.4): memory_append_turn is best-effort — the turn
+ * is captured to disk unconditionally, and any reindex to the vector store is
+ * fire-and-forget with logged errors. HTTP 200 is returned as soon as the disk
+ * write succeeds; the vector index can be stale until the next successful
+ * reindex (e.g., from a subsequent checkpoint). Contrast with memory_checkpoint,
+ * where reindex is blocking because the checkpoint is a consistency point.
+ *
  * @param {{ body: { project, content, role, timestamp?, conversation_id? } }} req
  * @param {{ status(code): this, json(obj): this }} res
- * @param {{ vaultDir?: string, writesEnabled: boolean }} ctx
+ * @param {{ vaultDir?: string, writesEnabled: boolean, reindexFn?: Function }} ctx
+ *   `reindexFn`: optional async fn(relPath) → indexed; called fire-and-forget
+ *   after a successful disk write. Defaults to the module-level `reindexDoc`.
+ *   Tests inject a stub (throwing or success) to assert best-effort semantics.
  */
 export async function handleAppendTurnRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
@@ -851,6 +872,17 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 			res.status(400).json(result);
 			return;
 		}
+		// B.9 (spec §5.4): fire-and-forget reindex. The user keeps typing; the
+		// turn is on disk; the vector index catches up on the next successful
+		// reindex. Errors are logged but do NOT affect the 200 response or the
+		// durability of the captured turn.
+		// Phase C: replace console.warn with structured logger call.
+		const reindexFn = ctx.reindexFn ?? reindexDoc;
+		reindexFn(result.path).catch((err) => {
+			console.warn(
+				`[mem0-mcp] append-turn reindex failed (best-effort): ${err?.message ?? err} path=${result.path}`
+			);
+		});
 		res.status(200).json(result);
 	} catch (err) {
 		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
