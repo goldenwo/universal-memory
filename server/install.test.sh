@@ -441,18 +441,16 @@ T9_OUT=$(run_install "$T9/bin" "$T9_SH" \
   HOME="$T9/home") || T9_EXIT=$?
 
 assert_exit_zero "T9: install exits 0 over stale symlink" "$T9_EXIT"
-# Plugin should now be a real directory (or symlink to correct src), not a symlink to $T9/elsewhere
-T9_LINK_DEST=$(readlink "$T9/plugins/universal-memory" 2>/dev/null || true)
-if [ -L "$T9/plugins/universal-memory" ]; then
-  # It's a symlink — must point at plugin src, NOT the old stale target
-  assert_not_contains "T9: stale symlink target not written into" "$T9_LINK_DEST" "$T9/elsewhere"
-else
-  # It's a real directory — also correct
-  assert_file_exists "T9: plugin installed as directory over stale symlink" "$T9/plugins/universal-memory"
-fi
-# $T9/elsewhere must be empty — no files were written into it
+# v0.5 contract: server/install.sh no longer handles plugin copy (delegated
+# to installer/install-plugin-cc.sh post-commit 881f229), so the plugin
+# symlink at $T9/plugins/universal-memory is untouched by this script. The
+# invariant we still enforce here is that install.sh did not write anything
+# into the stale symlink's target directory ($T9/elsewhere) — i.e. no code
+# path in server-only install accidentally traverses a plugin-dir symlink.
+# The stale-symlink replacement behavior moved to install-plugin-cc.sh and
+# is tracked as an install-plugin-cc.test.sh coverage gap for v0.6.
 T9_ELSEWHERE_COUNT=$(ls "$T9/elsewhere" 2>/dev/null | wc -l | tr -d ' ')
-assert_eq "T9: stale symlink target not corrupted" "$T9_ELSEWHERE_COUNT" "0"
+assert_eq "T9: stale symlink target not corrupted by server install" "$T9_ELSEWHERE_COUNT" "0"
 
 # ─── T10: C2 — malformed .env line does not crash --verify ────────────────────
 echo ""
