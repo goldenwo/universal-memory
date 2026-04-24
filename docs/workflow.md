@@ -351,6 +351,9 @@ Optional mem0 tuning: `MEM0_EMBEDDER_MODEL`, `MEM0_LLM_MODEL`, `QDRANT_HOST/PORT
 | `UM_CATCHUP_RAW_SINCE/UNTIL` | *(unset)* | Internal — catchup mode boundaries |
 | `UM_PROJECT` | *(auto-detected)* | Override project name detection |
 | `UM_PROMPT_DIR` | *(set by installer)* | Directory containing `summarize.txt` + `update-state.txt` prompts; default is plugin-local `hooks/lib/prompts/`. |
+| `UM_SUMMARIZER_FALLBACK` | `openai` | Backend to fall back to when the primary `UM_SUMMARIZER` is unavailable (e.g. `claude-agent-sdk` server-side). |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL. Only used when `UM_SUMMARIZER=ollama`. |
+| `UM_SUMMARIZE_MODEL` | `gpt-4o-mini` (openai) / `llama3` (ollama) | Model ID passed to the summarizer backend. |
 
 ---
 
