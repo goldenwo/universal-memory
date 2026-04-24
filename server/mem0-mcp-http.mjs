@@ -282,7 +282,7 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_checkpoint',
-		description: 'Force a session summary + state update (server-side stub — currently delegates to `/um-checkpoint` slash command in Claude Code)',
+		description: 'Trigger a session summary + state refresh for the given project. Pipeline: reads raw captures -> LLM-summarizes -> writes to sessions/<project>/<id>.md -> atomically merges into state/<project>/state.md -> reindexes into mem0. Cost-capped per day per project. Honors UM_SUMMARIZER (openai | ollama | claude-agent-sdk; latter falls back to openai server-side). Parity with the /um-checkpoint slash command in Claude Code.',
 		inputSchema: {
 			type: 'object',
 			properties: {
