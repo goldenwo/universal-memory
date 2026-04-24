@@ -42,7 +42,19 @@ export async function updateState(args, ctx = {}) {
   const promptPath = promptDir
     ? path.join(promptDir, 'update-state.txt')
     : DEFAULT_PROMPT_PATH;
-  const systemPrompt = await fs.readFile(promptPath, 'utf8');
+  let systemPrompt;
+  try {
+    systemPrompt = await fs.readFile(promptPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return {
+        schema_version: 1,
+        ok: false,
+        error: `update-state prompt missing at ${promptPath}; check $UM_PROMPT_DIR or reinstall plugin`,
+      };
+    }
+    throw err;
+  }
 
   // Build user prompt matching bash script's _UM_USER_PROMPT format
   const oldStateDisplay = oldStateMd.trim()
