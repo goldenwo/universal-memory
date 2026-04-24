@@ -51,6 +51,7 @@ import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
+import { createRateLimiter } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
@@ -1478,6 +1479,12 @@ export function createRequestHandler(ctx = {}) {
 	// in routes below (outside the do* helpers) use this resolved reference so
 	// tests that inject ctx.memory see their stub in every code path.
 	const resolvedMemory = () => ctx?.memory ?? memory;
+	// C.7 / spec §4.2 step 5: per-handler rate-limiter. Created ONCE per
+	// handler instance — the bucket Map is closed over and shared across
+	// every request the handler serves. createRateLimiter() reads
+	// UM_RATE_LIMIT_RPM / BURST / MAX_IPS from process.env at construction
+	// time, matching the env-snapshot behavior of every other server knob.
+	const admit = createRateLimiter();
 	return async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1658,12 +1665,41 @@ export function createRequestHandler(ctx = {}) {
 		}
 	}
 
+	// Step 5: rate-limit (C.7, spec §4.2 step 5). Bypass conditions
+	// MIRROR auth bypass exactly:
+	//   - route.bypassRateLimit (endpoint-class B.2: /health, /metrics
+	//     loopback-only branch, /openapi?gpt=1) → always skip.
+	//   - shouldBypassLoopback(req): pure loopback + no forwarded
+	//     headers → skip. Local CC plugin from same machine is NEVER
+	//     rate-limited; tunnel / proxy traffic IS. This is the same
+	//     defense-in-depth posture as auth (step 4 above).
+	// Over-limit:
+	//   - 429 with Retry-After header in seconds (RFC 7231 §7.1.3).
+	//   - Body uses §5.1 unified envelope via errorResponse() —
+	//     LIMIT_RATE_EXCEEDED auto-tags retryable:true.
+	//   - res.end shim flushes the C.5 metrics counter for status=429
+	//     and the C.3 finish-log on the way out.
+	if (!route.bypassRateLimit && !shouldBypassLoopback(req)) {
+		const ipKey = req.socket?.remoteAddress ?? 'unknown';
+		const decision = admit(ipKey);
+		if (!decision.admitted) {
+			res.writeHead(429, {
+				'Content-Type': 'application/json',
+				'Retry-After': String(decision.retryAfterSec),
+			});
+			res.end(JSON.stringify(errorResponse(
+				'LIMIT_RATE_EXCEEDED',
+				'rate limit exceeded',
+			)));
+			return;
+		}
+	}
+
 	// B.6b: UM_HTTP_MAX_REQUEST_BYTES cap enforced inside readBody() below.
 	//   Overrun throws an error with .code='INPUT_TOO_LARGE' which is caught
 	//   at the end of this handler → 413 INPUT_TOO_LARGE envelope response.
 	//   Fires BEFORE JSON-parse or any field-level validator (spec §5.2
 	//   precedence 1).
-	// TODO(Phase C): rate-limit step here (depends on route.bypassRateLimit).
 	// C.5: counter-finish metrics emit wired in res.end shim above.
 
 	try {

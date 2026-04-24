@@ -313,3 +313,173 @@ test('B.6b: field-level content cap fires INPUT_TOO_LARGE (not INPUT_INVALID) vi
     else process.env.UM_VAULT_DIR = prevVault;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Task C.7 — rate-limit middleware (spec §4.2 step 5).
+//
+// Wires createRateLimiter() (C.6) into the chain between auth (step 4) and
+// handler dispatch (step 6+). Bypass conditions match auth: route.bypassRateLimit
+// (endpoint-class) OR shouldBypassLoopback(req) (loopback + no forwarded headers).
+// 429 responses use the §5.1 unified envelope with LIMIT_RATE_EXCEEDED, plus
+// Retry-After header in seconds (RFC 7231 §7.1.3). The 429 status flows
+// through the C.5 res.end shim so um_http_requests_total{status="429"}
+// increments alongside 2xx and 4xx counters.
+// ---------------------------------------------------------------------------
+
+// Helper to spin up a server with custom rate-limit env knobs. The
+// limiter is constructed at createRequestHandler() time so env MUST be
+// set BEFORE startServerWithRateLimit() returns its handler.
+async function startServerWithRateLimit({ rpm, burst, token, memory }) {
+  const prevRpm = process.env.UM_RATE_LIMIT_RPM;
+  const prevBurst = process.env.UM_RATE_LIMIT_BURST;
+  const prevTok = process.env.UM_AUTH_TOKEN;
+  if (rpm !== undefined) process.env.UM_RATE_LIMIT_RPM = String(rpm);
+  if (burst !== undefined) process.env.UM_RATE_LIMIT_BURST = String(burst);
+  if (token !== undefined) process.env.UM_AUTH_TOKEN = token;
+  const srv = createServer(createRequestHandler({ memory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const close = async () => {
+    srv.close();
+    await once(srv, 'close');
+    if (prevRpm === undefined) delete process.env.UM_RATE_LIMIT_RPM;
+    else process.env.UM_RATE_LIMIT_RPM = prevRpm;
+    if (prevBurst === undefined) delete process.env.UM_RATE_LIMIT_BURST;
+    else process.env.UM_RATE_LIMIT_BURST = prevBurst;
+    if (prevTok === undefined) delete process.env.UM_AUTH_TOKEN;
+    else process.env.UM_AUTH_TOKEN = prevTok;
+  };
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  return { port, close, url };
+}
+
+test('C.7: over-limit request returns 429 LIMIT_RATE_EXCEEDED with Retry-After header', async () => {
+  // burst=2 → 1st + 2nd admit, 3rd denies. X-Forwarded-For forces the
+  // non-loopback path so loopback-bypass doesn't skip rate-limit.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 2, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    // Fire 3 requests sequentially with the same forwarded IP so they
+    // all hit the same bucket. Sequential await keeps ordering deterministic
+    // (concurrent admit() calls would still serialize through the Map but
+    // the assertion order would be ambiguous).
+    const results = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await fetch(url('/api/list'), {
+        headers: {
+          'Authorization': 'Bearer secret',
+          'X-Forwarded-For': '203.0.113.7',
+        },
+      });
+      results.push(r);
+      // Drain bodies to free the socket — fetch keeps connections alive
+      // and a pending body would queue subsequent requests behind it.
+      await r.text();
+    }
+    assert.equal(results[0].status, 200, 'first request admits');
+    assert.equal(results[1].status, 200, 'second request admits (burst=2)');
+    assert.equal(results[2].status, 429, 'third request denies');
+    const retryAfter = results[2].headers.get('retry-after');
+    assert.ok(retryAfter, 'Retry-After header MUST be set');
+    assert.match(retryAfter, /^\d+$/, 'Retry-After is integer seconds (RFC 7231)');
+    assert.ok(parseInt(retryAfter, 10) >= 1, 'Retry-After is >= 1');
+  } finally { await close(); }
+});
+
+test('C.7: 429 response body uses §5.1 unified envelope (LIMIT_RATE_EXCEEDED, retryable:true)', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    // 1st admits, 2nd denies — same forwarded IP keeps both on one bucket.
+    const r1 = await fetch(url('/api/list'), {
+      headers: { 'Authorization': 'Bearer secret', 'X-Forwarded-For': '203.0.113.8' },
+    });
+    await r1.text();
+    assert.equal(r1.status, 200);
+    const r2 = await fetch(url('/api/list'), {
+      headers: { 'Authorization': 'Bearer secret', 'X-Forwarded-For': '203.0.113.8' },
+    });
+    assert.equal(r2.status, 429);
+    const body = await r2.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error.code, 'LIMIT_RATE_EXCEEDED');
+    assert.equal(body.error.retryable, true);
+    assert.equal(typeof body.error.message, 'string');
+  } finally { await close(); }
+});
+
+test('C.7: /health bypasses rate-limit even at high request rates', async () => {
+  // burst=1 — would 429 immediately on /api/list. /health should sail
+  // through every time because route.bypassRateLimit=true for it.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (let i = 0; i < 25; i++) {
+      const r = await fetch(url('/health'), {
+        headers: { 'X-Forwarded-For': '203.0.113.9' },
+      });
+      await r.text();
+      assert.equal(r.status, 200, `request ${i + 1}: /health must not 429`);
+    }
+  } finally { await close(); }
+});
+
+test('C.7: /metrics from loopback bypasses rate-limit (loopback-only default)', async () => {
+  // /metrics defaults to loopback-only. From the test process (127.0.0.1)
+  // it returns 200 + Prometheus text exposition. burst=1 would 429 a
+  // /api/list path immediately, but /metrics has bypassRateLimit=true.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (let i = 0; i < 25; i++) {
+      // No X-Forwarded-For: pure loopback hits the loopback /metrics row
+      // which returns bypassRateLimit:true.
+      const r = await fetch(url('/metrics'));
+      await r.text();
+      assert.equal(r.status, 200, `request ${i + 1}: /metrics must not 429`);
+    }
+  } finally { await close(); }
+});
+
+test('C.7: loopback IP with no forwarded headers bypasses rate-limit (matches auth bypass)', async () => {
+  // Pure loopback (no forwarded headers) — shouldBypassLoopback() returns
+  // true. C.7 mirrors the auth-bypass condition: rate-limit also skipped.
+  // burst=1 would normally allow 1 request, but loopback-bypass means
+  // unlimited. 25 rapid /api/list hits all 200.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (let i = 0; i < 25; i++) {
+      const r = await fetch(url('/api/list')); // pure loopback, no X-F-F
+      await r.text();
+      assert.equal(r.status, 200, `request ${i + 1}: loopback bypass must skip rate-limit`);
+    }
+  } finally { await close(); }
+});
+
+test('C.7: forwarded header forces rate-limit even from loopback IP', async () => {
+  // X-Forwarded-For present → shouldBypassLoopback()=false (default-deny
+  // per spec §4.2). Auth applies AND rate-limit applies. burst=1 means
+  // 1st admits, 2nd 429s.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const r1 = await fetch(url('/api/list'), {
+      headers: { 'Authorization': 'Bearer secret', 'X-Forwarded-For': '198.51.100.42' },
+    });
+    await r1.text();
+    assert.equal(r1.status, 200);
+    const r2 = await fetch(url('/api/list'), {
+      headers: { 'Authorization': 'Bearer secret', 'X-Forwarded-For': '198.51.100.42' },
+    });
+    assert.equal(r2.status, 429, 'forwarded header opts out of loopback bypass — rate-limit kicks in');
+    await r2.text();
+  } finally { await close(); }
+});
