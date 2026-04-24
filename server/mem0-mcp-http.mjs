@@ -54,6 +54,7 @@ import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
+import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { registry, httpRequestsTotal, httpRequestDurationSeconds } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
@@ -594,7 +595,8 @@ export async function handleToolCall(name, args, ctx = {}) {
 			const docText = serializeFrontmatter(fm, `\n${content}`);
 
 			await writeVaultFile(relPath, docText);
-			getLogger().info({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath }, 'memory_capture: wrote');
+			// C.9 (§4.2.0): pino emit must never throw out of a tool path.
+			safeLog(() => getLogger().info({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath }, 'memory_capture: wrote'), 'log:memory_capture:wrote');
 
 			// Reindex
 			let indexed = false;
@@ -602,7 +604,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 				await reindexDoc(relPath);
 				indexed = true;
 			} catch (err) {
-				getLogger().error({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath, err_message: err?.message }, 'memory_capture: reindex failed');
+				safeLog(() => getLogger().error({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath, err_message: err?.message }, 'memory_capture: reindex failed'), 'log:memory_capture:reindex-failed');
 			}
 
 			return JSON.stringify({ ok: true, path: relPath, id, indexed });
@@ -649,13 +651,13 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// Write back atomically
 			const updated = serializeFrontmatter(fm, body);
 			await writeVaultFile(relPath, updated);
-			getLogger().info({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath }, 'memory_forget: deprecated');
+			safeLog(() => getLogger().info({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath }, 'memory_forget: deprecated'), 'log:memory_forget:deprecated');
 
 			// Reindex so mem0 sees the updated status
 			try {
 				await reindexDoc(relPath);
 			} catch (err) {
-				getLogger().error({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath, err_message: err?.message }, 'memory_forget: reindex failed');
+				safeLog(() => getLogger().error({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath, err_message: err?.message }, 'memory_forget: reindex failed'), 'log:memory_forget:reindex-failed');
 			}
 
 			return JSON.stringify({ ok: true, id, path: relPath, status: 'deprecated' });
@@ -720,7 +722,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 			delete newFm.content;
 			const newDocText = serializeFrontmatter(newFm, `\n${newContent}`);
 			await writeVaultFile(newRelPath, newDocText);
-			getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath }, 'memory_supersede: created new doc');
+			safeLog(() => getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath }, 'memory_supersede: created new doc'), 'log:memory_supersede:created');
 
 			// 3. Mutate old doc frontmatter
 			// I1: if the old-doc mutation fails, roll back the new doc we just wrote
@@ -734,7 +736,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 				oldFm.invalidated_at = now;
 				const updatedOld = serializeFrontmatter(oldFm, oldBody);
 				await writeVaultFile(oldRelPath, updatedOld);
-				getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath }, 'memory_supersede: superseded old doc');
+				safeLog(() => getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath }, 'memory_supersede: superseded old doc'), 'log:memory_supersede:superseded');
 			} catch (err) {
 				// Rollback: remove the new doc we wrote in step 2 (best-effort)
 				try { await fs.unlink(path.join(vaultPath(), newRelPath)); } catch {}
@@ -748,13 +750,13 @@ export async function handleToolCall(name, args, ctx = {}) {
 				await reindexDoc(newRelPath);
 				newIndexed = true;
 			} catch (err) {
-				getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath, err_message: err?.message }, 'memory_supersede: new doc reindex failed');
+				safeLog(() => getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath, err_message: err?.message }, 'memory_supersede: new doc reindex failed'), 'log:memory_supersede:new-reindex-failed');
 			}
 			try {
 				await reindexDoc(oldRelPath);
 				oldIndexed = true;
 			} catch (err) {
-				getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath, err_message: err?.message }, 'memory_supersede: old doc reindex failed');
+				safeLog(() => getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath, err_message: err?.message }, 'memory_supersede: old doc reindex failed'), 'log:memory_supersede:old-reindex-failed');
 			}
 
 			return JSON.stringify({
@@ -780,12 +782,12 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// already on disk and will reindex on the next successful pass.
 			if (result.ok && result.path) {
 				reindexDoc(result.path).catch((err) => {
-					getLogger().warn({
+					safeLog(() => getLogger().warn({
 						request_id: currentRequestId(),
 						tool: 'memory_append_turn',
 						path: result.path,
 						err_message: err?.message ?? String(err),
-					}, 'memory_append_turn reindex failed (best-effort)');
+					}, 'memory_append_turn reindex failed (best-effort)'), 'log:memory_append_turn:reindex-failed');
 				});
 			}
 			return JSON.stringify(result);
@@ -1013,20 +1015,20 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		// Phase C: structured logger replaces the legacy console.warn.
 		const reindexFn = ctx.reindexFn ?? reindexDoc;
 		reindexFn(result.path).catch((err) => {
-			getLogger().warn({
+			safeLog(() => getLogger().warn({
 				request_id: currentRequestId(),
 				endpoint: '/api/append-turn',
 				path: result.path,
 				err_message: err?.message ?? String(err),
-			}, 'append-turn reindex failed (best-effort)');
+			}, 'append-turn reindex failed (best-effort)'), 'log:append-turn:reindex-failed');
 		});
 		res.status(200).json(result);
 	} catch (err) {
-		getLogger().error({
+		safeLog(() => getLogger().error({
 			request_id: currentRequestId(),
 			endpoint: '/api/append-turn',
 			err_message: err?.message,
-		}, 'handleAppendTurnRequest error');
+		}, 'handleAppendTurnRequest error'), 'log:append-turn:handler-error');
 		// B.13 (§5.1): unhandled exceptions → SERVER_INTERNAL. Honor any
 		// pre-tagged err.statusCode (e.g., 413 for body-cap overruns) but the
 		// stable error code is INPUT_TOO_LARGE / SERVER_INTERNAL by category.
@@ -1104,11 +1106,11 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		}
 		res.status(200).json(result);
 	} catch (err) {
-		getLogger().error({
+		safeLog(() => getLogger().error({
 			request_id: currentRequestId(),
 			endpoint: '/api/checkpoint',
 			err_message: err?.message,
-		}, 'handleCheckpointRequest error');
+		}, 'handleCheckpointRequest error'), 'log:checkpoint:handler-error');
 		// B.13 (§5.1): mirror handleAppendTurnRequest — INPUT_TOO_LARGE
 		// pass-through for body-cap overruns; everything else is SERVER_INTERNAL.
 		if (err && err.code === 'INPUT_TOO_LARGE') {
@@ -1270,14 +1272,14 @@ export async function doState(project, ctx = {}) {
     // Transient I/O errors: log + treat as state-unavailable so callers can retry cleanly.
     // Whitelisted codes only — permission/config errors must bubble so ops can fix them.
     if (['EBUSY', 'ETXTBSY', 'EMFILE', 'ENFILE', 'EAGAIN'].includes(err.code)) {
-      getLogger().error({
+      safeLog(() => getLogger().error({
         request_id: currentRequestId(),
         endpoint: '/api/state/:project',
         project,
         path: relPath,
         err_code: err.code,
         err_message: err?.message,
-      }, 'doState transient I/O error');
+      }, 'doState transient I/O error'), 'log:doState:transient-io');
       return JSON.stringify({ ok: true, project, state: null, valid_from: null });
     }
     // Config/permission errors (EACCES, EPERM, etc.): bubble so ops can fix
@@ -1336,13 +1338,13 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
         return { relPath, mtime };
       } catch (err) {
         if (err.code === 'ENOENT') return null; // deleted between list and stat — skip
-        getLogger().error({
+        safeLog(() => getLogger().error({
           request_id: currentRequestId(),
           endpoint: '/api/recent/:project',
           project,
           path: relPath,
           err_message: err?.message,
-        }, 'doRecent: skipping stat');
+        }, 'doRecent: skipping stat'), 'log:doRecent:stat-skip');
         return null;
       }
     })
@@ -1371,13 +1373,13 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
         return record;
       } catch (err) {
         if (err.code === 'ENOENT') return null; // deleted between stat and read — skip
-        getLogger().error({
+        safeLog(() => getLogger().error({
           request_id: currentRequestId(),
           endpoint: '/api/recent/:project',
           project,
           path: relPath,
           err_message: err?.message,
-        }, 'doRecent: skipping read');
+        }, 'doRecent: skipping read'), 'log:doRecent:read-skip');
         return null;
       }
     })
@@ -1547,15 +1549,23 @@ export function createRequestHandler(ctx = {}) {
 		};
 		const project = extractProjectFromPath(url.pathname);
 		if (project) obj.project = project;
-		// Error-bucket logs go via warn/error directly (with error_code +
-		// error_class). The counter-finish log uses info for the success
-		// case and warn/error already emit their own structured line.
-		if (res.statusCode >= 500) {
-			getLogger().error(obj, 'request');
-		} else if (res.statusCode >= 400) {
-			getLogger().warn(obj, 'request');
-		} else {
-			getLogger().info(obj, 'request');
+		// C.9 (§4.2.0): pino throws on log-write failure (full disk on
+		// the log partition). Wrap each emit so a logger failure can't
+		// poison the response path. obs-fallback writes to stderr at
+		// most once per minute — never recurses through pino.
+		try {
+			// Error-bucket logs go via warn/error directly (with error_code +
+			// error_class). The counter-finish log uses info for the success
+			// case and warn/error already emit their own structured line.
+			if (res.statusCode >= 500) {
+				getLogger().error(obj, 'request');
+			} else if (res.statusCode >= 400) {
+				getLogger().warn(obj, 'request');
+			} else {
+				getLogger().info(obj, 'request');
+			}
+		} catch (e) {
+			obsFallback(e, 'log:request-finish');
 		}
 	};
 	// C.5: counter-finish metrics emit. Same callsite as the log emit
@@ -1564,6 +1574,12 @@ export function createRequestHandler(ctx = {}) {
 	// Skipped for /metrics itself (recursive scrape artifact). /health
 	// is already opted out above the ALS wrap, so it never reaches
 	// this code path.
+	//
+	// C.9 (§4.2.0): on prom-client throw (label-cardinality / label-shape
+	// violation, transport hiccup), drop into obs-fallback rather than
+	// the structured logger. If pino is the failing emitter, that path
+	// would recurse. obs-fallback writes directly to stderr at most once
+	// per minute — request continues.
 	let metricsEmitted = false;
 	const emitMetrics = () => {
 		if (metricsEmitted) return;
@@ -1575,9 +1591,7 @@ export function createRequestHandler(ctx = {}) {
 			httpRequestsTotal.inc({ endpoint, status: String(res.statusCode) });
 			httpRequestDurationSeconds.observe({ endpoint }, ms / 1000);
 		} catch (e) {
-			try {
-				getLogger().warn({ err: e?.message }, 'metrics emit failed (non-fatal)');
-			} catch { /* logger is already best-effort */ }
+			obsFallback(e, `metrics:request:${routeTemplate || url.pathname}`);
 		}
 	};
 	// Shim res.end so every code path (200, 4xx, 5xx, early-return)
@@ -1620,13 +1634,13 @@ export function createRequestHandler(ctx = {}) {
 			// Counter-finish log fires via res.end shim; emit a structured
 			// warn here so ops sees the misconfiguration distinctly from a
 			// generic 500.
-			getLogger().error({
+			safeLog(() => getLogger().error({
 				request_id: currentRequestId(),
 				endpoint: routeTemplate || url.pathname,
 				status: 500,
 				error_code: 'SERVER_INTERNAL',
 				error_class: 'auth_unconfigured',
-			}, 'auth misconfigured');
+			}, 'auth misconfigured'), 'log:auth:misconfigured');
 			res.writeHead(500, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(errorResponse(
 				'SERVER_INTERNAL',
@@ -1643,13 +1657,13 @@ export function createRequestHandler(ctx = {}) {
 			// Wire-response stays AUTH_INVALID for both (attacker can't
 			// differentiate).
 			const errorClass = received == null ? 'auth_missing' : 'auth_wrong';
-			getLogger().warn({
+			safeLog(() => getLogger().warn({
 				request_id: currentRequestId(),
 				endpoint: routeTemplate || url.pathname,
 				status: 401,
 				error_code: 'AUTH_INVALID',
 				error_class: errorClass,
-			}, 'auth failed');
+			}, 'auth failed'), 'log:auth:failed');
 			// Round-8 upgrade hint: legacy plugins (pre-v0.6) lack an
 			// identifying User-Agent. When the UA is missing or not a
 			// UM client, steer the user toward the plugin upgrade flow;
@@ -1883,11 +1897,11 @@ export function createRequestHandler(ctx = {}) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify(errorResponse('INPUT_INVALID', err.message)));
 				} else {
-					getLogger().error({
+					safeLog(() => getLogger().error({
 						request_id: currentRequestId(),
 						endpoint: '/api/recent/:project',
 						err_message: err?.message,
-					}, '/api/recent error');
+					}, '/api/recent error'), 'log:recent:handler-error');
 					res.writeHead(500, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', 'internal_error')));
 				}
@@ -2165,12 +2179,12 @@ export function createRequestHandler(ctx = {}) {
 			}
 			return;
 		}
-		getLogger().error({
+		safeLog(() => getLogger().error({
 			request_id: currentRequestId(),
 			endpoint: routeTemplate || url.pathname,
 			err_message: err?.message,
 			err_stack: err?.stack,
-		}, 'unhandled error');
+		}, 'unhandled error'), 'log:unhandled-error');
 		// B.13 (§5.1): unhandled exception → SERVER_INTERNAL envelope.
 		// In production, omit the message to avoid leaking internals; in dev
 		// keep the original message to preserve debuggability.

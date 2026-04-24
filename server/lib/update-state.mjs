@@ -14,6 +14,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getLogger } from './logger.mjs';
+import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { fileURLToPath } from 'node:url';
 import { summarize as defaultSummarize } from './summarize.mjs';
@@ -49,11 +50,12 @@ export async function updateState(args, ctx = {}) {
     systemPrompt = await fs.readFile(promptPath, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') {
-      getLogger().error({
+      // C.9 (§4.2.0): pino emit must never throw out of an update-state path.
+      safeLog(() => getLogger().error({
         request_id: currentRequestId(),
         component: 'update-state',
         path: promptPath,
-      }, 'update-state prompt missing');
+      }, 'update-state prompt missing'), 'log:update-state:prompt-missing');
       return {
         schema_version: 1,
         ok: false,

@@ -10,6 +10,7 @@
 // No changes to update-state.mjs, checkpoint.mjs, or hooks/lib/summarize.sh required.
 
 import { getLogger } from './logger.mjs';
+import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 
 export const BACKENDS = {
@@ -37,13 +38,14 @@ export async function summarize(transcript, ctx = {}) {
   const b = BACKENDS[name];
   if (!b || !b.invoke) {
     const fallback = b?.fallback ?? process.env.UM_SUMMARIZER_FALLBACK ?? 'openai';
-    getLogger().warn({
+    // C.9 (§4.2.0): pino emit must never throw out of a summarize path.
+    safeLog(() => getLogger().warn({
       request_id: currentRequestId(),
       component: 'summarize',
       backend: name,
       fallback,
       reason: b?.reason ?? 'unknown/unavailable',
-    }, 'summarize backend unavailable; falling back');
+    }, 'summarize backend unavailable; falling back'), 'log:summarize:backend-fallback');
     return BACKENDS[fallback].invoke(transcript, ctx);
   }
   return b.invoke(transcript, ctx);
