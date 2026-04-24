@@ -1099,8 +1099,20 @@ export async function doList(full = false, limit = null, ctx = {}) {
   const all = await memoryClient.getAll({ userId: USER_ID });
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
+  // §4.1 extensibility contract: additive sibling fields on the memory-client
+  // envelope (e.g., future `provider`, `latency_ms` for multi-provider
+  // transparency) MUST propagate through to the wire response. listEnvelope()
+  // accepts an `extras` object for exactly this reason. We forward any non-
+  // `results` top-level keys the client returned — unknown siblings are
+  // ignored by well-behaved parsers and available to forward-compat callers.
+  const extras = {};
+  if (all && typeof all === 'object' && !Array.isArray(all)) {
+    for (const k of Object.keys(all)) {
+      if (k !== 'results') extras[k] = all[k];
+    }
+  }
   if (full) {
-    return listEnvelope(sliced);
+    return listEnvelope(sliced, extras);
   }
   // Compact projection — consistent shape with doSearch compact items (minus score,
   // which is search-specific). id and title use the same fallback logic as doSearch.
@@ -1110,10 +1122,34 @@ export async function doList(full = false, limit = null, ctx = {}) {
     const snippet = buildSnippet(title, r.memory);
     return { id, title, snippet };
   });
-  return listEnvelope(results);
+  return listEnvelope(results, extras);
 }
 
-const server = createServer(async (req, res) => {
+/**
+ * Factory: build the top-level HTTP request handler.
+ *
+ * Returning a factory (rather than exporting the handler directly) lets tests
+ * inject a stubbed `ctx.memory` client without touching the module-level
+ * binding used by the production bootstrap. The shape matches the DI convention
+ * already used by doSearch/doList/doRecent/doState (A.8 sweep): `ctx.memory`
+ * overrides the module-level `memory` binding; anything else falls back.
+ *
+ * A.9 wire-shape test requirement: integration tests need to listen on an
+ * ephemeral port and exercise the real request → response path without a real
+ * mem0/Qdrant/OpenAI stack. This factory is the minimal export that makes that
+ * possible without rewriting any route logic.
+ *
+ * @param {object} [ctx={}] DI context; `ctx.memory` overrides the module-level
+ *   memory binding for all do* calls and direct memory calls in this handler.
+ *   Phase B/C/D will extend this with logger/metrics/rateLimiter/auth.
+ * @returns {(req: import('http').IncomingMessage, res: import('http').ServerResponse) => Promise<void>}
+ */
+export function createRequestHandler(ctx = {}) {
+	// Resolve the memory client once per handler instance. Direct memory calls
+	// in routes below (outside the do* helpers) use this resolved reference so
+	// tests that inject ctx.memory see their stub in every code path.
+	const resolvedMemory = () => ctx?.memory ?? memory;
+	return async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
 	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -1128,7 +1164,7 @@ const server = createServer(async (req, res) => {
 	try {
 		if (url.pathname === '/health' && req.method === 'GET') {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, memories: (await memory.getAll({ userId: USER_ID }))?.results?.length || 0 }));
+			res.end(JSON.stringify({ ok: true, memories: (await resolvedMemory().getAll({ userId: USER_ID }))?.results?.length || 0 }));
 			return;
 		}
 		if (url.pathname === '/openapi.yaml' && req.method === 'GET') {
@@ -1161,7 +1197,7 @@ const server = createServer(async (req, res) => {
 			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(query, clampedLimitPost, includeSup, true);
+			let response = await doSearch(query, clampedLimitPost, includeSup, true, ctx);
 			// Optional metadata filters (project, type) — post-filter after mem0 recall
 			if (filters && typeof filters === 'object') {
 				let items = response.results;
@@ -1196,7 +1232,7 @@ const server = createServer(async (req, res) => {
 			}
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(q, limit, includeSuperseded, true);
+			let response = await doSearch(q, limit, includeSuperseded, true, ctx);
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
 				response = listEnvelope(items);
@@ -1216,7 +1252,7 @@ const server = createServer(async (req, res) => {
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
 			const { text, metadata } = JSON.parse(await readBody(req));
-			const result = await memory.add(text, { userId: USER_ID, ...(metadata && { metadata }) });
+			const result = await resolvedMemory().add(text, { userId: USER_ID, ...(metadata && { metadata }) });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(result));
 			return;
@@ -1228,7 +1264,7 @@ const server = createServer(async (req, res) => {
 			const full = url.searchParams.get('full') === '1';
 			const limitStr = url.searchParams.get('limit');
 			const limit = limitStr ? Math.min(parseInt(limitStr, 10) || 0, 1000) : null;
-			const response = await doList(full, limit);
+			const response = await doList(full, limit, ctx);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
 			return;
@@ -1240,7 +1276,7 @@ const server = createServer(async (req, res) => {
 			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10;
 			const full = url.searchParams.get('full') === '1';
 			try {
-				const result = await doRecent(projectSegment, limit, full);
+				const result = await doRecent(projectSegment, limit, full, ctx);
 				res.writeHead(200, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(result));
 			} catch (err) {
@@ -1271,7 +1307,7 @@ const server = createServer(async (req, res) => {
 			// other REST clients expect application/json; Node's autodetection would
 			// fall back to text/plain and break downstream callers.
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(await doState(projectSegment));
+			res.end(await doState(projectSegment, ctx));
 			return;
 		}
 		if (url.pathname === '/api/reindex' && req.method === 'POST') {
@@ -1350,7 +1386,7 @@ const server = createServer(async (req, res) => {
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
 			const docText = `${fm.title}\n\n${body.trim()}`;
 			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
-			await memory.add(docText, { userId: USER_ID, metadata, infer: false });
+			await resolvedMemory().add(docText, { userId: USER_ID, metadata, infer: false });
 
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
@@ -1446,7 +1482,7 @@ const server = createServer(async (req, res) => {
 					return;
 				}
 				try {
-					await memory.delete(uuid);
+					await resolvedMemory().delete(uuid);
 					res.writeHead(200, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ ok: true, deleted: 1, query: `id=${uuid}` }));
 				} catch (err) {
@@ -1459,7 +1495,7 @@ const server = createServer(async (req, res) => {
 		}
 		if (url.pathname.startsWith('/api/') && req.method === 'DELETE') {
 			const id = url.pathname.split('/api/')[1];
-			await memory.delete(id);
+			await resolvedMemory().delete(id);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ deleted: id }));
 			return;
@@ -1472,7 +1508,13 @@ const server = createServer(async (req, res) => {
 		res.writeHead(500, { 'Content-Type': 'application/json' });
 		res.end(JSON.stringify({ error: userMsg }));
 	}
-});
+	};
+}
+
+// Module-level server instance — used by the IS_MAIN bootstrap below. Tests
+// import createRequestHandler directly and start their own http.createServer on
+// an ephemeral port (see api-list-wire-shape.test.mjs).
+const server = createServer(createRequestHandler());
 
 // Bootstrap — only runs when this file is invoked directly (not when imported
 // for tests). IS_MAIN is computed at the top of the file; see its comment.
