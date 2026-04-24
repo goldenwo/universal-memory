@@ -29,6 +29,18 @@ for (const file of fixtureFiles) {
   });
 }
 
+// Fix 6 (round-4): ENOENT path — missing promptDir returns ok:false with sanitized message
+test('updateState returns ok:false with sanitized message when promptDir is missing (F8 parity)', async () => {
+  const result = await updateState(
+    { oldStateMd: '', newSummary: 'some summary', projectId: 'test' },
+    { promptDir: '/nonexistent/path/that/does/not/exist' },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /update-state prompt.*missing/i);
+  // Sanitized: must NOT expose the server filesystem path in the client error
+  assert.ok(!result.error.includes('/nonexistent'), 'client error must not leak server path');
+});
+
 function stubFromFixture(stub) {
   if (stub.mode === 'throw') {
     return async () => { throw new Error(stub.error ?? 'stub error'); };
