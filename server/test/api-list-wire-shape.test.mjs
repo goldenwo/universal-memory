@@ -270,3 +270,52 @@ test('GET /api/list?full=1 propagates additive top-level siblings through to the
     await close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 6. Forward-compat sibling test — POST /api/search analogue of test #5.
+//
+// doSearch() must mirror doList() in propagating additive top-level siblings
+// (e.g., future v0.7 `provider`, `latency_ms`) from the memory client's
+// return value through to the wire response. Without this, the §4.1
+// extensibility contract only holds for /api/list and /api/recent — /api/search
+// silently drops siblings, breaking parity across list endpoints.
+//
+// The request uses `full: true` with no post-filters so the route handler
+// passes the doSearch output directly without re-wrapping via listEnvelope(),
+// isolating the assertion to the doSearch sibling-propagation layer (the same
+// layer test #5 exercises for doList).
+// ---------------------------------------------------------------------------
+
+test('POST /api/search propagates additive top-level siblings through to the wire (§4.1)', async () => {
+  const fakeMemory = {
+    search: async (_query, _opts) => ({
+      results: [
+        {
+          id: 'mem0-uuid-1',
+          memory: 'the quick brown fox',
+          metadata: { id: 'search-doc-1', title: 'Search Doc One' },
+          score: 0.91,
+        },
+      ],
+      provider: 'mem0',
+      latency_ms: 42,
+    }),
+  };
+  const { origin, close } = await startServer({ memory: fakeMemory });
+  try {
+    const res = await fetch(`${origin}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', limit: 5, full: true }),
+    });
+    assert.equal(res.status, 200);
+    const parsed = JSON.parse(await res.text());
+    assert.ok(Array.isArray(parsed.results), 'results envelope still present');
+    assert.equal(parsed.results.length, 1);
+    // Sibling propagation — the load-bearing assertion for §4.1.
+    assert.equal(parsed.provider, 'mem0', 'provider sibling must propagate');
+    assert.equal(parsed.latency_ms, 42, 'latency_ms sibling must propagate');
+  } finally {
+    await close();
+  }
+});

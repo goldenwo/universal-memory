@@ -862,6 +862,18 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	const memoryClient = ctx?.memory ?? (typeof ctx?.search === 'function' ? ctx : memory);
 	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
 	let items = raw?.results || raw || [];
+	// §4.1 extensibility contract: additive sibling fields on the memory-client
+	// envelope (e.g., future `provider`, `latency_ms` for multi-provider
+	// transparency) MUST propagate through to the wire response. Mirrors the
+	// doList fix (036fe95) so parity holds across all list endpoints. If the
+	// client returned a bare array (legacy mem0 versions), no siblings exist
+	// and extras stays empty.
+	const extras = {};
+	if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+		for (const k of Object.keys(raw)) {
+			if (k !== 'results') extras[k] = raw[k];
+		}
+	}
 	if (!includeSuperseded) {
 		items = items.filter((r) => {
 			const md = r.metadata || {};
@@ -901,7 +913,7 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		}
 		return base;
 	});
-	return listEnvelope(mapped);
+	return listEnvelope(mapped, extras);
 }
 
 // ---------------------------------------------------------------------------
