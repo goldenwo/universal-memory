@@ -257,6 +257,53 @@ python3 -c 'import yaml' 2>/dev/null || {
 }
 ok "pyyaml is available."
 
+# ─── v0.6: UM_AUTH_TOKEN preservation + generation (spec §4.2) ───────────────
+# On re-run, read UM_AUTH_TOKEN out of existing .env and reuse it so already-
+# running remote clients (Claude.ai tunnel, Custom GPT, Codex plugin on
+# different boxes) don't have their cached token silently invalidated by a
+# fresh install. Only generate a new 64-char hex token on true first run
+# (no pre-existing value in env OR in .env). Mirror idempotently to
+# ~/.um/auth-token with mode 600 — best-effort; chmod is a no-op on Windows
+# NTFS, where ACL inheritance from ~/.um (mode 700) provides equivalent
+# protection.
+#
+# This block is placed BEFORE the prompt/collection loop so that the
+# resulting UM_AUTH_TOKEN is already in the environment by the time the
+# .env-write block runs. It's idempotent: running install.sh N times
+# against the same .env produces the same token across all N runs.
+#
+# Direct-invocation callers (server/install.sh without installer/install.sh
+# in front) get the same preservation — this is the single source of truth
+# for the token lifecycle.
+if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
+	_UM_AT_EXISTING=$(grep -E '^UM_AUTH_TOKEN=' "$ENV_FILE" 2>/dev/null \
+		| head -1 \
+		| cut -d= -f2- \
+		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//')
+	if [ -n "$_UM_AT_EXISTING" ]; then
+		UM_AUTH_TOKEN="$_UM_AT_EXISTING"
+		info "Reusing existing UM_AUTH_TOKEN from .env."
+	fi
+	unset _UM_AT_EXISTING
+fi
+if [ -z "${UM_AUTH_TOKEN:-}" ]; then
+	command -v openssl >/dev/null 2>&1 \
+		|| fail "openssl not found in PATH. UM_AUTH_TOKEN cannot be generated. Install openssl (apt/brew/choco) or export a pre-generated UM_AUTH_TOKEN."
+	UM_AUTH_TOKEN=$(openssl rand -hex 32)
+	info "Generated new UM_AUTH_TOKEN."
+fi
+export UM_AUTH_TOKEN
+
+# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
+# on Windows NTFS where chmod is a no-op — equivalent protection comes from
+# ACL inheritance off ~/.um.
+if [ -n "${HOME:-}" ]; then
+	mkdir -p "$HOME/.um"
+	chmod 700 "$HOME/.um" 2>/dev/null || true
+	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
+	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
+fi
+
 # ─── Collect required values ─────────────────────────────────────────────────
 prompt() {
 	# $1=var name, $2=description, $3=default (optional), $4=secret (1=silent input)
@@ -459,6 +506,11 @@ fi
 	# Honor env override so CI / automated installs can enable the write-tool
 	# surface for end-to-end MCP coverage (smoke T10-G/H/I).
 	printf 'UM_MCP_WRITE_ENABLED=%s\n'  "${UM_MCP_WRITE_ENABLED:-false}"
+	# --- bearer auth (v0.6+) ---
+	# UM_AUTH_TOKEN is generated or preserved by the block above. Emitting
+	# the same value the server will read at boot keeps .env + ~/.um/auth-token
+	# in sync across re-runs (spec §4.2 token-preservation contract).
+	printf 'UM_AUTH_TOKEN=%s\n'         "$UM_AUTH_TOKEN"
 } > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true  # best-effort; no-op on Windows
