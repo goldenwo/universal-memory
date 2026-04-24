@@ -16,6 +16,11 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
       UM_VAULT_DIR: /vault
+    # UM_CONTAINER_USER lets CI / automated setups pin the container UID:GID
+    # to match the host user so files written into the rw-mounted vault are
+    # owned by the host user (avoids cross-user cleanup EACCES). Defaults to
+    # "node" (UID 1000 in the node:alpine base image) for production.
+    user: "${UM_CONTAINER_USER:-node}"
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
     ports:

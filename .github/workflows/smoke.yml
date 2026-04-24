@@ -41,9 +41,12 @@ jobs:
       #
       # UM_VAULT_DIR/UM_MOUNT_MODE/UM_MCP_WRITE_ENABLED are passed so the
       # resulting stack can exercise vault-file indexing (smoke Task 7), state
-      # writes (Task 8), and MCP write tools (T10-G/H/I) end-to-end. The vault
-      # dir is chmod 0777 so both the runner (UID 1001) and the container
-      # user `node` (UID 1000) can read/write.
+      # writes (Task 8), and MCP write tools (T10-G/H/I) end-to-end.
+      #
+      # UM_CONTAINER_USER pins the container process to the runner's UID:GID
+      # so files it writes into the rw-mounted vault are owned by the runner
+      # — otherwise T10-G cleanup fails with EACCES when the runner (1001)
+      # tries to unlink container-created files owned by node (1000).
       - name: Bring up stack via install.sh
         working-directory: server
         env:
@@ -60,6 +63,8 @@ jobs:
             echo "::error::Add it at Settings > Secrets and variables > Actions."
             exit 1
           fi
+          export UM_CONTAINER_USER="$(id -u):$(id -g)"
+          echo "::notice::Container will run as UM_CONTAINER_USER=$UM_CONTAINER_USER (matches runner)"
           mkdir -p "$UM_VAULT_DIR"
           chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
