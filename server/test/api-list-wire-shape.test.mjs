@@ -319,3 +319,103 @@ test('POST /api/search propagates additive top-level siblings through to the wir
     await close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 7. Route-level re-wrap sibling test — POST /api/search compact-projection.
+//
+// Test #6 above uses `full: true`, which skips the route-level compact
+// re-wrap entirely and lands directly on the doSearch output. This test
+// pins the OTHER path: the default compact projection, where the route
+// handler rebuilds the envelope via listEnvelope(compactItems, ...). Before
+// the A.10 follow-up fix, that re-wrap dropped every sibling doSearch had
+// propagated. With the fix, siblings survive the compact-projection step.
+// ---------------------------------------------------------------------------
+test('POST /api/search compact-projection preserves siblings through the route re-wrap (§4.1)', async () => {
+  const fakeMemory = {
+    search: async (_query, _opts) => ({
+      results: [
+        {
+          id: 'mem0-uuid-1',
+          memory: 'the quick brown fox',
+          metadata: { id: 'search-doc-1', title: 'Search Doc One' },
+          score: 0.91,
+        },
+      ],
+      provider: 'mem0',
+      latency_ms: 42,
+    }),
+  };
+  const { origin, close } = await startServer({ memory: fakeMemory });
+  try {
+    // No `full` key → compact projection path — exercises the route-level
+    // re-wrap that previously dropped siblings.
+    const res = await fetch(`${origin}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', limit: 5 }),
+    });
+    assert.equal(res.status, 200);
+    const parsed = JSON.parse(await res.text());
+    assert.ok(Array.isArray(parsed.results), 'results envelope still present');
+    assert.equal(parsed.results.length, 1);
+    // Compact shape must still be produced…
+    assert.equal(parsed.results[0].id, 'search-doc-1');
+    assert.ok('snippet' in parsed.results[0], 'compact item must include snippet');
+    // …AND siblings must survive the route-level re-wrap.
+    assert.equal(parsed.provider, 'mem0', 'provider sibling must propagate through compact re-wrap');
+    assert.equal(parsed.latency_ms, 42, 'latency_ms sibling must propagate through compact re-wrap');
+  } finally {
+    await close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. Route-level re-wrap sibling test — GET /api/search?type=… typeFilter.
+//
+// The GET handler has a second re-wrap site (the typeFilter post-filter
+// branch) that is skipped on POST. This test exercises that specific path:
+// a typeFilter is supplied AND `full=1` so the compact-projection re-wrap
+// is bypassed — isolating the assertion to the typeFilter re-wrap. Before
+// the fix, the typeFilter branch emitted `listEnvelope(items)` fresh and
+// dropped every sibling. With the fix, siblings propagate via the
+// `{ results: _, ...extras }` destructure forward.
+// ---------------------------------------------------------------------------
+test('GET /api/search?type=… typeFilter preserves siblings through the route re-wrap (§4.1)', async () => {
+  const fakeMemory = {
+    search: async (_query, _opts) => ({
+      results: [
+        {
+          id: 'mem0-uuid-1',
+          memory: 'matching doc',
+          metadata: { id: 'note-1', title: 'Note One', type: 'note' },
+          score: 0.82,
+        },
+        {
+          id: 'mem0-uuid-2',
+          memory: 'wrong-type doc',
+          metadata: { id: 'state-1', title: 'State One', type: 'state' },
+          score: 0.74,
+        },
+      ],
+      provider: 'mem0',
+      latency_ms: 42,
+    }),
+  };
+  const { origin, close } = await startServer({ memory: fakeMemory });
+  try {
+    // type=note → the typeFilter re-wrap fires.
+    // full=1    → the compact-projection re-wrap is skipped, so we isolate
+    //             the assertion to the typeFilter re-wrap path.
+    const res = await fetch(`${origin}/api/search?q=test&type=note&full=1`);
+    assert.equal(res.status, 200);
+    const parsed = JSON.parse(await res.text());
+    assert.ok(Array.isArray(parsed.results), 'results envelope still present');
+    assert.equal(parsed.results.length, 1, 'typeFilter must drop the non-matching doc');
+    assert.equal(parsed.results[0].metadata.type, 'note');
+    // Siblings must survive the typeFilter re-wrap.
+    assert.equal(parsed.provider, 'mem0', 'provider sibling must propagate through typeFilter re-wrap');
+    assert.equal(parsed.latency_ms, 42, 'latency_ms sibling must propagate through typeFilter re-wrap');
+  } finally {
+    await close();
+  }
+});

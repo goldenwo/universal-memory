@@ -1215,16 +1215,24 @@ export function createRequestHandler(ctx = {}) {
 				let items = response.results;
 				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
 				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
-				response = listEnvelope(items);
+				// Preserve §4.1 siblings (e.g., provider, latency_ms) that doSearch
+				// propagated from the upstream memory.search() envelope. Only
+				// `results` is replaced; every other top-level key is forwarded.
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
 			}
 			// Project to compact shape unless caller explicitly requested full.
 			if (!fullReq) {
-				response = listEnvelope(response.results.map((r) => ({
+				const compact = response.results.map((r) => ({
 					id: r.id,
 					title: r.title,
 					score: r.score,
 					snippet: buildSnippet(r.title, r.body),
-				})));
+				}));
+				// Preserve §4.1 siblings through the compact projection — same
+				// extensibility contract as the filter branch above.
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(compact, responseExtras);
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
@@ -1247,16 +1255,24 @@ export function createRequestHandler(ctx = {}) {
 			let response = await doSearch(q, limit, includeSuperseded, true, ctx);
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
-				response = listEnvelope(items);
+				// Preserve §4.1 siblings (e.g., provider, latency_ms) that doSearch
+				// propagated from the upstream memory.search() envelope. Only
+				// `results` is replaced; every other top-level key is forwarded.
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
 			}
 			// Project to compact shape unless caller explicitly requested full.
 			if (!fullReq) {
-				response = listEnvelope(response.results.map((r) => ({
+				const compact = response.results.map((r) => ({
 					id: r.id,
 					title: r.title,
 					score: r.score,
 					snippet: buildSnippet(r.title, r.body),
-				})));
+				}));
+				// Preserve §4.1 siblings through the compact projection — same
+				// extensibility contract as the typeFilter branch above.
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(compact, responseExtras);
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
