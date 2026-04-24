@@ -298,15 +298,38 @@ components:
             $ref: "#/components/schemas/MemoryResult"
     ErrorResponse:
       type: object
-      description: "Error envelope returned on any non-2xx HTTP response. Always
-        contains the `error` field. Some write-gated MCP tools additionally
-        return `{ ok: false, error }` inside a 200 JSON-RPC body; that shape is
-        represented by `McpWriteGatedResponse`."
+      description: v0.6 unified error envelope (spec §5.1). Returned on every 4xx/5xx
+        HTTP response from /api/* and inside the text content block of /mcp tool
+        errors. The stable `error.code` uses one of the §5.2 prefix-groups
+        (AUTH_*, INPUT_*, STATE_*, LIMIT_*, UPSTREAM_*, SERVER_*).
       properties:
+        ok:
+          type: boolean
+          enum:
+            - false
         error:
-          type: string
-          description: Human-readable error message
+          type: object
+          description: Structured error block per §5.1 wire format.
+          properties:
+            code:
+              type: string
+              description: Stable §5.2 error code (e.g. INPUT_INVALID, STATE_NOT_FOUND,
+                UPSTREAM_FAILURE).
+              pattern: ^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_
+            message:
+              type: string
+              description: Human-readable error message.
+            retryable:
+              type: boolean
+              description: Hint for client retry policy. Retryable codes (LIMIT_RATE_EXCEEDED,
+                STATE_LOCK_CONTENTION, UPSTREAM_FAILURE) are true; everything
+                else is false.
+          required:
+            - code
+            - message
+            - retryable
       required:
+        - ok
         - error
     StateResponse:
       type: object
@@ -557,6 +580,9 @@ components:
               description: Wall-clock duration in milliseconds
         - type: object
           title: CheckpointFailure
+          description: "v0.6 §5.1 unified envelope — see ErrorResponse schema. Stable
+            codes for /api/checkpoint failures: UPSTREAM_FAILURE (502),
+            STATE_LOCK_CONTENTION (503), INPUT_INVALID (400)."
           required:
             - ok
             - error
@@ -566,8 +592,19 @@ components:
               enum:
                 - false
             error:
-              type: string
-              description: Machine-readable error code or human-readable message
+              type: object
+              properties:
+                code:
+                  type: string
+                  pattern: ^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_
+                message:
+                  type: string
+                retryable:
+                  type: boolean
+              required:
+                - code
+                - message
+                - retryable
     SearchFilters:
       type: object
       description: Optional post-filters applied after mem0 recall.

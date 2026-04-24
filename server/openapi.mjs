@@ -30,23 +30,22 @@ function ref(name) {
 
 /**
  * Standard error response envelope returned by server on any 4xx/5xx path.
- * Shape sourced from server/mem0-mcp-http.mjs — every failing branch writes
- * `{ error: <string> }`. Some MCP tool paths also emit `{ ok: false, error }`
- * inside JSON-RPC results, but that happens in the `/mcp` success body
- * (status 200), not the HTTP error path, so this schema is HTTP-layer-only.
+ * v0.6 unified envelope (spec §5.1): `{ ok: false, error: { code, message,
+ * retryable } }`. Every 4xx/5xx response from /api/* and the inner text block
+ * of /mcp tool errors uses this shape.
  */
 const ERROR_RESPONSE = {
-  description: 'Error response with a human-readable message',
+  description: 'Unified §5.1 error envelope',
   content: {
     'application/json': { schema: ref('ErrorResponse') },
   },
 };
 
 /** Re-usable 500 response — every route can throw and fall through to the
- *  top-level try/catch which writes `{ error: <message> }`. */
+ *  top-level try/catch which writes the §5.1 envelope with code SERVER_INTERNAL. */
 const RESP_500 = {
   500: {
-    description: 'Unhandled server error',
+    description: 'Unhandled server error (SERVER_INTERNAL)',
     content: {
       'application/json': { schema: ref('ErrorResponse') },
     },
@@ -61,20 +60,45 @@ const SCHEMAS = {
   ErrorResponse: {
     type: 'object',
     description:
-      'Error envelope returned on any non-2xx HTTP response. Always contains the `error` field. Some write-gated MCP tools additionally return `{ ok: false, error }` inside a 200 JSON-RPC body; that shape is represented by `McpWriteGatedResponse`.',
+      'v0.6 unified error envelope (spec §5.1). Returned on every 4xx/5xx HTTP response from /api/* and inside the text content block of /mcp tool errors. The stable `error.code` uses one of the §5.2 prefix-groups (AUTH_*, INPUT_*, STATE_*, LIMIT_*, UPSTREAM_*, SERVER_*).',
     properties: {
-      error: { type: 'string', description: 'Human-readable error message' },
+      ok: { type: 'boolean', enum: [false] },
+      error: {
+        type: 'object',
+        description: 'Structured error block per §5.1 wire format.',
+        properties: {
+          code: {
+            type: 'string',
+            description: 'Stable §5.2 error code (e.g. INPUT_INVALID, STATE_NOT_FOUND, UPSTREAM_FAILURE).',
+            pattern: '^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_',
+          },
+          message: { type: 'string', description: 'Human-readable error message.' },
+          retryable: {
+            type: 'boolean',
+            description: 'Hint for client retry policy. Retryable codes (LIMIT_RATE_EXCEEDED, STATE_LOCK_CONTENTION, UPSTREAM_FAILURE) are true; everything else is false.',
+          },
+        },
+        required: ['code', 'message', 'retryable'],
+      },
     },
-    required: ['error'],
+    required: ['ok', 'error'],
   },
 
   McpWriteGatedResponse: {
     type: 'object',
     description:
-      'Returned inside MCP tool results when the server is in read-only mode (UM_MCP_WRITE_ENABLED != true).',
+      'Returned inside MCP tool results when the server is in read-only mode (UM_MCP_WRITE_ENABLED != true). Carries the same §5.1 unified envelope as ErrorResponse — `error.code` is INPUT_INVALID with a message instructing how to enable writes.',
     properties: {
       ok: { type: 'boolean', enum: [false] },
-      error: { type: 'string' },
+      error: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', enum: ['INPUT_INVALID'] },
+          message: { type: 'string' },
+          retryable: { type: 'boolean', enum: [false] },
+        },
+        required: ['code', 'message', 'retryable'],
+      },
     },
     required: ['ok', 'error'],
   },
@@ -392,10 +416,19 @@ const SCHEMAS = {
       {
         type: 'object',
         title: 'CheckpointFailure',
+        description: 'v0.6 §5.1 unified envelope — see ErrorResponse schema. Stable codes for /api/checkpoint failures: UPSTREAM_FAILURE (502), STATE_LOCK_CONTENTION (503), INPUT_INVALID (400).',
         required: ['ok', 'error'],
         properties: {
           ok: { type: 'boolean', enum: [false] },
-          error: { type: 'string', description: 'Machine-readable error code or human-readable message' },
+          error: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', pattern: '^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_' },
+              message: { type: 'string' },
+              retryable: { type: 'boolean' },
+            },
+            required: ['code', 'message', 'retryable'],
+          },
         },
       },
     ],

@@ -50,7 +50,8 @@ import { doCheckpoint } from './lib/checkpoint.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
-import { errorResponse as umErrorResponse, httpStatusFor } from './lib/error-envelope.mjs';
+import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
+import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -65,17 +66,6 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
-
-/**
- * Build a canonical error response envelope with schema_version:1.
- * Ensures all error returns are contract-parity with the lib layer.
- * @param {string} error
- * @param {Record<string, unknown>} extra
- * @returns {{ schema_version: 1, ok: false, error: string }}
- */
-function errorResponse(error, extra = {}) {
-  return { schema_version: 1, ok: false, error, ...extra };
-}
 
 /**
  * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
@@ -474,7 +464,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 		}
 		case 'memory_add': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
+				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
 			const result = await memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
@@ -498,7 +491,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 		}
 		case 'memory_delete': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
+				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
 			await memoryClient.delete(args.memoryId);
@@ -533,7 +529,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+				));
 			}
 			const project = metadata.project || 'default';
 			const id = metadata.id;
@@ -565,7 +564,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 
 		case 'memory_checkpoint': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
+				));
 			}
 			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc }));
 		}
@@ -576,7 +578,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// C1: validate id before using as path component
 			validateSafeName('id', id);
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+				));
 			}
 
 			const relPath = await findDocByIdInVault(id);
@@ -621,7 +626,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 			validateSafeName('new_doc.id', new_doc.id);
 			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+				));
 			}
 
 			// 1. Find old doc
@@ -715,7 +723,10 @@ export async function handleToolCall(name, args, ctx = {}) {
 
 		case 'memory_append_turn': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
+				return JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+				));
 			}
 			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
 			// B.9 (spec §5.4): fire-and-forget reindex for MCP parity with the
@@ -732,8 +743,46 @@ export async function handleToolCall(name, args, ctx = {}) {
 		}
 
 		default:
-			throw new Error(`Unknown tool: ${name}`);
+			// B.13 (§5.1): unknown-tool throw is caught by handleMcpMessage's
+			// .catch() below; that catch wraps the error message in the unified
+			// envelope. The Error here flows through the tool-error path with
+			// code INPUT_INVALID (caller named a non-existent tool — caller-shape).
+			{
+				const err = new Error(`Unknown tool: ${name}`);
+				err.umCode = 'INPUT_INVALID';
+				throw err;
+			}
 	}
+}
+
+/**
+ * Map an exception thrown inside handleToolCall to a stable §5.2 error code.
+ * Heuristics:
+ *   - err.umCode (set explicitly by the throw site) wins.
+ *   - err.code = 'INPUT_TOO_LARGE' from readBody → INPUT_TOO_LARGE.
+ *   - "must include" / "is required" / "must match" / "Invalid project name"
+ *     messages from validateSafeName / required-field guards → INPUT_INVALID.
+ *   - "Document not found in vault" / "File not found" → STATE_NOT_FOUND.
+ *   - "already exists" → STATE_ALREADY_EXISTS.
+ *   - Anything else → SERVER_INTERNAL.
+ *
+ * @param {Error} err
+ * @returns {string} stable error code
+ */
+function _classifyToolError(err) {
+	if (err && err.umCode) return err.umCode;
+	if (err && err.code === 'INPUT_TOO_LARGE') return 'INPUT_TOO_LARGE';
+	const msg = err?.message ?? '';
+	if (/must include|is required|must match|Invalid project|invalid project|new_doc must|metadata must/i.test(msg)) {
+		return 'INPUT_INVALID';
+	}
+	if (/not found in vault|File not found|does not exist/i.test(msg)) {
+		return 'STATE_NOT_FOUND';
+	}
+	if (/already exists|same path/i.test(msg)) {
+		return 'STATE_ALREADY_EXISTS';
+	}
+	return 'SERVER_INTERNAL';
 }
 
 function handleMcpMessage(msg, ctx = {}) {
@@ -747,8 +796,30 @@ function handleMcpMessage(msg, ctx = {}) {
 	} else if (method === 'tools/call') {
 		return handleToolCall(params.name, params.arguments || {}, ctx)
 			.then((text) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } }))
-			.catch((err) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true } }));
+			.catch((err) => {
+				// B.13 (§5.1) JSON-RPC dual-shape:
+				//   - INNER: result.content[0].text wraps the unified envelope as
+				//     a JSON string (so MCP clients parsing the text block see
+				//     ok:false / error.code / error.message / error.retryable).
+				//   - OUTER: handleMcpMessage already returns 200 OK for tool
+				//     errors with isError:true (MCP spec). We do NOT promote the
+				//     tool error to a JSON-RPC outer error.code here — the
+				//     transport stays clean; the structured shape is in the text
+				//     block per spec §5.1.
+				const stableCode = _classifyToolError(err);
+				const envelope = errorResponse(stableCode, err?.message ?? 'unknown error');
+				return {
+					jsonrpc: '2.0', id,
+					result: {
+						content: [{ type: 'text', text: JSON.stringify(envelope) }],
+						isError: true,
+					},
+				};
+			});
 	} else if (id !== undefined) {
+		// B.13 (§5.1) JSON-RPC dual-shape: method-not-found uses the standard
+		// JSON-RPC numeric -32601. No string code mapping (it's a transport-
+		// level error, not a §5.2 application-level error).
 		return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 	}
 	return null;
@@ -848,7 +919,14 @@ function readBody(req, maxBytes = _currentMaxBodyBytes()) {
  */
 export async function handleAppendTurnRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
-		res.status(403).json(errorResponse('MCP writes disabled'));
+		// B.13 (§5.1): writes-disabled is a caller-visible config error — code
+		// INPUT_INVALID per §5.2 (caller can recover by enabling env). HTTP 403
+		// is preserved for the existing wire contract; status code is decoupled
+		// from the stable error code by design.
+		res.status(403).json(errorResponse(
+			'INPUT_INVALID',
+			'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+		));
 		return;
 	}
 	try {
@@ -866,10 +944,17 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 			// for backward compat with older unit tests; the wire envelope lives
 			// at the HTTP boundary (here).
 			if (typeof result.error === 'string' && /exceeds.*bytes/i.test(result.error)) {
-				res.status(413).json(umErrorResponse('INPUT_TOO_LARGE', result.error));
+				res.status(413).json(errorResponse('INPUT_TOO_LARGE', result.error));
 				return;
 			}
-			res.status(400).json(result);
+			// B.13 (§5.1): all other lib-layer "ok:false" results are caller-shape
+			// validation failures (invalid project, role, timestamp, etc.). Wrap
+			// in the unified envelope with INPUT_INVALID. The lib's plain-string
+			// `result.error` is preserved verbatim as the envelope `message`.
+			res.status(400).json(errorResponse(
+				'INPUT_INVALID',
+				typeof result.error === 'string' ? result.error : 'invalid input',
+			));
 			return;
 		}
 		// B.9 (spec §5.4): fire-and-forget reindex. The user keeps typing; the
@@ -886,9 +971,17 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		res.status(200).json(result);
 	} catch (err) {
 		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
-		const status = err.statusCode || 500;
-		const message = err.statusCode ? err.message : 'internal server error';
-		res.status(status).json(errorResponse(message));
+		// B.13 (§5.1): unhandled exceptions → SERVER_INTERNAL. Honor any
+		// pre-tagged err.statusCode (e.g., 413 for body-cap overruns) but the
+		// stable error code is INPUT_TOO_LARGE / SERVER_INTERNAL by category.
+		if (err && err.code === 'INPUT_TOO_LARGE') {
+			res.status(413).json(errorResponse('INPUT_TOO_LARGE', err.message));
+			return;
+		}
+		res.status(err.statusCode || 500).json(errorResponse(
+			'SERVER_INTERNAL',
+			err.statusCode ? err.message : 'internal server error',
+		));
 	}
 }
 
@@ -910,7 +1003,12 @@ export async function handleAppendTurnRequest(req, res, ctx) {
  */
 export async function handleCheckpointRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
-		res.status(403).json(errorResponse('MCP writes disabled'));
+		// B.13 (§5.1): see handleAppendTurnRequest above — same writes-disabled
+		// code (INPUT_INVALID) for parity across all write endpoints.
+		res.status(403).json(errorResponse(
+			'INPUT_INVALID',
+			'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
+		));
 		return;
 	}
 	try {
@@ -923,23 +1021,44 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		if (!result.ok) {
 			// B.10: doCheckpoint returns structured `error: { code, message }` for
 			// UPSTREAM_FAILURE (retry-exhausted reindex) and STATE_LOCK_CONTENTION
-			// (two-phase write phase-2 contention). Map those to their stable HTTP
-			// status from error-envelope.mjs. Other errors (string `error`) keep
-			// the legacy 400 mapping for backward compat.
+			// (two-phase write phase-2 contention). B.13 (§5.1): wrap in the
+			// unified envelope so the wire shape stays consistent with §5.1.
+			// summary_id / summary_path (when present on the upstream-fail result)
+			// land inside `error` as additive fields so callers can correlate the
+			// failed reindex with the partially-written summary doc.
 			const errCode = result.error && typeof result.error === 'object' ? result.error.code : null;
 			if (errCode && (errCode === 'UPSTREAM_FAILURE' || errCode === 'STATE_LOCK_CONTENTION')) {
-				res.status(httpStatusFor(errCode)).json(result);
+				const extra = {};
+				if (result.summary_id) extra.summary_id = result.summary_id;
+				if (result.summary_path) extra.summary_path = result.summary_path;
+				res.status(httpStatusFor(errCode)).json(errorResponse(
+					errCode,
+					result.error.message ?? errCode,
+					extra,
+				));
 				return;
 			}
-			res.status(400).json(result);
+			// B.13: legacy plain-string `error` results (cost-cap, in-progress,
+			// invalid project, etc.) are caller-shape validations → INPUT_INVALID.
+			res.status(400).json(errorResponse(
+				'INPUT_INVALID',
+				typeof result.error === 'string' ? result.error : 'invalid input',
+			));
 			return;
 		}
 		res.status(200).json(result);
 	} catch (err) {
 		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
-		const status = err.statusCode || 500;
-		const message = err.statusCode ? err.message : 'internal server error';
-		res.status(status).json(errorResponse(message));
+		// B.13 (§5.1): mirror handleAppendTurnRequest — INPUT_TOO_LARGE
+		// pass-through for body-cap overruns; everything else is SERVER_INTERNAL.
+		if (err && err.code === 'INPUT_TOO_LARGE') {
+			res.status(413).json(errorResponse('INPUT_TOO_LARGE', err.message));
+			return;
+		}
+		res.status(err.statusCode || 500).json(errorResponse(
+			'SERVER_INTERNAL',
+			err.statusCode ? err.message : 'internal server error',
+		));
 	}
 }
 
@@ -1321,7 +1440,7 @@ export function createRequestHandler(ctx = {}) {
 		const expected = process.env.UM_AUTH_TOKEN;
 		if (!expected) {
 			res.writeHead(500, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(umErrorResponse(
+			res.end(JSON.stringify(errorResponse(
 				'SERVER_INTERNAL',
 				'server auth not configured (UM_AUTH_TOKEN unset)'
 			)));
@@ -1339,7 +1458,7 @@ export function createRequestHandler(ctx = {}) {
 				? 'invalid or missing bearer token'
 				: 'invalid or missing bearer token — upgrade plugin to v0.6+ via `git pull && bash installer/install.sh --plugin-cc` or set Authorization: Bearer <token from ~/.um/auth-token>';
 			res.writeHead(401, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(umErrorResponse('AUTH_INVALID', hint)));
+			res.end(JSON.stringify(errorResponse('AUTH_INVALID', hint)));
 			return;
 		}
 	}
@@ -1369,7 +1488,27 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
-			const body = JSON.parse(await readBody(req));
+			let body;
+			try {
+				body = JSON.parse(await readBody(req));
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE so the outer catch emits the 413
+				// envelope.
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
+				// B.13 (§5.1) JSON-RPC dual-shape: malformed JSON-RPC request →
+				// JSON-RPC standard parse-error -32700. The OUTER transport
+				// envelope is a well-formed JSON-RPC response; the body is the
+				// numeric parse-error code. Inner envelope uses the unified
+				// shape via toJsonRpcError() for the data block.
+				const parseEnvelope = errorResponse('INPUT_INVALID', 'invalid JSON body');
+				const rpcErr = toJsonRpcError(parseEnvelope);
+				// Override the standard parse-error code per JSON-RPC 2.0.
+				rpcErr.code = -32700;
+				rpcErr.message = 'Parse error';
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: rpcErr }));
+				return;
+			}
 			// Forward DI ctx so handleToolCall → do* helpers see the injected
 			// memory stub in tests, mirroring the REST routes' pattern.
 			const result = await handleMcpMessage(body, ctx);
@@ -1381,7 +1520,7 @@ export function createRequestHandler(ctx = {}) {
 			const { query, limit = 5, include_superseded = false, filters, full: fullBody } = JSON.parse(await readBody(req));
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
-				res.end(JSON.stringify({error: 'query is required'}));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'query is required')));
 				return;
 			}
 			const includeSup = include_superseded === true;
@@ -1428,7 +1567,7 @@ export function createRequestHandler(ctx = {}) {
 			const fullReq = url.searchParams.get('full') === '1';
 			if (!q) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'q parameter is required' }));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'q parameter is required')));
 				return;
 			}
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
@@ -1491,11 +1630,11 @@ export function createRequestHandler(ctx = {}) {
 			} catch (err) {
 				if (/Invalid project name/.test(err.message)) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: err.message }));
+					res.end(JSON.stringify(errorResponse('INPUT_INVALID', err.message)));
 				} else {
 					console.error('[mem0-mcp] /api/recent error:', err.message);
 					res.writeHead(500, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: 'internal_error' }));
+					res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', 'internal_error')));
 				}
 			}
 			return;
@@ -1508,7 +1647,10 @@ export function createRequestHandler(ctx = {}) {
 			// Both checks use the same regex — intentional duplication.
 			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'Invalid project name: must match ^[a-zA-Z0-9._-]+$' }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'Invalid project name: must match ^[a-zA-Z0-9._-]+$',
+				)));
 				return;
 			}
 			// Delegates to extracted doState() for DI testability (B.1.4b Step 0a).
@@ -1528,7 +1670,7 @@ export function createRequestHandler(ctx = {}) {
 				// envelope — don't swallow body-cap overruns as "invalid JSON".
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, {'Content-Type': 'application/json'});
-				res.end(JSON.stringify({error: 'invalid JSON body'}));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
 				return;
 			}
 			const { path: relPath } = reqBody;
@@ -1536,7 +1678,7 @@ export function createRequestHandler(ctx = {}) {
 			// 1. path present
 			if (!relPath || typeof relPath !== 'string' || !relPath.trim()) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'path is required' }));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'path is required')));
 				return;
 			}
 
@@ -1547,12 +1689,12 @@ export function createRequestHandler(ctx = {}) {
 			} catch (err) {
 				if (err.code === 'ENOENT') {
 					res.writeHead(404, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: `File not found: ${relPath}` }));
+					res.end(JSON.stringify(errorResponse('STATE_NOT_FOUND', `File not found: ${relPath}`)));
 					return;
 				}
 				if (err.message && err.message.includes('traversal')) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: `Path traversal detected: ${relPath}` }));
+					res.end(JSON.stringify(errorResponse('INPUT_INVALID', `Path traversal detected: ${relPath}`)));
 					return;
 				}
 				throw err;
@@ -1565,14 +1707,20 @@ export function createRequestHandler(ctx = {}) {
 			if (!fm.type || !fm.id || !fm.title) {
 				const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: `Missing required frontmatter fields: ${missing.join(', ')}` }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					`Missing required frontmatter fields: ${missing.join(', ')}`,
+				)));
 				return;
 			}
 
 			// 5. state type rejected
 			if (fm.type === 'state') {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'state.md is never reindexed — use /api/state (Task 10)' }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'state.md is never reindexed — use /api/state (Task 10)',
+				)));
 				return;
 			}
 
@@ -1580,7 +1728,10 @@ export function createRequestHandler(ctx = {}) {
 			const stem = path.basename(relPath, '.md');
 			if (stem !== fm.id) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: `id mismatch: frontmatter id "${fm.id}" does not match filename stem "${stem}"` }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					`id mismatch: frontmatter id "${fm.id}" does not match filename stem "${stem}"`,
+				)));
 				return;
 			}
 
@@ -1612,7 +1763,7 @@ export function createRequestHandler(ctx = {}) {
 				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
 				return;
 			}
 			const httpRes = {
@@ -1638,7 +1789,7 @@ export function createRequestHandler(ctx = {}) {
 				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
 				return;
 			}
 			const httpRes = {
@@ -1664,19 +1815,25 @@ export function createRequestHandler(ctx = {}) {
 				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
 				return;
 			}
 			const hasMetadata = reqBody.metadata !== undefined;
 			const hasId = reqBody.id !== undefined;
 			if (hasMetadata && hasId) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'provide either metadata.id or id, not both' }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'provide either metadata.id or id, not both',
+				)));
 				return;
 			}
 			if (!hasMetadata && !hasId) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ error: 'provide either metadata.id (Shape A) or id (Shape B)' }));
+				res.end(JSON.stringify(errorResponse(
+					'INPUT_INVALID',
+					'provide either metadata.id (Shape A) or id (Shape B)',
+				)));
 				return;
 			}
 			if (hasMetadata) {
@@ -1684,7 +1841,10 @@ export function createRequestHandler(ctx = {}) {
 				const targetId = reqBody.metadata?.id;
 				if (!targetId || typeof targetId !== 'string' || !targetId.trim()) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: 'metadata.id is required and must be a non-empty string' }));
+					res.end(JSON.stringify(errorResponse(
+						'INPUT_INVALID',
+						'metadata.id is required and must be a non-empty string',
+					)));
 					return;
 				}
 				const deleted = await deleteByMetadataId(targetId);
@@ -1696,7 +1856,10 @@ export function createRequestHandler(ctx = {}) {
 				const uuid = reqBody.id;
 				if (!uuid || typeof uuid !== 'string' || !uuid.trim()) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ error: 'id is required and must be a non-empty string' }));
+					res.end(JSON.stringify(errorResponse(
+						'INPUT_INVALID',
+						'id is required and must be a non-empty string',
+					)));
 					return;
 				}
 				try {
@@ -1718,8 +1881,11 @@ export function createRequestHandler(ctx = {}) {
 			res.end(JSON.stringify({ deleted: id }));
 			return;
 		}
-		res.writeHead(404);
-		res.end('Not Found');
+		// B.13 (§5.1): unknown route → STATE_NOT_FOUND envelope (HTTP 404).
+		// Replaces the legacy plain-text "Not Found" body so every 4xx/5xx on
+		// /api/* shares the unified §5.1 wire shape.
+		res.writeHead(404, { 'Content-Type': 'application/json' });
+		res.end(JSON.stringify(errorResponse('STATE_NOT_FOUND', 'route not found')));
 	} catch (err) {
 		// B.6b: request-body cap overruns throw err with .code='INPUT_TOO_LARGE'.
 		// Convert to 413 v0.6 envelope — same envelope the field-level
@@ -1729,15 +1895,29 @@ export function createRequestHandler(ctx = {}) {
 		if (err && err.code === 'INPUT_TOO_LARGE') {
 			if (!res.headersSent) {
 				res.writeHead(413, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify(umErrorResponse('INPUT_TOO_LARGE', err.message)));
+				res.end(JSON.stringify(errorResponse('INPUT_TOO_LARGE', err.message)));
+			}
+			return;
+		}
+		// B.13 (§5.1): SyntaxError from inline JSON.parse(await readBody(...))
+		// in /api/search POST and /api/add POST → INPUT_INVALID. Other inline
+		// JSON-parse paths (reindex, append-turn, checkpoint, delete) wrap in
+		// their own try/catch and emit INPUT_INVALID directly.
+		if (err instanceof SyntaxError) {
+			if (!res.headersSent) {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
 			}
 			return;
 		}
 		console.error('[mem0-mcp] Unhandled error:', err.stack);
+		// B.13 (§5.1): unhandled exception → SERVER_INTERNAL envelope.
+		// In production, omit the message to avoid leaking internals; in dev
+		// keep the original message to preserve debuggability.
 		const userMsg = process.env.NODE_ENV === 'production' ? 'internal_error' : err.message;
 		if (!res.headersSent) {
 			res.writeHead(500, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ error: userMsg }));
+			res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', userMsg)));
 		}
 	}
 	};

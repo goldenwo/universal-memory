@@ -6,6 +6,33 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified §5.1 error envelope across every endpoint (Task B.13).** Every
+  4xx/5xx response from `/api/*` now returns `{ ok: false, error: { code,
+  message, retryable } }` with a stable `code` from the §5.2 prefix-groups
+  (`AUTH_*`, `INPUT_*`, `STATE_*`, `LIMIT_*`, `UPSTREAM_*`, `SERVER_*`).
+  Replaces the legacy `{ error: '<string>' }` and `{ schema_version: 1, ok:
+  false, error: '<string>' }` shapes. The local `errorResponse` helper in
+  `server/mem0-mcp-http.mjs` is removed — single source of truth is now
+  `server/lib/error-envelope.mjs`. The OpenAPI `ErrorResponse` schema is
+  updated to match.
+- **`/mcp` JSON-RPC dual-shape.** Tool errors return the §5.1 unified envelope
+  inside `result.content[0].text` (JSON-encoded, replacing the old free-form
+  `"Error: <msg>"` plain text). Outer JSON-RPC envelope errors (parse error,
+  method not found) carry a numeric `error.code` in the `-32xxx` range,
+  mapped from the stable string code by `server/lib/jsonrpc-errors.mjs`.
+
+### Added
+
+- **`server/lib/jsonrpc-errors.mjs`** — string-to-numeric JSON-RPC code map
+  + `toJsonRpcError()` helper.
+- **`server/test/error-shape.test.mjs`** — cross-cutting per-endpoint shape
+  assertion. Catches future regressions where a handler forgets to use the
+  unified envelope helper.
+- **`server/test/jsonrpc-errors.test.mjs`** — unit tests for the JSON-RPC
+  code map (every stable code mapped, fallback to `-32603`, etc.).
+
 ## [0.5.0-alpha] — 2026-04-23
 
 Cross-env first-class release. Non-CC surfaces (Claude.ai, ChatGPT Desktop,

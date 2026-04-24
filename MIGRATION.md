@@ -20,6 +20,42 @@ $ curl http://localhost:6335/api/list
 
 Why: consistency across list-shape endpoints; future-proofs for additive top-level siblings (`provider`, `latency_ms` in v0.7+) without another shape change.
 
+### Breaking: unified §5.1 error envelope on every endpoint (Task B.13)
+
+Before (v0.5): error responses were ad-hoc — most paths emitted `{error:
+'<message>'}`, a few emitted `{schema_version: 1, ok: false, error:
+'<message>'}`, and `/mcp` tool errors returned plain `"Error: <msg>"` text.
+
+```bash
+$ curl http://localhost:6335/api/search -d '{}'   # missing query
+{"error":"query is required"}
+```
+
+After (v0.6): every 4xx/5xx response from `/api/*` and the inner text content
+block of `/mcp` tool errors uses the §5.1 unified envelope with a stable §5.2
+error code:
+
+```bash
+$ curl http://localhost:6335/api/search -d '{}'
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"query is required","retryable":false}}
+```
+
+Stable `code` values use one of six prefix-groups: `AUTH_*` (auth), `INPUT_*`
+(caller-shape errors), `STATE_*` (vault/memory ID state), `LIMIT_*` (rate/cap),
+`UPSTREAM_*` (downstream dependencies), `SERVER_*` (server-internal). Full
+table in `docs/plans/2026-04-24-v0.6-design.md` §5.2.
+
+`/mcp` JSON-RPC also gains a dual-shape: outer JSON-RPC `error.code` is a
+numeric `-32xxx` value mapped from the string code (parse-error / method-
+not-found at the transport layer), AND the inner `result.content[0].text`
+carries the unified envelope as a JSON string (tool-level errors).
+
+**Action for clients:** update error parsing to read `body.error.code` (string)
+or `body.error.message` (human-readable) instead of the old `body.error`
+(formerly the message itself). The `retryable` boolean is a new affordance —
+clients can use it to decide whether to retry without baking in code-by-code
+knowledge.
+
 ---
 
 ## v0.4.0-alpha → v0.5.0-alpha
