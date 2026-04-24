@@ -334,7 +334,12 @@ The canonical write-tool set is exported as `WRITE_TOOL_NAMES` in `server/mem0-m
 | `UM_TEMPORAL_DECAY` | `false` | Opt-in decay weighting |
 | `UM_DECAY_HALF_LIFE_DAYS` | `30` | Only used when decay enabled |
 
-Optional mem0 tuning: `MEM0_EMBEDDER_MODEL`, `MEM0_LLM_MODEL`, `QDRANT_HOST/PORT/COLLECTION`, `MEM0_HISTORY_DB_PATH`.
+| `MEM0_EMBEDDER_MODEL` | `text-embedding-3-small` | OpenAI embedding model used by mem0 for vectorizing memories. |
+| `MEM0_LLM_MODEL` | `gpt-4.1-nano-2025-04-14` | LLM model used by mem0 for fact extraction. |
+| `QDRANT_HOST` | `localhost` | Qdrant vector DB host (compose internal: `qdrant`). |
+| `QDRANT_PORT` | `6333` | Qdrant vector DB port. |
+| `QDRANT_COLLECTION` | `memories` | Qdrant collection name for mem0 vectors. |
+| `MEM0_HISTORY_DB_PATH` | `/tmp/mem0-history.db` | SQLite path for mem0's internal deduplication history. Mount a persistent path if you need history to survive container restarts. |
 
 ### Client-side (in shell env where Claude Code runs)
 
@@ -354,6 +359,10 @@ Optional mem0 tuning: `MEM0_EMBEDDER_MODEL`, `MEM0_LLM_MODEL`, `QDRANT_HOST/PORT
 | `UM_SUMMARIZER_FALLBACK` | `openai` | Backend to fall back to when the primary `UM_SUMMARIZER` is unavailable (e.g. `claude-agent-sdk` server-side). |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL. Only used when `UM_SUMMARIZER=ollama`. |
 | `UM_SUMMARIZE_MODEL` | `gpt-4o-mini` (openai) / `llama3` (ollama) | Model ID passed to the summarizer backend. |
+| `UM_SUMMARIZE_ALLOW_LIVE` | `0` | Set `1` to enable the live-OpenAI smoke test in `summarize.test.sh` (test T6). No effect at runtime — test-harness only. |
+| `UM_STATE_MAX_CHARS` | `12000` | Maximum characters fed into the state-merge LLM call (old + new combined). Splits evenly between old state and new summary when the combined length exceeds the cap. |
+| `UM_WELCOME_BANNER` | *(auto-set)* | Prepended to `additionalContext` at session start when no vault activity is detected (first-ever session). Cleared automatically once activity exists. Override to `""` to suppress. |
+| `UM_COMPOSE_DIR` | *(unset)* | Directory containing `docker-compose.yml` for the UM server. When unset, `auto-start.sh` skips Docker auto-start (appropriate for remote/self-host setups). Set to the repo's `server/` directory for local Docker users. |
 
 ---
 
