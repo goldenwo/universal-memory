@@ -129,6 +129,10 @@ if [[ $MODE == wizard ]]; then
 
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
   wizard_validate_openai_key UM_OPENAI_API_KEY "OpenAI API key" "<paste later into .env>"
+  # Ensure wizard-set vars are exported so sub-installers inherit them.
+  # wizard_prompt already calls eval "export $var=..." since fix-5; these are
+  # belts-and-suspenders for any wizard path that goes through direct assignment.
+  export UM_VAULT_DIR UM_OPENAI_API_KEY
   wizard_summarize
   wizard_confirm "Proceed?" || { echo "Aborted."; exit 0; }
   MODE=components  # fall through to dispatcher
