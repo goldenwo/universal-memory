@@ -544,3 +544,66 @@ test('doAppendTurn returns ok=false when lockdir acquire fails (contract preserv
   assert.equal(result.ok, false);
   assert.match(result.error, /lock_acquire_failed/);
 });
+
+// B.12 followup: kernel-level O_NOFOLLOW symlink-swap defense for append-turn.
+// The pre-existing lstat-based check (Fix 3) refuses to write when the target
+// file is itself a symlink. This test covers the open()-syscall layer: even
+// if an attacker wins the lstat→open race (replaces the path with a symlink
+// to an outside file between lstat and open), O_NOFOLLOW makes open() reject
+// with ELOOP and the redirection fails. Companion to vault-nofollow.test.mjs.
+//
+// Windows note: file-symlink creation requires admin/Developer Mode on
+// Windows, and constants.O_NOFOLLOW is undefined on Windows (coerced to 0;
+// no-op). Skip on win32; the lstat-refusal layer (Fix 3) covers cross-platform.
+test('doAppendTurn with O_NOFOLLOW rejects symlink at the raw capture path', { skip: process.platform === 'win32' }, async () => {
+  const vault = await makeTempVault();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-out-'));
+  try {
+    // Pre-existing file outside the vault — the attacker's redirection target.
+    const outsideTarget = path.join(outside, 'outside.txt');
+    await fs.writeFile(outsideTarget, 'pre-existing-outside-data', 'utf8');
+
+    // Plant a symlink at the raw capture path (captures/<project>/raw/<date>.md)
+    // pointing at the outside file. Since the existing lstat check (Fix 3) will
+    // reject any symlink at the target, we bypass that check by crafting a
+    // capture whose target lstat reports as a symlink — i.e. we intentionally
+    // exercise the same code path the lstat check guards against, to ensure
+    // the kernel-level O_NOFOLLOW also rejects.
+    //
+    // The lstat check fires first and returns ok:false, which is also a valid
+    // defense — but if a future refactor accidentally drops the lstat guard,
+    // O_NOFOLLOW still keeps the outside file safe. The test's invariant is
+    // therefore: outsideTarget MUST NOT be modified, regardless of which
+    // layer fired.
+    const date = '2026-04-22';
+    const projDir = path.join(vault, 'captures', 'symswap-proj', 'raw');
+    await fs.mkdir(projDir, { recursive: true });
+    const linkPath = path.join(projDir, `${date}.md`);
+    await fs.symlink(outsideTarget, linkPath, 'file');
+
+    const result = await doAppendTurn({
+      project: 'symswap-proj',
+      content: 'attacker-injected payload',
+      role: 'user',
+    }, { vaultDir: vault, clock: () => new Date(`${date}T12:00:00Z`) });
+
+    // Either layer firing is acceptable — the invariant is that no write
+    // followed the symlink. The lstat check (Fix 3) returns ok:false with
+    // 'target is a symlink' and the kernel-level open() with O_NOFOLLOW
+    // would surface as a thrown ELOOP if lstat were bypassed.
+    assert.equal(result.ok, false, `expected ok:false from symlink defense, got: ${JSON.stringify(result)}`);
+    assert.match(result.error, /symlink|ELOOP/i);
+
+    // Critical invariant: outside file unchanged. Whichever layer rejected
+    // the write, the redirection MUST NOT have followed the symlink.
+    const outsideContent = await fs.readFile(outsideTarget, 'utf8');
+    assert.equal(
+      outsideContent,
+      'pre-existing-outside-data',
+      'outside file must remain unchanged — symlink defense must not follow the link',
+    );
+  } finally {
+    await fs.rm(vault, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});

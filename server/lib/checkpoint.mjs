@@ -31,6 +31,7 @@
 //     factoring + structured-log emission.
 
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -41,6 +42,21 @@ import { updateState as defaultUpdateState } from './update-state.mjs';
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
 const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/summarize.txt');
+
+// B.12 followup: O_NOFOLLOW — refuse to follow symlinks at the open() syscall level.
+// Closes the lstat→open TOCTOU race: even if an attacker swaps the path for
+// a symlink between our lstat() check and our open(), the kernel rejects
+// the open() with ELOOP and the redirection fails atomically.
+//
+// CRITICAL Windows compatibility: fsConstants.O_NOFOLLOW is `undefined` on
+// Windows (NTFS has a different threat model — symlink creation requires
+// SeCreateSymbolicLinkPrivilege). ORing `undefined` into open flags yields
+// NaN, which fs.open rejects with ERR_INVALID_ARG_TYPE — meaning every vault
+// write would fail on Windows. Coercing to 0 via `?? 0` makes the flag a
+// no-op on Windows, preserving cross-platform writes. Windows-specific
+// TOCTOU exposure is documented as a v0.7 hardening item; the existing
+// lstat-based refusal upstream covers the lstat-refusal layer cross-platform.
+const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
 const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
@@ -63,13 +79,18 @@ async function markOrphanSummary(tmpPath) {
     // Insert `status: orphan_summary` immediately after the opening `---\n` line,
     // before any other frontmatter fields. Idempotent: if status: already exists,
     // replace it; else insert after the opening fence.
+    let updated;
     if (/^status:\s*\S+$/m.test(content)) {
-      const updated = content.replace(/^status:\s*\S+$/m, 'status: orphan_summary');
-      await fs.writeFile(tmpPath, updated);
+      updated = content.replace(/^status:\s*\S+$/m, 'status: orphan_summary');
     } else {
-      const updated = content.replace(/^---\n/, '---\nstatus: orphan_summary\n');
-      await fs.writeFile(tmpPath, updated);
+      updated = content.replace(/^---\n/, '---\nstatus: orphan_summary\n');
     }
+    // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
+    // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
+    // followed and overwriting an attacker-chosen target. NOFOLLOW is a
+    // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
+    const fh = await fs.open(tmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+    try { await fh.writeFile(updated, 'utf8'); } finally { await fh.close(); }
   } catch (err) {
     console.warn(`[checkpoint] failed to mark orphan_summary on ${tmpPath}: ${err?.message ?? err}`);
   }
@@ -274,7 +295,14 @@ export async function doCheckpoint(args, ctx = {}) {
     const summaryWithFm = frontmatter + summary;
 
     // Phase 1: write .tmp
-    await fs.writeFile(tmpSummaryPath, summaryWithFm);
+    // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
+    // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
+    // followed and overwriting an attacker-chosen target. NOFOLLOW is a
+    // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
+    {
+      const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+      try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
+    }
 
     // Phase 2: update state.md first, then rename .tmp → final.
     // Ordering rationale: state.md is the contention-prone path (lockdir,
@@ -302,7 +330,14 @@ export async function doCheckpoint(args, ctx = {}) {
           return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
         }
         const stateTmpPath = oldStatePath + '.tmp';
-        await fs.writeFile(stateTmpPath, stateResult.mergedMd);
+        // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
+        // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
+        // followed and overwriting an attacker-chosen target. NOFOLLOW is a
+        // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
+        {
+          const fh = await fs.open(stateTmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+          try { await fh.writeFile(stateResult.mergedMd, 'utf8'); } finally { await fh.close(); }
+        }
         await fs.rename(stateTmpPath, oldStatePath);
         stateUpdated = true;
         statePath = `state/${project}/state.md`;
@@ -321,7 +356,13 @@ export async function doCheckpoint(args, ctx = {}) {
         await markOrphanSummary(tmpSummaryPath);
       } else {
         try {
-          await fs.writeFile(tmpSummaryPath, summaryWithFm);
+          // B.12 followup: open with O_NOFOLLOW so a planted symlink at the
+          // .tmp path is rejected atomically by the kernel (ELOOP on POSIX)
+          // instead of followed and overwriting an attacker-chosen target.
+          // NOFOLLOW is a no-op on Windows (constants.O_NOFOLLOW is undefined
+          // → coerced to 0).
+          const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+          try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
           await markOrphanSummary(tmpSummaryPath);
         } catch (restageErr) {
           console.warn(`[checkpoint] phase-2 orphan re-stage failed: ${restageErr?.message ?? restageErr}`);
@@ -377,7 +418,13 @@ export async function doCheckpoint(args, ctx = {}) {
     // Update per-day telemetry
     try {
       await fs.mkdir(path.dirname(costPath), { recursive: true });
-      await fs.writeFile(costPath, String(daySpent + costUsd));
+      // B.12 followup: open with O_NOFOLLOW so a planted symlink at the
+      // telemetry path is rejected atomically by the kernel (ELOOP on POSIX)
+      // instead of followed and overwriting an attacker-chosen target.
+      // NOFOLLOW is a no-op on Windows (constants.O_NOFOLLOW is undefined
+      // → coerced to 0).
+      const fh = await fs.open(costPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+      try { await fh.writeFile(String(daySpent + costUsd), 'utf8'); } finally { await fh.close(); }
     } catch {}
 
     const result = {

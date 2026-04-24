@@ -922,3 +922,69 @@ test('checkpoint: default summarize prompt path resolves correctly (no ctx.syste
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
+
+// B.12 followup: kernel-level O_NOFOLLOW symlink-swap defense for checkpoint.
+// Companion to vault-nofollow.test.mjs and the appendFile test in
+// append-turn.test.mjs. Closes the lstat→open TOCTOU race on every vault
+// write inside checkpoint.mjs. The state.md.tmp path is predictable
+// (state/<project>/state.md.tmp), so we plant a symlink there and verify
+// that the kernel rejects with ELOOP — protecting an outside-vault file
+// from being overwritten through the symlink. By code symmetry the same
+// protection applies to the 5 other writes in checkpoint.mjs (summary .tmp,
+// orphan rewrites, telemetry).
+//
+// Windows note: file-symlink creation requires admin/Developer Mode on
+// Windows, and constants.O_NOFOLLOW is undefined on Windows (coerced to 0;
+// no-op). Skip on win32; the lstat-refusal layer covers cross-platform.
+test('checkpoint: O_NOFOLLOW rejects symlink at state.md.tmp path (kernel-level defense)', { skip: process.platform === 'win32' }, async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'symswap-proj', '2026-01-01T00.md', '# Session\nWork.');
+
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-ck-out-'));
+  try {
+    // Pre-existing file outside the vault — the attacker's redirection target.
+    const outsideTarget = path.join(outside, 'outside.txt');
+    await fs.writeFile(outsideTarget, 'pre-existing-outside-data', 'utf8');
+
+    // Plant a symlink at state/<project>/state.md.tmp (a path checkpoint
+    // writes to during phase-2 state.md two-phase update). The pre-existing
+    // lstat check guards state.md (not state.md.tmp), so without O_NOFOLLOW
+    // the open(O_WRONLY|O_CREAT|O_TRUNC) on .tmp would follow the symlink
+    // and overwrite outside.txt. With O_NOFOLLOW the syscall returns ELOOP.
+    const stateDir = path.join(vaultDir, 'state', 'symswap-proj');
+    await fs.mkdir(stateDir, { recursive: true });
+    const stateTmpLink = path.join(stateDir, 'state.md.tmp');
+    await fs.symlink(outsideTarget, stateTmpLink, 'file');
+
+    const result = await doCheckpoint(
+      { project: 'symswap-proj' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+
+    // Phase-2 must fail (ELOOP propagates as the phase2Err path in
+    // checkpoint.mjs). The result envelope reports ok:false with the
+    // open() error message.
+    assert.equal(result.ok, false, `expected ok:false from O_NOFOLLOW rejection, got: ${JSON.stringify(result)}`);
+    const errMsg = typeof result.error === 'string' ? result.error : (result.error?.message ?? '');
+    assert.match(errMsg, /ELOOP|symbolic link|symlink/i, `expected ELOOP/symlink-related error, got: ${JSON.stringify(result.error)}`);
+
+    // Critical invariant: outside file unchanged. O_NOFOLLOW must have
+    // prevented the open() from following the symlink — no write reached
+    // outsideTarget through the redirection.
+    const outsideContent = await fs.readFile(outsideTarget, 'utf8');
+    assert.equal(
+      outsideContent,
+      'pre-existing-outside-data',
+      'outside file must remain unchanged — O_NOFOLLOW prevented the write',
+    );
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});

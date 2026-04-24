@@ -1,7 +1,23 @@
 // server/lib/append-turn.mjs
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
+
+// B.12 followup: O_NOFOLLOW — refuse to follow symlinks at the open() syscall level.
+// Closes the lstat→open TOCTOU race: even if an attacker swaps the path for
+// a symlink between our lstat() check and our open(), the kernel rejects
+// the open() with ELOOP and the redirection fails atomically.
+//
+// CRITICAL Windows compatibility: fsConstants.O_NOFOLLOW is `undefined` on
+// Windows (NTFS has a different threat model — symlink creation requires
+// SeCreateSymbolicLinkPrivilege). ORing `undefined` into open flags yields
+// NaN, which fs.open rejects with ERR_INVALID_ARG_TYPE — meaning every vault
+// write would fail on Windows. Coercing to 0 via `?? 0` makes the flag a
+// no-op on Windows, preserving cross-platform writes. Windows-specific
+// TOCTOU exposure is documented as a v0.7 hardening item; the existing
+// lstat-based refusal upstream covers the lstat-refusal layer cross-platform.
+const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
 const MAX_CONTENT_BYTES = 8192;
 const MAX_CONVERSATION_ID_BYTES = 256;
@@ -95,7 +111,14 @@ export async function doAppendTurn(args, ctx = {}) {
   }
 
   try {
-    await fs.appendFile(absPath, payload);
+    // B.12 followup: open with O_NOFOLLOW so a planted symlink at the target
+    // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
+    // followed and appending to an attacker-chosen target. NOFOLLOW is a
+    // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
+    // O_APPEND (vs O_TRUNC in vault-write.mjs) preserves the per-day raw-file
+    // append semantics — same content, just hardened open path.
+    const fh = await fs.open(absPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND | NOFOLLOW, 0o644);
+    try { await fh.writeFile(payload, 'utf8'); } finally { await fh.close(); }
   } finally {
     await releaseFn(lockdirPath);
   }
