@@ -1,0 +1,11 @@
+{
+  "description": "Empty old state — merge is trivial: output is what the summarizer returns",
+  "old_state_md": "",
+  "new_summary_md": "## Session summary\n\nImplemented login flow. Added JWT middleware.",
+  "summarize_stub": {
+    "mode": "ok",
+    "summary": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nImplementing login flow with JWT.\n\n## In flight\n- JWT middleware added\n\n## Recent decisions\n- 2026-04-23: Added JWT middleware\n\n## Next actions\n- Write login tests\n\n## Open questions\n- Token refresh strategy?\n\n## Environment\n"
+  },
+  "expected_merged_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nImplementing login flow with JWT.\n\n## In flight\n- JWT middleware added\n\n## Recent decisions\n- 2026-04-23: Added JWT middleware\n\n## Next actions\n- Write login tests\n\n## Open questions\n- Token refresh strategy?\n\n## Environment\n",
+  "expected_schema_version": 1
+}

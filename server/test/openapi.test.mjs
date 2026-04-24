@@ -56,6 +56,8 @@ test('openapi spec includes all expected routes', () => {
     '/api/reindex',
     '/api/state/{project}',
     '/api/recent/{project}',
+    '/api/append-turn',
+    '/api/checkpoint',
     '/api/delete',
     '/api/{id}',
     '/openapi.yaml',
@@ -107,17 +109,19 @@ test('custom GPT actions spec is valid 3.1', async () => {
   await SwaggerParser.validate(toValidate);
 });
 
-test('custom GPT actions spec includes only the 5 trimmed routes with operationIds', () => {
+test('custom GPT actions spec includes only the 7 trimmed routes with operationIds', () => {
   const yamlText = generateCustomGPTActionsSpec();
   const parsed = YAML.parse(yamlText);
 
-  // Exactly these 5 paths — no more, no less.
+  // Exactly these 7 paths — no more, no less.
   const expectedPaths = new Set([
     '/api/search',
     '/api/state/{project}',
     '/api/add',
     '/api/delete',
     '/api/recent/{project}',
+    '/api/append-turn',
+    '/api/checkpoint',
   ]);
   const actualPaths = new Set(Object.keys(parsed.paths || {}));
   assert.deepEqual(actualPaths, expectedPaths, 'trimmed spec paths mismatch');
@@ -130,6 +134,8 @@ test('custom GPT actions spec includes only the 5 trimmed routes with operationI
   assert.equal(parsed.paths['/api/add'].post.operationId, 'memory_add');
   assert.equal(parsed.paths['/api/delete'].post.operationId, 'memory_delete');
   assert.equal(parsed.paths['/api/recent/{project}'].get.operationId, 'memory_recent');
+  assert.equal(parsed.paths['/api/append-turn'].post.operationId, 'memory_append_turn');
+  assert.equal(parsed.paths['/api/checkpoint'].post.operationId, 'memory_checkpoint');
 
   // The GET form of /api/search must be absent — Custom GPT only gets the
   // POST form (which supports filters.project).

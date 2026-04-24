@@ -41,6 +41,10 @@ const SUMMARIZE_SH_PATH = join(
 	__dirname,
 	'../../plugins/claude-code/universal-memory/hooks/lib/summarize.sh'
 );
+const SUMMARIZE_PROMPT_PATH = join(
+	__dirname,
+	'../config/prompts/summarize.txt'
+);
 
 // ---------------------------------------------------------------------------
 // Measurement helpers
@@ -262,16 +266,14 @@ test('token-cost: measurement sweep — 4 additional locations', () => {
 
 		const summarizeSrc = readFileSync(SUMMARIZE_SH_PATH, 'utf8');
 
-		// Extract the system prompt: everything between the export ... =' and the
-		// closing ' on its own line.
-		const sysPromptMatch = summarizeSrc.match(
-			/export _UM_SYSTEM_PROMPT='([\s\S]*?)'\s*\n/
-		);
+		// Read the system prompt from its canonical location. As of v0.5 the
+		// prompt is extracted to server/config/prompts/summarize.txt; summarize.sh
+		// loads it at runtime via $UM_PROMPT_DIR (Task 2.1).
+		const systemPrompt = readFileSync(SUMMARIZE_PROMPT_PATH, 'utf8');
 		assert.ok(
-			sysPromptMatch,
-			'Could not extract _UM_SYSTEM_PROMPT from summarize.sh — grep the file for the pattern'
+			systemPrompt.length > 0,
+			`Summary prompt file empty or missing at ${SUMMARIZE_PROMPT_PATH}`
 		);
-		const systemPrompt = sysPromptMatch[1];
 
 		// Extract the user prompt template (everything between the two lines that
 		// bracket _UM_USER_PROMPT). The template has a ${transcript} placeholder.

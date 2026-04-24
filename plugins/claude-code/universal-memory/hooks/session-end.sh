@@ -47,7 +47,7 @@ if [ "${UM_DETACH:-0}" = "1" ]; then
   mkdir -p "$vault/.telemetry" 2>/dev/null || true
   (
     exec >> "$vault/.telemetry/session-end-detached-$(date -u +%Y%m%d).log" 2>&1
-    UM_DETACH= bash "$0"  # re-invoke self without detach flag to do the work
+    UM_DETACH='' bash "$0"  # re-invoke self without detach flag to do the work
   ) </dev/null >/dev/null 2>&1 &
   disown 2>/dev/null || true
   exit 0
@@ -168,7 +168,7 @@ fi
 try_clear_stale_lock "$lockdir" 600
 
 LOCK_HELD=0
-for i in 1 2 3 4 5; do
+for _ in 1 2 3 4 5; do
   if mkdir "$lockdir" 2>/dev/null; then
     LOCK_HELD=1
     break

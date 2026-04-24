@@ -11,7 +11,7 @@ Audience: a user who already has universal-memory running locally (via `server/i
 This plugin wires Codex CLI to a locally running UM server via MCP. The plugin itself is two small config files — no scripts, no hooks, no daemons. See [`NOTES.md`](NOTES.md) for the schema TBDs that the v0.3 alpha carries.
 
 ### Works
-- All 10 MCP tools listed at [`docs/mcp-tools.md`](../../../docs/mcp-tools.md) (4 reads visible by default; 6 writes opt-in via `UM_MCP_WRITE_ENABLED=true` + `UM_MOUNT_MODE=rw`). As of v0.4, the MCP server's default `listTools` response exposes only the 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`); the 6 write tools (`memory_add`, `memory_capture`, `memory_delete`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when both gates are set on the server.
+- All 11 MCP tools listed at [`docs/mcp-tools.md`](../../../docs/mcp-tools.md) (4 reads visible by default; 7 writes opt-in via `UM_MCP_WRITE_ENABLED=true` + `UM_MOUNT_MODE=rw`). As of v0.5, the MCP server's default `listTools` response exposes only the 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`); the 7 write tools (`memory_add`, `memory_capture`, `memory_delete`, `memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`) appear only when both gates are set on the server.
 - Memories captured from Codex sessions (via explicit `memory_capture` calls) show up in your Claude Code sessions at next session start, indexed by mem0, readable via `memory_search` / `memory_state` / `memory_recent`.
 - The rubric pasted into Codex's custom-instructions equivalent (see §4) steers Codex to call `memory_capture` on explicit "remember" requests — same behavior as Claude Code's hook-injected rubric or ChatGPT Desktop's pasted rubric.
 
@@ -37,7 +37,7 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`.
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`.
 - Codex CLI installed. `<TBD: confirm minimum version >= 0.121.0 during verification — earlier versions predate plugin support>`.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want Codex to write memories, not just read. Read-only is safer for first connection.
 - For a **remote** UM server (Codex on a different host from UM), you need a tunnel. See [`docs/um-tunnel.md`](../../../docs/um-tunnel.md).
@@ -123,6 +123,7 @@ Paste the block below into `<TBD: confirm exact surface during verification — 
 <!-- Do not edit inline — mirror of docs/memory-routing-rubric.md. If the canonical file changes, re-paste this whole block. -->
 
 ```markdown
+<!-- CANONICAL-RUBRIC-START -->
 ## Memory routing (universal-memory)
 
 Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
@@ -132,8 +133,10 @@ When the user says "remember", "note that", or similar:
 - Durable facts the user will want later ("I prefer X", "my address is Y", "the API rotates quarterly"): call `memory_capture` with `type: fact` and `project: global` (cross-project) or `project: <current-project>` (project-scoped).
 - Architecture decisions worth auditing later: call `memory_capture` with `type: adr` and `project: <current>`.
 - Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
+- **Conversational context worth preserving across surfaces** (e.g. "track this conversation", a significant exchange you'll revisit from Claude Code later, the current turn on its own): call `memory_append_turn` with `role` (user/assistant/system) + `content` + `project`. Unlike `memory_capture` (which writes a stable authored doc with structured frontmatter), `memory_append_turn` appends a raw turn that the NEXT session-end summary will consume. Use both when appropriate — a durable decision gets `memory_capture`; the context around the decision gets `memory_append_turn`.
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.
+<!-- CANONICAL-RUBRIC-END -->
 ```
 
 This block is the canonical rubric — the source lives at [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md). If the repo version is updated, re-paste this block.
@@ -149,7 +152,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Co
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected (v0.4 default): Codex lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4** or the wrong ones, the MCP server didn't register — re-check `~/.codex/config.toml` or the plugin `.mcp.json`, and confirm UM is reachable.
+   Expected (v0.5 default): Codex lists **4 default read tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. All 7 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4** or the wrong ones, the MCP server didn't register — re-check `~/.codex/config.toml` or the plugin `.mcp.json`, and confirm UM is reachable.
 
    You can also run `codex mcp list` directly at the shell to confirm `universal-memory` shows up.
 
@@ -186,7 +189,7 @@ If all four pass, Codex is reading and writing the same vault that Claude Code u
 
 ## 7. Status and roadmap
 
-- **Version:** 0.4.0-alpha (tracks v0.4 of universal-memory overall; Codex plugin remains config-only).
+- **Version:** 0.5.0-alpha (tracks v0.5 of universal-memory overall; Codex plugin remains config-only).
 - **Scope:** MCP connector only — no lifecycle hooks.
 - **Upstream gaps blocking full parity** (tracked in [`docs/codex-integration-notes.md`](../../../docs/codex-integration-notes.md)):
   1. Codex v0.121 has no `SessionEnd` event.

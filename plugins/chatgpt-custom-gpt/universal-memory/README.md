@@ -56,6 +56,22 @@ As of v0.4, `memory_search` responses ship in a **compact shape** by default: ea
 
    ![TBD: screenshot of Instructions field populated](screenshots/custom-gpt-instructions.png)
 
+<!-- Do not edit inline — mirror of docs/memory-routing-rubric.md. If the canonical file changes, re-paste this whole block. -->
+<!-- CANONICAL-RUBRIC-START -->
+## Memory routing (universal-memory)
+
+Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
+
+When the user says "remember", "note that", or similar:
+- Project-scoped active work (current focus, in-flight tasks, open questions, decisions made today): no immediate action needed — the session-end pipeline will capture it in state.md and the session summary automatically.
+- Durable facts the user will want later ("I prefer X", "my address is Y", "the API rotates quarterly"): call `memory_capture` with `type: fact` and `project: global` (cross-project) or `project: <current-project>` (project-scoped).
+- Architecture decisions worth auditing later: call `memory_capture` with `type: adr` and `project: <current>`.
+- Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
+- **Conversational context worth preserving across surfaces** (e.g. "track this conversation", a significant exchange you'll revisit from Claude Code later, the current turn on its own): call `memory_append_turn` with `role` (user/assistant/system) + `content` + `project`. Unlike `memory_capture` (which writes a stable authored doc with structured frontmatter), `memory_append_turn` appends a raw turn that the NEXT session-end summary will consume. Use both when appropriate — a durable decision gets `memory_capture`; the context around the decision gets `memory_append_turn`.
+
+When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.
+<!-- CANONICAL-RUBRIC-END -->
+
 ---
 
 ## 3. Add the Actions
@@ -134,10 +150,10 @@ If all four pass, the Custom GPT is wired correctly.
 - **Delete.** Remove by metadata.id (wipes every entry with that id) or mem0 UUID (single entry).
 
 ### Doesn't work
-- **Raw session capture.** ChatGPT web has no session-end hook — there's no equivalent of Claude Code's Stop / SessionEnd pipeline. Whatever the GPT doesn't explicitly capture via `memory_add` is ephemeral on UM's side. The `memory_append_turn` MCP tool is planned for v0.5+ ([issue #6](https://github.com/goldenwo/universal-memory/issues/6)) to close this.
+- **Raw session capture.** ChatGPT web has no session-end hook — there's no equivalent of Claude Code's Stop / SessionEnd pipeline. Custom GPT Actions can call `memory_append_turn` (v0.5) via MCP to append turns, but this requires the MCP surface (not just Actions REST). Whatever the GPT doesn't explicitly capture via `memory_add` or `memory_append_turn` is ephemeral on UM's side.
 - **Rich structured capture.** `memory_add` goes through mem0's fact-extractor; you don't get to specify the full frontmatter (type, id, title, project) the way `memory_capture` does over MCP. For ADRs, canonical docs, or anything that needs a stable filename + versioning, use Claude Code (the native plugin exposes `memory_capture` directly) or a Claude.ai / ChatGPT Desktop MCP connector instead.
-- **Supersede / forget / checkpoint.** These are MCP-only write tools (`memory_supersede`, `memory_forget`, `memory_checkpoint`). Not exposed to Custom GPT Actions.
-- **State regeneration.** A Custom GPT session does not refresh `state.md` — only Claude Code's `session-end.sh` / `/um-checkpoint` does. If you want ChatGPT-session context in the next Claude Code session, wait for a future release (tracked alongside `memory_append_turn`) or checkpoint manually.
+- **Supersede / forget.** These are MCP-only write tools (`memory_supersede`, `memory_forget`). Not exposed to Custom GPT Actions.
+- **State regeneration via checkpoint.** `memory_checkpoint` is now a real tool (v0.5) but it is MCP-only — not exposed to Custom GPT Actions. Use it from a ChatGPT Desktop MCP connector or Claude Code's `/um-checkpoint` command.
 - **Rubric drift.** The Instructions block is a static paste. If the canonical rubric in [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md) changes, re-paste `system-prompt.md` into the GPT's Instructions field.
 
 ### Out-of-scope failure modes to expect

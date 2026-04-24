@@ -32,12 +32,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # install.sh in UM_NONINTERACTIVE=1 mode reads the required values
       # from env vars, fails fast if any are missing, and writes .env
       # itself. We do not pre-write .env — letting install.sh own its
       # entire code path is what we want to CI.
+      #
+      # UM_VAULT_DIR/UM_MOUNT_MODE/UM_MCP_WRITE_ENABLED are passed so the
+      # resulting stack can exercise vault-file indexing (smoke Task 7), state
+      # writes (Task 8), and MCP write tools (T10-G/H/I) end-to-end.
+      #
+      # UM_CONTAINER_USER pins the container process to the runner's UID:GID
+      # so files it writes into the rw-mounted vault are owned by the runner
+      # — otherwise T10-G cleanup fails with EACCES when the runner (1001)
+      # tries to unlink container-created files owned by node (1000).
       - name: Bring up stack via install.sh
         working-directory: server
         env:
@@ -45,17 +54,55 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MEM0_USER_ID: ci-smoke-${{ github.run_id }}
           MEM0_MCP_PORT: "6335"
+          UM_VAULT_DIR: "/tmp/um-vault-ci"
+          UM_MOUNT_MODE: "rw"
+          UM_MCP_WRITE_ENABLED: "true"
         run: |
           if [ -z "${OPENAI_API_KEY:-}" ]; then
             echo "::error::OPENAI_API_KEY secret is not set on this repo."
             echo "::error::Add it at Settings > Secrets and variables > Actions."
             exit 1
           fi
+          export UM_CONTAINER_USER="$(id -u):$(id -g)"
+          echo "::notice::Container will run as UM_CONTAINER_USER=$UM_CONTAINER_USER (matches runner)"
+          mkdir -p "$UM_VAULT_DIR"
+          chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
 
+      # install.sh only brings up the container stack; host node_modules
+      # isn't populated, so unit tests run on the host need a separate npm ci.
+      - name: Install host node deps for unit tests
+        working-directory: server
+        run: npm ci
+
+      - name: Run server unit tests
+        working-directory: server
+        # Unquoted glob so bash expands test/*.test.mjs into a file list.
+        # node --test treats quoted "test/*.test.mjs" as a literal path and fails.
+        run: node --test test/*.test.mjs
+
+      # Full smoke — install step mounted /tmp/um-vault-ci rw and enabled MCP
+      # writes, so Task 7 (reindex vault files), Task 8 (state writes), and
+      # T10-G/H/I (MCP write tools) all run end-to-end on the live stack.
+      # UM_VAULT_DIR is re-exported here because smoke.sh creates host-side
+      # fixtures at $UM_VAULT_DIR/sessions/... that the container reads via
+      # its /vault mount.
+      #
+      # umask 000 so host-created fixture dirs under $UM_VAULT_DIR are 0777
+      # and the container's node user (UID 1000) can create its own subdirs
+      # (e.g. /vault/state/t10e for memory_checkpoint writes). Without this,
+      # runner-owned 0755 state/ dir blocks container mkdir with EACCES.
+      # v0.6 follow-up: set docker-compose user: to match host UID so this
+      # cross-user write pattern isn't needed.
       - name: Run smoke test
         working-directory: server
-        run: bash ./test/smoke.sh
+        env:
+          UM_MCP_WRITE_ENABLED: "true"
+          UM_VAULT_DIR: "/tmp/um-vault-ci"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          umask 000
+          bash ./test/smoke.sh
 
       # Continuity pipeline test: exercises stop → session-end → state.md →
       # session-start catchup + inject, end-to-end against the live server.
@@ -101,6 +148,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # --severity=warning catches real warnings (unused vars, quote issues,
+      # shadowed assignments) while filtering info/style noise (useless-echo,
+      # ls-vs-find, A&&B||C patterns). Info/style findings remaining after
+      # the v0.5 installer refactor are tracked as a v0.6 follow-up — see
+      # ROADMAP. Warnings MUST pass: each one is either a real bug, or
+      # explicitly annotated with a shellcheck directive explaining why.
+      - name: Run shellcheck
+        run: |
+          sudo apt-get install -y shellcheck 2>/dev/null || brew install shellcheck
+          shellcheck --severity=warning \
+                     installer/*.sh installer/lib/*.sh \
+                     plugins/claude-code/universal-memory/bin/um \
+                     plugins/claude-code/universal-memory/bin/um-capture \
+                     plugins/claude-code/universal-memory/bin/um-forget \
+                     plugins/claude-code/universal-memory/bin/um-preview \
+                     plugins/claude-code/universal-memory/bin/um-supersede \
+                     plugins/claude-code/universal-memory/bin/um-tunnel \
+                     plugins/claude-code/universal-memory/hooks/*.sh \
+                     plugins/claude-code/universal-memory/hooks/lib/*.sh
       # macOS runners don't ship pyyaml; install-cli.sh preflight checks for it.
       # ubuntu-latest has python3-yaml out of the box; skip on Linux.
       - name: Ensure pyyaml (macOS)

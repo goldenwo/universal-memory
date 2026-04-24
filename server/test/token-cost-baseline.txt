@@ -21,19 +21,20 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   @anthropic-ai/tokenizer: approximation (per package README)
   Surface consumed by: all model surfaces (mixed)
 
-  memory_search      tiktoken=   169  anthropic=   172
-  memory_add         tiktoken=    49  anthropic=    51
-  memory_list        tiktoken=    79  anthropic=    79
-  memory_delete      tiktoken=    30  anthropic=    30
-  memory_state       tiktoken=    62  anthropic=    67
-  memory_recent      tiktoken=   119  anthropic=   119
-  memory_capture     tiktoken=   149  anthropic=   156
-  memory_checkpoint  tiktoken=    52  anthropic=    55
-  memory_forget      tiktoken=    64  anthropic=    68
-  memory_supersede   tiktoken=   152  anthropic=   161
+  memory_search       tiktoken=   169  anthropic=   172
+  memory_add          tiktoken=    49  anthropic=    51
+  memory_list         tiktoken=    79  anthropic=    79
+  memory_delete       tiktoken=    30  anthropic=    30
+  memory_state        tiktoken=    62  anthropic=    67
+  memory_recent       tiktoken=   119  anthropic=   119
+  memory_capture      tiktoken=   149  anthropic=   156
+  memory_checkpoint   tiktoken=   125  anthropic=   133
+  memory_forget       tiktoken=    64  anthropic=    68
+  memory_supersede    tiktoken=   152  anthropic=   161
+  memory_append_turn  tiktoken=   190  anthropic=   200
 
-  TOTAL              tiktoken=   925  anthropic=   958
-  (10 tools measured)
+  TOTAL               tiktoken=  1188  anthropic=  1236
+  (11 tools measured)
 
 === LOCATION 2: MCP response payloads ===
   Fixture: server/test/fixtures/response-samples.json
@@ -64,13 +65,13 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   Note: system prompt has NO runtime placeholders (measured as-is);
         user message includes the transcript (variable; see per-char estimate below).
 
-  system prompt (template-only):  tiktoken=   136  anthropic=   152
+  system prompt (template-only):  tiktoken=   132  anthropic=   145
   user prompt (no transcript):    tiktoken=    14  anthropic=    17
-  combined (no transcript fill):  tiktoken=   150  anthropic=   170
+  combined (no transcript fill):  tiktoken=   146  anthropic=   163
 
   transcript tokens/char (approx): tiktoken=0.125  anthropic=0.125
   at UM_SUMMARY_MAX_CHARS=24000 chars, transcript adds ~tiktoken=3000  anthropic=3000
-  TOTAL prompt at max transcript:  tiktoken=~3150  anthropic=~3170
+  TOTAL prompt at max transcript:  tiktoken=~3146  anthropic=~3163
   (prod choice depends on UM_SUMMARIZER: openai→tiktoken matters; claude-agent-sdk→anthropic matters)
 
 ---

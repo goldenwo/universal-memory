@@ -1,0 +1,11 @@
+{
+  "description": "Old state has YAML frontmatter; merged state preserves schema_version: 1 in frontmatter",
+  "old_state_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-20T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nBuilding dashboard.\n\n## In flight\n- Dashboard layout in progress\n\n## Recent decisions\n- 2026-04-20: Chose React for dashboard\n\n## Next actions\n- Wire up data sources\n\n## Open questions\n- Which chart library?\n\n## Environment\nBranch: feat/dashboard\n",
+  "new_summary_md": "## Session summary\n\nCompleted dashboard layout. Chose Recharts for charts.",
+  "summarize_stub": {
+    "mode": "ok",
+    "summary": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nWiring up data sources to dashboard.\n\n## In flight\n- Data source integration\n\n## Recent decisions\n- 2026-04-20: Chose React for dashboard\n- 2026-04-23: Chose Recharts for charts\n\n## Next actions\n- Connect API endpoints\n\n## Open questions\n- (none)\n\n## Environment\nBranch: feat/dashboard\n"
+  },
+  "expected_merged_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nWiring up data sources to dashboard.\n\n## In flight\n- Data source integration\n\n## Recent decisions\n- 2026-04-20: Chose React for dashboard\n- 2026-04-23: Chose Recharts for charts\n\n## Next actions\n- Connect API endpoints\n\n## Open questions\n- (none)\n\n## Environment\nBranch: feat/dashboard\n",
+  "expected_schema_version": 1
+}

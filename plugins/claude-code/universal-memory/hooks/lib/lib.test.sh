@@ -138,6 +138,8 @@ val=$(vault_path)
 assert_eq "T8: vault_path returns default ~/.um/vault" "$val" "$HOME/.um/vault"
 
 # Test 9: project_name returns CLAUDE_CWD basename
+# shellcheck disable=SC2034  # CLAUDE_CWD is set for the project_name invocation
+# only (inline VAR=value cmd idiom); project_name reads it from its env.
 CLAUDE_CWD="/home/user/projects/my-project" val=$(project_name)
 assert_eq "T9: project_name returns CLAUDE_CWD basename" "$val" "my-project"
 

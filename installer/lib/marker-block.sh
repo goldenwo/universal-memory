@@ -64,6 +64,7 @@ _write_marker_block() {
   local _srv; _srv=$(_marker_escape_sq "${UM_SERVER_URL:-http://localhost:6335}")
   local _lib; _lib=$(_marker_escape_sq "${UM_LIB_DIR:-$HOME/.local/share/um/lib}")
   local _cli; _cli=$(_marker_escape_sq "${UM_CLI_DIR:-$HOME/.local/share/um/cli}")
+  local _pdir; _pdir=$(_marker_escape_sq "${UM_PROMPT_DIR:-}")
   {
     printf '\n%s\n' "$marker_start"
     printf "export UM_OPENAI_API_KEY='%s'\n" "$_key"
@@ -71,6 +72,7 @@ _write_marker_block() {
     printf "export UM_SERVER_URL='%s'\n" "$_srv"
     printf "export UM_LIB_DIR='%s'\n" "$_lib"
     printf "export UM_CLI_DIR='%s'\n" "$_cli"
+    [[ -n "$_pdir" ]] && printf "export UM_PROMPT_DIR='%s'\n" "$_pdir"
     printf 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
     printf '%s\n' "$marker_end"
   } >> "$tmp"

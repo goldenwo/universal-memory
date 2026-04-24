@@ -1,0 +1,11 @@
+{
+  "description": "Old state has human-added prose; merged output preserves it AND adds new info",
+  "old_state_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-20T10:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nRefactoring auth module.\n\n## In flight\n- Auth refactor in progress\n\n## Recent decisions\n- 2026-04-20: Decided to use JWT\n\n## Next actions\n- Finish auth refactor\n\n## Open questions\n- Should we use refresh tokens? (human note: yes, per sec review)\n\n## Environment\nBranch: feat/auth\n",
+  "new_summary_md": "## Session summary\n\nCompleted auth refactor. Added refresh token support.",
+  "summarize_stub": {
+    "mode": "ok",
+    "summary": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nAuth refactor complete; moving to tests.\n\n## In flight\n- Writing auth tests\n\n## Recent decisions\n- 2026-04-20: Decided to use JWT\n- 2026-04-23: Completed auth refactor with refresh tokens\n\n## Next actions\n- Write auth tests\n- Deploy to staging\n\n## Open questions\n- Should we use refresh tokens? (human note: yes, per sec review)\n\n## Environment\nBranch: feat/auth\n"
+  },
+  "expected_merged_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\ntitle: State of play — fixture\nstatus: current\nvalid_from: 2026-04-23T00:00:00Z\nproject: fixture\n---\n\n# State of play — fixture\n\n## Current focus\nAuth refactor complete; moving to tests.\n\n## In flight\n- Writing auth tests\n\n## Recent decisions\n- 2026-04-20: Decided to use JWT\n- 2026-04-23: Completed auth refactor with refresh tokens\n\n## Next actions\n- Write auth tests\n- Deploy to staging\n\n## Open questions\n- Should we use refresh tokens? (human note: yes, per sec review)\n\n## Environment\nBranch: feat/auth\n",
+  "expected_schema_version": 1
+}

@@ -5,6 +5,14 @@
 # Tests use a sandboxed $HOME=$(mktemp -d) per test so no real user env is touched.
 # Pattern matches server/install.test.sh for PASS/FAIL conventions.
 
+# shellcheck disable=SC2034
+# Several TX_OUT / TX_EXIT / TX_LINES_BEFORE vars are captured at runtime as
+# test scaffold — the OUT captures are for dump-on-fail diagnostics and the
+# measurement vars are for potential delta comparisons. Not all are currently
+# wired to asserts; TODO(v0.6) add a _dump_on_fail helper + comparison asserts.
+# Disabling SC2034 file-wide keeps the production-code lint posture strict
+# (asserted by CI) while tolerating test-scaffold lifetime in test files.
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +64,9 @@ assert_exit_nonzero() {
 # ─── Temp root ────────────────────────────────────────────────────────────────
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
+# Portable mktemp subdirectory: mktemp -d -p is GNU-only; macOS requires TMPDIR=.
+mktemp_in() { TMPDIR="$1" mktemp -d; }
+mktemp_in_t() { mktemp -d "$1/${2:-tmp.XXXXXX}"; }
 
 # make_fakepython3 <dest_dir>
 # Creates a fake python3 that succeeds for 'import yaml'.
@@ -315,7 +326,7 @@ assert_eq "T7: UM_LIB_DIR round-trips through rc correctly" "$T7_SOURCE_OUT" "$T
 # run but awk didn't strip the preceding blank line from prior runs → unbounded
 # bashrc growth (1 extra blank line per re-run). Fix: awk buffers blank lines and
 # discards the buffer when it sees the marker-start sentinel.
-T8=$(mktemp -d -p "$TMPROOT" "t8.XXXXXX")
+T8=$(mktemp_in_t "$TMPROOT" "t8.XXXXXX")
 T8_HOME="$T8/home"
 T8_LIB="$T8_HOME/.local/share/um/lib"
 mkdir -p "$T8_HOME" "$T8_LIB"
@@ -332,7 +343,7 @@ make_fakepython3 "$T8/bin"
 _BASH_BIN8="$(command -v bash)"
 
 # Run installer 3 times
-for i in 1 2 3; do
+for _ in 1 2 3; do
   env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
     "$_BASH_BIN8" "$INSTALL_CLI" --yes >/dev/null 2>&1
 done
@@ -350,6 +361,54 @@ env PATH="$T8/bin:$PATH" HOME="$T8_HOME" UM_LIB_DIR="$T8_LIB" \
   "$_BASH_BIN8" "$INSTALL_CLI" --yes >/dev/null 2>&1
 T8_LINES_AFTER_4=$(wc -l < "$T8_HOME/.bashrc")
 assert_eq "T8: bashrc line count stable between run 3 and run 4" "$T8_LINES_AFTER_4" "$T8_LINES_AFTER"
+
+# ─── T9: --no-path leaves .bashrc clean ───────────────────────────────────────
+T9=$(mktemp_in_t "$TMPROOT" "t9.XXXXXX")
+T9_HOME="$T9/home"
+T9_LIB="$T9_HOME/.local/share/um/lib"
+mkdir -p "$T9_HOME" "$T9_LIB"
+make_fakepython3 "$T9/bin"
+# .bashrc must exist so installer would normally write to it
+touch "$T9_HOME/.bashrc"
+_BASH_BIN9="$(which bash)"
+env PATH="$T9/bin:$PATH" HOME="$T9_HOME" UM_LIB_DIR="$T9_LIB" \
+  "$_BASH_BIN9" "$INSTALL_CLI" --no-path --yes >/dev/null 2>&1 || true
+
+if grep -qE "UM_PROMPT_DIR|UM_SERVER_URL" "$T9_HOME/.bashrc" 2>/dev/null; then
+  fail_test "T9: --no-path: .bashrc modified despite --no-path flag" \
+    "$(grep -E 'UM_PROMPT_DIR|UM_SERVER_URL' "$T9_HOME/.bashrc" | head -2)"
+else
+  pass "T9: --no-path: .bashrc clean"
+fi
+
+# ─── T10: unknown flag → exit 2 (round-9 fix: was silently continuing) ────────
+echo ""
+echo "=== T10: unknown flag fails with exit 2 ==="
+T10=$(mktemp_in_t "$TMPROOT" "t10.XXXXXX")
+T10_HOME="$T10/home"
+mkdir -p "$T10_HOME"
+make_fakepython3 "$T10/bin"
+touch "$T10_HOME/.bashrc"
+_BASH_BIN10="$(which bash)"
+T10_EXIT=0
+T10_OUT=$(env PATH="$T10/bin:$PATH" HOME="$T10_HOME" \
+  "$_BASH_BIN10" "$INSTALL_CLI" --yes --typoFlag 2>&1) || T10_EXIT=$?
+assert_exit_nonzero "T10: unknown flag exits non-zero" "$T10_EXIT"
+assert_contains "T10: unknown flag error message" "$T10_OUT" "unknown flag"
+
+# ─── T11: --um-install-dir with no value → fails (round-9 fix: was silently empty) ──
+echo ""
+echo "=== T11: --um-install-dir requires a value ==="
+T11=$(mktemp_in_t "$TMPROOT" "t11.XXXXXX")
+T11_HOME="$T11/home"
+mkdir -p "$T11_HOME"
+make_fakepython3 "$T11/bin"
+touch "$T11_HOME/.bashrc"
+_BASH_BIN11="$(which bash)"
+T11_EXIT=0
+T11_OUT=$(env PATH="$T11/bin:$PATH" HOME="$T11_HOME" \
+  "$_BASH_BIN11" "$INSTALL_CLI" --yes --um-install-dir 2>&1) || T11_EXIT=$?
+assert_exit_nonzero "T11: --um-install-dir with no value exits non-zero" "$T11_EXIT"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

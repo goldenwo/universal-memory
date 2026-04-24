@@ -45,6 +45,8 @@ import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
+import { doAppendTurn } from './lib/append-turn.mjs';
+import { doCheckpoint } from './lib/checkpoint.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +61,17 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
+
+/**
+ * Build a canonical error response envelope with schema_version:1.
+ * Ensures all error returns are contract-parity with the lib layer.
+ * @param {string} error
+ * @param {Record<string, unknown>} extra
+ * @returns {{ schema_version: 1, ok: false, error: string }}
+ */
+function errorResponse(error, extra = {}) {
+  return { schema_version: 1, ok: false, error, ...extra };
+}
 
 /**
  * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
@@ -269,7 +282,7 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_checkpoint',
-		description: 'Force a session summary + state update (server-side stub — currently delegates to `/um-checkpoint` slash command in Claude Code)',
+		description: 'Trigger a session summary + state refresh for the given project. Pipeline: reads raw captures -> LLM-summarizes -> writes to sessions/<project>/<id>.md -> atomically merges into state/<project>/state.md -> reindexes into mem0. Cost-capped per day per project. Honors UM_SUMMARIZER (openai | ollama | claude-agent-sdk; latter falls back to openai server-side). Parity with the /um-checkpoint slash command in Claude Code.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -311,6 +324,22 @@ export const TOOLS = [
 			required: ['old_id', 'new_doc'],
 		},
 	},
+	// ── v0.5: append-turn tool ────────────────────────────────────────────────
+	{
+		name: 'memory_append_turn',
+		description: 'Write a raw conversation turn to the vault capture log for the given project. Appends to captures/<project>/raw/<date>.md and is consumed by the next session-end summary. Provides MCP parity with POST /api/append-turn. Requires UM_MCP_WRITE_ENABLED=true.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: { type: 'string', description: 'Project name (must match ^[a-zA-Z0-9._-]+$)' },
+				content: { type: 'string', description: 'Turn text content (markdown)', maxLength: 8192 },
+				role: { type: 'string', enum: ['user', 'assistant', 'system'], description: 'Role of the turn author' },
+				timestamp: { type: 'string', format: 'date-time', description: 'ISO 8601 timestamp (defaults to now)' },
+				conversation_id: { type: 'string', description: 'Optional conversation/session identifier' },
+			},
+			required: ['project', 'content', 'role'],
+		},
+	},
 ];
 
 // ---------------------------------------------------------------------------
@@ -321,12 +350,13 @@ export const TOOLS = [
  * Names of MCP tools that mutate state. Exported so tests can import the
  * canonical set without duplicating it.
  *
- * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 10 so
+ * Filter logic: getVisibleTools() uses this set; TOOLS still holds all 11 so
  * the runtime can still execute write tools when UM_MCP_WRITE_ENABLED=true.
  */
 export const WRITE_TOOL_NAMES = new Set([
 	'memory_add', 'memory_delete', 'memory_capture',
 	'memory_checkpoint', 'memory_forget', 'memory_supersede',
+	'memory_append_turn',
 ]);
 
 /**
@@ -340,7 +370,7 @@ export function isWriteEnabled() {
 
 /**
  * Returns the tools visible to MCP clients given the current write-enabled state.
- * When writeEnabled is true (or omitted and env var is true/1), all 10 tools are returned.
+ * When writeEnabled is true (or omitted and env var is true/1), all 11 tools are returned.
  * When false (default when UM_MCP_WRITE_ENABLED is unset), write tools are filtered out.
  *
  * @param {boolean} [writeEnabled] — if omitted, reads process.env.UM_MCP_WRITE_ENABLED
@@ -350,11 +380,6 @@ export function getVisibleTools(writeEnabled) {
 	const enabled = writeEnabled !== undefined ? writeEnabled : isWriteEnabled();
 	if (enabled) return TOOLS;
 	return TOOLS.filter(t => !WRITE_TOOL_NAMES.has(t.name));
-}
-
-/** @deprecated Use isWriteEnabled() instead */
-function mcpWriteEnabled() {
-	return isWriteEnabled();
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +463,7 @@ export async function handleToolCall(name, args) {
 		}
 		case 'memory_add': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
 			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -461,7 +486,7 @@ export async function handleToolCall(name, args) {
 		}
 		case 'memory_delete': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
 			await memory.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
@@ -494,8 +519,8 @@ export async function handleToolCall(name, args) {
 			// C1: validate filename-path components before any path construction
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			if (!isWriteEnabled()) {
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const project = metadata.project || 'default';
 			const id = metadata.id;
@@ -527,15 +552,9 @@ export async function handleToolCall(name, args) {
 
 		case 'memory_checkpoint': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
-			// Server-side stub — session-end.sh runs on the host with filesystem + env access;
-			// driving it from inside the container requires hook-in-container infrastructure
-			// not yet implemented. Use /um-checkpoint in Claude Code instead.
-			return JSON.stringify({
-				ok: false,
-				error: 'memory_checkpoint is not yet implemented server-side; use `/um-checkpoint` in Claude Code instead.',
-			});
+			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc }));
 		}
 
 		case 'memory_forget': {
@@ -543,8 +562,8 @@ export async function handleToolCall(name, args) {
 			if (!id) throw new Error('id is required');
 			// C1: validate id before using as path component
 			validateSafeName('id', id);
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			if (!isWriteEnabled()) {
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
 			const relPath = await findDocByIdInVault(id);
@@ -588,8 +607,8 @@ export async function handleToolCall(name, args) {
 			validateSafeName('old_id', old_id);
 			validateSafeName('new_doc.id', new_doc.id);
 			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
-			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+			if (!isWriteEnabled()) {
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
 			// 1. Find old doc
@@ -681,6 +700,14 @@ export async function handleToolCall(name, args) {
 			});
 		}
 
+		case 'memory_append_turn': {
+			if (!isWriteEnabled()) {
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
+			}
+			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
+			return JSON.stringify(result);
+		}
+
 		default:
 			throw new Error(`Unknown tool: ${name}`);
 	}
@@ -689,7 +716,7 @@ export async function handleToolCall(name, args) {
 function handleMcpMessage(msg) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
-		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.4.0-alpha' }, capabilities: { tools: {} } } };
+		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.5.0-alpha' }, capabilities: { tools: {} } } };
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {
@@ -704,13 +731,95 @@ function handleMcpMessage(msg) {
 	return null;
 }
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — DoS guard
+
 function readBody(req) {
 	return new Promise((resolve, reject) => {
+		// Reject early if Content-Length header exceeds cap
+		const contentLength = parseInt(req.headers?.['content-length'] || '0', 10);
+		if (contentLength > MAX_BODY_BYTES) {
+			const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
+			req.destroy(err);
+			return reject(err);
+		}
 		const chunks = [];
-		req.on('data', (c) => chunks.push(c));
+		let totalBytes = 0;
+		req.on('data', (c) => {
+			totalBytes += c.length;
+			if (totalBytes > MAX_BODY_BYTES) {
+				const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
+				req.destroy(err);
+				return reject(err);
+			}
+			chunks.push(c);
+		});
 		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
 		req.on('error', reject);
 	});
+}
+
+/**
+ * Exported handler for POST /api/append-turn.
+ * Accepts a pre-parsed body via req.body (unit-test friendly).
+ * @param {{ body: { project, content, role, timestamp?, conversation_id? } }} req
+ * @param {{ status(code): this, json(obj): this }} res
+ * @param {{ vaultDir?: string, writesEnabled: boolean }} ctx
+ */
+export async function handleAppendTurnRequest(req, res, ctx) {
+	if (!ctx.writesEnabled) {
+		res.status(403).json(errorResponse('MCP writes disabled'));
+		return;
+	}
+	try {
+		const { project, content, role, timestamp, conversation_id } = req.body || {};
+		const result = await doAppendTurn(
+			{ project, content, role, timestamp, conversation_id },
+			{ vaultDir: ctx.vaultDir },
+		);
+		if (!result.ok) {
+			res.status(400).json(result);
+			return;
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
+		const status = err.statusCode || 500;
+		const message = err.statusCode ? err.message : 'internal server error';
+		res.status(status).json(errorResponse(message));
+	}
+}
+
+/**
+ * Exported handler for POST /api/checkpoint.
+ * Accepts a pre-parsed body via req.body (unit-test friendly).
+ * Supports DI of _doCheckpoint for testing without a real vault/LLM.
+ * @param {{ body: { project?, since?, until?, skip_state_merge? } }} req
+ * @param {{ status(code): this, json(obj): this }} res
+ * @param {{ vaultDir?: string, writesEnabled: boolean, _doCheckpoint?: Function }} ctx
+ */
+export async function handleCheckpointRequest(req, res, ctx) {
+	if (!ctx.writesEnabled) {
+		res.status(403).json(errorResponse('MCP writes disabled'));
+		return;
+	}
+	try {
+		const { project, since, until, skip_state_merge } = req.body || {};
+		const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
+		const result = await checkpointFn(
+			{ project, since, until, skip_state_merge },
+			{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
+		);
+		if (!result.ok) {
+			res.status(400).json(result);
+			return;
+		}
+		res.status(200).json(result);
+	} catch (err) {
+		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
+		const status = err.statusCode || 500;
+		const message = err.statusCode ? err.message : 'internal server error';
+		res.status(status).json(errorResponse(message));
+	}
 }
 
 /**
@@ -1184,7 +1293,7 @@ const server = createServer(async (req, res) => {
 
 			// 7. upsert: delete all existing entries with this metadata.id, then add
 			const targetId = fm.id;
-			// TODO(v0.3): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
+			// TODO(v0.6): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
 			await deleteByMetadataId(targetId);
 
 			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
@@ -1200,6 +1309,54 @@ const server = createServer(async (req, res) => {
 
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
+			return;
+		}
+		if (url.pathname === '/api/append-turn' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleAppendTurnRequest(
+				{ body: reqBody },
+				httpRes,
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+			);
+			return;
+		}
+		if (url.pathname === '/api/checkpoint' && req.method === 'POST') {
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'invalid JSON body' }));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleCheckpointRequest(
+				{ body: reqBody },
+				httpRes,
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+			);
 			return;
 		}
 		if (url.pathname === '/api/delete' && req.method === 'POST') {

@@ -114,6 +114,58 @@ fi
 assert_file_missing "T2: no raw capture written under guard" "$RAW_FILE"
 
 # ===========================================================================
+# Test 3: T-CONC — sibling-lockfile flock serializes stop.sh appends
+# ===========================================================================
+echo "=== Test 3: T-CONC: flock serializes stop.sh appends ==="
+
+T3_DIR=$(mktemp -d)
+export UM_VAULT_DIR="$T3_DIR/vault"
+export CLAUDE_CWD="$T3_DIR/proj"
+mkdir -p "$CLAUDE_CWD"
+T3_PROJ=$(basename "$CLAUDE_CWD")
+
+# Fire 10 stop.sh instances in parallel; each gets ~1KB transcript via stdin
+# with a distinguishable marker, to check for cross-stream interleaving.
+for i in $(seq 1 10); do
+  ( printf 'MARKER-%d-START\n%s\nMARKER-%d-END' "$i" "$(printf 'x%.0s' {1..500})" "$i" |
+      bash "$STOP" ) &
+done
+wait
+
+DATE=$(date -u +%Y-%m-%d)
+T3_RAW="$UM_VAULT_DIR/captures/$T3_PROJ/raw/$DATE.md"
+
+if [ ! -f "$T3_RAW" ]; then
+  fail "T-CONC: raw file not created"
+else
+  for i in $(seq 1 10); do
+    # Extract the block between MARKER-$i-START and MARKER-$i-END (inclusive)
+    BLOCK=$(awk -v i="$i" '
+      $0 == "MARKER-" i "-START" { flag=1 }
+      flag { print }
+      $0 == "MARKER-" i "-END" { flag=0 }
+    ' "$T3_RAW")
+    if [ -z "$BLOCK" ]; then
+      fail "T-CONC: turn-$i block missing from raw file"
+    else
+      # Count OTHER markers in the block — any presence = interleaving = FAIL
+      OTHERS=$(echo "$BLOCK" | grep -cE "MARKER-[0-9]+-(START|END)" | awk '{print $1}')
+      # Each block should contain exactly 2 marker lines (its own START and END)
+      if [ "$OTHERS" -le 2 ]; then
+        pass "T-CONC: turn-$i intact (no interleaving)"
+      else
+        fail "T-CONC: turn-$i interleaved (found $OTHERS marker lines, expected 2)"
+      fi
+    fi
+  done
+fi
+
+rm -rf "$T3_DIR"
+# Restore env to prior test values (test harness exports these globally)
+export UM_VAULT_DIR="$TMPDIR_ROOT/vault"
+export CLAUDE_CWD="$TMPDIR_ROOT/testproject"
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

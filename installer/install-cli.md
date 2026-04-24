@@ -93,7 +93,7 @@ $ which um
 /home/<user>/.local/bin/um
 
 $ um --version
-0.4.0-alpha
+0.5.0-alpha
 ```
 
 Note: `um --version` outputs the bare version string from `plugin.json` (no `um ` prefix).

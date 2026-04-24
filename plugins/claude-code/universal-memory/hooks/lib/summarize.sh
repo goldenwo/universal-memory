@@ -14,6 +14,25 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# Load system prompt from file — must happen BEFORE the UM_SUMMARIZER dispatch
+# so that all backends (including claude-agent-sdk) have $_UM_SYSTEM_PROMPT
+# available at dispatch time.
+#
+# UM_PROMPT_DIR can be set by the installer's managed-block; defaults to
+# <script-dir>/prompts/ so the plugin works standalone without the installer.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UM_PROMPT_DIR="${UM_PROMPT_DIR:-$SCRIPT_DIR/prompts}"
+_UM_SUMMARIZE_PROMPT_FILE="$UM_PROMPT_DIR/summarize.txt"
+if [ ! -f "$_UM_SUMMARIZE_PROMPT_FILE" ]; then
+  echo "[um-summarize] prompt file not found: $_UM_SUMMARIZE_PROMPT_FILE" >&2
+  exit 0
+fi
+export _UM_SYSTEM_PROMPT
+_UM_SYSTEM_PROMPT=$(cat "$_UM_SUMMARIZE_PROMPT_FILE")
+unset _UM_SUMMARIZE_PROMPT_FILE
+
 # ─── UM_SUMMARIZER dispatch (A2) ──────────────────────────────────────────────
 # Selects which summarizer backend to use. Default: openai.
 # Options: openai (curl OpenAI chat/completions), claude-agent-sdk (stub - A3),
@@ -45,7 +64,7 @@ case "$SUMMARIZER" in
       # propagate anywhere meaningful — only the `claude` child process on the
       # RHS needs the sentinel to short-circuit its hooks.
       STDIN_CONTENT=$(cat)
-      SUMMARY=$(printf '%s' "$STDIN_CONTENT" | \
+      SUMMARY=$(printf '%s\n\n%s' "$_UM_SYSTEM_PROMPT" "$STDIN_CONTENT" | \
                 UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null)
       claude_rc=$?
       if [ "$claude_rc" -ne 0 ] || [ -z "$SUMMARY" ]; then
@@ -71,7 +90,6 @@ esac
 # Rest of script assumes SUMMARIZER=openai from here on.
 
 # Source vault.sh for vault_path and project_name
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f vault_path >/dev/null 2>&1; then
   # shellcheck source=./vault.sh
   source "$SCRIPT_DIR/vault.sh"
@@ -143,27 +161,6 @@ echo "$((current + 1))" > "$counter_file"
 # Build JSON payload via python3 (handles all escaping correctly)
 # Prompts are passed via environment variables to avoid shell-quoting issues.
 # ---------------------------------------------------------------------------
-
-# Verbatim system prompt
-export _UM_SYSTEM_PROMPT='Summarize a Claude Code session into a markdown note that lets a future session resume without reading the full transcript.
-
-Sections (omit any that don'"'"'t apply):
-
-## What happened
-1-3 sentences of what was accomplished.
-
-## Key decisions
-Bullets — decisions worth remembering.
-
-## In flight
-Bullets — work started but not finished, enough detail to resume.
-
-## Next steps
-Bullets — next actions identified.
-
-Be concrete: cite file paths, function names, commit hashes, ticket IDs. Skip vague phrases. For trivial sessions, write 2-3 sentences instead of headers.
-
-Output only the markdown body — no preamble, no code fences.'
 
 export _UM_USER_PROMPT="Session transcript (most recent turns):
 

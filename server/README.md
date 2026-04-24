@@ -58,6 +58,44 @@ See [../docs/architecture.md](../docs/architecture.md) for the full protocol. Su
 
 See [.env.example](.env.example) for all knobs.
 
+## Advanced: writes-enabled install (v0.5+)
+
+By default the container mounts the vault read-only (`UM_MOUNT_MODE=ro`) and
+MCP write tools are gated off (`UM_MCP_WRITE_ENABLED=false`). That's the safe
+production posture.
+
+To opt into the MCP write surface (`memory_append_turn`, `memory_checkpoint`,
+`memory_capture`, `memory_forget`, `memory_supersede`), pass the env overrides
+to install.sh. Both MUST be set together — `install.sh` rejects `UM_MOUNT_MODE=rw`
+without `UM_MCP_WRITE_ENABLED=true`:
+
+```bash
+UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-... \
+  MEM0_USER_ID=your-id \
+  UM_VAULT_DIR=/path/to/your/vault \
+  UM_MOUNT_MODE=rw \
+  UM_MCP_WRITE_ENABLED=true \
+  UM_CONTAINER_USER="$(id -u):$(id -g)" \
+  ./install.sh
+```
+
+`UM_CONTAINER_USER` pins the container UID:GID to match the host user so the
+files the server writes into the mounted vault are owned by you on the host
+— without it, the container runs as `node` (UID 1000) and the vault ends up
+with files the host user can't cleanly overwrite/delete.
+
+**Pin it ONCE on the first `docker compose up`** and don't change the value
+mid-lifecycle. Changing the UID while the vault already has content causes
+mixed ownership that blocks later overwrites with EACCES. If you must change
+it, stop the stack, `chown -R <new-uid>:<new-gid> <vault-dir>`, then bring
+the stack back up.
+
+`UM_CONTAINER_USER` accepts the literal `node` (default) or a numeric
+`<uid>:<gid>` pair with both values > 0. `install.sh` rejects root (`0:0`)
+and any zero in either half — combined with `UM_MOUNT_MODE=rw` that would
+get root inside the container writing to the host vault.
+
 ## Upgrade
 
 ```bash

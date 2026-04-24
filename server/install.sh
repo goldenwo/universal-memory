@@ -204,6 +204,9 @@ for _arg in "$@"; do
 			UM_YES=1
 			UM_NONINTERACTIVE=1
 			;;
+		--skip-docker)
+			UM_SKIP_DOCKER=1
+			;;
 		--verify)
 			# Handled above; reaching here means the user combined flags.
 			# Honor the --verify early-exit behavior by rejecting the combo.
@@ -233,9 +236,13 @@ if [ "${UM_YES:-0}" = "1" ]; then
 fi
 
 # ─── Prereq checks ───────────────────────────────────────────────────────────
-command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
-docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
-docker info >/dev/null 2>&1 || fail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
+	info "Skipping docker stack (--skip-docker set)."
+else
+	command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
+	docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
+	docker info >/dev/null 2>&1 || fail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+fi
 
 [ -f "$ENV_EXAMPLE" ] || fail "Not finding $ENV_EXAMPLE — are you running this from the repo's server/ directory or via ./install.sh?"
 [ -f "$COMPOSE_FILE" ] || fail "Not finding $COMPOSE_FILE."
@@ -321,6 +328,36 @@ fi
 [[ "$UM_VAULT_DIR" =~ [[:space:]] ]] && fail "UM_VAULT_DIR contains whitespace — refusing to write to .env."
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
 [[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
+
+# ─── v0.5 env-override validation ────────────────────────────────────────────
+# UM_MOUNT_MODE / UM_MCP_WRITE_ENABLED / UM_CONTAINER_USER are advanced env
+# overrides. Validate format + consistency to catch common footguns early.
+if [ -n "${UM_MOUNT_MODE:-}" ]; then
+	[[ "$UM_MOUNT_MODE" =~ ^(ro|rw)$ ]] || fail "UM_MOUNT_MODE must be 'ro' or 'rw'. Got: $UM_MOUNT_MODE"
+fi
+if [ -n "${UM_MCP_WRITE_ENABLED:-}" ]; then
+	[[ "$UM_MCP_WRITE_ENABLED" =~ ^(true|false|1|0)$ ]] || fail "UM_MCP_WRITE_ENABLED must be 'true'/'false'/'1'/'0'. Got: $UM_MCP_WRITE_ENABLED"
+fi
+# Consistency: rw mount without writes-enabled is attack surface with no feature
+# benefit (container can scribble on the vault from a non-MCP path, but the MCP
+# write tool surface is still gated off). Fail fast with a clear message.
+_mount_mode_effective="${UM_MOUNT_MODE:-ro}"
+_writes_effective="${UM_MCP_WRITE_ENABLED:-false}"
+if [ "$_mount_mode_effective" = "rw" ] \
+	&& [ "$_writes_effective" != "true" ] && [ "$_writes_effective" != "1" ]; then
+	fail "UM_MOUNT_MODE=rw requires UM_MCP_WRITE_ENABLED=true. A rw mount without MCP writes is attack surface with no feature benefit — either enable writes explicitly, or leave mount as ro."
+fi
+# UM_CONTAINER_USER: pins the container UID:GID to match the host user for rw-
+# mount installs (avoids cross-user EACCES on vault writes). Accept either the
+# literal 'node' (Dockerfile default, UID 1000 in node:alpine) or a numeric
+# uid:gid pair. Reject root (0:0) — any shell with UM_CONTAINER_USER=0:0 +
+# UM_MOUNT_MODE=rw gets root inside the container writing to the host vault.
+if [ -n "${UM_CONTAINER_USER:-}" ]; then
+	if [[ "$UM_CONTAINER_USER" != "node" ]] \
+		&& ! [[ "$UM_CONTAINER_USER" =~ ^[1-9][0-9]*:[1-9][0-9]*$ ]]; then
+		fail "UM_CONTAINER_USER must be 'node' or a numeric <uid>:<gid> pair with both >0. Got: $UM_CONTAINER_USER. Root (0:0) is rejected — combined with UM_MOUNT_MODE=rw it gets root inside the container writing to the host vault. Use \"\$(id -u):\$(id -g)\" for CI / rw-mount installs."
+	fi
+fi
 
 # ─── P0-3: API key validation ────────────────────────────────────────────────
 # Only probe when the key is freshly entered (not pre-existing in env) and
@@ -411,235 +448,32 @@ fi
 	printf 'MEM0_USER_ID=%s\n'   "$MEM0_USER_ID"
 	printf 'MEM0_MCP_PORT=%s\n'  "$MEM0_MCP_PORT"
 	printf 'UM_VAULT_DIR=%s\n'          "$UM_VAULT_DIR"
-	printf 'UM_MOUNT_MODE=%s\n'         "ro"
+	# UM_MOUNT_MODE defaults to "ro" (safe — container cannot modify host vault).
+	# Honor env override in NONINTERACTIVE mode so CI / automated installs can
+	# opt into rw when they need to exercise vault-write code paths (Task 7/8/T10).
+	printf 'UM_MOUNT_MODE=%s\n'         "${UM_MOUNT_MODE:-ro}"
 	printf 'UM_SUMMARY_ENABLED=%s\n'    "$UM_SUMMARY_ENABLED"
 	printf 'UM_OPENAI_API_KEY=%s\n'     "$UM_OPENAI_API_KEY"
 	printf 'UM_TEMPORAL_DECAY=%s\n'     "$UM_TEMPORAL_DECAY"
+	# UM_MCP_WRITE_ENABLED defaults to false (safe — MCP write tools gated off).
+	# Honor env override so CI / automated installs can enable the write-tool
+	# surface for end-to-end MCP coverage (smoke T10-G/H/I).
+	printf 'UM_MCP_WRITE_ENABLED=%s\n'  "${UM_MCP_WRITE_ENABLED:-false}"
 } > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true  # best-effort; no-op on Windows
 ok ".env written."
 
-# ─── P0-1: Plugin install ────────────────────────────────────────────────────
-_PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
-_PLUGIN_TARGET_BASE="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}"
-_PLUGIN_TARGET="$_PLUGIN_TARGET_BASE/universal-memory"
-
-_read_plugin_version() {
-	local dir="$1"
-	# plugin.json may be at the root or under .claude-plugin/
-	local pjson
-	if [ -f "$dir/.claude-plugin/plugin.json" ]; then
-		pjson="$dir/.claude-plugin/plugin.json"
-	elif [ -f "$dir/plugin.json" ]; then
-		pjson="$dir/plugin.json"
-	else
-		return 0  # no plugin.json found — return empty string, exit 0
-	fi
-	# Extract version without jq — simple grep
-	grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
-}
-
-# Copy the canonical routing rubric into an installed plugin so
-# session-start.sh can read it via the sibling-copy fallback when the
-# repo is not reachable (e.g. installed-plugin copy outside the checkout).
-# On failure warn visibly — a silent failure would make a missing rubric
-# indistinguishable from a successful install.
-_copy_rubric_to_target() {
-	local target="$1"
-	local src_rubric="$REPO_ROOT/docs/memory-routing-rubric.md"
-	if [ ! -r "$src_rubric" ]; then
-		warn "Rubric source missing at $src_rubric — session-start will use inline fallback."
-		return
-	fi
-	if ! cp "$src_rubric" "$target/rubric.md" 2>/dev/null; then
-		warn "Could not copy rubric.md to $target — session-start will use inline fallback."
-	fi
-}
-
-_install_plugin() {
-	local src="$_PLUGIN_SRC"
-	local target="$_PLUGIN_TARGET"
-
-	if [ ! -d "$src" ]; then
-		warn "Plugin source not found at $src — skipping plugin install."
-		return
-	fi
-
-	mkdir -p "$_PLUGIN_TARGET_BASE" || { warn "Could not create plugin directory $_PLUGIN_TARGET_BASE — skipping."; return; }
-
-	# Already a symlink pointing at src?
-	if [ -L "$target" ]; then
-		local link_dest
-		link_dest=$(readlink "$target" 2>/dev/null || true)
-		if [ "$link_dest" = "$src" ]; then
-			ok "Plugin already linked at $target — skipping."
-			return
-		fi
-		warn "Plugin symlink at $target points elsewhere ($link_dest). Will prompt for action."
-	fi
-
-	# Already a directory?
-	if [ -d "$target" ] && [ ! -L "$target" ]; then
-		local src_ver target_ver
-		src_ver=$(_read_plugin_version "$src")
-		target_ver=$(_read_plugin_version "$target")
-		if [ -n "$src_ver" ] && [ -n "$target_ver" ]; then
-			if [ "$src_ver" = "$target_ver" ]; then
-				ok "Plugin v$target_ver already installed at $target — skipping."
-				return
-			fi
-			# Compare versions: if target > src, skip.
-			# I5: sort -V gives wrong result for e.g. 0.9 vs 0.10 when unavailable.
-			# If sort -V is not present, warn and skip the comparison (treat as same,
-			# let user decide via the copy/link prompt rather than silently upgrading).
-			if ! sort -V </dev/null >/dev/null 2>&1; then
-				warn "sort -V not available — cannot reliably compare plugin versions; skipping version check."
-			else
-				local newer
-				newer=$(printf '%s\n%s\n' "$src_ver" "$target_ver" | sort -V | tail -1)
-				if [ "$newer" = "$target_ver" ] && [ "$src_ver" != "$target_ver" ]; then
-					warn "Installed plugin (v$target_ver) is newer than source (v$src_ver) — skipping."
-					return
-				fi
-			fi
-			# target is older — prompt for replacement
-			if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
-				printf 'Replace installed plugin v%s with v%s? [Y/n] ' "$target_ver" "$src_ver" >&2
-				read -r _replace
-				_replace="${_replace:-Y}"
-				[[ "$_replace" =~ ^[Nn] ]] && { info "Plugin update skipped."; return; }
-			fi
-			rm -rf "$target"
-		fi
-	fi
-
-	# Prompt: copy, link, or skip
-	local _action="c"
-	if [ "${UM_NONINTERACTIVE:-0}" = "1" ]; then
-		_action="c"
-	else
-		printf 'Install plugin to %s? (c)opy, (l)ink for development, (s)kip [c] ' "$target" >&2
-		read -r _action
-		_action="${_action:-c}"
-	fi
-
-	# C1: Remove any pre-existing symlink or directory at the target before
-	# placing a new copy or symlink.  Without this, cp -r into an existing
-	# symlink would write files into the symlink's target (data corruption), and
-	# ln -s would fail with "File exists".  This MUST happen only inside the
-	# install branches — the (s)kip branch must be non-destructive so that an
-	# existing install is preserved if the user declines to replace it.
-	case "$_action" in
-		[lL]*)
-			if [ -L "$target" ]; then
-				rm -f "$target"
-			elif [ -d "$target" ]; then
-				rm -rf "$target"
-			fi
-			if ln -s "$src" "$target" 2>/dev/null; then
-				ok "Plugin symlinked: $target -> $src"
-				# Do NOT copy rubric into $target here — it would resolve
-				# through the symlink and pollute the repo source tree with
-				# an untracked rubric.md. session-start.sh's canonical-path
-				# lookup ($SCRIPT_DIR/../../../../docs/memory-routing-rubric.md)
-				# already resolves correctly through the symlink.
-			else
-				warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
-				if cp -r "$src" "$target"; then
-					ok "Plugin copied to $target (copy fallback)."
-					_copy_rubric_to_target "$target"
-				fi
-			fi
-			;;
-		[sS]*)
-			info "Plugin install skipped — install manually to $target"
-			return
-			;;
-		*)
-			if [ -L "$target" ]; then
-				rm -f "$target"
-			elif [ -d "$target" ]; then
-				rm -rf "$target"
-			fi
-			if cp -r "$src" "$target"; then
-				ok "Plugin copied to $target"
-				_copy_rubric_to_target "$target"
-			fi
-			;;
-	esac
-
-	local installed_ver
-	installed_ver=$(_read_plugin_version "$target")
-	ok "Plugin installed. Restart Claude Code to load v${installed_ver:-?} hooks."
-}
-
-info "Installing Claude Code plugin..."
-_install_plugin
-
-# ─── Codex CLI plugin install (v0.3 — config-only, recall via MCP) ───────────
-# Detect a Codex CLI install by the presence of its config dir. If absent,
-# skip silently — Codex is not a hard dependency and most users will never
-# have it. Install is idempotent (same version → skip; different version →
-# replace).  No hooks are installed in v0.3 (see docs/codex-integration-notes.md
-# for the three upstream gaps blocking a hook-driven port).
-_CODEX_PLUGIN_SRC="$REPO_ROOT/plugins/codex/universal-memory"
-_CODEX_CONFIG_DIR="${CODEX_CONFIG_DIR:-$HOME/.codex}"
-_CODEX_PLUGIN_TARGET_BASE="${CODEX_PLUGINS_DIR:-$_CODEX_CONFIG_DIR/plugins}"
-_CODEX_PLUGIN_TARGET="$_CODEX_PLUGIN_TARGET_BASE/universal-memory"
-
-_install_codex_plugin() {
-	local src="$_CODEX_PLUGIN_SRC"
-	local target="$_CODEX_PLUGIN_TARGET"
-
-	# Skip if the plugin source isn't checked out (partial clones, old tags).
-	if [ ! -d "$src" ]; then
-		info "Codex plugin source not found at $src — skipping."
-		return
-	fi
-
-	# Skip silently if Codex is not installed on this host.
-	if [ ! -d "$_CODEX_CONFIG_DIR" ]; then
-		info "Codex CLI not detected (~/.codex missing) — skipping Codex plugin install."
-		return
-	fi
-
-	info "Codex CLI detected at $_CODEX_CONFIG_DIR — installing Codex plugin to $target"
-
-	if ! mkdir -p "$_CODEX_PLUGIN_TARGET_BASE" 2>/dev/null; then
-		warn "Could not create Codex plugin directory $_CODEX_PLUGIN_TARGET_BASE — skipping."
-		return
-	fi
-
-	# Idempotent: same version already installed → no-op.
-	if [ -d "$target" ] && [ ! -L "$target" ]; then
-		local src_ver target_ver
-		src_ver=$(_read_plugin_version "$src")
-		target_ver=$(_read_plugin_version "$target")
-		if [ -n "$src_ver" ] && [ -n "$target_ver" ] && [ "$src_ver" = "$target_ver" ]; then
-			ok "Codex plugin v$target_ver already installed at $target — skipping."
-			return
-		fi
-		# Different version → replace without prompting. Codex plugin is
-		# config-only (two small JSON files + README + NOTES) so there is no
-		# meaningful user customization to preserve.
-		rm -rf "$target"
-	elif [ -L "$target" ]; then
-		# Pre-existing symlink → remove before copying over.
-		rm -f "$target"
-	fi
-
-	if ! cp -r "$src" "$target" 2>/dev/null; then
-		warn "Codex plugin copy failed ($src -> $target) — install manually per plugins/codex/universal-memory/README.md"
-		return
-	fi
-
-	local installed_ver
-	installed_ver=$(_read_plugin_version "$target")
-	ok "Codex plugin installed (v${installed_ver:-?}). See $target/README.md for rubric paste-in + verification steps."
-}
-
-_install_codex_plugin
+# ─── Plugin install (v0.5: delegated to standalone scripts) ──────────────────
+# In v0.5+, plugin-copy is handled by installer/install-plugin-cc.sh and
+# installer/install-plugin-codex.sh.  server/install.sh no longer does it
+# inline.  Use installer/install.sh --plugin-cc / --plugin-codex, or
+# installer/install.sh --all, to install plugins alongside the server.
+info "Plugin install is now handled by installer/install-plugin-cc.sh and"
+info "installer/install-plugin-codex.sh. To install plugins, run:"
+info "  bash installer/install.sh --plugin-cc     # Claude Code plugin"
+info "  bash installer/install.sh --plugin-codex  # Codex CLI plugin (if ~/.codex exists)"
+info "  bash installer/install.sh --all           # install everything detected"
 
 # ─── P0-2: Shell profile export ──────────────────────────────────────────────
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
@@ -764,32 +598,38 @@ info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
 _append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
-info "Pulling / building images..."
-docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/[compose] /'
+if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
+	info "Skipping docker stack start (--skip-docker set)."
+else
+	info "Pulling / building images..."
+	docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/[compose] /'
 
-# ─── Poll /health until ready ─────────────────────────────────────────────────
-# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
-# take >90s end-to-end before the server binds. Allow 180s to cover that.
-ENDPOINT="http://localhost:$MEM0_MCP_PORT/health"
-info "Waiting for $ENDPOINT (up to 180s)..."
+	# ─── Poll /health until ready ─────────────────────────────────────────────────
+	# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
+	# take >90s end-to-end before the server binds. Allow 180s to cover that.
+	ENDPOINT="http://localhost:$MEM0_MCP_PORT/health"
+	info "Waiting for $ENDPOINT (up to 180s)..."
 
-READY=0
-for i in $(seq 1 90); do
-	if curl -sf --max-time 3 "$ENDPOINT" >/dev/null 2>&1; then
-		READY=1
-		break
+	READY=0
+	for i in $(seq 1 90); do
+		if curl -sf --max-time 3 "$ENDPOINT" >/dev/null 2>&1; then
+			READY=1
+			break
+		fi
+		sleep 2
+	done
+
+	if [ "$READY" != "1" ]; then
+		warn "Server did not become healthy within 180s."
+		warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
+		exit 1
 	fi
-	sleep 2
-done
-
-if [ "$READY" != "1" ]; then
-	warn "Server did not become healthy within 180s."
-	warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
-	exit 1
 fi
 
-HEALTH=$(curl -sf "$ENDPOINT")
-ok "Server is healthy: $HEALTH"
+if [ "${UM_SKIP_DOCKER:-0}" -ne 1 ]; then
+	HEALTH=$(curl -sf "$ENDPOINT")
+	ok "Server is healthy: $HEALTH"
+fi
 
 # ─── Success banner ──────────────────────────────────────────────────────────
 _profile_hint=""
