@@ -48,6 +48,9 @@ import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
+import { endpointClassRoute } from './lib/endpoint-class.mjs';
+import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
+import { errorResponse as umErrorResponse } from './lib/error-envelope.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -1181,6 +1184,62 @@ export function createRequestHandler(ctx = {}) {
 		res.end();
 		return;
 	}
+
+	// ---------------------------------------------------------------
+	// Middleware chain (spec §4.2 step 3-7) — B.6.
+	//
+	// Inserted at handler entry so every /api/* and /mcp request flows
+	// through endpoint-class routing + bearer-auth enforcement before
+	// any route handler runs. Loopback bypass keeps local-dev ergonomic
+	// (UM_ALLOW_LOOPBACK_NOAUTH=true by default), forwarded-header
+	// default-deny prevents a proxy / tunnel from impersonating it.
+	// ---------------------------------------------------------------
+
+	// Step 3: endpoint-class routing.
+	const sourceIp = req.socket?.remoteAddress ?? null;
+	const route = endpointClassRoute(req, process.env, sourceIp);
+
+	// Step 3a: hard short-circuit — e.g. /metrics 404 off-loopback.
+	if (route.returnStatus) {
+		res.writeHead(route.returnStatus);
+		res.end();
+		return;
+	}
+
+	// Step 4: auth check. Skipped when the endpoint-class row says
+	// bypassAuth (e.g. /health) OR when loopback-bypass applies AND
+	// no forwarded header is present.
+	if (!route.bypassAuth && !shouldBypassLoopback(req)) {
+		const expected = process.env.UM_AUTH_TOKEN;
+		if (!expected) {
+			res.writeHead(500, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(umErrorResponse(
+				'SERVER_INTERNAL',
+				'server auth not configured (UM_AUTH_TOKEN unset)'
+			)));
+			return;
+		}
+		const received = extractBearer(req);
+		if (!received || !compareTokens(received, expected)) {
+			// Round-8 upgrade hint: legacy plugins (pre-v0.6) lack an
+			// identifying User-Agent. When the UA is missing or not a
+			// UM client, steer the user toward the plugin upgrade flow;
+			// recognized UM clients get the terse message (they know).
+			const ua = req.headers['user-agent'] || '';
+			const isUmClient = /um-(cli|bridge|plugin)\//.test(ua);
+			const hint = isUmClient
+				? 'invalid or missing bearer token'
+				: 'invalid or missing bearer token — upgrade plugin to v0.6+ via `git pull && bash installer/install.sh --plugin-cc` or set Authorization: Bearer <token from ~/.um/auth-token>';
+			res.writeHead(401, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(umErrorResponse('AUTH_INVALID', hint)));
+			return;
+		}
+	}
+
+	// TODO(B.6b): UM_HTTP_MAX_REQUEST_BYTES cap on readBody — rejects
+	//   oversize bodies with 413 INPUT_TOO_LARGE before parsing JSON.
+	// TODO(Phase C): rate-limit step here (depends on route.bypassRateLimit).
+	// TODO(Phase C): counter-finish (metrics emit) at response send.
 
 	try {
 		if (url.pathname === '/health' && req.method === 'GET') {
