@@ -128,7 +128,7 @@ if [[ $MODE == wizard ]]; then
   esac
 
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
-  wizard_prompt UM_OPENAI_API_KEY "OpenAI API key" "<paste later into .env>"
+  wizard_validate_openai_key UM_OPENAI_API_KEY "OpenAI API key" "<paste later into .env>"
   wizard_summarize
   wizard_confirm "Proceed?" || { echo "Aborted."; exit 0; }
   MODE=components  # fall through to dispatcher

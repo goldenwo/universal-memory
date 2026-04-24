@@ -59,7 +59,32 @@ wizard_prompt() {
   local var="$1" question="$2" default="$3"
   read -r -p "$question [${default:-skip}]: " val
   val="${val:-$default}"
+  # Trim leading/trailing whitespace
+  val="${val#"${val%%[![:space:]]*}"}"
+  val="${val%"${val##*[![:space:]]}"}"
   eval "$var=\"\$val\""
+}
+
+wizard_validate_openai_key() {
+  # wizard_validate_openai_key <var> <question> <default>
+  # Like wizard_prompt but re-prompts if value doesn't start with sk- (unless it's the defer placeholder).
+  local var="$1" question="$2" default="$3"
+  local _defer_placeholder="<paste later into .env>"
+  while true; do
+    wizard_prompt "$var" "$question" "$default"
+    local _val
+    eval "_val=\"\${$var}\""
+    # Accept the defer placeholder or any sk- prefixed value
+    if [ "$_val" = "$_defer_placeholder" ] || [[ "$_val" == sk-* ]]; then
+      break
+    fi
+    # Non-empty value that doesn't start with sk- — warn and re-prompt
+    if [ -n "$_val" ]; then
+      echo "Warning: OpenAI API keys should start with 'sk-'. Got: ${_val:0:8}... — please re-enter or press Enter to defer." >&2
+    else
+      break
+    fi
+  done
 }
 
 wizard_confirm() {
