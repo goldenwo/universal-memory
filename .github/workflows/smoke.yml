@@ -38,6 +38,12 @@ jobs:
       # from env vars, fails fast if any are missing, and writes .env
       # itself. We do not pre-write .env — letting install.sh own its
       # entire code path is what we want to CI.
+      #
+      # UM_VAULT_DIR/UM_MOUNT_MODE/UM_MCP_WRITE_ENABLED are passed so the
+      # resulting stack can exercise vault-file indexing (smoke Task 7), state
+      # writes (Task 8), and MCP write tools (T10-G/H/I) end-to-end. The vault
+      # dir is chmod 0777 so both the runner (UID 1001) and the container
+      # user `node` (UID 1000) can read/write.
       - name: Bring up stack via install.sh
         working-directory: server
         env:
@@ -45,12 +51,17 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MEM0_USER_ID: ci-smoke-${{ github.run_id }}
           MEM0_MCP_PORT: "6335"
+          UM_VAULT_DIR: "/tmp/um-vault-ci"
+          UM_MOUNT_MODE: "rw"
+          UM_MCP_WRITE_ENABLED: "true"
         run: |
           if [ -z "${OPENAI_API_KEY:-}" ]; then
             echo "::error::OPENAI_API_KEY secret is not set on this repo."
             echo "::error::Add it at Settings > Secrets and variables > Actions."
             exit 1
           fi
+          mkdir -p "$UM_VAULT_DIR"
+          chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
 
       # install.sh only brings up the container stack; host node_modules
@@ -65,15 +76,17 @@ jobs:
         # node --test treats quoted "test/*.test.mjs" as a literal path and fails.
         run: node --test test/*.test.mjs
 
-      # Basic smoke only in CI. Task 7/8/T10 vault-file + MCP-write tests
-      # need the container mounted rw on a host-accessible vault path — that
-      # requires install.sh to honor UM_MOUNT_MODE from env (currently hardcoded
-      # to "ro") and a UID-compatible host dir. Those tests run locally before
-      # release and are skipped here via their UM_VAULT_DIR guard. Tracked as
-      # a v0.6 follow-up.
+      # Full smoke — install step mounted /tmp/um-vault-ci rw and enabled MCP
+      # writes, so Task 7 (reindex vault files), Task 8 (state writes), and
+      # T10-G/H/I (MCP write tools) all run end-to-end on the live stack.
+      # UM_VAULT_DIR is re-exported here because smoke.sh creates host-side
+      # fixtures at $UM_VAULT_DIR/sessions/... that the container reads via
+      # its /vault mount.
       - name: Run smoke test
         working-directory: server
         env:
+          UM_MCP_WRITE_ENABLED: "true"
+          UM_VAULT_DIR: "/tmp/um-vault-ci"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: bash ./test/smoke.sh
 

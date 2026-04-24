@@ -418,10 +418,17 @@ fi
 	printf 'MEM0_USER_ID=%s\n'   "$MEM0_USER_ID"
 	printf 'MEM0_MCP_PORT=%s\n'  "$MEM0_MCP_PORT"
 	printf 'UM_VAULT_DIR=%s\n'          "$UM_VAULT_DIR"
-	printf 'UM_MOUNT_MODE=%s\n'         "ro"
+	# UM_MOUNT_MODE defaults to "ro" (safe — container cannot modify host vault).
+	# Honor env override in NONINTERACTIVE mode so CI / automated installs can
+	# opt into rw when they need to exercise vault-write code paths (Task 7/8/T10).
+	printf 'UM_MOUNT_MODE=%s\n'         "${UM_MOUNT_MODE:-ro}"
 	printf 'UM_SUMMARY_ENABLED=%s\n'    "$UM_SUMMARY_ENABLED"
 	printf 'UM_OPENAI_API_KEY=%s\n'     "$UM_OPENAI_API_KEY"
 	printf 'UM_TEMPORAL_DECAY=%s\n'     "$UM_TEMPORAL_DECAY"
+	# UM_MCP_WRITE_ENABLED defaults to false (safe — MCP write tools gated off).
+	# Honor env override so CI / automated installs can enable the write-tool
+	# surface for end-to-end MCP coverage (smoke T10-G/H/I).
+	printf 'UM_MCP_WRITE_ENABLED=%s\n'  "${UM_MCP_WRITE_ENABLED:-false}"
 } > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true  # best-effort; no-op on Windows
