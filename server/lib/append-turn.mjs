@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const MAX_CONTENT_BYTES = 8192;
+const MAX_CONVERSATION_ID_BYTES = 256;
+const CONVERSATION_ID_RE = /^[\x20-\x7E]{0,256}$/;  // printable ASCII only, max 256
 const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
 
@@ -27,8 +29,26 @@ export async function doAppendTurn(args, ctx = {}) {
   if (!role) return { schema_version: 1, ok: false, error: 'role is required' };
   if (!ROLES.has(role)) return { schema_version: 1, ok: false, error: 'invalid role: ' + JSON.stringify(role) + '; accepted values: user, assistant, system' };
 
+  // Fix 1: validate conversation_id to prevent header-line injection
+  if (conversation_id !== undefined && conversation_id !== null) {
+    if (typeof conversation_id !== 'string') {
+      return { schema_version: 1, ok: false, error: 'conversation_id must be a string' };
+    }
+    if (Buffer.byteLength(conversation_id, 'utf8') > MAX_CONVERSATION_ID_BYTES) {
+      return { schema_version: 1, ok: false, error: `conversation_id exceeds ${MAX_CONVERSATION_ID_BYTES} bytes` };
+    }
+    if (!CONVERSATION_ID_RE.test(conversation_id)) {
+      return { schema_version: 1, ok: false, error: 'conversation_id must be printable ASCII (no newlines/CR/control chars)' };
+    }
+  }
+
   const now = timestamp ? new Date(timestamp) : clock();
   if (Number.isNaN(now.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp' };
+  // Fix 2: reject timestamps outside safe year range to prevent dash-prefixed filenames + broken since/until
+  const year = now.getUTCFullYear();
+  if (year < 1970 || year > 9999) {
+    return { schema_version: 1, ok: false, error: `timestamp year ${year} out of range (1970-9999)` };
+  }
 
   const date = now.toISOString().slice(0, 10);
   const relPath = `captures/${project}/raw/${date}.md`;
@@ -55,6 +75,12 @@ export async function doAppendTurn(args, ctx = {}) {
   const lockfilePath = absPath + '.lock';
   // Ensure the lockfile exists (proper-lockfile requires the target to exist)
   await fs.writeFile(lockfilePath, '', { flag: 'a' });
+
+  // Fix 3: symlink guard — refuse to write if target exists and is a symlink
+  const targetStat = await fs.lstat(absPath).catch(() => null);
+  if (targetStat && targetStat.isSymbolicLink()) {
+    return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+  }
 
   let release;
   try {
