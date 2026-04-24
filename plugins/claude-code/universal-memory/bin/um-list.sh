@@ -74,5 +74,5 @@ response=$(curl -fSsm 10 "$URL" 2>&1) || {
   exit 3
 }
 
-# /api/list returns a RAW ARRAY, not {results: [...]}. Map directly.
-echo "$response" | jq -c '.[]'
+# /api/list returns {results: [...]} envelope. Map the inner array.
+echo "$response" | jq -c '.results[]'

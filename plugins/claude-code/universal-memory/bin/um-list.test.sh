@@ -45,10 +45,10 @@ EOF
   chmod +x "$dir/curl"
 }
 
-# ─── T1: happy path — raw array → JSONL output ───────────────────────────────
+# ─── T1: happy path — enveloped results → JSONL output ──────────────────────
 echo "=== T1: happy path — JSONL output ==="
 tmp=$(mktemp -d)
-_make_mock_curl "$tmp/bin" '[{"id":"a","title":"A","snippet":"s1"},{"id":"b","title":"B","snippet":"s2"}]'
+_make_mock_curl "$tmp/bin" '{"results":[{"id":"a","title":"A","snippet":"s1"},{"id":"b","title":"B","snippet":"s2"}]}'
 output=$(PATH="$tmp/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" 2>&1) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
   pass "T1-exit-0"
@@ -88,7 +88,7 @@ echo ""
 echo "=== T3: --full flag → full=1 in URL, body field in output ==="
 tmp3=$(mktemp -d)
 args_file3="$tmp3/curl-args"
-_make_recording_curl "$tmp3/bin" '[{"id":"a","title":"A","snippet":"s","body":"full body text","metadata":{}}]' "$args_file3"
+_make_recording_curl "$tmp3/bin" '{"results":[{"id":"a","title":"A","snippet":"s","body":"full body text","metadata":{}}]}' "$args_file3"
 output=$(PATH="$tmp3/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" --full 2>&1) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
   pass "T3-exit-0"
@@ -111,7 +111,7 @@ rm -rf "$tmp3"
 echo ""
 echo "=== T4: JSONL parses via jq -c '.' ==="
 tmp4=$(mktemp -d)
-_make_mock_curl "$tmp4/bin" '[{"id":"a","title":"A","snippet":"s1"},{"id":"b","title":"B","snippet":"s2"}]'
+_make_mock_curl "$tmp4/bin" '{"results":[{"id":"a","title":"A","snippet":"s1"},{"id":"b","title":"B","snippet":"s2"}]}'
 output=$(PATH="$tmp4/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" 2>&1) && rc=0 || rc=$?
 all_parse=1
 while IFS= read -r line; do
@@ -132,7 +132,7 @@ echo ""
 echo "=== T5: \$UM_SERVER_URL override ==="
 tmp5=$(mktemp -d)
 args_file5="$tmp5/curl-args"
-_make_recording_curl "$tmp5/bin" '[]' "$args_file5"
+_make_recording_curl "$tmp5/bin" '{"results":[]}' "$args_file5"
 PATH="$tmp5/bin:$PATH" UM_SERVER_URL="http://custom:9999" bash "$BIN" >/dev/null 2>&1 || true
 if grep -q "http://custom:9999" "$args_file5" 2>/dev/null; then
   pass "T5-url-override"
@@ -146,7 +146,7 @@ echo ""
 echo "=== T6: --limit N → limit=N in URL ==="
 tmp6=$(mktemp -d)
 args_file6="$tmp6/curl-args"
-_make_recording_curl "$tmp6/bin" '[]' "$args_file6"
+_make_recording_curl "$tmp6/bin" '{"results":[]}' "$args_file6"
 PATH="$tmp6/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" --limit 5 >/dev/null 2>&1 || true
 if grep -q "limit=5" "$args_file6" 2>/dev/null; then
   pass "T6-limit-param"
@@ -159,7 +159,7 @@ rm -rf "$tmp6"
 echo ""
 echo "=== T7: positional arg → ignored with warning ==="
 tmp7=$(mktemp -d)
-_make_mock_curl "$tmp7/bin" '[]'
+_make_mock_curl "$tmp7/bin" '{"results":[]}'
 warn_out=$(PATH="$tmp7/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" some-proj 2>&1 >/dev/null) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
   pass "T7-exit-0-not-fatal"
@@ -177,7 +177,7 @@ rm -rf "$tmp7"
 echo ""
 echo "=== T8: empty array → empty JSONL output ==="
 tmp8=$(mktemp -d)
-_make_mock_curl "$tmp8/bin" '[]'
+_make_mock_curl "$tmp8/bin" '{"results":[]}'
 output=$(PATH="$tmp8/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" 2>&1) && rc=0 || rc=$?
 if [ "$rc" -eq 0 ]; then
   pass "T8-exit-0"
@@ -196,7 +196,7 @@ echo ""
 echo "=== T9: --full + --limit combined ==="
 tmp9=$(mktemp -d)
 args_file9="$tmp9/curl-args"
-_make_recording_curl "$tmp9/bin" '[]' "$args_file9"
+_make_recording_curl "$tmp9/bin" '{"results":[]}' "$args_file9"
 PATH="$tmp9/bin:$PATH" UM_SERVER_URL="http://mock" bash "$BIN" --full --limit 3 >/dev/null 2>&1 || true
 if grep -q "full=1" "$args_file9" && grep -q "limit=3" "$args_file9" 2>/dev/null; then
   pass "T9-combined-params"
