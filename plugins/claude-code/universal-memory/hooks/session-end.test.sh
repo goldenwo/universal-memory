@@ -3,6 +3,11 @@
 #
 # Run: bash session-end.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
+
+# shellcheck disable=SC2034
+# Test scaffold captures T2_SUMMARY_COUNT / T3_NEW_SUMMARIES / T4_STDERR
+# intentionally — they record state for dump-on-fail / future assert coverage.
+# TODO(v0.6): wire these into dump-on-fail helpers or explicit asserts.
 #
 # Scenarios:
 #   1. No raw captures → exit 0 silently, nothing written

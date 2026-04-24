@@ -39,7 +39,7 @@ LOCKDIR="${RELPATH}.lockdir"
 # Clear stale lock if older than 10 minutes (crashed previous run)
 try_clear_stale_lock "$LOCKDIR" 600
 LOCK_HELD=0
-for i in 1 2 3 4 5; do
+for _ in 1 2 3 4 5; do
   if mkdir "$LOCKDIR" 2>/dev/null; then
     LOCK_HELD=1
     break

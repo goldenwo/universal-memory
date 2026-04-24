@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # hooks/lib/resolve-project.sh
 # Resolve <project> per docs/um-cli.md §"Project-resolution order":
 #   1. $1 arg (--project <p>)

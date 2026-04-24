@@ -1,5 +1,10 @@
 # Connecting Claude.ai and Claude Desktop to universal-memory
 
+> **Draft docs — Claude.ai (web + desktop) UI labels may shift across app
+> updates. Paths below are verified against Claude.ai and Claude Desktop as of
+> 2026-04-23. If a label differs from what you see, look for the conceptually
+> matching option.**
+
 How to add your universal-memory server as an MCP connector inside Claude.ai (web) and Claude Desktop (app), so both surfaces can read/write the same vault that Claude Code uses.
 
 Audience: a user who already has UM running locally (via `install.sh` + `docker compose up -d`) and wants Claude.ai and/or Claude Desktop to share the same memory store. Assumes basic familiarity with the UM tool surface — see [`docs/workflow.md`](workflow.md) and [`docs/mcp-tools.md`](mcp-tools.md) for the runtime reference.
@@ -18,11 +23,11 @@ Before starting, you should have:
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 tools** by default (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). The 6 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
 - A reachable URL for the MCP endpoint:
   - **Claude.ai (web)** runs in Anthropic's cloud and cannot reach your `localhost:6335`. You need a **publicly reachable HTTPS tunnel** — see [Tunnel options](#2-tunnel-options) below.
   - **Claude Desktop (app)** can reach `http://localhost:6335` directly via its MCP config file — no tunnel required for local-only use. If you want Claude Desktop to reach a UM server running on a different host, you still need a tunnel (or LAN/VPN reachability).
-- A Claude plan that supports custom MCP connectors. `<TBD: confirm exact plan tier required during verification — Pro / Team / Enterprise for Claude.ai; desktop app MCP config works on all tiers that support Claude Desktop>`.
+- A Claude plan that supports custom MCP connectors — typically Pro, Team, or Enterprise for Claude.ai (web); Claude Desktop MCP config via the JSON file works on all tiers that support Claude Desktop. See [Anthropic's documentation](https://docs.anthropic.com) for current plan-tier requirements.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want Claude to write memories, not just read. Read-only is safer for first connection.
 
 ---
@@ -80,27 +85,27 @@ Step-by-step UI clicks. The Claude.ai settings UI evolves, so screenshots will b
 
    ![TBD: screenshot of Claude.ai Settings entry point](screenshots/claude-ai-1.png)
 
-2. In Settings, navigate to **`<TBD: exact menu name during verification — likely "Connectors" or "Integrations" or "Custom Connectors">`**.
+2. In Settings, navigate to **Connectors** (may be labeled **Integrations** or **Custom Connectors** — look for the MCP server setup section).
 
    ![TBD: screenshot of Claude.ai Settings Connectors panel](screenshots/claude-ai-2.png)
 
-3. Click **`<TBD: exact button label — "Add connector" / "Add custom connector" / "New MCP server">`**.
+3. Click **Add connector** (or **Add custom connector** / **New MCP server** if that's what your version shows).
 
    ![TBD: screenshot of Claude.ai Add Connector dialog](screenshots/claude-ai-3.png)
 
 4. Fill in the connector form:
    - **Name**: `universal-memory` (any label you want — what Claude will call it in the connector list)
    - **URL**: your tunnel URL + `/mcp` suffix, e.g. `https://<your-device>.<tailnet>.ts.net/mcp`
-   - **Transport**: `<TBD: confirm option name — "HTTP" or "Streamable HTTP" or "SSE">`. UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that.
-   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick `<TBD: "None" / "No auth" equivalent>`.
+   - **Transport**: **HTTP** (may be labeled **Streamable HTTP** or **SSE** — UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that).
+   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick **None** or the equivalent no-auth option.
 
    ![TBD: screenshot of the filled-in connector form](screenshots/claude-ai-4.png)
 
-5. Click **`<TBD: "Save" / "Add" / "Connect">`**. Claude.ai should perform the MCP handshake and list the discovered tools.
+5. Click **Save** (or **Add** / **Connect** depending on your version). Claude.ai should perform the MCP handshake and list the discovered tools.
 
    ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/claude-ai-5.png)
 
-6. Enable the connector in a new chat (`<TBD: confirm whether it's on by default or needs a per-chat / per-project toggle>`).
+6. Enable the connector in a new chat (it may be on by default, or you may need a per-chat or per-project toggle — look for a plugin/connector icon in the chat input bar).
 
 ### 3b. Claude Desktop (app)
 
@@ -110,7 +115,7 @@ Claude Desktop reads MCP server configuration from a JSON file on disk. No UI wa
 
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `<TBD: confirm during verification — likely ~/.config/Claude/claude_desktop_config.json>`
+- Linux: `~/.config/Claude/claude_desktop_config.json` (likely — verify if not found)
 
 Open the file (create it if missing) and add an entry under `mcpServers`. For a **local UM server** (no tunnel):
 
@@ -138,7 +143,7 @@ For a **remote UM server** (tunnel URL):
 }
 ```
 
-`<TBD: confirm exact field name during verification — Claude Desktop may call it "transport", "type", or something else; and the accepted value may be "http", "streamable-http", or "sse">`. If Claude Desktop only supports stdio-based MCP servers and not HTTP URLs in the config, an HTTP→stdio proxy is required — flag during verification.
+The `"transport"` field value may need to be `"streamable-http"` or `"sse"` depending on your Claude Desktop version — try `"http"` first. If Claude Desktop only supports stdio-based MCP servers and not HTTP URLs in the config, an HTTP→stdio proxy is required.
 
 Save the file, quit Claude Desktop completely (not just close the window — use **Quit** from the menu on macOS, or exit via the system tray on Windows), and relaunch. The `universal-memory` server should appear in the app's MCP connector list.
 
@@ -148,18 +153,19 @@ Save the file, quit Claude Desktop completely (not just close the window — use
 
 UM's routing rubric is injected automatically in Claude Code sessions via a SessionStart hook. Claude.ai and Claude Desktop don't run that hook, so the rubric has to live somewhere Claude reads at the start of every conversation.
 
-**For Claude.ai (web):** Claude.ai supports per-connector custom instructions. Open **Settings → Connectors → universal-memory → `<TBD: "Custom instructions" / "Instructions" / "Connector prompt">`** and paste the rubric block below. This scopes the rubric to conversations where the UM connector is enabled, which is the cleanest placement.
+**For Claude.ai (web):** Claude.ai supports per-connector custom instructions. Open **Settings → Connectors → universal-memory** and look for a **Custom instructions** field (may be labeled **Instructions** or **Connector prompt**). Paste the rubric block below. This scopes the rubric to conversations where the UM connector is enabled, which is the cleanest placement.
 
 **For Claude Desktop (app):** Claude Desktop's config file does not currently have a per-connector instructions field. Two placements work:
 
 1. **Preferred — Projects system prompt.** If you use Claude's **Projects** feature, add the rubric block to the project's system prompt / knowledge. This scopes it to the project where you actually use UM.
-2. **Fallback — User-level custom instructions.** Set via **Settings → Profile → `<TBD: "Custom instructions" / "How Claude should respond">`**. This applies to every conversation, which is noisier but works when you don't use Projects.
+2. **Fallback — User-level custom instructions.** Set via **Settings → Profile → Custom instructions** (may be labeled **How Claude should respond**). This applies to every conversation, which is noisier but works when you don't use Projects.
 
 Paste the following block verbatim. This is the same rubric Claude Code hooks inject at session start.
 
 <!-- Do not edit inline — mirror of docs/memory-routing-rubric.md. If the canonical file changes, re-paste this whole block. -->
 
 ```markdown
+<!-- CANONICAL-RUBRIC-START -->
 ## Memory routing (universal-memory)
 
 Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
@@ -169,8 +175,10 @@ When the user says "remember", "note that", or similar:
 - Durable facts the user will want later ("I prefer X", "my address is Y", "the API rotates quarterly"): call `memory_capture` with `type: fact` and `project: global` (cross-project) or `project: <current-project>` (project-scoped).
 - Architecture decisions worth auditing later: call `memory_capture` with `type: adr` and `project: <current>`.
 - Anything the user will likely search for by keyword later: call `memory_capture` (any appropriate type).
+- **Conversational context worth preserving across surfaces** (e.g. "track this conversation", a significant exchange you'll revisit from Claude Code later, the current turn on its own): call `memory_append_turn` with `role` (user/assistant/system) + `content` + `project`. Unlike `memory_capture` (which writes a stable authored doc with structured frontmatter), `memory_append_turn` appends a raw turn that the NEXT session-end summary will consume. Use both when appropriate — a durable decision gets `memory_capture`; the context around the decision gets `memory_append_turn`.
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.
+<!-- CANONICAL-RUBRIC-END -->
 ```
 
 This block is the canonical rubric — the source lives at [`docs/memory-routing-rubric.md`](memory-routing-rubric.md). If the repo version is updated, re-paste this block.
@@ -184,7 +192,7 @@ Quick sanity checks that the connector works end-to-end. Run these in a fresh Cl
 1. **Tool discovery.** Ask:
    > "What tools do you have available from universal-memory?"
 
-   Expected (v0.4 default): Claude lists **4 tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. The 6 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
+   Expected (v0.5 default): Claude lists **4 default read tools** — `memory_search`, `memory_list`, `memory_state`, `memory_recent`. These are the reads visible to any MCP client. All 7 write tools (`memory_add`, `memory_delete`, `memory_capture`, `memory_checkpoint`, `memory_forget`, `memory_supersede`, `memory_append_turn`) appear only when the server runs with `UM_MCP_WRITE_ENABLED=true`. If you see **fewer than 4**, the connector isn't wired correctly — re-check the URL and transport.
 
 2. **Read test — state.md.** Ask:
    > "Call `memory_state` with project `test` and tell me what you got."
@@ -214,9 +222,8 @@ If all four pass, Claude.ai / Claude Desktop is reading and writing the same vau
 - **Writes when `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`**: `memory_capture`, `memory_forget`, `memory_supersede` persist to the same vault. Captures written from Claude.ai or Claude Desktop appear in your Claude Code sessions at next session start.
 - **Rubric routing.** The rubric pasted into the connector's custom instructions (Claude.ai) or the Project / user-level instructions (Claude Desktop) steers Claude to call `memory_capture` on explicit "remember" requests — same behavior as Claude Code's hook-injected rubric.
 
-### Doesn't work (yet)
-- **No state.md regen from Claude.ai / Claude Desktop sessions.** `memory_checkpoint` is a stub — the server-side checkpoint implementation is tracked in [issue #5](https://github.com/goldenwo/universal-memory/issues/5). Workaround: run `/um-checkpoint` in Claude Code (or `hooks/session-end.sh` directly) to refresh state after a significant Claude.ai / Claude Desktop session.
-- **No raw turn capture** from Claude.ai / Claude Desktop conversations. Claude Code's Stop hook appends every turn to the vault automatically; Anthropic's hosted surfaces have no equivalent. Tracked in [issue #6](https://github.com/goldenwo/universal-memory/issues/6) (`memory_append_turn` MCP tool). Until that lands, only explicit `memory_capture` calls persist — the rest of the conversation stays ephemeral on the UM side.
+### Doesn't work automatically (but now bridgeable with v0.5 tools)
+- **No automatic session-end hook.** Claude.ai / Claude Desktop have no equivalent of Claude Code's Stop / SessionEnd hooks, so the raw-capture pipeline does not run automatically. Use `memory_append_turn` (v0.5) to append turns during a session, and `memory_checkpoint` (v0.5 real implementation) to trigger synthesis and `state.md` refresh at session end.
 - **Rubric drift risk.** Connector custom instructions (Claude.ai) and Project prompts (Claude Desktop) are static. If the canonical rubric in [`docs/memory-routing-rubric.md`](memory-routing-rubric.md) changes, you need to re-paste. No auto-sync.
 
 ---

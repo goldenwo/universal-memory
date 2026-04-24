@@ -154,12 +154,15 @@ fi
 RUBRIC_REPO="$SCRIPT_DIR/../../../../docs/memory-routing-rubric.md"
 RUBRIC_INSTALLED="$SCRIPT_DIR/../rubric.md"
 
+_extract_rubric() {
+  awk '/CANONICAL-RUBRIC-START/{p=1;next} /CANONICAL-RUBRIC-END/{p=0} p' "$1"
+}
+
 read_rubric() {
   if [ -f "$RUBRIC_REPO" ]; then
-    # Strip leading HTML comments (rubric file has a `<!-- ... -->` header).
-    sed '/^<!--/,/-->$/d' "$RUBRIC_REPO" | sed '/./,$!d'
+    _extract_rubric "$RUBRIC_REPO"
   elif [ -f "$RUBRIC_INSTALLED" ]; then
-    sed '/^<!--/,/-->$/d' "$RUBRIC_INSTALLED" | sed '/./,$!d'
+    _extract_rubric "$RUBRIC_INSTALLED"
   else
     printf '%s\n' "(routing rubric file not found — see docs/memory-routing-rubric.md in the universal-memory repo)"
   fi

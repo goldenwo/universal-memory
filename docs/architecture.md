@@ -153,7 +153,7 @@ Claude.ai / Desktop / any MCP client
 
 ## MCP tool surface
 
-The memory server exposes 10 tools via JSON-RPC 2.0 at `POST /mcp`. Any MCP client — Claude.ai connector, Claude Desktop, custom agents — can use them without installing the Claude Code plugin.
+The memory server exposes 11 tools via JSON-RPC 2.0 at `POST /mcp`. Any MCP client — Claude.ai connector, Claude Desktop, custom agents — can use them without installing the Claude Code plugin.
 
 **Read tools (always available):**
 
