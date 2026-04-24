@@ -777,7 +777,9 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		res.status(200).json(result);
 	} catch (err) {
 		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
-		res.status(500).json({ ok: false, error: 'internal server error' });
+		const status = err.statusCode || 500;
+		const message = err.statusCode ? err.message : 'internal server error';
+		res.status(status).json({ ok: false, error: message });
 	}
 }
 
@@ -808,7 +810,9 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		res.status(200).json(result);
 	} catch (err) {
 		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
-		res.status(500).json({ ok: false, error: 'internal server error' });
+		const status = err.statusCode || 500;
+		const message = err.statusCode ? err.message : 'internal server error';
+		res.status(status).json({ ok: false, error: message });
 	}
 }
 
