@@ -63,6 +63,17 @@ const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
 
 /**
+ * Build a canonical error response envelope with schema_version:1.
+ * Ensures all error returns are contract-parity with the lib layer.
+ * @param {string} error
+ * @param {Record<string, unknown>} extra
+ * @returns {{ schema_version: 1, ok: false, error: string }}
+ */
+function errorResponse(error, extra = {}) {
+  return { schema_version: 1, ok: false, error, ...extra };
+}
+
+/**
  * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
  * Uses [...str] (code-point-aware iteration) rather than slice(0, N) which operates on
  * UTF-16 code units and can split a surrogate pair at the boundary.
@@ -457,7 +468,7 @@ export async function handleToolCall(name, args) {
 		}
 		case 'memory_add': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
 			const result = await memory.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -480,7 +491,7 @@ export async function handleToolCall(name, args) {
 		}
 		case 'memory_delete': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
 			await memory.delete(args.memoryId);
 			return `Deleted ${args.memoryId}`;
@@ -514,7 +525,7 @@ export async function handleToolCall(name, args) {
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
 			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const project = metadata.project || 'default';
 			const id = metadata.id;
@@ -546,7 +557,7 @@ export async function handleToolCall(name, args) {
 
 		case 'memory_checkpoint': {
 			if (!isWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env'));
 			}
 			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc }));
 		}
@@ -557,7 +568,7 @@ export async function handleToolCall(name, args) {
 			// C1: validate id before using as path component
 			validateSafeName('id', id);
 			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
 			const relPath = await findDocByIdInVault(id);
@@ -602,7 +613,7 @@ export async function handleToolCall(name, args) {
 			validateSafeName('new_doc.id', new_doc.id);
 			if (new_doc.project != null) validateSafeName('new_doc.project', new_doc.project);
 			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 
 			// 1. Find old doc
@@ -696,7 +707,7 @@ export async function handleToolCall(name, args) {
 
 		case 'memory_append_turn': {
 			if (!mcpWriteEnabled()) {
-				return JSON.stringify({ ok: false, error: 'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env' });
+				return JSON.stringify(errorResponse('MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env'));
 			}
 			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
 			return JSON.stringify(result);
@@ -761,7 +772,7 @@ function readBody(req) {
  */
 export async function handleAppendTurnRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
-		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
+		res.status(403).json(errorResponse('MCP writes disabled'));
 		return;
 	}
 	try {
@@ -779,7 +790,7 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
 		const status = err.statusCode || 500;
 		const message = err.statusCode ? err.message : 'internal server error';
-		res.status(status).json({ ok: false, error: message });
+		res.status(status).json(errorResponse(message));
 	}
 }
 
@@ -793,7 +804,7 @@ export async function handleAppendTurnRequest(req, res, ctx) {
  */
 export async function handleCheckpointRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
-		res.status(403).json({ ok: false, error: 'MCP writes disabled' });
+		res.status(403).json(errorResponse('MCP writes disabled'));
 		return;
 	}
 	try {
@@ -812,7 +823,7 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
 		const status = err.statusCode || 500;
 		const message = err.statusCode ? err.message : 'internal server error';
-		res.status(status).json({ ok: false, error: message });
+		res.status(status).json(errorResponse(message));
 	}
 }
 

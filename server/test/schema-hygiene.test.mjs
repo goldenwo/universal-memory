@@ -11,7 +11,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TOOLS, WRITE_TOOL_NAMES, getVisibleTools } from '../mem0-mcp-http.mjs';
+import { TOOLS, WRITE_TOOL_NAMES, getVisibleTools, handleToolCall } from '../mem0-mcp-http.mjs';
 
 // Sanity check: confirm the exported WRITE_TOOL_NAMES matches what we expect.
 const EXPECTED_WRITE_TOOLS = new Set([
@@ -59,6 +59,24 @@ test('tools/list default visibility: TOOLS.length - WRITE_TOOL_NAMES.size', () =
   const visible = getVisibleTools(false);
   assert.strictEqual(visible.length, TOOLS.length - WRITE_TOOL_NAMES.size,
     `expected ${TOOLS.length - WRITE_TOOL_NAMES.size} read tools after filtering ${WRITE_TOOL_NAMES.size} writes; got ${visible.length}`);
+});
+
+// ---------- contract parity: schema_version on write-disabled MCP path ----------
+test('handleToolCall(memory_add) write-disabled response includes schema_version:1', async () => {
+  const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
+  try {
+    delete process.env.UM_MCP_WRITE_ENABLED;  // ensure writes disabled
+    const raw = await handleToolCall('memory_add', { text: 'test' });
+    const parsed = JSON.parse(raw);
+    assert.equal(parsed.ok, false, 'write-disabled response should have ok:false');
+    assert.equal(parsed.schema_version, 1, 'write-disabled response must include schema_version:1');
+  } finally {
+    if (savedEnv === undefined) {
+      delete process.env.UM_MCP_WRITE_ENABLED;
+    } else {
+      process.env.UM_MCP_WRITE_ENABLED = savedEnv;
+    }
+  }
 });
 
 test('getVisibleTools with no arg defaults to env-var behavior', () => {
