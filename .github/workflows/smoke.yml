@@ -53,6 +53,12 @@ jobs:
           fi
           bash ./install.sh
 
+      # install.sh only brings up the container stack; host node_modules
+      # isn't populated, so unit tests run on the host need a separate npm ci.
+      - name: Install host node deps for unit tests
+        working-directory: server
+        run: npm ci
+
       - name: Run server unit tests
         working-directory: server
         # Unquoted glob so bash expands test/*.test.mjs into a file list.
