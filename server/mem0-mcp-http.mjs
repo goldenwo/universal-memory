@@ -427,7 +427,7 @@ async function reindexDoc(relPath) {
 // handleToolCall
 // ---------------------------------------------------------------------------
 
-export async function handleToolCall(name, args) {
+export async function handleToolCall(name, args, ctx = {}) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
@@ -437,8 +437,8 @@ export async function handleToolCall(name, args) {
 			// Always call doSearch(full=true) internally so metadata is preserved for
 			// post-filtering (project, type). Then project to compact shape at the end
 			// unless the MCP client explicitly requested full bodies (args.full=true).
-			const searchResult = await doSearch(args.query, limit, includeSup, true);
-			let items = searchResult.results;
+			let response = await doSearch(args.query, limit, includeSup, true, ctx);
+			let items = response.results;
 
 			// Apply optional metadata filters (project, type)
 			if (args.filters) {
@@ -460,7 +460,14 @@ export async function handleToolCall(name, args) {
 				}));
 			}
 
-			return JSON.stringify(listEnvelope(items));
+			// §4.1 extensibility contract: preserve additive top-level siblings
+			// (e.g., provider, latency_ms) that doSearch propagated from the
+			// upstream memory.search() envelope. Mirrors the REST /api/search
+			// pattern — only `results` is replaced; every other top-level key
+			// is forwarded. Without this, the MCP memory_search tool surface
+			// silently drops siblings and breaks parity with REST.
+			const { results: _prev, ...responseExtras } = response;
+			return JSON.stringify(listEnvelope(items, responseExtras));
 		}
 		case 'memory_add': {
 			if (!isWriteEnabled()) {
@@ -714,7 +721,7 @@ export async function handleToolCall(name, args) {
 	}
 }
 
-function handleMcpMessage(msg) {
+function handleMcpMessage(msg, ctx = {}) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
 		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.5.0-alpha' }, capabilities: { tools: {} } } };
@@ -723,7 +730,7 @@ function handleMcpMessage(msg) {
 	} else if (method === 'tools/list') {
 		return { jsonrpc: '2.0', id, result: { tools: getVisibleTools() } };
 	} else if (method === 'tools/call') {
-		return handleToolCall(params.name, params.arguments || {})
+		return handleToolCall(params.name, params.arguments || {}, ctx)
 			.then((text) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } }))
 			.catch((err) => ({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true } }));
 	} else if (id !== undefined) {
@@ -1191,7 +1198,9 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
 			const body = JSON.parse(await readBody(req));
-			const result = await handleMcpMessage(body);
+			// Forward DI ctx so handleToolCall → do* helpers see the injected
+			// memory stub in tests, mirroring the REST routes' pattern.
+			const result = await handleMcpMessage(body, ctx);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
 			return;
