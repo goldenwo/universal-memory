@@ -20,7 +20,11 @@ Shared prompt templates + `UM_PROMPT_DIR`. I4 fix for `claude-agent-sdk`.
   `timestamp`, `conversation_id` optional) directly to the raw-capture pipeline.
   Enables Claude.ai, ChatGPT Desktop, and Codex to feed turns to the vault
   without Claude Code's Stop hook. Flock-protected file writes prevent turn
-  corruption under concurrent calls; log-injection guard on project value.
+  corruption within the node server (concurrent `memory_append_turn` calls)
+  and within Claude Code (concurrent `stop.sh` invocations). Cross-process
+  bash↔node races on the same raw-capture file are a known v0.6 hardening
+  item — stop.sh writes complete in <10ms so practical overlap is rare, but
+  not zero. Log-injection guard on project value.
 - **`memory_checkpoint` server-side implementation** — triggers full
   session-end pipeline (summary + state merge + reindex) from any MCP surface
   via `POST /api/checkpoint`. Drops v0.4 stub; see MIGRATION.md.

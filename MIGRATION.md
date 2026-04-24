@@ -78,6 +78,12 @@ This means re-running the installer (to pick up the new managed block) will
 eliminate prompt drift between the CC plugin and any server-side prompt path.
 Re-install is optional — existing installs continue to work with the fallback.
 
+**Known limitations (deferred to v0.6):**
+- Cross-process concurrent-write coordination between Claude Code's stop.sh
+  (perl Fcntl::flock) and the node server's memory_append_turn (proper-lockfile)
+  uses different lock mechanisms. Corruption risk is practically low (stop.sh
+  writes <10ms) but cross-language coordination is a v0.6 hardening item.
+
 ---
 
 ### Rollback from v0.5 to v0.4
