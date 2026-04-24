@@ -157,3 +157,159 @@ test('401 upgrade hint — um-cli UA gets terse message (no upgrade hint)', asyn
     assert.doesNotMatch(body.error.message, /upgrade plugin/);
   } finally { await close(); }
 });
+
+// ---------------------------------------------------------------------------
+// Task B.6b — request-body size cap (spec §5.2 precedence 1: fires FIRST).
+// Body cap (UM_HTTP_MAX_REQUEST_BYTES, default 2 MB) rejects oversize bodies
+// at the HTTP parser level BEFORE JSON-parse or field-level validators run.
+// Over-cap → 413 INPUT_TOO_LARGE with the v0.6 envelope.
+// Field-level MAX_CONTENT_BYTES (append-turn content) also emits
+// INPUT_TOO_LARGE — same caller action (send less data).
+// ---------------------------------------------------------------------------
+
+// Small helper: spin up a server with a custom UM_HTTP_MAX_REQUEST_BYTES cap.
+async function startServerWithCap({ capBytes, token, memory }) {
+  const prevCap = process.env.UM_HTTP_MAX_REQUEST_BYTES;
+  const prevTok = process.env.UM_AUTH_TOKEN;
+  if (capBytes !== undefined) process.env.UM_HTTP_MAX_REQUEST_BYTES = String(capBytes);
+  if (token !== undefined) process.env.UM_AUTH_TOKEN = token;
+  const srv = createServer(createRequestHandler({ memory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const close = async () => {
+    srv.close();
+    await once(srv, 'close');
+    if (prevCap === undefined) delete process.env.UM_HTTP_MAX_REQUEST_BYTES;
+    else process.env.UM_HTTP_MAX_REQUEST_BYTES = prevCap;
+    if (prevTok === undefined) delete process.env.UM_AUTH_TOKEN;
+    else process.env.UM_AUTH_TOKEN = prevTok;
+  };
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  return { port, close, url };
+}
+
+test('B.6b: request body over UM_HTTP_MAX_REQUEST_BYTES → 413 INPUT_TOO_LARGE', async () => {
+  // 1 KB cap, 2 KB body → must be rejected at HTTP-parser level with
+  // the v0.6 INPUT_TOO_LARGE envelope (spec §5.2 precedence 1).
+  const { close, url } = await startServerWithCap({
+    capBytes: 1024,
+    token: 'secret',
+    memory: fakeMemory,
+  });
+  try {
+    const body = 'x'.repeat(2048);
+    const r = await fetch(url('/api/reindex'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer secret' },
+      body,
+    });
+    assert.equal(r.status, 413);
+    const json = await r.json();
+    assert.equal(json.ok, false);
+    assert.equal(json.error.code, 'INPUT_TOO_LARGE');
+    assert.equal(json.error.retryable, false);
+  } finally { await close(); }
+});
+
+test('B.6b: body cap rejects via Content-Length header (pre-read short-circuit)', async () => {
+  // If Content-Length exceeds the cap, we should reject before even reading
+  // the body stream. Set a tiny cap so any body header trips it.
+  const { close, url } = await startServerWithCap({
+    capBytes: 512,
+    token: 'secret',
+    memory: fakeMemory,
+  });
+  try {
+    const body = 'x'.repeat(4096);
+    const r = await fetch(url('/api/reindex'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer secret',
+        'Content-Length': String(body.length),
+      },
+      body,
+    });
+    assert.equal(r.status, 413);
+    const json = await r.json();
+    assert.equal(json.error.code, 'INPUT_TOO_LARGE');
+  } finally { await close(); }
+});
+
+test('B.6b: small body within cap proceeds to handler normally', async () => {
+  // Default cap is 2 MB; a tiny health check is well under any cap.
+  const { close, url } = await startServerWithCap({
+    capBytes: undefined,  // leave default
+    token: 'secret',
+    memory: fakeMemory,
+  });
+  try {
+    const r = await fetch(url('/health'));
+    assert.equal(r.status, 200);
+    const json = await r.json();
+    assert.equal(json.ok, true);
+  } finally { await close(); }
+});
+
+test('B.6b: body cap applies to /api/search (POST) as well as /api/reindex', async () => {
+  // Generalize — any POST endpoint that hits readBody() must see the cap.
+  const { close, url } = await startServerWithCap({
+    capBytes: 1024,
+    token: 'secret',
+    memory: fakeMemory,
+  });
+  try {
+    const body = JSON.stringify({ query: 'x'.repeat(2048) });
+    const r = await fetch(url('/api/search'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer secret' },
+      body,
+    });
+    assert.equal(r.status, 413);
+    const json = await r.json();
+    assert.equal(json.error.code, 'INPUT_TOO_LARGE');
+  } finally { await close(); }
+});
+
+test('B.6b: field-level content cap fires INPUT_TOO_LARGE (not INPUT_INVALID) via POST /api/append-turn', async () => {
+  // Body is within request-body cap (default 2MB), but content field exceeds
+  // MAX_CONTENT_BYTES (8 KB). Per spec §5.2, field-level size violations
+  // MUST emit INPUT_TOO_LARGE — same code as the body cap, same caller action
+  // (send less data). v0.5 shipped this as a plain-string error; v0.6
+  // migrates it to the INPUT_TOO_LARGE envelope.
+  //
+  // Requires UM_MCP_WRITE_ENABLED=true (otherwise the handler 403s first),
+  // and UM_VAULT_DIR so doAppendTurn can reach its field validator.
+  const prevWrites = process.env.UM_MCP_WRITE_ENABLED;
+  const prevVault = process.env.UM_VAULT_DIR;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  // Point at a tmp vault so append-turn's field validator runs before any FS write
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  process.env.UM_VAULT_DIR = await mkdtemp(path.join(tmpdir(), 'um-b6b-'));
+  const { close, url } = await startServer({ token: 'secret', memory: fakeMemory });
+  try {
+    const body = JSON.stringify({
+      project: 'p',
+      role: 'user',
+      content: 'x'.repeat(9000),  // > 8192-byte MAX_CONTENT_BYTES
+    });
+    const r = await fetch(url('/api/append-turn'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer secret' },
+      body,
+    });
+    assert.equal(r.status, 413);
+    const json = await r.json();
+    assert.equal(json.ok, false);
+    assert.equal(json.error.code, 'INPUT_TOO_LARGE');
+  } finally {
+    await close();
+    if (prevWrites === undefined) delete process.env.UM_MCP_WRITE_ENABLED;
+    else process.env.UM_MCP_WRITE_ENABLED = prevWrites;
+    if (prevVault === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = prevVault;
+  }
+});

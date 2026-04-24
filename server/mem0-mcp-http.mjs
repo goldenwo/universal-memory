@@ -744,30 +744,77 @@ function handleMcpMessage(msg, ctx = {}) {
 	return null;
 }
 
-const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — DoS guard
+// Default request-body cap (spec §5.2): 2 MB. Overridable per-process via
+// UM_HTTP_MAX_REQUEST_BYTES — installer seeds the env with this default.
+// Resolved inside readBody() (not at module load) so tests that mutate the
+// env var between `startServer` calls see the new value on each request.
+const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
-function readBody(req) {
+function _currentMaxBodyBytes() {
+	const v = parseInt(process.env.UM_HTTP_MAX_REQUEST_BYTES || '', 10);
+	return Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_BODY_BYTES;
+}
+
+/**
+ * Read the request body into a UTF-8 string, enforcing UM_HTTP_MAX_REQUEST_BYTES.
+ *
+ * On overrun (either via Content-Length header or mid-stream byte count), the
+ * incoming stream is paused, further chunks are ignored, and the returned
+ * promise rejects with an error whose `.code === 'INPUT_TOO_LARGE'`. The outer
+ * request handler's catch turns that into a 413 response with the v0.6 envelope
+ * (spec §5.2 precedence 1 — fires before JSON-parse or any field-level
+ * validator).
+ *
+ * Early-pause (not req.destroy()) is intentional: we need the paired ServerResponse
+ * to still be writable so the 413 response body can flush. req.destroy() tears
+ * down the socket prematurely and the client sees a connection reset instead of
+ * a structured error envelope. The pause still prevents an attacker from forcing
+ * us to buffer a 2 GB upload — we stop consuming bytes the moment the cap trips.
+ */
+function readBody(req, maxBytes = _currentMaxBodyBytes()) {
 	return new Promise((resolve, reject) => {
-		// Reject early if Content-Length header exceeds cap
+		const makeOverrunError = () => {
+			const err = new Error(`request body exceeds UM_HTTP_MAX_REQUEST_BYTES cap (${maxBytes} bytes)`);
+			err.code = 'INPUT_TOO_LARGE';
+			err.statusCode = 413;
+			return err;
+		};
+		// Reject early if Content-Length header exceeds cap.
+		// We do NOT tear down the socket here (req.destroy()) because the outer
+		// handler still needs to flush a 413 response on the paired res. The
+		// calling route's try/catch rejects, the outer catch writes headers and
+		// body, and Node handles the socket close after the response flushes.
+		// We do `req.pause()` to stop buffering any further bytes the peer may
+		// still be sending — attacker uploads 2 GB, we stop reading at the cap.
 		const contentLength = parseInt(req.headers?.['content-length'] || '0', 10);
-		if (contentLength > MAX_BODY_BYTES) {
-			const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
-			req.destroy(err);
-			return reject(err);
+		if (contentLength > maxBytes) {
+			req.pause();
+			req.unpipe?.();
+			return reject(makeOverrunError());
 		}
 		const chunks = [];
 		let totalBytes = 0;
+		let rejected = false;
 		req.on('data', (c) => {
+			if (rejected) return;
 			totalBytes += c.length;
-			if (totalBytes > MAX_BODY_BYTES) {
-				const err = Object.assign(new Error('Payload Too Large'), { statusCode: 413 });
-				req.destroy(err);
-				return reject(err);
+			if (totalBytes > maxBytes) {
+				rejected = true;
+				// Stop consuming further bytes; abandon buffered chunks.
+				req.pause();
+				req.unpipe?.();
+				return reject(makeOverrunError());
 			}
 			chunks.push(c);
 		});
-		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-		req.on('error', reject);
+		req.on('end', () => {
+			if (rejected) return;
+			resolve(Buffer.concat(chunks).toString('utf8'));
+		});
+		req.on('error', (err) => {
+			if (rejected) return;
+			reject(err);
+		});
 	});
 }
 
@@ -790,6 +837,17 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 			{ vaultDir: ctx.vaultDir },
 		);
 		if (!result.ok) {
+			// B.6b (spec §5.2): field-level size violations from the lib layer
+			// ("content exceeds N bytes", "conversation_id exceeds N bytes") are
+			// promoted to the v0.6 INPUT_TOO_LARGE envelope with HTTP 413.
+			// Same error code + caller action as the request-body cap — send
+			// less data. The lib keeps returning its legacy plain-string shape
+			// for backward compat with older unit tests; the wire envelope lives
+			// at the HTTP boundary (here).
+			if (typeof result.error === 'string' && /exceeds.*bytes/i.test(result.error)) {
+				res.status(413).json(umErrorResponse('INPUT_TOO_LARGE', result.error));
+				return;
+			}
 			res.status(400).json(result);
 			return;
 		}
@@ -1236,8 +1294,11 @@ export function createRequestHandler(ctx = {}) {
 		}
 	}
 
-	// TODO(B.6b): UM_HTTP_MAX_REQUEST_BYTES cap on readBody — rejects
-	//   oversize bodies with 413 INPUT_TOO_LARGE before parsing JSON.
+	// B.6b: UM_HTTP_MAX_REQUEST_BYTES cap enforced inside readBody() below.
+	//   Overrun throws an error with .code='INPUT_TOO_LARGE' which is caught
+	//   at the end of this handler → 413 INPUT_TOO_LARGE envelope response.
+	//   Fires BEFORE JSON-parse or any field-level validator (spec §5.2
+	//   precedence 1).
 	// TODO(Phase C): rate-limit step here (depends on route.bypassRateLimit).
 	// TODO(Phase C): counter-finish (metrics emit) at response send.
 
@@ -1412,7 +1473,10 @@ export function createRequestHandler(ctx = {}) {
 			let reqBody;
 			try {
 				reqBody = JSON.parse(await readBody(req));
-			} catch {
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE so the outer catch emits the 413
+				// envelope — don't swallow body-cap overruns as "invalid JSON".
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify({error: 'invalid JSON body'}));
 				return;
@@ -1494,7 +1558,9 @@ export function createRequestHandler(ctx = {}) {
 			let reqBody;
 			try {
 				reqBody = JSON.parse(await readBody(req));
-			} catch {
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'invalid JSON body' }));
 				return;
@@ -1518,7 +1584,9 @@ export function createRequestHandler(ctx = {}) {
 			let reqBody;
 			try {
 				reqBody = JSON.parse(await readBody(req));
-			} catch {
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'invalid JSON body' }));
 				return;
@@ -1542,7 +1610,9 @@ export function createRequestHandler(ctx = {}) {
 			let reqBody;
 			try {
 				reqBody = JSON.parse(await readBody(req));
-			} catch {
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ error: 'invalid JSON body' }));
 				return;
@@ -1601,10 +1671,24 @@ export function createRequestHandler(ctx = {}) {
 		res.writeHead(404);
 		res.end('Not Found');
 	} catch (err) {
+		// B.6b: request-body cap overruns throw err with .code='INPUT_TOO_LARGE'.
+		// Convert to 413 v0.6 envelope — same envelope the field-level
+		// MAX_CONTENT_BYTES path emits (spec §5.2 unified error code).
+		// Guard against writing headers twice (req.destroy() may have already
+		// fired a response in some races — `res.headersSent` short-circuits).
+		if (err && err.code === 'INPUT_TOO_LARGE') {
+			if (!res.headersSent) {
+				res.writeHead(413, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(umErrorResponse('INPUT_TOO_LARGE', err.message)));
+			}
+			return;
+		}
 		console.error('[mem0-mcp] Unhandled error:', err.stack);
 		const userMsg = process.env.NODE_ENV === 'production' ? 'internal_error' : err.message;
-		res.writeHead(500, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ error: userMsg }));
+		if (!res.headersSent) {
+			res.writeHead(500, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ error: userMsg }));
+		}
 	}
 	};
 }
