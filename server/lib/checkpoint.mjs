@@ -2,22 +2,39 @@
 //
 // Pipeline order:
 //   1. Validate project slug
-//   2. Acquire lockdir (atomic mkdir; stale-detect on EEXIST)
+//   2. Acquire lockdir (lockdir.mjs — atomic mkdir + stale recovery)
 //   3. Cost-cap check (per-day, per-project telemetry file)
-//   4. Read raw captures
+//   4. Read raw captures (per-file lockdir coordination)
 //   5. Summarize transcript
-//   6. Write session summary file
-//   7. Reindex
-//   8. Merge into state.md (unless skip_state_merge)
-//   9. Atomic state write (.tmp + rename)
-//  10. Update telemetry
-//  11. Release lockdir (finally)
+//   6. Two-phase write summary file (phase-1: .tmp; phase-2: rename + state.md)
+//   7. Blocking reindex (3x retry + UPSTREAM_FAILURE on exhaustion — §5.4)
+//   8. Update telemetry
+//   9. Release lockdir (finally)
+//
+// B.10 (v0.6) changes vs B.9 baseline:
+//   • Part A: replaces `proper-lockfile` + inline mkdir(lockdir) with shared
+//     acquireLockdir/releaseLockdir from lockdir.mjs (also B.9 in append-turn).
+//   • Part B (spec §4.2.2 two-phase write):
+//       phase-1: write <summary>.md.tmp
+//       phase-2: rename .tmp → final, then update state.md (also two-phase)
+//     Phase-2 failure rewrites the .tmp file with `status: orphan_summary`
+//     frontmatter so next session-start can recover (see hooks/session-start.sh
+//     orphan detection).
+//   • Part C (spec §5.4 blocking reindex):
+//     memory_checkpoint is a semantic consistency point — reindex MUST block
+//     and retry 3x with 100/200/400ms backoff + 0-50ms jitter. Retry-exhausted
+//     surfaces UPSTREAM_FAILURE (B.1 stable-codes table). Contrast: append-turn
+//     (B.9) is best-effort fire-and-forget.
+//     TODO(C.11): swap the manual retry loop here for the shared withRetry()
+//     helper once retry.mjs lands. The constants RETRY_DELAYS_MS / JITTER_MAX_MS
+//     here are the same values C.11 will adopt; the only delta is the helper
+//     factoring + structured-log emission.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import lockfile from 'proper-lockfile';
+import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
 
@@ -27,6 +44,36 @@ const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/s
 
 const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
+
+// Spec §5.4 retry policy for blocking reindex
+const DEFAULT_RETRY_DELAYS_MS = [100, 200, 400];
+const DEFAULT_RETRY_JITTER_MAX_MS = 50;
+
+const LOCK_TIMEOUT_MS = 10_000;
+const RAW_LOCK_TIMEOUT_MS = 5_000;
+
+/**
+ * Rewrite a .tmp summary file to set `status: orphan_summary` in its frontmatter.
+ * Best-effort: failures here are logged but not propagated — the original phase-2
+ * error is what should surface to the caller.
+ */
+async function markOrphanSummary(tmpPath) {
+  try {
+    const content = await fs.readFile(tmpPath, 'utf8');
+    // Insert `status: orphan_summary` immediately after the opening `---\n` line,
+    // before any other frontmatter fields. Idempotent: if status: already exists,
+    // replace it; else insert after the opening fence.
+    if (/^status:\s*\S+$/m.test(content)) {
+      const updated = content.replace(/^status:\s*\S+$/m, 'status: orphan_summary');
+      await fs.writeFile(tmpPath, updated);
+    } else {
+      const updated = content.replace(/^---\n/, '---\nstatus: orphan_summary\n');
+      await fs.writeFile(tmpPath, updated);
+    }
+  } catch (err) {
+    console.warn(`[checkpoint] failed to mark orphan_summary on ${tmpPath}: ${err?.message ?? err}`);
+  }
+}
 
 /**
  * Run a full session-end checkpoint for a project.
@@ -43,6 +90,8 @@ const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
  * @param {Function}[ctx.updateStateFn]  - updateState function override
  * @param {Function}[ctx.reindexFn]      - Reindex function override
  * @param {string} [ctx.model]           - Model override
+ * @param {number[]}[ctx.retryDelaysMs]  - Test override for retry backoff (default 100/200/400)
+ * @param {number} [ctx.retryJitterMaxMs]- Test override for retry jitter (default 50ms)
  * @returns {Promise<object>}
  */
 export async function doCheckpoint(args, ctx = {}) {
@@ -68,6 +117,8 @@ export async function doCheckpoint(args, ctx = {}) {
   const summarizeFn = ctx.summarizeFn ?? defaultSummarize;
   const updateStateFn = ctx.updateStateFn ?? defaultUpdateState;
   const reindexFn = ctx.reindexFn ?? (async () => {});
+  const retryDelaysMs = ctx.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const retryJitterMaxMs = ctx.retryJitterMaxMs ?? DEFAULT_RETRY_JITTER_MAX_MS;
 
   // Load summarize system prompt (mirrors update-state.mjs prompt-resolution priority)
   let systemPrompt = ctx.systemPrompt;
@@ -93,21 +144,24 @@ export async function doCheckpoint(args, ctx = {}) {
 
   const t0 = Date.now();
 
-  // Acquire lockdir (atomic via EEXIST)
+  // B.10 Part A: acquire state.md lockdir via the shared lockdir.mjs primitive.
+  // - Uses atomic mkdir + EEXIST contention (verified cross-process on NTFS / Linux / macOS).
+  // - Adaptive stale recovery (10 min default, 2 min when disk < 100MB).
+  // - Process-exit cleanup (SIGINT/SIGTERM/uncaughtException) of HELD set.
   const lockdir = path.join(vaultDir, 'state', project, 'state.md.lockdir');
   await fs.mkdir(path.dirname(lockdir), { recursive: true });
-  try {
-    await fs.mkdir(lockdir);
-  } catch (err) {
-    if (err.code !== 'EEXIST') throw err;
-    // Check for stale lockdir
-    const stat = await fs.stat(lockdir).catch(() => null);
-    if (stat && (Date.now() - stat.mtimeMs) > config.lockdir_stale_timeout_ms) {
-      await fs.rmdir(lockdir).catch(() => {});
-      await fs.mkdir(lockdir);
-    } else {
-      return { schema_version: 1, ok: false, error: 'checkpoint_in_progress' };
-    }
+  const acquired = await acquireLockdir(lockdir, {
+    timeoutMs: 0,                                // fail fast — caller can retry
+    staleMs: config.lockdir_stale_timeout_ms,    // honor config-specified stale timeout
+  }).catch((err) => {
+    // Surface unexpected acquireLockdir errors as a clean ok:false envelope
+    return { _acquireError: err };
+  });
+  if (acquired === false) {
+    return { schema_version: 1, ok: false, error: 'checkpoint_in_progress' };
+  }
+  if (acquired && acquired._acquireError) {
+    return { schema_version: 1, ok: false, error: `lock_acquire_failed: ${acquired._acquireError.code ?? acquired._acquireError.message}` };
   }
 
   try {
@@ -121,9 +175,12 @@ export async function doCheckpoint(args, ctx = {}) {
     }
 
     // Read raw captures — filter by since/until window, enforce MAX_TRANSCRIPT_BYTES cap.
-    // Lock each raw file's sibling .lock before reading to ensure consistency
-    // with concurrent writers (stop.sh + append-turn.mjs) that hold the same
-    // <date>.md.lock path via proper-lockfile / perl flock.
+    // B.10 Part A: per-raw-file coordination now uses lockdir.mjs (sibling .lockdir),
+    // not proper-lockfile's .lock. This keeps the cross-process story consistent with
+    // append-turn writes (B.9) which use the same .lockdir convention. Bash stop.sh
+    // continues to use perl flock against the .lock path — the cross-process race
+    // between bash-perl and node-lockdir is the same as v0.5 (documented, low risk
+    // in practice; B.11 will migrate the bash side to .lockdir to close it).
     const rawDir = path.join(vaultDir, 'captures', project, 'raw');
     const rawFiles = await fs.readdir(rawDir).catch(() => []);
 
@@ -146,12 +203,15 @@ export async function doCheckpoint(args, ctx = {}) {
     let transcriptTruncated = false;
     for (const f of filteredFiles) {
       const rawFilePath = path.join(rawDir, f);
-      const lockPath = rawFilePath + '.lock';
-      // Ensure the .lock file exists (proper-lockfile requires the file to exist)
-      await fs.writeFile(lockPath, '', { flag: 'a' });
-      let release;
+      const rawLockdir = rawFilePath + '.lockdir';
+      const rawAcquired = await acquireLockdir(rawLockdir, { timeoutMs: RAW_LOCK_TIMEOUT_MS });
+      if (!rawAcquired) {
+        // Skip this file rather than fail the whole checkpoint — best-effort read,
+        // matches v0.5 proper-lockfile behavior on contention.
+        console.warn(`[checkpoint] could not acquire raw lock for ${f}; skipping`);
+        continue;
+      }
       try {
-        release = await lockfile.lock(lockPath);
         const chunk = await fs.readFile(rawFilePath, 'utf8') + '\n\n';
         if (Buffer.byteLength(transcript + chunk, 'utf8') > MAX_TRANSCRIPT_BYTES) {
           transcriptTruncated = true;
@@ -159,7 +219,7 @@ export async function doCheckpoint(args, ctx = {}) {
         }
         transcript += chunk;
       } finally {
-        if (release) await release().catch(() => {});
+        await releaseLockdir(rawLockdir);
       }
     }
     if (transcriptTruncated) {
@@ -173,18 +233,30 @@ export async function doCheckpoint(args, ctx = {}) {
       systemPrompt,
     });
 
-    // Write session summary file
+    // ----- B.10 Part B: two-phase write -----
+    // Phase 1: write <summary>.md.tmp with full frontmatter (no `status:` field —
+    //          a successful phase-2 leaves the final file un-statused; phase-2
+    //          failure rewrites the .tmp with `status: orphan_summary`).
+    // Phase 2: atomic rename → final, then update state.md (itself two-phase).
+    //          Failures in phase-2 leave the .tmp with status: orphan_summary
+    //          for next-session-start orphan recovery.
     const summaryId = `session-${today}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
-    const summaryPath = `sessions/${project}/${summaryId}.md`;
-    const absSummaryPath = path.join(vaultDir, summaryPath);
+    const summaryRelPath = `sessions/${project}/${summaryId}.md`;
+    const absSummaryPath = path.join(vaultDir, summaryRelPath);
+    const tmpSummaryPath = absSummaryPath + '.tmp';
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
-    // Fix 3: symlink guard on summary write
+
+    // Symlink guards on both .tmp and final paths (preserves Fix 3 from v0.5).
+    const tmpSymCheck = await fs.lstat(tmpSummaryPath).catch(() => null);
+    if (tmpSymCheck && tmpSymCheck.isSymbolicLink()) {
+      return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+    }
     const summaryStatCheck = await fs.lstat(absSummaryPath).catch(() => null);
     if (summaryStatCheck && summaryStatCheck.isSymbolicLink()) {
       return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
     }
-    // Prepend YAML frontmatter — reindexDoc requires type/id/title to index into mem0.
-    // Without frontmatter, reindexDoc throws → caught → reindex_failed:true silently.
+
+    // Frontmatter — reindexDoc requires type/id/title to index into mem0.
     const now = new Date();
     const frontmatter = [
       '---',
@@ -200,41 +272,106 @@ export async function doCheckpoint(args, ctx = {}) {
       '',
     ].join('\n');
     const summaryWithFm = frontmatter + summary;
-    await fs.writeFile(absSummaryPath, summaryWithFm);
 
-    // Reindex (non-fatal — orphan summary is recoverable; state.md must still update)
-    let reindexFailed = false;
-    let reindexError;
-    try {
-      await reindexFn(summaryPath);
-    } catch (err) {
-      reindexFailed = true;
-      reindexError = err?.message ?? String(err);
-      console.warn(`[checkpoint] reindex failed for project=${project}: ${err?.message ?? String(err)}`);
-    }
+    // Phase 1: write .tmp
+    await fs.writeFile(tmpSummaryPath, summaryWithFm);
 
-    // Optionally merge into state.md
+    // Phase 2: update state.md first, then rename .tmp → final.
+    // Ordering rationale: state.md is the contention-prone path (lockdir,
+    // disk-full, lstat symlink check). If state.md update fails, the summary
+    // .tmp is still in place — markOrphanSummary marks it for recovery and we
+    // never advance to the rename. If rename fails AFTER state.md succeeds
+    // (rare: EBUSY on Windows, ENOSPC mid-rename), the state.md references a
+    // summary that exists only as `.tmp`; we still mark it orphan_summary so
+    // session-start recovery can re-attempt the rename to its canonical name.
     let stateUpdated = false;
     let statePath = null;
-    if (!skip_state_merge) {
-      const oldStatePath = path.join(vaultDir, 'state', project, 'state.md');
-      let oldStateMd = '';
-      try { oldStateMd = await fs.readFile(oldStatePath, 'utf8'); } catch {}
-      const stateResult = await updateStateFn(
-        { oldStateMd, newSummary: summary, projectId: project },
-        { summarizeFn },
-      );
-      // Atomic write: .tmp + rename
-      // Fix 3: symlink guard on state.md target before rename
-      const stateSymCheck = await fs.lstat(oldStatePath).catch(() => null);
-      if (stateSymCheck && stateSymCheck.isSymbolicLink()) {
-        return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+    try {
+      // State.md merge (also two-phase: state.md.tmp → rename to state.md)
+      if (!skip_state_merge) {
+        const oldStatePath = path.join(vaultDir, 'state', project, 'state.md');
+        let oldStateMd = '';
+        try { oldStateMd = await fs.readFile(oldStatePath, 'utf8'); } catch {}
+        const stateResult = await updateStateFn(
+          { oldStateMd, newSummary: summary, projectId: project },
+          { summarizeFn },
+        );
+        // Symlink guard on state.md target before rename (preserves Fix 3).
+        const stateSymCheck = await fs.lstat(oldStatePath).catch(() => null);
+        if (stateSymCheck && stateSymCheck.isSymbolicLink()) {
+          return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+        }
+        const stateTmpPath = oldStatePath + '.tmp';
+        await fs.writeFile(stateTmpPath, stateResult.mergedMd);
+        await fs.rename(stateTmpPath, oldStatePath);
+        stateUpdated = true;
+        statePath = `state/${project}/state.md`;
       }
-      const tmpPath = oldStatePath + '.tmp';
-      await fs.writeFile(tmpPath, stateResult.mergedMd);
-      await fs.rename(tmpPath, oldStatePath);
-      stateUpdated = true;
-      statePath = `state/${project}/state.md`;
+
+      // Final rename — the summary becomes durably reachable at its canonical path.
+      await fs.rename(tmpSummaryPath, absSummaryPath);
+    } catch (phase2Err) {
+      // Phase 2 failed. Mark the .tmp (if still present) as orphan_summary so
+      // next-session-start orphan recovery can finish the job. If rename
+      // succeeded but state.md failed first (impossible with the ordering
+      // above), we'd re-stage a .tmp; the ordering keeps that branch dead but
+      // we keep the safety net for defensive future edits.
+      const tmpStillThere = await fs.stat(tmpSummaryPath).catch(() => null);
+      if (tmpStillThere) {
+        await markOrphanSummary(tmpSummaryPath);
+      } else {
+        try {
+          await fs.writeFile(tmpSummaryPath, summaryWithFm);
+          await markOrphanSummary(tmpSummaryPath);
+        } catch (restageErr) {
+          console.warn(`[checkpoint] phase-2 orphan re-stage failed: ${restageErr?.message ?? restageErr}`);
+        }
+      }
+      const isLockContention =
+        phase2Err.code === 'EBUSY' || phase2Err.code === 'STATE_LOCK_CONTENTION';
+      const out = {
+        schema_version: 1,
+        ok: false,
+        error: isLockContention
+          ? { code: 'STATE_LOCK_CONTENTION', message: `checkpoint phase 2: state.md update contention: ${phase2Err.message}` }
+          : phase2Err.message ?? String(phase2Err),
+      };
+      return out;
+    }
+
+    // ----- B.10 Part C: blocking reindex with retry (spec §5.4) -----
+    // memory_checkpoint is a consistency point — reindex BLOCKS the response.
+    // 3 retries with 100/200/400 ms backoff + 0–retryJitterMaxMs ms jitter.
+    // Retry-exhausted surfaces UPSTREAM_FAILURE (B.1 stable-codes table).
+    // TODO(C.11): replace this manual loop with the shared withRetry() helper
+    //             in server/lib/retry.mjs once it lands.
+    let reindexErr;
+    let reindexSucceeded = false;
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
+      try {
+        await reindexFn(summaryRelPath);
+        reindexSucceeded = true;
+        break;
+      } catch (err) {
+        reindexErr = err;
+        console.warn(`[checkpoint] reindex attempt ${attempt + 1} failed for project=${project}: ${err?.message ?? String(err)}`);
+        if (attempt === retryDelaysMs.length) break; // budget exhausted
+        const delay = retryDelaysMs[attempt] + Math.floor(Math.random() * (retryJitterMaxMs + 1));
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    if (!reindexSucceeded) {
+      return {
+        schema_version: 1,
+        ok: false,
+        error: {
+          code: 'UPSTREAM_FAILURE',
+          message: `checkpoint reindex failed after ${retryDelaysMs.length} retries: ${reindexErr?.message ?? String(reindexErr)}`,
+        },
+        // Diagnostic context — caller can surface or log
+        summary_id: summaryId,
+        summary_path: summaryRelPath,
+      };
     }
 
     // Update per-day telemetry
@@ -247,7 +384,7 @@ export async function doCheckpoint(args, ctx = {}) {
       schema_version: 1,
       ok: true,
       summary_id: summaryId,
-      summary_path: summaryPath,
+      summary_path: summaryRelPath,
       state_updated: stateUpdated,
       state_path: statePath,
       cost_usd: costUsd,
@@ -256,12 +393,8 @@ export async function doCheckpoint(args, ctx = {}) {
       duration_ms: Date.now() - t0,
     };
     if (transcriptTruncated) result.truncated = true;
-    if (reindexFailed) {
-      result.reindex_failed = true;
-      result.reindex_error = reindexError;
-    }
     return result;
   } finally {
-    await fs.rmdir(lockdir).catch(() => {});
+    await releaseLockdir(lockdir);
   }
 }

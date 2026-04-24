@@ -50,7 +50,7 @@ import { doCheckpoint } from './lib/checkpoint.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
-import { errorResponse as umErrorResponse } from './lib/error-envelope.mjs';
+import { errorResponse as umErrorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -896,6 +896,14 @@ export async function handleAppendTurnRequest(req, res, ctx) {
  * Exported handler for POST /api/checkpoint.
  * Accepts a pre-parsed body via req.body (unit-test friendly).
  * Supports DI of _doCheckpoint for testing without a real vault/LLM.
+ *
+ * Reindex semantics (spec §5.4): memory_checkpoint reindex is BLOCKING + retry-
+ * exhausted. doCheckpoint awaits the reindex with 3x exponential backoff;
+ * persistent failure surfaces as `result.error.code = "UPSTREAM_FAILURE"` which
+ * we map to HTTP 502 here. Contrast with /api/append-turn (B.9) which is fire-
+ * and-forget. STATE_LOCK_CONTENTION (phase-2 contention from two-phase write)
+ * maps to HTTP 503 for retryable-by-client semantics.
+ *
  * @param {{ body: { project?, since?, until?, skip_state_merge? } }} req
  * @param {{ status(code): this, json(obj): this }} res
  * @param {{ vaultDir?: string, writesEnabled: boolean, _doCheckpoint?: Function }} ctx
@@ -913,6 +921,16 @@ export async function handleCheckpointRequest(req, res, ctx) {
 			{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
 		);
 		if (!result.ok) {
+			// B.10: doCheckpoint returns structured `error: { code, message }` for
+			// UPSTREAM_FAILURE (retry-exhausted reindex) and STATE_LOCK_CONTENTION
+			// (two-phase write phase-2 contention). Map those to their stable HTTP
+			// status from error-envelope.mjs. Other errors (string `error`) keep
+			// the legacy 400 mapping for backward compat.
+			const errCode = result.error && typeof result.error === 'object' ? result.error.code : null;
+			if (errCode && (errCode === 'UPSTREAM_FAILURE' || errCode === 'STATE_LOCK_CONTENTION')) {
+				res.status(httpStatusFor(errCode)).json(result);
+				return;
+			}
 			res.status(400).json(result);
 			return;
 		}

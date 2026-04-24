@@ -521,6 +521,43 @@ test('POST /api/checkpoint 403 when writes disabled → ok:false, statusCode 403
   assert.equal(res.jsonBody.ok, false);
 });
 
+// B.10 (spec §5.4): UPSTREAM_FAILURE from doCheckpoint maps to HTTP 502.
+test('POST /api/checkpoint UPSTREAM_FAILURE result → HTTP 502 with code propagated', async () => {
+  const req = { body: { project: 'upstream-fail-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    writesEnabled: true,
+    _doCheckpoint: async () => ({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'UPSTREAM_FAILURE', message: 'reindex exhausted retries' },
+      summary_id: 'session-x',
+      summary_path: 'sessions/upstream-fail-proj/session-x.md',
+    }),
+  });
+
+  assert.equal(res.statusCode, 502, 'UPSTREAM_FAILURE should map to HTTP 502');
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'UPSTREAM_FAILURE');
+});
+
+// B.10: STATE_LOCK_CONTENTION result → HTTP 503 (retryable by client).
+test('POST /api/checkpoint STATE_LOCK_CONTENTION result → HTTP 503', async () => {
+  const req = { body: { project: 'lock-cont-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    writesEnabled: true,
+    _doCheckpoint: async () => ({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'STATE_LOCK_CONTENTION', message: 'state.md contention' },
+    }),
+  });
+
+  assert.equal(res.statusCode, 503, 'STATE_LOCK_CONTENTION should map to HTTP 503');
+  assert.equal(res.jsonBody.error.code, 'STATE_LOCK_CONTENTION');
+});
+
 // Fix 2 (round-9): reindexFn must receive a STRING path, not {path, project} object.
 // reindexDoc(relPath) in mem0-mcp-http.mjs takes a string; passing an object silently coerced
 // to "[object Object]" and caused every checkpoint reindex to fail silently.
@@ -602,8 +639,10 @@ test('checkpoint: MAX_TRANSCRIPT_BYTES cap sets truncated:true in result', async
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
-// Fix 2: reindexFn throws — ok:true, reindex_failed:true, state_updated:true
-test('checkpoint: reindexFn failure returns ok:true with reindex_failed:true and state_updated:true', async () => {
+// B.10 (spec §5.4): memory_checkpoint reindex is BLOCKING — retry 3x with
+// 100/200/400ms backoff + jitter; on persistent failure surface UPSTREAM_FAILURE.
+// Contrast with B.9 append-turn (best-effort fire-and-forget).
+test('checkpoint: reindexFn persistent failure surfaces UPSTREAM_FAILURE (blocking + retry-exhausted)', async () => {
   const vaultDir = await makeVault();
   await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome content.');
 
@@ -611,6 +650,7 @@ test('checkpoint: reindexFn failure returns ok:true with reindex_failed:true and
   const origWarn = console.warn;
   console.warn = (...args) => { warnings.push(args.join(' ')); };
 
+  let attempts = 0;
   let result;
   try {
     result = await doCheckpoint(
@@ -620,19 +660,141 @@ test('checkpoint: reindexFn failure returns ok:true with reindex_failed:true and
         vaultDir,
         summarizeFn: makeSummarizeFn(),
         updateStateFn: makeUpdateStateFn(),
-        reindexFn: async () => { throw new Error('mem0 unavailable'); },
+        // Inject zero-delay retry so the test runs fast — we still want to
+        // verify that 1 initial + 3 retries = 4 attempts before giving up.
+        retryDelaysMs: [0, 0, 0],
+        retryJitterMaxMs: 0,
+        reindexFn: async () => {
+          attempts += 1;
+          throw new Error('mem0 unavailable');
+        },
       },
     );
   } finally {
     console.warn = origWarn;
   }
 
-  assert.equal(result.ok, true, 'ok should remain true despite reindex failure');
-  assert.equal(result.reindex_failed, true, 'reindex_failed should be true');
-  assert.ok(typeof result.reindex_error === 'string', 'reindex_error should be a string');
-  assert.ok(result.reindex_error.includes('mem0 unavailable'), 'reindex_error should contain the error message');
-  assert.equal(result.state_updated, true, 'state_updated should be true — pipeline must continue');
-  assert.ok(warnings.some(w => w.includes('reindex failed')), 'should have emitted a warning');
+  assert.equal(result.ok, false, 'persistent reindex failure must fail the checkpoint');
+  assert.equal(result.error?.code ?? result.error, 'UPSTREAM_FAILURE',
+    `expected UPSTREAM_FAILURE error code, got: ${JSON.stringify(result.error)}`);
+  assert.equal(attempts, 4, 'reindex should be attempted 4x (initial + 3 retries) before giving up');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// B.10 Part C: retry-then-succeed completes successfully. Timing test asserts
+// the retry budget actually waits 100+200+400 = 700ms minimum when 3 retries fire.
+test('checkpoint: reindex retries 3x on transient failure with backoff timing >= 700ms', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome content.');
+
+  let attempts = 0;
+  const t0 = Date.now();
+  const result = await doCheckpoint(
+    { project: 'myproj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {
+        attempts += 1;
+        if (attempts <= 3) throw new Error('transient');
+        // 4th attempt succeeds
+      },
+    },
+  );
+  const elapsed = Date.now() - t0;
+
+  assert.equal(result.ok, true, 'checkpoint should succeed after 3 retries');
+  assert.equal(attempts, 4, 'reindex should be called 4x (initial + 3 retries) then succeed');
+  // 100 + 200 + 400 = 700ms minimum (no jitter floor); allow some slack
+  assert.ok(elapsed >= 700,
+    `retry budget should enforce >= 700ms total wait, got ${elapsed}ms`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// B.10 Part B: two-phase write — phase-2 (rename / state-md update) failure
+// must leave the .tmp summary file with `status: orphan_summary` frontmatter
+// so next session-start can recover.
+test('checkpoint: phase-2 failure leaves .tmp file with status: orphan_summary frontmatter', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'orphproj', '2026-01-01.md', '# Session\nContent.');
+
+  // Inject phase-2 failure by stubbing updateStateFn to throw before state.md write.
+  // This simulates a state.md write contention or disk-full error during phase-2.
+  const result = await doCheckpoint(
+    { project: 'orphproj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn({ summary: 'Orphan body here.' }),
+      updateStateFn: async () => {
+        const err = new Error('simulated phase-2 disk-full');
+        err.code = 'ENOSPC';
+        throw err;
+      },
+      reindexFn: async () => {},
+    },
+  );
+
+  // Phase-2 failed, so checkpoint should fail
+  assert.equal(result.ok, false, 'checkpoint should fail when phase-2 fails');
+
+  // Locate the .tmp file in sessions/<project>/
+  const sessionsDir = path.join(vaultDir, 'sessions', 'orphproj');
+  const entries = await fs.readdir(sessionsDir);
+  const tmpFile = entries.find((f) => f.endsWith('.md.tmp'));
+  assert.ok(tmpFile, `expected .tmp file in ${sessionsDir}, got: ${entries.join(', ')}`);
+
+  // Final renamed file must NOT exist (rename did not run, or was rolled back)
+  const finalFile = entries.find((f) => f.endsWith('.md') && !f.endsWith('.md.tmp'));
+  assert.ok(!finalFile, `expected NO finalized .md file, got: ${finalFile}`);
+
+  // .tmp file must have status: orphan_summary in frontmatter
+  const content = await fs.readFile(path.join(sessionsDir, tmpFile), 'utf8');
+  assert.ok(content.startsWith('---\n'), 'tmp must start with frontmatter block');
+  assert.ok(/^status:\s*orphan_summary$/m.test(content),
+    `tmp file must have 'status: orphan_summary' frontmatter, got: ${content.slice(0, 400)}`);
+  // Body must still be present
+  assert.ok(content.includes('Orphan body here.'),
+    'tmp file must still contain the original body content');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// B.10 Part A: lockdir migration — concurrent checkpoint calls must serialize
+// cleanly via the new lockdir primitive (mirrors B.9 append-turn pattern).
+test('checkpoint: lockdir-migrated path serializes concurrent calls cleanly', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'lockproj', '2026-01-01.md', '# Session\nLockdir test.');
+
+  // Run two checkpoints concurrently — one must win, the other must see
+  // the lockdir and return a clean checkpoint_in_progress without torn writes.
+  const ctx = () => ({
+    config: BASE_CONFIG,
+    vaultDir,
+    summarizeFn: makeSummarizeFn(),
+    updateStateFn: makeUpdateStateFn(),
+    reindexFn: async () => {},
+  });
+
+  const [r1, r2] = await Promise.all([
+    doCheckpoint({ project: 'lockproj' }, ctx()),
+    doCheckpoint({ project: 'lockproj' }, ctx()),
+  ]);
+
+  const wins = [r1, r2].filter((r) => r.ok);
+  const losses = [r1, r2].filter((r) => !r.ok);
+  assert.equal(wins.length, 1, `exactly one checkpoint should succeed, got: r1=${JSON.stringify(r1).slice(0,120)} r2=${JSON.stringify(r2).slice(0,120)}`);
+  assert.equal(losses.length, 1, 'exactly one checkpoint should hit the lockdir');
+  assert.equal(losses[0].error, 'checkpoint_in_progress');
+
+  // Lockdir must be released after both calls
+  const lockdirPath = path.join(vaultDir, 'state', 'lockproj', 'state.md.lockdir');
+  const lockdirStat = await fs.stat(lockdirPath).catch(() => null);
+  assert.equal(lockdirStat, null, 'lockdir must be released (rmdir) after checkpoint completes');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
