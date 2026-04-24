@@ -90,6 +90,18 @@ test('checkpoint: happy path returns complete result shape', async () => {
   assert.ok(typeof result.duration_ms === 'number' && result.duration_ms >= 0, 'duration_ms must be non-negative number');
   assert.equal(reindexCalls.length, 1, 'reindex should be called once');
 
+  // Verify on-disk content of summary file
+  const diskSummary = await fs.readFile(path.join(vaultDir, result.summary_path), 'utf8');
+  assert.ok(diskSummary.length > 0, 'summary file must not be empty on disk');
+  assert.ok(diskSummary.includes('Mock session summary.'),
+    `summary content mismatch: ${diskSummary.slice(0, 200)}`);
+
+  // Verify on-disk content of state.md
+  if (result.state_updated) {
+    const stateMd = await fs.readFile(path.join(vaultDir, result.state_path), 'utf8');
+    assert.ok(stateMd.length > 0, 'state.md must not be empty on disk');
+  }
+
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
