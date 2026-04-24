@@ -183,7 +183,24 @@ export async function doCheckpoint(args, ctx = {}) {
     if (summaryStatCheck && summaryStatCheck.isSymbolicLink()) {
       return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
     }
-    await fs.writeFile(absSummaryPath, summary);
+    // Prepend YAML frontmatter — reindexDoc requires type/id/title to index into mem0.
+    // Without frontmatter, reindexDoc throws → caught → reindex_failed:true silently.
+    const now = new Date();
+    const frontmatter = [
+      '---',
+      `type: session_summary`,
+      `id: ${summaryId}`,
+      `title: Session summary ${today} for ${project}`,
+      `project: ${project}`,
+      `valid_from: ${now.toISOString()}`,
+      `tokens_in: ${tokensIn}`,
+      `tokens_out: ${tokensOut}`,
+      `cost_usd: ${costUsd.toFixed(6)}`,
+      '---',
+      '',
+    ].join('\n');
+    const summaryWithFm = frontmatter + summary;
+    await fs.writeFile(absSummaryPath, summaryWithFm);
 
     // Reindex (non-fatal — orphan summary is recoverable; state.md must still update)
     let reindexFailed = false;

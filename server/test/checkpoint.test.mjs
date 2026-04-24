@@ -665,6 +665,76 @@ test('checkpoint: default config path resolves correctly (no ctx.config — Dock
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// Round-10 blocker fix: summary file on disk must start with YAML frontmatter
+// so reindexDoc can parse type/id/title and index into mem0.
+test('checkpoint: summary file written to disk starts with YAML frontmatter', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'fm-proj', '2026-01-01T00.md', '# Session\nFrontmatter test.');
+
+  const result = await doCheckpoint(
+    { project: 'fm-proj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn({ summary: 'Body content here.' }),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, 'checkpoint should succeed');
+  const diskContent = await fs.readFile(path.join(vaultDir, result.summary_path), 'utf8');
+  assert.ok(diskContent.startsWith('---\n'), 'summary file must start with YAML frontmatter block');
+  assert.ok(diskContent.includes('type: session_summary'), 'frontmatter must include type: session_summary');
+  assert.ok(diskContent.includes(`id: ${result.summary_id}`), 'frontmatter must include the summary id');
+  assert.ok(diskContent.includes('title: Session summary'), 'frontmatter must include a title field');
+  assert.ok(diskContent.includes('project: fm-proj'), 'frontmatter must include the project slug');
+  assert.ok(diskContent.includes('Body content here.'), 'LLM body must appear after frontmatter');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Round-10: reindexDoc-compatible parse — frontmatter must satisfy the exact schema
+// that reindexDoc checks: fm.type, fm.id, fm.title must all be present and truthy.
+test('checkpoint: frontmatter satisfies reindexDoc required fields (type, id, title)', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'reindex-fm-proj', '2026-01-01T00.md', '# Session\nReindex frontmatter test.');
+
+  // Spy: capture whatever the reindexFn receives so we can read the file ourselves
+  let capturedPath = null;
+  const result = await doCheckpoint(
+    { project: 'reindex-fm-proj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async (relPath) => { capturedPath = relPath; },
+    },
+  );
+
+  assert.equal(result.ok, true, 'checkpoint should succeed');
+  assert.ok(capturedPath, 'reindexFn must be called');
+  const diskContent = await fs.readFile(path.join(vaultDir, capturedPath), 'utf8');
+
+  // Minimal frontmatter parse: extract the --- block
+  const fmMatch = diskContent.match(/^---\n([\s\S]*?)\n---\n/);
+  assert.ok(fmMatch, 'summary file must contain a YAML frontmatter block');
+  const fmBlock = fmMatch[1];
+
+  // Check each required field is present and non-empty
+  const getField = (key) => {
+    const m = fmBlock.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
+    return m ? m[1].trim() : null;
+  };
+  assert.ok(getField('type'), `frontmatter must have a non-empty 'type' field`);
+  assert.equal(getField('type'), 'session_summary', `type must be 'session_summary'`);
+  assert.ok(getField('id'), `frontmatter must have a non-empty 'id' field`);
+  assert.ok(getField('title'), `frontmatter must have a non-empty 'title' field`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
 // Round-9 blocker fix: default summarize-prompt path must resolve relative to lib dir.
 // Omit ctx.systemPrompt so doCheckpoint reads DEFAULT_SUMMARIZE_PROMPT_PATH from disk.
 test('checkpoint: default summarize prompt path resolves correctly (no ctx.systemPrompt — Docker-safe)', async () => {
