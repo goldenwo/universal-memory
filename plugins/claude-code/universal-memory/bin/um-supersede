@@ -129,7 +129,9 @@ ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
 OLD_REL="${OLD_PATH#$VAULT/}"
 NEW_REL="${NEW_ABS#$VAULT/}"
 for rel in "$NEW_REL" "$OLD_REL"; do
-  curl -fSsm 5 -X POST "$ENDPOINT/api/reindex" \
+  curl -fSsm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
+    -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
+    -H "User-Agent: um-cli/0.6" \
     -H 'Content-Type: application/json' \
     -d "{\"path\":\"$rel\"}" >/dev/null 2>&1 || \
     echo "um-supersede: reindex failed for $rel (server may be down)" >&2

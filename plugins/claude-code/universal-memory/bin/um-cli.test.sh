@@ -272,6 +272,24 @@ else
 fi
 
 # ===========================================================================
+# Test 7: v0.6 retrofit — Authorization + User-Agent headers on both CLIs (B.7)
+# ===========================================================================
+echo "=== Test 7: v0.6 Authorization + User-Agent headers ==="
+for CLI in "$UM_FORGET" "$UM_SUPERSEDE"; do
+  CLI_NAME="$(basename "$CLI")"
+  if grep -q 'Authorization: Bearer' "$CLI"; then
+    pass "T7: $CLI_NAME has Authorization: Bearer header"
+  else
+    fail "T7: $CLI_NAME missing Authorization: Bearer header"
+  fi
+  if grep -qE 'User-Agent: um-(cli|bridge)/' "$CLI"; then
+    pass "T7: $CLI_NAME has UM User-Agent marker"
+  else
+    fail "T7: $CLI_NAME missing UM User-Agent marker"
+  fi
+done
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 

@@ -190,6 +190,21 @@ else
 fi
 rm -rf "$tmp"
 
+# ─── T9: v0.6 retrofit — Authorization + User-Agent headers (B.7) ───────────
+echo ""
+echo "=== T9: v0.6 Authorization + User-Agent headers present ==="
+CLI="$BIN"
+if grep -q 'Authorization: Bearer' "$CLI"; then
+  pass "T9-authorization-header"
+else
+  fail "T9-authorization-header: $CLI missing 'Authorization: Bearer' header"
+fi
+if grep -qE 'User-Agent: um-(cli|bridge)/' "$CLI"; then
+  pass "T9-user-agent-header"
+else
+  fail "T9-user-agent-header: $CLI missing UM User-Agent marker"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-recent.sh: $PASS passed, $FAIL failed"
