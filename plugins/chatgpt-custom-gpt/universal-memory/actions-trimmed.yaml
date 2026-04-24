@@ -17,11 +17,12 @@ paths:
     post:
       operationId: memory_search
       summary: Semantic search
-      description: Body form. Returns compact shape by default; add `?full=1` for full
-        MemoryResult[]. Applies default status filter (excludes
+      description: "Body form. Returns `{results: [...]}` with compact items by
+        default; add `?full=1` to get the full MemoryResult shape in each result
+        instead. Applies default status filter (excludes
         superseded/deprecated/rejected, and any doc with invalidated_at set)
         unless `include_superseded=true`. Optional `filters.project` /
-        `filters.type` are applied after mem0 recall.
+        `filters.type` are applied after mem0 recall."
       parameters:
         - name: full
           in: query
@@ -29,8 +30,9 @@ paths:
           schema:
             type: boolean
             default: false
-          description: When true, return full MemoryResult[] instead of compact
-            CompactMemoryResult[]
+          description: "When true, return the full MemoryResult shape in each result
+            instead of the compact CompactMemoryResult shape. The outer envelope
+            (`{results: [...]}`) is the same either way."
       requestBody:
         required: true
         content:
@@ -39,8 +41,9 @@ paths:
               $ref: "#/components/schemas/SearchRequest"
       responses:
         "200":
-          description: "Search succeeded. Default: compact CompactMemoryResult[]; with
-            ?full=1: full MemoryResult[]."
+          description: "Search succeeded. Response is `{results: [...]}`; items are
+            compact (CompactMemoryResult) by default, or full (MemoryResult)
+            when ?full=1."
           content:
             application/json:
               schema:
@@ -132,9 +135,10 @@ paths:
     get:
       operationId: memory_recent
       summary: Most-recent memories for a project
-      description: Returns the N most-recently indexed memories for the given project
-        slug. Returns compact shape by default; add `?full=1` for full
-        MemoryResult[]. Results are sorted newest-first by updated_at.
+      description: "Returns the N most-recently indexed memories for the given project
+        slug. Response is `{results: [...]}` with compact items by default; add
+        `?full=1` to get the full MemoryResult shape in each result instead.
+        Results are sorted newest-first by updated_at."
       parameters:
         - name: project
           in: path
@@ -158,12 +162,14 @@ paths:
           schema:
             type: boolean
             default: false
-          description: When true, return full MemoryResult[] instead of compact
-            CompactMemoryResult[]
+          description: "When true, return the full MemoryResult shape in each result
+            instead of the compact CompactMemoryResult shape. The outer envelope
+            (`{results: [...]}`) is the same either way."
       responses:
         "200":
-          description: "Recent memories. Default: compact CompactMemoryResult[]; with
-            ?full=1: full MemoryResult[]."
+          description: "Recent memories. Response is `{results: [...]}`; items are compact
+            (CompactMemoryResult) by default, or full (MemoryResult) when
+            ?full=1."
           content:
             application/json:
               schema:
@@ -270,8 +276,9 @@ components:
           $ref: "#/components/schemas/SearchFilters"
     SearchResponse:
       type: object
-      description: Default response shape for /api/search (compact). Add ?full=1 to
-        get MemoryResult[] instead.
+      description: "Default response shape for /api/search: `{results:
+        [CompactMemoryResult]}`. Add ?full=1 to get the full MemoryResult shape
+        in each result instead."
       required:
         - results
       properties:
@@ -409,8 +416,8 @@ components:
           description: Echo of the delete criterion, e.g. metadata.id=foo
     CompactSearchResponse:
       type: object
-      description: Default search/list/recent response (compact shape). Use ?full=1
-        for MemoryResult[].
+      description: Default search/list/recent response envelope with compact items.
+        Use ?full=1 to get the full MemoryResult shape in each result instead.
       required:
         - results
       properties:

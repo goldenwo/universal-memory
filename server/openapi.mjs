@@ -154,7 +154,7 @@ const SCHEMAS = {
 
   CompactSearchResponse: {
     type: 'object',
-    description: 'Default search/list/recent response (compact shape). Use ?full=1 for MemoryResult[].',
+    description: 'Default search/list/recent response envelope with compact items. Use ?full=1 to get the full MemoryResult shape in each result instead.',
     required: ['results'],
     properties: {
       results: { type: 'array', items: ref('CompactMemoryResult') },
@@ -197,7 +197,7 @@ const SCHEMAS = {
   SearchResponse: {
     type: 'object',
     description:
-      'Default response shape for /api/search (compact). Add ?full=1 to get MemoryResult[] instead.',
+      'Default response shape for /api/search: `{results: [CompactMemoryResult]}`. Add ?full=1 to get the full MemoryResult shape in each result instead.',
     required: ['results'],
     properties: {
       results: { type: 'array', items: ref('CompactMemoryResult') },
@@ -529,14 +529,14 @@ function pathSearch() {
       operationId: 'searchMemories',
       summary: 'Semantic search',
       description:
-        'Body form. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+        'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
       parameters: [
         {
           name: 'full',
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       requestBody: {
@@ -547,7 +547,7 @@ function pathSearch() {
       },
       responses: {
         200: {
-          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Search succeeded. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -600,12 +600,12 @@ function pathSearch() {
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Search succeeded. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -654,25 +654,26 @@ function pathList() {
       operationId: 'listMemories',
       summary: 'List all memories for MEM0_USER_ID',
       description:
-        'Returns the unfiltered list of every memory for the server\'s configured user. Returns compact shape by default; add `?full=1` for full MemoryResult[].',
+        'Returns the unfiltered list of every memory for the server\'s configured user. Response is `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead.',
       parameters: [
         {
           name: 'full',
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Memory list. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description:
+            'Memory list. Always wrapped in `{ results: [...] }` envelope per spec §4.1 (v0.6 breaking change — unified with /api/search and /api/recent). Default: compact CompactMemoryResult items; with ?full=1: full MemoryResult items.',
           content: {
             'application/json': {
               schema: {
                 oneOf: [
                   ref('CompactSearchResponse'),
-                  { type: 'array', items: ref('MemoryResult') },
+                  ref('SearchResponseFull'),
                 ],
               },
             },
@@ -755,7 +756,7 @@ function pathRecent() {
       operationId: 'getRecentByProject',
       summary: 'Most-recent memories for a project',
       description:
-        'Returns the N most-recently indexed memories for the given project slug. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Results are sorted newest-first by updated_at.',
+        'Returns the N most-recently indexed memories for the given project slug. Response is `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Results are sorted newest-first by updated_at.',
       parameters: [
         {
           name: 'project',
@@ -776,12 +777,12 @@ function pathRecent() {
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Recent memories. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Recent memories. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -1129,6 +1130,12 @@ export function generateCustomGPTActionsSpec() {
     post: cloneAndRewriteOperation(checkpointPath.post, 'memory_checkpoint'),
   };
 
+  // Intentionally omitted: /api/list. Custom GPT Actions uses /api/search and
+  // /api/recent/{project} for retrieval; a bare "list every memory" action
+  // would exceed the GPT's context budget on any non-trivial vault and has no
+  // filter/ranking story. /api/list remains in the full spec (/openapi.yaml)
+  // for programmatic callers. v0.6 envelope change (spec §4.1) therefore
+  // does not need to be mirrored here.
   const paths = {
     '/api/search': trimmedSearch,
     '/api/state/{project}': trimmedState,
