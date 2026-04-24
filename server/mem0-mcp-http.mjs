@@ -846,10 +846,20 @@ export async function handleCheckpointRequest(req, res, ctx) {
  * @param {number} limit
  * @param {boolean} includeSuperseded
  * @param {boolean} [full=false] — false → compact shape; true → add body field
- * @param {{search: Function}} [memoryClient] — dependency injection for tests;
- *   defaults to the module-level `memory` binding used by real requests.
+ * @param {object} [ctx={}] - DI context; preferred shape `{ memory: MemoryClient }`.
+ *   Backward compatible: callers that pass a bare memoryClient (object with
+ *   `.search()`) as the fifth arg continue to work — see `search-quality.test.mjs`
+ *   and `decay-integration.test.mjs` which still use that positional style.
+ *   Defaults to the module-level `memory` binding used by real requests.
+ *   Phase B/C/D will extend ctx with `ctx.logger`, `ctx.metrics`,
+ *   `ctx.rateLimiter`, `ctx.auth`, etc. — unified contract across all list/state
+ *   handlers keeps middleware injection consistent (A.8 sweep).
  */
-export async function doSearch(query, limit, includeSuperseded, full = false, memoryClient = memory) {
+export async function doSearch(query, limit, includeSuperseded, full = false, ctx = {}) {
+	// DI resolution: prefer ctx.memory (new convention), then treat ctx itself as a
+	// memoryClient if it exposes search (legacy positional pattern), else fall back
+	// to the module-level memory binding used by real requests.
+	const memoryClient = ctx?.memory ?? (typeof ctx?.search === 'function' ? ctx : memory);
 	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
 	let items = raw?.results || raw || [];
 	if (!includeSuperseded) {
@@ -912,9 +922,23 @@ export async function doSearch(query, limit, includeSuperseded, full = false, me
  * { ok, project, state: null, valid_from: null } when the file does not exist.
  *
  * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
+ * @param {object} [ctx={}] - DI context; preferred shape `{ memory: MemoryClient }`
+ *   for signature parity with the other list/state handlers. doState itself is
+ *   filesystem-only and does not currently consume `ctx.memory`, but accepting
+ *   ctx keeps the DI contract uniform across the read surface (A.8 sweep).
+ *   Backward compatible: legacy callers that pass a bare memoryClient positionally
+ *   continue to work — the ternary falls through to the module-level `memory`.
+ *   Phase B/C/D will extend ctx with `ctx.logger`, `ctx.metrics`,
+ *   `ctx.rateLimiter`, `ctx.auth`, etc.
  * @returns {Promise<string>} JSON string
  */
-export async function doState(project) {
+export async function doState(project, ctx = {}) {
+  // doState is filesystem-only — no memory client resolution needed today.
+  // `ctx = {}` is accepted for signature parity with doSearch/doRecent/doList
+  // and as the injection point for Phase B middleware (ctx.logger, ctx.metrics,
+  // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
+  // warnings without losing the documented DI surface.
+  void ctx;
   if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
     throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
   }
@@ -956,10 +980,23 @@ export async function doState(project) {
  * @param {string} project - Project name (validated: ^[a-zA-Z0-9._-]+$)
  * @param {number} [limit=10] - Max results to return
  * @param {boolean} [full=false] - Include body in response
- * @param {*} [_memoryClient] - Unused; accepted for DI signature parity with doSearch
+ * @param {object} [ctx={}] - DI context; preferred shape `{ memory: MemoryClient }`
+ *   for signature parity with the other list/state handlers. doRecent itself
+ *   reads the vault filesystem and does not currently consume `ctx.memory`,
+ *   but accepting ctx keeps the DI contract uniform across the read surface
+ *   (A.8 sweep). Backward compatible: legacy callers that pass a bare memoryClient
+ *   positionally as the fourth arg continue to work — the ternary tolerates it.
+ *   Phase B/C/D will extend ctx with `ctx.logger`, `ctx.metrics`,
+ *   `ctx.rateLimiter`, `ctx.auth`, etc.
  * @returns {Promise<{ results: Array<{id, title, snippet, body?}> }>}
  */
-export async function doRecent(project, limit = 10, full = false, _memoryClient = memory) {
+export async function doRecent(project, limit = 10, full = false, ctx = {}) {
+  // doRecent is filesystem-only — no memory client resolution needed today.
+  // `ctx = {}` is accepted for signature parity with doSearch/doList and as
+  // the injection point for Phase B middleware (ctx.logger, ctx.metrics,
+  // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
+  // warnings without losing the documented DI surface.
+  void ctx;
   if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
     throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
   }
