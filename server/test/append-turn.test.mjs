@@ -256,3 +256,48 @@ test('POST /api/append-turn returns 403 when writes disabled', async () => {
   assert.equal(res.statusCode, 403);
   assert.equal(res.jsonBody.ok, false);
 });
+
+// Fix 3: role trim — 'user ' (trailing space) should be accepted
+test('doAppendTurn trims whitespace from role', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'trimmed role test',
+    role: 'user ',  // trailing space
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true, 'role with trailing space should be accepted after trim');
+});
+
+// Fix 3: invalid role error lists accepted values
+test('doAppendTurn invalid role error message lists accepted values', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'bot',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /accepted values/i);
+  assert.match(result.error, /user.*assistant.*system/i);
+});
+
+// Fix 4: schema_version:1 on all error returns
+test('doAppendTurn error returns include schema_version:1', async () => {
+  const vault = await makeTempVault();
+
+  // invalid project
+  const r1 = await doAppendTurn({ project: '../bad', content: 'c', role: 'user' }, { vaultDir: vault });
+  assert.equal(r1.schema_version, 1, 'invalid project error should have schema_version:1');
+
+  // missing content
+  const r2 = await doAppendTurn({ project: 'p', content: '', role: 'user' }, { vaultDir: vault });
+  assert.equal(r2.schema_version, 1, 'missing content error should have schema_version:1');
+
+  // invalid role
+  const r3 = await doAppendTurn({ project: 'p', content: 'c', role: 'bot' }, { vaultDir: vault });
+  assert.equal(r3.schema_version, 1, 'invalid role error should have schema_version:1');
+
+  // missing UM_VAULT_DIR
+  const r4 = await doAppendTurn({ project: 'p', content: 'c', role: 'user' }, { vaultDir: undefined });
+  assert.equal(r4.schema_version, 1, 'missing vaultDir error should have schema_version:1');
+});

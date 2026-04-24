@@ -10,23 +10,25 @@ export async function doAppendTurn(args, ctx = {}) {
   const vaultDir = ctx.vaultDir ?? process.env.UM_VAULT_DIR;
   const clock = ctx.clock ?? (() => new Date());
 
-  if (!vaultDir) return { ok: false, error: 'UM_VAULT_DIR not set' };
+  if (!vaultDir) return { schema_version: 1, ok: false, error: 'UM_VAULT_DIR not set' };
 
-  const { project, content, role, timestamp, conversation_id } = args;
+  const { project, content, timestamp, conversation_id } = args;
+  // Trim whitespace from role before validation
+  const role = typeof args.role === 'string' ? args.role.trim() : args.role;
   if (!project || typeof project !== 'string' || !PROJECT_SLUG_RE.test(project)) {
-    return { ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
+    return { schema_version: 1, ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
   }
   if (!content || typeof content !== 'string') {
-    return { ok: false, error: 'content is required and must be a string' };
+    return { schema_version: 1, ok: false, error: 'content is required and must be a string' };
   }
   if (Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES) {
-    return { ok: false, error: `content exceeds ${MAX_CONTENT_BYTES} bytes` };
+    return { schema_version: 1, ok: false, error: `content exceeds ${MAX_CONTENT_BYTES} bytes` };
   }
-  if (!role) return { ok: false, error: 'role is required' };
-  if (!ROLES.has(role)) return { ok: false, error: `invalid role: ${role}` };
+  if (!role) return { schema_version: 1, ok: false, error: 'role is required' };
+  if (!ROLES.has(role)) return { schema_version: 1, ok: false, error: 'invalid role: ' + JSON.stringify(role) + '; accepted values: user, assistant, system' };
 
   const now = timestamp ? new Date(timestamp) : clock();
-  if (Number.isNaN(now.getTime())) return { ok: false, error: 'invalid timestamp' };
+  if (Number.isNaN(now.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp' };
 
   const date = now.toISOString().slice(0, 10);
   const relPath = `captures/${project}/raw/${date}.md`;
@@ -58,7 +60,7 @@ export async function doAppendTurn(args, ctx = {}) {
   try {
     release = await lockAcquire(lockfilePath, ctx);
   } catch (err) {
-    return { ok: false, error: `lock_acquire_failed: ${err.code ?? err.message}` };
+    return { schema_version: 1, ok: false, error: `lock_acquire_failed: ${err.code ?? err.message}` };
   }
   try {
     await fs.appendFile(absPath, payload);
