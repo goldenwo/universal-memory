@@ -25,6 +25,7 @@ const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, 'server/config/checkpoint.json'
 const DEFAULT_SUMMARIZE_PROMPT_PATH = path.join(REPO_ROOT, 'server/config/prompts/summarize.txt');
 
 const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
+const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
 
 /**
  * Run a full session-end checkpoint for a project.
@@ -46,8 +47,8 @@ const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
 export async function doCheckpoint(args, ctx = {}) {
   const {
     project,
-    since = null,             // v0.5: accepted but reads all captures
-    until = null,             // v0.5: accepted but reads all captures
+    since = null,
+    until = null,
     skip_state_merge = false,
   } = args;
 
@@ -117,14 +118,31 @@ export async function doCheckpoint(args, ctx = {}) {
       return { schema_version: 1, ok: false, error: 'cost cap hit' };
     }
 
-    // Read raw captures (v0.5: read all; since/until accepted for future use)
+    // Read raw captures — filter by since/until window, enforce MAX_TRANSCRIPT_BYTES cap.
     // Lock each raw file's sibling .lock before reading to ensure consistency
     // with concurrent writers (stop.sh + append-turn.mjs) that hold the same
     // <date>.md.lock path via proper-lockfile / perl flock.
     const rawDir = path.join(vaultDir, 'captures', project, 'raw');
     const rawFiles = await fs.readdir(rawDir).catch(() => []);
+
+    // Parse since/until into date strings (YYYY-MM-DD) for filename comparison
+    const sinceDate = since ? since.slice(0, 10) : null;
+    const untilDate = until ? until.slice(0, 10) : new Date().toISOString().slice(0, 10);
+
+    // Filter: only .md files whose YYYY-MM-DD prefix falls within [sinceDate, untilDate]
+    const filteredFiles = rawFiles
+      .filter(f => f.endsWith('.md'))
+      .filter(f => {
+        const fileDate = f.slice(0, 10); // YYYY-MM-DD prefix
+        if (sinceDate && fileDate < sinceDate) return false;
+        if (untilDate && fileDate > untilDate) return false;
+        return true;
+      })
+      .sort();
+
     let transcript = '';
-    for (const f of rawFiles.filter(f => f.endsWith('.md')).sort()) {
+    let transcriptTruncated = false;
+    for (const f of filteredFiles) {
       const rawFilePath = path.join(rawDir, f);
       const lockPath = rawFilePath + '.lock';
       // Ensure the .lock file exists (proper-lockfile requires the file to exist)
@@ -132,10 +150,18 @@ export async function doCheckpoint(args, ctx = {}) {
       let release;
       try {
         release = await lockfile.lock(lockPath);
-        transcript += await fs.readFile(rawFilePath, 'utf8') + '\n\n';
+        const chunk = await fs.readFile(rawFilePath, 'utf8') + '\n\n';
+        if (Buffer.byteLength(transcript + chunk, 'utf8') > MAX_TRANSCRIPT_BYTES) {
+          transcriptTruncated = true;
+          break;
+        }
+        transcript += chunk;
       } finally {
         if (release) await release().catch(() => {});
       }
+    }
+    if (transcriptTruncated) {
+      transcript += `\n\n[transcript truncated at ${MAX_TRANSCRIPT_BYTES} bytes; use since=<date> to window the checkpoint]\n`;
     }
 
     // Summarize (pass systemPrompt so the curated UM format is used, not generic output)
@@ -152,8 +178,16 @@ export async function doCheckpoint(args, ctx = {}) {
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
     await fs.writeFile(absSummaryPath, summary);
 
-    // Reindex
-    await reindexFn({ path: summaryPath, project });
+    // Reindex (non-fatal — orphan summary is recoverable; state.md must still update)
+    let reindexFailed = false;
+    let reindexError;
+    try {
+      await reindexFn({ path: summaryPath, project });
+    } catch (err) {
+      reindexFailed = true;
+      reindexError = err.message;
+      console.warn(`[checkpoint] reindex failed for project=${project}: ${err.message}`);
+    }
 
     // Optionally merge into state.md
     let stateUpdated = false;
@@ -180,7 +214,7 @@ export async function doCheckpoint(args, ctx = {}) {
       await fs.writeFile(costPath, String(daySpent + costUsd));
     } catch {}
 
-    return {
+    const result = {
       schema_version: 1,
       ok: true,
       summary_id: summaryId,
@@ -192,6 +226,12 @@ export async function doCheckpoint(args, ctx = {}) {
       tokens_out: tokensOut,
       duration_ms: Date.now() - t0,
     };
+    if (transcriptTruncated) result.truncated = true;
+    if (reindexFailed) {
+      result.reindex_failed = true;
+      result.reindex_error = reindexError;
+    }
+    return result;
   } finally {
     await fs.rmdir(lockdir).catch(() => {});
   }

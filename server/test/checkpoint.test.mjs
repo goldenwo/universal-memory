@@ -318,30 +318,38 @@ test('checkpoint: skip_state_merge=true produces summary but skips state.md', as
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
-// 8. since/until arg: pass explicit window; for v0.5 all captures read (confirmed simplification)
-test('checkpoint: since/until args accepted, checkpoint completes successfully', async () => {
+// 8. since/until filter: 3 files (day1, day2, day3); since=day2 reads only day2+day3
+test('checkpoint: since/until filter reads only files within window', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session A\nContent A.');
-  await seedCapture(vaultDir, 'myproj', '2026-01-02T00.md', '# Session B\nContent B.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session A\nContent A only.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-02.md', '# Session B\nContent B only.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-03.md', '# Session C\nContent C only.');
+
+  let capturedTranscript = '';
+  const spySummarizeFn = async (transcript, ctx) => {
+    capturedTranscript = transcript;
+    return { summary: 'Summary.', costUsd: 0.001, tokensIn: 50, tokensOut: 20 };
+  };
 
   const result = await doCheckpoint(
     {
       project: 'myproj',
       since: '2026-01-02T00:00:00Z',
-      until: '2026-01-02T23:59:59Z',
+      until: '2026-01-03T23:59:59Z',
     },
     {
       config: BASE_CONFIG,
       vaultDir,
-      summarizeFn: makeSummarizeFn(),
+      summarizeFn: spySummarizeFn,
       updateStateFn: makeUpdateStateFn(),
       reindexFn: async () => {},
     },
   );
 
   assert.equal(result.ok, true);
-  assert.ok(result.summary_id, 'summary_id should exist');
-  assert.ok(result.summary_path, 'summary_path should exist');
+  assert.ok(!capturedTranscript.includes('Content A only'), 'day1 should be filtered out by since');
+  assert.ok(capturedTranscript.includes('Content B only'), 'day2 should be included');
+  assert.ok(capturedTranscript.includes('Content C only'), 'day3 should be included');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -552,4 +560,63 @@ test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint', asy
   assert.equal(res.statusCode, 200);
   assert.equal(reindexCalls.length, 1, 'reindexFn should be forwarded and called');
   assert.equal(reindexCalls[0].project, 'rest-reindex-proj');
+});
+
+// Fix 1 (DoS cap): MAX_TRANSCRIPT_BYTES — fixture exceeds 1MB; result.truncated=true
+test('checkpoint: MAX_TRANSCRIPT_BYTES cap sets truncated:true in result', async () => {
+  const vaultDir = await makeVault();
+  // Write a file larger than 1MB (1.1MB of content)
+  const bigContent = 'x'.repeat(1100 * 1024);
+  await seedCapture(vaultDir, 'bigproj', '2026-01-01.md', bigContent);
+
+  const result = await doCheckpoint(
+    { project: 'bigproj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true, 'truncated should be true when transcript exceeds cap');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Fix 2: reindexFn throws — ok:true, reindex_failed:true, state_updated:true
+test('checkpoint: reindexFn failure returns ok:true with reindex_failed:true and state_updated:true', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome content.');
+
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+
+  let result;
+  try {
+    result = await doCheckpoint(
+      { project: 'myproj' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => { throw new Error('mem0 unavailable'); },
+      },
+    );
+  } finally {
+    console.warn = origWarn;
+  }
+
+  assert.equal(result.ok, true, 'ok should remain true despite reindex failure');
+  assert.equal(result.reindex_failed, true, 'reindex_failed should be true');
+  assert.ok(typeof result.reindex_error === 'string', 'reindex_error should be a string');
+  assert.ok(result.reindex_error.includes('mem0 unavailable'), 'reindex_error should contain the error message');
+  assert.equal(result.state_updated, true, 'state_updated should be true — pipeline must continue');
+  assert.ok(warnings.some(w => w.includes('reindex failed')), 'should have emitted a warning');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
 });
