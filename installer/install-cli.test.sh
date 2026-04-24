@@ -373,6 +373,35 @@ else
   pass "T9: --no-path: .bashrc clean"
 fi
 
+# ─── T10: unknown flag → exit 2 (round-9 fix: was silently continuing) ────────
+echo ""
+echo "=== T10: unknown flag fails with exit 2 ==="
+T10=$(mktemp_in_t "$TMPROOT" "t10.XXXXXX")
+T10_HOME="$T10/home"
+mkdir -p "$T10_HOME"
+make_fakepython3 "$T10/bin"
+touch "$T10_HOME/.bashrc"
+_BASH_BIN10="$(which bash)"
+T10_EXIT=0
+T10_OUT=$(env PATH="$T10/bin:$PATH" HOME="$T10_HOME" \
+  "$_BASH_BIN10" "$INSTALL_CLI" --yes --typoFlag 2>&1) || T10_EXIT=$?
+assert_exit_nonzero "T10: unknown flag exits non-zero" "$T10_EXIT"
+assert_contains "T10: unknown flag error message" "$T10_OUT" "unknown flag"
+
+# ─── T11: --um-install-dir with no value → fails (round-9 fix: was silently empty) ──
+echo ""
+echo "=== T11: --um-install-dir requires a value ==="
+T11=$(mktemp_in_t "$TMPROOT" "t11.XXXXXX")
+T11_HOME="$T11/home"
+mkdir -p "$T11_HOME"
+make_fakepython3 "$T11/bin"
+touch "$T11_HOME/.bashrc"
+_BASH_BIN11="$(which bash)"
+T11_EXIT=0
+T11_OUT=$(env PATH="$T11/bin:$PATH" HOME="$T11_HOME" \
+  "$_BASH_BIN11" "$INSTALL_CLI" --yes --um-install-dir 2>&1) || T11_EXIT=$?
+assert_exit_nonzero "T11: --um-install-dir with no value exits non-zero" "$T11_EXIT"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

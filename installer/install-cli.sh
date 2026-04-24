@@ -34,8 +34,8 @@ while [[ $# -gt 0 ]]; do
     --yes|-y) YES=1 ;;
     --no-path) NO_PATH=1 ;;
     --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
-    --um-install-dir) DATA_DIR="$2"; shift ;;
-    --vault-dir) UM_VAULT_DIR="$2"; shift ;;
+    --um-install-dir) DATA_DIR="${2:?--um-install-dir requires a path}"; shift ;;
+    --vault-dir) UM_VAULT_DIR="${2:?--vault-dir requires a path}"; shift ;;
     --help|-h)
       cat <<EOF
 Usage: install-cli.sh [--yes] [--no-path] [--server-url URL]
@@ -49,7 +49,7 @@ Installs the 'um' CLI dispatcher and libraries to:
 EOF
       exit 0
       ;;
-    *) warn "Unknown flag: $1" ;;
+    *) echo "[install-cli] unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
