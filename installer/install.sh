@@ -11,7 +11,7 @@
 #   --plugin-codex  Install the Codex CLI plugin (~/.codex/plugins/)
 #   --cli           Install the um CLI tool
 #   --all           Install all detected components (default when no flags + non-TTY)
-#   --interactive   Launch the interactive wizard (stub: falls back to --all)
+#   --interactive   Launch the interactive wizard
 #   --yes / -y      Non-interactive; accept defaults
 #   --server-url U  Pass --server-url to sub-installers
 #   --skip-docker   Pass --skip-docker to server installer
@@ -44,8 +44,8 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)        ASSUME_YES=1; PASSTHROUGH_ARGS+=("$1") ;;
     --interactive)   FORCE_WIZARD=1 ;;
     --server-url)    UM_SERVER_URL="$2"; PASSTHROUGH_ARGS+=("$1" "$2"); shift ;;
-    --skip-docker)   SKIP_DOCKER=1 ;;
-    --no-path)       NO_PATH_MODIFY=1 ;;
+    --skip-docker)   SKIP_DOCKER=1; PASSTHROUGH_ARGS+=("$1") ;;
+    --no-path)       NO_PATH_MODIFY=1; PASSTHROUGH_ARGS+=("$1") ;;
     --dry-run)       DRY_RUN=1 ;;
     -h|--help)       _show_help=1 ;;
     *)               PASSTHROUGH_ARGS+=("$1") ;;
@@ -68,7 +68,7 @@ Component flags:
 
 Behaviour flags:
   --yes, -y         Non-interactive; accept defaults
-  --interactive     Launch the setup wizard (coming soon)
+  --interactive     Launch the setup wizard
   --server-url URL  Override the server URL passed to sub-installers
   --skip-docker     Skip Docker checks (passed to server installer)
   --no-path         Skip PATH modification (passed to CLI installer)

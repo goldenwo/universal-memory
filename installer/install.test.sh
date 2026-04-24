@@ -211,26 +211,28 @@ if [ "$TF12_EXIT" -eq 0 ]; then pass "T-FLAGS-12: exit 0"; else fail "T-FLAGS-12
 if echo "$TF12_OUT" | grep -q "delegate: installer/install-cli.sh.*--server-url"; then pass "T-FLAGS-12: --server-url in delegation args"; else fail "T-FLAGS-12: --server-url not propagated (got: $TF12_OUT)"; fi
 rm -rf "$TF12"
 
-# ─── T-FLAGS-13: --skip-docker sets flag (no crash) ─────────────────────────
+# ─── T-FLAGS-13: --skip-docker propagates to delegation args ─────────────────
 echo ""
-echo "=== T-FLAGS-13: --skip-docker accepted without crash ==="
+echo "=== T-FLAGS-13: --skip-docker propagates to delegation ==="
 TF13=$(mktemp -d)
 make_stubs "$TF13/bin"
 TF13_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF13/repo" \
   env PATH="$TF13/bin:/usr/bin:/bin" bash "$INSTALLER" --server --skip-docker 2>&1) && TF13_EXIT=0 || TF13_EXIT=$?
 if [ "$TF13_EXIT" -eq 0 ]; then pass "T-FLAGS-13: exit 0 with --skip-docker"; else fail "T-FLAGS-13: exit $TF13_EXIT (out: $TF13_OUT)"; fi
 if echo "$TF13_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-13: server still delegated with --skip-docker"; else fail "T-FLAGS-13: server not delegated (got: $TF13_OUT)"; fi
+if echo "$TF13_OUT" | grep -qE "delegate: server/install.sh.*--skip-docker|--skip-docker.*delegate: server/install.sh"; then pass "T-FLAGS-13: --skip-docker propagates in delegation args"; else fail "T-FLAGS-13: --skip-docker not in delegation args (got: $TF13_OUT)"; fi
 rm -rf "$TF13"
 
-# ─── T-FLAGS-14: --no-path accepted without crash ────────────────────────────
+# ─── T-FLAGS-14: --no-path propagates to delegation args ─────────────────────
 echo ""
-echo "=== T-FLAGS-14: --no-path accepted without crash ==="
+echo "=== T-FLAGS-14: --no-path propagates to delegation ==="
 TF14=$(mktemp -d)
 make_stubs "$TF14/bin"
 TF14_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF14/repo" \
   env PATH="$TF14/bin:/usr/bin:/bin" bash "$INSTALLER" --cli --no-path 2>&1) && TF14_EXIT=0 || TF14_EXIT=$?
 if [ "$TF14_EXIT" -eq 0 ]; then pass "T-FLAGS-14: exit 0 with --no-path"; else fail "T-FLAGS-14: exit $TF14_EXIT (out: $TF14_OUT)"; fi
 if echo "$TF14_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-14: cli still delegated with --no-path"; else fail "T-FLAGS-14: cli not delegated (got: $TF14_OUT)"; fi
+if echo "$TF14_OUT" | grep -qE "delegate: installer/install-cli.sh.*--no-path|--no-path.*delegate: installer/install-cli.sh"; then pass "T-FLAGS-14: --no-path propagates in delegation args"; else fail "T-FLAGS-14: --no-path not in delegation args (got: $TF14_OUT)"; fi
 rm -rf "$TF14"
 
 # ─── T-FLAGS-15: --interactive launches wizard (header + detect env) ─────────
