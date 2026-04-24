@@ -371,10 +371,10 @@ Distinct from `memory_add` (mem0 fact extraction, no project structure) and `mem
 | Arg | Required | Default | Purpose |
 |-----|----------|---------|---------|
 | `project` | yes | — | Project slug (`^[a-zA-Z0-9._-]+$`) |
-| `content` | yes | — | Turn text (max 8192 bytes, UTF-8) |
+| `content` | yes | — | Turn text (max 8192 bytes UTF-8; server returns an error if exceeded — split long turns or truncate) |
 | `role` | yes | — | `user` / `assistant` / `system` |
 | `timestamp` | no | now-UTC | ISO 8601 timestamp |
-| `conversation_id` | no | — | Optional grouping hint (max 256 bytes, UTF-8) |
+| `conversation_id` | no | — | Optional grouping hint (max 256 bytes, printable ASCII only — no newlines, CR, or control chars) |
 
 > Note: raw-capture files contain heterogeneous headers — Claude Code's stop.sh
 > writes `## <ISO>\n` (transcript-only, no role); `memory_append_turn` writes
