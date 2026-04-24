@@ -521,12 +521,14 @@ test('POST /api/checkpoint 403 when writes disabled → ok:false, statusCode 403
   assert.equal(res.jsonBody.ok, false);
 });
 
-// Fix 1: reindexFn wiring — doCheckpoint must call reindexFn with {path, project}
-test('checkpoint: reindexFn spy receives {path, project} args (Fix 1 integration-bug regression)', async () => {
+// Fix 2 (round-9): reindexFn must receive a STRING path, not {path, project} object.
+// reindexDoc(relPath) in mem0-mcp-http.mjs takes a string; passing an object silently coerced
+// to "[object Object]" and caused every checkpoint reindex to fail silently.
+test('checkpoint: reindexFn receives a string path (not object) — round-9 blocker fix', async () => {
   const vaultDir = await makeVault();
   await seedCapture(vaultDir, 'reindex-proj', '2026-01-01T00.md', '# Session\nReindex wiring test.');
 
-  const reindexCalls = [];
+  const reindexArgs = [];
   const result = await doCheckpoint(
     { project: 'reindex-proj' },
     {
@@ -534,31 +536,32 @@ test('checkpoint: reindexFn spy receives {path, project} args (Fix 1 integration
       vaultDir,
       summarizeFn: makeSummarizeFn(),
       updateStateFn: makeUpdateStateFn(),
-      reindexFn: async (args) => { reindexCalls.push(args); },
+      reindexFn: async (arg) => { reindexArgs.push(arg); },
     },
   );
 
   assert.equal(result.ok, true, 'checkpoint should succeed');
-  assert.equal(reindexCalls.length, 1, 'reindexFn must be called exactly once');
-  const call = reindexCalls[0];
-  assert.ok(typeof call.path === 'string' && call.path.startsWith('sessions/'),
-    `reindexFn path should start with sessions/, got: ${call.path}`);
-  assert.equal(call.project, 'reindex-proj',
-    `reindexFn project should be 'reindex-proj', got: ${call.project}`);
+  assert.equal(reindexArgs.length, 1, 'reindexFn must be called exactly once');
+  const arg = reindexArgs[0];
+  assert.equal(typeof arg, 'string',
+    `reindexFn must receive a string, got: ${typeof arg} — ${JSON.stringify(arg)}`);
+  assert.ok(arg.startsWith('sessions/'),
+    `reindexFn path should start with sessions/, got: ${arg}`);
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
 // Fix 1: handleCheckpointRequest wires reindexFn to doCheckpoint (not the no-op default)
-test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint', async () => {
+// Fix 2 (round-9): reindexFn receives a string path (not object); assert typeof === 'string'
+test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint (string arg)', async () => {
   const reindexCalls = [];
   const req = { body: { project: 'rest-reindex-proj' } };
   const res = mockRes();
   await handleCheckpointRequest(req, res, {
     writesEnabled: true,
     _doCheckpoint: async (args, ctx) => {
-      // Invoke the injected reindexFn so the test can spy on it
-      await ctx.reindexFn({ path: `sessions/${args.project}/test.md`, project: args.project });
+      // Invoke the injected reindexFn with a string path (matching real doCheckpoint behaviour)
+      await ctx.reindexFn(`sessions/${args.project}/test.md`);
       return {
         schema_version: 1, ok: true, summary_id: 'spy-id',
         summary_path: `sessions/${args.project}/test.md`,
@@ -566,12 +569,13 @@ test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint', asy
         cost_usd: 0, tokens_in: 0, tokens_out: 0, duration_ms: 1,
       };
     },
-    _reindexFn: async (args) => { reindexCalls.push(args); },
+    _reindexFn: async (arg) => { reindexCalls.push(arg); },
   });
 
   assert.equal(res.statusCode, 200);
   assert.equal(reindexCalls.length, 1, 'reindexFn should be forwarded and called');
-  assert.equal(reindexCalls[0].project, 'rest-reindex-proj');
+  assert.equal(typeof reindexCalls[0], 'string', 'reindexFn must receive a string');
+  assert.ok(reindexCalls[0].includes('rest-reindex-proj'), `path must mention project, got: ${reindexCalls[0]}`);
 });
 
 // Fix 1 (DoS cap): MAX_TRANSCRIPT_BYTES — fixture exceeds 1MB; result.truncated=true
@@ -629,6 +633,60 @@ test('checkpoint: reindexFn failure returns ok:true with reindex_failed:true and
   assert.ok(result.reindex_error.includes('mem0 unavailable'), 'reindex_error should contain the error message');
   assert.equal(result.state_updated, true, 'state_updated should be true — pipeline must continue');
   assert.ok(warnings.some(w => w.includes('reindex failed')), 'should have emitted a warning');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Round-9 blocker fix: default config path must resolve relative to lib dir, not REPO_ROOT.
+// Omit ctx.config so doCheckpoint reads DEFAULT_CONFIG_PATH from disk.
+// This test catches the 'new URL("../../", import.meta.url)' = "/" regression in Docker.
+test('checkpoint: default config path resolves correctly (no ctx.config — Docker-safe path fix)', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'defaultcfg-proj', '2026-01-01T00.md', '# Session\nDefault config test.');
+
+  // Do NOT pass ctx.config — doCheckpoint must read the real checkpoint.json from disk
+  const result = await doCheckpoint(
+    { project: 'defaultcfg-proj' },
+    {
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+      // ctx.systemPrompt is also omitted — doCheckpoint must resolve DEFAULT_SUMMARIZE_PROMPT_PATH
+      systemPrompt: 'Test prompt (bypass real file load)',
+    },
+  );
+
+  // If the path was broken (resolving to /server/config/checkpoint.json), it would throw ENOENT
+  // before reaching summarizeFn. A successful (ok:true) result proves the path is correct.
+  assert.equal(result.ok, true,
+    `Expected ok:true from real config load; got: ${JSON.stringify(result)}`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Round-9 blocker fix: default summarize-prompt path must resolve relative to lib dir.
+// Omit ctx.systemPrompt so doCheckpoint reads DEFAULT_SUMMARIZE_PROMPT_PATH from disk.
+test('checkpoint: default summarize prompt path resolves correctly (no ctx.systemPrompt — Docker-safe)', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'defaultprompt-proj', '2026-01-01T00.md', '# Session\nDefault prompt test.');
+
+  // Omit ctx.systemPrompt — doCheckpoint must find the file at server/config/prompts/summarize.txt
+  const result = await doCheckpoint(
+    { project: 'defaultprompt-proj' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+      // no systemPrompt override
+    },
+  );
+
+  // If DEFAULT_SUMMARIZE_PROMPT_PATH resolved wrongly, result would be {ok:false, error:'summarize prompt file missing'}
+  assert.equal(result.ok, true,
+    `Expected ok:true from real prompt load; got: ${JSON.stringify(result)}`);
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });

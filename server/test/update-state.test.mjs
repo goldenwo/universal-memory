@@ -29,6 +29,29 @@ for (const file of fixtureFiles) {
   });
 }
 
+// Round-9 blocker fix: default prompt path must resolve relative to lib dir (Docker-safe).
+// Omit ctx.promptDir so updateState reads the real update-state.txt from disk.
+// Catches the 'new URL("../../", import.meta.url)' = "/" regression in Docker.
+test('updateState: default prompt path resolves correctly (no ctx.promptDir — Docker-safe path fix)', async () => {
+  const result = await updateState(
+    { oldStateMd: '', newSummary: 'Test summary for default path.', projectId: 'docker-path-test' },
+    {
+      summarizeFn: async () => ({
+        summary: 'merged',
+        costUsd: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+      }),
+      // no promptDir override — must find server/config/prompts/update-state.txt via LIB_DIR
+    },
+  );
+  // If DEFAULT_PROMPT_PATH resolved wrongly, result would be {ok:false, error:'update-state prompt file missing'}
+  assert.ok(result.mergedMd !== undefined,
+    `Expected mergedMd in result; got: ${JSON.stringify(result)}`);
+  assert.ok(!result.ok === false || result.mergedMd,
+    `Expected ok or mergedMd from real prompt load; got: ${JSON.stringify(result)}`);
+});
+
 // Fix 6 (round-4): ENOENT path — missing promptDir returns ok:false with sanitized message
 test('updateState returns ok:false with sanitized message when promptDir is missing (F8 parity)', async () => {
   const result = await updateState(
