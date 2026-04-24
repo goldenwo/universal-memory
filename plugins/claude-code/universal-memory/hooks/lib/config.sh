@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # hooks/lib/config.sh — sourced by bin/um dispatcher to load KEY=value config files.
 # Contract per docs/um-cli.md: env > repo-local > user-global; values are literal bytes;
 # CRLF globally stripped; invalid lines log-and-skip.

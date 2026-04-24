@@ -1,0 +1,11 @@
+# Shell scripts must be LF on all platforms — CRLF breaks bash on Linux/macOS.
+# This prevents the failure seen when stop.sh / continuity.sh chain to a
+# CRLF-stored script and the Linux CI runner reports:
+#   $'\r': command not found
+*.sh text eol=lf
+
+# Plugin launcher scripts under plugins/**/bin/ have no .sh extension but are
+# bash scripts — force LF explicitly so they stay executable on Linux/macOS.
+plugins/**/bin/um text eol=lf
+plugins/**/bin/um-* text eol=lf
+plugins/**/hooks/* text eol=lf

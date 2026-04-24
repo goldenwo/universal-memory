@@ -23,7 +23,7 @@ Foundations shipped alongside v0.1.0:
 
 The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
 
-### v0.5 — cross-env first-class (active, ~3 weeks)
+### v0.5 (v0.5.0-alpha) — cross-env first-class (active, ~3 weeks)
 Close the gap where Claude.ai / ChatGPT Desktop / Codex conversations stay ephemeral: ship `memory_append_turn` (raw-capture writes from any MCP client) + `memory_checkpoint` server-side body (non-CC surfaces can trigger session-summary + state.md refresh) + modular install flags with an interactive wizard for first-time users + I4 summarizer-prompt fix (silent quality regression from v0.4 review). After v0.5, no surface is second-class for capture.
 
 **Closes:** #5 (server-side memory_checkpoint), #6 (memory_append_turn raw-capture bridge)

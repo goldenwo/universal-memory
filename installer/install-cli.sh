@@ -27,14 +27,25 @@ warn()  { printf '\033[1;33m[install-cli]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install-cli]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- flags ---
-YES=0
-for arg in "$@"; do
-  case "$arg" in
-    --yes|-y) YES=1 ;;
+# NOTE: --yes/-y and --vault-dir are accepted for parent-installer passthrough
+# (installer/install.sh --cli) but this script has no confirmation prompts and
+# no vault-relevant behavior, so both are intentional no-ops here. We still
+# validate --vault-dir has an arg so malformed invocations fail loudly.
+NO_PATH=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --yes|-y) ;;
+    --no-path) NO_PATH=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
+    --um-install-dir) DATA_DIR="${2:?--um-install-dir requires a path}"; shift ;;
+    --vault-dir) : "${2:?--vault-dir requires a path}"; shift ;;
     --help|-h)
       cat <<EOF
-Usage: install-cli.sh [--yes]
-  --yes, -y    Non-interactive install (skip confirmation prompts)
+Usage: install-cli.sh [--yes] [--no-path] [--server-url URL]
+  --yes, -y          Non-interactive install (skip confirmation prompts)
+  --no-path          Skip PATH/shell-rc modification
+  --server-url URL   Override UM server URL written to shell profile
 
 Installs the 'um' CLI dispatcher and libraries to:
   \$HOME/.local/share/um/{lib,cli}
@@ -42,8 +53,17 @@ Installs the 'um' CLI dispatcher and libraries to:
 EOF
       exit 0
       ;;
+    *) echo "[install-cli] unknown flag: $1" >&2; exit 2 ;;
   esac
+  shift
 done
+
+# --- dry-run guard ---
+# When invoked by the parent installer with --dry-run, print intent and exit.
+if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+  info "[dry-run] would install um CLI (libs, dispatcher, shell profile block)"
+  exit 0
+fi
 
 # --- preflight: python3 ---
 if ! command -v python3 >/dev/null 2>&1; then
@@ -59,7 +79,7 @@ fi
 
 # --- target layout ---
 BIN_DIR="${HOME}/.local/bin"
-DATA_DIR="${HOME}/.local/share/um"
+DATA_DIR="${DATA_DIR:-${HOME}/.local/share/um}"
 LIB_DIR="${UM_LIB_DIR:-$DATA_DIR/lib}"
 CLI_DIR="${UM_CLI_DIR:-$DATA_DIR/cli}"
 
@@ -120,33 +140,37 @@ fi
 # --- write marker block to shell rc files ---
 source "$REPO_ROOT/installer/lib/marker-block.sh"
 
-_RC_UPDATED=0
-_sh="${SHELL:-}"
-for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
-  # Only write if the rc file already exists OR matches the user's default shell.
-  # Use _sh (default-empty) instead of ${SHELL##*/} to avoid "unbound variable"
-  # abort under set -u when SHELL is unset (cron, systemd-run, minimal containers).
-  case "$rc" in
-    "${HOME}/.bashrc")
-      [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || continue
-      ;;
-    "${HOME}/.zshrc")
-      [ -f "$rc" ] || [ "${_sh##*/}" = "zsh" ] || continue
-      ;;
-  esac
-  touch "$rc"
-  # key + summarizer empty — leave env-defaults (env-sourced contract)
-  _write_marker_block "$rc" "" ""
-  ok "Shell profile updated: $rc"
-  _RC_UPDATED=$((_RC_UPDATED + 1))
-done
+if [ "${NO_PATH:-0}" -eq 1 ]; then
+  info "--no-path set: skipping shell profile modification."
+else
+  _RC_UPDATED=0
+  _sh="${SHELL:-}"
+  for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+    # Only write if the rc file already exists OR matches the user's default shell.
+    # Use _sh (default-empty) instead of ${SHELL##*/} to avoid "unbound variable"
+    # abort under set -u when SHELL is unset (cron, systemd-run, minimal containers).
+    case "$rc" in
+      "${HOME}/.bashrc")
+        [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || continue
+        ;;
+      "${HOME}/.zshrc")
+        [ -f "$rc" ] || [ "${_sh##*/}" = "zsh" ] || continue
+        ;;
+    esac
+    touch "$rc"
+    # key + summarizer empty — leave env-defaults (env-sourced contract)
+    _write_marker_block "$rc" "" ""
+    ok "Shell profile updated: $rc"
+    _RC_UPDATED=$((_RC_UPDATED + 1))
+  done
 
-if [ "$_RC_UPDATED" -eq 0 ]; then
-  warn "Could not detect shell rc file — add the following to your shell profile manually:"
-  warn "  export UM_SERVER_URL='${UM_SERVER_URL:-http://localhost:6335}'"
-  warn "  export UM_LIB_DIR='$LIB_DIR'"
-  warn "  export UM_CLI_DIR='$CLI_DIR'"
-  warn "  case \":\$PATH:\" in *\":\$HOME/.local/bin:\"*) ;; *) export PATH=\"\$HOME/.local/bin:\$PATH\" ;; esac"
+  if [ "$_RC_UPDATED" -eq 0 ]; then
+    warn "Could not detect shell rc file — add the following to your shell profile manually:"
+    warn "  export UM_SERVER_URL='${UM_SERVER_URL:-http://localhost:6335}'"
+    warn "  export UM_LIB_DIR='$LIB_DIR'"
+    warn "  export UM_CLI_DIR='$CLI_DIR'"
+    warn "  case \":\$PATH:\" in *\":\$HOME/.local/bin:\"*) ;; *) export PATH=\"\$HOME/.local/bin:\$PATH\" ;; esac"
+  fi
 fi
 
 echo ""

@@ -1,5 +1,5 @@
 #!/bin/bash
-# stop.sh — append-only raw capture. No LLM, no state update. <50ms.
+# stop.sh — append-only raw capture. No LLM, no state update. ~200ms (perl spawn).
 
 # Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
 # claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
@@ -19,11 +19,40 @@ TIME=$(date -u +%H:%M:%SZ)
 RAW_DIR="$VAULT/captures/$PROJECT/raw"
 mkdir -p "$RAW_DIR"
 
-{
-    echo "## $TIME"
-    echo ""
-    echo "$TRANSCRIPT" | head -c 10000
-    echo ""
-} >> "$RAW_DIR/$DATE.md"
+RAW_FILE="$RAW_DIR/$DATE.md"
+LOCK_FILE="$RAW_FILE.lock"
+
+# Write truncated transcript to a temp file so perl can read it without
+# conflicting with the heredoc that provides perl's program source.
+_UM_TMP=$(mktemp)
+chmod 600 "$_UM_TMP"   # transcript may contain secrets/PII — restrict before writing
+trap 'rm -f "$_UM_TMP"' EXIT
+printf '%s' "$TRANSCRIPT" | head -c 10000 > "$_UM_TMP"
+
+# Acquire an exclusive advisory lock on the sibling .lock file before appending,
+# so that concurrent stop.sh invocations and the memory_append_turn MCP tool
+# (server/lib/append-turn.mjs) do not interleave writes. Both writers lock the
+# same <date>.md.lock path.
+#
+# The .lock file is deliberately NOT removed after release: cross-process flock(2)
+# coordination requires a stable inode, so deleting and recreating the sibling
+# file would break locking for any writer that has it open. One .lock file per
+# raw-capture day is an intentional, bounded artifact.
+#
+# Uses perl Fcntl::flock (flock(2) syscall) for portability across Linux, macOS,
+# and Windows Git Bash, where the util-linux `flock` binary may be unavailable.
+perl - "$LOCK_FILE" "$RAW_FILE" "$TIME" "$_UM_TMP" <<'PERL_FLOCK'
+    use Fcntl qw(:flock);
+    my ($lock_file, $raw_file, $time, $tmp) = @ARGV;
+    open(my $t_fh,    '<', $tmp)       or die "stop.sh: cannot open tmp $tmp: $!";
+    local $/; my $transcript = <$t_fh>; close($t_fh);
+    open(my $lock_fh, '>>', $lock_file) or die "stop.sh: cannot open lock $lock_file: $!";
+    flock($lock_fh, LOCK_EX)            or die "stop.sh: cannot flock $lock_file: $!";
+    open(my $out_fh,  '>>', $raw_file)  or die "stop.sh: cannot open raw $raw_file: $!";
+    print $out_fh "## $time\n\n$transcript\n\n";
+    close($out_fh);
+    flock($lock_fh, LOCK_UN);
+    close($lock_fh);
+PERL_FLOCK
 
 exit 0

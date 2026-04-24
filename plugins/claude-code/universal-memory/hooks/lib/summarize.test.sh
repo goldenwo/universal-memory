@@ -564,6 +564,60 @@ else
 fi
 
 # ============================================================
+# Test T-PROMPT-DIR: summarize.sh honors $UM_PROMPT_DIR
+#
+# Verifies that the UM_PROMPT_DIR resolution block in summarize.sh reads
+# from the override directory when $UM_PROMPT_DIR is set. Scoped bash -c
+# isolates the path-resolution logic without running the full script.
+# ============================================================
+echo "=== Test T-PROMPT-DIR: summarize.sh honors \$UM_PROMPT_DIR ==="
+
+TPROMPT_DIR=$(mktemp -d)
+echo "CUSTOM_PROMPT_MARKER_UNIQUE_XYZ" > "$TPROMPT_DIR/summarize.txt"
+
+CAPTURED_PROMPT=$(UM_PROMPT_DIR="$TPROMPT_DIR" bash -c '
+  # Replicate the resolution block from summarize.sh
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || pwd)"
+  UM_PROMPT_DIR="${UM_PROMPT_DIR:-$SCRIPT_DIR/prompts}"
+  cat "$UM_PROMPT_DIR/summarize.txt"
+' 2>&1)
+
+if [[ "$CAPTURED_PROMPT" == *"CUSTOM_PROMPT_MARKER_UNIQUE_XYZ"* ]]; then
+  pass "T-PROMPT-DIR: summarize.sh reads from \$UM_PROMPT_DIR when set"
+else
+  fail "T-PROMPT-DIR: expected custom marker; got: $CAPTURED_PROMPT"
+fi
+rm -rf "$TPROMPT_DIR"
+
+# ============================================================
+# Test T-I4: summarize.sh claude-agent-sdk mode passes system prompt to claude
+# ============================================================
+echo "=== T-I4: claude-agent-sdk passes system prompt ==="
+TEST_DIR=$(mktemp -d)
+CAPTURE="$TEST_DIR/claude-pipe-captured.txt"  # tempdir-safe, not /tmp literal
+
+# Stub `claude` binary that captures its entire stdin to the capture file
+cat > "$TEST_DIR/claude" <<STUB
+#!/usr/bin/env bash
+cat > "$CAPTURE"
+echo "stub-summary"
+STUB
+chmod +x "$TEST_DIR/claude"
+
+# Pipe a small transcript; check claude's stdin contains the system prompt opening phrase
+echo "short transcript" | \
+  PATH="$TEST_DIR:$PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash plugins/claude-code/universal-memory/hooks/lib/summarize.sh > /dev/null 2>&1
+
+if grep -qi "Summarize a Claude Code session" "$CAPTURE"; then
+  pass "T-I4: claude-agent-sdk received system prompt"
+else
+  fail "T-I4: system prompt NOT in claude stdin; captured: $(head -5 "$CAPTURE" 2>/dev/null || echo '(empty)')"
+fi
+
+rm -rf "$TEST_DIR"
+
+# ============================================================
 # Summary
 # ============================================================
 

@@ -1,0 +1,12 @@
+{
+  "description": "summarize throws; updateState must fall back: append new summary verbatim with marker, ok: true, llmFailure: true",
+  "old_state_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\nstatus: current\nvalid_from: 2026-04-22T00:00:00Z\nproject: fixture\n---\n\n## Current focus\nWorking on feature X.\n",
+  "new_summary_md": "## Session summary\n\nFixed bug in feature X.",
+  "summarize_stub": {
+    "mode": "throw",
+    "error": "API rate limit exceeded"
+  },
+  "expected_merged_md": "---\nschema_version: 1\ntype: state\nid: state-fixture\nstatus: current\nvalid_from: 2026-04-22T00:00:00Z\nproject: fixture\n---\n\n## Current focus\nWorking on feature X.\n\n\n<!-- llm-merge-failed, appended raw -->\n\n## Session summary\n\nFixed bug in feature X.",
+  "expected_llm_failure": true,
+  "expected_schema_version": 1
+}

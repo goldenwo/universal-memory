@@ -124,7 +124,9 @@ fi
 # ---------------------------------------------------------------------------
 # 5. FIRST PROMPT — vector search
 # ---------------------------------------------------------------------------
-PROJECT=$(project_name)
+# Cross-project search — no project filter on the query. If project-scoped
+# search is wanted here in the future, compute PROJECT=$(project_name) and
+# pass it via the search payload.
 ENDPOINT="${UM_ENDPOINT}"
 
 # Build POST body: use 'query' field (not 'q') for POST /api/search

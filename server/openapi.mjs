@@ -295,6 +295,112 @@ const SCHEMAS = {
     },
   },
 
+  AppendTurnRequest: {
+    type: 'object',
+    required: ['project', 'content', 'role'],
+    additionalProperties: false,
+    properties: {
+      project: {
+        type: 'string',
+        pattern: '^[a-zA-Z0-9._-]+$',
+        description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+      },
+      content: {
+        type: 'string',
+        maxLength: 8192,
+        description: 'Turn content (max 8 192 chars).',
+      },
+      role: {
+        type: 'string',
+        enum: ['user', 'assistant', 'system'],
+        description: 'Speaker role.',
+      },
+      timestamp: {
+        type: 'string',
+        format: 'date-time',
+        description: 'ISO 8601 timestamp. Defaults to server clock when omitted.',
+      },
+      conversation_id: {
+        type: 'string',
+        description: 'Optional conversation identifier stored in the turn header.',
+      },
+    },
+  },
+
+  AppendTurnResponse: {
+    type: 'object',
+    required: ['schema_version', 'ok', 'path', 'appended', 'bytes_written'],
+    properties: {
+      schema_version: { type: 'integer', enum: [1] },
+      ok: { type: 'boolean', enum: [true] },
+      path: { type: 'string', description: 'Vault-relative path written, e.g. captures/<project>/raw/<date>.md' },
+      appended: { type: 'boolean', enum: [true] },
+      bytes_written: { type: 'integer', minimum: 0, description: 'Bytes appended to the file' },
+    },
+  },
+
+  CheckpointRequest: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      project: {
+        type: 'string',
+        pattern: '^[a-zA-Z0-9._-]+$',
+        description: 'Project slug to checkpoint. Must match ^[a-zA-Z0-9._-]+$.',
+      },
+      since: {
+        type: 'string',
+        format: 'date-time',
+        description: 'ISO 8601 start of capture window (inclusive). Defaults to all captures.',
+      },
+      until: {
+        type: 'string',
+        format: 'date-time',
+        description: 'ISO 8601 end of capture window (inclusive). Defaults to now.',
+      },
+      skip_state_merge: {
+        type: 'boolean',
+        default: false,
+        description: 'When true, produce a summary but skip the state.md merge step.',
+      },
+    },
+  },
+
+  CheckpointResponse: {
+    description: 'Result of a successful checkpoint (ok:true) or soft failure (ok:false).',
+    oneOf: [
+      {
+        type: 'object',
+        title: 'CheckpointSuccess',
+        required: ['schema_version', 'ok', 'summary_id', 'summary_path', 'state_updated', 'cost_usd', 'tokens_in', 'tokens_out', 'duration_ms'],
+        properties: {
+          schema_version: { type: 'integer', enum: [1] },
+          ok: { type: 'boolean', enum: [true] },
+          summary_id: { type: 'string', description: 'Filename stem of the written session summary' },
+          summary_path: { type: 'string', description: 'Vault-relative path of the written session summary' },
+          state_updated: { type: 'boolean', description: 'Whether state.md was updated' },
+          state_path: {
+            oneOf: [{ type: 'string' }, { type: 'null' }],
+            description: 'Vault-relative path of state.md, or null when skip_state_merge=true',
+          },
+          cost_usd: { type: 'number', description: 'Total LLM cost in USD for this checkpoint' },
+          tokens_in: { type: 'integer', description: 'Total input tokens consumed' },
+          tokens_out: { type: 'integer', description: 'Total output tokens produced' },
+          duration_ms: { type: 'integer', minimum: 0, description: 'Wall-clock duration in milliseconds' },
+        },
+      },
+      {
+        type: 'object',
+        title: 'CheckpointFailure',
+        required: ['ok', 'error'],
+        properties: {
+          ok: { type: 'boolean', enum: [false] },
+          error: { type: 'string', description: 'Machine-readable error code or human-readable message' },
+        },
+      },
+    ],
+  },
+
   DeleteRequest: {
     description:
       'Two shapes: A) `{ metadata: { id } }` to delete every mem0 entry whose metadata.id matches; B) `{ id }` to delete a single entry by mem0 UUID.',
@@ -694,6 +800,70 @@ function pathRecent() {
   };
 }
 
+function pathAppendTurn() {
+  return {
+    post: {
+      operationId: 'appendTurn',
+      summary: 'Append a raw conversation turn to a project',
+      description:
+        'Writes a single turn (user/assistant/system) to captures/<project>/raw/<date>.md. Requires UM_MCP_WRITE_ENABLED=true. Parity with MCP tool memory_append_turn; feeds the session-summary pipeline on next checkpoint.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': { schema: ref('AppendTurnRequest') },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Turn appended',
+          content: { 'application/json': { schema: ref('AppendTurnResponse') } },
+        },
+        400: {
+          ...ERROR_RESPONSE,
+          description: 'Invalid request (bad slug, missing role, content too large)',
+        },
+        403: {
+          ...ERROR_RESPONSE,
+          description: 'Writes disabled (UM_MCP_WRITE_ENABLED not set)',
+        },
+        ...RESP_500,
+      },
+    },
+  };
+}
+
+function pathCheckpoint() {
+  return {
+    post: {
+      operationId: 'triggerCheckpoint',
+      summary: 'Force a session checkpoint (summary + state update)',
+      description:
+        'Triggers a server-side checkpoint for the given project: reads capture logs, generates a session summary via LLM, and merges it into state.md. Requires UM_MCP_WRITE_ENABLED=true. Parity with MCP tool memory_checkpoint.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': { schema: ref('CheckpointRequest') },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Checkpoint completed successfully',
+          content: { 'application/json': { schema: ref('CheckpointResponse') } },
+        },
+        400: {
+          ...ERROR_RESPONSE,
+          description: 'Soft checkpoint failure (e.g. cost cap hit, invalid project, checkpoint in progress)',
+        },
+        403: {
+          ...ERROR_RESPONSE,
+          description: 'Writes disabled (UM_MCP_WRITE_ENABLED not set)',
+        },
+        ...RESP_500,
+      },
+    },
+  };
+}
+
 function pathDelete() {
   return {
     post: {
@@ -806,7 +976,7 @@ function buildSpec() {
     openapi: '3.1.0',
     info: {
       title: 'universal-memory',
-      version: '0.4.0-alpha',
+      version: '0.5.0-alpha',
       description:
         'HTTP API for universal-memory session continuity layer. Markdown-first vault + vector index via mem0. Exposes REST endpoints under /api/* and an MCP (JSON-RPC 2.0) endpoint at /mcp.',
       license: {
@@ -836,6 +1006,8 @@ function buildSpec() {
       '/api/reindex': pathReindex(),
       '/api/state/{project}': pathState(),
       '/api/recent/{project}': pathRecent(),
+      '/api/append-turn': pathAppendTurn(),
+      '/api/checkpoint': pathCheckpoint(),
       '/api/delete': pathDelete(),
       '/api/{id}': pathDeleteById(),
       '/mcp': pathMcp(),
@@ -925,6 +1097,8 @@ export function generateCustomGPTActionsSpec() {
   const addPath = pathAdd();
   const deletePath = pathDelete();
   const recentPath = pathRecent();
+  const appendTurnPath = pathAppendTurn();
+  const checkpointPath = pathCheckpoint();
 
   // POST /api/search only (drop GET; POST has richer filter support)
   const trimmedSearch = {
@@ -946,6 +1120,14 @@ export function generateCustomGPTActionsSpec() {
   const trimmedRecent = {
     get: cloneAndRewriteOperation(recentPath.get, 'memory_recent'),
   };
+  // POST /api/append-turn
+  const trimmedAppendTurn = {
+    post: cloneAndRewriteOperation(appendTurnPath.post, 'memory_append_turn'),
+  };
+  // POST /api/checkpoint
+  const trimmedCheckpoint = {
+    post: cloneAndRewriteOperation(checkpointPath.post, 'memory_checkpoint'),
+  };
 
   const paths = {
     '/api/search': trimmedSearch,
@@ -953,6 +1135,8 @@ export function generateCustomGPTActionsSpec() {
     '/api/add': trimmedAdd,
     '/api/delete': trimmedDelete,
     '/api/recent/{project}': trimmedRecent,
+    '/api/append-turn': trimmedAppendTurn,
+    '/api/checkpoint': trimmedCheckpoint,
   };
 
   // Prune components.schemas to only those transitively referenced by the
@@ -985,7 +1169,7 @@ export function generateCustomGPTActionsSpec() {
     info: {
       ...full.info,
       description:
-        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 5 routes a Custom GPT needs (search, state, add, delete, recent). Full spec at /openapi.yaml.',
+        'ChatGPT Custom GPT Actions surface for universal-memory. Trimmed subset of the full spec — only the 7 routes a Custom GPT needs (search, state, add, delete, recent, append-turn, checkpoint). Full spec at /openapi.yaml.',
     },
     servers: full.servers,
     paths,
