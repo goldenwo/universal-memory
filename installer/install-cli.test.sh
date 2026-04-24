@@ -58,7 +58,7 @@ TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
 # Portable mktemp subdirectory: mktemp -d -p is GNU-only; macOS requires TMPDIR=.
 mktemp_in() { TMPDIR="$1" mktemp -d; }
-mktemp_in_t() { TMPDIR="$1" mktemp -d "${2:-tmp.XXXXXX}"; }
+mktemp_in_t() { mktemp -d "$1/${2:-tmp.XXXXXX}"; }
 
 # make_fakepython3 <dest_dir>
 # Creates a fake python3 that succeeds for 'import yaml'.
