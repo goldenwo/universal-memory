@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { Writable } from 'node:stream';
 import { doAppendTurn } from '../lib/append-turn.mjs';
 import { handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
+import { _setLogStreamForTest } from '../lib/logger.mjs';
 
 function mockRes() {
   const res = {
@@ -493,10 +495,18 @@ test('/api/append-turn reindex is best-effort — succeeds with 200 even when re
     throw new Error('simulated reindex failure (vector store down)');
   };
 
-  // Capture warnings to assert the best-effort logger output.
-  const origWarn = console.warn;
-  const warnings = [];
-  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  // C.3: capture pino-emitted warn lines via the logger test sink — the
+  // structured logger replaced console.warn for handler-path messages.
+  const captured = [];
+  _setLogStreamForTest(new Writable({
+    write(chunk, enc, cb) {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        try { captured.push(JSON.parse(line)); } catch { /* ignore */ }
+      }
+      cb();
+    },
+  }));
 
   try {
     const req = { body: { project: 'besteffort', content: 'stays on disk', role: 'user' } };
@@ -523,11 +533,16 @@ test('/api/append-turn reindex is best-effort — succeeds with 200 even when re
     assert.equal(reindexCallCount, 1, 'reindex should be called exactly once');
     assert.equal(reindexRelPath, res.jsonBody.path, 'reindex called with the capture path');
 
-    // Error was logged (structured logger lands in Phase C; for now console.warn is fine).
-    const reindexWarnings = warnings.filter((w) => /reindex.*(failed|best-effort)/i.test(w));
-    assert.ok(reindexWarnings.length >= 1, `expected a reindex-failure warning, got: ${warnings.join(' | ')}`);
+    // Phase C: structured logger emits a warn line with msg='append-turn reindex failed (best-effort)'.
+    const reindexWarnings = captured.filter(
+      (l) => l.level === 'warn' && /reindex.*(failed|best-effort)/i.test(l.msg ?? ''),
+    );
+    assert.ok(
+      reindexWarnings.length >= 1,
+      `expected a reindex-failure warn log line, got: ${JSON.stringify(captured)}`,
+    );
   } finally {
-    console.warn = origWarn;
+    _setLogStreamForTest(null);
   }
 });
 

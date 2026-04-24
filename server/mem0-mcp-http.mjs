@@ -52,7 +52,51 @@ import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
+import { getLogger } from './lib/logger.mjs';
+import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+
+// ---------------------------------------------------------------------------
+// Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
+//
+// Maps a raw URL pathname + method to the route TEMPLATE used in log
+// `endpoint` fields and (later) Prometheus labels. Path segments that
+// expand at runtime (e.g., :project, :id) are collapsed to their
+// template form so log + metric cardinality stays bounded.
+//
+// Returns null for unknown / unrouted paths — caller then logs the raw
+// pathname as a last-resort `endpoint` for the 404 finish-log.
+// ---------------------------------------------------------------------------
+function resolveRouteTemplate(pathname, method) {
+  if (pathname === '/health') return '/health';
+  if (pathname === '/openapi.yaml') return '/openapi.yaml';
+  if (pathname === '/metrics') return '/metrics';
+  if (pathname === '/mcp') return '/mcp';
+  if (pathname === '/api/search') return '/api/search';
+  if (pathname === '/api/add') return '/api/add';
+  if (pathname === '/api/list') return '/api/list';
+  if (pathname === '/api/reindex') return '/api/reindex';
+  if (pathname === '/api/append-turn') return '/api/append-turn';
+  if (pathname === '/api/checkpoint') return '/api/checkpoint';
+  if (pathname === '/api/delete') return '/api/delete';
+  if (pathname.startsWith('/api/recent/')) return '/api/recent/:project';
+  if (pathname.startsWith('/api/state/')) return '/api/state/:project';
+  if (pathname.startsWith('/api/') && method === 'DELETE') return '/api/:id';
+  return null;
+}
+
+// Decode a /api/recent/:project or /api/state/:project URL into the
+// project segment used as a log field. Returns null when no project
+// is present in the URL.
+function extractProjectFromPath(pathname) {
+  if (pathname.startsWith('/api/recent/')) {
+    try { return decodeURIComponent(pathname.slice('/api/recent/'.length)); } catch { return null; }
+  }
+  if (pathname.startsWith('/api/state/')) {
+    try { return decodeURIComponent(pathname.slice('/api/state/'.length)); } catch { return null; }
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Snippet design fixture — single source of truth for compact-shape N.
@@ -548,7 +592,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 			const docText = serializeFrontmatter(fm, `\n${content}`);
 
 			await writeVaultFile(relPath, docText);
-			console.log(`[mem0-mcp] memory_capture: wrote ${relPath}`);
+			getLogger().info({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath }, 'memory_capture: wrote');
 
 			// Reindex
 			let indexed = false;
@@ -556,7 +600,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 				await reindexDoc(relPath);
 				indexed = true;
 			} catch (err) {
-				console.error(`[mem0-mcp] memory_capture: reindex failed: ${err.message}`);
+				getLogger().error({ request_id: currentRequestId(), tool: 'memory_capture', path: relPath, err_message: err?.message }, 'memory_capture: reindex failed');
 			}
 
 			return JSON.stringify({ ok: true, path: relPath, id, indexed });
@@ -603,13 +647,13 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// Write back atomically
 			const updated = serializeFrontmatter(fm, body);
 			await writeVaultFile(relPath, updated);
-			console.log(`[mem0-mcp] memory_forget: deprecated ${relPath}`);
+			getLogger().info({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath }, 'memory_forget: deprecated');
 
 			// Reindex so mem0 sees the updated status
 			try {
 				await reindexDoc(relPath);
 			} catch (err) {
-				console.error(`[mem0-mcp] memory_forget: reindex failed: ${err.message}`);
+				getLogger().error({ request_id: currentRequestId(), tool: 'memory_forget', path: relPath, err_message: err?.message }, 'memory_forget: reindex failed');
 			}
 
 			return JSON.stringify({ ok: true, id, path: relPath, status: 'deprecated' });
@@ -674,7 +718,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 			delete newFm.content;
 			const newDocText = serializeFrontmatter(newFm, `\n${newContent}`);
 			await writeVaultFile(newRelPath, newDocText);
-			console.log(`[mem0-mcp] memory_supersede: created new doc ${newRelPath}`);
+			getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath }, 'memory_supersede: created new doc');
 
 			// 3. Mutate old doc frontmatter
 			// I1: if the old-doc mutation fails, roll back the new doc we just wrote
@@ -688,7 +732,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 				oldFm.invalidated_at = now;
 				const updatedOld = serializeFrontmatter(oldFm, oldBody);
 				await writeVaultFile(oldRelPath, updatedOld);
-				console.log(`[mem0-mcp] memory_supersede: superseded old doc ${oldRelPath}`);
+				getLogger().info({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath }, 'memory_supersede: superseded old doc');
 			} catch (err) {
 				// Rollback: remove the new doc we wrote in step 2 (best-effort)
 				try { await fs.unlink(path.join(vaultPath(), newRelPath)); } catch {}
@@ -702,13 +746,13 @@ export async function handleToolCall(name, args, ctx = {}) {
 				await reindexDoc(newRelPath);
 				newIndexed = true;
 			} catch (err) {
-				console.error(`[mem0-mcp] memory_supersede: new doc reindex failed: ${err.message}`);
+				getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: newRelPath, err_message: err?.message }, 'memory_supersede: new doc reindex failed');
 			}
 			try {
 				await reindexDoc(oldRelPath);
 				oldIndexed = true;
 			} catch (err) {
-				console.error(`[mem0-mcp] memory_supersede: old doc reindex failed: ${err.message}`);
+				getLogger().error({ request_id: currentRequestId(), tool: 'memory_supersede', path: oldRelPath, err_message: err?.message }, 'memory_supersede: old doc reindex failed');
 			}
 
 			return JSON.stringify({
@@ -734,9 +778,12 @@ export async function handleToolCall(name, args, ctx = {}) {
 			// already on disk and will reindex on the next successful pass.
 			if (result.ok && result.path) {
 				reindexDoc(result.path).catch((err) => {
-					console.warn(
-						`[mem0-mcp] memory_append_turn reindex failed (best-effort): ${err?.message ?? err} path=${result.path}`
-					);
+					getLogger().warn({
+						request_id: currentRequestId(),
+						tool: 'memory_append_turn',
+						path: result.path,
+						err_message: err?.message ?? String(err),
+					}, 'memory_append_turn reindex failed (best-effort)');
 				});
 			}
 			return JSON.stringify(result);
@@ -961,16 +1008,23 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 		// turn is on disk; the vector index catches up on the next successful
 		// reindex. Errors are logged but do NOT affect the 200 response or the
 		// durability of the captured turn.
-		// Phase C: replace console.warn with structured logger call.
+		// Phase C: structured logger replaces the legacy console.warn.
 		const reindexFn = ctx.reindexFn ?? reindexDoc;
 		reindexFn(result.path).catch((err) => {
-			console.warn(
-				`[mem0-mcp] append-turn reindex failed (best-effort): ${err?.message ?? err} path=${result.path}`
-			);
+			getLogger().warn({
+				request_id: currentRequestId(),
+				endpoint: '/api/append-turn',
+				path: result.path,
+				err_message: err?.message ?? String(err),
+			}, 'append-turn reindex failed (best-effort)');
 		});
 		res.status(200).json(result);
 	} catch (err) {
-		console.error('[mem0-mcp] handleAppendTurnRequest error:', err.message);
+		getLogger().error({
+			request_id: currentRequestId(),
+			endpoint: '/api/append-turn',
+			err_message: err?.message,
+		}, 'handleAppendTurnRequest error');
 		// B.13 (§5.1): unhandled exceptions → SERVER_INTERNAL. Honor any
 		// pre-tagged err.statusCode (e.g., 413 for body-cap overruns) but the
 		// stable error code is INPUT_TOO_LARGE / SERVER_INTERNAL by category.
@@ -1048,7 +1102,11 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		}
 		res.status(200).json(result);
 	} catch (err) {
-		console.error('[mem0-mcp] handleCheckpointRequest error:', err.message);
+		getLogger().error({
+			request_id: currentRequestId(),
+			endpoint: '/api/checkpoint',
+			err_message: err?.message,
+		}, 'handleCheckpointRequest error');
 		// B.13 (§5.1): mirror handleAppendTurnRequest — INPUT_TOO_LARGE
 		// pass-through for body-cap overruns; everything else is SERVER_INTERNAL.
 		if (err && err.code === 'INPUT_TOO_LARGE') {
@@ -1210,7 +1268,14 @@ export async function doState(project, ctx = {}) {
     // Transient I/O errors: log + treat as state-unavailable so callers can retry cleanly.
     // Whitelisted codes only — permission/config errors must bubble so ops can fix them.
     if (['EBUSY', 'ETXTBSY', 'EMFILE', 'ENFILE', 'EAGAIN'].includes(err.code)) {
-      console.error('[mem0-mcp] doState transient I/O error:', relPath, err.message);
+      getLogger().error({
+        request_id: currentRequestId(),
+        endpoint: '/api/state/:project',
+        project,
+        path: relPath,
+        err_code: err.code,
+        err_message: err?.message,
+      }, 'doState transient I/O error');
       return JSON.stringify({ ok: true, project, state: null, valid_from: null });
     }
     // Config/permission errors (EACCES, EPERM, etc.): bubble so ops can fix
@@ -1269,7 +1334,13 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
         return { relPath, mtime };
       } catch (err) {
         if (err.code === 'ENOENT') return null; // deleted between list and stat — skip
-        console.error('[mem0-mcp] doRecent: skipping stat for', relPath, err.message);
+        getLogger().error({
+          request_id: currentRequestId(),
+          endpoint: '/api/recent/:project',
+          project,
+          path: relPath,
+          err_message: err?.message,
+        }, 'doRecent: skipping stat');
         return null;
       }
     })
@@ -1298,7 +1369,13 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
         return record;
       } catch (err) {
         if (err.code === 'ENOENT') return null; // deleted between stat and read — skip
-        console.error('[mem0-mcp] doRecent: skipping read for', relPath, err.message);
+        getLogger().error({
+          request_id: currentRequestId(),
+          endpoint: '/api/recent/:project',
+          project,
+          path: relPath,
+          err_message: err?.message,
+        }, 'doRecent: skipping read');
         return null;
       }
     })
@@ -1412,6 +1489,76 @@ export function createRequestHandler(ctx = {}) {
 		return;
 	}
 
+	// C.3 / spec §4.2.0: /health is the liveness probe — every
+	// k8s/load-balancer poll hits it. Wrapping in withRequestContext
+	// would burn the 100 µs cumulative-cost budget; emitting a finish-
+	// log per probe would also pollute logs. /health gets a fast direct
+	// path: endpoint-class still applies (bypassAuth=true, returnStatus
+	// never set for /health), but we skip ALS + the counter-finish log.
+	if (url.pathname === '/health' && req.method === 'GET') {
+		try {
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ ok: true, memories: (await resolvedMemory().getAll({ userId: USER_ID }))?.results?.length || 0 }));
+		} catch (err) {
+			if (!res.headersSent) {
+				res.writeHead(500, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', 'health-check failed')));
+			}
+		}
+		return;
+	}
+
+	// C.3 / spec §5.3: every non-/health request runs inside an ALS
+	// scope so log calls deeper in the stack can pull request_id from
+	// currentRequestId() without explicit threading. The wrap also
+	// generates the request_id once per request (or honors an injected
+	// X-Request-Id header for trace stitching across services).
+	const incomingId = req.headers['x-request-id'];
+	return withRequestContext({ id: typeof incomingId === 'string' ? incomingId : undefined }, async () => {
+	const startedAt = Date.now();
+	const routeTemplate = resolveRouteTemplate(url.pathname, req.method);
+
+	// Counter-finish log emitter — invoked once per request via res.end
+	// shim below. `extras` lets the per-route handlers attach the
+	// `tool` (MCP) or any other late-bound field. Project comes from
+	// the URL for /api/recent/:project + /api/state/:project; other
+	// REST routes don't carry a project.
+	const finishLogExtras = {};
+	const setFinishLogExtra = (k, v) => { finishLogExtras[k] = v; };
+	let finishLogEmitted = false;
+	const emitFinishLog = () => {
+		if (finishLogEmitted) return;
+		finishLogEmitted = true;
+		const ms = Date.now() - startedAt;
+		const obj = {
+			request_id: currentRequestId(),
+			endpoint: routeTemplate || url.pathname,
+			status: res.statusCode,
+			ms,
+			...finishLogExtras,
+		};
+		const project = extractProjectFromPath(url.pathname);
+		if (project) obj.project = project;
+		// Error-bucket logs go via warn/error directly (with error_code +
+		// error_class). The counter-finish log uses info for the success
+		// case and warn/error already emit their own structured line.
+		if (res.statusCode >= 500) {
+			getLogger().error(obj, 'request');
+		} else if (res.statusCode >= 400) {
+			getLogger().warn(obj, 'request');
+		} else {
+			getLogger().info(obj, 'request');
+		}
+	};
+	// Shim res.end so every code path (200, 4xx, 5xx, early-return)
+	// flushes the §5.3 finish log without each route handler having to
+	// remember.
+	const _origEnd = res.end.bind(res);
+	res.end = function (...args) {
+		try { emitFinishLog(); } catch { /* logging must never break the response */ }
+		return _origEnd(...args);
+	};
+
 	// ---------------------------------------------------------------
 	// Middleware chain (spec §4.2 step 3-7) — B.6.
 	//
@@ -1439,6 +1586,16 @@ export function createRequestHandler(ctx = {}) {
 	if (!route.bypassAuth && !shouldBypassLoopback(req)) {
 		const expected = process.env.UM_AUTH_TOKEN;
 		if (!expected) {
+			// Counter-finish log fires via res.end shim; emit a structured
+			// warn here so ops sees the misconfiguration distinctly from a
+			// generic 500.
+			getLogger().error({
+				request_id: currentRequestId(),
+				endpoint: routeTemplate || url.pathname,
+				status: 500,
+				error_code: 'SERVER_INTERNAL',
+				error_class: 'auth_unconfigured',
+			}, 'auth misconfigured');
 			res.writeHead(500, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(errorResponse(
 				'SERVER_INTERNAL',
@@ -1447,7 +1604,21 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		const received = extractBearer(req);
-		if (!received || !compareTokens(received, expected)) {
+		const tokenMatches = received != null && compareTokens(received, expected);
+		if (!tokenMatches) {
+			// C.3 / §5.3: distinguish auth_missing from auth_wrong in logs
+			// so ops can tell "client never sent a token" from "client sent
+			// the wrong token" — useful for debugging plugin-version drift.
+			// Wire-response stays AUTH_INVALID for both (attacker can't
+			// differentiate).
+			const errorClass = received == null ? 'auth_missing' : 'auth_wrong';
+			getLogger().warn({
+				request_id: currentRequestId(),
+				endpoint: routeTemplate || url.pathname,
+				status: 401,
+				error_code: 'AUTH_INVALID',
+				error_class: errorClass,
+			}, 'auth failed');
 			// Round-8 upgrade hint: legacy plugins (pre-v0.6) lack an
 			// identifying User-Agent. When the UA is missing or not a
 			// UM client, steer the user toward the plugin upgrade flow;
@@ -1472,11 +1643,8 @@ export function createRequestHandler(ctx = {}) {
 	// TODO(Phase C): counter-finish (metrics emit) at response send.
 
 	try {
-		if (url.pathname === '/health' && req.method === 'GET') {
-			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, memories: (await resolvedMemory().getAll({ userId: USER_ID }))?.results?.length || 0 }));
-			return;
-		}
+		// /health is handled BEFORE the ALS wrap (top of this handler)
+		// per spec §4.2.0 — opted out for the 100µs liveness budget.
 		if (url.pathname === '/openapi.yaml' && req.method === 'GET') {
 			// Self-describing spec — served as YAML for ChatGPT Custom GPT Actions (Phase D)
 			// and any tooling that prefers an authoritative spec URL.
@@ -1508,6 +1676,14 @@ export function createRequestHandler(ctx = {}) {
 				res.writeHead(200, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: rpcErr }));
 				return;
+			}
+			// C.3 / spec §5.3: surface the tool name to the counter-finish
+			// log so the MCP path log carries `tool` per the contract. Only
+			// tools/call carries a tool name; initialize / tools/list don't.
+			if (body && body.method === 'tools/call' && body.params?.name) {
+				setFinishLogExtra('tool', body.params.name);
+			} else if (body && typeof body.method === 'string') {
+				setFinishLogExtra('tool', body.method);
 			}
 			// Forward DI ctx so handleToolCall → do* helpers see the injected
 			// memory stub in tests, mirroring the REST routes' pattern.
@@ -1632,7 +1808,11 @@ export function createRequestHandler(ctx = {}) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify(errorResponse('INPUT_INVALID', err.message)));
 				} else {
-					console.error('[mem0-mcp] /api/recent error:', err.message);
+					getLogger().error({
+						request_id: currentRequestId(),
+						endpoint: '/api/recent/:project',
+						err_message: err?.message,
+					}, '/api/recent error');
 					res.writeHead(500, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', 'internal_error')));
 				}
@@ -1910,7 +2090,12 @@ export function createRequestHandler(ctx = {}) {
 			}
 			return;
 		}
-		console.error('[mem0-mcp] Unhandled error:', err.stack);
+		getLogger().error({
+			request_id: currentRequestId(),
+			endpoint: routeTemplate || url.pathname,
+			err_message: err?.message,
+			err_stack: err?.stack,
+		}, 'unhandled error');
 		// B.13 (§5.1): unhandled exception → SERVER_INTERNAL envelope.
 		// In production, omit the message to avoid leaking internals; in dev
 		// keep the original message to preserve debuggability.
@@ -1920,6 +2105,7 @@ export function createRequestHandler(ctx = {}) {
 			res.end(JSON.stringify(errorResponse('SERVER_INTERNAL', userMsg)));
 		}
 	}
+	}); // close withRequestContext
 	};
 }
 

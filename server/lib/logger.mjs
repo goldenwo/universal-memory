@@ -14,10 +14,16 @@
 //     transport is skipped to keep the test runner from hanging on
 //     exit while the worker thread settles. Production behavior
 //     (async writes) is preserved by default.
+//
+// Test-sink hook (C.3): `_setLogStreamForTest(stream)` lets a contract
+// test inject a custom Writable to capture pino lines without writing
+// to real stdout. Resets the cached base logger so the next getLogger()
+// returns a fresh instance bound to the captured stream. Test-only.
 
 import pino from 'pino';
 
 let baseLogger;
+let testSink = null;
 
 function isTestEnv() {
   return process.env.UM_LOG_TEST === '1'
@@ -36,7 +42,12 @@ function buildOptions() {
 function base() {
   if (baseLogger) return baseLogger;
   const opts = buildOptions();
-  if (isTestEnv()) {
+  if (testSink) {
+    // C.3 contract test: write JSON lines into the injected Writable so
+    // tests can parse and assert §5.3 required fields without touching
+    // real stdout (would interfere with the test runner's TAP output).
+    baseLogger = pino(opts, testSink);
+  } else if (isTestEnv()) {
     // Synchronous, in-process write — no worker thread, no exit-hang.
     baseLogger = pino(opts);
   } else {
@@ -59,4 +70,17 @@ export function getLogger() {
 
 export function getRequestLogger(requestId) {
   return base().child({ request_id: requestId });
+}
+
+/**
+ * Test-only: inject a Writable stream as the pino destination. Resets
+ * the cached base logger so the next getLogger() rebuilds against the
+ * sink. Pass `null` to reset back to the default (test-env synchronous
+ * stdout).
+ *
+ * @param {NodeJS.WritableStream | null} stream
+ */
+export function _setLogStreamForTest(stream) {
+  testSink = stream;
+  baseLogger = undefined;
 }

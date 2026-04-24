@@ -1,7 +1,9 @@
 // server/test/summarize.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { Writable } from 'node:stream';
 import { summarize, BACKENDS } from '../lib/summarize.mjs';
+import { _setLogStreamForTest } from '../lib/logger.mjs';
 
 // ---------- openai backend ----------
 
@@ -50,9 +52,18 @@ test('summarize: ollama backend invoked when backend=ollama', async () => {
 // ---------- claude-agent-sdk falls back ----------
 
 test('summarize: claude-agent-sdk falls back to openai with warning', async () => {
-  const warnings = [];
-  const origWarn = console.warn;
-  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  // Capture pino-emitted warn lines via the logger test sink (C.3): the
+  // structured logger replaced the legacy console.warn here.
+  const captured = [];
+  _setLogStreamForTest(new Writable({
+    write(chunk, enc, cb) {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        try { captured.push(JSON.parse(line)); } catch { /* ignore */ }
+      }
+      cb();
+    },
+  }));
   try {
     let fallbackCalled = false;
     const openaiClient = {
@@ -70,10 +81,13 @@ test('summarize: claude-agent-sdk falls back to openai with warning', async () =
     };
     const result = await summarize('t', { backend: 'claude-agent-sdk', openaiClient });
     assert.ok(fallbackCalled, 'fallback backend should have been invoked');
-    assert.ok(warnings.some(w => /claude-agent-sdk|fallback/i.test(w)));
+    assert.ok(
+      captured.some((l) => l.level === 'warn' && (l.backend === 'claude-agent-sdk' || /fallback/i.test(l.msg ?? ''))),
+      'expected a warn log line referencing claude-agent-sdk or the fallback',
+    );
     assert.equal(result.summary, 'fallback');
   } finally {
-    console.warn = origWarn;
+    _setLogStreamForTest(null);
   }
 });
 

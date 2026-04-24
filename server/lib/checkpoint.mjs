@@ -38,6 +38,8 @@ import { randomUUID } from 'node:crypto';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
+import { getLogger } from './logger.mjs';
+import { currentRequestId } from './request-context.mjs';
 
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
@@ -92,7 +94,12 @@ async function markOrphanSummary(tmpPath) {
     const fh = await fs.open(tmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
     try { await fh.writeFile(updated, 'utf8'); } finally { await fh.close(); }
   } catch (err) {
-    console.warn(`[checkpoint] failed to mark orphan_summary on ${tmpPath}: ${err?.message ?? err}`);
+    getLogger().warn({
+      request_id: currentRequestId(),
+      component: 'checkpoint',
+      path: tmpPath,
+      err_message: err?.message ?? String(err),
+    }, 'failed to mark orphan_summary');
   }
 }
 
@@ -152,7 +159,11 @@ export async function doCheckpoint(args, ctx = {}) {
       systemPrompt = await fs.readFile(promptPath, 'utf8');
     } catch (err) {
       if (err.code === 'ENOENT') {
-        console.error('[checkpoint] summarize prompt missing at', promptPath);
+        getLogger().error({
+          request_id: currentRequestId(),
+          component: 'checkpoint',
+          path: promptPath,
+        }, 'summarize prompt missing');
         return {
           schema_version: 1,
           ok: false,
@@ -229,7 +240,11 @@ export async function doCheckpoint(args, ctx = {}) {
       if (!rawAcquired) {
         // Skip this file rather than fail the whole checkpoint — best-effort read,
         // matches v0.5 proper-lockfile behavior on contention.
-        console.warn(`[checkpoint] could not acquire raw lock for ${f}; skipping`);
+        getLogger().warn({
+          request_id: currentRequestId(),
+          component: 'checkpoint',
+          file: f,
+        }, 'could not acquire raw lock; skipping');
         continue;
       }
       try {
@@ -365,7 +380,12 @@ export async function doCheckpoint(args, ctx = {}) {
           try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
           await markOrphanSummary(tmpSummaryPath);
         } catch (restageErr) {
-          console.warn(`[checkpoint] phase-2 orphan re-stage failed: ${restageErr?.message ?? restageErr}`);
+          getLogger().warn({
+            request_id: currentRequestId(),
+            component: 'checkpoint',
+            path: tmpSummaryPath,
+            err_message: restageErr?.message ?? String(restageErr),
+          }, 'phase-2 orphan re-stage failed');
         }
       }
       const isLockContention =
@@ -395,7 +415,13 @@ export async function doCheckpoint(args, ctx = {}) {
         break;
       } catch (err) {
         reindexErr = err;
-        console.warn(`[checkpoint] reindex attempt ${attempt + 1} failed for project=${project}: ${err?.message ?? String(err)}`);
+        getLogger().warn({
+          request_id: currentRequestId(),
+          component: 'checkpoint',
+          attempt: attempt + 1,
+          project,
+          err_message: err?.message ?? String(err),
+        }, 'reindex attempt failed');
         if (attempt === retryDelaysMs.length) break; // budget exhausted
         const delay = retryDelaysMs[attempt] + Math.floor(Math.random() * (retryJitterMaxMs + 1));
         if (delay > 0) await new Promise((r) => setTimeout(r, delay));

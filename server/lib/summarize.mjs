@@ -9,6 +9,9 @@
 //   4. Optionally add a fallback relationship (e.g. { 'claude-agent-sdk': { invoke: null, fallback: 'openai' } }).
 // No changes to update-state.mjs, checkpoint.mjs, or hooks/lib/summarize.sh required.
 
+import { getLogger } from './logger.mjs';
+import { currentRequestId } from './request-context.mjs';
+
 export const BACKENDS = {
   openai:             { invoke: openaiInvoke,  requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'] },
   ollama:             { invoke: ollamaInvoke,  requires: [] /* host-bind enough */ },
@@ -34,7 +37,13 @@ export async function summarize(transcript, ctx = {}) {
   const b = BACKENDS[name];
   if (!b || !b.invoke) {
     const fallback = b?.fallback ?? process.env.UM_SUMMARIZER_FALLBACK ?? 'openai';
-    console.warn(`[summarize] backend='${name}' ${b?.reason ?? 'unknown/unavailable'} — falling back to ${fallback}`);
+    getLogger().warn({
+      request_id: currentRequestId(),
+      component: 'summarize',
+      backend: name,
+      fallback,
+      reason: b?.reason ?? 'unknown/unavailable',
+    }, 'summarize backend unavailable; falling back');
     return BACKENDS[fallback].invoke(transcript, ctx);
   }
   return b.invoke(transcript, ctx);

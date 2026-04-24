@@ -4,8 +4,30 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { Writable } from 'node:stream';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
 import { handleToolCall, handleCheckpointRequest } from '../mem0-mcp-http.mjs';
+import { _setLogStreamForTest } from '../lib/logger.mjs';
+
+// C.3 helper: capture pino-emitted log lines into an array via the test
+// sink. The structured logger replaced legacy console.warn/error in
+// handler-path code; tests now assert against parsed JSON log objects.
+function _attachLogCapture() {
+  const captured = [];
+  _setLogStreamForTest(new Writable({
+    write(chunk, enc, cb) {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        try { captured.push(JSON.parse(line)); } catch { /* ignore non-JSON */ }
+      }
+      cb();
+    },
+  }));
+  return captured;
+}
+function _detachLogCapture() {
+  _setLogStreamForTest(null);
+}
 
 // ---------- mock helpers (patterned after append-turn.test.mjs) ----------
 
@@ -266,9 +288,7 @@ test('checkpoint: UM_SUMMARIZER=claude-agent-sdk emits warning log', async () =>
   const vaultDir = await makeVault();
   await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
 
-  const warnings = [];
-  const origWarn = console.warn;
-  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  const captured = _attachLogCapture();
 
   try {
     // Real summarize fn (not stubbed) with sdk-backend but we short-circuit via openaiClient stub
@@ -293,12 +313,12 @@ test('checkpoint: UM_SUMMARIZER=claude-agent-sdk emits warning log', async () =>
       },
     );
   } finally {
-    console.warn = origWarn;
+    _detachLogCapture();
   }
 
   assert.ok(
-    warnings.some(w => /claude-agent-sdk|fallback/i.test(w)),
-    `expected warning about claude-agent-sdk, got: ${warnings.join(' | ')}`,
+    captured.some((l) => l.level === 'warn' && (l.backend === 'claude-agent-sdk' || /fallback/i.test(l.msg ?? ''))),
+    `expected a warn log line referencing claude-agent-sdk or the fallback, got: ${JSON.stringify(captured)}`,
   );
 
   await fs.rm(vaultDir, { recursive: true, force: true });
@@ -646,9 +666,9 @@ test('checkpoint: reindexFn persistent failure surfaces UPSTREAM_FAILURE (blocki
   const vaultDir = await makeVault();
   await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome content.');
 
-  const warnings = [];
-  const origWarn = console.warn;
-  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  // C.3: capture log lines (legacy console.warn replaced by structured logger).
+  // This test asserts UPSTREAM_FAILURE result; warning emission is best-effort.
+  _attachLogCapture();
 
   let attempts = 0;
   let result;
@@ -671,7 +691,7 @@ test('checkpoint: reindexFn persistent failure surfaces UPSTREAM_FAILURE (blocki
       },
     );
   } finally {
-    console.warn = origWarn;
+    _detachLogCapture();
   }
 
   assert.equal(result.ok, false, 'persistent reindex failure must fail the checkpoint');
