@@ -12,6 +12,8 @@ server/logs/
 data/
 *.db
 *.db-journal
+# Test fixtures (structurally-valid synthetic DBs) are the one exception — keep them tracked
+!server/test/fixtures/*.db
 
 # Node
 node_modules/

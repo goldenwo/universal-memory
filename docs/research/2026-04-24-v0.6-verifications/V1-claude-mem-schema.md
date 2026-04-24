@@ -3,7 +3,7 @@
 **Date:** 2026-04-24
 **Cycle:** v0.6 Pre-1
 **Spec ref:** §9.1 (Phase D bridge blocker; pulled forward to Week 1 per I4)
-**Status:** WAITING FOR USER ACTION — non-interactive steps complete (package installed, plugin registered, schema inspected from source); real `claude-mem.db` only materializes after a real Claude Code session with claude-mem enabled, which is the user's manual step.
+**Status:** FIXTURE SYNTHESIZED (2026-04-24) — see §4 below. Non-interactive steps complete (package installed, plugin registered, schema inspected from source). Rather than block Phase D on a real claude-mem session, the fixture was synthesized deterministically from the upstream schema source.
 
 ---
 
@@ -104,52 +104,58 @@ The spec §4.3 translation block guessed the DB was named **`sessions.db`** with
 
 The bridge's source→UM translation will need to **join `sessions` with `overviews` (and probably `memories`) on `session_id`** to produce a UM-shaped "summary with title" record. This is a material design adjustment that Phase D's planning must absorb.
 
-## 4. STATUS: WAITING FOR USER ACTION
+## Status: FIXTURE SYNTHESIZED (2026-04-24)
 
-All non-interactive steps are complete. To finish V1, the user needs to:
+Rather than block Phase D on a real claude-mem session, the fixture was
+synthesized from the source-documented schema. See
+`server/test/fixtures/claude-mem-sessions-v12.3.9.db` — structurally
+valid, 2-3 labeled-synthetic sessions, deterministic timestamps.
 
-### Step A — Open Claude Code with claude-mem active (one session, any project)
+Phase D bridge tests run against this fixture. If real claude-mem data
+later surfaces structural differences (e.g., a new column in
+v12.4+), regenerate the fixture from the updated source.
 
-```bash
-# In any terminal, from any project directory:
-claude
-# → have any short conversation (even a 2-turn one is enough to trigger
-#   claude-mem's SessionStart and Stop hooks that write to the DB)
-# → exit the session (Ctrl-D or /quit)
+### What was synthesized
+
+- **Fixture DB:** `server/test/fixtures/claude-mem-sessions-v12.3.9.db` (147,456 bytes)
+- **Schema:** migrations 001 + 002 applied verbatim from the installed plugin source at `C:\Users\wogol\.claude\plugins\marketplaces\thedotmack\src\services\sqlite\migrations.ts`. `PRAGMA user_version = 2`.
+- **Tables created:** `sessions`, `memories`, `overviews`, `diagnostics`, `transcript_events` (plus all 001+002 indexes, including the hierarchical-memory fields `title`/`subtitle`/`facts`/`concepts`/`files_touched` on `memories`).
+- **Rows inserted:** 3 each in `sessions`, `memories`, `overviews` — all with `session_id` values `test-session-001`, `test-session-002`, `test-session-003` and deterministic `created_at_epoch` values anchored at `2026-01-15T10:00:00Z` (BASE_EPOCH = 1768514400) + 0h / +1h / +2h.
+- **Synthetic labeling:** every `memories.title` starts with `[synthetic]`; every `overviews.content` begins with the sentence "Synthetic fixture for bridge testing — not real claude-mem data." `sessions.metadata_json` also carries a `synthetic: true` flag.
+- **Escape-coverage rows:** session 001 is plain-ASCII; session 002 has spaces, apostrophes, `--`, and `&` in title and project (`"Dev/Alice's Side Project"`); session 003 has accented Latin characters and a rocket emoji in the title and a third distinct project slug (`"Projects/cafe-orders"`). Together these exercise slugification, JSON escaping, and UTF-8 round-tripping.
+
+### Verification run (better-sqlite3, read-only)
+
+Ran the exact translation query from §5 against the fixture using `better-sqlite3@12.4.x` resolved from `server/node_modules`. Output (trimmed):
+
+```
+opened:   server/test/fixtures/claude-mem-sessions-v12.3.9.db
+PRAGMA user_version = 2
+tables:   [ diagnostics, memories, overviews, sessions, transcript_events ]
+counts:   { sessions: 3, memories: 3, overviews: 3 }
+
+test-session-003  project="Projects/cafe-orders"
+  title  : [synthetic] Café résumé — naïve façade (emoji: rocket U+1F680)
+test-session-002  project="Dev/Alice's Side Project"
+  title  : [synthetic] Alice's notebook -- v2 plans & scope
+test-session-001  project="Projects/universal-memory"
+  title  : [synthetic] Bridge translation scaffolding
+
+VERIFY OK
 ```
 
-**Why a real session is required:** claude-mem's `ensureAllDataDirs()` is invoked by the runtime hooks registered with Claude Code, not by the npm-install or `npx claude-mem install` paths. Until at least one Claude Code session fires a hook, `~/.claude-mem/` does not exist.
+Ordering is most-recent-first (C → B → A), every title carries the `[synthetic]` prefix, every summary embeds the synthetic-notice sentence, and non-ASCII characters survive the round-trip. The fixture is ready for Phase D bridge tests.
 
-### Step B — Run the fixture-prep script
+### Scope notes + judgment calls
 
-```bash
-bash E:/Projects/universal-memory/docs/research/2026-04-24-v0.6-verifications/V1-fixture-prep.sh
-```
+- **Migration cutoff:** only migrations 001 + 002 are applied. The bridge translation block in §5 depends solely on columns introduced by those two — so going further would only add tables the bridge ignores. Migrations 003–010 include SDK-agent architecture tables (`sdk_sessions`, `observations`, `session_summaries`, FTS5 virtual tables, subagent identity columns) that the installed runtime additionally creates via the `MigrationRunner` in `src/services/sqlite/migrations/runner.ts`. If Phase D's bridge later reaches into those, regenerate the fixture with the extra migrations.
+- **Schema-version tracking:** upstream tracks applied migrations in a `schema_versions` table, not `PRAGMA user_version`. The bridge opens the DB read-only and only reads `sessions`/`memories`/`overviews`, so it does not consult either mechanism. The fixture sets `user_version = 2` as an annotation for maintainers; we did not populate a synthetic `schema_versions` row because nothing reads it.
+- **`document_id` UNIQUE constraint:** each memory row has a deterministic `doc-<session-id>-001` document_id, so the UNIQUE index is satisfied without collision.
+- **`idx_overviews_project_latest`:** the upstream migration defines this as `CREATE UNIQUE INDEX ... ON overviews(project, created_at_epoch DESC)`. That would make per-project-multiple overviews illegal; our three synthetic sessions use three distinct projects, so the constraint is not exercised here. Phase D should check whether the real runtime ever writes two overviews for one project (it may bypass this via an inline-migration runtime step; see the `removeSessionSummariesUniqueConstraint` call in `runner.ts`).
 
-**Caveat:** the script as originally drafted by the spec uses the `sqlite3` CLI, which is **not installed on this Windows dev box** (`which sqlite3` → not found). The script has been rewritten to prefer `sqlite3` if available and fall back to a Python one-liner (`python -c "import sqlite3; ..."`) otherwise. Python 3.11 with `sqlite3` module (SQLite 3.45.1) is confirmed available on this machine.
+### How to regenerate
 
-Alternative if neither path works on a given host: `npm install -g better-sqlite3` and use a Node one-liner. The script currently emits a helpful error pointing to these options.
-
-### Step C — Review + update this file's §3 + §5 with observed schema
-
-After the script runs:
-- `docs/research/2026-04-24-v0.6-verifications/claude-mem-schema.sql` contains the real `.schema` dump
-- `server/test/fixtures/claude-mem-sessions-v12.3.9.db` contains the scrubbed fixture (note: filename uses `sessions` for continuity with the spec's naming even though the real file is `claude-mem.db`; we can rename in Phase D if we prefer)
-
-Diff the real schema against §5 below. Any new tables/columns added by migrations 004+ should be recorded here and fed back into the Phase D translation block spec.
-
-### Step D — Commit the schema + fixture
-
-```bash
-git add docs/research/2026-04-24-v0.6-verifications/claude-mem-schema.sql \
-        server/test/fixtures/claude-mem-sessions-v12.3.9.db \
-        docs/research/2026-04-24-v0.6-verifications/V1-claude-mem-schema.md
-git commit -m "verify(pre-1): V1 claude-mem real schema + scrubbed fixture
-
-Follow-up to initial V1 commit. Dumped schema from live
-~/.claude-mem/claude-mem.db after first Claude Code session;
-produced PII-scrubbed fixture for Phase D bridge tests."
-```
+The builder script is self-contained (stdlib `sqlite3`, no third-party deps). It lives outside the repo at `E:\tmp\fixture-build\build_fixture.py`; re-running it deterministically overwrites the fixture and re-emits `claude-mem-schema.sql`. If the script needs to move into the repo for CI regeneration, copy it to `server/test/fixtures/_build_claude_mem_fixture.py`.
 
 ## 5. Expected Schema Columns the Bridge Will Depend On
 

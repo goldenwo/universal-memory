@@ -16,3 +16,5 @@ plugins/**/hooks/* text eol=lf
 # platform-dependent baseline drift.
 server/test/fixtures/* text eol=lf
 server/test/token-cost-baseline.txt text eol=lf
+# Exception: SQLite DB fixtures are binary — LF-normalization would corrupt them.
+server/test/fixtures/*.db binary
