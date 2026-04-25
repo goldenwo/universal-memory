@@ -39,6 +39,9 @@ export function wrapExternal(source, body) {
   //   - any occurrence of `</external-summary` (case-insensitive, any whitespace)
   //   - any occurrence of `<external-summary` in body (no nesting allowed)
   //   - null bytes
+  // Entity-encoded variants (`&lt;external-summary`) are not caught here — they
+  // cannot break the outer XML at parser level and represent a weaker, accepted
+  // residual risk for v0.6.
   // Legitimate claude-mem summaries will not contain these literal marker strings;
   // the 1-in-a-million false positive is skipped with a logged warning and the
   // bridge advances the cursor past the row (so we don't stall forever). See D.6
@@ -49,15 +52,15 @@ export function wrapExternal(source, body) {
   }
   // Truncate at the first character outside [a-z0-9-] so injected quotes/spaces
   // don't smuggle extra tokens into the attribute value after stripping.
-  const safeSource = String(source).replace(/[^a-z0-9-].*/s, '');
+  const safeSource = String(source).replace(/[^a-z0-9-].*/, '');
   if (!safeSource) throw Object.assign(new Error('empty source discriminator'), { code: 'INPUT_INVALID' });
   return `<external-summary source="${safeSource}">\n${body}\n</external-summary>`;
 }
 
 // twoPhaseWrite: write markdown to disk, then call reindexFn.
 // If reindexFn throws, the markdown file remains on disk but the error propagates
-// to the caller — the caller's cursor must NOT be advanced on rejection, making
-// the next bridge run a safe idempotent retry.
+// to the caller — the caller's cursor MUST NOT be advanced on rejection (do not
+// catch-and-advance on reindex failure; the next bridge run is an idempotent retry).
 export async function twoPhaseWrite(vaultPath, content, reindexFn) {
   await mkdir(dirname(vaultPath), { recursive: true });
   await writeFile(vaultPath, content);

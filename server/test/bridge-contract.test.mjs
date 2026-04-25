@@ -40,6 +40,16 @@ test('cursor write creates parent directory if missing', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('cursor read propagates SyntaxError on corrupt JSON', async () => {
+  const dir = mkWorkDir();
+  try {
+    const p = join(dir, 'corrupt-cursor.json');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(p, 'not valid json');
+    await assert.rejects(() => readCursor(p), SyntaxError);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ---------- wrapExternal ----------
 
 test('wrapExternal emits fenced block with source discriminator', () => {
@@ -151,13 +161,17 @@ test('withBridgeLock: concurrent acquire fails with STATE_LOCK_CONTENTION', asyn
     const gate = new Promise((r) => { resolveFirst = r; });
     let secondError = null;
 
+    let signalHeld;
+    const heldPromise = new Promise((r) => { signalHeld = r; });
+
     const firstPromise = withBridgeLock(dir, 'contention-bridge', async () => {
-      await gate; // hold the lock until we release it
+      signalHeld();   // signal lock is confirmed held
+      await gate;     // hold the lock until we release it
       return 'first done';
     });
 
-    // Give the first lock a moment to acquire, then try to acquire concurrently
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait for held confirmation — deterministic, no timer race
+    await heldPromise;
 
     try {
       await withBridgeLock(dir, 'contention-bridge', async () => 'second');
