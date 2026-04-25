@@ -33,7 +33,7 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 - **`server/test/jsonrpc-errors.test.mjs`** — unit tests for the JSON-RPC
   code map (every stable code mapped, fallback to `-32603`, etc.).
 
-## [0.6.0-alpha] — 2026-MM-DD
+## [0.6.0-alpha] — 2026-04-25
 
 ### Added
 - Bearer auth on `/api/*` and `/mcp` with loopback + forwarded-header safe default (§4.2)

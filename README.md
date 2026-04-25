@@ -23,6 +23,7 @@ Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decisio
 - **Command-line toolkit** — 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts, cron jobs, and power-user workflows. Composable with grep / awk / jq. Installs standalone via `installer/install-cli.sh` against any reachable UM server.
 - **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default.
 - **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
+- **Upstream bridges** (new in v0.6) — one-way ingest from external memory stores. The first bridge, `um-bridge-claude-mem`, mirrors your claude-mem session history into the UM vault as searchable markdown so cross-surface queries see it too. Bridge-emitted content is fenced with `<external-summary source="…">` markers so the summarizer treats it as data, not instruction. See [`docs/bridges.md`](docs/bridges.md).
 
 ---
 
@@ -42,7 +43,7 @@ Anyone who uses Claude across multiple sessions and wants continuity. This is no
 
 **vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds on top: session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface. Using mem0 alone means no session state, no catchup mechanism, no document versioning.
 
-**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server.
+**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server. **In v0.6 they compose**: `um-bridge-claude-mem` ingests claude-mem's session history into the UM vault, so a session you logged in Claude Code becomes searchable from Claude.ai too.
 
 **vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault that a human can open in any editor can also be queried by agents at conversation speed via the MCP surface.
 
