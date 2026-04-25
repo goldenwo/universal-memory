@@ -672,6 +672,38 @@ MOCK
   assert_not_contains "T14: raw <external-summary> tag removed" "$ac" '<external-summary source='
   # State body content outside the block still present
   assert_contains "T14: non-bridge body still present" "$ac" "Current focus"
+
+  # Two-block fixture: confirm re.sub rewrites all occurrences, not just the first.
+  TWO_BLOCK_BODY='# State of play
+
+<external-summary source="claude-mem">
+First block payload.
+</external-summary>
+
+middle prose
+
+<external-summary source="other-bridge">
+Second block payload.
+</external-summary>'
+
+  vf2=$(days_ago_iso 1)
+  resp2=$(make_state_response "$TWO_BLOCK_BODY" "$vf2")
+  resp_file2="$TMPDIR_ROOT/resp14b.json"
+  printf '%s' "$resp2" > "$resp_file2"
+  cat > "$MOCK_BIN/curl" <<MOCK
+#!/bin/bash
+cat "$resp_file2"
+MOCK
+  chmod +x "$MOCK_BIN/curl"
+
+  output2=$(PATH="$MOCK_BIN:$PATH" UM_ENDPOINT="http://localhost:19999" \
+    UM_VAULT_DIR="$UM_VAULT_DIR" CLAUDE_CWD="$CLAUDE_CWD" \
+    bash "$SESSION_START" 2>/dev/null)
+  ac2=$(extract_additional_context "$output2")
+
+  assert_contains "T14: two-block — first BEGIN labeled" "$ac2" "[BEGIN external-summary source=claude-mem"
+  assert_contains "T14: two-block — second BEGIN labeled" "$ac2" "[BEGIN external-summary source=other-bridge"
+  assert_not_contains "T14: two-block — no raw open tag survives" "$ac2" '<external-summary source='
 }
 
 # ---------------------------------------------------------------------------
