@@ -329,14 +329,14 @@ make_fakebin "$T16/bin"
 T16_LINK_TARGET="$T16/plugins/universal-memory"
 ln -s "$PLUGIN_SRC" "$T16_LINK_TARGET" 2>/dev/null || true
 
-T16_EXIT=0
-T16_OUT=$(run_plugin_cc "$T16/bin" \
+_tx_capture T16 run_plugin_cc "$T16/bin" \
   UM_NONINTERACTIVE=1 \
   CLAUDE_PLUGINS_DIR="$T16/plugins" \
   SHELL=/bin/bash \
-  HOME="$T16/home") || T16_EXIT=$?
+  HOME="$T16/home"
+_dump_on_fail T16
 
-assert_exit_zero "T16: symlink-mode install exits 0" "$T16_EXIT"
+assert_exit_zero "T16: symlink-mode install exits 0" "$TX_EXIT_T16"
 
 # Bridge link must be installed regardless of mode
 T16_BRIDGE_LINK="$T16/home/.local/bin/um-bridge-claude-mem"

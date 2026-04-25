@@ -364,9 +364,8 @@ T3_EXIT="$TX_EXIT_T3"
 _dump_on_fail T3
 
 assert_eq "T3: exit code 0 when summarize returns empty" "$T3_EXIT" "0"
-# Summary should NOT have been written (summarize returned empty)
-T3_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-# We check stderr mentions the skip reason
+# Summary should NOT have been written (summarize returned empty) — verified
+# below via stderr skip-reason check + state.md missing assertion.
 assert_contains "T3: stderr explains summarize was empty" "$T3_STDERR" "summarize returned empty"
 assert_file_missing "T3: state.md not created" "$T3_STATE_FILE"
 

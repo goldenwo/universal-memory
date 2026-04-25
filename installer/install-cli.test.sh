@@ -100,10 +100,10 @@ mkdir -p "$T1_HOME"
 touch "$T1_HOME/.bashrc"
 make_fakepython3 "$T1/bin"
 
-T1_EXIT=0
-T1_OUT=$(env PATH="$T1/bin:$PATH" HOME="$T1_HOME" bash "$INSTALL_CLI" --yes 2>&1) || T1_EXIT=$?
+_tx_capture T1 env PATH="$T1/bin:$PATH" HOME="$T1_HOME" bash "$INSTALL_CLI" --yes
+_dump_on_fail T1
 
-assert_exit_zero "T1: install exits 0" "$T1_EXIT"
+assert_exit_zero "T1: install exits 0" "$TX_EXIT_T1"
 assert_file_exists "T1: LIB_DIR created" "$T1_HOME/.local/share/um/lib"
 assert_file_exists "T1: CLI_DIR created" "$T1_HOME/.local/share/um/cli"
 assert_file_exists "T1: um dispatcher in CLI_DIR" "$T1_HOME/.local/share/um/cli/um"
@@ -142,12 +142,12 @@ export UM_SUMMARIZER='openai'
 EOF
 
 _BASH_BIN2="$(command -v bash)"
-T2_EXIT=0
 # Run CLI install with UM_OPENAI_API_KEY deliberately unset (env-sourced contract)
-T2_OUT=$(env -i PATH="$T2/bin:/usr/bin:/bin" HOME="$T2_HOME" SHELL="$_BASH_BIN2" \
-  "$_BASH_BIN2" "$INSTALL_CLI" --yes 2>&1) || T2_EXIT=$?
+_tx_capture T2 env -i PATH="$T2/bin:/usr/bin:/bin" HOME="$T2_HOME" SHELL="$_BASH_BIN2" \
+  "$_BASH_BIN2" "$INSTALL_CLI" --yes
+_dump_on_fail T2
 
-assert_exit_zero "T2: install exits 0" "$T2_EXIT"
+assert_exit_zero "T2: install exits 0" "$TX_EXIT_T2"
 
 T2_BASHRC="$(cat "$T2_HOME/.bashrc")"
 # Block should now be present (overwritten by CLI install)
@@ -175,10 +175,10 @@ T3_CUSTOM_LIB="$T3/custom-lib"
 mkdir -p "$T3_CUSTOM_LIB"
 
 # Step 1: run CLI install with UM_LIB_DIR pointing at a custom writable path
-T3_EXIT1=0
-env -i PATH="$T3/bin:/usr/bin:/bin" HOME="$T3_HOME" SHELL="$_BASH_BIN" \
+_tx_capture T3step1 env -i PATH="$T3/bin:/usr/bin:/bin" HOME="$T3_HOME" SHELL="$_BASH_BIN" \
   UM_LIB_DIR="$T3_CUSTOM_LIB" \
-  "$_BASH_BIN" "$INSTALL_CLI" --yes >/dev/null 2>&1 || T3_EXIT1=$?
+  "$_BASH_BIN" "$INSTALL_CLI" --yes
+_dump_on_fail T3step1
 
 # Verify CLI install wrote the custom path into the block
 T3_BASHRC_AFTER_CLI="$(cat "$T3_HOME/.bashrc")"
@@ -208,17 +208,16 @@ T4_HOME="$T4/home"
 mkdir -p "$T4_HOME"
 make_nopython3 "$T4/empty-bin"
 
-T4_EXIT=0
-T4_OUT=$(env -i PATH="$T4/empty-bin:/usr/bin:/bin" HOME="$T4_HOME" SHELL=/bin/bash \
-  bash "$INSTALL_CLI" --yes 2>&1) || T4_EXIT=$?
+_tx_capture T4 env -i PATH="$T4/empty-bin:/usr/bin:/bin" HOME="$T4_HOME" SHELL=/bin/bash \
+  bash "$INSTALL_CLI" --yes
 
 # python3 is present on the host but PATH is minimal — if host python3 is found
 # on PATH above, the test may not trigger. So we only check IF exit was non-zero.
 # On a host where /usr/bin/python3 exists, this test is skipped gracefully.
 if ! command -v python3 >/dev/null 2>&1; then
   # python3 truly absent on host
-  assert_exit_nonzero "T4: fails without python3" "$T4_EXIT"
-  assert_contains "T4: error message has install hint" "$T4_OUT" "python3 is required"
+  assert_exit_nonzero "T4: fails without python3" "$TX_EXIT_T4"
+  assert_contains "T4: error message has install hint" "$TX_OUT_T4" "python3 is required"
 else
   # python3 found on host PATH — test the yaml-missing path instead
   # Create a python3 wrapper that fails 'import yaml'
@@ -246,12 +245,12 @@ touch "$T5_HOME/.bashrc"
 make_fakepython3 "$T5/bin"
 
 _BASH_BIN5="$(command -v bash)"
-T5_EXIT=0
 # Explicitly omit $HOME/.local/bin from PATH to verify guard is always written
-T5_OUT=$(env -i PATH="$T5/bin:/usr/bin:/bin" HOME="$T5_HOME" SHELL="$_BASH_BIN5" \
-  "$_BASH_BIN5" "$INSTALL_CLI" --yes 2>&1) || T5_EXIT=$?
+_tx_capture T5 env -i PATH="$T5/bin:/usr/bin:/bin" HOME="$T5_HOME" SHELL="$_BASH_BIN5" \
+  "$_BASH_BIN5" "$INSTALL_CLI" --yes
+_dump_on_fail T5
 
-assert_exit_zero "T5: install exits 0" "$T5_EXIT"
+assert_exit_zero "T5: install exits 0" "$TX_EXIT_T5"
 T5_BASHRC="$(cat "$T5_HOME/.bashrc")"
 # PATH guard must be in the block regardless of caller's PATH
 assert_contains "T5: PATH guard present in bashrc" "$T5_BASHRC" 'case ":$PATH:"'
@@ -303,12 +302,12 @@ touch "$T7_HOME/.bashrc"
 make_fakepython3 "$T7/bin"
 _BASH_BIN7="$(command -v bash)"
 
-T7_EXIT=0
-T7_OUT=$(env PATH="$T7/bin:$PATH" HOME="$T7_HOME" \
+_tx_capture T7 env PATH="$T7/bin:$PATH" HOME="$T7_HOME" \
   UM_LIB_DIR="$T7_SQ_LIB" \
-  "$_BASH_BIN7" "$INSTALL_CLI" --yes 2>&1) || T7_EXIT=$?
+  "$_BASH_BIN7" "$INSTALL_CLI" --yes
+_dump_on_fail T7
 
-assert_exit_zero "T7: install exits 0 with single-quote in UM_LIB_DIR" "$T7_EXIT"
+assert_exit_zero "T7: install exits 0 with single-quote in UM_LIB_DIR" "$TX_EXIT_T7"
 
 # The written rc file must source cleanly and UM_LIB_DIR must round-trip correctly.
 T7_SOURCE_OUT=$(bash -c "source '$T7_HOME/.bashrc'; printf '%s' \"\$UM_LIB_DIR\"" 2>&1)
@@ -385,11 +384,10 @@ mkdir -p "$T10_HOME"
 make_fakepython3 "$T10/bin"
 touch "$T10_HOME/.bashrc"
 _BASH_BIN10="$(which bash)"
-T10_EXIT=0
-T10_OUT=$(env PATH="$T10/bin:$PATH" HOME="$T10_HOME" \
-  "$_BASH_BIN10" "$INSTALL_CLI" --yes --typoFlag 2>&1) || T10_EXIT=$?
-assert_exit_nonzero "T10: unknown flag exits non-zero" "$T10_EXIT"
-assert_contains "T10: unknown flag error message" "$T10_OUT" "unknown flag"
+_tx_capture T10 env PATH="$T10/bin:$PATH" HOME="$T10_HOME" \
+  "$_BASH_BIN10" "$INSTALL_CLI" --yes --typoFlag
+assert_exit_nonzero "T10: unknown flag exits non-zero" "$TX_EXIT_T10"
+assert_contains "T10: unknown flag error message" "$TX_OUT_T10" "unknown flag"
 
 # ─── T11: --um-install-dir with no value → fails (round-9 fix: was silently empty) ──
 echo ""
@@ -400,10 +398,9 @@ mkdir -p "$T11_HOME"
 make_fakepython3 "$T11/bin"
 touch "$T11_HOME/.bashrc"
 _BASH_BIN11="$(which bash)"
-T11_EXIT=0
-T11_OUT=$(env PATH="$T11/bin:$PATH" HOME="$T11_HOME" \
-  "$_BASH_BIN11" "$INSTALL_CLI" --yes --um-install-dir 2>&1) || T11_EXIT=$?
-assert_exit_nonzero "T11: --um-install-dir with no value exits non-zero" "$T11_EXIT"
+_tx_capture T11 env PATH="$T11/bin:$PATH" HOME="$T11_HOME" \
+  "$_BASH_BIN11" "$INSTALL_CLI" --yes --um-install-dir
+assert_exit_nonzero "T11: --um-install-dir with no value exits non-zero" "$TX_EXIT_T11"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

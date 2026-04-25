@@ -39,6 +39,7 @@ UM_CLI_DIR="$HOME/.local/share/um/cli" \
   _write_marker_block "$tmp" "test-key" "openai"
 
 # ─── Assertions: trailer presence + exact form ──────────────────────────────
+# shellcheck disable=SC2034  # consumed by `assert` via single-quoted bash strings (eval)
 trailer_text=$(grep 'auth-token' "$tmp" | head -1 || true)
 assert '[ -n "$trailer_text" ]' 'marker block contains auth-token trailer'
 assert '[[ "$trailer_text" == *"[ -r"*"auth-token"*"]"* ]]' 'exact trailer form matches spec ([ -r … auth-token ])'
