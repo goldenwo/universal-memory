@@ -23,8 +23,61 @@
 Install is handled by `installer/install-cli.sh` (the standalone CLI installer shipped in v0.4). See [`installer/install-cli.md`](../installer/install-cli.md) for the step-by-step. After installation:
 
 - `um` is placed on `$PATH` (typically `~/.local/bin/um`).
-- A managed block is appended to `~/.bashrc` / `~/.zshrc` by the installer, sourcing the caller's current env — typically `UM_OPENAI_API_KEY`, `UM_SUMMARIZER`, and `UM_SERVER_URL` (set in the shell before running the installer so the values flow into the block).
+- A managed block is appended to `~/.bashrc` / `~/.zshrc` by the installer, sourcing the caller's current env — typically `UM_OPENAI_API_KEY`, `UM_SUMMARIZER`, `UM_SERVER_URL`, and `UM_AUTH_TOKEN` (set in the shell before running the installer so the values flow into the block).
 - Config is read from `.um/config` (repo-local, `KEY=value`) at runtime; then `$HOME/.um/config` (user-global, same format); env vars take highest precedence. See [Config](#config) for the full precedence chain.
+
+---
+
+## Environment requirements (v0.6)
+
+### `UM_AUTH_TOKEN` — bearer auth for non-loopback servers
+
+Six CLI scripts were retrofitted in v0.6 to pass `Authorization: Bearer $UM_AUTH_TOKEN` on every server request:
+
+| Script | Subcommand |
+|---|---|
+| `bin/um-list.sh` | `um list` |
+| `bin/um-recent.sh` | `um recent` |
+| `bin/um-search.sh` | `um search` |
+| `bin/um-state.sh` | `um state` |
+| `bin/um-forget` | `um forget` |
+| `bin/um-supersede` | `um supersede` |
+
+`UM_AUTH_TOKEN` is **required** when `UM_SERVER_URL` points to a non-loopback server (a tunnel URL or a remote host). Loopback (`http://localhost:6335`) with no forwarded-headers does not require auth.
+
+### How the token gets into your shell
+
+The install wizard writes `UM_AUTH_TOKEN` into the managed marker-block in `~/.bashrc` / `~/.zshrc`, sourcing it from `~/.um/auth-token`:
+
+```bash
+# example of what the installer writes inside the _UM_MARKER_START / _UM_MARKER_END block:
+export UM_AUTH_TOKEN="$(cat ~/.um/auth-token)"
+```
+
+After install (or if you update the token manually), reload your shell:
+
+```bash
+source ~/.bashrc   # or ~/.zshrc / restart terminal
+```
+
+Verify the var is set:
+
+```bash
+echo "$UM_AUTH_TOKEN"
+```
+
+### Friendly error translation (`_um_curl_wrap`)
+
+All six retrofitted scripts run their `curl` calls through `_um_curl_wrap` (introduced in Phase E.5). This wrapper translates HTTP error codes into human-readable messages before exit:
+
+| HTTP status | Message |
+|---|---|
+| `401` | `auth failed — set UM_AUTH_TOKEN to the value in ~/.um/auth-token and re-source your shell rc` |
+| `429` | `rate limited — wait and retry, or lower request frequency` |
+| `503` | `server unavailable — check docker compose ps and server logs` |
+| `5xx` | `server error (HTTP <status>) — check server logs` |
+
+A raw 401 from curl is never surfaced to the user; the wrapper always emits the actionable message.
 
 ---
 
@@ -283,6 +336,7 @@ Supported keys (case-sensitive, uppercase):
 | `UM_SERVER_URL` | Base URL of the `um` server |
 | `UM_PROJECT` | Default project name |
 | `UM_OPENAI_API_KEY` | OpenAI API key (used by server-side summarization) |
+| `UM_AUTH_TOKEN` | Bearer token for non-loopback servers (see [Environment requirements](#environment-requirements-v06)) |
 
 Future keys follow the same `UM_*` prefix convention.
 

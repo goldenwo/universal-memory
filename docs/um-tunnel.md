@@ -52,9 +52,39 @@ All three tunnels expose `http://localhost:6335` at a public HTTPS URL. None of 
 
 ---
 
+## Forwarded-header default-deny (v0.6 — why tunnels force auth)
+
+As of v0.6, UM uses a **forwarded-header presence check** as a proxy-safety signal (per spec §4.2). When any of the following headers is present on an incoming request, the server bypasses its loopback-noauth shortcut and requires a valid `Authorization: Bearer <token>` header:
+
+| Header | Purpose |
+|---|---|
+| `X-Forwarded-For` | Standard de-facto client IP from reverse proxy |
+| `X-Forwarded-Proto` | Original protocol (http/https) from proxy |
+| `X-Forwarded-Host` | Original Host header from proxy |
+| `X-Forwarded-Port` | Original port from proxy |
+| `X-Real-IP` | Single-client-IP variant used by nginx |
+| `Forwarded` | RFC 7239 standardized forwarding header |
+| `CF-Connecting-IP` | Cloudflare client IP (Cloudflare Tunnel / CDN) |
+| `CF-Ray` | Cloudflare Ray ID — confirms Cloudflare proxying |
+| `True-Client-IP` | Akamai / Cloudflare real-IP alternative |
+| `X-Original-Forwarded-For` | Forwarded-For after internal re-forwarding |
+
+**Rationale:** all major tunnel CLIs (`cloudflared`, `ngrok`, `tailscale funnel`) inject at least one of these headers when they forward a request. Presence of any forwarded-header indicates the request passed through a proxy, meaning it originated from outside the host — even if the outer TCP connection arrives on `127.0.0.1`. Without this check, a tunnel-fronted loopback could bypass auth silently.
+
+**Effect on `um-tunnel` users:** the token from `~/.um/auth-token` (written by `install.sh`) must be included in every tunnel-fronted request. The UM connector docs and CLI wrapper handle this automatically when `UM_AUTH_TOKEN` is exported. Direct `curl` calls to a tunnel URL must include the header:
+
+```bash
+curl -H "Authorization: Bearer $UM_AUTH_TOKEN" https://<tunnel-host>/mcp ...
+```
+
+Loopback requests with **no** forwarded-headers (e.g. direct `curl http://localhost:6335/...` from the same host) continue to skip auth.
+
+---
+
 ## Security model (blunt)
 
 - **Tunneling makes `localhost:6335` world-reachable at the printed URL.** Anyone who guesses or intercepts the URL can hit your MCP server.
+- **Bearer auth is required for all tunnel-fronted requests (v0.6+).** The token lives at `~/.um/auth-token`; see the forwarded-header section above for why.
 - **MCP write tools remain gated on `UM_MCP_WRITE_ENABLED`.** The tunnel does **not** bypass that gate. With `UM_MCP_WRITE_ENABLED=false` (the default), remote callers get `{ ok: false, error: "MCP writes disabled" }` when they try to persist anything.
 - **`UM_MCP_WRITE_ENABLED=true` + public tunnel with no auth = world-writable vault.** Don't do this without fronting the tunnel with auth.
 - **For any non-trivial use, front the tunnel with auth:**
