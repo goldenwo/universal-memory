@@ -244,3 +244,40 @@ _write_prompt_dir_to_rc() {
   fi
 }
 _write_prompt_dir_to_rc
+
+# ─── um-bridge-claude-mem (D.9) ───────────────────────────────────────────────
+_install_bridge_cli() {
+  local bridge_src="$_PLUGIN_TARGET/bin/um-bridge-claude-mem"
+  local bin_link="${HOME}/.local/bin/um-bridge-claude-mem"
+
+  # 1. Symlink CLI into ~/.local/bin/
+  mkdir -p "${HOME}/.local/bin"
+  if [ -L "$bin_link" ] || [ -e "$bin_link" ]; then rm -f "$bin_link"; fi
+  if ln -s "$bridge_src" "$bin_link" 2>/dev/null; then
+    ok "um-bridge-claude-mem symlinked: $bin_link -> $bridge_src"
+  else
+    cp "$bridge_src" "$bin_link" && chmod +x "$bin_link" && \
+      ok "um-bridge-claude-mem copied to $bin_link (symlink unavailable)"
+  fi
+
+  # 2. Vendor-copy bridge-contract.mjs + lockdir.mjs into plugin's bin/lib/
+  #    Skip in symlink mode: the shim's relative ../ path still resolves through
+  #    the symlink to server/lib/, so no copy is needed.
+  if [ ! -L "$_PLUGIN_TARGET" ]; then
+    local lib_dst="$_PLUGIN_TARGET/bin/lib"
+    mkdir -p "$lib_dst"
+    cp "$REPO_ROOT/server/lib/bridge-contract.mjs" "$lib_dst/bridge-contract.mjs"
+    cp "$REPO_ROOT/server/lib/lockdir.mjs"          "$lib_dst/lockdir.mjs"
+    ok "bridge-contract + lockdir vendored to $lib_dst"
+  fi
+
+  # 3. Build better-sqlite3 native binding (graceful failure — node-gyp prereqs
+  #    may be absent on user machines; bridge warns but plugin install succeeds).
+  if ( cd "$_PLUGIN_TARGET/bin" && npm install --omit=dev --loglevel=error >/dev/null 2>&1 ); then
+    ok "better-sqlite3 built successfully"
+  else
+    warn "um-bridge-claude-mem native build failed (better-sqlite3 needs node-gyp prereqs: python3, make, compiler)"
+    warn "  Bridge will be unavailable until: cd $_PLUGIN_TARGET/bin && npm install"
+  fi
+}
+_install_bridge_cli

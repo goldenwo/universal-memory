@@ -4,14 +4,14 @@
 // Exported as a separate module so it can be unit-tested without better-sqlite3
 // (tests pass mock row objects; no fs / db imports here).
 //
-// D.9 note: bridge-contract is imported via relative path because dev/CI runs
-// within the repo tree. D.9 (install-plugin-cc.sh) will vendor-copy
-// server/lib/bridge-contract.mjs to plugins/.../bin/lib/ and update this import.
+// D.9 note: bridge-contract is imported from ./lib/bridge-contract.mjs which is
+// a dev-tree shim in source (re-exports from server/lib/) and a vendor-copied
+// real file in production installs. install-plugin-cc.sh overwrites the shim
+// with a hard copy at install time (copy mode only; symlink mode uses the shim).
 
 import { createHash } from 'node:crypto';
 
-// Imported via relative path from the bin/ dir. See D.9 note above.
-import { wrapExternal } from '../../../../server/lib/bridge-contract.mjs';
+import { wrapExternal } from './lib/bridge-contract.mjs';
 
 // ---------------------------------------------------------------------------
 // slugify — convert raw project string to a safe directory name.
