@@ -92,7 +92,10 @@ jobs:
             echo "UM_RATE_LIMIT_RPM=100000"
             echo "UM_RATE_LIMIT_BURST=10000"
           } >> .env
-          docker compose restart memory-server
+          # `restart` reuses the existing container's env vars — does NOT
+          # re-read .env. Use `up -d --force-recreate` to rebuild the
+          # container with the updated env_file. qdrant is left untouched.
+          docker compose up -d --force-recreate --no-deps memory-server
           timeout 60 bash -c 'until curl -sf http://localhost:6335/health >/dev/null 2>&1; do sleep 1; done'
           echo "[ci] server back up after rate-limit reconfig"
 
