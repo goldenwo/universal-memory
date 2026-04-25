@@ -6,6 +6,7 @@
 // Exit codes (§5.2 / B.1 stable codes):
 //   0  success / silent skip (missing DB, cursor-reset done)
 //   1  CLI error (path validation failure, unexpected exception)
+//   2  UPSTREAM_FAILURE (reindex call failed; cursor not advanced; retry next tick)
 //   3  SERVER_INTERNAL (schema mismatch)
 //   4  STATE_LOCK_CONTENTION (SQLITE_BUSY after retries)
 
@@ -20,10 +21,16 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 
 // D.9 note: translateRows is imported from the helper extracted in D.5.
-// bridge-contract is imported inside translate.mjs via relative path (works in
-// dev/CI because the repo is a single tree). D.9 (install-plugin-cc.sh) will
-// vendor-copy server/lib/bridge-contract.mjs alongside this file.
+// bridge-contract is imported via relative path (works in dev/CI because the
+// repo is a single tree). D.9 (install-plugin-cc.sh) will vendor-copy
+// server/lib/bridge-contract.mjs alongside this file.
 import { translateRows } from './translate.mjs';
+import {
+  withBridgeLock,
+  twoPhaseWrite,
+  readCursor,
+  writeCursor,
+} from '../../../../server/lib/bridge-contract.mjs';
 
 // V1 correction: default DB filename is claude-mem.db (not sessions.db)
 const DEFAULT_DB = join(homedir(), '.claude-mem', 'claude-mem.db');
@@ -87,9 +94,11 @@ function validateDbPath(p) {
   const allowlist = [cmDir];
 
   // Add the repo test-fixtures dir to the allowlist (CWD-independent path via
-  // import.meta.url so tests work regardless of where the CLI is invoked from)
+  // import.meta.url so tests work regardless of where the CLI is invoked from).
+  // URL resolution: '../' from the FILE strips the filename first, so 4 steps
+  // are needed to reach the repo root (bin→universal-memory→claude-code→plugins→repo).
   try {
-    const repoFixturesUrl = new URL('../../../../../server/test/fixtures', import.meta.url);
+    const repoFixturesUrl = new URL('../../../../server/test/fixtures', import.meta.url);
     // Convert file URL pathname /E:/Projects/... to E:/Projects/... on Windows
     const fixturesPath = repoFixturesUrl.pathname.replace(/^\/([A-Za-z]):\//, '$1:/');
     allowlist.push(realpathSync(fixturesPath));
@@ -224,29 +233,18 @@ async function main() {
   // Cursor: we order by created_at_epoch (INTEGER) for stable pagination
   // across restarts. The cursor stores last_ingested_at_epoch from the
   // previous run; on first run the cursor file is absent and the default
-  // 0 is used (ingest everything). D.6 will write the cursor after
-  // two-phase write completes.
+  // 0 is used (ingest everything). Cursor is written after each successful
+  // two-phase write so a partial run (e.g., reindex fails on row 6 of 10)
+  // resumes at row 6 next tick.
   // ---------------------------------------------------------------------------
   const vaultDir =
     process.env.UM_VAULT_DIR ||
     join(homedir(), '.local', 'share', 'universal-memory');
   const cursorPath = join(vaultDir, '.local', 'bridges', 'claude-mem.json');
 
-  // readCursor is imported in translate.mjs; we import directly here too for
-  // the cursor epoch. D.6 will also need writeCursor — add that import then.
-  // For D.5 we only need to read the cursor epoch.
-  let lastEpoch = 0;
-  if (existsSync(cursorPath)) {
-    try {
-      const { readFile } = await import('node:fs/promises');
-      const raw = await readFile(cursorPath, 'utf8');
-      const cur = JSON.parse(raw);
-      lastEpoch = cur.last_ingested_at_epoch ?? 0;
-    } catch {
-      // Corrupt cursor — start from beginning (safe; idempotent re-ingest)
-      lastEpoch = 0;
-    }
-  }
+  // Read cursor via bridge-contract (returns default shape on ENOENT)
+  const cursor = await readCursor(cursorPath);
+  const lastEpoch = cursor.last_ingested_at_epoch ?? 0;
 
   const MAX_PER_RUN = parseInt(process.env.UM_BRIDGE_MAX_PER_RUN || '50', 10);
 
@@ -276,26 +274,121 @@ async function main() {
 
   const { translated, skipped } = translateRows(rows);
 
-  if (skipped.length > 0) {
-    for (const s of skipped) {
-      console.warn(`[um-bridge] skipped session ${s.id}: ${s.reason}`);
+  // ---------------------------------------------------------------------------
+  // §4.3 D.6 — Two-phase write + cursor advance inside bridge lock
+  //
+  // Lock prevents two concurrent bridge runs from racing on the same vault.
+  // twoPhaseWrite writes the markdown first (Phase 1), then calls reindexFn
+  // (Phase 2). If reindex throws, the markdown file remains on disk (idempotent
+  // on retry) but the cursor is NOT advanced — next run re-processes the row.
+  // Cursor is advanced with all three fields after each successful reindex so
+  // a partial run preserves progress.
+  // ---------------------------------------------------------------------------
+  const serverUrl = process.env.UM_SERVER_URL || 'http://localhost:6335';
+  const token = process.env.UM_AUTH_TOKEN;
+
+  // reindex — POST {path: relPath} to /api/reindex; throws UPSTREAM_FAILURE on any error
+  // (network errors like ECONNREFUSED are also wrapped — they are retryable upstream failures)
+  const reindex = async (relPath) => {
+    let r;
+    try {
+      r = await fetch(`${serverUrl}/api/reindex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'um-bridge/0.6',
+        },
+        body: JSON.stringify({ path: relPath }),
+      });
+    } catch (fetchErr) {
+      // Network error (ECONNREFUSED, DNS failure, timeout, etc.) — retryable
+      throw Object.assign(
+        new Error(`reindex network error: ${fetchErr.message}`),
+        { code: 'UPSTREAM_FAILURE' }
+      );
     }
-  }
+    if (!r.ok) {
+      const err = await r.text().catch(() => '(no body)');
+      throw Object.assign(new Error(`reindex ${r.status}: ${err}`), {
+        code: 'UPSTREAM_FAILURE',
+      });
+    }
+  };
 
-  console.log(
-    `[um-bridge] translated=${translated.length} skipped=${skipped.length} ` +
-      `(epoch_cursor=${lastEpoch} limit=${MAX_PER_RUN})`
-  );
+  await withBridgeLock(vaultDir, 'claude-mem', async () => {
+    let ingested = 0;
 
-  // D.6 will take over from here: two-phase write + cursor advance
-  // For D.5 the loop ends with translated[] and skipped[] populated.
+    for (const item of translated) {
+      try {
+        const fullPath = join(vaultDir, item.relPath);
+        // twoPhaseWrite: write markdown then call reindexFn.
+        // Propagates on reindex failure — cursor stays unchanged (retry semantics).
+        await twoPhaseWrite(fullPath, item.content, () => reindex(item.relPath));
+
+        // Advance cursor only after successful reindex (all three fields for ops visibility)
+        cursor.last_ingested_id = item.row.session_id;        // TEXT session_id (stable)
+        cursor.last_ingested_at = new Date().toISOString();   // wall-clock for ops visibility
+        cursor.last_ingested_at_epoch = item.row.created_at_epoch; // INTEGER used by WHERE query
+        await writeCursor(cursorPath, cursor);
+        ingested++;
+      } catch (e) {
+        if (e.code === 'UPSTREAM_FAILURE') {
+          console.error(
+            `[um-bridge] reindex failed at session_id=${item.row.session_id}; ` +
+              `cursor not advanced; exits UPSTREAM_FAILURE; retry next tick`
+          );
+          // Exit summary before non-zero exit
+          console.error(
+            `[um-bridge] ingested ${ingested} of ${rows.length} sessions (partial); ` +
+              `cursor at session_id=${cursor.last_ingested_id ?? 'none'}`
+          );
+          process.exit(2); // UPSTREAM_FAILURE — cursor preserved, retry next tick
+        }
+        throw e; // unexpected error — propagate
+      }
+    }
+
+    // Advance cursor past skipped rows so bridge doesn't re-read them next tick.
+    // Skipped rows failed translation (e.g. marker-injection attempt) — we still
+    // need to move past them or the bridge stalls forever on bad rows.
+    if (skipped.length > 0 && rows.length > 0) {
+      const lastRow = rows[rows.length - 1];
+      cursor.last_ingested_id = lastRow.session_id;
+      cursor.last_ingested_at = new Date().toISOString();
+      cursor.last_ingested_at_epoch = lastRow.created_at_epoch;
+      await writeCursor(cursorPath, cursor);
+    }
+
+    // Final human-readable summary line on every exit path (§4.3 round-8 fix)
+    const remaining = rows.length === MAX_PER_RUN ? '(more available)' : '(backfill complete)';
+    const skipSuffix =
+      skipped.length > 0
+        ? `; ${skipped.length} skipped (content rejected — see log for session IDs)`
+        : '';
+
+    if (ingested === 0 && skipped.length === 0) {
+      console.log(
+        `[um-bridge] no new claude-mem sessions since epoch=${lastEpoch}; nothing to do`
+      );
+    } else {
+      for (const s of skipped) {
+        console.error(`[um-bridge] skipped session_id=${s.id}: ${s.reason}`);
+      }
+      console.log(
+        `[um-bridge] ingested ${ingested} of ${rows.length} sessions ${remaining}${skipSuffix}; ` +
+          `cursor at session_id=${cursor.last_ingested_id ?? 'none'}; ` +
+          `next tick in ~6h or run 'um-bridge-claude-mem --once' to resume`
+      );
+    }
+  });
 
   if (values.once) {
-    // --once: single pass, exit 0
+    // --once: single pass done, exit 0
     process.exit(0);
   }
 
-  // Daemon mode: D.6 will add polling interval here
+  // Daemon mode: D.8 will add polling interval here
   process.exit(0);
 }
 
