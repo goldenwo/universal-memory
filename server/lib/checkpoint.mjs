@@ -42,8 +42,19 @@ import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
 import { withRetry } from './retry.mjs';
 import { getLogger } from './logger.mjs';
-import { safeLog } from './obs-fallback.mjs';
+import { safeLog, obsFallback } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
+import { lockContentionsTotal } from './metrics.mjs';
+
+// R1 review A1, fix #1: lock-contention metric. Stable label only — never
+// raw lockdir paths (per-project expansion would explode cardinality).
+function emitLockContentionMetric(lockPath) {
+  try {
+    lockContentionsTotal.inc({ lock_path: lockPath });
+  } catch (e) {
+    obsFallback(e, `metrics:lock_contentions:${lockPath}`);
+  }
+}
 
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
@@ -219,9 +230,13 @@ export async function doCheckpoint(args, ctx = {}) {
     return { _acquireError: err };
   });
   if (acquired === false) {
+    // R1 review A1, fix #1: contention metric. Stable label — raw path includes
+    // the project slug, which would explode cardinality with N projects.
+    emitLockContentionMetric('checkpoint:state');
     return { schema_version: 1, ok: false, error: 'checkpoint_in_progress' };
   }
   if (acquired && acquired._acquireError) {
+    emitLockContentionMetric('checkpoint:state');
     return { schema_version: 1, ok: false, error: `lock_acquire_failed: ${acquired._acquireError.code ?? acquired._acquireError.message}` };
   }
 
@@ -269,6 +284,9 @@ export async function doCheckpoint(args, ctx = {}) {
       if (!rawAcquired) {
         // Skip this file rather than fail the whole checkpoint — best-effort read,
         // matches v0.5 proper-lockfile behavior on contention.
+        // R1 review A1, fix #1: contention metric. Per-raw-file collisions
+        // bucket under 'checkpoint:raw' for stable label cardinality.
+        emitLockContentionMetric('checkpoint:raw');
         safeLog(() => getLogger().warn({
           request_id: currentRequestId(),
           component: 'checkpoint',
@@ -419,6 +437,10 @@ export async function doCheckpoint(args, ctx = {}) {
       }
       const isLockContention =
         phase2Err.code === 'EBUSY' || phase2Err.code === 'STATE_LOCK_CONTENTION';
+      if (isLockContention) {
+        // R1 review A1, fix #1: phase-2 rename / state.md write contention metric.
+        emitLockContentionMetric('checkpoint:summary');
+      }
       const out = {
         schema_version: 1,
         ok: false,
@@ -446,6 +468,9 @@ export async function doCheckpoint(args, ctx = {}) {
     try {
       const callerOverridesDelays =
         ctx.retryDelaysMs !== undefined || ctx.retryJitterMaxMs !== undefined;
+      // R1 review A1, fix #1: thread op label for um_mem0_ops_total. Even when
+      // tests override the timing knobs, the op label stays so the metric still
+      // reflects every checkpoint reindex (success or fail).
       const retryOpts = callerOverridesDelays
         ? {
             // Legacy hooks: keep test backwards compat. retryDelaysMs.length is
@@ -454,8 +479,9 @@ export async function doCheckpoint(args, ctx = {}) {
             maxRetries: retryDelaysMs.length,
             baseDelayMs: retryDelaysMs[0] ?? 0,
             jitterMaxMs: retryJitterMaxMs,
+            op: 'reindex',
           }
-        : undefined; // let withRetry honor UM_UPSTREAM_RETRY_MAX + spec defaults
+        : { op: 'reindex' }; // let withRetry honor UM_UPSTREAM_RETRY_MAX + spec defaults
       await withRetry(async () => {
         attemptCount += 1;
         try {

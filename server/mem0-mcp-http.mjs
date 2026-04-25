@@ -57,7 +57,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 
 // ---------------------------------------------------------------------------
@@ -446,15 +446,16 @@ function tagRetryable(err) {
 async function deleteByMetadataId(targetId) {
 	// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
 	// C.11: wrap in withRetry — transient qdrant blips don't fail the request.
+	// R1 review A1, fix #1: thread op label so um_mem0_ops_total increments.
 	const allMemories = await withRetry(() =>
 		memory.getAll({ userId: USER_ID }).catch((e) => { throw tagRetryable(e); })
-	);
+	, { op: 'getAll' });
 	const allItems = allMemories?.results || allMemories || [];
 	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
 	for (const item of existingItems) {
 		await withRetry(() =>
 			memory.delete(item.id).catch((e) => { throw tagRetryable(e); })
-		);
+		, { op: 'delete' });
 	}
 	return existingItems.length;
 }
@@ -483,18 +484,46 @@ async function reindexDoc(relPath) {
 	// surfacing UPSTREAM_FAILURE. checkpoint.mjs (B.10) wraps reindexDoc itself
 	// in another withRetry layer for the consistency-point reindex; the inner
 	// retry here covers append-turn (best-effort) and direct /api/reindex calls.
+	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 	await withRetry(() =>
 		memory.add(docText, { userId: USER_ID, metadata, infer: false })
 			.catch((e) => { throw tagRetryable(e); })
-	);
+	, { op: 'add' });
 	return { ok: true, path: relPath, id: targetId, indexed: true };
 }
 
 // ---------------------------------------------------------------------------
 // handleToolCall
+//
+// R1 review A1, fix #1: every MCP tool dispatch emits one
+// um_mcp_tool_calls_total{tool, status} sample (status='ok' on resolution,
+// status='fail' on rejection). The switch body is delegated to
+// _handleToolCallInner so the wrapper can do exactly one emit per call,
+// independent of how many branches a handler crosses internally.
 // ---------------------------------------------------------------------------
 
 export async function handleToolCall(name, args, ctx = {}) {
+	let status = 'ok';
+	try {
+		return await _handleToolCallInner(name, args, ctx);
+	} catch (err) {
+		status = 'fail';
+		throw err;
+	} finally {
+		try {
+			// Use the tool name verbatim — TOOLS list is the cardinality cap.
+			// Unknown-tool throws (default branch) still bucket under their
+			// caller-supplied name; the cardinality is bounded by what the
+			// caller can put in `params.name`. If that becomes a worry, a
+			// future fix can clamp to the TOOLS allow-list before emit.
+			mcpToolCallsTotal.inc({ tool: String(name), status });
+		} catch (e) {
+			obsFallback(e, `metrics:mcp_tool:${name}:${status}`);
+		}
+	}
+}
+
+async function _handleToolCallInner(name, args, ctx = {}) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
@@ -545,10 +574,11 @@ export async function handleToolCall(name, args, ctx = {}) {
 			}
 			const memoryClient = ctx?.memory ?? memory;
 			// C.11: wrap memory.add — transient qdrant errors get up to 3 retries.
+			// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 			const result = await withRetry(() =>
 				memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) })
 					.catch((e) => { throw tagRetryable(e); })
-			);
+			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
@@ -576,10 +606,11 @@ export async function handleToolCall(name, args, ctx = {}) {
 			}
 			const memoryClient = ctx?.memory ?? memory;
 			// C.11: wrap memory.delete — transient qdrant errors get up to 3 retries.
+			// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 			await withRetry(() =>
 				memoryClient.delete(args.memoryId)
 					.catch((e) => { throw tagRetryable(e); })
-			);
+			, { op: 'delete' });
 			return `Deleted ${args.memoryId}`;
 		}
 
@@ -1200,10 +1231,11 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// before surfacing UPSTREAM_FAILURE. /api/search is the hottest path (every
 	// session-start / chat turn), so a brief qdrant blip should not bubble a 502
 	// to the user when one retry would cover it.
+	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 	const raw = await withRetry(() =>
 		memoryClient.search(query, { userId: USER_ID, limit: limit || 5 })
 			.catch((e) => { throw tagRetryable(e); })
-	);
+	, { op: 'search' });
 	let items = raw?.results || raw || [];
 	// §4.1 extensibility contract: additive sibling fields on the memory-client
 	// envelope (e.g., future `provider`, `latency_ms` for multi-provider
@@ -1473,10 +1505,11 @@ export async function doList(full = false, limit = null, ctx = {}) {
   // C.11: wrap memoryClient.getAll — transient qdrant errors get up to 3 retries
   // before surfacing UPSTREAM_FAILURE. /api/list is request-path; covers MCP
   // memory_list as well via doList.
+  // R1 review A1, fix #1: thread op label for um_mem0_ops_total.
   const all = await withRetry(() =>
     memoryClient.getAll({ userId: USER_ID })
       .catch((e) => { throw tagRetryable(e); })
-  );
+  , { op: 'getAll' });
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   // §4.1 extensibility contract: additive sibling fields on the memory-client
@@ -1635,11 +1668,17 @@ export function createRequestHandler(ctx = {}) {
 		if (url.pathname === '/metrics') return;
 		try {
 			const ms = Date.now() - startedAt;
-			const endpoint = routeTemplate || url.pathname;
+			// R1 review C6, fix #2: cardinality fence. Unknown paths
+			// (resolveRouteTemplate→null) bucket under '/__unknown__' so an
+			// attacker spraying /api/foo, /api/bar, /api/baz cannot grow the
+			// prom-client registry unboundedly. Per-IP rate-limit (60 RPM) is a
+			// partial natural throttle; multi-IP would still amplify without
+			// this fence.
+			const endpoint = routeTemplate || '/__unknown__';
 			httpRequestsTotal.inc({ endpoint, status: String(res.statusCode) });
 			httpRequestDurationSeconds.observe({ endpoint }, ms / 1000);
 		} catch (e) {
-			obsFallback(e, `metrics:request:${routeTemplate || url.pathname}`);
+			obsFallback(e, `metrics:request:${routeTemplate || '/__unknown__'}`);
 		}
 	};
 	// Shim res.end so every code path (200, 4xx, 5xx, early-return)
@@ -1913,7 +1952,13 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
 			const { text, metadata } = JSON.parse(await readBody(req));
-			const result = await resolvedMemory().add(text, { userId: USER_ID, ...(metadata && { metadata }) });
+			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
+			// previously surfaced as raw 500; withRetry retries 3× then
+			// surfaces UPSTREAM_FAILURE (mapped to 502 by error-envelope).
+			const result = await withRetry(() =>
+				resolvedMemory().add(text, { userId: USER_ID, ...(metadata && { metadata }) })
+					.catch((e) => { throw tagRetryable(e); })
+			, { op: 'add' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(result));
 			return;
@@ -2066,7 +2111,13 @@ export function createRequestHandler(ctx = {}) {
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
 			const docText = `${fm.title}\n\n${body.trim()}`;
 			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
-			await resolvedMemory().add(docText, { userId: USER_ID, metadata, infer: false });
+			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
+			// retried 3× before UPSTREAM_FAILURE surfaces. Mirrors the
+			// reindexDoc() helper which already uses withRetry.
+			await withRetry(() =>
+				resolvedMemory().add(docText, { userId: USER_ID, metadata, infer: false })
+					.catch((e) => { throw tagRetryable(e); })
+			, { op: 'add' });
 
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ ok: true, path: relPath, id: targetId, indexed: true }));
@@ -2180,11 +2231,20 @@ export function createRequestHandler(ctx = {}) {
 					return;
 				}
 				try {
-					await resolvedMemory().delete(uuid);
+					// R1 review B11, fix #3: wrap mem0.delete. Idempotent op
+					// (delete-same-id twice = no-op) so retry is safe; uniformity
+					// with the other request-path mem0 calls outweighs the
+					// argument that delete is "already idempotent."
+					await withRetry(() =>
+						resolvedMemory().delete(uuid)
+							.catch((e) => { throw tagRetryable(e); })
+					, { op: 'delete' });
 					res.writeHead(200, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ ok: true, deleted: 1, query: `id=${uuid}` }));
 				} catch (err) {
-					// mem0 may throw if UUID not found — treat as 0 deleted
+					// mem0 may throw if UUID not found — treat as 0 deleted.
+					// withRetry wraps in UPSTREAM_FAILURE on retry-exhaustion;
+					// either path lands here and is normalized to deleted: 0.
 					res.writeHead(200, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ ok: true, deleted: 0, query: `id=${uuid}` }));
 				}
@@ -2193,7 +2253,12 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname.startsWith('/api/') && req.method === 'DELETE') {
 			const id = url.pathname.split('/api/')[1];
-			await resolvedMemory().delete(id);
+			// R1 review B11, fix #3: wrap mem0.delete. Idempotent op so retry
+			// is safe; matches the wrapping of POST /api/delete Shape B above.
+			await withRetry(() =>
+				resolvedMemory().delete(id)
+					.catch((e) => { throw tagRetryable(e); })
+			, { op: 'delete' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify({ deleted: id }));
 			return;
@@ -2224,6 +2289,18 @@ export function createRequestHandler(ctx = {}) {
 			if (!res.headersSent) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
+			}
+			return;
+		}
+		// R1 review B11, fix #3: withRetry surfaces UPSTREAM_FAILURE on
+		// retry-exhaustion. Without this branch the outer catch falls through
+		// to SERVER_INTERNAL → 500, which defeats the "retry, then 502" intent
+		// of withRetry-wrapping the request-path mem0 calls. Map to 502 via
+		// the unified envelope so clients see a retryable: true error.
+		if (err && err.code === 'UPSTREAM_FAILURE') {
+			if (!res.headersSent) {
+				res.writeHead(httpStatusFor('UPSTREAM_FAILURE'), { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('UPSTREAM_FAILURE', err.message ?? 'upstream failed')));
 			}
 			return;
 		}

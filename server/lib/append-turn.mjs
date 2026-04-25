@@ -3,6 +3,18 @@ import fs from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
+import { lockContentionsTotal } from './metrics.mjs';
+import { obsFallback } from './obs-fallback.mjs';
+
+// R1 review A1, fix #1: lock-contention metric. Stable label only — never
+// raw lockdir paths (per-day-file expansion would explode cardinality).
+function emitLockContentionMetric(lockPath) {
+  try {
+    lockContentionsTotal.inc({ lock_path: lockPath });
+  } catch (e) {
+    obsFallback(e, `metrics:lock_contentions:${lockPath}`);
+  }
+}
 
 // B.12 followup: O_NOFOLLOW — refuse to follow symlinks at the open() syscall level.
 // Closes the lstat→open TOCTOU race: even if an attacker swaps the path for
@@ -117,9 +129,13 @@ export async function doAppendTurn(args, ctx = {}) {
   try {
     acquired = await acquireFn(lockdirPath, { timeoutMs: 10_000 });
   } catch (err) {
+    // R1 review A1, fix #1: contention metric. Use stable label 'append-turn' —
+    // raw lockdir path includes the date (one bucket per day), exploding cardinality.
+    emitLockContentionMetric('append-turn');
     return { schema_version: 1, ok: false, error: `lock_acquire_failed: ${err.code ?? err.message}` };
   }
   if (!acquired) {
+    emitLockContentionMetric('append-turn');
     return { schema_version: 1, ok: false, error: 'lock_acquire_failed: timeout' };
   }
 
