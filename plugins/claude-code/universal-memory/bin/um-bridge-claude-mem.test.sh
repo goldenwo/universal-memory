@@ -125,23 +125,17 @@ assert_exit "T2d: --cursor-reset with no file exits 0 (idempotent)" "$reset_exit
 # ---------------------------------------------------------------------------
 printf '\nTest 3 (Bonus): Non-existent DB path → silent exit 0\n'
 
-if [ "$HAVE_BRIDGE" -eq 0 ]; then
-  skip "T3: non-existent path (better-sqlite3 not installed)"
+# existsSync check fires before the better-sqlite3 dynamic import, so this
+# test runs regardless of whether the native module is built.
+FIXTURES_DIR="$REPO_ROOT/server/test/fixtures"
+out3=$(node "$CLI" --once --db-path="$FIXTURES_DIR/does-not-exist.db" 2>&1)
+exit3=$?
+assert_exit "T3a: non-existent DB exits 0" "$exit3" "0"
+if [ -z "$out3" ]; then
+  pass "T3b: no output on silent skip"
 else
-  NONEXISTENT_PATH="$TMPDIR_ROOT/nonexistent-claude-mem/claude-mem.db"
-  # The nonexistent path is NOT in the allowlist normally; we need it to point
-  # inside fixtures or ~/.claude-mem. Use a path that resolves to ENOENT within
-  # the fixtures dir allowlist by pointing to a file that doesn't exist there.
-  FIXTURES_DIR="$REPO_ROOT/server/test/fixtures"
-  out3=$(node "$CLI" --once --db-path="$FIXTURES_DIR/does-not-exist.db" 2>&1)
-  exit3=$?
-  assert_exit "T3a: non-existent DB exits 0" "$exit3" "0"
-  if [ -z "$out3" ]; then
-    pass "T3b: no output on silent skip"
-  else
-    # Some output is acceptable (e.g. a debug line) — not a hard failure
-    skip "T3b: got output on silent skip (acceptable): $out3"
-  fi
+  # Some output is acceptable (e.g. a debug line) — not a hard failure
+  skip "T3b: got output on silent skip (acceptable): $out3"
 fi
 
 # ---------------------------------------------------------------------------
@@ -149,24 +143,24 @@ fi
 # ---------------------------------------------------------------------------
 printf '\nTest 4 (Bonus): Path-traversal guard\n'
 
-if [ "$HAVE_BRIDGE" -eq 0 ]; then
-  skip "T4: path-traversal (better-sqlite3 not installed)"
+# validateDbPath fires before the better-sqlite3 dynamic import, so this
+# test runs regardless of whether the native module is built.
+# UNC path test — use Windows-style on win32, POSIX double-slash elsewhere
+if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$(uname -s)" == MINGW* ]]; then
+  TRAVERSAL_PATH='\\\\attacker\\share\\evil.db'
 else
-  # UNC path test — use Windows-style on win32, POSIX double-slash elsewhere
-  if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$(uname -s)" == MINGW* ]]; then
-    TRAVERSAL_PATH='\\\\attacker\\share\\evil.db'
-  else
-    TRAVERSAL_PATH='//attacker/share/evil.db'
-  fi
+  TRAVERSAL_PATH='//attacker/share/evil.db'
+fi
 
-  out4=$(node "$CLI" --once --db-path="$TRAVERSAL_PATH" 2>&1 || true)
-  exit4=$?
-  assert_exit "T4a: UNC path exits 1" "$exit4" "1"
-  if [[ "$out4" == *"UNC"* ]] || [[ "$out4" == *"outside allowlist"* ]]; then
-    pass "T4b: UNC/allowlist rejection message present"
-  else
-    fail "T4b: expected 'UNC' or 'outside allowlist' in output, got: ${out4:0:200}"
-  fi
+set +e
+out4=$(node "$CLI" --once --db-path="$TRAVERSAL_PATH" 2>&1)
+exit4=$?
+set -e
+assert_exit "T4a: UNC path exits 1" "$exit4" "1"
+if [[ "$out4" == *"UNC"* ]] || [[ "$out4" == *"outside allowlist"* ]]; then
+  pass "T4b: UNC/allowlist rejection message present"
+else
+  fail "T4b: expected 'UNC' or 'outside allowlist' in output, got: ${out4:0:200}"
 fi
 
 # ---------------------------------------------------------------------------

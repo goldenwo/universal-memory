@@ -14,7 +14,7 @@
 // --cursor-reset and --help work even when better-sqlite3 is not yet installed
 // (e.g., before the first `npm install` on a new dev box). D.9 (install-plugin)
 // will ensure better-sqlite3 is built before the daemon is started.
-import { readFileSync, realpathSync, lstatSync, unlinkSync, existsSync } from 'node:fs';
+import { realpathSync, lstatSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
@@ -151,17 +151,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Missing claude-mem DB: exit 0 silently (matches install-plugin-codex pattern)
-  // The test above returns the raw path unchanged for ENOENT; check existence here
-  try {
-    readFileSync(dbPath, { flag: 'r' });
-  } catch (e) {
-    if (e.code === 'ENOENT') {
-      // claude-mem not installed or DB not yet created — not an error
-      process.exit(0);
-    }
-    console.error(`[um-bridge] failed to read DB: ${e.message}`);
-    process.exit(1);
+  // Missing claude-mem DB: exit 0 silently (matches install-plugin-codex pattern).
+  // existsSync is O(1) instead of reading the whole DB into memory.
+  if (!existsSync(dbPath)) {
+    // claude-mem not installed or DB not yet created — not an error
+    process.exit(0);
   }
 
   // §4.3.0 point 8 — upstream-locked retry: 3× with 1 s backoff on SQLITE_BUSY
