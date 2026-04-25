@@ -429,7 +429,11 @@ fi
 # users don't silently produce a broken install.
 _PRIOR_CONTAINER_USER=""
 if [ -f "$ENV_FILE" ]; then
-	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)
+	# Trailing `|| true` masks the pipeline's exit code: grep returns 1 when
+	# UM_CONTAINER_USER isn't yet in .env (which is the common case for re-runs
+	# of installs that never set the override), and `set -o pipefail` would
+	# otherwise propagate that 1 → `set -e` would kill the script silently.
+	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 fi
 if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
 	&& [ "$UM_CONTAINER_USER" != "$_PRIOR_CONTAINER_USER" ]; then
