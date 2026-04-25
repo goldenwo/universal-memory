@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib/um-curl-wrap.sh
+source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
 
 _usage() {
   cat <<EOF
@@ -68,14 +70,10 @@ fi
 
 URL="$SERVER/api/list$QS"
 
-response=$(curl -fSsm 10 --fail-with-body \
+response=$(_um_curl_wrap "um-list" -fSsm 10 --fail-with-body \
   -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
-  "$URL" 2>&1) || {
-  curl_rc=$?
-  echo "um list: curl exit $curl_rc: $response" >&2
-  exit 3
-}
+  "$URL") || exit 3
 
 # /api/list returns {results: [...]} envelope. Map the inner array.
 echo "$response" | jq -c '.results[]'

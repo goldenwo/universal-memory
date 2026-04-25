@@ -96,10 +96,11 @@ write_mock_curl_ok() {
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/usr/bin/env bash
 # Mock curl — records call count, always succeeds
+# Emits body + "200" on last line (matches _um_curl_wrap -w %{http_code} contract)
 count=\$(cat "$calls_file" 2>/dev/null || echo 0)
 count=\$((count + 1))
 echo "\$count" > "$calls_file"
-printf '{"ok":true}\n'
+printf '{"ok":true}\n200\n'
 exit 0
 MOCK
   chmod +x "$MOCK_BIN/curl"

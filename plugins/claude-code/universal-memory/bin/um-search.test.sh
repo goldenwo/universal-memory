@@ -11,34 +11,35 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-# Helper: write a mock curl that emits a canned JSON response
+# Helper: write a mock curl that emits a canned JSON response + "200" status line
+# (wrapper expects body\n<http_code> on the last line via -w $'\n%{http_code}')
 _make_mock_curl() {
   local dir="$1"
   local response="$2"
   mkdir -p "$dir"
   # Write the canned response into a temp file to avoid heredoc quoting issues
   local resp_file="$dir/response.json"
-  printf '%s\n' "$response" > "$resp_file"
+  printf '%s\n200\n' "$response" > "$resp_file"
   cat > "$dir/curl" <<EOF
 #!/bin/bash
-# Mock curl — emits canned response, exit 0
+# Mock curl — emits canned response + 200 status line, exit 0
 cat "$resp_file"
 exit 0
 EOF
   chmod +x "$dir/curl"
 }
 
-# Helper: write a mock curl that records its args AND emits canned JSON
+# Helper: write a mock curl that records its args AND emits canned JSON + "200"
 _make_recording_curl() {
   local dir="$1"
   local response="$2"
   local args_file="$3"
   mkdir -p "$dir"
   local resp_file="$dir/response.json"
-  printf '%s\n' "$response" > "$resp_file"
+  printf '%s\n200\n' "$response" > "$resp_file"
   cat > "$dir/curl" <<EOF
 #!/bin/bash
-# Recording mock curl — saves args to file, emits canned response
+# Recording mock curl — saves args to file, emits canned response + 200 status line
 echo "\$@" > "$args_file"
 cat "$resp_file"
 exit 0
