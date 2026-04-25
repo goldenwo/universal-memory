@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { withRetry } from './lib/retry.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
@@ -424,17 +425,36 @@ export function getVisibleTools(writeEnabled) {
 }
 
 // ---------------------------------------------------------------------------
+// C.11: tag mem0/qdrant errors as retryable for the shared withRetry() helper.
+// mem0's JS client doesn't ship a `.retryable` flag on its rejections, but in
+// practice nearly every failure we observe is transient (qdrant unreachable,
+// network blip, container restarting). Our own validation errors (typeof
+// guards, INPUT_INVALID class) are caught BEFORE reaching mem0, so it is safe
+// to default-mark mem0 errors retryable. Adapters that want to opt out can
+// re-throw with `.retryable = false`.
+// ---------------------------------------------------------------------------
+function tagRetryable(err) {
+	if (err && err.retryable === undefined) err.retryable = true;
+	return err;
+}
+
+// ---------------------------------------------------------------------------
 // Shared helper: delete all mem0 entries matching a metadata.id value
 // Returns the count of deleted entries.
 // ---------------------------------------------------------------------------
 
 async function deleteByMetadataId(targetId) {
 	// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
-	const allMemories = await memory.getAll({ userId: USER_ID });
+	// C.11: wrap in withRetry — transient qdrant blips don't fail the request.
+	const allMemories = await withRetry(() =>
+		memory.getAll({ userId: USER_ID }).catch((e) => { throw tagRetryable(e); })
+	);
 	const allItems = allMemories?.results || allMemories || [];
 	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
 	for (const item of existingItems) {
-		await memory.delete(item.id);
+		await withRetry(() =>
+			memory.delete(item.id).catch((e) => { throw tagRetryable(e); })
+		);
 	}
 	return existingItems.length;
 }
@@ -459,7 +479,14 @@ async function reindexDoc(relPath) {
 	await deleteByMetadataId(targetId);
 	const metadata = { schema_version: 1, ...fm };
 	const docText = `${fm.title}\n\n${body.trim()}`;
-	await memory.add(docText, { userId: USER_ID, metadata, infer: false });
+	// C.11: wrap memory.add — transient qdrant errors get up to 3 retries before
+	// surfacing UPSTREAM_FAILURE. checkpoint.mjs (B.10) wraps reindexDoc itself
+	// in another withRetry layer for the consistency-point reindex; the inner
+	// retry here covers append-turn (best-effort) and direct /api/reindex calls.
+	await withRetry(() =>
+		memory.add(docText, { userId: USER_ID, metadata, infer: false })
+			.catch((e) => { throw tagRetryable(e); })
+	);
 	return { ok: true, path: relPath, id: targetId, indexed: true };
 }
 
@@ -517,7 +544,11 @@ export async function handleToolCall(name, args, ctx = {}) {
 				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
-			const result = await memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) });
+			// C.11: wrap memory.add — transient qdrant errors get up to 3 retries.
+			const result = await withRetry(() =>
+				memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) })
+					.catch((e) => { throw tagRetryable(e); })
+			);
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
 			return events;
 		}
@@ -544,7 +575,11 @@ export async function handleToolCall(name, args, ctx = {}) {
 				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
-			await memoryClient.delete(args.memoryId);
+			// C.11: wrap memory.delete — transient qdrant errors get up to 3 retries.
+			await withRetry(() =>
+				memoryClient.delete(args.memoryId)
+					.catch((e) => { throw tagRetryable(e); })
+			);
 			return `Deleted ${args.memoryId}`;
 		}
 
@@ -1161,7 +1196,14 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// memoryClient if it exposes search (legacy positional pattern), else fall back
 	// to the module-level memory binding used by real requests.
 	const memoryClient = ctx?.memory ?? (typeof ctx?.search === 'function' ? ctx : memory);
-	const raw = await memoryClient.search(query, { userId: USER_ID, limit: limit || 5 });
+	// C.11: wrap memoryClient.search — transient qdrant errors get up to 3 retries
+	// before surfacing UPSTREAM_FAILURE. /api/search is the hottest path (every
+	// session-start / chat turn), so a brief qdrant blip should not bubble a 502
+	// to the user when one retry would cover it.
+	const raw = await withRetry(() =>
+		memoryClient.search(query, { userId: USER_ID, limit: limit || 5 })
+			.catch((e) => { throw tagRetryable(e); })
+	);
 	let items = raw?.results || raw || [];
 	// §4.1 extensibility contract: additive sibling fields on the memory-client
 	// envelope (e.g., future `provider`, `latency_ms` for multi-provider
@@ -1428,7 +1470,13 @@ export async function doList(full = false, limit = null, ctx = {}) {
   // memoryClient if it exposes getAll (legacy positional pattern), else fall back
   // to the module-level memory binding used by real requests.
   const memoryClient = ctx?.memory ?? (typeof ctx?.getAll === 'function' ? ctx : memory);
-  const all = await memoryClient.getAll({ userId: USER_ID });
+  // C.11: wrap memoryClient.getAll — transient qdrant errors get up to 3 retries
+  // before surfacing UPSTREAM_FAILURE. /api/list is request-path; covers MCP
+  // memory_list as well via doList.
+  const all = await withRetry(() =>
+    memoryClient.getAll({ userId: USER_ID })
+      .catch((e) => { throw tagRetryable(e); })
+  );
   const items = all?.results || all || [];
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   // §4.1 extensibility contract: additive sibling fields on the memory-client

@@ -25,10 +25,12 @@
 //     and retry 3x with 100/200/400ms backoff + 0-50ms jitter. Retry-exhausted
 //     surfaces UPSTREAM_FAILURE (B.1 stable-codes table). Contrast: append-turn
 //     (B.9) is best-effort fire-and-forget.
-//     TODO(C.11): swap the manual retry loop here for the shared withRetry()
-//     helper once retry.mjs lands. The constants RETRY_DELAYS_MS / JITTER_MAX_MS
-//     here are the same values C.11 will adopt; the only delta is the helper
-//     factoring + structured-log emission.
+//     C.11: B.10's manual loop has been replaced with the shared withRetry()
+//     helper from retry.mjs. The legacy DI hooks (ctx.retryDelaysMs,
+//     ctx.retryJitterMaxMs) are still honored for fast-running tests; they
+//     are translated into withRetry opts (maxRetries / baseDelayMs / jitterMaxMs).
+//     The per-attempt structured-warn log is preserved by intercepting
+//     reindexFn rejections before re-throwing into withRetry.
 
 import fs from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
@@ -38,6 +40,7 @@ import { randomUUID } from 'node:crypto';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
+import { withRetry } from './retry.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
@@ -430,36 +433,63 @@ export async function doCheckpoint(args, ctx = {}) {
     // memory_checkpoint is a consistency point — reindex BLOCKS the response.
     // 3 retries with 100/200/400 ms backoff + 0–retryJitterMaxMs ms jitter.
     // Retry-exhausted surfaces UPSTREAM_FAILURE (B.1 stable-codes table).
-    // TODO(C.11): replace this manual loop with the shared withRetry() helper
-    //             in server/lib/retry.mjs once it lands.
-    let reindexErr;
+    //
+    // C.11: now uses the shared withRetry() helper from retry.mjs. Legacy DI
+    // hooks (ctx.retryDelaysMs, ctx.retryJitterMaxMs) are translated into
+    // helper opts: the maxRetries count is the array length, baseDelayMs is
+    // the first non-zero entry (or 0 if all zeros — fast-test case). When the
+    // caller does not override, withRetry's own defaults (100ms base, 50ms
+    // jitter, 3 retries) are used and exactly match the §5.4 spec.
+    let attemptCount = 0;
+    let lastReindexErr;
     let reindexSucceeded = false;
-    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
-      try {
-        await reindexFn(summaryRelPath);
-        reindexSucceeded = true;
-        break;
-      } catch (err) {
-        reindexErr = err;
-        safeLog(() => getLogger().warn({
-          request_id: currentRequestId(),
-          component: 'checkpoint',
-          attempt: attempt + 1,
-          project,
-          err_message: err?.message ?? String(err),
-        }, 'reindex attempt failed'), 'log:checkpoint:reindex-attempt-failed');
-        if (attempt === retryDelaysMs.length) break; // budget exhausted
-        const delay = retryDelaysMs[attempt] + Math.floor(Math.random() * (retryJitterMaxMs + 1));
-        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-      }
+    try {
+      const callerOverridesDelays =
+        ctx.retryDelaysMs !== undefined || ctx.retryJitterMaxMs !== undefined;
+      const retryOpts = callerOverridesDelays
+        ? {
+            // Legacy hooks: keep test backwards compat. retryDelaysMs.length is
+            // the retry count; baseDelayMs/jitterMaxMs translate the per-step
+            // values. Tests pass [0,0,0] + 0 to skip waits entirely.
+            maxRetries: retryDelaysMs.length,
+            baseDelayMs: retryDelaysMs[0] ?? 0,
+            jitterMaxMs: retryJitterMaxMs,
+          }
+        : undefined; // let withRetry honor UM_UPSTREAM_RETRY_MAX + spec defaults
+      await withRetry(async () => {
+        attemptCount += 1;
+        try {
+          await reindexFn(summaryRelPath);
+        } catch (err) {
+          lastReindexErr = err;
+          // Preserve B.10's per-attempt warning log so operators can correlate
+          // transient mem0/qdrant blips with checkpoint runs (B.1 observability).
+          safeLog(() => getLogger().warn({
+            request_id: currentRequestId(),
+            component: 'checkpoint',
+            attempt: attemptCount,
+            project,
+            err_message: err?.message ?? String(err),
+          }, 'reindex attempt failed'), 'log:checkpoint:reindex-attempt-failed');
+          throw err; // let withRetry decide whether to back off + try again
+        }
+      }, retryOpts);
+      reindexSucceeded = true;
+    } catch (wrappedErr) {
+      // withRetry wraps the retry-exhausted error in { code: 'UPSTREAM_FAILURE',
+      // cause: lastErr }. We preserve the legacy result envelope shape (string
+      // count "after N retries" + diagnostic context) so existing tests that
+      // assert on result.error.code keep working.
+      void wrappedErr;
     }
     if (!reindexSucceeded) {
+      const totalRetries = ctx.retryDelaysMs !== undefined ? retryDelaysMs.length : 3;
       return {
         schema_version: 1,
         ok: false,
         error: {
           code: 'UPSTREAM_FAILURE',
-          message: `checkpoint reindex failed after ${retryDelaysMs.length} retries: ${reindexErr?.message ?? String(reindexErr)}`,
+          message: `checkpoint reindex failed after ${totalRetries} retries: ${lastReindexErr?.message ?? String(lastReindexErr)}`,
         },
         // Diagnostic context — caller can surface or log
         summary_id: summaryId,
