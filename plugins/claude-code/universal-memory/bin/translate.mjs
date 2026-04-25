@@ -77,8 +77,12 @@ export function translateRows(rows) {
     // Stable filename: SHA256 of session_id (TEXT), truncated to 16 hex chars
     const idSha = createHash('sha256').update(r.session_id).digest('hex').slice(0, 16);
 
-    // Title: memories.title → summary prefix → sha fallback
+    // Title: memories.title → summary prefix → sha fallback.
+    // §6.1 review B: cap raw title at 200 chars — memories.title is upstream-
+    // controlled, an N-MB row would balloon the frontmatter line and stress
+    // the server-side reindex parser.
     const title = (r.title || r.summary?.slice(0, 80) || `claude-mem-${idSha}`)
+      .slice(0, 200)
       .replace(/\n/g, ' ');
 
     // Body: overviews.content (may be empty string or null)

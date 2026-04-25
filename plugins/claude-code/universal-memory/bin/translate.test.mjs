@@ -222,6 +222,34 @@ test('translateRows: null title → uses summary.slice(0, 80) as title', () => {
 });
 
 // ---------------------------------------------------------------------------
+// translateRows: huge attacker-controlled title is capped at 200 chars (E.12 R1)
+// ---------------------------------------------------------------------------
+test('translateRows: oversized title is sliced to 200 chars (review B safeguard)', () => {
+  const huge = 'A'.repeat(50_000);  // 50KB title (worst-case upstream-controlled)
+  const rows = [
+    {
+      rowid: 21,
+      session_id: 'huge-title-001',
+      project_raw: 'myproject',
+      created_at: '2026-01-17T00:00:00.000Z',
+      created_at_epoch: 1768608000,
+      title: huge,
+      summary: 'short summary',
+    },
+  ];
+
+  const { translated } = translateRows(rows);
+  assert.strictEqual(translated.length, 1);
+  // Extract the title line and confirm length cap
+  const titleLine = translated[0].content.split('\n').find((l) => l.startsWith('title: '));
+  assert.ok(titleLine, 'title line present');
+  // "title: " prefix is 7 chars; the title slice itself should be ≤ 200
+  const titleValue = titleLine.slice('title: '.length);
+  assert.ok(titleValue.length <= 200, `title length ${titleValue.length} exceeds 200-char cap`);
+  assert.ok(titleValue.startsWith('AAAA'), 'title still starts with the attacker bytes (not corrupted)');
+});
+
+// ---------------------------------------------------------------------------
 // translateRows: null title AND null summary → sha fallback
 // ---------------------------------------------------------------------------
 test('translateRows: null title + null summary → sha-derived title', () => {

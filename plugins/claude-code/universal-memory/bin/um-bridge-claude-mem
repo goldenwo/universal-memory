@@ -20,17 +20,20 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 
-// D.9 note: translateRows is imported from the helper extracted in D.5.
-// bridge-contract is imported via relative path (works in dev/CI because the
-// repo is a single tree). D.9 (install-plugin-cc.sh) will vendor-copy
-// server/lib/bridge-contract.mjs alongside this file.
+// D.9 note: translateRows + bridge-contract primitives are both imported via
+// stable plugin-relative paths. translate.mjs lives next to this file.
+// bridge-contract resolves via the ./lib/ shim — dev-tree re-exports from
+// server/lib/, install-plugin-cc.sh copy-mode replaces the shim with a
+// vendored copy. The CLI MUST use this './lib/' path (not '../../../../
+// server/lib/') so copy-mode installs at ~/.claude/plugins/.../bin/ resolve
+// correctly — there is no server/ four levels up in a real install.
 import { translateRows } from './translate.mjs';
 import {
   withBridgeLock,
   twoPhaseWrite,
   readCursor,
   writeCursor,
-} from '../../../../server/lib/bridge-contract.mjs';
+} from './lib/bridge-contract.mjs';
 
 // V1 correction: default DB filename is claude-mem.db (not sessions.db)
 const DEFAULT_DB = join(homedir(), '.claude-mem', 'claude-mem.db');
@@ -256,12 +259,20 @@ async function main() {
   // Read cursor via bridge-contract (returns default shape on ENOENT)
   const cursor = await readCursor(cursorPath);
   const lastEpoch = cursor.last_ingested_at_epoch ?? 0;
+  const lastSessionId = cursor.last_ingested_id ?? '';
 
   const MAX_PER_RUN = parseInt(process.env.UM_BRIDGE_MAX_PER_RUN || '50', 10);
 
-  // Three-table LEFT JOIN — §4.3 V1 schema
-  // Cursor field: created_at_epoch INTEGER (stable across schema versions)
-  // Ties broken by session_id ASC (TEXT, deterministic)
+  // Three-table LEFT JOIN — §4.3 V1 schema.
+  // Cursor field: created_at_epoch INTEGER (stable across schema versions).
+  // Ties broken by session_id ASC (TEXT, deterministic).
+  //
+  // Tied-epoch fix (R1 review A.2): claude-mem stores 1-second-resolution
+  // INTEGER epochs, so two rows can share the same created_at_epoch. A strict
+  // `> ?` predicate combined with cursor advance after each row would skip
+  // rows B,C,... with the same epoch as a successfully-ingested row A on a
+  // partial-failure run. Compound predicate matches the ORDER BY lexicographic
+  // sort and excludes only the exact (epoch, session_id) pair already ingested.
   const rows = db
     .prepare(
       `SELECT
@@ -275,11 +286,12 @@ async function main() {
        FROM sessions s
        LEFT JOIN memories m ON m.session_id = s.session_id
        LEFT JOIN overviews o ON o.session_id = s.session_id
-       WHERE s.created_at_epoch > ?
+       WHERE (s.created_at_epoch > ?)
+          OR (s.created_at_epoch = ? AND s.session_id > ?)
        ORDER BY s.created_at_epoch ASC, s.session_id ASC
        LIMIT ?`
     )
-    .all(lastEpoch, MAX_PER_RUN);
+    .all(lastEpoch, lastEpoch, lastSessionId, MAX_PER_RUN);
 
   db.close();
 

@@ -293,6 +293,24 @@ else
   fi
 fi
 
+# T15 copy-mode loadability smoke (E.12 R1 Critical fix verification): the
+# installed bridge CLI must resolve all its imports from its own ./lib/ shim
+# vendor-copy. If it accidentally hard-codes ../../../../server/lib/, copy-mode
+# installs at ~/.claude/plugins/.../bin/ have no server/ four levels up and
+# every systemd/launchd/cron tick fails with ERR_MODULE_NOT_FOUND before main()
+# runs. --help exits before parseArgs touches anything else, so it's the
+# cheapest possible "the module load chain works" check.
+set +e
+T15_HELP_OUT=$(node "$T15_BRIDGE_LINK" --help 2>&1)
+T15_HELP_EXIT=$?
+set -e
+if [ "$T15_HELP_EXIT" -eq 0 ] && [[ "$T15_HELP_OUT" == *"um-bridge-claude-mem"* ]]; then
+  pass "T15: bridge CLI loads from copy-mode plugin path (--help exits 0)"
+else
+  fail_test "T15: bridge CLI loads from copy-mode plugin path" \
+    "exit=$T15_HELP_EXIT, out: ${T15_HELP_OUT:0:200}"
+fi
+
 # ─── T16: symlink-mode install — vendor-copy is SKIPPED (D.9) ─────────────────
 # In symlink mode (_PLUGIN_TARGET is a symlink into the dev tree):
 #   • ~/.local/bin/um-bridge-claude-mem installed
