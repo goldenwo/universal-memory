@@ -188,11 +188,17 @@ test('body containing horizontal rule: frontmatter and full body preserved', () 
 });
 
 // ---------------------------------------------------------------------------
-// 12. validateSource — registered sources accepted, unregistered rejected
+// 12. validateSource — registered sources accepted, unregistered rejected,
+//     non-string inputs produce a distinct error
 // ---------------------------------------------------------------------------
 test('frontmatter rejects unregistered source value', () => {
   const err = () => validateSource('foobar');
   assert.throws(err, /unknown source 'foobar'/);
+});
+
+test('validateSource: non-string input throws "expected string" (typeof guard)', () => {
+  assert.throws(() => validateSource(undefined), /expected string/);
+  assert.throws(() => validateSource({ toString: () => 'native' }), /expected string/);
 });
 
 test('frontmatter accepts native + claude-mem', () => {

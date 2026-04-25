@@ -86,40 +86,15 @@ test('handleToolCall(memory_add) write-disabled response uses §5.1 unified enve
   }
 });
 
-// ---------------------------------------------------------------------------
-// Source-discriminator drift-gate (§4.3.1)
-// Unit-level invariant: serializeFrontmatter produces a registered source on
-// every write path. File-walking against a live vault is a D.10 concern.
-// ---------------------------------------------------------------------------
-import { serializeFrontmatter, validateSource } from '../lib/frontmatter.mjs';
+// ─── Source-discriminator drift-gate ───────────────────────────────────────
+// Unit-level invariants for source: native injection and validateSource are
+// covered in frontmatter.test.mjs sections 12–13. The TRUE drift-gate (walk
+// the vault directory and assert every record has a registered source) is
+// deferred to D.10's integration smoke per Phase D plan §4.3.1, where a
+// fixture vault is available. This block is intentionally empty — adding
+// unit-level duplicates here dilutes the schema-hygiene suite's signal.
 
-test('drift-gate: serializeFrontmatter injects source:native when source absent', () => {
-  const out = serializeFrontmatter({ schema_version: 1, status: 'current' }, '\nbody\n');
-  assert.ok(out.includes('source: native'),
-    `Expected "source: native" in serialized output; got:\n${out}`);
-});
-
-test('drift-gate: serializeFrontmatter preserves registered source value', () => {
-  const out = serializeFrontmatter({ schema_version: 1, status: 'current', source: 'claude-mem' }, '\nbody\n');
-  assert.ok(out.includes('source: claude-mem'),
-    `Expected "source: claude-mem" in serialized output; got:\n${out}`);
-});
-
-test('drift-gate: serializeFrontmatter rejects unregistered source (INPUT_INVALID)', () => {
-  assert.throws(
-    () => serializeFrontmatter({ schema_version: 1, status: 'current', source: 'unregistered-bridge' }, '\nbody\n'),
-    (err) => {
-      assert.match(err.message, /unknown source 'unregistered-bridge'/);
-      assert.equal(err.code, 'INPUT_INVALID');
-      return true;
-    }
-  );
-});
-
-test('drift-gate: validateSource accepts all BRIDGES.md-registered sources', () => {
-  assert.doesNotThrow(() => validateSource('native'));
-  assert.doesNotThrow(() => validateSource('claude-mem'));
-});
+// ───────────────────────────────────────────────────────────────────────────
 
 test('getVisibleTools with no arg defaults to env-var behavior', () => {
   // When called with no argument, getVisibleTools reads process.env.UM_MCP_WRITE_ENABLED.

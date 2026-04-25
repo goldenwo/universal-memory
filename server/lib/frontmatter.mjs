@@ -58,13 +58,32 @@ if (_registeredSources.size === 0) {
 // validateSource — exported for callers and for bridge implementations.
 // ---------------------------------------------------------------------------
 
+// validateSource — assert that a `source` discriminator value is registered in
+// BRIDGES.md per spec §4.3.1. The discriminator is TOTAL, not nullable: every
+// vault record must declare a source so downstream queries can fence by
+// provenance (native vs. each upstream bridge). Unknown sources are hard
+// failures (INPUT_INVALID) rather than logged warnings — drift here would
+// silently corrupt provenance metadata downstream. Called from any frontmatter
+// write path (currently `serializeFrontmatter`) and explicitly by D.5+ bridge
+// CLIs that need to validate before constructing markdown.
+
 /**
  * Assert that `value` is a registered source in BRIDGES.md.
  * Throws with code 'INPUT_INVALID' if not.
  *
+ * Non-string inputs throw with a distinct "expected string" message (code
+ * 'INPUT_INVALID') rather than producing misleading "unknown source 'undefined'"
+ * errors — consistent with the project's typeof-string guard pattern (§4.2).
+ *
  * @param {string} value
  */
 export function validateSource(value) {
+  if (typeof value !== 'string') {
+    throw Object.assign(
+      new Error(`validateSource: expected string, got ${typeof value}`),
+      { code: 'INPUT_INVALID' }
+    );
+  }
   if (!_registeredSources.has(value)) {
     throw Object.assign(
       new Error(`unknown source '${value}' — register in BRIDGES.md per §4.3.1`),
@@ -78,6 +97,10 @@ const FM_REGEX = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;
 
 /**
  * Parse a markdown document that may begin with YAML front matter.
+ *
+ * Note: source field is NOT validated on parse — read-permissive by design so
+ * legacy/external files load without errors. Use `validateSource()` or rely on
+ * `serializeFrontmatter` rejection at write time.
  *
  * @param {string} text - Raw document text.
  * @returns {{ frontmatter: object, body: string }}
