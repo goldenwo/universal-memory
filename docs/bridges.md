@@ -5,8 +5,8 @@ store and translate each record into a markdown file in your UM vault. The
 first bridge ships in v0.6: `um-bridge-claude-mem` ingests sessions from
 [claude-mem](https://github.com/jonathanlhart/claude-mem)'s SQLite database.
 
-See [`BRIDGES.md`](../BRIDGES.md) (repo root) for the canonical registry of
-supported bridges.
+See [`server/config/BRIDGES.md`](../server/config/BRIDGES.md) for the canonical
+registry of supported bridges.
 
 ## `um-bridge-claude-mem` (v0.6+)
 
@@ -166,7 +166,7 @@ tiebreaker for tied-epoch rows in the WHERE compound predicate.
 
 ## See also
 
-- [`BRIDGES.md`](../BRIDGES.md) — registry of registered `source:` values
+- [`server/config/BRIDGES.md`](../server/config/BRIDGES.md) — registry of registered `source:` values
 - [`docs/um-cli.md`](um-cli.md) — read-side CLIs for the vault
 - [`docs/process/review-playbook.md`](process/review-playbook.md) — how
   bridge designs go through pre-implementation review

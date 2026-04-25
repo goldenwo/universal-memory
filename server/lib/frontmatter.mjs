@@ -26,7 +26,11 @@ import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 // set would silently allow all sources, which defeats the drift-gate.
 // ---------------------------------------------------------------------------
 
-const _bridgesPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../BRIDGES.md');
+// BRIDGES.md is co-located with the server's other build-time config under
+// server/config/ so the Dockerfile's `COPY config/ ./config/` step ships it
+// inside the image. Local dev: server/lib/frontmatter.mjs → server/config/BRIDGES.md.
+// Container: /app/lib/frontmatter.mjs → /app/config/BRIDGES.md.
+const _bridgesPath = resolve(dirname(fileURLToPath(import.meta.url)), '../config/BRIDGES.md');
 
 let _bridgesRaw;
 try {
