@@ -25,8 +25,8 @@ _tx_capture() {
   local label="$1"; shift
   local out_var="TX_OUT_${label}"
   local exit_var="TX_EXIT_${label}"
-  # shellcheck disable=SC2034  # tx_out/tx_exit are read by the eval line below
   local tx_out tx_exit=0
+  # shellcheck disable=SC2034  # tx_out/tx_exit consumed by the eval below
   tx_out=$("$@" 2>&1) || tx_exit=$?
   eval "$out_var=\$tx_out; $exit_var=\$tx_exit"
 }
