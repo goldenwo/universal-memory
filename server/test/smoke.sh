@@ -27,6 +27,25 @@ MARKER="smoke-test-$(date +%s)-$$"
 echo "[smoke] endpoint: $ENDPOINT"
 echo "[smoke] marker:   $MARKER"
 
+# v0.6 auth (Phase B): /api/* and /mcp require bearer auth from non-loopback
+# callers. Smoke runs against a docker-compose stack where the host's
+# `localhost:6335` calls arrive at the container with the bridge gateway IP
+# as source, not 127.0.0.1 — so loopback-bypass does not apply. Read the
+# server-generated token from .env (install.sh writes it there) and override
+# the `curl` builtin so every call site picks up the Authorization header.
+# Routes with bypassAuth (/health, /openapi.yaml) silently ignore the header.
+if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "${UM_ENV_FILE:-.env}" ]; then
+	UM_AUTH_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "${UM_ENV_FILE:-.env}" | head -1 | cut -d= -f2- | tr -d '"')
+fi
+if [ -n "${UM_AUTH_TOKEN:-}" ]; then
+	echo "[smoke] auth:     bearer token loaded (${#UM_AUTH_TOKEN} chars)"
+	curl() {
+		command curl -H "Authorization: Bearer $UM_AUTH_TOKEN" "$@"
+	}
+else
+	echo "[smoke] auth:     no UM_AUTH_TOKEN found — assuming loopback-bypass mode"
+fi
+
 get_count() {
 	curl -sf "$ENDPOINT/health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('memories', -1))"
 }
@@ -52,7 +71,22 @@ echo "[smoke]     baseline memories: $BASELINE"
 # can't easily simulate from within the smoke runner since UM_ENDPOINT
 # could be either loopback or remote).
 echo "[smoke]     /metrics scrape sanity"
-METRICS=$(curl -sf "$ENDPOINT/metrics" || true)
+# v0.6 (Phase C C.5): /metrics is loopback-only by default. When smoke runs
+# against a docker-compose stack, the host's localhost:6335 reaches the
+# container via Docker's NAT bridge — source IP is the bridge gateway, not
+# 127.0.0.1, so the default-secure handler short-circuits to 404. Scrape via
+# `docker compose exec` so the request originates inside the container with
+# 127.0.0.1 as source IP — that path bypasses auth and emits text exposition,
+# exercising the same default users get out of the box.
+#
+# Falls back to direct curl when docker-compose isn't available (bare-metal
+# dev install) or when the caller has set UM_METRICS_LOOPBACK_ONLY=false +
+# UM_METRICS_AUTH_REQUIRED=false in the stack's .env.
+if command -v docker >/dev/null 2>&1 && docker compose ps -q memory-server 2>/dev/null | grep -q .; then
+	METRICS=$(docker compose exec -T memory-server wget -qO- "http://localhost:6335/metrics" 2>/dev/null || true)
+else
+	METRICS=$(curl -sf "$ENDPOINT/metrics" || true)
+fi
 if [ -z "$METRICS" ]; then
 	echo "FAIL: /metrics returned empty/error — expected Prometheus text exposition"
 	echo "      (loopback-only mode? endpoint=$ENDPOINT — non-loopback callers get 404)"
