@@ -19,6 +19,12 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 
+// D.9 note: translateRows is imported from the helper extracted in D.5.
+// bridge-contract is imported inside translate.mjs via relative path (works in
+// dev/CI because the repo is a single tree). D.9 (install-plugin-cc.sh) will
+// vendor-copy server/lib/bridge-contract.mjs alongside this file.
+import { translateRows } from './translate.mjs';
+
 // V1 correction: default DB filename is claude-mem.db (not sessions.db)
 const DEFAULT_DB = join(homedir(), '.claude-mem', 'claude-mem.db');
 
@@ -207,15 +213,89 @@ async function main() {
     process.exit(3); // SERVER_INTERNAL
   }
 
-  // Scaffold complete — D.5 will add session read + markdown translation
+  // ---------------------------------------------------------------------------
+  // §4.3 — Read sessions + translate to UM markdown
+  //
+  // JOIN rationale: the three-table JOIN is needed because the V1 schema
+  // splits session metadata (sessions), memory entries (memories), and
+  // summarized content (overviews) across three tables. Each joined via
+  // sessions.session_id (TEXT, stable external ID).
+  //
+  // Cursor: we order by created_at_epoch (INTEGER) for stable pagination
+  // across restarts. The cursor stores last_ingested_at_epoch from the
+  // previous run; on first run the cursor file is absent and the default
+  // 0 is used (ingest everything). D.6 will write the cursor after
+  // two-phase write completes.
+  // ---------------------------------------------------------------------------
+  const vaultDir =
+    process.env.UM_VAULT_DIR ||
+    join(homedir(), '.local', 'share', 'universal-memory');
+  const cursorPath = join(vaultDir, '.local', 'bridges', 'claude-mem.json');
+
+  // readCursor is imported in translate.mjs; we import directly here too for
+  // the cursor epoch. D.6 will also need writeCursor — add that import then.
+  // For D.5 we only need to read the cursor epoch.
+  let lastEpoch = 0;
+  if (existsSync(cursorPath)) {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const raw = await readFile(cursorPath, 'utf8');
+      const cur = JSON.parse(raw);
+      lastEpoch = cur.last_ingested_at_epoch ?? 0;
+    } catch {
+      // Corrupt cursor — start from beginning (safe; idempotent re-ingest)
+      lastEpoch = 0;
+    }
+  }
+
+  const MAX_PER_RUN = parseInt(process.env.UM_BRIDGE_MAX_PER_RUN || '50', 10);
+
+  // Three-table LEFT JOIN — §4.3 V1 schema
+  // Cursor field: created_at_epoch INTEGER (stable across schema versions)
+  // Ties broken by session_id ASC (TEXT, deterministic)
+  const rows = db
+    .prepare(
+      `SELECT
+         s.id              AS rowid,
+         s.session_id      AS session_id,
+         s.project         AS project_raw,
+         s.created_at      AS created_at,
+         s.created_at_epoch AS created_at_epoch,
+         m.title           AS title,
+         o.content         AS summary
+       FROM sessions s
+       LEFT JOIN memories m ON m.session_id = s.session_id
+       LEFT JOIN overviews o ON o.session_id = s.session_id
+       WHERE s.created_at_epoch > ?
+       ORDER BY s.created_at_epoch ASC, s.session_id ASC
+       LIMIT ?`
+    )
+    .all(lastEpoch, MAX_PER_RUN);
+
   db.close();
 
+  const { translated, skipped } = translateRows(rows);
+
+  if (skipped.length > 0) {
+    for (const s of skipped) {
+      console.warn(`[um-bridge] skipped session ${s.id}: ${s.reason}`);
+    }
+  }
+
+  console.log(
+    `[um-bridge] translated=${translated.length} skipped=${skipped.length} ` +
+      `(epoch_cursor=${lastEpoch} limit=${MAX_PER_RUN})`
+  );
+
+  // D.6 will take over from here: two-phase write + cursor advance
+  // For D.5 the loop ends with translated[] and skipped[] populated.
+
   if (values.once) {
-    // --once: single pass, exit 0 (D.5 will populate the ingest loop here)
+    // --once: single pass, exit 0
     process.exit(0);
   }
 
-  // Daemon mode: D.5 will add polling interval here
+  // Daemon mode: D.6 will add polling interval here
   process.exit(0);
 }
 
