@@ -1,0 +1,13 @@
+# claude-mem-bridge.cron — UM v0.6 §4.3 (cron template for non-systemd Linux + minimal images)
+#
+# Install:
+#   crontab -e   # then paste the line below
+# Or:
+#   (crontab -l 2>/dev/null; cat installer/bridge-templates/claude-mem-bridge.cron) | crontab -
+#
+# Required env: source ~/.um/bridge.env first (UM_SERVER_URL, UM_AUTH_TOKEN, UM_VAULT_DIR).
+# UM_BRIDGE_JITTER_SEC=600 → CLI sleeps a random 0–600s before ingesting so concurrent
+# users on the same host don't stampede the reindex endpoint at :00.
+
+# m h dom mon dow  cmd
+0 */6 * * *  . $HOME/.um/bridge.env && UM_BRIDGE_JITTER_SEC=600 $HOME/.local/bin/um-bridge-claude-mem --once

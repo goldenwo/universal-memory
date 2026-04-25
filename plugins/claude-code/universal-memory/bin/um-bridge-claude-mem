@@ -155,6 +155,17 @@ async function main() {
     process.exit(0);
   }
 
+  // §4.3 D.8 — startup jitter for non-systemd runners (launchd / cron / manual).
+  // systemd templates use RandomizedDelaySec=600 natively, so they leave
+  // UM_BRIDGE_JITTER_SEC=0. launchd plist + cron template set =600 to spread
+  // host-concurrent reindex traffic. Only applies when --once is set so daemon
+  // mode (no --once) is not delayed at startup.
+  const jitterMax = parseInt(process.env.UM_BRIDGE_JITTER_SEC || '0', 10);
+  if (jitterMax > 0 && values.once) {
+    const jitter = Math.floor(Math.random() * jitterMax * 1000);
+    await new Promise((r) => setTimeout(r, jitter));
+  }
+
   const rawPath = values['db-path'] || DEFAULT_DB;
 
   // Validate path — exits 1 on violation
