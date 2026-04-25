@@ -69,6 +69,33 @@ jobs:
           chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
 
+      # v0.6 (Phase C C.6/C.7): rate limiter is per-IP token bucket with
+      # default 60 RPM / 10 burst. Smoke fires dozens of /api/* calls in
+      # quick succession from the runner's IP — well above 60 RPM — so the
+      # second-wave calls (Task 8 onward) hit 429. The limiter applies to
+      # every non-loopback caller (security-symmetric loopback bypass), and
+      # CI calls hit the container via Docker's NAT bridge so the source IP
+      # is non-loopback.
+      #
+      # Override UM_RATE_LIMIT_RPM / BURST in .env and restart the server
+      # service to pick up the new env. install.sh's snapshot mechanism
+      # would preserve these on a re-run, but here we're appending after
+      # the first install. Smoke tests the pipeline correctness; load
+      # behavior is exercised elsewhere (rate-limit unit tests + perf gates).
+      - name: Tune rate-limit budget for smoke
+        working-directory: server
+        run: |
+          {
+            echo ""
+            echo "# CI smoke override — high RPM/burst so dozens of /api/*"
+            echo "# calls in quick succession do not 429."
+            echo "UM_RATE_LIMIT_RPM=100000"
+            echo "UM_RATE_LIMIT_BURST=10000"
+          } >> .env
+          docker compose restart memory-server
+          timeout 60 bash -c 'until curl -sf http://localhost:6335/health >/dev/null 2>&1; do sleep 1; done'
+          echo "[ci] server back up after rate-limit reconfig"
+
       # install.sh only brings up the container stack; host node_modules
       # isn't populated, so unit tests run on the host need a separate npm ci.
       - name: Install host node deps for unit tests
