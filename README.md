@@ -119,6 +119,8 @@ memory_search("query")        # semantic search across all indexed documents
 memory_capture(...)           # write a new document to the vault from the remote surface
 ```
 
+> **v0.6 note — tunnel-fronted installs require a bearer token.** Any request reaching UM through a tunnel or reverse proxy must include `Authorization: Bearer <UM_AUTH_TOKEN>`. See [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) or [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for connector-specific setup. Loopback installs (Claude Desktop → `localhost:6335` directly) do not require auth.
+
 Captures made from any surface are visible in Claude Code sessions and vice versa.
 
 Surface-specific guides:
@@ -176,6 +178,12 @@ universal-memory/
 │   └── quickstart.md            Install walkthroughs
 └── .github/workflows/           CI smoke tests and release pipeline
 ```
+
+---
+
+## Upgrading from v0.5
+
+v0.6 introduces breaking changes — bearer auth, unified error envelopes, `/api/list` envelope shape change, and request-body caps. See [MIGRATION.md](MIGRATION.md) for step-by-step upgrade guidance before updating a production install.
 
 ---
 

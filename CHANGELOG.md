@@ -33,6 +33,43 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 - **`server/test/jsonrpc-errors.test.mjs`** — unit tests for the JSON-RPC
   code map (every stable code mapped, fallback to `-32603`, etc.).
 
+## [0.6.0-alpha] — 2026-MM-DD
+
+### Added
+- Bearer auth on `/api/*` and `/mcp` with loopback + forwarded-header safe default (§4.2)
+- Structured pino logging with `request_id` propagation
+- `/metrics` Prometheus exposition (5 bound metrics, loopback-only default)
+- Per-IP token-bucket rate limiter with bounded map + LRU eviction
+- `um-bridge-claude-mem` — one-way ingest from `~/.claude-mem/claude-mem.db`
+- BRIDGES.md registry; `source:` discriminator in vault frontmatter
+- `<external-summary>` untrusted-content boundary for bridge-ingested records
+- Shared `_dump_on_fail` test harness (`installer/lib/test-harness.sh`)
+- Container entrypoint guard refusing root+rw+writes-enabled (#28)
+- UM_CONTAINER_USER change warning on re-run (#30)
+- CLI friendly-error translation via `_um_curl_wrap` (401/429/503/5xx)
+
+### Changed
+- **Breaking:** `/api/list` envelope → `{results: [...]}`
+- **Breaking:** Error responses unified across all endpoints (§5)
+- **Breaking:** `/openapi.yaml` (full) now default-secure — auth-required + loopback-only
+- **Breaking:** Request-body cap `UM_HTTP_MAX_REQUEST_BYTES` (default 2 MB) — clients sending larger payloads receive 413 `INPUT_TOO_LARGE`
+- **Breaking:** `/metrics` now default-secure loopback-only — ops with existing Prometheus scrape from non-loopback must set `UM_METRICS_LOOPBACK_ONLY=false` + configure `UM_METRICS_AUTH_REQUIRED`
+- mem0/qdrant calls now retry 3× with 100/200/400 ms jittered backoff before surfacing `UPSTREAM_FAILURE` — p99 latency may shift by ~700 ms on transient upstream failures (previously surfaced immediately)
+- Cross-process lockdir replaces Perl flock + proper-lockfile (server+plugin)
+- O_NOFOLLOW on all vault writes (symlink-swap fix)
+
+### Fixed
+- Typeof-string guard on timestamp inputs
+- #20, #21, #28, #29, #30 (backlog)
+
+### Security
+- Constant-time token compare (A1)
+- Forwarded-header default-deny on loopback (10-header list forces auth even from 127.0.0.1 when any proxy/tunnel indicator present) — tunnel-safety default
+- `<external-summary>` marker blocks prompt-injection from bridge sources (A3) — REJECT-on-literal-marker (LLM-entity-decode bypass fix)
+- `/metrics` default-secure posture (A2)
+- `/openapi.yaml` auth-required default (A4)
+- Bridge `--db-path` realpath + allowlist (rejects UNC paths, absolute escapes, symlinks outside `~/.claude-mem/`)
+
 ## [0.5.0-alpha] — 2026-04-23
 
 Cross-env first-class release. Non-CC surfaces (Claude.ai, ChatGPT Desktop,
@@ -302,7 +339,8 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...HEAD
+[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...HEAD
+[0.6.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/goldenwo/universal-memory/releases/tag/v0.4.0-alpha
 [0.3.0-alpha]: https://github.com/goldenwo/universal-memory/releases/tag/v0.3.0-alpha
