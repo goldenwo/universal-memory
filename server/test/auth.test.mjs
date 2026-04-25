@@ -57,10 +57,21 @@ test('extractBearer with multiple Authorization headers — Node normalizes to f
   // Downstream compareTokens will reject this because it is not a legal token byte string.
 });
 
-test('compareTokens — first-byte-wrong vs last-byte-wrong timing within noise (warm, 10k iters)', () => {
-  const good = 'a'.repeat(64);
-  const firstBad = 'b' + 'a'.repeat(63);
-  const lastBad = 'a'.repeat(63) + 'b';
+test('compareTokens — first-byte-wrong vs last-byte-wrong timing within noise (median-of-7, 4 KiB tokens)', () => {
+  // Token length 4096 (not 64): with short tokens, Buffer.from() allocation
+  // cost dominates the byte-comparison cost, so a buggy byte-by-byte
+  // early-return implementation only produces a measured ratio of ~1.1-1.2 —
+  // indistinguishable from jitter. At 4 KiB the byte-comparison cost
+  // dominates the per-call overhead: a leaky implementation produces a
+  // median-of-7 ratio of ~2.2-3.9, while the constant-time timingSafeEqual
+  // produces a median-of-7 ratio of ~1.01-1.05 (verified empirically with a
+  // reference leaky implementation across 20 batches × 7 trials). 4 KiB is
+  // the smallest size that gives a clean separation; longer tokens scale
+  // Buffer.from cost too, narrowing the margin again.
+  const len = 4096;
+  const good = 'a'.repeat(len);
+  const firstBad = 'b' + 'a'.repeat(len - 1);
+  const lastBad = 'a'.repeat(len - 1) + 'b';
   // Warm-up: prime the JIT so the measurement only captures steady-state.
   for (let i = 0; i < 1000; i++) { compareTokens(firstBad, good); compareTokens(lastBad, good); }
   const measure = (a, b) => {
@@ -68,15 +79,24 @@ test('compareTokens — first-byte-wrong vs last-byte-wrong timing within noise 
     for (let i = 0; i < 10000; i++) compareTokens(a, b);
     return Number(process.hrtime.bigint() - t0);
   };
-  const first = measure(firstBad, good);
-  const last = measure(lastBad, good);
-  const ratio = Math.max(first, last) / Math.min(first, last);
-  // Threshold 3.0 (not 2.0): the 10k-iter window is short enough that Windows
-  // scheduler jitter alone (context switches, ETW, antivirus) pushes the ratio
-  // past 2x in ~30-40% of runs even with JIT pre-warmed. A real byte-by-byte
-  // early-return leak would produce a ratio >>64 (proportional to prefix
-  // length), so 3.0 still catches any meaningful regression while tolerating
-  // platform noise. Longer iter counts or median-of-N would restore the 2x
-  // bound; kept simple for CI speed.
-  assert.ok(ratio < 3.0, `timing ratio ${ratio} exceeded 3x — possible leak`);
+  // Median-of-7 (not min, not max): scheduler jitter (Windows context
+  // switches, ETW, antivirus) is bidirectional in its effect on max/min
+  // ratio — noise on the firstBad measurement *narrows* the ratio (false
+  // negative), while noise on the lastBad measurement *widens* it (false
+  // positive). So min-of-N hides leaks (the noisiest-firstBad trial
+  // dominates) and max-of-N flags noise as leaks. Median is robust to
+  // outliers in both directions and tracks the underlying steady-state.
+  const ratios = [];
+  for (let i = 0; i < 7; i++) {
+    const first = measure(firstBad, good);
+    const last = measure(lastBad, good);
+    ratios.push(Math.max(first, last) / Math.min(first, last));
+  }
+  ratios.sort((a, b) => a - b);
+  const medianRatio = ratios[3]; // index 3 of 7 sorted == median
+  assert.ok(
+    medianRatio < 1.5,
+    `median-of-7 timing ratio ${medianRatio.toFixed(3)} exceeded 1.5x — possible leak. ` +
+      `Sorted trials: [${ratios.map(r => r.toFixed(2)).join(', ')}]`,
+  );
 });
