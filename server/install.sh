@@ -422,6 +422,31 @@ if [ -n "${UM_CONTAINER_USER:-}" ]; then
 	fi
 fi
 
+# v0.6 (#30) — UM_CONTAINER_USER change warning across re-runs.
+# Files in the vault were written with whatever UID:GID was active LAST time
+# install.sh ran. Switching the container user without chown-ing the vault
+# causes EACCES on subsequent writes. Detect the change and surface it so
+# users don't silently produce a broken install.
+_PRIOR_CONTAINER_USER=""
+if [ -f "$ENV_FILE" ]; then
+	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)
+fi
+if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
+	&& [ "$UM_CONTAINER_USER" != "$_PRIOR_CONTAINER_USER" ]; then
+	warn "UM_CONTAINER_USER changed: was '$_PRIOR_CONTAINER_USER', now '$UM_CONTAINER_USER'."
+	warn "  Existing vault files were written with the old UID:GID. Switching"
+	warn "  without chown-ing the vault will cause EACCES on subsequent writes."
+	warn "  Recommended: chown -R <new-uid>:<new-gid> $UM_VAULT_DIR"
+	if [ "${NONINTERACTIVE_STRICT:-0}" = "1" ]; then
+		fail "NONINTERACTIVE_STRICT=1 — refusing to proceed with UM_CONTAINER_USER change."
+	fi
+	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
+		printf 'Continue with new UM_CONTAINER_USER? [y/N] ' >&2
+		read -r _ans
+		case "$_ans" in [yY]*) ;; *) fail "Aborted by user." ;; esac
+	fi
+fi
+
 # ─── P0-3: API key validation ────────────────────────────────────────────────
 # Only probe when the key is freshly entered (not pre-existing in env) and
 # validation is not explicitly skipped.
@@ -522,6 +547,11 @@ fi
 	# Honor env override so CI / automated installs can enable the write-tool
 	# surface for end-to-end MCP coverage (smoke T10-G/H/I).
 	printf 'UM_MCP_WRITE_ENABLED=%s\n'  "${UM_MCP_WRITE_ENABLED:-false}"
+	# UM_CONTAINER_USER (#30): only emit when explicitly set so unset installs
+	# stay silent. Persisted so the next install run can detect a change.
+	if [ -n "${UM_CONTAINER_USER:-}" ]; then
+		printf 'UM_CONTAINER_USER=%s\n'  "$UM_CONTAINER_USER"
+	fi
 	# --- bearer auth (v0.6+) ---
 	# UM_AUTH_TOKEN is generated or preserved by the block above. Emitting
 	# the same value the server will read at boot keeps .env + ~/.um/auth-token
