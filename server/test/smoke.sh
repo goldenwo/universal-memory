@@ -79,12 +79,28 @@ echo "[smoke]     /metrics scrape sanity"
 # 127.0.0.1 as source IP — that path bypasses auth and emits text exposition,
 # exercising the same default users get out of the box.
 #
-# Falls back to direct curl when docker-compose isn't available (bare-metal
-# dev install) or when the caller has set UM_METRICS_LOOPBACK_ONLY=false +
+# Falls back to direct curl when docker isn't available (bare-metal dev
+# install) or when the caller has set UM_METRICS_LOOPBACK_ONLY=false +
 # UM_METRICS_AUTH_REQUIRED=false in the stack's .env.
-if command -v docker >/dev/null 2>&1 && docker compose ps -q memory-server 2>/dev/null | grep -q .; then
-	METRICS=$(docker compose exec -T memory-server wget -qO- "http://localhost:6335/metrics" 2>/dev/null || true)
-else
+METRICS=""
+if command -v docker >/dev/null 2>&1; then
+	# Match the docker-compose'd container by name regardless of project
+	# prefix. Compose names containers like <project>-<service>-<n>, where
+	# <project> defaults to the dir or comes from the compose file's `name:`
+	# field. `docker ps` avoids guessing project name.
+	UM_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'memory-server' | head -1 || true)
+	if [ -n "$UM_CONTAINER" ]; then
+		echo "[smoke]     scraping /metrics inside container: $UM_CONTAINER"
+		# wget ships with busybox in node:20-alpine; fall back to node fetch
+		# if a future base image drops it.
+		METRICS=$(docker exec -i "$UM_CONTAINER" sh -c \
+			'wget -qO- "http://localhost:6335/metrics" 2>/dev/null \
+			 || node -e "fetch('"'"'http://localhost:6335/metrics'"'"').then(r=>r.text()).then(t=>process.stdout.write(t))"' \
+			2>/dev/null || true)
+	fi
+fi
+if [ -z "$METRICS" ]; then
+	echo "[smoke]     no in-container scrape path — falling back to direct curl"
 	METRICS=$(curl -sf "$ENDPOINT/metrics" || true)
 fi
 if [ -z "$METRICS" ]; then
