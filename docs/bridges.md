@@ -138,6 +138,32 @@ re-ingests every session from claude-mem's epoch-zero. Re-ingestion is
 idempotent (markdown filenames are stable SHA-of-session_id), so existing
 files are overwritten in place — no duplicate vault entries.
 
+### Cursor file format
+
+The cursor lives at `<UM_VAULT_DIR>/.local/bridges/claude-mem.json` and has
+this shape:
+
+```json
+{
+  "schema": 1,
+  "last_ingested_id": "test-session-001",
+  "last_ingested_at": "2026-04-25T00:00:00.000Z",
+  "last_ingested_at_epoch": 1768521600
+}
+```
+
+The §4.3.0 bridge contract requires `schema`, `last_ingested_id`, and
+`last_ingested_at`. The fourth field, `last_ingested_at_epoch`, is a
+per-bridge implementation detail used for the SQL `WHERE created_at_epoch
+> ?` predicate — claude-mem's stable orderable column is the epoch
+INTEGER, not the ISO string. Future bridges built against different
+upstream schemas may add their own per-bridge fields (e.g., `last_lsn` for
+Postgres-WAL bridges) without amending the §4.3.0 contract.
+
+`last_ingested_id` is the TEXT `session_id` (not the rowid INTEGER), used
+both as the user-facing "where I left off" pointer and as the second-key
+tiebreaker for tied-epoch rows in the WHERE compound predicate.
+
 ## See also
 
 - [`BRIDGES.md`](../BRIDGES.md) — registry of registered `source:` values
