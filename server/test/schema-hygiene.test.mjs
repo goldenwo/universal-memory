@@ -86,6 +86,41 @@ test('handleToolCall(memory_add) write-disabled response uses §5.1 unified enve
   }
 });
 
+// ---------------------------------------------------------------------------
+// Source-discriminator drift-gate (§4.3.1)
+// Unit-level invariant: serializeFrontmatter produces a registered source on
+// every write path. File-walking against a live vault is a D.10 concern.
+// ---------------------------------------------------------------------------
+import { serializeFrontmatter, validateSource } from '../lib/frontmatter.mjs';
+
+test('drift-gate: serializeFrontmatter injects source:native when source absent', () => {
+  const out = serializeFrontmatter({ schema_version: 1, status: 'current' }, '\nbody\n');
+  assert.ok(out.includes('source: native'),
+    `Expected "source: native" in serialized output; got:\n${out}`);
+});
+
+test('drift-gate: serializeFrontmatter preserves registered source value', () => {
+  const out = serializeFrontmatter({ schema_version: 1, status: 'current', source: 'claude-mem' }, '\nbody\n');
+  assert.ok(out.includes('source: claude-mem'),
+    `Expected "source: claude-mem" in serialized output; got:\n${out}`);
+});
+
+test('drift-gate: serializeFrontmatter rejects unregistered source (INPUT_INVALID)', () => {
+  assert.throws(
+    () => serializeFrontmatter({ schema_version: 1, status: 'current', source: 'unregistered-bridge' }, '\nbody\n'),
+    (err) => {
+      assert.match(err.message, /unknown source 'unregistered-bridge'/);
+      assert.equal(err.code, 'INPUT_INVALID');
+      return true;
+    }
+  );
+});
+
+test('drift-gate: validateSource accepts all BRIDGES.md-registered sources', () => {
+  assert.doesNotThrow(() => validateSource('native'));
+  assert.doesNotThrow(() => validateSource('claude-mem'));
+});
+
 test('getVisibleTools with no arg defaults to env-var behavior', () => {
   // When called with no argument, getVisibleTools reads process.env.UM_MCP_WRITE_ENABLED.
   // This test verifies the env-var-reading default (write disabled when unset).
