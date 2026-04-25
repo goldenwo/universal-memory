@@ -3,10 +3,6 @@
 #
 # Run: bash session-start.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
-
-# shellcheck disable=SC2034
-# REAL_SESSION_END fixture var is captured at test setup for potential use in
-# teardown / debug printing. TODO(v0.6): wire into dump-on-fail.
 #
 # Scenarios:
 #   1. UM_ENDPOINT unset → emit '{}', exit 0 silently
@@ -27,6 +23,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_START="$SCRIPT_DIR/session-start.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 
 # ---------------------------------------------------------------------------
 # Test harness
@@ -357,7 +357,6 @@ printf '\nTest 7: Orphans exist → catchup fork\n'
   marker_file="$TMPDIR_ROOT/catchup_marker_orphans"
 
   # Replace session-end.sh with a stub that writes the marker
-  REAL_SESSION_END="$SCRIPT_DIR/session-end.sh"
   STUB_SESSION_END="$TMPDIR_ROOT/stub_session_end.sh"
   cat > "$STUB_SESSION_END" <<STUBEOF
 #!/bin/bash

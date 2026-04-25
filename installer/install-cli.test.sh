@@ -5,18 +5,13 @@
 # Tests use a sandboxed $HOME=$(mktemp -d) per test so no real user env is touched.
 # Pattern matches server/install.test.sh for PASS/FAIL conventions.
 
-# shellcheck disable=SC2034
-# Several TX_OUT / TX_EXIT / TX_LINES_BEFORE vars are captured at runtime as
-# test scaffold — the OUT captures are for dump-on-fail diagnostics and the
-# measurement vars are for potential delta comparisons. Not all are currently
-# wired to asserts; TODO(v0.6) add a _dump_on_fail helper + comparison asserts.
-# Disabling SC2034 file-wide keeps the production-code lint posture strict
-# (asserted by CI) while tolerating test-scaffold lifetime in test files.
-
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 INSTALL_CLI="$SCRIPT_DIR/install-cli.sh"
 
 # ─── Test harness ─────────────────────────────────────────────────────────────
@@ -338,7 +333,7 @@ export PATH="$HOME/.local/bin:$PATH"
 alias ll='ls -la'
 BASHRC_T8
 
-T8_LINES_BEFORE=$(wc -l < "$T8_HOME/.bashrc")
+# T8_LINES_BEFORE was measured here but not used in any assertion; removed.
 make_fakepython3 "$T8/bin"
 _BASH_BIN8="$(command -v bash)"
 

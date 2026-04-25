@@ -5,16 +5,13 @@
 # server/install.test.sh) so real `bash` and coreutils still resolve. We do NOT
 # stub `bash` itself because the outer invocation `bash $INSTALLER` needs real
 # bash to execute the script (stubbing bash would make the test runner a stub).
-
-# shellcheck disable=SC2034
-# Test scaffold captures TFx_EXIT / TPCCn_EXIT for sites where the assertion
-# pattern checks via side-effects (file presence, output content) rather than
-# exit code — the exit is captured defensively but not asserted. Not weakening
-# checks: production files remain strict; TODO(v0.6) either assert exits or
-# remove vestigial captures after auditing intent.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 
 PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -300,13 +297,14 @@ TPCC1_HOME="$TPCC1/home"
 mkdir -p "$TPCC1_HOME/.claude/plugins"
 # Pre-create .bashrc so the rc-writer finds it (rc writer skips non-existent files)
 touch "$TPCC1_HOME/.bashrc"
-TPCC1_OUT=$(
-  _UM_REPO_ROOT="$TPCC1/repo" \
+_tx_capture TPCC1 \
+  env _UM_REPO_ROOT="$TPCC1/repo" \
   CLAUDE_PLUGINS_DIR="$TPCC1_HOME/.claude/plugins" \
   HOME="$TPCC1_HOME" \
   UM_NONINTERACTIVE=1 \
-  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes 2>&1
-) && TPCC1_EXIT=0 || TPCC1_EXIT=$?
+  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes
+TPCC1_OUT="$TX_OUT_TPCC1"
+_dump_on_fail TPCC1
 
 TPCC1_PLUGIN_DIR="$TPCC1_HOME/.claude/plugins/universal-memory"
 if [ -f "$TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt" ]; then

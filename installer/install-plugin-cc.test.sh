@@ -5,14 +5,13 @@
 #
 # Run: bash installer/install-plugin-cc.test.sh
 
-# shellcheck disable=SC2034
-# TX_OUT scaffold vars (T3_OUT, T14_OUT) captured for dump-on-fail diagnostics.
-# TODO(v0.6): wire into a _dump_on_fail helper.
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 PLUGIN_CC_SH="$SCRIPT_DIR/install-plugin-cc.sh"
 PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
 
@@ -148,14 +147,14 @@ mkdir -p "$T3/plugins" "$T3/home"
 touch "$T3/home/.bashrc"
 make_fakebin "$T3/bin"
 
-T3_EXIT=0
-T3_OUT=$(run_plugin_cc "$T3/bin" \
+_tx_capture T3 run_plugin_cc "$T3/bin" \
   UM_NONINTERACTIVE=1 \
   CLAUDE_PLUGINS_DIR="$T3/plugins" \
   SHELL=/bin/bash \
-  HOME="$T3/home") || T3_EXIT=$?
+  HOME="$T3/home"
+_dump_on_fail T3
 
-assert_exit_zero "T3: non-interactive exits 0" "$T3_EXIT"
+assert_exit_zero "T3: non-interactive exits 0" "$TX_EXIT_T3"
 assert_file_exists "T3: plugin installed non-interactively" "$T3/plugins/universal-memory"
 
 # ─── T11: picking 'skip' at install prompt — non-destructive ─────────────────
@@ -196,14 +195,14 @@ mkdir -p "$T14/plugins" "$T14/home"
 touch "$T14/home/.bashrc"
 make_fakebin "$T14/bin"
 
-T14_EXIT=0
-T14_OUT=$(run_plugin_cc "$T14/bin" \
+_tx_capture T14 run_plugin_cc "$T14/bin" \
   UM_NONINTERACTIVE=1 \
   CLAUDE_PLUGINS_DIR="$T14/plugins" \
   SHELL=/bin/bash \
-  HOME="$T14/home") || T14_EXIT=$?
+  HOME="$T14/home"
+_dump_on_fail T14
 
-assert_exit_zero "T14: install exits 0" "$T14_EXIT"
+assert_exit_zero "T14: install exits 0" "$TX_EXIT_T14"
 assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
 
 # ─── T12: --yes non-interactive with all defaults ─────────────────────────────

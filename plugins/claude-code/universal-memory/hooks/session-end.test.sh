@@ -3,11 +3,6 @@
 #
 # Run: bash session-end.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
-
-# shellcheck disable=SC2034
-# Test scaffold captures T2_SUMMARY_COUNT / T3_NEW_SUMMARIES / T4_STDERR
-# intentionally — they record state for dump-on-fail / future assert coverage.
-# TODO(v0.6): wire these into dump-on-fail helpers or explicit asserts.
 #
 # Scenarios:
 #   1. No raw captures → exit 0 silently, nothing written
@@ -26,6 +21,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_END="$SCRIPT_DIR/session-end.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 
 # ---------------------------------------------------------------------------
 # Test harness
@@ -284,14 +283,15 @@ printf '%s\n' "$FIXTURE_STATE" > "$T2_STATE_FILE"
 
 write_full_mock_curl "$T2_SUMMARY_FILE" "$T2_STATE_FILE" "200"
 
-T2_EXIT=0
-T2_STDERR=$(PATH="$MOCK_BIN:$PATH" bash "$SESSION_END" 2>&1) || T2_EXIT=$?
+_tx_capture T2 env PATH="$MOCK_BIN:$PATH" bash "$SESSION_END"
+T2_STDERR="$TX_OUT_T2"
+T2_EXIT="$TX_EXIT_T2"
+_dump_on_fail T2
 
 assert_eq "T2: exit code 0 on success" "$T2_EXIT" "0"
 
 # Verify session summary was written
 T2_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-T2_SUMMARY_COUNT=$(find "$T2_SESSIONS_DIR" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
 assert_not_empty "T2: sessions dir exists" "$([ -d "$T2_SESSIONS_DIR" ] && echo yes || echo '')"
 # Find the summary file (pattern: YYYYMMDD-HHMMSS-testproject.md)
 T2_SUMMARY_PATH=$(find "$T2_SESSIONS_DIR" -name '*-testproject.md' 2>/dev/null | head -1)
@@ -355,16 +355,17 @@ printf '\n__UM_HTTP_CODE__401'
 MOCK_EOF
 chmod +x "$MOCK_BIN/curl"
 
-T3_EXIT=0
-T3_STDERR=$(PATH="$MOCK_BIN:$PATH" \
+_tx_capture T3 env PATH="$MOCK_BIN:$PATH" \
   UM_OPENAI_API_KEY="sk-test-fake" \
   OPENAI_API_KEY="sk-test-fake" \
-  bash "$SESSION_END" 2>&1) || T3_EXIT=$?
+  bash "$SESSION_END"
+T3_STDERR="$TX_OUT_T3"
+T3_EXIT="$TX_EXIT_T3"
+_dump_on_fail T3
 
 assert_eq "T3: exit code 0 when summarize returns empty" "$T3_EXIT" "0"
 # Summary should NOT have been written (summarize returned empty)
 T3_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-T3_NEW_SUMMARIES=$(find "$T3_SESSIONS_DIR" -name '*.md' -newer "$TMPDIR_ROOT/t3_empty.md" 2>/dev/null | wc -l | tr -d ' ')
 # We check stderr mentions the skip reason
 assert_contains "T3: stderr explains summarize was empty" "$T3_STDERR" "summarize returned empty"
 assert_file_missing "T3: state.md not created" "$T3_STATE_FILE"
@@ -447,8 +448,9 @@ fi
 MOCK_EOF
 chmod +x "$MOCK_BIN/curl"
 
-T4_EXIT=0
-T4_STDERR=$(PATH="$MOCK_BIN:$PATH" bash "$SESSION_END" 2>&1) || T4_EXIT=$?
+_tx_capture T4 env PATH="$MOCK_BIN:$PATH" bash "$SESSION_END"
+T4_EXIT="$TX_EXIT_T4"
+_dump_on_fail T4
 
 assert_eq "T4: exit code 0 when update-state returns empty" "$T4_EXIT" "0"
 
