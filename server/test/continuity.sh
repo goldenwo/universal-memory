@@ -20,11 +20,34 @@ FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 # ---------------------------------------------------------------------------
 TMP_VAULT=$(mktemp -d)
 MOCK_BIN=""
+_UM_CONT_AUTH_CONFIG=""
 cleanup() {
   [ -d "$TMP_VAULT" ] && rm -rf "$TMP_VAULT"
   [ -n "$MOCK_BIN" ] && [ -d "$MOCK_BIN" ] && rm -rf "$MOCK_BIN"
+  [ -n "$_UM_CONT_AUTH_CONFIG" ] && [ -f "$_UM_CONT_AUTH_CONFIG" ] && rm -f "$_UM_CONT_AUTH_CONFIG"
 }
 trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# v0.6 auth (Phase B): /api/search requires bearer auth from non-loopback.
+# Read UM_AUTH_TOKEN from .env (same pattern as smoke.sh). PR #31 R1 review
+# caught that Step 4 was silently degrading to "passed" because the call
+# 401'd and the script swallowed it via `|| echo '{"results":[]}'` — the
+# CI gate was provably no-op for this path. Auth-aware now.
+#
+# Token is written to a 0600 tempfile and passed via curl --config so it
+# never appears in `ps auxe` argv (matches install.sh _UM_TMP_KEYFILE +
+# smoke.sh _UM_SMOKE_AUTH_CONFIG patterns).
+_UM_CONT_TOKEN=""
+if [ -f "$REPO_ROOT/server/.env" ]; then
+  _UM_CONT_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "$REPO_ROOT/server/.env" | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//' || true)
+fi
+if [ -n "$_UM_CONT_TOKEN" ]; then
+  _UM_CONT_AUTH_CONFIG=$(mktemp -t cont-auth.XXXXXX 2>/dev/null || mktemp)
+  chmod 600 "$_UM_CONT_AUTH_CONFIG"
+  printf 'header = "Authorization: Bearer %s"\n' "$_UM_CONT_TOKEN" > "$_UM_CONT_AUTH_CONFIG"
+fi
+unset _UM_CONT_TOKEN
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -274,11 +297,18 @@ fi
 # Step 4: /api/search returns summary (soft check — server may not be running)
 # ===========================================================================
 info "Step 4: checking /api/search (soft — server may not be running)"
+# v0.6 auth: if a bearer token tempfile exists (set up at script-init), pass
+# it via curl --config so the call doesn't silently 401 and degrade to a
+# fake-pass via the `|| echo '{...}'` fallback. PR #31 R1 finding.
+_UM_CONT_CFG_FLAG=()
+if [ -n "$_UM_CONT_AUTH_CONFIG" ] && [ -f "$_UM_CONT_AUTH_CONFIG" ]; then
+  _UM_CONT_CFG_FLAG=(--config "$_UM_CONT_AUTH_CONFIG")
+fi
 SEARCH_RESULT=$(
-  /usr/bin/curl -sf --max-time 3 -X POST "$UM_ENDPOINT/api/search" \
+  /usr/bin/curl -sf --max-time 3 "${_UM_CONT_CFG_FLAG[@]}" -X POST "$UM_ENDPOINT/api/search" \
     -H 'Content-Type: application/json' \
     -d '{"query":"authentication password JWT","limit":5}' 2>/dev/null \
-  || /bin/curl -sf --max-time 3 -X POST "$UM_ENDPOINT/api/search" \
+  || /bin/curl -sf --max-time 3 "${_UM_CONT_CFG_FLAG[@]}" -X POST "$UM_ENDPOINT/api/search" \
     -H 'Content-Type: application/json' \
     -d '{"query":"authentication password JWT","limit":5}' 2>/dev/null \
   || echo '{"results":[]}'

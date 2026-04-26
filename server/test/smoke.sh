@@ -34,16 +34,37 @@ echo "[smoke] marker:   $MARKER"
 # server-generated token from .env (install.sh writes it there) and override
 # the `curl` builtin so every call site picks up the Authorization header.
 # Routes with bypassAuth (/health, /openapi.yaml) silently ignore the header.
+# R1 hardening (PR #31 review):
+#   - `|| true` on the grep pipeline: if `.env` exists but lacks an
+#     UM_AUTH_TOKEN= line, grep exits 1 and `set -o pipefail` would
+#     otherwise kill smoke silently — same class of bug as the install.sh
+#     UM_CONTAINER_USER fix landed in commit 05b1b32.
+#   - Quote-strip pattern: matches install.sh's `_UM_AT_EXISTING` block —
+#     only strips matched leading/trailing quotes, not every `"` byte
+#     (which `tr -d '"'` would, corrupting any token containing `"`).
 if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "${UM_ENV_FILE:-.env}" ]; then
-	UM_AUTH_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "${UM_ENV_FILE:-.env}" | head -1 | cut -d= -f2- | tr -d '"')
+	UM_AUTH_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "${UM_ENV_FILE:-.env}" | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//' || true)
 fi
 if [ -n "${UM_AUTH_TOKEN:-}" ]; then
 	echo "[smoke] auth:     bearer token loaded (${#UM_AUTH_TOKEN} chars)"
+	# R1 hardening: write the bearer header to a 0600 tempfile so the token
+	# never appears in `ps auxe` argv. Mirrors the established pattern in
+	# server/install.sh:462-468 (_UM_TMP_KEYFILE for OpenAI key validation).
+	# Lifetime is the entire smoke run; manual cleanup happens at script end
+	# (see _um_smoke_auth_cleanup below). A trap-based safety net would
+	# conflict with smoke.sh's per-section EXIT traps (Task 7, Task 25),
+	# so we rely on OS tmpdir policy to sweep on early exit. File is 0600;
+	# only the running user can read it during the leak window.
+	_UM_SMOKE_AUTH_CONFIG=$(mktemp -t smoke-auth.XXXXXX 2>/dev/null || mktemp)
+	chmod 600 "$_UM_SMOKE_AUTH_CONFIG"
+	printf 'header = "Authorization: Bearer %s"\n' "$UM_AUTH_TOKEN" > "$_UM_SMOKE_AUTH_CONFIG"
+	_um_smoke_auth_cleanup() { rm -f "$_UM_SMOKE_AUTH_CONFIG"; }
 	curl() {
-		command curl -H "Authorization: Bearer $UM_AUTH_TOKEN" "$@"
+		command curl --config "$_UM_SMOKE_AUTH_CONFIG" "$@"
 	}
 else
 	echo "[smoke] auth:     no UM_AUTH_TOKEN found — assuming loopback-bypass mode"
+	_um_smoke_auth_cleanup() { :; }
 fi
 
 get_count() {
@@ -1433,3 +1454,8 @@ else
 	fi
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
+
+# Clean up the auth-config tempfile on the success path. Failure paths
+# `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
+# policy. Acceptable per the R1 hardening rationale at the auth setup block.
+_um_smoke_auth_cleanup
