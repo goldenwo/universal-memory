@@ -34,13 +34,14 @@ import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP from './provider/google.mjs';
+import * as ollamaP from './provider/ollama.mjs';
 import { computeCost } from './pricing.mjs';
 
 export const BACKENDS = {
   openai:             { invoke: openaiInvoke,                requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'], defaults: { summarizerModel: 'gpt-4o-mini' } },
   anthropic:          { invoke: anthropicP.summarizerInvoke, requires: anthropicP.requires,                     defaults: anthropicP.defaults },
   google:             { invoke: googleP.summarizerInvoke,    requires: googleP.requires,                        defaults: googleP.defaults },
-  ollama:             { invoke: ollamaInvoke,                requires: [],                                      defaults: { summarizerModel: 'llama3' } },
+  ollama:             { invoke: ollamaP.summarizerInvoke,    requires: ollamaP.requires,                        defaults: ollamaP.defaults },
   'claude-agent-sdk': { invoke: null, fallback: 'openai', reason: 'Docker cannot spawn host CC' },
 };
 
@@ -52,11 +53,11 @@ export const BACKENDS = {
  * @param {string}  [ctx.provider]          - Provider/backend name (preferred v0.7 name)
  * @param {string}  [ctx.backend]           - Backend name (v0.6 compat alias for ctx.provider)
  * @param {object}  [ctx.openaiClient]      - Pre-made OpenAI client (for test stubbing)
- * @param {Function}[ctx.ollamaFetch]       - fetch replacement for ollama (for test stubbing)
+ * @param {Function}[ctx.fetch]             - fetch replacement for ollama (for test stubbing)
  * @param {string}  [ctx.model]             - Model override
  * @param {string}  [ctx.systemPrompt]      - System prompt prepended to transcript
  * @param {number}  [ctx.temperature]       - Temperature override
- * @param {string}  [ctx.ollamaHost]        - Ollama host override
+ * @param {string}  [ctx.host]              - Ollama host override
  * @param {object}  [ctx._providerOverride] - Test seam: object with summarizerInvoke; bypasses backend dispatch
  * @returns {Promise<{summary: string, costUsd: number, tokensIn: number, tokensOut: number}>}
  */
@@ -96,7 +97,6 @@ export async function summarize(transcript, ctx = {}) {
   const raw = await invoke(transcript, { ...ctx, model });
 
   // Reshape: provider modules return { content, usage: { tokensIn, tokensOut } }.
-  // Legacy local invoke functions (openaiInvoke, ollamaInvoke) also return that shape.
   // Guard with fallbacks in case a future adapter uses old shape transitionally.
   const tokensIn = raw.usage?.tokensIn ?? raw.tokensIn ?? 0;
   const tokensOut = raw.usage?.tokensOut ?? raw.tokensOut ?? 0;
@@ -135,28 +135,4 @@ async function openaiInvoke(transcript, ctx) {
   const tokensIn = response.usage?.prompt_tokens ?? 0;
   const tokensOut = response.usage?.completion_tokens ?? 0;
   return { content, usage: { tokensIn, tokensOut } };
-}
-
-// ollamaInvoke stays inline through C1; migrated to provider/ollama.mjs in C2.
-
-async function ollamaInvoke(transcript, ctx) {
-  const fetchFn = ctx.ollamaFetch ?? globalThis.fetch;
-  const host = ctx.ollamaHost ?? process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-  const model = ctx.model ?? process.env.UM_SUMMARIZE_MODEL ?? 'llama3';
-  const systemPrompt = ctx.systemPrompt ?? '';
-  const prompt = systemPrompt ? `${systemPrompt}\n\n${transcript}` : transcript;
-  const res = await fetchFn(`${host}/api/generate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model, prompt, stream: false }),
-  });
-  if (!res.ok) throw new Error(`ollama invoke failed: ${res.status}`);
-  const data = await res.json();
-  return {
-    content: data.response,
-    usage: {
-      tokensIn: data.prompt_eval_count ?? 0,
-      tokensOut: data.eval_count ?? 0,
-    },
-  };
 }

@@ -34,14 +34,14 @@ test('summarize: openai backend invoked when backend=openai', async () => {
 
 test('summarize: ollama backend invoked when backend=ollama', async () => {
   let called = false;
-  const ollamaFetch = async (url, opts) => {
+  const fakeFetch = async (url, opts) => {
     called = true;
     return {
       ok: true,
       json: async () => ({ response: 'ollama-summary', prompt_eval_count: 80, eval_count: 40 }),
     };
   };
-  const result = await summarize('transcript', { backend: 'ollama', ollamaFetch });
+  const result = await summarize('transcript', { backend: 'ollama', fetch: fakeFetch });
   assert.ok(called);
   assert.equal(result.summary, 'ollama-summary');
   assert.equal(result.tokensIn, 80);
