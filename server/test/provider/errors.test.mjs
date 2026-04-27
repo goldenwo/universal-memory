@@ -23,3 +23,13 @@ test('ProviderError carries class, provider, status, retryable', () => {
 test('ProviderError class enum is enforced', () => {
   assert.throws(() => new ProviderError({ class: 'BOGUS', provider: 'x', message: '' }), /class must be/);
 });
+
+test('ProviderError retryable defaults to false when omitted', () => {
+  const err = new ProviderError({ class: 'PROVIDER_CONFIG', provider: 'x', message: 'bad config' });
+  assert.equal(err.retryable, false);
+});
+
+test('ProviderError retryable uses strict === true (truthy non-bool yields false)', () => {
+  const err = new ProviderError({ class: 'PROVIDER_CONFIG', provider: 'x', message: '', retryable: 1 });
+  assert.equal(err.retryable, false);
+});
