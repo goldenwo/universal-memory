@@ -9,6 +9,24 @@ The goal is not "more rounds" — it's **lens diversity**. Most material
 findings cluster in a few specific lenses; running them deliberately catches
 more than five sequential general reviews would.
 
+## Contents
+
+- [When to use](#when-to-use)
+- [Cadence](#cadence)
+- [The four high-yield specialized lenses](#the-four-high-yield-specialized-lenses)
+- [Lens diversity > round count](#lens-diversity--round-count)
+- [Convergence is observable](#convergence-is-observable)
+- [Rename sweep protocol](#rename-sweep-protocol)
+- [Fictional-reference check](#fictional-reference-check)
+- [Punchlist scope](#punchlist-scope-per-feedback_punchlist_scopemd)
+- [Pairing model](#pairing-model)
+- [Past examples](#past-examples)
+- [When to skip](#when-to-skip)
+- [Anti-patterns](#anti-patterns)
+- [See also](#see-also)
+- [Recurring lessons](#recurring-lessons) — case studies that produced enforced rules
+  - [v0.6 — phase-boundary smoke gate](#v06--phase-boundary-smoke-gate)
+
 ## When to use
 
 - Spec / design docs before implementation starts
@@ -229,3 +247,225 @@ the other independently flagged a related symptom.
 - `MIGRATION.md` v0.5→v0.6 — reflects the security findings R1/R2 surfaced
 - `docs/plans/2026-04-22-v0.5-design.md` — v0.5 spec retrospective notes
 - `docs/plans/2026-04-24-v0.6-design.md` — v0.6 spec with R1–R12 history
+
+---
+
+## Recurring lessons
+
+Case studies of release cycles that surfaced rules worth enforcing
+beyond the round-by-round review process. Each lesson is a story first,
+a rule second, with the enforcement mechanism noted inline so a future
+contributor can find both the *what* and the *how*.
+
+### v0.6 — phase-boundary smoke gate
+
+#### What happened
+
+PR #31 (the v0.6.0-alpha release) opened with 79 phase commits accumulated
+on the `v0.6` work-branch over several weeks. Those commits had been
+merged directly into `v0.6` without an intermediate PR, so CI had never
+exercised any of them against a fresh-stack smoke run or a shellcheck
+sweep. When the release PR finally opened, every previously-silent
+contract drift came due — one CI round at a time, across 9 sequential
+fix commits.
+
+Five of the nine were **true phase regressions** — contract changes a
+planned phase task introduced that broke the live-stack contract:
+
+- `5f9b68a` — Phase D.2 added `BRIDGES.md` at the repo root, outside the
+  `server/` Docker build context. The image never shipped the file and
+  the resolver couldn't find it inside `/app/`. Fix: co-locate under
+  `server/config/`.
+- `4dfc633` — Phase B made bearer auth mandatory on `/api/*`; Phase C.5
+  made `/metrics` loopback-only. The smoke didn't send the bearer header
+  and called `/metrics` from outside the container. Fix: add the header,
+  scrape `/metrics` via `docker exec`.
+- `79480c0` — Phase C.6/C.7 introduced a per-IP token-bucket limiter at
+  60 RPM / 10 burst. The smoke's dozens of `/api/*` calls drained the
+  bucket and 429'd. Fix: CI `.env` override raised the cap.
+- `5ff8cd2` — Phase E.2 dropped file-level SC2034 disables but didn't
+  finish migrating capture sites to `_tx_capture`. 14+ shellcheck
+  warnings accumulated silently. Fix: complete the migration.
+- `05b1b32` — Phase E.4 added a `grep | tail | cut` pipeline that exits
+  1 under `set -o pipefail` when grep finds no match. With `set -e` this
+  killed `install.sh` silently on re-runs. Fix: trailing `|| true`.
+
+Four of the nine were **debugging-cascade artifacts** — bugs introduced
+*by the iteration fixes themselves*, surfaced only because someone was
+finally re-running the gate that had been skipped:
+
+- `07d778a` — `5f9b68a` had used `git add -A` and accidentally committed
+  `.claude/settings.local.json`. Cleanup commit untracked it and added
+  the path to `.gitignore`.
+- `ca8c4a0` — `4dfc633`'s `/metrics` fix used `docker compose ps -q
+  memory-server`, which doesn't reliably detect the container in CI.
+  Switched to `docker ps --format '{{.Names}}' | grep memory-server`.
+- `673b056` — `79480c0`'s rate-limit override appended to `.env` then
+  ran `docker compose restart`. `restart` reuses the running container's
+  env and does NOT re-read `env_file`, so the override didn't take
+  effect. Switched to `up -d --force-recreate --no-deps`.
+- `3876b10` — `5ff8cd2` placed a `# shellcheck disable=SC2034` directive
+  above the `local tx_out tx_exit=0` declaration; shellcheck flags the
+  next-line assignment, not the local. Moved the directive.
+
+Total CI wall cost: **~23 minutes across 9 round trips** (measured from
+GitHub Actions run history, not estimated). On top of that: the cognitive
+cost of nine sequential diagnoses across phases the contributor hadn't
+touched in weeks. That second cost is the one that matters and the one
+that's hard to put a number on — context-switch back into a phase
+nominally "done" three weeks ago is expensive every time.
+
+#### What we learned
+
+The five true phase regressions all shared a property: they manifested
+**only** against the production-shaped Docker stack — not against unit
+tests, not against the dev environment, not against a partial smoke run.
+Phase changes that affect runtime contracts (auth defaults, rate-limit
+thresholds, container file layout, network reachability, env-file
+semantics) are invisible to `npm test`. The unit suite was passing on
+every one of those phase commits at the time it landed.
+
+The four cascade artifacts shared a different property: they only
+manifested when someone finally tried to **re-run the gate** that had
+been skipped at phase boundary. The fix authors were making
+container-shape changes against a stack they hadn't recently exercised,
+so each fix introduced its own new contract-shape bug. Cascade bugs
+look like negligence in retrospect; in the moment they look like
+"obviously this is the right `docker` invocation, I've used it a
+hundred times" — the kind of thing only a fresh run would have flagged.
+
+Both classes of regression compress to "minutes of debugging at the
+moment of introduction" if a gate runs at the phase boundary. They
+expand to "hours of cascading diagnosis" if the gate runs only at
+release time. The wall-clock CI difference is small (~23 min total
+either way); the human-cost difference is large.
+
+#### The rule going forward
+
+A **phase boundary** is the commit that closes a planned phase task per
+the implementation plan — the integration commits at the end of each
+phase block (`B.14` for Phase B, `C.12` for Phase C, `D.10` for Phase
+D, etc.). Phase boundaries are identifiable from the plan's task list.
+
+**Mark integration commits with a `Phase-boundary:` git trailer** so
+tooling can detect them unambiguously:
+
+```
+feat(server): integration gate for Phase B
+
+Phase-boundary: B.14
+```
+
+The trailer is the canonical signal. Subject-line patterns like
+`feat(B.14):` or `(B.13)` in trailing parens also match the gate's
+detection regex (mirroring v0.6's actual commit conventions), but the
+trailer is the only form that's guaranteed unambiguous.
+
+> **Note on the SHA list above.** The 9 SHAs cited in the catches
+> section are *fix* commits (the work that closed each regression).
+> The introducing commits — Phase D.2 `2f5a21a`, Phase E.2 `00a6b05`,
+> Phase E.4 `18d1a28`, etc. — are noted in the body of each fix
+> commit. Read both: the fix shows what the live-stack contract drift
+> looked like; the introducing commit shows what the phase change
+> intended.
+
+Before pushing a phase-boundary commit to a `v0.X` work-branch, run
+locally (in this order — unit tests catch some regressions smoke alone
+misses, e.g. Phase E.4 `05b1b32` surfaced via `install.test.sh` T18
+idempotency, not via smoke):
+
+1. **Smoke against a freshly-rebuilt stack:**
+   ```bash
+   ( cd server && docker compose up -d --force-recreate --no-deps memory-server )
+   bash server/test/smoke.sh
+   ```
+   `--force-recreate` is required — `docker compose restart` does NOT
+   re-read `env_file` (catch `673b056`).
+
+2. **Server installer unit tests** (catches T18-class idempotency bugs):
+   ```bash
+   ( cd server && bash install.test.sh )
+   ```
+
+3. **CLI installer unit tests** (parity with CI's installer-test job):
+   ```bash
+   bash installer/install-cli.test.sh
+   ```
+
+4. **Shellcheck — file list MUST mirror `.github/workflows/smoke.yml`**
+   so the local gate catches the same warnings CI would. Drift between
+   the local recipe and CI's command was an R2 finding; this list is
+   the canonical one (re-sync if either side changes):
+   ```bash
+   shellcheck --severity=warning \
+     installer/*.sh installer/lib/*.sh \
+     plugins/claude-code/universal-memory/bin/um \
+     plugins/claude-code/universal-memory/bin/um-capture \
+     plugins/claude-code/universal-memory/bin/um-forget \
+     plugins/claude-code/universal-memory/bin/um-preview \
+     plugins/claude-code/universal-memory/bin/um-supersede \
+     plugins/claude-code/universal-memory/bin/um-tunnel \
+     plugins/claude-code/universal-memory/hooks/*.sh \
+     plugins/claude-code/universal-memory/hooks/lib/*.sh
+   ```
+
+Per measured per-step durations from the `smoke.yml` workflow on PR #31's
+final green run: smoke is ~45s with image cached, ~90s on first build;
+unit tests ~30s combined; shellcheck is ~7s. Total realistic per-phase-
+boundary cost: ~2 minutes once images are warm, ~5 minutes on the first
+run. Cheaper than re-opening a closed phase to chase a cascade bug.
+
+#### Enforcement
+
+A pre-push git hook at `scripts/githooks/pre-push` runs all four gates
+automatically when pushing to a branch matching `v*`. **The filename
+must be exactly `pre-push`** — that is the only name git invokes for
+this hook. Install once per clone:
+
+```bash
+git config --local core.hooksPath scripts/githooks
+```
+
+Verify:
+
+```bash
+git config --local --get core.hooksPath
+# → scripts/githooks
+```
+
+The hook detects phase-boundary commits by:
+1. **Recommended:** an explicit `Phase-boundary: <X>.<N>` git trailer
+   on the integration commit (canonical signal).
+2. **Fallback:** any `<X>.<N>` token in the subject's parens (matches
+   v0.6's `feat(server): ... (B.13)` convention AND the alternative
+   `feat(B.14):` style). Word-boundaries minimize false positives.
+
+Either is sufficient to fire the gate. The trailer is unambiguous; the
+pattern fallback may have false positives (gate runs unnecessarily —
+no harm, just slow) or false negatives (gate doesn't fire on a phase
+boundary that uses neither convention).
+
+Bypass with `git push --no-verify` only for hot-fix paths where the
+contributor takes explicit responsibility for the gate skip — the next
+non-hot-fix push will catch any drift.
+
+CI (`smoke.yml`) on push to `v*` branches re-runs the same gates as a
+backstop. If you forget to install the local hook, CI catches you
+eventually, but the local hook is the cheap-and-fast checkpoint that
+keeps phases from stacking silent regressions.
+
+#### For future plans
+
+Each future `<date>-v0.X-plan.md` should include a preamble line in
+its **Execution handoff** section:
+
+> Review-gate: `docs/process/review-playbook.md` § Recurring lessons
+> § v0.6 — phase-boundary smoke gate. Install the pre-push hook
+> before opening the work-branch.
+
+(Design docs don't currently carry an Execution-handoff section, so
+the preamble convention applies to plan docs only. If a future design
+doc adopts a similar handoff section, mirror the line there too.)
+
+This keeps the rule discoverable at the moment a contributor opens the
+plan to start work, not just when they happen to browse the playbook.
