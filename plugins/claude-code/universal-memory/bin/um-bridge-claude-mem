@@ -1,0 +1,418 @@
+#!/usr/bin/env node
+// um-bridge-claude-mem — one-way ingest from ~/.claude-mem/claude-mem.db → UM vault
+// Spec: docs/plans/2026-04-24-v0.6-design.md §4.3 + §4.3.0
+// Security: §6.1 N2 (path-traversal guard on --db-path)
+//
+// Exit codes (§5.2 / B.1 stable codes):
+//   0  success / silent skip (missing DB, cursor-reset done)
+//   1  CLI error (path validation failure, unexpected exception)
+//   2  UPSTREAM_FAILURE (reindex call failed; cursor not advanced; retry next tick)
+//   3  SERVER_INTERNAL (schema mismatch)
+//   4  STATE_LOCK_CONTENTION (SQLITE_BUSY after retries)
+
+// Note: 'better-sqlite3' is loaded via dynamic import only when the DB is
+// actually needed (i.e., after --cursor-reset / --help early exits). This lets
+// --cursor-reset and --help work even when better-sqlite3 is not yet installed
+// (e.g., before the first `npm install` on a new dev box). D.9 (install-plugin)
+// will ensure better-sqlite3 is built before the daemon is started.
+import { realpathSync, lstatSync, unlinkSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { parseArgs } from 'node:util';
+
+// D.9 note: translateRows + bridge-contract primitives are both imported via
+// stable plugin-relative paths. translate.mjs lives next to this file.
+// bridge-contract resolves via the ./lib/ shim — dev-tree re-exports from
+// server/lib/, install-plugin-cc.sh copy-mode replaces the shim with a
+// vendored copy. The CLI MUST use this './lib/' path (not '../../../../
+// server/lib/') so copy-mode installs at ~/.claude/plugins/.../bin/ resolve
+// correctly — there is no server/ four levels up in a real install.
+import { translateRows } from './translate.mjs';
+import {
+  withBridgeLock,
+  twoPhaseWrite,
+  readCursor,
+  writeCursor,
+} from './lib/bridge-contract.mjs';
+
+// V1 correction: default DB filename is claude-mem.db (not sessions.db)
+const DEFAULT_DB = join(homedir(), '.claude-mem', 'claude-mem.db');
+
+// Schema versions supported by this bridge build.
+// V1 fixture PRAGMA user_version = 2 (confirmed empirically).
+// Future claude-mem versions will extend this array.
+const SUPPORTED_SCHEMA_RANGE = [2];
+
+// ---------------------------------------------------------------------------
+// Path-traversal + UNC + symlink-escape guard (§6.1 N2).
+//
+// A prior substring check on '..' was insufficient — it missed absolute paths
+// like /etc/shadow and Windows UNC like \\attacker\share (NTLM hash leak).
+// Round-2 adversarial catch: realpathSync on `~/.claude-mem` ALSO canonicalizes
+// through symlinks, so an attacker with write access to $HOME could replace
+// `~/.claude-mem` itself with a symlink to `/tmp/evil/`; the allowlist then
+// computes to `/tmp/evil/`, trivially bypassed. Mitigation: compute allowlist
+// from `realpathSync(homedir()) + '/.claude-mem'` WITHOUT realpath'ing the
+// .claude-mem component, AND lstat that component — reject if symlink. This
+// matches the threat model: if attacker has write to HOME itself they can
+// also replace DB file contents (game over anyway), so realpath'ing HOME is
+// acceptable; tightening ends at the leaf-most trusted component.
+// ---------------------------------------------------------------------------
+function validateDbPath(p) {
+  if (p.includes('\0')) throw new Error('invalid db-path (null byte)');
+  // Reject UNC paths — Windows \\server\share leaks NTLM hashes; POSIX //host
+  // is similarly surprising
+  if (/^\\\\/.test(p) || /^\/\//.test(p)) throw new Error('invalid db-path (UNC)');
+
+  let resolved;
+  try {
+    resolved = realpathSync(p);
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      // Missing DB is handled downstream silently — return original path so
+      // the ENOENT check below can fire cleanly
+      return p;
+    }
+    throw e;
+  }
+
+  const homeReal = realpathSync(homedir());
+  // Build allowlist: the canonical home + '/.claude-mem' WITHOUT resolving
+  // .claude-mem itself (so a symlink attack on .claude-mem is caught below)
+  const sep = process.platform === 'win32' ? '\\' : '/';
+  const cmDir = homeReal + sep + '.claude-mem';
+
+  // lstat .claude-mem and reject if it is a symlink (adversarial R2 finding)
+  try {
+    const st = lstatSync(cmDir);
+    if (st.isSymbolicLink()) {
+      throw new Error('invalid db-path (~/.claude-mem is a symlink; refuse to follow)');
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+    // .claude-mem doesn't exist yet — allowlist the path anyway; the ENOENT
+    // check below will fire if the file itself is missing
+  }
+
+  const allowlist = [cmDir];
+
+  // Add the repo test-fixtures dir to the allowlist (CWD-independent path via
+  // import.meta.url so tests work regardless of where the CLI is invoked from).
+  // URL resolution: '../' from the FILE strips the filename first, so 4 steps
+  // are needed to reach the repo root (bin→universal-memory→claude-code→plugins→repo).
+  try {
+    const repoFixturesUrl = new URL('../../../../server/test/fixtures', import.meta.url);
+    // Convert file URL pathname /E:/Projects/... to E:/Projects/... on Windows
+    const fixturesPath = repoFixturesUrl.pathname.replace(/^\/([A-Za-z]):\//, '$1:/');
+    allowlist.push(realpathSync(fixturesPath));
+  } catch {
+    // Fixtures dir may not exist in production installs — safe to ignore
+  }
+
+  if (!allowlist.some((root) => resolved === root || resolved.startsWith(root + sep))) {
+    throw new Error(`invalid db-path (outside allowlist): ${resolved}`);
+  }
+  return resolved;
+}
+
+async function main() {
+  const { values } = parseArgs({
+    options: {
+      once: { type: 'boolean', default: false },
+      'db-path': { type: 'string' },
+      'cursor-reset': { type: 'boolean', default: false },
+      help: { type: 'boolean', default: false },
+    },
+  });
+
+  if (values.help) {
+    console.log([
+      'um-bridge-claude-mem — ingest claude-mem sessions into UM vault',
+      '',
+      'Usage: um-bridge-claude-mem [options]',
+      '',
+      'Options:',
+      '  --once           Run once and exit (default: continuous daemon)',
+      '  --db-path=PATH   Override default DB path (~/.claude-mem/claude-mem.db)',
+      '  --cursor-reset   Delete the cursor file and exit (next run re-ingests from beginning)',
+      '  --help           Show this help',
+      '',
+      `Supported claude-mem schema versions: ${SUPPORTED_SCHEMA_RANGE.join(', ')}`,
+    ].join('\n'));
+    process.exit(0);
+  }
+
+  // --cursor-reset: delete cursor file BEFORE opening DB (exit 0)
+  if (values['cursor-reset']) {
+    const vaultDir = process.env.UM_VAULT_DIR || join(homedir(), '.local', 'share', 'universal-memory');
+    const cursorPath = join(vaultDir, '.local', 'bridges', 'claude-mem.json');
+    if (existsSync(cursorPath)) {
+      try {
+        unlinkSync(cursorPath);
+      } catch (e) {
+        console.error(`[um-bridge] failed to delete cursor file: ${e.message}`);
+        process.exit(1);
+      }
+    }
+    console.log('[um-bridge] cursor reset; next run will re-ingest from beginning');
+    process.exit(0);
+  }
+
+  // §4.3 D.8 — startup jitter for non-systemd runners (launchd / cron / manual).
+  // systemd templates use RandomizedDelaySec=600 natively, so they leave
+  // UM_BRIDGE_JITTER_SEC=0. launchd plist + cron template set =600 to spread
+  // host-concurrent reindex traffic. Only applies when --once is set so daemon
+  // mode (no --once) is not delayed at startup.
+  const jitterMax = parseInt(process.env.UM_BRIDGE_JITTER_SEC || '0', 10);
+  if (jitterMax > 0 && values.once) {
+    const jitter = Math.floor(Math.random() * jitterMax * 1000);
+    await new Promise((r) => setTimeout(r, jitter));
+  }
+
+  const rawPath = values['db-path'] || DEFAULT_DB;
+
+  // Validate path — exits 1 on violation
+  let dbPath;
+  try {
+    dbPath = validateDbPath(rawPath);
+  } catch (e) {
+    console.error(`[um-bridge] ${e.message}`);
+    process.exit(1);
+  }
+
+  // Missing claude-mem DB: exit 0 silently (matches install-plugin-codex pattern).
+  // existsSync is O(1) instead of reading the whole DB into memory.
+  if (!existsSync(dbPath)) {
+    // claude-mem not installed or DB not yet created — not an error
+    process.exit(0);
+  }
+
+  // §4.3.0 point 8 — upstream-locked retry: 3× with 1 s backoff on SQLITE_BUSY
+  // Dynamic import: deferred until here so --cursor-reset / --help can run
+  // without better-sqlite3 being installed (the module-load error would fire
+  // before main() could even parse flags otherwise).
+  let Database;
+  try {
+    ({ default: Database } = await import('better-sqlite3'));
+  } catch (e) {
+    console.error('[um-bridge] better-sqlite3 not found — run: npm install (in plugins/claude-code/universal-memory/bin/)');
+    process.exit(1);
+  }
+  let db;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      db = new Database(dbPath, { readonly: true, timeout: 1000 });
+      break;
+    } catch (e) {
+      if (
+        e.code === 'SQLITE_BUSY' ||
+        e.code === 'SQLITE_BUSY_SNAPSHOT' ||
+        /locked/i.test(e.message)
+      ) {
+        if (attempt === 2) {
+          console.error(
+            '[um-bridge] claude-mem DB locked after 3 retries; exiting STATE_LOCK_CONTENTION'
+          );
+          process.exit(4); // STATE_LOCK_CONTENTION
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      // Unexpected open error
+      console.error(`[um-bridge] failed to open DB: ${e.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate schema version
+  const version = db.pragma('user_version', { simple: true });
+  if (!SUPPORTED_SCHEMA_RANGE.includes(version)) {
+    console.error(
+      `[um-bridge] FAIL: claude-mem schema version ${version} not in supported range ` +
+        `${SUPPORTED_SCHEMA_RANGE.join(', ')}; vault not modified; ` +
+        'see um-bridge-claude-mem --help for supported versions'
+    );
+    db.close();
+    process.exit(3); // SERVER_INTERNAL
+  }
+
+  // ---------------------------------------------------------------------------
+  // §4.3 — Read sessions + translate to UM markdown
+  //
+  // JOIN rationale: the three-table JOIN is needed because the V1 schema
+  // splits session metadata (sessions), memory entries (memories), and
+  // summarized content (overviews) across three tables. Each joined via
+  // sessions.session_id (TEXT, stable external ID).
+  //
+  // Cursor: we order by created_at_epoch (INTEGER) for stable pagination
+  // across restarts. The cursor stores last_ingested_at_epoch from the
+  // previous run; on first run the cursor file is absent and the default
+  // 0 is used (ingest everything). Cursor is written after each successful
+  // two-phase write so a partial run (e.g., reindex fails on row 6 of 10)
+  // resumes at row 6 next tick.
+  // ---------------------------------------------------------------------------
+  const vaultDir =
+    process.env.UM_VAULT_DIR ||
+    join(homedir(), '.local', 'share', 'universal-memory');
+  const cursorPath = join(vaultDir, '.local', 'bridges', 'claude-mem.json');
+
+  // Read cursor via bridge-contract (returns default shape on ENOENT)
+  const cursor = await readCursor(cursorPath);
+  const lastEpoch = cursor.last_ingested_at_epoch ?? 0;
+  const lastSessionId = cursor.last_ingested_id ?? '';
+
+  const MAX_PER_RUN = parseInt(process.env.UM_BRIDGE_MAX_PER_RUN || '50', 10);
+
+  // Three-table LEFT JOIN — §4.3 V1 schema.
+  // Cursor field: created_at_epoch INTEGER (stable across schema versions).
+  // Ties broken by session_id ASC (TEXT, deterministic).
+  //
+  // Tied-epoch fix (R1 review A.2): claude-mem stores 1-second-resolution
+  // INTEGER epochs, so two rows can share the same created_at_epoch. A strict
+  // `> ?` predicate combined with cursor advance after each row would skip
+  // rows B,C,... with the same epoch as a successfully-ingested row A on a
+  // partial-failure run. Compound predicate matches the ORDER BY lexicographic
+  // sort and excludes only the exact (epoch, session_id) pair already ingested.
+  const rows = db
+    .prepare(
+      `SELECT
+         s.id              AS rowid,
+         s.session_id      AS session_id,
+         s.project         AS project_raw,
+         s.created_at      AS created_at,
+         s.created_at_epoch AS created_at_epoch,
+         m.title           AS title,
+         o.content         AS summary
+       FROM sessions s
+       LEFT JOIN memories m ON m.session_id = s.session_id
+       LEFT JOIN overviews o ON o.session_id = s.session_id
+       WHERE (s.created_at_epoch > ?)
+          OR (s.created_at_epoch = ? AND s.session_id > ?)
+       ORDER BY s.created_at_epoch ASC, s.session_id ASC
+       LIMIT ?`
+    )
+    .all(lastEpoch, lastEpoch, lastSessionId, MAX_PER_RUN);
+
+  db.close();
+
+  const { translated, skipped } = translateRows(rows);
+
+  // ---------------------------------------------------------------------------
+  // §4.3 D.6 — Two-phase write + cursor advance inside bridge lock
+  //
+  // Lock prevents two concurrent bridge runs from racing on the same vault.
+  // twoPhaseWrite writes the markdown first (Phase 1), then calls reindexFn
+  // (Phase 2). If reindex throws, the markdown file remains on disk (idempotent
+  // on retry) but the cursor is NOT advanced — next run re-processes the row.
+  // Cursor is advanced with all three fields after each successful reindex so
+  // a partial run preserves progress.
+  // ---------------------------------------------------------------------------
+  const serverUrl = process.env.UM_SERVER_URL || 'http://localhost:6335';
+  const token = process.env.UM_AUTH_TOKEN;
+
+  // reindex — POST {path: relPath} to /api/reindex; throws UPSTREAM_FAILURE on any error
+  // (network errors like ECONNREFUSED are also wrapped — they are retryable upstream failures)
+  const reindex = async (relPath) => {
+    let r;
+    try {
+      r = await fetch(`${serverUrl}/api/reindex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'um-bridge/0.6',
+        },
+        body: JSON.stringify({ path: relPath }),
+      });
+    } catch (fetchErr) {
+      // Network error (ECONNREFUSED, DNS failure, timeout, etc.) — retryable
+      throw Object.assign(
+        new Error(`reindex network error: ${fetchErr.message}`),
+        { code: 'UPSTREAM_FAILURE' }
+      );
+    }
+    if (!r.ok) {
+      const err = await r.text().catch(() => '(no body)');
+      throw Object.assign(new Error(`reindex ${r.status}: ${err}`), {
+        code: 'UPSTREAM_FAILURE',
+      });
+    }
+  };
+
+  await withBridgeLock(vaultDir, 'claude-mem', async () => {
+    let ingested = 0;
+
+    for (const item of translated) {
+      try {
+        const fullPath = join(vaultDir, item.relPath);
+        // twoPhaseWrite: write markdown then call reindexFn.
+        // Propagates on reindex failure — cursor stays unchanged (retry semantics).
+        await twoPhaseWrite(fullPath, item.content, () => reindex(item.relPath));
+
+        // Advance cursor only after successful reindex (all three fields for ops visibility)
+        cursor.last_ingested_id = item.row.session_id;        // TEXT session_id (stable)
+        cursor.last_ingested_at = new Date().toISOString();   // wall-clock for ops visibility
+        cursor.last_ingested_at_epoch = item.row.created_at_epoch; // INTEGER used by WHERE query
+        await writeCursor(cursorPath, cursor);
+        ingested++;
+      } catch (e) {
+        if (e.code === 'UPSTREAM_FAILURE') {
+          console.error(
+            `[um-bridge] reindex failed at session_id=${item.row.session_id}; ` +
+              `cursor not advanced; exits UPSTREAM_FAILURE; retry next tick`
+          );
+          // Exit summary before non-zero exit
+          console.error(
+            `[um-bridge] ingested ${ingested} of ${rows.length} sessions (partial); ` +
+              `cursor at session_id=${cursor.last_ingested_id ?? 'none'}`
+          );
+          process.exit(2); // UPSTREAM_FAILURE — cursor preserved, retry next tick
+        }
+        throw e; // unexpected error — propagate
+      }
+    }
+
+    // Advance cursor past skipped rows so bridge doesn't re-read them next tick.
+    // Skipped rows failed translation (e.g. marker-injection attempt) — we still
+    // need to move past them or the bridge stalls forever on bad rows.
+    if (skipped.length > 0 && rows.length > 0) {
+      const lastRow = rows[rows.length - 1];
+      cursor.last_ingested_id = lastRow.session_id;
+      cursor.last_ingested_at = new Date().toISOString();
+      cursor.last_ingested_at_epoch = lastRow.created_at_epoch;
+      await writeCursor(cursorPath, cursor);
+    }
+
+    // Final human-readable summary line on every exit path (§4.3 round-8 fix)
+    const remaining = rows.length === MAX_PER_RUN ? '(more available)' : '(backfill complete)';
+    const skipSuffix =
+      skipped.length > 0
+        ? `; ${skipped.length} skipped (content rejected — see log for session IDs)`
+        : '';
+
+    if (ingested === 0 && skipped.length === 0) {
+      console.log(
+        `[um-bridge] no new claude-mem sessions since epoch=${lastEpoch}; nothing to do`
+      );
+    } else {
+      for (const s of skipped) {
+        console.error(`[um-bridge] skipped session_id=${s.id}: ${s.reason}`);
+      }
+      console.log(
+        `[um-bridge] ingested ${ingested} of ${rows.length} sessions ${remaining}${skipSuffix}; ` +
+          `cursor at session_id=${cursor.last_ingested_id ?? 'none'}; ` +
+          `next tick in ~6h or run 'um-bridge-claude-mem --once' to resume`
+      );
+    }
+  });
+
+  if (values.once) {
+    // --once: single pass done, exit 0
+    process.exit(0);
+  }
+
+  // Daemon mode: D.8 will add polling interval here
+  process.exit(0);
+}
+
+await main();

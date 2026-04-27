@@ -28,9 +28,9 @@ See the [Limitations](#5-limitations) section below for the full can / can't-do 
 Before starting, you should have:
 
 - UM server running + reachable at a tunnel URL (Tailscale Funnel, Cloudflare Tunnel, or ngrok).
-  See [`docs/connecting-chatgpt-desktop.md#2-tunnel-options`](../../../docs/connecting-chatgpt-desktop.md#2-tunnel-options) for tunnel walkthroughs — the same tunnel works for Custom GPT Actions. Confirm the tunnel resolves:
+  See [`docs/connecting-chatgpt-desktop.md#2-tunnel-options`](../../../docs/connecting-chatgpt-desktop.md#2-tunnel-options) for tunnel walkthroughs — the same tunnel works for Custom GPT Actions. Confirm the tunnel resolves (tunnel-fronted installs require `Authorization: Bearer $UM_AUTH_TOKEN`):
   ```bash
-  curl -sf https://<your-tunnel-host>/health
+  curl -sf -H "Authorization: Bearer $UM_AUTH_TOKEN" https://<your-tunnel-host>/health
   # expected: {"ok":true,"memories":<count>}
   ```
 - A ChatGPT account on a plan that can create Custom GPTs. `<TBD: confirm current plan tier during D3 — likely Plus / Pro / Team / Enterprise as of 2026>`.
@@ -103,7 +103,15 @@ node -e "import('./server/openapi.mjs').then(m => console.log(m.generateCustomGP
 
 ### Either option — set the Authentication
 
-Set Authentication to **None** (UM has no auth layer of its own; auth lives in the tunnel). `<TBD: confirm the exact UI label during D3 — "None", "No authentication", or equivalent>`.
+In the **Authentication** section of the GPT builder, select **API Key** and configure it as a **Bearer token**:
+
+1. **Auth type:** API Key
+2. **API Key:** paste the value from `~/.um/auth-token` on the UM host
+3. **Auth:** Bearer
+
+This sets `Authorization: Bearer <token>` on every action call from the GPT to your UM server.
+
+**`?gpt=1` schema endpoint is auth-exempt by design.** The `/openapi.yaml?gpt=1` URL used by Option A (Import from URL) does not require a bearer token — the GPT builder needs to introspect the schema before auth is wired, and the schema endpoint exposes no vault contents. Only the actual API calls (`/api/search`, `/api/state`, `/api/add`, `/api/delete`) go through bearer auth.
 
 Then confirm the **server URL** shown by the Actions editor matches your tunnel host. The spec ships with `http://localhost:6335` baked into `servers[0].url` — the Custom GPT editor normally lets you override this at import time. If it doesn't, edit the `servers:` block in the pasted YAML (Option B) before saving.
 

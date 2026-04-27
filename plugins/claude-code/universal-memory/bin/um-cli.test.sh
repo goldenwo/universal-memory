@@ -96,10 +96,11 @@ write_mock_curl_ok() {
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/usr/bin/env bash
 # Mock curl — records call count, always succeeds
+# Emits body + "200" on last line (matches _um_curl_wrap -w %{http_code} contract)
 count=\$(cat "$calls_file" 2>/dev/null || echo 0)
 count=\$((count + 1))
 echo "\$count" > "$calls_file"
-printf '{"ok":true}\n'
+printf '{"ok":true}\n200\n'
 exit 0
 MOCK
   chmod +x "$MOCK_BIN/curl"
@@ -270,6 +271,24 @@ if [ "$T6_CALL_COUNT" -ge 2 ]; then
 else
   fail "T6: expected 2 reindex calls, got $T6_CALL_COUNT"
 fi
+
+# ===========================================================================
+# Test 7: v0.6 retrofit — Authorization + User-Agent headers on both CLIs (B.7)
+# ===========================================================================
+echo "=== Test 7: v0.6 Authorization + User-Agent headers ==="
+for CLI in "$UM_FORGET" "$UM_SUPERSEDE"; do
+  CLI_NAME="$(basename "$CLI")"
+  if grep -q 'Authorization: Bearer' "$CLI"; then
+    pass "T7: $CLI_NAME has Authorization: Bearer header"
+  else
+    fail "T7: $CLI_NAME missing Authorization: Bearer header"
+  fi
+  if grep -qE 'User-Agent: um-(cli|bridge)/' "$CLI"; then
+    pass "T7: $CLI_NAME has UM User-Agent marker"
+  else
+    fail "T7: $CLI_NAME missing UM User-Agent marker"
+  fi
+done
 
 # ===========================================================================
 # Summary

@@ -257,6 +257,69 @@ python3 -c 'import yaml' 2>/dev/null || {
 }
 ok "pyyaml is available."
 
+# ─── v0.6: was-existing-install probe (spec §4.2 — delta summary gating) ────
+# Captured BEFORE any .env writes so the end-of-run post-install delta summary
+# (Part C) can tell upgrading users ("fresh .env existed at start") apart from
+# first-time users ("no .env at start"). Must stay above the token block —
+# token generation doesn't touch .env, but the subsequent .env writer does.
+UM_WAS_EXISTING_INSTALL=0
+if [ -f "$ENV_FILE" ]; then
+	UM_WAS_EXISTING_INSTALL=1
+fi
+
+# ─── v0.6: UM_AUTH_TOKEN preservation + generation (spec §4.2) ───────────────
+# On re-run, read UM_AUTH_TOKEN out of existing .env and reuse it so already-
+# running remote clients (Claude.ai tunnel, Custom GPT, Codex plugin on
+# different boxes) don't have their cached token silently invalidated by a
+# fresh install. Only generate a new 64-char hex token on true first run
+# (no pre-existing value in env OR in .env). Mirror idempotently to
+# ~/.um/auth-token with mode 600 — best-effort; chmod is a no-op on Windows
+# NTFS, where ACL inheritance from ~/.um (mode 700) provides equivalent
+# protection.
+#
+# This block is placed BEFORE the prompt/collection loop so that the
+# resulting UM_AUTH_TOKEN is already in the environment by the time the
+# .env-write block runs. It's idempotent: running install.sh N times
+# against the same .env produces the same token across all N runs.
+#
+# Direct-invocation callers (server/install.sh without installer/install.sh
+# in front) get the same preservation — this is the single source of truth
+# for the token lifecycle.
+if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
+	# `|| true` is mandatory: when .env exists but lacks UM_AUTH_TOKEN= (the
+	# v0.5 → v0.6 upgrade case), grep returns 1 and under `set -euo pipefail`
+	# the whole assignment aborts the script. `|| true` swallows the grep miss
+	# and leaves _UM_AT_EXISTING empty, letting the generation branch handle
+	# the fresh-token path downstream.
+	_UM_AT_EXISTING=$(grep -E '^UM_AUTH_TOKEN=' "$ENV_FILE" 2>/dev/null \
+		| head -1 \
+		| cut -d= -f2- \
+		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
+		|| true)
+	if [ -n "$_UM_AT_EXISTING" ]; then
+		UM_AUTH_TOKEN="$_UM_AT_EXISTING"
+		info "Reusing existing UM_AUTH_TOKEN from .env."
+	fi
+	unset _UM_AT_EXISTING
+fi
+if [ -z "${UM_AUTH_TOKEN:-}" ]; then
+	command -v openssl >/dev/null 2>&1 \
+		|| fail "openssl not found in PATH. UM_AUTH_TOKEN cannot be generated. Install openssl (apt/brew/choco) or export a pre-generated UM_AUTH_TOKEN."
+	UM_AUTH_TOKEN=$(openssl rand -hex 32)
+	info "Generated new UM_AUTH_TOKEN."
+fi
+export UM_AUTH_TOKEN
+
+# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
+# on Windows NTFS where chmod is a no-op — equivalent protection comes from
+# ACL inheritance off ~/.um.
+if [ -n "${HOME:-}" ]; then
+	mkdir -p "$HOME/.um"
+	chmod 700 "$HOME/.um" 2>/dev/null || true
+	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
+	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
+fi
+
 # ─── Collect required values ─────────────────────────────────────────────────
 prompt() {
 	# $1=var name, $2=description, $3=default (optional), $4=secret (1=silent input)
@@ -356,6 +419,35 @@ if [ -n "${UM_CONTAINER_USER:-}" ]; then
 	if [[ "$UM_CONTAINER_USER" != "node" ]] \
 		&& ! [[ "$UM_CONTAINER_USER" =~ ^[1-9][0-9]*:[1-9][0-9]*$ ]]; then
 		fail "UM_CONTAINER_USER must be 'node' or a numeric <uid>:<gid> pair with both >0. Got: $UM_CONTAINER_USER. Root (0:0) is rejected — combined with UM_MOUNT_MODE=rw it gets root inside the container writing to the host vault. Use \"\$(id -u):\$(id -g)\" for CI / rw-mount installs."
+	fi
+fi
+
+# v0.6 (#30) — UM_CONTAINER_USER change warning across re-runs.
+# Files in the vault were written with whatever UID:GID was active LAST time
+# install.sh ran. Switching the container user without chown-ing the vault
+# causes EACCES on subsequent writes. Detect the change and surface it so
+# users don't silently produce a broken install.
+_PRIOR_CONTAINER_USER=""
+if [ -f "$ENV_FILE" ]; then
+	# Trailing `|| true` masks the pipeline's exit code: grep returns 1 when
+	# UM_CONTAINER_USER isn't yet in .env (which is the common case for re-runs
+	# of installs that never set the override), and `set -o pipefail` would
+	# otherwise propagate that 1 → `set -e` would kill the script silently.
+	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+fi
+if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
+	&& [ "$UM_CONTAINER_USER" != "$_PRIOR_CONTAINER_USER" ]; then
+	warn "UM_CONTAINER_USER changed: was '$_PRIOR_CONTAINER_USER', now '$UM_CONTAINER_USER'."
+	warn "  Existing vault files were written with the old UID:GID. Switching"
+	warn "  without chown-ing the vault will cause EACCES on subsequent writes."
+	warn "  Recommended: chown -R <new-uid>:<new-gid> $UM_VAULT_DIR"
+	if [ "${NONINTERACTIVE_STRICT:-0}" = "1" ]; then
+		fail "NONINTERACTIVE_STRICT=1 — refusing to proceed with UM_CONTAINER_USER change."
+	fi
+	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
+		printf 'Continue with new UM_CONTAINER_USER? [y/N] ' >&2
+		read -r _ans
+		case "$_ans" in [yY]*) ;; *) fail "Aborted by user." ;; esac
 	fi
 fi
 
@@ -459,10 +551,153 @@ fi
 	# Honor env override so CI / automated installs can enable the write-tool
 	# surface for end-to-end MCP coverage (smoke T10-G/H/I).
 	printf 'UM_MCP_WRITE_ENABLED=%s\n'  "${UM_MCP_WRITE_ENABLED:-false}"
+	# UM_CONTAINER_USER (#30): only emit when explicitly set so unset installs
+	# stay silent. Persisted so the next install run can detect a change.
+	if [ -n "${UM_CONTAINER_USER:-}" ]; then
+		printf 'UM_CONTAINER_USER=%s\n'  "$UM_CONTAINER_USER"
+	fi
+	# --- bearer auth (v0.6+) ---
+	# UM_AUTH_TOKEN is generated or preserved by the block above. Emitting
+	# the same value the server will read at boot keeps .env + ~/.um/auth-token
+	# in sync across re-runs (spec §4.2 token-preservation contract).
+	printf 'UM_AUTH_TOKEN=%s\n'         "$UM_AUTH_TOKEN"
 } > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true  # best-effort; no-op on Windows
 ok ".env written."
+
+# ─── v0.6: new-keys-merged on re-run (spec §4.2, round-8 fix) ────────────────
+# The v0.5-era writer above rewrites a fixed set of keys on every run. v0.6
+# adds 13 new env keys for bearer auth, rate-limit, metrics/openapi auth,
+# logging, request limits, bridge, and upstream retry. They are NOT in the
+# v0.5 writer output. This block appends any v0.6 key that's missing from
+# the freshly-written .env, defaulting to safe values. User-tuned values
+# that were present in the PREVIOUS .env must be preserved — we snapshot
+# those from the backup (.env.bak.*) created before the rewrite, or from
+# the environment (if the user exported them before running install).
+#
+# Why a snapshot step: the v0.5 writer's rewrite drops anything not in its
+# fixed list. Without snapshot, a user who hand-edited UM_RATE_LIMIT_RPM=120
+# into .env would silently lose their value on re-run. Snapshot-then-append
+# preserves it.
+#
+# bash 3.2 compat: uses parallel arrays (macOS default bash is 3.2 and does
+# not support `declare -A` associative arrays). Keys and defaults are
+# index-aligned across the two arrays.
+v06_keys=(
+	UM_ALLOW_LOOPBACK_NOAUTH
+	UM_RATE_LIMIT_RPM
+	UM_RATE_LIMIT_BURST
+	UM_RATE_LIMIT_MAX_IPS
+	UM_METRICS_LOOPBACK_ONLY
+	UM_METRICS_AUTH_REQUIRED
+	UM_OPENAPI_AUTH_REQUIRED
+	UM_LOG_LEVEL
+	UM_HTTP_MAX_REQUEST_BYTES
+	UM_LOCK_LOW_DISK_THRESHOLD
+	UM_UPSTREAM_RETRY_MAX
+	UM_BRIDGE_MAX_PER_RUN
+	UM_BRIDGE_JITTER_SEC
+)
+v06_defaults=(
+	true        # UM_ALLOW_LOOPBACK_NOAUTH
+	60          # UM_RATE_LIMIT_RPM
+	10          # UM_RATE_LIMIT_BURST
+	10000       # UM_RATE_LIMIT_MAX_IPS
+	true        # UM_METRICS_LOOPBACK_ONLY
+	true        # UM_METRICS_AUTH_REQUIRED
+	true        # UM_OPENAPI_AUTH_REQUIRED
+	info        # UM_LOG_LEVEL
+	2097152     # UM_HTTP_MAX_REQUEST_BYTES (2 MB)
+	104857600   # UM_LOCK_LOW_DISK_THRESHOLD (100 MB)
+	3           # UM_UPSTREAM_RETRY_MAX
+	50          # UM_BRIDGE_MAX_PER_RUN
+	600         # UM_BRIDGE_JITTER_SEC
+)
+
+# Parallel-array drift guard — v06_keys and v06_defaults must be same length.
+# If a future editor adds one without the other, every subsequent default
+# silently mis-aligns. Fail loud here instead.
+if [ "${#v06_keys[@]}" -ne "${#v06_defaults[@]}" ]; then
+	fail "internal: v06_keys (${#v06_keys[@]}) and v06_defaults (${#v06_defaults[@]}) length mismatch — edit both arrays together"
+fi
+
+# Locate the backup (if we just made one) so we can recover user-tuned values.
+# BACKUP may be unset if the .env path was a pure fresh install — that's fine,
+# the snapshot simply finds nothing and we fall through to defaults.
+_um_read_backup_value() {
+	# $1=key; stdout=value or empty. Treats first match as authoritative;
+	# strips surrounding double/single quotes to match what the user likely
+	# hand-edited.
+	#
+	# MUST ALWAYS return 0 (never let grep's no-match exit 1 leak out): this
+	# function is called via $(...) under `set -euo pipefail`, and a non-zero
+	# return from the pipeline would abort the whole install on every key
+	# that isn't in the backup (which is most keys on a fresh .env path).
+	# Captures pipeline output into a local, explicitly prints it, returns 0.
+	local k="$1" _val=""
+	[ -z "${BACKUP:-}" ] && return 0
+	[ ! -f "$BACKUP" ]  && return 0
+	_val=$(grep -E "^${k}=" "$BACKUP" 2>/dev/null \
+		| head -1 \
+		| cut -d= -f2- \
+		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
+		|| true)
+	printf '%s' "$_val"
+	return 0
+}
+
+added_keys=()
+preserved_keys=()
+{
+	# One header+body pass so the dated comment only appears if we actually
+	# add at least one key. Buffered via a subshell-emitted string so the
+	# header is withheld when added_keys ends up empty.
+	_um_append_buffer=""
+	for i in "${!v06_keys[@]}"; do
+		key="${v06_keys[$i]}"
+		default="${v06_defaults[$i]}"
+
+		# If writer above happened to already emit this key, skip. (Currently
+		# the writer doesn't emit any v0.6 key — belt-and-suspenders for future
+		# writer expansions that might add some v0.6 keys inline.)
+		if grep -qE "^${key}=" "$ENV_FILE"; then
+			continue
+		fi
+
+		# Preserve user-tuned value from prior .env (via backup) if present.
+		# Falls back to shell env, then to the v0.6 safe default.
+		_um_existing=$(_um_read_backup_value "$key")
+		if [ -n "$_um_existing" ]; then
+			_um_val="$_um_existing"
+			preserved_keys+=("$key")
+		elif [ -n "${!key:-}" ]; then
+			_um_val="${!key}"
+			preserved_keys+=("$key")
+		else
+			_um_val="$default"
+			added_keys+=("$key")
+		fi
+		_um_append_buffer+="${key}=${_um_val}"$'\n'
+	done
+	unset _um_existing _um_val
+
+	if [ -n "$_um_append_buffer" ]; then
+		{
+			printf '\n'
+			printf '# --- Added by v0.6 migration on %s ---\n' "$(date -u +%Y-%m-%d)"
+			printf '%s' "$_um_append_buffer"
+		} >> "$ENV_FILE"
+	fi
+	unset _um_append_buffer
+}
+
+if [ "${#added_keys[@]}" -gt 0 ]; then
+	info "[install] added ${#added_keys[@]} new env keys to .env (defaulted; see MIGRATION.md)"
+fi
+if [ "${#preserved_keys[@]}" -gt 0 ]; then
+	info "[install] preserved ${#preserved_keys[@]} user-tuned v0.6 env keys from prior .env"
+fi
 
 # ─── Plugin install (v0.5: delegated to standalone scripts) ──────────────────
 # In v0.5+, plugin-copy is handled by installer/install-plugin-cc.sh and
@@ -629,6 +864,29 @@ fi
 if [ "${UM_SKIP_DOCKER:-0}" -ne 1 ]; then
 	HEALTH=$(curl -sf "$ENDPOINT")
 	ok "Server is healthy: $HEALTH"
+fi
+
+# ─── v0.6 → v0.5 post-install delta summary (spec §4.2, round-8 fix) ────────
+# When upgrading an existing install, surface the v0.5 → v0.6 changes users
+# need to know about: bearer auth, new env keys, loopback behavior, and tunnel
+# token rotation. Suppressed on fresh installs (no prior .env) and under
+# UM_QUIET=1. Uses only POSIX tests so non-interactive + --yes paths also see
+# it when coming from a v0.5 .env.
+#
+# Set UM_WAS_EXISTING_INSTALL=1 earlier (before token+env blocks) so the gate
+# reflects state at script-entry, not post-write.
+if [ "${UM_WAS_EXISTING_INSTALL:-0}" = "1" ] && [ -z "${UM_QUIET:-}" ]; then
+	_added_count="${#added_keys[@]}"
+	cat <<EOM
+
+[install] v0.5 → v0.6 changes applied:
+  • Bearer auth enabled — token written to ~/.um/auth-token (chmod 600)
+  • ${_added_count} new env keys added to .env (defaulted; see MIGRATION.md)
+  • Loopback bypass active by default; tunnel-fronted clients require token
+  -> Tunnel users: rotate token in Claude.ai/Custom GPT connector settings
+  -> Manual token rotation: see server/README.md "Advanced: writes-enabled install"
+EOM
+	unset _added_count
 fi
 
 # ─── Success banner ──────────────────────────────────────────────────────────

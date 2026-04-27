@@ -282,9 +282,9 @@ test('doList returns compact shape (id, title, snippet; no body, no score) by de
       metadata: { id: 'item-b', title: 'Item B', type: 'adr' } },
   ];
   const result = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
-  assert.ok(Array.isArray(result), 'doList must return a raw array (not an envelope)');
-  assert.strictEqual(result.length, 2, 'length must match fakeResults');
-  for (const r of result) {
+  assert.ok(Array.isArray(result.results), 'doList must return {results: [...]} envelope');
+  assert.strictEqual(result.results.length, 2, 'length must match fakeResults');
+  for (const r of result.results) {
     assert.ok(r.id, 'id must be present');
     assert.ok(r.title, 'title must be present');
     assert.ok(r.snippet, 'snippet must be present');
@@ -295,8 +295,8 @@ test('doList returns compact shape (id, title, snippet; no body, no score) by de
     assert.ok(!('metadata' in r), 'raw metadata must NOT be present');
   }
   // id must be metadata.id, not mem0 UUID
-  assert.strictEqual(result[0].id, 'item-a');
-  assert.notStrictEqual(result[0].id, 'mem0-uuid-1');
+  assert.strictEqual(result.results[0].id, 'item-a');
+  assert.notStrictEqual(result.results[0].id, 'mem0-uuid-1');
 });
 
 test('doList returns raw mem0 items when full=true', async () => {
@@ -305,11 +305,11 @@ test('doList returns raw mem0 items when full=true', async () => {
       metadata: { id: 'item-a', title: 'Item A' } },
   ];
   const result = await doList(true, null, buildFakeMemoryGetAll(fakeResults));
-  assert.ok(Array.isArray(result), 'full=true result must be a raw array');
-  assert.strictEqual(result.length, 1);
-  // Full shape: raw mem0 items (backward compat — pre-B.1 callers expect this shape)
-  assert.ok('memory' in result[0], 'memory field must be present with full=true');
-  assert.strictEqual(result[0].memory, 'Full body text.');
+  assert.ok(Array.isArray(result.results), 'full=true result must be {results: [...]} envelope');
+  assert.strictEqual(result.results.length, 1);
+  // Full shape: raw mem0 items inside the results array — body/metadata preserved
+  assert.ok('memory' in result.results[0], 'memory field must be present with full=true');
+  assert.strictEqual(result.results[0].memory, 'Full body text.');
 });
 
 test('doList compact shape id falls back to mem0 UUID when metadata.id absent', async () => {
@@ -318,14 +318,14 @@ test('doList compact shape id falls back to mem0 UUID when metadata.id absent', 
       metadata: {} },  // no metadata.id
   ];
   const result = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
-  assert.strictEqual(result[0].id, 'mem0-uuid-fallback',
+  assert.strictEqual(result.results[0].id, 'mem0-uuid-fallback',
     'id must fall back to mem0 UUID when metadata.id absent');
 });
 
 test('doList returns empty array when vault has no memories', async () => {
   const result = await doList(false, null, buildFakeMemoryGetAll([]));
-  assert.ok(Array.isArray(result));
-  assert.strictEqual(result.length, 0);
+  assert.ok(Array.isArray(result.results));
+  assert.strictEqual(result.results.length, 0);
 });
 
 test('doList honors limit parameter (IMPORTANT-3)', async () => {
@@ -336,13 +336,13 @@ test('doList honors limit parameter (IMPORTANT-3)', async () => {
     metadata: { id: `item-${i}`, title: `Item ${i}` },
   }));
   const all = await doList(false, null, buildFakeMemoryGetAll(fakeResults));
-  assert.strictEqual(all.length, 10, 'limit=null returns all items');
+  assert.strictEqual(all.results.length, 10, 'limit=null returns all items');
 
   const limited = await doList(false, 3, buildFakeMemoryGetAll(fakeResults));
-  assert.strictEqual(limited.length, 3, 'limit=3 must return only 3 items');
+  assert.strictEqual(limited.results.length, 3, 'limit=3 must return only 3 items');
 
   const limited1 = await doList(false, 1, buildFakeMemoryGetAll(fakeResults));
-  assert.strictEqual(limited1.length, 1, 'limit=1 must return only 1 item');
+  assert.strictEqual(limited1.results.length, 1, 'limit=1 must return only 1 item');
 });
 
 // ---------------------------------------------------------------------------

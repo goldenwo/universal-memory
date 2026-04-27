@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# pre-push — phase-boundary smoke + shellcheck gate.
+#
+# Codifies the v0.6 phase-boundary smoke gate documented in
+# docs/process/review-playbook.md § Recurring lessons § v0.6.
+#
+# This file MUST be named `pre-push` (no extension) — that is the exact
+# filename git invokes for the pre-push hook. Renaming breaks enforcement.
+#
+# ─── Install ──────────────────────────────────────────────────────────────────
+#
+# Per-clone, run once:
+#
+#   git config --local core.hooksPath scripts/githooks
+#
+# That points git at this directory for hooks. Verify with:
+#
+#   git config --local --get core.hooksPath
+#   # → scripts/githooks
+#
+# ─── Behavior ─────────────────────────────────────────────────────────────────
+#
+# Trigger: push to any remote branch matching `v*`. Other branches (main,
+# feature branches, docs/* PR branches) skip the gate — only release-track
+# work-branches enforce phase-boundary discipline.
+#
+# Detection: scans the push range for commit messages with a phase-boundary
+# marker. Two equivalent forms — either is sufficient:
+#
+#   1. RECOMMENDED — explicit git trailer:
+#        feat(server): integration commit
+#
+#        Phase-boundary: B.14
+#
+#      The trailer is unambiguous. Add it to integration commits at the
+#      end of each phase block (B.14, C.12, D.10, E.13).
+#
+#   2. Pattern match on subject — any `<X>.<N>` token in parens, where
+#      `<X>` is a single uppercase phase letter and `<N>` is the task
+#      number. Matches v0.6's actual commit conventions:
+#        feat(server): unified §5.1 error envelope ... (B.13)
+#        ci(smoke): rate-limit override (C.6)
+#        fix(install): pipefail re-run (E.4)
+#
+# The trailer is the canonical signal — if you don't add the trailer to your
+# integration commits, the pattern fallback may miss them, and the gate may
+# also fire on non-integration commits that happen to mention a phase ID
+# (false-positive — gate runs unnecessarily, no harm done; just slow).
+#
+# Gate steps (when triggered):
+#   1. docker compose up -d --force-recreate --no-deps memory-server
+#   2. bash server/test/smoke.sh                — live-stack contract test
+#   3. bash server/install.test.sh              — installer unit tests
+#   4. bash installer/install-cli.test.sh       — CLI installer unit tests
+#   5. shellcheck --severity=warning            — installer + plugin shells
+#
+# Refuses the push if any step fails. Exit 0 on success, 1 on failure.
+#
+# (Steps 3 + 4 catch regressions like Phase E.4's grep-pipefail, which only
+# install.test.sh's T18 idempotency check surfaced — smoke alone wouldn't.)
+#
+# ─── Bypass ───────────────────────────────────────────────────────────────────
+#
+# For hot-fix paths only:
+#
+#   git push --no-verify
+#
+# The next non-hot-fix push will catch any drift the bypass introduced.
+# Bypassing routinely defeats the gate — see PR #31 retrospective.
+
+set -euo pipefail
+
+# ─── Args (per git pre-push hook contract) ────────────────────────────────────
+remote="${1:-origin}"
+url="${2:-}"
+
+# Hook reads `<local_ref> <local_sha> <remote_ref> <remote_sha>` lines on stdin.
+# An empty stdin (e.g., when tested manually) means no refs to push — skip.
+if [ -t 0 ]; then
+  echo "[pre-push-phase-gate] no refs on stdin (manual run?) — skipping" >&2
+  exit 0
+fi
+
+triggered=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Only fire on `v*` remote branches.
+  case "$remote_ref" in
+    refs/heads/v*) ;;
+    *) continue ;;
+  esac
+
+  # Determine the commit range being pushed.
+  # If `remote_sha` is the all-zeros SHA, the branch is new; compare against
+  # the merge-base with `main` instead so we cover only the new commits.
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    base=$(git merge-base "$local_sha" "origin/main" 2>/dev/null || echo "")
+    if [ -z "$base" ]; then
+      base=$(git rev-parse "$local_sha~10" 2>/dev/null || echo "$local_sha")
+    fi
+    range="$base..$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  # Phase-boundary detection — match either:
+  #   (a) explicit `Phase-boundary:` trailer (the canonical signal), OR
+  #   (b) any `<X>.<N>` token in subject parens where X = single uppercase
+  #       letter (phase) and N = task number. Matches v0.6's actual format
+  #       (`feat(server): ... (B.13)`) AND the alternative `feat(B.14):`
+  #       form. Word-boundaries minimize false positives like `IPv4.5`.
+  trailer_pattern='^Phase-boundary:'
+  subject_pattern='\([^)]*\b[A-Z]\.[0-9]+\b[^)]*\)'
+
+  if git log --format='%s%n%(trailers)' "$range" 2>/dev/null \
+     | grep -qE "$trailer_pattern|$subject_pattern"; then
+    triggered=1
+    echo "[pre-push-phase-gate] phase-boundary commits detected in $range" >&2
+    break
+  fi
+done
+
+if [ "$triggered" -ne 1 ]; then
+  exit 0
+fi
+
+# ─── Run the gate ─────────────────────────────────────────────────────────────
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "[pre-push-phase-gate] gate firing — smoke + unit tests + shellcheck against fresh stack" >&2
+
+# 1. Fresh stack.
+echo "[pre-push-phase-gate] (1/5) docker compose up -d --force-recreate" >&2
+if ! ( cd server && docker compose up -d --force-recreate --no-deps memory-server ) >/dev/null 2>&1; then
+  echo "[pre-push-phase-gate] FAIL: docker compose up failed" >&2
+  echo "[pre-push-phase-gate] check 'docker compose logs memory-server' for cause" >&2
+  exit 1
+fi
+
+# Wait briefly for the server to come up.
+echo "[pre-push-phase-gate]       waiting for /health..." >&2
+for i in $(seq 1 60); do
+  if curl -sf http://localhost:6335/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -sf http://localhost:6335/health >/dev/null 2>&1; then
+  echo "[pre-push-phase-gate] FAIL: server did not become healthy within 60s" >&2
+  exit 1
+fi
+
+# 2. Smoke (live-stack contract test).
+echo "[pre-push-phase-gate] (2/5) bash server/test/smoke.sh" >&2
+if ! bash server/test/smoke.sh; then
+  echo "[pre-push-phase-gate] FAIL: smoke.sh exited non-zero" >&2
+  echo "[pre-push-phase-gate] fix the failure or push with --no-verify (hot-fix only)" >&2
+  exit 1
+fi
+
+# 3. Server install.test.sh — unit-test phase that catches regressions
+#    smoke alone misses (e.g., Phase E.4 grep-pipefail surfaced via T18
+#    idempotency, not via smoke).
+echo "[pre-push-phase-gate] (3/5) bash server/install.test.sh" >&2
+if ! ( cd server && bash install.test.sh ); then
+  echo "[pre-push-phase-gate] FAIL: server/install.test.sh exited non-zero" >&2
+  exit 1
+fi
+
+# 4. CLI installer test (parity with CI's installer-test job).
+echo "[pre-push-phase-gate] (4/5) bash installer/install-cli.test.sh" >&2
+if ! bash installer/install-cli.test.sh; then
+  echo "[pre-push-phase-gate] FAIL: installer/install-cli.test.sh exited non-zero" >&2
+  exit 1
+fi
+
+# 5. Shellcheck — file list MIRRORS .github/workflows/smoke.yml exactly so
+#    a contributor running the gate locally catches the same warnings CI
+#    would catch. Drift between this list and CI's was an R2 finding.
+echo "[pre-push-phase-gate] (5/5) shellcheck --severity=warning (CI-parity list)" >&2
+if ! shellcheck --severity=warning \
+     installer/*.sh installer/lib/*.sh \
+     plugins/claude-code/universal-memory/bin/um \
+     plugins/claude-code/universal-memory/bin/um-capture \
+     plugins/claude-code/universal-memory/bin/um-forget \
+     plugins/claude-code/universal-memory/bin/um-preview \
+     plugins/claude-code/universal-memory/bin/um-supersede \
+     plugins/claude-code/universal-memory/bin/um-tunnel \
+     plugins/claude-code/universal-memory/hooks/*.sh \
+     plugins/claude-code/universal-memory/hooks/lib/*.sh 2>&1; then
+  echo "[pre-push-phase-gate] FAIL: shellcheck found warnings" >&2
+  echo "[pre-push-phase-gate] fix the warnings or push with --no-verify (hot-fix only)" >&2
+  exit 1
+fi
+
+echo "[pre-push-phase-gate] OK: phase-boundary gate green" >&2
+exit 0

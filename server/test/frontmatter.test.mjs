@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseFrontmatter, serializeFrontmatter } from '../lib/frontmatter.mjs';
+import { parseFrontmatter, serializeFrontmatter, validateSource } from '../lib/frontmatter.mjs';
 
 // ---------------------------------------------------------------------------
 // 1. Happy round-trip
@@ -185,4 +185,47 @@ test('body containing horizontal rule: frontmatter and full body preserved', () 
   assert.equal(frontmatter.title, 'Post');
   assert.ok(body.includes('---'), 'horizontal rule preserved in body');
   assert.ok(body.includes('Below the rule.'), 'body after horizontal rule preserved');
+});
+
+// ---------------------------------------------------------------------------
+// 12. validateSource — registered sources accepted, unregistered rejected,
+//     non-string inputs produce a distinct error
+// ---------------------------------------------------------------------------
+test('frontmatter rejects unregistered source value', () => {
+  const err = () => validateSource('foobar');
+  assert.throws(err, /unknown source 'foobar'/);
+});
+
+test('validateSource: non-string input throws "expected string" (typeof guard)', () => {
+  assert.throws(() => validateSource(undefined), /expected string/);
+  assert.throws(() => validateSource({ toString: () => 'native' }), /expected string/);
+});
+
+test('frontmatter accepts native + claude-mem', () => {
+  assert.doesNotThrow(() => validateSource('native'));
+  assert.doesNotThrow(() => validateSource('claude-mem'));
+});
+
+// ---------------------------------------------------------------------------
+// 13. serializeFrontmatter — source injection and discriminator validation
+// ---------------------------------------------------------------------------
+test('serializeFrontmatter: injects source:native when source is absent', () => {
+  const result = serializeFrontmatter({ status: 'current' }, 'body');
+  assert.ok(result.includes('source: native'), `expected "source: native" in output, got:\n${result}`);
+});
+
+test('serializeFrontmatter: preserves explicit source:claude-mem', () => {
+  const result = serializeFrontmatter({ status: 'current', source: 'claude-mem' }, 'body');
+  assert.ok(result.includes('source: claude-mem'), `expected "source: claude-mem" in output, got:\n${result}`);
+});
+
+test('serializeFrontmatter: throws INPUT_INVALID for unregistered source', () => {
+  assert.throws(
+    () => serializeFrontmatter({ status: 'current', source: 'foobar' }, 'body'),
+    (err) => {
+      assert.match(err.message, /unknown source 'foobar'/);
+      assert.equal(err.code, 'INPUT_INVALID');
+      return true;
+    }
+  );
 });

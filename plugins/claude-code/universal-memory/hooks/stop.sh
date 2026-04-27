@@ -1,5 +1,5 @@
 #!/bin/bash
-# stop.sh — append-only raw capture. No LLM, no state update. ~200ms (perl spawn).
+# stop.sh — append-only raw capture. No LLM, no state update.
 
 # Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
 # claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
@@ -20,39 +20,56 @@ RAW_DIR="$VAULT/captures/$PROJECT/raw"
 mkdir -p "$RAW_DIR"
 
 RAW_FILE="$RAW_DIR/$DATE.md"
-LOCK_FILE="$RAW_FILE.lock"
+LOCK="$RAW_FILE.lockdir"
 
-# Write truncated transcript to a temp file so perl can read it without
-# conflicting with the heredoc that provides perl's program source.
-_UM_TMP=$(mktemp)
-chmod 600 "$_UM_TMP"   # transcript may contain secrets/PII — restrict before writing
-trap 'rm -f "$_UM_TMP"' EXIT
-printf '%s' "$TRANSCRIPT" | head -c 10000 > "$_UM_TMP"
+# Truncate transcript to 10KB up-front (kept in a variable, no temp file).
+TRANSCRIPT_TRUNC=$(printf '%s' "$TRANSCRIPT" | head -c 10000)
 
-# Acquire an exclusive advisory lock on the sibling .lock file before appending,
-# so that concurrent stop.sh invocations and the memory_append_turn MCP tool
-# (server/lib/append-turn.mjs) do not interleave writes. Both writers lock the
-# same <date>.md.lock path.
+# ---------------------------------------------------------------------------
+# Acquire an exclusive advisory lock on the sibling `.lockdir` directory before
+# appending, so that concurrent stop.sh invocations and the memory_append_turn
+# MCP tool (server/lib/append-turn.mjs) do not interleave writes. Both writers
+# now coordinate on the same <date>.md.lockdir path.
 #
-# The .lock file is deliberately NOT removed after release: cross-process flock(2)
-# coordination requires a stable inode, so deleting and recreating the sibling
-# file would break locking for any writer that has it open. One .lock file per
-# raw-capture day is an intentional, bounded artifact.
+# B.11 (v0.6): migrated from `perl Fcntl::flock` against `<date>.md.lock` to
+# bash mkdir-based lockdir. flock and proper-lockfile/lockdir.mjs use
+# incompatible primitives — coexisting on the same file caused cross-process
+# races in v0.5. V4 verification (commit 3ae36ef) confirmed mkdir is atomic
+# across bash + node on Windows NTFS, so this primitive is safe for both sides.
 #
-# Uses perl Fcntl::flock (flock(2) syscall) for portability across Linux, macOS,
-# and Windows Git Bash, where the util-linux `flock` binary may be unavailable.
-perl - "$LOCK_FILE" "$RAW_FILE" "$TIME" "$_UM_TMP" <<'PERL_FLOCK'
-    use Fcntl qw(:flock);
-    my ($lock_file, $raw_file, $time, $tmp) = @ARGV;
-    open(my $t_fh,    '<', $tmp)       or die "stop.sh: cannot open tmp $tmp: $!";
-    local $/; my $transcript = <$t_fh>; close($t_fh);
-    open(my $lock_fh, '>>', $lock_file) or die "stop.sh: cannot open lock $lock_file: $!";
-    flock($lock_fh, LOCK_EX)            or die "stop.sh: cannot flock $lock_file: $!";
-    open(my $out_fh,  '>>', $raw_file)  or die "stop.sh: cannot open raw $raw_file: $!";
-    print $out_fh "## $time\n\n$transcript\n\n";
-    close($out_fh);
-    flock($lock_fh, LOCK_UN);
-    close($lock_fh);
-PERL_FLOCK
+# Stale recovery: if a lockdir's mtime is older than 10 minutes, assume the
+# previous owner crashed and reclaim it. Mirrors the Node-side lockdir.mjs
+# 10-min threshold (DEFAULT_STALE_MS).
+# ---------------------------------------------------------------------------
+STALE_MIN=10                # find -mmin +10 = 10 minutes
+TRIES=0
+MAX_TRIES=200               # 200 * 25ms = 5s timeout
+
+while ! mkdir "$LOCK" 2>/dev/null; do
+  # Stale check inside the loop so a crashed previous owner can be reclaimed
+  # without waiting the full 5 seconds first.
+  if [ -d "$LOCK" ] && \
+     [ -n "$(find "$LOCK" -maxdepth 0 -mmin +${STALE_MIN} 2>/dev/null)" ]; then
+    rmdir "$LOCK" 2>/dev/null || true
+    continue                # retry mkdir immediately after reclaim
+  fi
+  TRIES=$((TRIES + 1))
+  if [ "$TRIES" -gt "$MAX_TRIES" ]; then
+    echo "[stop] could not acquire $LOCK after ~5s — abandoning turn capture" >&2
+    exit 0
+  fi
+  sleep 0.025
+done
+
+# Release lockdir on any exit (clean or signal). Single trap covers both the
+# lockdir and any future cleanup; bash only honors the most recent trap per
+# signal, so consolidate here rather than registering two.
+# shellcheck disable=SC2064
+trap "rmdir '$LOCK' 2>/dev/null; true" EXIT INT TERM
+
+# Append turn under lock. Plain bash redirect — no perl spawn needed.
+{
+  printf '## %s\n\n%s\n\n' "$TIME" "$TRANSCRIPT_TRUNC"
+} >> "$RAW_FILE"
 
 exit 0

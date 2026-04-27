@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib/um-curl-wrap.sh
+source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
 
 _usage() {
   cat <<EOF
@@ -87,11 +89,10 @@ URL="$SERVER/api/search?q=$Q_ENC&limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
 # Fetch
-response=$(curl -fSsm 10 "$URL" 2>&1) || {
-  curl_rc=$?
-  echo "um search: curl exit $curl_rc: $response" >&2
-  exit 3
-}
+response=$(_um_curl_wrap "um-search" -fSsm 10 --fail-with-body \
+  -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
+  -H "User-Agent: um-cli/0.6" \
+  "$URL") || exit 3
 
 # Emit JSONL — one object per result
 # Use jq if available; otherwise fall back to a minimal awk-based extractor.

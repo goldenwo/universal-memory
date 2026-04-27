@@ -12,6 +12,8 @@ server/logs/
 data/
 *.db
 *.db-journal
+# Test fixtures (structurally-valid synthetic DBs) are the one exception — keep them tracked
+!server/test/fixtures/*.db
 
 # Node
 node_modules/
@@ -67,6 +69,10 @@ docs/decisions/
 
 # Claude Code worktrees (created by superpowers skills / /worktree)
 .claude/worktrees/
+
+# Per-developer Claude Code settings (auto-written by the harness when a
+# user approves a permission). Not appropriate to share across machines.
+.claude/settings.local.json
 
 # mktemp scratch dirs created by test scripts (pattern: t<digits>.<alphanum>/)
 /t[0-9]*.[A-Za-z0-9]*/

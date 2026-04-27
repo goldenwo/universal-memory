@@ -13,6 +13,9 @@ COPY mem0-mcp-http.mjs ./
 COPY openapi.mjs ./
 COPY lib/ ./lib/
 COPY config/ ./config/
+COPY entrypoint.sh ./
+RUN chmod +x ./entrypoint.sh
 EXPOSE 6335
 USER node
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["node", "mem0-mcp-http.mjs"]

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  claude-mem-bridge.launchd.plist — UM v0.6 §4.3 (macOS launchd template)
+
+  Install at: ~/Library/LaunchAgents/com.universal-memory.claude-mem-bridge.plist
+  Activate:   launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.universal-memory.claude-mem-bridge.plist
+
+  StartInterval fires every 6h. The bridge CLI consumes UM_BRIDGE_JITTER_SEC=600
+  as a startup sleep so multiple users do not stampede the server endpoint.
+
+  Replace HOME placeholder below with your actual home path before installing.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.universal-memory.claude-mem-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>HOME/.local/bin/um-bridge-claude-mem</string>
+    <string>--once</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>UM_BRIDGE_JITTER_SEC</key>
+    <string>600</string>
+    <key>UM_SERVER_URL</key>
+    <string>http://localhost:6335</string>
+    <key>UM_AUTH_TOKEN</key>
+    <string>REPLACE_WITH_BEARER_TOKEN</string>
+    <key>UM_VAULT_DIR</key>
+    <string>HOME/.local/share/universal-memory</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>HOME/.um/logs/claude-mem-bridge.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>HOME/.um/logs/claude-mem-bridge.err.log</string>
+</dict>
+</plist>

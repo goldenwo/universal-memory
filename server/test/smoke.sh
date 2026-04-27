@@ -27,6 +27,46 @@ MARKER="smoke-test-$(date +%s)-$$"
 echo "[smoke] endpoint: $ENDPOINT"
 echo "[smoke] marker:   $MARKER"
 
+# v0.6 auth (Phase B): /api/* and /mcp require bearer auth from non-loopback
+# callers. Smoke runs against a docker-compose stack where the host's
+# `localhost:6335` calls arrive at the container with the bridge gateway IP
+# as source, not 127.0.0.1 — so loopback-bypass does not apply. Read the
+# server-generated token from .env (install.sh writes it there) and override
+# the `curl` builtin so every call site picks up the Authorization header.
+# Routes with bypassAuth (/health, /openapi.yaml) silently ignore the header.
+# R1 hardening (PR #31 review):
+#   - `|| true` on the grep pipeline: if `.env` exists but lacks an
+#     UM_AUTH_TOKEN= line, grep exits 1 and `set -o pipefail` would
+#     otherwise kill smoke silently — same class of bug as the install.sh
+#     UM_CONTAINER_USER fix landed in commit 05b1b32.
+#   - Quote-strip pattern: matches install.sh's `_UM_AT_EXISTING` block —
+#     only strips matched leading/trailing quotes, not every `"` byte
+#     (which `tr -d '"'` would, corrupting any token containing `"`).
+if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "${UM_ENV_FILE:-.env}" ]; then
+	UM_AUTH_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "${UM_ENV_FILE:-.env}" | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//' || true)
+fi
+if [ -n "${UM_AUTH_TOKEN:-}" ]; then
+	echo "[smoke] auth:     bearer token loaded (${#UM_AUTH_TOKEN} chars)"
+	# R1 hardening: write the bearer header to a 0600 tempfile so the token
+	# never appears in `ps auxe` argv. Mirrors the established pattern in
+	# server/install.sh:462-468 (_UM_TMP_KEYFILE for OpenAI key validation).
+	# Lifetime is the entire smoke run; manual cleanup happens at script end
+	# (see _um_smoke_auth_cleanup below). A trap-based safety net would
+	# conflict with smoke.sh's per-section EXIT traps (Task 7, Task 25),
+	# so we rely on OS tmpdir policy to sweep on early exit. File is 0600;
+	# only the running user can read it during the leak window.
+	_UM_SMOKE_AUTH_CONFIG=$(mktemp -t smoke-auth.XXXXXX 2>/dev/null || mktemp)
+	chmod 600 "$_UM_SMOKE_AUTH_CONFIG"
+	printf 'header = "Authorization: Bearer %s"\n' "$UM_AUTH_TOKEN" > "$_UM_SMOKE_AUTH_CONFIG"
+	_um_smoke_auth_cleanup() { rm -f "$_UM_SMOKE_AUTH_CONFIG"; }
+	curl() {
+		command curl --config "$_UM_SMOKE_AUTH_CONFIG" "$@"
+	}
+else
+	echo "[smoke] auth:     no UM_AUTH_TOKEN found — assuming loopback-bypass mode"
+	_um_smoke_auth_cleanup() { :; }
+fi
+
 get_count() {
 	curl -sf "$ENDPOINT/health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('memories', -1))"
 }
@@ -40,6 +80,65 @@ echo "$HEALTH" | grep -q '"ok":true' || {
 }
 BASELINE=$(get_count)
 echo "[smoke]     baseline memories: $BASELINE"
+
+# /metrics scrape sanity (C.5 — spec §4.2). Confirms the endpoint-class
+# loopback bypass + handler dispatch + counter-finish wiring all line up
+# end-to-end against a running stack. R10-class regression guard for the
+# full middleware chain ordering.
+#
+# Local runs exercise this from 127.0.0.1, so endpoint-class returns
+# bypassAuth+bypassRateLimit and the handler emits text exposition.
+# A non-loopback caller would get 404 (verified by the handler test;
+# can't easily simulate from within the smoke runner since UM_ENDPOINT
+# could be either loopback or remote).
+echo "[smoke]     /metrics scrape sanity"
+# v0.6 (Phase C C.5): /metrics is loopback-only by default. When smoke runs
+# against a docker-compose stack, the host's localhost:6335 reaches the
+# container via Docker's NAT bridge — source IP is the bridge gateway, not
+# 127.0.0.1, so the default-secure handler short-circuits to 404. Scrape via
+# `docker compose exec` so the request originates inside the container with
+# 127.0.0.1 as source IP — that path bypasses auth and emits text exposition,
+# exercising the same default users get out of the box.
+#
+# Falls back to direct curl when docker isn't available (bare-metal dev
+# install) or when the caller has set UM_METRICS_LOOPBACK_ONLY=false +
+# UM_METRICS_AUTH_REQUIRED=false in the stack's .env.
+METRICS=""
+if command -v docker >/dev/null 2>&1; then
+	# Match the docker-compose'd container by name regardless of project
+	# prefix. Compose names containers like <project>-<service>-<n>, where
+	# <project> defaults to the dir or comes from the compose file's `name:`
+	# field. `docker ps` avoids guessing project name.
+	UM_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'memory-server' | head -1 || true)
+	if [ -n "$UM_CONTAINER" ]; then
+		echo "[smoke]     scraping /metrics inside container: $UM_CONTAINER"
+		# wget ships with busybox in node:20-alpine; fall back to node fetch
+		# if a future base image drops it.
+		METRICS=$(docker exec -i "$UM_CONTAINER" sh -c \
+			'wget -qO- "http://localhost:6335/metrics" 2>/dev/null \
+			 || node -e "fetch('"'"'http://localhost:6335/metrics'"'"').then(r=>r.text()).then(t=>process.stdout.write(t))"' \
+			2>/dev/null || true)
+	fi
+fi
+if [ -z "$METRICS" ]; then
+	echo "[smoke]     no in-container scrape path — falling back to direct curl"
+	METRICS=$(curl -sf "$ENDPOINT/metrics" || true)
+fi
+if [ -z "$METRICS" ]; then
+	echo "FAIL: /metrics returned empty/error — expected Prometheus text exposition"
+	echo "      (loopback-only mode? endpoint=$ENDPOINT — non-loopback callers get 404)"
+	exit 1
+fi
+echo "$METRICS" | grep -q '^# HELP um_http_requests_total' || {
+	echo "FAIL: /metrics did not return expected um_http_requests_total HELP line"
+	echo "Got: $(echo "$METRICS" | head -5)"
+	exit 1
+}
+echo "$METRICS" | grep -q '^# TYPE um_http_request_duration_seconds histogram' || {
+	echo "FAIL: /metrics did not return expected histogram TYPE line"
+	exit 1
+}
+echo "[smoke]     OK: /metrics emitted Prometheus text exposition"
 
 # 2/5 add memory — use a name-shaped fact (extracts reliably in mem0's
 # training distribution), capture the returned IDs.
@@ -1355,3 +1454,8 @@ else
 	fi
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
+
+# Clean up the auth-config tempfile on the success path. Failure paths
+# `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
+# policy. Acceptable per the R1 hardening rationale at the auth setup block.
+_um_smoke_auth_cleanup

@@ -73,6 +73,22 @@ _write_marker_block() {
     printf "export UM_LIB_DIR='%s'\n" "$_lib"
     printf "export UM_CLI_DIR='%s'\n" "$_cli"
     [[ -n "$_pdir" ]] && printf "export UM_PROMPT_DIR='%s'\n" "$_pdir"
+    # v0.6 bearer-auth trailer (spec §4.2): auto-export UM_AUTH_TOKEN from
+    # ~/.um/auth-token at shell startup, if the file exists. Short-circuits
+    # cleanly when the file is absent (e.g. first shell after uninstall or
+    # a revoked token). Static literal — no user-controlled interpolation,
+    # so _marker_escape_sq is not involved (V2 verification §7).
+    #
+    # IMPORTANT — ordering: this line is emitted BEFORE the PATH guard. If
+    # the trailer were the final line and auth-token were absent, the
+    # rc-sourcing exit status would be 1 (from `[ -r ]` failing), which
+    # `set -e` users' prompt displays / CI harnesses may surface as an
+    # error. The PATH guard that follows is an unconditional `export
+    # PATH=…` on the no-already-present branch, guaranteeing the marker
+    # block's final command exits 0. V2 verification §6.2 (commit e0a5a7f)
+    # documents this finding; it overrides the v0.6 spec's original
+    # "append after PATH guard" wording.
+    printf '%s\n' '[ -r "$HOME/.um/auth-token" ] && export UM_AUTH_TOKEN="$(cat "$HOME/.um/auth-token")"'
     printf 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
     printf '%s\n' "$marker_end"
   } >> "$tmp"

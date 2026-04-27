@@ -466,18 +466,51 @@ test('C2: listVaultFiles("../outside") throws traversal error', async () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Try to create a symlink; return true if successful, false if the platform
- * doesn't allow it (Windows without Developer Mode / admin).
+ * Create a "symlink-like" entry at linkPath for symlink-refusal testing.
+ *
+ * On Linux/macOS (and Windows with Developer Mode / admin) we create a real
+ * file symlink pointing at fileTarget. On plain Windows (no elevated privilege)
+ * creating a file symlink fails with EPERM, so we fall back to a directory
+ * JUNCTION pointing at dirTarget.
+ *
+ * Junctions are NTFS reparse points that do NOT require
+ * SeCreateSymbolicLinkPrivilege to create. Critically, Node reports them as
+ * symlinks via `fs.lstat().isSymbolicLink() === true` and
+ * `Dirent.isSymbolicLink() === true` — which is exactly the predicate the
+ * vault library uses to decide whether to skip / refuse. So junction-based
+ * testing exercises the same symlink-refusal code path as file-symlink-based
+ * testing (see server/lib/vault.mjs walkDir and server/lib/vault-write.mjs
+ * writeVaultFile), just via a different reparse-point subtype.
+ *
+ * Returns true on success, false only if the fallback also fails (which
+ * shouldn't happen on any supported platform — report it via t.skip with
+ * details if it does).
+ *
+ * @param {string} fileTarget - Absolute path to a file (symlink target on POSIX / Dev-Mode Windows).
+ * @param {string} dirTarget  - Absolute path to a directory (junction target on Windows fallback).
+ * @param {string} linkPath   - Absolute path where the link will be created.
  */
-async function trySymlink(target, linkPath) {
+async function trySymlink(fileTarget, dirTarget, linkPath) {
   try {
-    await fs.symlink(target, linkPath, 'file');
+    await fs.symlink(fileTarget, linkPath, 'file');
     return true;
   } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'UNKNOWN' || err.code === 'ENOSYS') {
+    if (err.code !== 'EPERM' && err.code !== 'UNKNOWN' && err.code !== 'ENOSYS') {
+      throw err;
+    }
+    // Windows without Developer Mode: fall back to a directory junction.
+    // Junctions require absolute paths to an existing directory.
+    try {
+      await fs.symlink(path.resolve(dirTarget), linkPath, 'junction');
+      return true;
+    } catch (junctionErr) {
+      // Junctions should work on any NTFS volume without elevation.
+      // If this fails too, something is genuinely wrong with the platform.
+      process.stderr.write(
+        `[trySymlink] file-symlink failed (${err.code}); junction fallback also failed (${junctionErr.code}): ${junctionErr.message}\n`
+      );
       return false;
     }
-    throw err;
   }
 }
 
@@ -495,11 +528,15 @@ test('security: listVaultFiles skips symlinks; findDocByIdInVault returns null f
     // A real file inside the vault.
     await writeFixture(vault, 'authored/proj/real.md', '# real');
 
-    // A symlink inside the vault pointing outside.
+    // A symlink inside the vault pointing outside. On Windows without
+    // Developer Mode, trySymlink falls back to a directory junction pointing
+    // at `outside`; Node reports junctions as symlinks via lstat(), so the
+    // same skip-symlink code path is exercised.
+    await fs.mkdir(path.join(vault, 'authored', 'proj'), { recursive: true });
     const linkPath = path.join(vault, 'authored', 'proj', 'fake.md');
-    const created = await trySymlink(outsideFile, linkPath);
+    const created = await trySymlink(outsideFile, outside, linkPath);
     if (!created) {
-      t.skip('symlink creation not permitted on this platform (Windows without Developer Mode?)');
+      t.skip('neither file-symlink nor directory-junction creation permitted on this platform');
       return;
     }
 
@@ -533,12 +570,14 @@ test('security: writeVaultFile refuses to write when target is a symlink', async
     const outsideFile = path.join(outside, 'secret.md');
     await fs.writeFile(outsideFile, '# original', 'utf8');
 
-    // Create parent dir, then plant a symlink at the target path.
+    // Create parent dir, then plant a symlink (or Windows junction fallback)
+    // at the target path. Junctions lstat() as symlinks on Windows, so the
+    // writeVaultFile refuse-on-symlink path fires either way.
     await fs.mkdir(path.join(vault, 'authored', 'proj'), { recursive: true });
     const linkPath = path.join(vault, 'authored', 'proj', 'fake.md');
-    const created = await trySymlink(outsideFile, linkPath);
+    const created = await trySymlink(outsideFile, outside, linkPath);
     if (!created) {
-      t.skip('symlink creation not permitted on this platform (Windows without Developer Mode?)');
+      t.skip('neither file-symlink nor directory-junction creation permitted on this platform');
       return;
     }
 

@@ -1,0 +1,9 @@
+{
+  "name": "um-plugin-cc-bin",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^11"
+  }
+}

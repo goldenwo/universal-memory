@@ -5,16 +5,13 @@
 # server/install.test.sh) so real `bash` and coreutils still resolve. We do NOT
 # stub `bash` itself because the outer invocation `bash $INSTALLER` needs real
 # bash to execute the script (stubbing bash would make the test runner a stub).
-
-# shellcheck disable=SC2034
-# Test scaffold captures TFx_EXIT / TPCCn_EXIT for sites where the assertion
-# pattern checks via side-effects (file presence, output content) rather than
-# exit code — the exit is captured defensively but not asserted. Not weakening
-# checks: production files remain strict; TODO(v0.6) either assert exits or
-# remove vestigial captures after auditing intent.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 
 PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -165,10 +162,10 @@ echo ""
 echo "=== T-FLAGS-8: --dry-run → all delegations print 'delegate:' (not 'running:') ==="
 TF8=$(mktemp -d)
 make_stubs "$TF8/bin"
-TF8_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF8/repo" \
-  env PATH="$TF8/bin:/usr/bin:/bin" bash "$INSTALLER" --server --cli 2>&1) && TF8_EXIT=0 || TF8_EXIT=$?
-if echo "$TF8_OUT" | grep -q "delegate:"; then pass "T-FLAGS-8: 'delegate:' present in dry-run"; else fail "T-FLAGS-8: 'delegate:' not found (got: $TF8_OUT)"; fi
-if ! echo "$TF8_OUT" | grep -q "running:"; then pass "T-FLAGS-8: 'running:' absent in dry-run"; else fail "T-FLAGS-8: 'running:' leaked in dry-run"; fi
+_tx_capture TF8 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TF8/repo" \
+  PATH="$TF8/bin:/usr/bin:/bin" bash "$INSTALLER" --server --cli
+if echo "$TX_OUT_TF8" | grep -q "delegate:"; then pass "T-FLAGS-8: 'delegate:' present in dry-run"; else fail "T-FLAGS-8: 'delegate:' not found (got: $TX_OUT_TF8)"; fi
+if ! echo "$TX_OUT_TF8" | grep -q "running:"; then pass "T-FLAGS-8: 'running:' absent in dry-run"; else fail "T-FLAGS-8: 'running:' leaked in dry-run"; fi
 rm -rf "$TF8"
 
 # ─── T-FLAGS-9: --all triggers server + cli (+ plugins if dirs exist) ────────
@@ -275,10 +272,10 @@ echo ""
 echo "=== T-FLAGS-15: --interactive (real wizard) prints header and detected env ==="
 TF15=$(mktemp -d)
 make_stubs "$TF15/bin"
-TF15_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
-  env PATH="$TF15/bin:/usr/bin:/bin" bash "$INSTALLER" --interactive 2>&1) && TF15_EXIT=0 || TF15_EXIT=$?
+_tx_capture TF15 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
+  PATH="$TF15/bin:/usr/bin:/bin" bash "$INSTALLER" --interactive
 # Real wizard must print the installer header and detected environment
-if echo "$TF15_OUT" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TF15_OUT)"; fi
+if echo "$TX_OUT_TF15" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
 rm -rf "$TF15"
 
 # ─── T-PCC-1: --plugin-cc copies prompt files to plugin-local prompts dir ─────
@@ -300,13 +297,14 @@ TPCC1_HOME="$TPCC1/home"
 mkdir -p "$TPCC1_HOME/.claude/plugins"
 # Pre-create .bashrc so the rc-writer finds it (rc writer skips non-existent files)
 touch "$TPCC1_HOME/.bashrc"
-TPCC1_OUT=$(
-  _UM_REPO_ROOT="$TPCC1/repo" \
+_tx_capture TPCC1 \
+  env _UM_REPO_ROOT="$TPCC1/repo" \
   CLAUDE_PLUGINS_DIR="$TPCC1_HOME/.claude/plugins" \
   HOME="$TPCC1_HOME" \
   UM_NONINTERACTIVE=1 \
-  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes 2>&1
-) && TPCC1_EXIT=0 || TPCC1_EXIT=$?
+  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes
+TPCC1_OUT="$TX_OUT_TPCC1"
+_dump_on_fail TPCC1
 
 TPCC1_PLUGIN_DIR="$TPCC1_HOME/.claude/plugins/universal-memory"
 if [ -f "$TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt" ]; then

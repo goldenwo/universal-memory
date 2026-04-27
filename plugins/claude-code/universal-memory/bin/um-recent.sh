@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib/um-curl-wrap.sh
+source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
 LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # shellcheck source=../hooks/lib/resolve-project.sh
@@ -69,10 +71,9 @@ fi
 URL="$SERVER/api/recent/$project?limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
-response=$(curl -fSsm 10 "$URL" 2>&1) || {
-  curl_rc=$?
-  echo "um recent: curl exit $curl_rc: $response" >&2
-  exit 3
-}
+response=$(_um_curl_wrap "um-recent" -fSsm 10 --fail-with-body \
+  -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
+  -H "User-Agent: um-cli/0.6" \
+  "$URL") || exit 3
 
 echo "$response" | jq -c '.results // [] | .[]'

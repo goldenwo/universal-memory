@@ -1,0 +1,20 @@
+# claude-mem-bridge.systemd-user.timer — UM v0.6 §4.3
+#
+# Install at: ~/.config/systemd/user/claude-mem-bridge.timer
+# Activate:   systemctl --user daemon-reload && systemctl --user enable --now claude-mem-bridge.timer
+#
+# Pairs with claude-mem-bridge.service. Native systemd jitter via
+# RandomizedDelaySec=600 (10 min spread) so multiple users on the same host
+# do not stampede the server reindex endpoint at the top of the hour.
+
+[Unit]
+Description=UM claude-mem bridge tick
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=600
+Unit=claude-mem-bridge.service
+
+[Install]
+WantedBy=timers.target
