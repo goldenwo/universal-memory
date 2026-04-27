@@ -59,6 +59,8 @@ import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+import { getEmbedderConfig } from './lib/embed.mjs';
+import { getFactsLlmConfig } from './lib/facts.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -178,10 +180,7 @@ let memory;
 async function initMemory() {
 	memory = new Memory({
 		version: 'v1.1',
-		embedder: {
-			provider: 'openai',
-			config: { model: process.env.MEM0_EMBEDDER_MODEL || 'text-embedding-3-small' },
-		},
+		embedder: getEmbedderConfig(process.env),
 		vectorStore: {
 			provider: 'qdrant',
 			config: {
@@ -190,10 +189,7 @@ async function initMemory() {
 				collectionName: process.env.QDRANT_COLLECTION || 'memories',
 			},
 		},
-		llm: {
-			provider: 'openai',
-			config: { model: process.env.MEM0_LLM_MODEL || 'gpt-4.1-nano-2025-04-14' },
-		},
+		llm: getFactsLlmConfig(process.env),
 		// mem0's default history DB is "memory.db" relative to CWD. In the container
 		// CWD is /app (root-owned) but we run as USER node — unwritable. Put it in
 		// /tmp by default (ephemeral, always writable). Users who want persistence
