@@ -345,13 +345,34 @@ either way); the human-cost difference is large.
 A **phase boundary** is the commit that closes a planned phase task per
 the implementation plan — the integration commits at the end of each
 phase block (`B.14` for Phase B, `C.12` for Phase C, `D.10` for Phase
-D, etc.). Phase boundaries are identifiable from the plan's task list,
-not inferred from commit-message structure. (Optional: tag boundary
-commits with a conventional-commit footer like `Phase-boundary: B.14`
-to make detection by tooling unambiguous.)
+D, etc.). Phase boundaries are identifiable from the plan's task list.
+
+**Mark integration commits with a `Phase-boundary:` git trailer** so
+tooling can detect them unambiguously:
+
+```
+feat(server): integration gate for Phase B
+
+Phase-boundary: B.14
+```
+
+The trailer is the canonical signal. Subject-line patterns like
+`feat(B.14):` or `(B.13)` in trailing parens also match the gate's
+detection regex (mirroring v0.6's actual commit conventions), but the
+trailer is the only form that's guaranteed unambiguous.
+
+> **Note on the SHA list above.** The 9 SHAs cited in the catches
+> section are *fix* commits (the work that closed each regression).
+> The introducing commits — Phase D.2 `2f5a21a`, Phase E.2 `00a6b05`,
+> Phase E.4 `18d1a28`, etc. — are noted in the body of each fix
+> commit. Read both: the fix shows what the live-stack contract drift
+> looked like; the introducing commit shows what the phase change
+> intended.
 
 Before pushing a phase-boundary commit to a `v0.X` work-branch, run
-locally:
+locally (in this order — unit tests catch some regressions smoke alone
+misses, e.g. Phase E.4 `05b1b32` surfaced via `install.test.sh` T18
+idempotency, not via smoke):
 
 1. **Smoke against a freshly-rebuilt stack:**
    ```bash
@@ -361,49 +382,90 @@ locally:
    `--force-recreate` is required — `docker compose restart` does NOT
    re-read `env_file` (catch `673b056`).
 
-2. **Shellcheck the installer tree:**
+2. **Server installer unit tests** (catches T18-class idempotency bugs):
    ```bash
-   shellcheck --severity=warning installer/*.sh installer/lib/*.sh \
-     installer/*.test.sh installer/lib/*.test.sh \
-     plugins/claude-code/universal-memory/hooks/*.test.sh
+   ( cd server && bash install.test.sh )
+   ```
+
+3. **CLI installer unit tests** (parity with CI's installer-test job):
+   ```bash
+   bash installer/install-cli.test.sh
+   ```
+
+4. **Shellcheck — file list MUST mirror `.github/workflows/smoke.yml`**
+   so the local gate catches the same warnings CI would. Drift between
+   the local recipe and CI's command was an R2 finding; this list is
+   the canonical one (re-sync if either side changes):
+   ```bash
+   shellcheck --severity=warning \
+     installer/*.sh installer/lib/*.sh \
+     plugins/claude-code/universal-memory/bin/um \
+     plugins/claude-code/universal-memory/bin/um-capture \
+     plugins/claude-code/universal-memory/bin/um-forget \
+     plugins/claude-code/universal-memory/bin/um-preview \
+     plugins/claude-code/universal-memory/bin/um-supersede \
+     plugins/claude-code/universal-memory/bin/um-tunnel \
+     plugins/claude-code/universal-memory/hooks/*.sh \
+     plugins/claude-code/universal-memory/hooks/lib/*.sh
    ```
 
 Per measured per-step durations from the `smoke.yml` workflow on PR #31's
 final green run: smoke is ~45s with image cached, ~90s on first build;
-shellcheck is ~7s. Total realistic per-phase-boundary cost: 1–3 minutes
-once images are warm, ~5 minutes on the first run. Cheaper than re-
-opening a closed phase to chase a cascade bug.
+unit tests ~30s combined; shellcheck is ~7s. Total realistic per-phase-
+boundary cost: ~2 minutes once images are warm, ~5 minutes on the first
+run. Cheaper than re-opening a closed phase to chase a cascade bug.
 
 #### Enforcement
 
-A pre-push git hook at `scripts/githooks/pre-push-phase-gate.sh` runs
-both gates automatically when pushing to a branch matching `v*`. Install
-once per clone:
+A pre-push git hook at `scripts/githooks/pre-push` runs all four gates
+automatically when pushing to a branch matching `v*`. **The filename
+must be exactly `pre-push`** — that is the only name git invokes for
+this hook. Install once per clone:
 
 ```bash
 git config --local core.hooksPath scripts/githooks
 ```
 
-The hook detects phase-boundary commit messages by pattern match (e.g.,
-`feat(B.14)`, `fix(C.11)`, `refactor(D.10)`) and only fires the gate
-when at least one such commit is in the push range. Bypass with
-`git push --no-verify` only for hot-fix paths where the contributor
-takes explicit responsibility for the gate skip — review the next non-
-hot-fix push will catch any drift.
+Verify:
 
-CI (`smoke.yml`) on push to `v*` branches re-runs both as a backstop;
-if you forget to install the local hook, CI catches you eventually,
-but the local hook is the cheap-and-fast checkpoint that keeps phases
-from stacking silent regressions.
+```bash
+git config --local --get core.hooksPath
+# → scripts/githooks
+```
+
+The hook detects phase-boundary commits by:
+1. **Recommended:** an explicit `Phase-boundary: <X>.<N>` git trailer
+   on the integration commit (canonical signal).
+2. **Fallback:** any `<X>.<N>` token in the subject's parens (matches
+   v0.6's `feat(server): ... (B.13)` convention AND the alternative
+   `feat(B.14):` style). Word-boundaries minimize false positives.
+
+Either is sufficient to fire the gate. The trailer is unambiguous; the
+pattern fallback may have false positives (gate runs unnecessarily —
+no harm, just slow) or false negatives (gate doesn't fire on a phase
+boundary that uses neither convention).
+
+Bypass with `git push --no-verify` only for hot-fix paths where the
+contributor takes explicit responsibility for the gate skip — the next
+non-hot-fix push will catch any drift.
+
+CI (`smoke.yml`) on push to `v*` branches re-runs the same gates as a
+backstop. If you forget to install the local hook, CI catches you
+eventually, but the local hook is the cheap-and-fast checkpoint that
+keeps phases from stacking silent regressions.
 
 #### For future plans
 
-Each future `<date>-v0.X-plan.md` and `<date>-v0.X-design.md` should
-include a preamble line in their **Execution handoff** section:
+Each future `<date>-v0.X-plan.md` should include a preamble line in
+its **Execution handoff** section:
 
 > Review-gate: `docs/process/review-playbook.md` § Recurring lessons
 > § v0.6 — phase-boundary smoke gate. Install the pre-push hook
 > before opening the work-branch.
+
+(Design docs don't currently carry an Execution-handoff section, so
+the preamble convention applies to plan docs only. If a future design
+doc adopts a similar handoff section, mirror the line there too.)
 
 This keeps the rule discoverable at the moment a contributor opens the
 plan to start work, not just when they happen to browse the playbook.
