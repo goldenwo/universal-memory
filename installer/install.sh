@@ -234,19 +234,27 @@ _delegate() {
 
 # Run in order: server first, then plugins, then CLI.
 # Each delegate receives only the args relevant to it (per-delegate filtering).
+#
+# bash 3.2 portability: under `set -u`, spreading an empty array via
+# `"${arr[@]}"` errors with "unbound variable" on stock macOS bash 3.2
+# (and bash 4.0–4.3). Bash 4.4+ handles it correctly. We use the
+# `${arr[@]+"${arr[@]}"}` idiom — expands to nothing when the array is
+# empty, expands to the contents quoted-individually otherwise. This is
+# the canonical fix for empty-array spread under set -u.
+# Surfaced when install-token.test.sh was wired into CI on macos-latest.
 if [[ $INSTALL_SERVER -eq 1 ]]; then
-  _delegate "server/install.sh" "${COMMON_ARGS[@]}" "${SERVER_ARGS[@]}"
+  _delegate "server/install.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
 fi
 if [[ $INSTALL_PLUGIN_CC -eq 1 ]]; then
-  _delegate "installer/install-plugin-cc.sh" "${COMMON_ARGS[@]}" "${PLUGIN_ARGS[@]}"
+  _delegate "installer/install-plugin-cc.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
 fi
 if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
   if [[ ! -d "${HOME:-}/.codex" ]]; then
     echo "[install] ~/.codex not found — soft-skipping Codex plugin" >&2
   else
-    _delegate "installer/install-plugin-codex.sh" "${COMMON_ARGS[@]}" "${PLUGIN_ARGS[@]}"
+    _delegate "installer/install-plugin-codex.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
   fi
 fi
 if [[ $INSTALL_CLI -eq 1 ]]; then
-  _delegate "installer/install-cli.sh" "${COMMON_ARGS[@]}" "${CLI_ARGS[@]}"
+  _delegate "installer/install-cli.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
 fi

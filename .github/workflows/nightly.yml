@@ -1,0 +1,60 @@
+name: nightly
+
+# Nightly run for tests that are too expensive or too slow for the per-PR
+# `smoke` workflow but valuable enough that we want at-least-daily coverage.
+#
+# Currently exercises:
+#   - server/test/summarize-external-marker.test.mjs LIVE prompt-injection
+#     guard (skipped in CI by default via UM_LIVE_TESTS gate; ~1¢/run).
+#
+# v0.6 R3 caught that this guard test was never running in CI — the
+# `<external-summary>` REJECT-on-literal-marker contract (D.3) was
+# untested against real LLM output until this workflow.
+
+on:
+  schedule:
+    # 09:00 UTC = 05:00 EDT (post-midnight in user's timezone). Pick a
+    # quiet hour so a flaky external API doesn't spam dashboards during
+    # work hours.
+    - cron: '0 9 * * *'
+  # Allow manual trigger for ad-hoc runs (e.g. when shipping a v0.X
+  # release and you want to confirm the live guards are still green).
+  workflow_dispatch:
+
+# Don't run nightly on forks — secrets are not available there and the
+# job would fail at the first OpenAI call.
+permissions:
+  contents: read
+
+jobs:
+  live-tests:
+    name: live OpenAI tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.repository == 'goldenwo/universal-memory'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install server deps
+        working-directory: server
+        run: npm ci
+
+      # The live test is gated on UM_LIVE_TESTS=1 (see
+      # server/test/summarize-external-marker.test.mjs:82). Without this
+      # flag the test skips silently — exactly what was happening pre-fix.
+      - name: Run live-OpenAI prompt-injection guard
+        working-directory: server
+        env:
+          UM_LIVE_TESTS: "1"
+          UM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node --test test/summarize-external-marker.test.mjs
+
+      # Future live-only tests can be appended above. Keep them in
+      # `test/*.test.mjs` so `node --test` discovers them when invoked
+      # without an explicit filename. Use `{ skip: !runLive }` per the
+      # `summarize-external-marker.test.mjs` pattern.

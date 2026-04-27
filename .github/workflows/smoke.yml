@@ -134,13 +134,23 @@ jobs:
           umask 000
           bash ./test/smoke.sh
 
-      # Continuity pipeline test: exercises stop → session-end → state.md →
-      # session-start catchup + inject, end-to-end against the live server.
-      # Uses UM_CONTINUITY_LIVE=1 so the OpenAI summarizer path runs for real
-      # (the secret is already in scope from the install step above).
-      # Adds ~1¢/run of API cost on top of the existing smoke test, worth
-      # the cross-section coverage. See issue #7.
-      - name: Run continuity test
+      # Continuity pipeline test — runs BOTH mock + live modes so a mock-
+      # scaffold regression (canned-response shape, JSON parsing, etc.) is
+      # caught fast and cheap, before the live OpenAI run validates the
+      # real API path. v0.6 R3 caught that mock-mode wasn't being exercised
+      # in CI; this fix closes that gap.
+      - name: Run continuity test (mock mode)
+        working-directory: server
+        env:
+          UM_CONTINUITY_LIVE: "0"
+          UM_ENDPOINT: http://localhost:6335
+        run: bash ./test/continuity.sh
+
+      # Live mode uses UM_CONTINUITY_LIVE=1 so the OpenAI summarizer path
+      # runs for real. Adds ~1¢/run of API cost on top of mock — worth the
+      # cross-section coverage of state.md round-trip with real LLM output
+      # variability. See issue #7.
+      - name: Run continuity test (live OpenAI)
         working-directory: server
         env:
           UM_CONTINUITY_LIVE: "1"
@@ -205,6 +215,11 @@ jobs:
       # Sandbox tests first
       - run: bash installer/install-cli.test.sh
       - run: bash server/install.test.sh
+      # install-token.test.sh exercises the v0.6 token-generation +
+      # preservation contract (B.4) plus the v0.6-key snapshot at
+      # install.sh:585-602. v0.6 R3 caught that this script was being
+      # shellchecked but never run end-to-end — closing that gap here.
+      - run: bash installer/install-token.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
