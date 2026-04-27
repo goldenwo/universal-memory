@@ -275,15 +275,23 @@ info "Step 3: running session-end.sh (first session)"
 reset_call_counter
 
 SESSION_END_ERR=$(UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/session-end.sh" 2>&1) \
-  || fail "session-end.sh exited non-zero"
+  || { echo "$SESSION_END_ERR" | tail -40 >&2; fail "session-end.sh exited non-zero"; }
+
+# On any Step 3 failure below, dump session-end output FIRST so CI logs reveal
+# what update-state / summarize emitted before the assertion that tripped.
+_dump_session_end_on_fail() {
+  echo "--- session-end stderr+stdout (last 40 lines) ---" >&2
+  echo "$SESSION_END_ERR" | tail -40 >&2
+  echo "--- end session-end output ---" >&2
+}
 
 # Verify session summary file written
-[ -d "$SUMMARY_DIR" ] || fail "sessions dir not created: $SUMMARY_DIR"
+[ -d "$SUMMARY_DIR" ] || { _dump_session_end_on_fail; fail "sessions dir not created: $SUMMARY_DIR"; }
 SUMMARY_COUNT=$(find "$SUMMARY_DIR" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-[ "$SUMMARY_COUNT" -ge 1 ] || fail "no summary file created (count=$SUMMARY_COUNT)"
+[ "$SUMMARY_COUNT" -ge 1 ] || { _dump_session_end_on_fail; fail "no summary file created (count=$SUMMARY_COUNT)"; }
 
 # Verify state.md written and has required headers
-[ -f "$STATE_FILE" ] || fail "state.md not created at $STATE_FILE"
+[ -f "$STATE_FILE" ] || { _dump_session_end_on_fail; fail "state.md not created at $STATE_FILE"; }
 grep -q "## Current focus" "$STATE_FILE"   || fail "state.md missing '## Current focus'"
 grep -q "## Recent decisions" "$STATE_FILE" || fail "state.md missing '## Recent decisions'"
 grep -q "## Next actions" "$STATE_FILE"    || fail "state.md missing '## Next actions'"
@@ -300,19 +308,51 @@ info "Step 4: checking /api/search (soft — server may not be running)"
 # v0.6 auth: if a bearer token tempfile exists (set up at script-init), pass
 # it via curl --config so the call doesn't silently 401 and degrade to a
 # fake-pass via the `|| echo '{...}'` fallback. PR #31 R1 finding.
+#
+# R2 hardening: distinguish connect-class curl exits (6 DNS, 7 refused,
+# 28 timeout) — the legitimate "server may not be running" soft skip — from
+# HTTP-error exits (22 from -f flag) and other failures, which indicate a
+# real contract regression (auth misconfig, shape change, 5xx). The
+# original `|| echo '{"results":[]}'` swallowed everything; now connect-
+# class only swallows; the rest fail loudly.
+#
+# bash 3.2 portability: `${arr[@]+"${arr[@]}"}` idiom for empty-array
+# expansion under `set -u` (stock macOS bash 3.2 errors on plain `"${arr[@]}"`).
 _UM_CONT_CFG_FLAG=()
 if [ -n "$_UM_CONT_AUTH_CONFIG" ] && [ -f "$_UM_CONT_AUTH_CONFIG" ]; then
   _UM_CONT_CFG_FLAG=(--config "$_UM_CONT_AUTH_CONFIG")
 fi
-SEARCH_RESULT=$(
-  /usr/bin/curl -sf --max-time 3 "${_UM_CONT_CFG_FLAG[@]}" -X POST "$UM_ENDPOINT/api/search" \
+# Pick a curl binary; absolute paths bypass any mock-curl on PATH (mock-mode
+# tests inject a mock at $MOCK_BIN/curl — Step 4 must hit the REAL server).
+if [ -x /usr/bin/curl ]; then
+  _UM_CONT_CURL=/usr/bin/curl
+elif [ -x /bin/curl ]; then
+  _UM_CONT_CURL=/bin/curl
+else
+  _UM_CONT_CURL=""
+fi
+SEARCH_EXIT=0
+SEARCH_RESULT=""
+if [ -n "$_UM_CONT_CURL" ]; then
+  SEARCH_RESULT=$("$_UM_CONT_CURL" -sf --max-time 3 \
+    ${_UM_CONT_CFG_FLAG[@]+"${_UM_CONT_CFG_FLAG[@]}"} \
+    -X POST "$UM_ENDPOINT/api/search" \
     -H 'Content-Type: application/json' \
-    -d '{"query":"authentication password JWT","limit":5}' 2>/dev/null \
-  || /bin/curl -sf --max-time 3 "${_UM_CONT_CFG_FLAG[@]}" -X POST "$UM_ENDPOINT/api/search" \
-    -H 'Content-Type: application/json' \
-    -d '{"query":"authentication password JWT","limit":5}' 2>/dev/null \
-  || echo '{"results":[]}'
-)
+    -d '{"query":"authentication password JWT","limit":5}' 2>/dev/null) || SEARCH_EXIT=$?
+fi
+case "$SEARCH_EXIT" in
+  0)
+    : ;;
+  6|7|28)
+    # Connect-class: server unreachable. Legitimate soft skip.
+    SEARCH_RESULT='{"results":[]}' ;;
+  *)
+    # 22 (HTTP error via -f), 35 (TLS), 60 (cert), or anything else — server
+    # reached but call failed for a non-reachability reason. Surface the
+    # regression. Common v0.6 cause: bearer auth misconfig (401), or
+    # /api/search response shape changed.
+    fail "Step 4: /api/search returned curl exit=$SEARCH_EXIT (HTTP error or malformed; auth or shape regression)" ;;
+esac
 if echo "$SEARCH_RESULT" | python3 -c \
     'import json,sys; d=json.load(sys.stdin); sys.exit(0 if isinstance(d.get("results"),list) else 1)' \
     2>/dev/null; then
@@ -320,7 +360,7 @@ if echo "$SEARCH_RESULT" | python3 -c \
     'import json,sys; d=json.load(sys.stdin); print(len(d.get("results",[])))' 2>/dev/null || echo 0)
   info "Step 4 passed: /api/search responded with $RESULT_COUNT result(s)"
 else
-  warn "Step 4: /api/search unreachable or malformed (server may be down) — skipping"
+  warn "Step 4: /api/search response malformed (server reachable, JSON unparseable)"
 fi
 
 # ===========================================================================

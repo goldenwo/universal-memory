@@ -1010,7 +1010,7 @@ function buildSpec() {
     openapi: '3.1.0',
     info: {
       title: 'universal-memory',
-      version: '0.5.0-alpha',
+      version: '0.6.0-alpha',
       description:
         'HTTP API for universal-memory session continuity layer. Markdown-first vault + vector index via mem0. Exposes REST endpoints under /api/* and an MCP (JSON-RPC 2.0) endpoint at /mcp.',
       license: {
