@@ -2,8 +2,8 @@
 //
 // EXTENDING: to add a new summarizer backend (v0.7 will add anthropic + google):
 //   1. Write an invoke function with signature:
-//      async function myBackendInvoke(transcript, ctx = {}) { ... return { summary, costUsd, tokensIn, tokensOut }; }
-//   2. Add it to BACKENDS below: { myBackend: { invoke: myBackendInvoke, requires: ['MY_API_KEY'] } }
+//      async function myBackendInvoke(transcript, ctx = {}) { ... return { content, usage: { tokensIn, tokensOut } }; }
+//   2. Add it to BACKENDS below: { myBackend: { invoke: myBackendInvoke, requires: ['MY_API_KEY'], defaults: {} } }
 //   3. Add a test case to summarize.test.mjs — the test loops over Object.keys(BACKENDS) so
 //      registering a new backend automatically adds it to the test matrix.
 //   4. Optionally add a fallback relationship (e.g. { 'claude-agent-sdk': { invoke: null, fallback: 'openai' } }).
@@ -32,10 +32,15 @@ export const EXTERNAL_SUMMARY_META_INSTRUCTION =
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
+import * as anthropicP from './provider/anthropic.mjs';
+import * as googleP from './provider/google.mjs';
+import { computeCost } from './pricing.mjs';
 
 export const BACKENDS = {
-  openai:             { invoke: openaiInvoke,  requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'] },
-  ollama:             { invoke: ollamaInvoke,  requires: [] /* host-bind enough */ },
+  openai:             { invoke: openaiInvoke,                requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'], defaults: { summarizerModel: 'gpt-4o-mini' } },
+  anthropic:          { invoke: anthropicP.summarizerInvoke, requires: anthropicP.requires,                     defaults: anthropicP.defaults },
+  google:             { invoke: googleP.summarizerInvoke,    requires: googleP.requires,                        defaults: googleP.defaults },
+  ollama:             { invoke: ollamaInvoke,                requires: [],                                      defaults: { summarizerModel: 'llama3' } },
   'claude-agent-sdk': { invoke: null, fallback: 'openai', reason: 'Docker cannot spawn host CC' },
 };
 
@@ -44,13 +49,15 @@ export const BACKENDS = {
  *
  * @param {string} transcript - Text to summarize
  * @param {object} ctx - Options / DI overrides
- * @param {string}  [ctx.backend]        - Backend name (default: UM_SUMMARIZER env var or 'openai')
- * @param {object}  [ctx.openaiClient]   - Pre-made OpenAI client (for test stubbing)
- * @param {Function}[ctx.ollamaFetch]    - fetch replacement for ollama (for test stubbing)
- * @param {string}  [ctx.model]          - Model override
- * @param {string}  [ctx.systemPrompt]   - System prompt prepended to transcript
- * @param {number}  [ctx.temperature]    - Temperature override
- * @param {string}  [ctx.ollamaHost]     - Ollama host override
+ * @param {string}  [ctx.provider]          - Provider/backend name (preferred v0.7 name)
+ * @param {string}  [ctx.backend]           - Backend name (v0.6 compat alias for ctx.provider)
+ * @param {object}  [ctx.openaiClient]      - Pre-made OpenAI client (for test stubbing)
+ * @param {Function}[ctx.ollamaFetch]       - fetch replacement for ollama (for test stubbing)
+ * @param {string}  [ctx.model]             - Model override
+ * @param {string}  [ctx.systemPrompt]      - System prompt prepended to transcript
+ * @param {number}  [ctx.temperature]       - Temperature override
+ * @param {string}  [ctx.ollamaHost]        - Ollama host override
+ * @param {object}  [ctx._providerOverride] - Test seam: object with summarizerInvoke; bypasses backend dispatch
  * @returns {Promise<{summary: string, costUsd: number, tokensIn: number, tokensOut: number}>}
  */
 export async function summarize(transcript, ctx = {}) {
@@ -63,24 +70,47 @@ export async function summarize(transcript, ctx = {}) {
       ? `${EXTERNAL_SUMMARY_META_INSTRUCTION}\n\n${callerPrompt}`
       : EXTERNAL_SUMMARY_META_INSTRUCTION,
   };
-  const name = ctx.backend ?? process.env.UM_SUMMARIZER ?? 'openai';
-  const b = BACKENDS[name];
-  if (!b || !b.invoke) {
+
+  // ctx.provider is the v0.7 name; ctx.backend is the v0.6 compat alias;
+  // UM_SUMMARIZER_PROVIDER and UM_SUMMARIZER are both checked for backward compat.
+  const providerName = ctx.provider ?? ctx.backend ?? process.env.UM_SUMMARIZER_PROVIDER ?? process.env.UM_SUMMARIZER ?? 'openai';
+  const b = BACKENDS[providerName];
+
+  if (!b?.invoke) {
     const fallback = b?.fallback ?? process.env.UM_SUMMARIZER_FALLBACK ?? 'openai';
     // C.9 (§4.2.0): pino emit must never throw out of a summarize path.
     safeLog(() => getLogger().warn({
       request_id: currentRequestId(),
       component: 'summarize',
-      backend: name,
+      backend: providerName,
       fallback,
       reason: b?.reason ?? 'unknown/unavailable',
     }, 'summarize backend unavailable; falling back'), 'log:summarize:backend-fallback');
-    return BACKENDS[fallback].invoke(transcript, ctx);
+    return summarize(transcript, { ...ctx, provider: fallback, backend: fallback, systemPrompt: undefined });
   }
-  return b.invoke(transcript, ctx);
+
+  const model = ctx.model ?? process.env.UM_SUMMARIZER_MODEL ?? b.defaults?.summarizerModel;
+
+  // Provider override hook for tests — bypasses backend dispatch entirely.
+  const invoke = ctx._providerOverride?.summarizerInvoke ?? b.invoke;
+  const raw = await invoke(transcript, { ...ctx, model });
+
+  // Reshape: provider modules return { content, usage: { tokensIn, tokensOut } }.
+  // Legacy local invoke functions (openaiInvoke, ollamaInvoke) also return that shape.
+  // Guard with fallbacks in case a future adapter uses old shape transitionally.
+  const tokensIn = raw.usage?.tokensIn ?? raw.tokensIn ?? 0;
+  const tokensOut = raw.usage?.tokensOut ?? raw.tokensOut ?? 0;
+  const summary = raw.content ?? raw.summary;
+
+  // ollama is self-hosted; pricing table has no entries → cost is always 0.
+  // All other providers compute cost from the PRICING table (single source of truth).
+  const costUsd = providerName === 'ollama' ? 0 : computeCost(providerName, model, tokensIn, tokensOut);
+
+  return { summary, costUsd, tokensIn, tokensOut };
 }
 
-// DI for tests: per-backend invoke functions accept ctx.openaiClient / ctx.ollamaFetch for stubbing.
+// DI for tests: openaiInvoke accepts ctx.openaiClient for stubbing.
+// Stays inline through C1; C2 migrates openai to provider/openai.mjs fully.
 
 async function openaiInvoke(transcript, ctx) {
   // Friendly error if no API key is configured (avoids SDK's cryptic stack trace)
@@ -101,13 +131,13 @@ async function openaiInvoke(transcript, ctx) {
     ],
     temperature: ctx.temperature ?? 0.2,
   });
-  const summary = response.choices[0].message.content;
+  const content = response.choices[0].message.content;
   const tokensIn = response.usage?.prompt_tokens ?? 0;
   const tokensOut = response.usage?.completion_tokens ?? 0;
-  // Rough cost for gpt-4o-mini as of 2026: $0.15/1M input, $0.60/1M output
-  const costUsd = (tokensIn / 1e6) * 0.15 + (tokensOut / 1e6) * 0.60;
-  return { summary, costUsd, tokensIn, tokensOut };
+  return { content, usage: { tokensIn, tokensOut } };
 }
+
+// ollamaInvoke stays inline through C1; migrated to provider/ollama.mjs in C2.
 
 async function ollamaInvoke(transcript, ctx) {
   const fetchFn = ctx.ollamaFetch ?? globalThis.fetch;
@@ -123,9 +153,10 @@ async function ollamaInvoke(transcript, ctx) {
   if (!res.ok) throw new Error(`ollama invoke failed: ${res.status}`);
   const data = await res.json();
   return {
-    summary: data.response,
-    costUsd: 0,  // ollama is local
-    tokensIn: data.prompt_eval_count ?? 0,
-    tokensOut: data.eval_count ?? 0,
+    content: data.response,
+    usage: {
+      tokensIn: data.prompt_eval_count ?? 0,
+      tokensOut: data.eval_count ?? 0,
+    },
   };
 }
