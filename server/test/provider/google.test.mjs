@@ -75,3 +75,18 @@ test('summarizerInvoke calls injected client and returns shaped result', async (
   assert.equal(result.content, 'summary');
   assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 7 });
 });
+
+test('summarizerInvoke nests systemInstruction inside config (1.x SDK shape)', async () => {
+  let captured;
+  const fakeClient = {
+    models: {
+      generateContent: async (params) => {
+        captured = params;
+        return { text: 'ok', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } };
+      },
+    },
+  };
+  await google.summarizerInvoke('p', { client: fakeClient, model: 'gemini-2.0-flash', systemPrompt: 'be terse' });
+  assert.equal(captured.systemInstruction, undefined, 'must NOT be at top level (silently dropped by 1.x SDK)');
+  assert.equal(captured.config?.systemInstruction, 'be terse', 'must be inside config block');
+});

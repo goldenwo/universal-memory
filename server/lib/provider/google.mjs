@@ -83,13 +83,13 @@ export async function summarizerInvoke(prompt, { client, model = defaults.summar
   try {
     raw = await client.models.generateContent({
       model,
-      ...(systemPrompt ? { systemInstruction: systemPrompt } : {}),
       contents: [
         {
           role: 'user',
           parts: [{ text: prompt }],
         },
       ],
+      ...(systemPrompt ? { config: { systemInstruction: systemPrompt } } : {}),
     });
   } catch (cause) {
     const norm = normalizeError(cause);
