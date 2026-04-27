@@ -1,8 +1,27 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.5.0-alpha**. Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT), REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and the standalone `um` CLI (7 subcommands). Progressive disclosure on reads: responses default to compact snippets; full bodies via `?full=1` / `full: true`.
+> **Version:** This document describes **v0.6.0-alpha** (tagged 2026-04-27).
+> Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT),
+> REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and
+> the standalone `um` CLI (7 subcommands). Progressive disclosure on reads:
+> responses default to compact snippets; full bodies via `?full=1` /
+> `full: true`.
+>
+> **What's new in v0.6**, in one place: see [`CHANGELOG.md`](../CHANGELOG.md)
+> §`[0.6.0-alpha]` — bearer auth, structured pino logging with `request_id`,
+> `/metrics` Prometheus (loopback-only default), per-IP rate limiter,
+> cross-process lockdir, O_NOFOLLOW vault writes, `um-bridge-claude-mem`
+> one-way ingest. Breaking changes (envelope unification, default-secure
+> posture) documented in [`MIGRATION.md`](../MIGRATION.md) §`v0.5 → v0.6`.
 
-Source-of-truth description of what universal-memory does on this machine today. Written against **v0.5.0-alpha** (supersedes v0.4.0-alpha, which was tagged 2026-04-21). Update this file when the behavior changes.
+Source-of-truth description of what universal-memory does on this machine
+today. Written against **v0.6.0-alpha** (supersedes v0.5.0-alpha, tagged
+2026-04-24). The body sections below describe the v0.5 baseline plus the
+v0.6 deltas; when a v0.6 surface differs from v0.5, the change is noted
+inline with the v0.6 version tag. For a phase-by-phase history of the
+v0.5→v0.6 work, see `docs/plans/2026-04-24-v0.6-design.md` (gitignored).
+Update this file when the runtime behavior changes — banner version is
+the trigger.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 

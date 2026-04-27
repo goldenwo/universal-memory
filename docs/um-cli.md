@@ -541,9 +541,9 @@ meta-framework needed.
 
 ## Versioning
 
-`v0.4.0-alpha` is the first release of the `um` CLI. The following contracts are
-**stable** as of this version and will be preserved in all future minor releases
-(`v0.4.x`):
+`v0.4.0-alpha` was the first release of the `um` CLI. As of **v0.6.0-alpha**
+(tagged 2026-04-27) the following contracts are **stable** and will be
+preserved across minor releases:
 
 - Config file format (KEY=value)
 - Config resolution order (6 levels)
@@ -552,6 +552,18 @@ meta-framework needed.
 - Exit code semantics (0 / 1 / 2 / 3)
 - Subcommand names and required flags
 
-Breaking changes (rename, removal, incompatible shape changes) are only permitted in
-major version increments (`v0.5+`) and must be preceded by a deprecation notice in the
-release notes.
+**v0.6 additions to the contract** (preserved going forward):
+
+- `UM_AUTH_TOKEN` bearer-auth requirement on non-loopback `UM_SERVER_URL`
+- `_um_curl_wrap` HTTP-error → friendly-message translation table
+  (401/429/503/5xx — see [Environment requirements](#environment-requirements-v06))
+- Six retrofitted scripts (`um-list`, `um-recent`, `um-search`, `um-state`,
+  `um-forget`, `um-supersede`) sending `Authorization: Bearer $UM_AUTH_TOKEN`
+  on every server call
+
+Breaking changes to any of the above (rename, removal, incompatible shape
+changes) are only permitted in major version increments and must be
+preceded by a deprecation notice in the release notes (`CHANGELOG.md`)
+plus a `MIGRATION.md` entry with before/after examples.
+
+**v0.4 → v0.5 → v0.6** transitions documented in [`MIGRATION.md`](../MIGRATION.md).
