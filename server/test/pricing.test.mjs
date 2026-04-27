@@ -39,3 +39,19 @@ test('staleness advisory: each last_verified parses', () => {
     assert.ok(!isNaN(d.getTime()), `${provider}.last_verified is not a parseable date`);
   }
 });
+
+test('staleness advisory: warn (not fail) if any last_verified > 90 days', () => {
+  const ninetyDays = 90 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const stale = [];
+  for (const [provider, entry] of Object.entries(PRICING)) {
+    if (entry.last_verified === 'n/a') continue;
+    const age = now - new Date(entry.last_verified).getTime();
+    if (age > ninetyDays) stale.push(`${provider} (${Math.floor(age / (24*60*60*1000))} days)`);
+  }
+  if (stale.length) {
+    console.warn(`[pricing-staleness] ${stale.join(', ')} — refresh PRICING.last_verified after rate verification`);
+  }
+  // ADVISORY: this test never fails; it only emits a warning.
+  assert.ok(true);
+});
