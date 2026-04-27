@@ -96,6 +96,42 @@ the stack back up.
 and any zero in either half — combined with `UM_MOUNT_MODE=rw` that would
 get root inside the container writing to the host vault.
 
+### Wizard does NOT prompt for writes-enabled (#29)
+
+The interactive wizard intentionally does not surface
+`UM_MCP_WRITE_ENABLED` / `UM_MOUNT_MODE=rw` — they're deliberately off the
+happy path. The wizard always defaults to `ro` mounts and writes-disabled,
+so a user who clicks through prompts cannot accidentally open the write
+surface. Writes-enabled deployments require the explicit
+`UM_NONINTERACTIVE=1 UM_MCP_WRITE_ENABLED=true UM_MOUNT_MODE=rw` env
+combo above.
+
+This is a defense-in-depth pairing with the v0.6 entrypoint guard
+(`server/entrypoint.sh`, #28), which refuses to start when
+`UM_MCP_WRITE_ENABLED=true` AND `UM_MOUNT_MODE=rw` AND the container
+runs as root.
+
+## Advanced: rotating UM_AUTH_TOKEN (v0.6+)
+
+`install.sh` generates `UM_AUTH_TOKEN` once and writes it to both `.env`
+and `~/.um/auth-token`. To rotate the token (e.g., suspected leak,
+periodic schedule):
+
+```bash
+NEW_TOKEN=$(openssl rand -hex 32)
+sed -i "s/^UM_AUTH_TOKEN=.*/UM_AUTH_TOKEN=${NEW_TOKEN}/" .env
+echo "$NEW_TOKEN" > ~/.um/auth-token && chmod 600 ~/.um/auth-token
+docker compose restart   # or: systemctl --user restart um-server
+```
+
+After restart, **re-source your shell rc** (`source ~/.bashrc`) so any
+running CLIs that already exported the old token pick up the new one.
+Connectors (Claude.ai, ChatGPT Desktop, Custom GPT) need their bearer
+header updated manually.
+
+macOS users: `sed -i ''` (BSD sed needs the empty-string arg). Windows
+Git Bash: GNU sed, the recipe above works as-is.
+
 ## Upgrade
 
 ```bash

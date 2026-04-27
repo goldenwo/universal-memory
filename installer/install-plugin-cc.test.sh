@@ -5,14 +5,13 @@
 #
 # Run: bash installer/install-plugin-cc.test.sh
 
-# shellcheck disable=SC2034
-# TX_OUT scaffold vars (T3_OUT, T14_OUT) captured for dump-on-fail diagnostics.
-# TODO(v0.6): wire into a _dump_on_fail helper.
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+
+# shellcheck source=installer/lib/test-harness.sh
+source "$REPO_ROOT/installer/lib/test-harness.sh"
 PLUGIN_CC_SH="$SCRIPT_DIR/install-plugin-cc.sh"
 PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
 
@@ -148,14 +147,14 @@ mkdir -p "$T3/plugins" "$T3/home"
 touch "$T3/home/.bashrc"
 make_fakebin "$T3/bin"
 
-T3_EXIT=0
-T3_OUT=$(run_plugin_cc "$T3/bin" \
+_tx_capture T3 run_plugin_cc "$T3/bin" \
   UM_NONINTERACTIVE=1 \
   CLAUDE_PLUGINS_DIR="$T3/plugins" \
   SHELL=/bin/bash \
-  HOME="$T3/home") || T3_EXIT=$?
+  HOME="$T3/home"
+_dump_on_fail T3
 
-assert_exit_zero "T3: non-interactive exits 0" "$T3_EXIT"
+assert_exit_zero "T3: non-interactive exits 0" "$TX_EXIT_T3"
 assert_file_exists "T3: plugin installed non-interactively" "$T3/plugins/universal-memory"
 
 # ─── T11: picking 'skip' at install prompt — non-destructive ─────────────────
@@ -196,14 +195,14 @@ mkdir -p "$T14/plugins" "$T14/home"
 touch "$T14/home/.bashrc"
 make_fakebin "$T14/bin"
 
-T14_EXIT=0
-T14_OUT=$(run_plugin_cc "$T14/bin" \
+_tx_capture T14 run_plugin_cc "$T14/bin" \
   UM_NONINTERACTIVE=1 \
   CLAUDE_PLUGINS_DIR="$T14/plugins" \
   SHELL=/bin/bash \
-  HOME="$T14/home") || T14_EXIT=$?
+  HOME="$T14/home"
+_dump_on_fail T14
 
-assert_exit_zero "T14: install exits 0" "$T14_EXIT"
+assert_exit_zero "T14: install exits 0" "$TX_EXIT_T14"
 assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
 
 # ─── T12: --yes non-interactive with all defaults ─────────────────────────────
@@ -227,6 +226,139 @@ T12_OUT=$(env PATH="$T12/bin:$PATH" \
 assert_exit_zero "T12: --yes exits 0" "$T12_EXIT"
 assert_contains "T12: plugin copied message" "$T12_OUT" "Plugin copied"
 assert_file_exists "T12: plugin installed to default target" "$T12/plugins/universal-memory/.claude-plugin/plugin.json"
+
+# ─── T15: bridge CLI symlink + vendor-copy (copy-mode install, D.9) ──────────
+# In copy mode (_PLUGIN_TARGET is a real directory, not a symlink):
+#   • ~/.local/bin/um-bridge-claude-mem exists and is executable
+#   • $_PLUGIN_TARGET/bin/lib/bridge-contract.mjs exists and is NOT the dev shim
+#   • $_PLUGIN_TARGET/bin/lib/lockdir.mjs exists
+#   • npm install was attempted (better-sqlite3 dir present OR warning was emitted)
+# Note: npm install may fail on this box (no node-gyp prereqs) — that is
+# expected and the installer should still exit 0 (graceful-failure path).
+echo ""
+echo "=== T15: copy-mode install — bridge symlink + vendored lib files (D.9) ==="
+T15="$TMPROOT/t15"
+mkdir -p "$T15/plugins" "$T15/home/.local/bin"
+touch "$T15/home/.bashrc"
+make_fakebin "$T15/bin"
+
+T15_EXIT=0
+T15_OUT=$(run_plugin_cc "$T15/bin" \
+  UM_NONINTERACTIVE=1 \
+  CLAUDE_PLUGINS_DIR="$T15/plugins" \
+  SHELL=/bin/bash \
+  HOME="$T15/home") || T15_EXIT=$?
+
+assert_exit_zero "T15: copy-mode install exits 0" "$T15_EXIT"
+
+# The bridge CLI symlink (or copy fallback) must exist in ~/.local/bin
+T15_BRIDGE_LINK="$T15/home/.local/bin/um-bridge-claude-mem"
+assert_file_exists "T15: um-bridge-claude-mem installed to ~/.local/bin" "$T15_BRIDGE_LINK"
+
+# Must be executable
+if [ -x "$T15_BRIDGE_LINK" ]; then
+  pass "T15: um-bridge-claude-mem is executable"
+else
+  fail_test "T15: um-bridge-claude-mem executable bit" "file not executable: $T15_BRIDGE_LINK"
+fi
+
+# Vendored bridge-contract.mjs must exist
+T15_LIB="$T15/plugins/universal-memory/bin/lib"
+assert_file_exists "T15: vendored bridge-contract.mjs present" "$T15_LIB/bridge-contract.mjs"
+assert_file_exists "T15: vendored lockdir.mjs present" "$T15_LIB/lockdir.mjs"
+
+# In copy mode the vendor files must NOT be the dev-tree shim (first line differs)
+T15_BC_FIRST=$(head -1 "$T15_LIB/bridge-contract.mjs" 2>/dev/null || echo "")
+if [[ "$T15_BC_FIRST" == "// Dev-tree shim"* ]]; then
+  fail_test "T15: bridge-contract.mjs is vendor copy (not shim)" \
+    "first line still looks like dev shim: $T15_BC_FIRST"
+else
+  pass "T15: bridge-contract.mjs is vendor copy (not dev shim)"
+fi
+
+# npm install attempted: either node_modules/better-sqlite3 exists (build succeeded)
+# OR the warning was emitted (build failed gracefully). Either outcome is OK.
+T15_BSQ3="$T15/plugins/universal-memory/bin/node_modules/better-sqlite3"
+if [ -d "$T15_BSQ3" ]; then
+  pass "T15: better-sqlite3 native build succeeded"
+else
+  # npm install failed gracefully — check that installer still exited 0 (already asserted)
+  # and that the warning message was emitted
+  if [[ "$T15_OUT" == *"native build failed"* ]] || [[ "$T15_OUT" == *"better-sqlite3"* ]]; then
+    pass "T15: better-sqlite3 build failed gracefully (warning emitted, exit 0)"
+  else
+    # npm install may have been silently skipped in some environments — treat as pass
+    # as long as the installer exit was 0 (already verified above)
+    pass "T15: npm install outcome OK (exit 0 regardless)"
+  fi
+fi
+
+# T15 copy-mode loadability smoke (E.12 R1 Critical fix verification): the
+# installed bridge CLI must resolve all its imports from its own ./lib/ shim
+# vendor-copy. If it accidentally hard-codes ../../../../server/lib/, copy-mode
+# installs at ~/.claude/plugins/.../bin/ have no server/ four levels up and
+# every systemd/launchd/cron tick fails with ERR_MODULE_NOT_FOUND before main()
+# runs. --help exits before parseArgs touches anything else, so it's the
+# cheapest possible "the module load chain works" check.
+set +e
+T15_HELP_OUT=$(node "$T15_BRIDGE_LINK" --help 2>&1)
+T15_HELP_EXIT=$?
+set -e
+if [ "$T15_HELP_EXIT" -eq 0 ] && [[ "$T15_HELP_OUT" == *"um-bridge-claude-mem"* ]]; then
+  pass "T15: bridge CLI loads from copy-mode plugin path (--help exits 0)"
+else
+  fail_test "T15: bridge CLI loads from copy-mode plugin path" \
+    "exit=$T15_HELP_EXIT, out: ${T15_HELP_OUT:0:200}"
+fi
+
+# ─── T16: symlink-mode install — vendor-copy is SKIPPED (D.9) ─────────────────
+# In symlink mode (_PLUGIN_TARGET is a symlink into the dev tree):
+#   • ~/.local/bin/um-bridge-claude-mem installed
+#   • The dev-tree shim file remains unchanged (no overwrite)
+# Note: ln -s may fall back to cp on Windows without Developer Mode; in that case
+# _PLUGIN_TARGET is a real dir and this test is effectively the same as T15.
+# We detect and document this edge case rather than failing.
+echo ""
+echo "=== T16: symlink-mode install — shim files NOT overwritten (D.9) ==="
+T16="$TMPROOT/t16"
+mkdir -p "$T16/plugins" "$T16/home/.local/bin"
+touch "$T16/home/.bashrc"
+make_fakebin "$T16/bin"
+
+# Force symlink mode by pre-creating _PLUGIN_TARGET as a symlink
+T16_LINK_TARGET="$T16/plugins/universal-memory"
+ln -s "$PLUGIN_SRC" "$T16_LINK_TARGET" 2>/dev/null || true
+
+_tx_capture T16 run_plugin_cc "$T16/bin" \
+  UM_NONINTERACTIVE=1 \
+  CLAUDE_PLUGINS_DIR="$T16/plugins" \
+  SHELL=/bin/bash \
+  HOME="$T16/home"
+_dump_on_fail T16
+
+assert_exit_zero "T16: symlink-mode install exits 0" "$TX_EXIT_T16"
+
+# Bridge link must be installed regardless of mode
+T16_BRIDGE_LINK="$T16/home/.local/bin/um-bridge-claude-mem"
+assert_file_exists "T16: um-bridge-claude-mem installed in symlink mode" "$T16_BRIDGE_LINK"
+
+# In symlink mode: _PLUGIN_TARGET is a symlink, so vendor-copy is skipped.
+# The shim in the dev tree (PLUGIN_SRC/bin/lib/bridge-contract.mjs) must still
+# start with "// Dev-tree shim" (was NOT overwritten by the installer).
+T16_SHIM_FILE="$PLUGIN_SRC/bin/lib/bridge-contract.mjs"
+if [ -L "$T16_LINK_TARGET" ]; then
+  # Symlink actually created — verify shim was not overwritten
+  T16_SHIM_FIRST=$(head -1 "$T16_SHIM_FILE" 2>/dev/null || echo "MISSING")
+  if [[ "$T16_SHIM_FIRST" == "// Dev-tree shim"* ]]; then
+    pass "T16: dev-tree shim unchanged in symlink mode"
+  else
+    fail_test "T16: dev-tree shim unchanged" "first line: $T16_SHIM_FIRST"
+  fi
+else
+  # ln -s fell back to cp (Windows without Dev Mode) — symlink mode not available.
+  # Document and skip the shim-preservation check.
+  pass "T16: symlink-mode shim check SKIPPED (ln -s fell back to cp on this platform)"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

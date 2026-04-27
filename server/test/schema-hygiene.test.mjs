@@ -61,15 +61,22 @@ test('tools/list default visibility: TOOLS.length - WRITE_TOOL_NAMES.size', () =
     `expected ${TOOLS.length - WRITE_TOOL_NAMES.size} read tools after filtering ${WRITE_TOOL_NAMES.size} writes; got ${visible.length}`);
 });
 
-// ---------- contract parity: schema_version on write-disabled MCP path ----------
-test('handleToolCall(memory_add) write-disabled response includes schema_version:1', async () => {
+// ---------- contract parity: write-disabled MCP path uses §5.1 unified envelope ----------
+// B.13: legacy schema_version:1 was part of the local-helper error envelope.
+// The §5.1 wire format dropped schema_version (the lib helper does not emit it).
+// This test is now pinned to the new unified shape.
+test('handleToolCall(memory_add) write-disabled response uses §5.1 unified envelope', async () => {
   const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
   try {
     delete process.env.UM_MCP_WRITE_ENABLED;  // ensure writes disabled
     const raw = await handleToolCall('memory_add', { text: 'test' });
     const parsed = JSON.parse(raw);
     assert.equal(parsed.ok, false, 'write-disabled response should have ok:false');
-    assert.equal(parsed.schema_version, 1, 'write-disabled response must include schema_version:1');
+    assert.ok(parsed.error && typeof parsed.error === 'object', 'error must be an object');
+    assert.match(parsed.error.code, /^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_/,
+      'error.code must use §5.2 prefix');
+    assert.equal(typeof parsed.error.message, 'string', 'error.message must be a string');
+    assert.equal(typeof parsed.error.retryable, 'boolean', 'error.retryable must be a boolean');
   } finally {
     if (savedEnv === undefined) {
       delete process.env.UM_MCP_WRITE_ENABLED;
@@ -78,6 +85,16 @@ test('handleToolCall(memory_add) write-disabled response includes schema_version
     }
   }
 });
+
+// ─── Source-discriminator drift-gate ───────────────────────────────────────
+// Unit-level invariants for source: native injection and validateSource are
+// covered in frontmatter.test.mjs sections 12–13. The TRUE drift-gate (walk
+// the vault directory and assert every record has a registered source) is
+// deferred to D.10's integration smoke per Phase D plan §4.3.1, where a
+// fixture vault is available. This block is intentionally empty — adding
+// unit-level duplicates here dilutes the schema-hygiene suite's signal.
+
+// ───────────────────────────────────────────────────────────────────────────
 
 test('getVisibleTools with no arg defaults to env-var behavior', () => {
   // When called with no argument, getVisibleTools reads process.env.UM_MCP_WRITE_ENABLED.

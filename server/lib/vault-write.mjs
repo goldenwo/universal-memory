@@ -22,8 +22,25 @@
  */
 
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { vaultPath, listVaultFiles } from './vault.mjs';
+
+// B.12: O_NOFOLLOW — refuse to follow symlinks at the open() syscall level.
+// Closes the lstat→open TOCTOU race: even if an attacker swaps the path for
+// a symlink between our lstat() check and our open(), the kernel rejects
+// the open() with ELOOP and the redirection fails atomically.
+//
+// CRITICAL Windows compatibility: fsConstants.O_NOFOLLOW is `undefined` on
+// Windows (NTFS has a different threat model — symlink creation requires
+// SeCreateSymbolicLinkPrivilege). ORing `undefined` into open flags yields
+// NaN, which fs.open rejects with ERR_INVALID_ARG_TYPE — meaning every vault
+// write would fail on Windows. Coercing to 0 via `?? 0` makes the flag a
+// no-op on Windows, preserving cross-platform writes. Windows-specific
+// TOCTOU exposure is documented as a v0.7 hardening item; the existing
+// lstat-based refusal in this function (and the junction-aware tests in
+// vault.test.mjs) cover the lstat-refusal layer cross-platform.
+const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
 // ---------------------------------------------------------------------------
 // safePath (write edition — same logic as vault.mjs)
@@ -75,7 +92,34 @@ export async function writeVaultFile(relPath, content) {
   }
 
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(tmp, content, 'utf8');
+
+  // B.12: open the .tmp path with O_NOFOLLOW so a planted symlink at that
+  // location is rejected atomically by the kernel (ELOOP), instead of
+  // followed and overwriting an attacker-chosen target. The flags below
+  // mirror what fs.writeFile would use under the hood (O_WRONLY|O_CREAT|
+  // O_TRUNC) plus our O_NOFOLLOW (no-op on Windows, see NOFOLLOW const).
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW;
+  let fh;
+  try {
+    fh = await fs.open(tmp, flags, 0o644);
+  } catch (err) {
+    // ELOOP (POSIX O_NOFOLLOW rejection) — surface a clear message so callers
+    // and audit logs can recognize the symlink-swap defense firing. Other
+    // errors (EACCES, ENOSPC, etc.) propagate unchanged.
+    if (err.code === 'ELOOP') {
+      const wrapped = new Error(`Refusing to write through symlink at .tmp path: ${path.relative(vault, tmp)}`);
+      wrapped.code = 'ELOOP';
+      wrapped.cause = err;
+      throw wrapped;
+    }
+    throw err;
+  }
+  try {
+    await fh.writeFile(content, 'utf8');
+  } finally {
+    await fh.close();
+  }
+
   try {
     await fs.rename(tmp, abs);
   } catch (err) {

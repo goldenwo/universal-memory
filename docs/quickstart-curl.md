@@ -41,3 +41,20 @@ curl -fsSL https://raw.githubusercontent.com/goldenwo/universal-memory/main/inst
 - Restart Claude Code to load the plugin
 - Run `install.sh --verify` later to confirm everything is green (9 checks)
 - See [docs/quickstart.md](quickstart.md) for the full guided walkthrough
+
+## Verify with curl
+
+The install wizard generates a bearer token at `~/.um/auth-token` and adds a shell-rc trailer that auto-exports `UM_AUTH_TOKEN`. After `source ~/.bashrc` (or a new shell), every API call should include `Authorization: Bearer $UM_AUTH_TOKEN`:
+
+```bash
+# Loopback (default install): auth is bypassed automatically
+curl http://localhost:6335/health
+
+# Same call with token (works regardless of loopback exemption — explicit is clearer):
+curl -H "Authorization: Bearer $UM_AUTH_TOKEN" http://localhost:6335/api/list
+
+# Tunnel-fronted / non-loopback: token is required (loopback-noauth defaults off)
+curl -H "Authorization: Bearer $UM_AUTH_TOKEN" https://my-tunnel.example/api/recent/myproject
+```
+
+If you get `401 AUTH_REQUIRED`, your shell didn't pick up the token — `source ~/.bashrc` or run `export UM_AUTH_TOKEN=$(cat ~/.um/auth-token)` and retry.

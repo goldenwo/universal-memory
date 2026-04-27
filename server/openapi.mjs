@@ -30,23 +30,22 @@ function ref(name) {
 
 /**
  * Standard error response envelope returned by server on any 4xx/5xx path.
- * Shape sourced from server/mem0-mcp-http.mjs — every failing branch writes
- * `{ error: <string> }`. Some MCP tool paths also emit `{ ok: false, error }`
- * inside JSON-RPC results, but that happens in the `/mcp` success body
- * (status 200), not the HTTP error path, so this schema is HTTP-layer-only.
+ * v0.6 unified envelope (spec §5.1): `{ ok: false, error: { code, message,
+ * retryable } }`. Every 4xx/5xx response from /api/* and the inner text block
+ * of /mcp tool errors uses this shape.
  */
 const ERROR_RESPONSE = {
-  description: 'Error response with a human-readable message',
+  description: 'Unified §5.1 error envelope',
   content: {
     'application/json': { schema: ref('ErrorResponse') },
   },
 };
 
 /** Re-usable 500 response — every route can throw and fall through to the
- *  top-level try/catch which writes `{ error: <message> }`. */
+ *  top-level try/catch which writes the §5.1 envelope with code SERVER_INTERNAL. */
 const RESP_500 = {
   500: {
-    description: 'Unhandled server error',
+    description: 'Unhandled server error (SERVER_INTERNAL)',
     content: {
       'application/json': { schema: ref('ErrorResponse') },
     },
@@ -61,20 +60,45 @@ const SCHEMAS = {
   ErrorResponse: {
     type: 'object',
     description:
-      'Error envelope returned on any non-2xx HTTP response. Always contains the `error` field. Some write-gated MCP tools additionally return `{ ok: false, error }` inside a 200 JSON-RPC body; that shape is represented by `McpWriteGatedResponse`.',
+      'v0.6 unified error envelope (spec §5.1). Returned on every 4xx/5xx HTTP response from /api/* and inside the text content block of /mcp tool errors. The stable `error.code` uses one of the §5.2 prefix-groups (AUTH_*, INPUT_*, STATE_*, LIMIT_*, UPSTREAM_*, SERVER_*).',
     properties: {
-      error: { type: 'string', description: 'Human-readable error message' },
+      ok: { type: 'boolean', enum: [false] },
+      error: {
+        type: 'object',
+        description: 'Structured error block per §5.1 wire format.',
+        properties: {
+          code: {
+            type: 'string',
+            description: 'Stable §5.2 error code (e.g. INPUT_INVALID, STATE_NOT_FOUND, UPSTREAM_FAILURE).',
+            pattern: '^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_',
+          },
+          message: { type: 'string', description: 'Human-readable error message.' },
+          retryable: {
+            type: 'boolean',
+            description: 'Hint for client retry policy. Retryable codes (LIMIT_RATE_EXCEEDED, STATE_LOCK_CONTENTION, UPSTREAM_FAILURE) are true; everything else is false.',
+          },
+        },
+        required: ['code', 'message', 'retryable'],
+      },
     },
-    required: ['error'],
+    required: ['ok', 'error'],
   },
 
   McpWriteGatedResponse: {
     type: 'object',
     description:
-      'Returned inside MCP tool results when the server is in read-only mode (UM_MCP_WRITE_ENABLED != true).',
+      'Returned inside MCP tool results when the server is in read-only mode (UM_MCP_WRITE_ENABLED != true). Carries the same §5.1 unified envelope as ErrorResponse — `error.code` is INPUT_INVALID with a message instructing how to enable writes.',
     properties: {
       ok: { type: 'boolean', enum: [false] },
-      error: { type: 'string' },
+      error: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', enum: ['INPUT_INVALID'] },
+          message: { type: 'string' },
+          retryable: { type: 'boolean', enum: [false] },
+        },
+        required: ['code', 'message', 'retryable'],
+      },
     },
     required: ['ok', 'error'],
   },
@@ -154,7 +178,7 @@ const SCHEMAS = {
 
   CompactSearchResponse: {
     type: 'object',
-    description: 'Default search/list/recent response (compact shape). Use ?full=1 for MemoryResult[].',
+    description: 'Default search/list/recent response envelope with compact items. Use ?full=1 to get the full MemoryResult shape in each result instead.',
     required: ['results'],
     properties: {
       results: { type: 'array', items: ref('CompactMemoryResult') },
@@ -197,7 +221,7 @@ const SCHEMAS = {
   SearchResponse: {
     type: 'object',
     description:
-      'Default response shape for /api/search (compact). Add ?full=1 to get MemoryResult[] instead.',
+      'Default response shape for /api/search: `{results: [CompactMemoryResult]}`. Add ?full=1 to get the full MemoryResult shape in each result instead.',
     required: ['results'],
     properties: {
       results: { type: 'array', items: ref('CompactMemoryResult') },
@@ -392,10 +416,19 @@ const SCHEMAS = {
       {
         type: 'object',
         title: 'CheckpointFailure',
+        description: 'v0.6 §5.1 unified envelope — see ErrorResponse schema. Stable codes for /api/checkpoint failures: UPSTREAM_FAILURE (502), STATE_LOCK_CONTENTION (503), INPUT_INVALID (400).',
         required: ['ok', 'error'],
         properties: {
           ok: { type: 'boolean', enum: [false] },
-          error: { type: 'string', description: 'Machine-readable error code or human-readable message' },
+          error: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', pattern: '^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_' },
+              message: { type: 'string' },
+              retryable: { type: 'boolean' },
+            },
+            required: ['code', 'message', 'retryable'],
+          },
         },
       },
     ],
@@ -529,14 +562,14 @@ function pathSearch() {
       operationId: 'searchMemories',
       summary: 'Semantic search',
       description:
-        'Body form. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+        'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
       parameters: [
         {
           name: 'full',
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       requestBody: {
@@ -547,7 +580,7 @@ function pathSearch() {
       },
       responses: {
         200: {
-          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Search succeeded. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -600,12 +633,12 @@ function pathSearch() {
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Search succeeded. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Search succeeded. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -654,25 +687,26 @@ function pathList() {
       operationId: 'listMemories',
       summary: 'List all memories for MEM0_USER_ID',
       description:
-        'Returns the unfiltered list of every memory for the server\'s configured user. Returns compact shape by default; add `?full=1` for full MemoryResult[].',
+        'Returns the unfiltered list of every memory for the server\'s configured user. Response is `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead.',
       parameters: [
         {
           name: 'full',
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Memory list. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description:
+            'Memory list. Always wrapped in `{ results: [...] }` envelope per spec §4.1 (v0.6 breaking change — unified with /api/search and /api/recent). Default: compact CompactMemoryResult items; with ?full=1: full MemoryResult items.',
           content: {
             'application/json': {
               schema: {
                 oneOf: [
                   ref('CompactSearchResponse'),
-                  { type: 'array', items: ref('MemoryResult') },
+                  ref('SearchResponseFull'),
                 ],
               },
             },
@@ -755,7 +789,7 @@ function pathRecent() {
       operationId: 'getRecentByProject',
       summary: 'Most-recent memories for a project',
       description:
-        'Returns the N most-recently indexed memories for the given project slug. Returns compact shape by default; add `?full=1` for full MemoryResult[]. Results are sorted newest-first by updated_at.',
+        'Returns the N most-recently indexed memories for the given project slug. Response is `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Results are sorted newest-first by updated_at.',
       parameters: [
         {
           name: 'project',
@@ -776,12 +810,12 @@ function pathRecent() {
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
-          description: 'When true, return full MemoryResult[] instead of compact CompactMemoryResult[]',
+          description: 'When true, return the full MemoryResult shape in each result instead of the compact CompactMemoryResult shape. The outer envelope (`{results: [...]}`) is the same either way.',
         },
       ],
       responses: {
         200: {
-          description: 'Recent memories. Default: compact CompactMemoryResult[]; with ?full=1: full MemoryResult[].',
+          description: 'Recent memories. Response is `{results: [...]}`; items are compact (CompactMemoryResult) by default, or full (MemoryResult) when ?full=1.',
           content: {
             'application/json': {
               schema: {
@@ -976,7 +1010,7 @@ function buildSpec() {
     openapi: '3.1.0',
     info: {
       title: 'universal-memory',
-      version: '0.5.0-alpha',
+      version: '0.6.0-alpha',
       description:
         'HTTP API for universal-memory session continuity layer. Markdown-first vault + vector index via mem0. Exposes REST endpoints under /api/* and an MCP (JSON-RPC 2.0) endpoint at /mcp.',
       license: {
@@ -1129,6 +1163,12 @@ export function generateCustomGPTActionsSpec() {
     post: cloneAndRewriteOperation(checkpointPath.post, 'memory_checkpoint'),
   };
 
+  // Intentionally omitted: /api/list. Custom GPT Actions uses /api/search and
+  // /api/recent/{project} for retrieval; a bare "list every memory" action
+  // would exceed the GPT's context budget on any non-trivial vault and has no
+  // filter/ranking story. /api/list remains in the full spec (/openapi.yaml)
+  // for programmatic callers. v0.6 envelope change (spec §4.1) therefore
+  // does not need to be mirrored here.
   const paths = {
     '/api/search': trimmedSearch,
     '/api/state/{project}': trimmedState,

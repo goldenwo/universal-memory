@@ -114,9 +114,12 @@ fi
 assert_file_missing "T2: no raw capture written under guard" "$RAW_FILE"
 
 # ===========================================================================
-# Test 3: T-CONC — sibling-lockfile flock serializes stop.sh appends
+# Test 3: T-CONC — sibling-lockdir mkdir serializes stop.sh appends
 # ===========================================================================
-echo "=== Test 3: T-CONC: flock serializes stop.sh appends ==="
+# B.11 (v0.6): stop.sh migrated from perl Fcntl::flock against `.md.lock` to
+# bash mkdir-based lockdir against `.md.lockdir`, matching B.9's Node-side
+# append-turn migration. Both writers now coordinate on the same path.
+echo "=== Test 3: T-CONC: lockdir serializes stop.sh appends ==="
 
 T3_DIR=$(mktemp -d)
 export UM_VAULT_DIR="$T3_DIR/vault"
@@ -133,7 +136,8 @@ done
 wait
 
 DATE=$(date -u +%Y-%m-%d)
-T3_RAW="$UM_VAULT_DIR/captures/$T3_PROJ/raw/$DATE.md"
+T3_RAW_DIR="$UM_VAULT_DIR/captures/$T3_PROJ/raw"
+T3_RAW="$T3_RAW_DIR/$DATE.md"
 
 if [ ! -f "$T3_RAW" ]; then
   fail "T-CONC: raw file not created"
@@ -158,6 +162,24 @@ else
       fi
     fi
   done
+fi
+
+# B.11: lockdir cleanup — after all stop.sh runs complete, no `.lockdir`
+# directories should remain (trap-on-EXIT must have rmdir'd them).
+T3_LOCKDIR="$T3_RAW_DIR/$DATE.md.lockdir"
+if [ -d "$T3_LOCKDIR" ]; then
+  fail "T-CONC: lockdir still present after runs ($T3_LOCKDIR)"
+else
+  pass "T-CONC: lockdir cleaned up after runs"
+fi
+
+# B.11: legacy path — old `.md.lock` file (perl-flock target) must not be
+# created by the bash-mkdir lockdir code. Catches accidental regressions.
+T3_LEGACY_LOCK="$T3_RAW_DIR/$DATE.md.lock"
+if [ -e "$T3_LEGACY_LOCK" ]; then
+  fail "T-CONC: legacy .md.lock path created (should be .md.lockdir)"
+else
+  pass "T-CONC: legacy .md.lock path not used"
 fi
 
 rm -rf "$T3_DIR"

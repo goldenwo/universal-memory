@@ -45,6 +45,15 @@ export UM_VAULT_DIR=$HOME/.um/vault        # match what the wizard set
 export UM_OPENAI_API_KEY=sk-...            # or OPENAI_API_KEY if already set globally
 ```
 
+**v0.6+ — bearer auth:** the install wizard generates `UM_AUTH_TOKEN` and writes it to `~/.um/auth-token`. The installer also adds a marker-block trailer to your shell rc that auto-exports it:
+
+```bash
+# Added by install.sh (universal-memory)
+[ -r "$HOME/.um/auth-token" ] && export UM_AUTH_TOKEN="$(cat "$HOME/.um/auth-token")"
+```
+
+After install, **`source ~/.bashrc` (or restart your shell)** so the bridge CLIs and curl examples pick up `$UM_AUTH_TOKEN`. Loopback requests (`127.0.0.1` / `::1`) skip auth by default; set `UM_ALLOW_LOOPBACK_NOAUTH=false` to require the token even from localhost.
+
 ## Step 3: First session
 
 Open any project in Claude Code. Do some work. The Stop hook appends a raw capture after each message. At the end of the session, the SessionEnd hook synthesizes a summary.

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: universal-memory
-  version: 0.5.0-alpha
+  version: 0.6.0-alpha
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
     subset of the full spec — only the 7 routes a Custom GPT needs (search,
     state, add, delete, recent, append-turn, checkpoint). Full spec at
@@ -17,11 +17,12 @@ paths:
     post:
       operationId: memory_search
       summary: Semantic search
-      description: Body form. Returns compact shape by default; add `?full=1` for full
-        MemoryResult[]. Applies default status filter (excludes
+      description: "Body form. Returns `{results: [...]}` with compact items by
+        default; add `?full=1` to get the full MemoryResult shape in each result
+        instead. Applies default status filter (excludes
         superseded/deprecated/rejected, and any doc with invalidated_at set)
         unless `include_superseded=true`. Optional `filters.project` /
-        `filters.type` are applied after mem0 recall.
+        `filters.type` are applied after mem0 recall."
       parameters:
         - name: full
           in: query
@@ -29,8 +30,9 @@ paths:
           schema:
             type: boolean
             default: false
-          description: When true, return full MemoryResult[] instead of compact
-            CompactMemoryResult[]
+          description: "When true, return the full MemoryResult shape in each result
+            instead of the compact CompactMemoryResult shape. The outer envelope
+            (`{results: [...]}`) is the same either way."
       requestBody:
         required: true
         content:
@@ -39,8 +41,9 @@ paths:
               $ref: "#/components/schemas/SearchRequest"
       responses:
         "200":
-          description: "Search succeeded. Default: compact CompactMemoryResult[]; with
-            ?full=1: full MemoryResult[]."
+          description: "Search succeeded. Response is `{results: [...]}`; items are
+            compact (CompactMemoryResult) by default, or full (MemoryResult)
+            when ?full=1."
           content:
             application/json:
               schema:
@@ -132,9 +135,10 @@ paths:
     get:
       operationId: memory_recent
       summary: Most-recent memories for a project
-      description: Returns the N most-recently indexed memories for the given project
-        slug. Returns compact shape by default; add `?full=1` for full
-        MemoryResult[]. Results are sorted newest-first by updated_at.
+      description: "Returns the N most-recently indexed memories for the given project
+        slug. Response is `{results: [...]}` with compact items by default; add
+        `?full=1` to get the full MemoryResult shape in each result instead.
+        Results are sorted newest-first by updated_at."
       parameters:
         - name: project
           in: path
@@ -158,12 +162,14 @@ paths:
           schema:
             type: boolean
             default: false
-          description: When true, return full MemoryResult[] instead of compact
-            CompactMemoryResult[]
+          description: "When true, return the full MemoryResult shape in each result
+            instead of the compact CompactMemoryResult shape. The outer envelope
+            (`{results: [...]}`) is the same either way."
       responses:
         "200":
-          description: "Recent memories. Default: compact CompactMemoryResult[]; with
-            ?full=1: full MemoryResult[]."
+          description: "Recent memories. Response is `{results: [...]}`; items are compact
+            (CompactMemoryResult) by default, or full (MemoryResult) when
+            ?full=1."
           content:
             application/json:
               schema:
@@ -270,8 +276,9 @@ components:
           $ref: "#/components/schemas/SearchFilters"
     SearchResponse:
       type: object
-      description: Default response shape for /api/search (compact). Add ?full=1 to
-        get MemoryResult[] instead.
+      description: "Default response shape for /api/search: `{results:
+        [CompactMemoryResult]}`. Add ?full=1 to get the full MemoryResult shape
+        in each result instead."
       required:
         - results
       properties:
@@ -291,15 +298,38 @@ components:
             $ref: "#/components/schemas/MemoryResult"
     ErrorResponse:
       type: object
-      description: "Error envelope returned on any non-2xx HTTP response. Always
-        contains the `error` field. Some write-gated MCP tools additionally
-        return `{ ok: false, error }` inside a 200 JSON-RPC body; that shape is
-        represented by `McpWriteGatedResponse`."
+      description: v0.6 unified error envelope (spec §5.1). Returned on every 4xx/5xx
+        HTTP response from /api/* and inside the text content block of /mcp tool
+        errors. The stable `error.code` uses one of the §5.2 prefix-groups
+        (AUTH_*, INPUT_*, STATE_*, LIMIT_*, UPSTREAM_*, SERVER_*).
       properties:
+        ok:
+          type: boolean
+          enum:
+            - false
         error:
-          type: string
-          description: Human-readable error message
+          type: object
+          description: Structured error block per §5.1 wire format.
+          properties:
+            code:
+              type: string
+              description: Stable §5.2 error code (e.g. INPUT_INVALID, STATE_NOT_FOUND,
+                UPSTREAM_FAILURE).
+              pattern: ^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_
+            message:
+              type: string
+              description: Human-readable error message.
+            retryable:
+              type: boolean
+              description: Hint for client retry policy. Retryable codes (LIMIT_RATE_EXCEEDED,
+                STATE_LOCK_CONTENTION, UPSTREAM_FAILURE) are true; everything
+                else is false.
+          required:
+            - code
+            - message
+            - retryable
       required:
+        - ok
         - error
     StateResponse:
       type: object
@@ -409,8 +439,8 @@ components:
           description: Echo of the delete criterion, e.g. metadata.id=foo
     CompactSearchResponse:
       type: object
-      description: Default search/list/recent response (compact shape). Use ?full=1
-        for MemoryResult[].
+      description: Default search/list/recent response envelope with compact items.
+        Use ?full=1 to get the full MemoryResult shape in each result instead.
       required:
         - results
       properties:
@@ -550,6 +580,9 @@ components:
               description: Wall-clock duration in milliseconds
         - type: object
           title: CheckpointFailure
+          description: "v0.6 §5.1 unified envelope — see ErrorResponse schema. Stable
+            codes for /api/checkpoint failures: UPSTREAM_FAILURE (502),
+            STATE_LOCK_CONTENTION (503), INPUT_INVALID (400)."
           required:
             - ok
             - error
@@ -559,8 +592,19 @@ components:
               enum:
                 - false
             error:
-              type: string
-              description: Machine-readable error code or human-readable message
+              type: object
+              properties:
+                code:
+                  type: string
+                  pattern: ^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_
+                message:
+                  type: string
+                retryable:
+                  type: boolean
+              required:
+                - code
+                - message
+                - retryable
     SearchFilters:
       type: object
       description: Optional post-filters applied after mem0 recall.

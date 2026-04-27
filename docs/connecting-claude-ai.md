@@ -17,13 +17,13 @@ Audience: a user who already has UM running locally (via `install.sh` + `docker 
 
 Before starting, you should have:
 
-- UM server running locally. Confirm with:
+- UM server running locally. Confirm with (loopback — no auth header needed):
   ```bash
   curl -sf http://localhost:6335/mcp -X POST \
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing). From a tunnel URL, include `Authorization: Bearer $UM_AUTH_TOKEN`.
 - A reachable URL for the MCP endpoint:
   - **Claude.ai (web)** runs in Anthropic's cloud and cannot reach your `localhost:6335`. You need a **publicly reachable HTTPS tunnel** — see [Tunnel options](#2-tunnel-options) below.
   - **Claude Desktop (app)** can reach `http://localhost:6335` directly via its MCP config file — no tunnel required for local-only use. If you want Claude Desktop to reach a UM server running on a different host, you still need a tunnel (or LAN/VPN reachability).
@@ -97,7 +97,7 @@ Step-by-step UI clicks. The Claude.ai settings UI evolves, so screenshots will b
    - **Name**: `universal-memory` (any label you want — what Claude will call it in the connector list)
    - **URL**: your tunnel URL + `/mcp` suffix, e.g. `https://<your-device>.<tailnet>.ts.net/mcp`
    - **Transport**: **HTTP** (may be labeled **Streamable HTTP** or **SSE** — UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that).
-   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick **None** or the equivalent no-auth option.
+   - **Auth**: Bearer token — see [Bearer token configuration](#bearer-token-configuration) below. For loopback-only installs (Claude Desktop reaching `localhost:6335` directly with no tunnel), auth is not required.
 
    ![TBD: screenshot of the filled-in connector form](screenshots/claude-ai-4.png)
 
@@ -146,6 +146,40 @@ For a **remote UM server** (tunnel URL):
 The `"transport"` field value may need to be `"streamable-http"` or `"sse"` depending on your Claude Desktop version — try `"http"` first. If Claude Desktop only supports stdio-based MCP servers and not HTTP URLs in the config, an HTTP→stdio proxy is required.
 
 Save the file, quit Claude Desktop completely (not just close the window — use **Quit** from the menu on macOS, or exit via the system tray on Windows), and relaunch. The `universal-memory` server should appear in the app's MCP connector list.
+
+---
+
+## 3c. Bearer token configuration
+
+As of v0.6, all requests arriving over a tunnel (or any route where a forwarded-header is present) require a `Authorization: Bearer <token>` header. The token is generated during `install.sh` and stored at `~/.um/auth-token` on the UM host.
+
+**Why auth is required through a tunnel:** when any of the ten forwarded-presence headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`, `CF-Ray`, `True-Client-IP`, `X-Original-Forwarded-For`) is present on an incoming request, UM bypasses the loopback-noauth shortcut and requires a bearer token. This ensures a tunnel or reverse proxy in front of the loopback cannot be used to bypass auth.
+
+To find your token:
+
+```bash
+cat ~/.um/auth-token
+```
+
+**Claude.ai (web) connector auth:** when filling in the connector form, select **Bearer Token** (or **API Key / Bearer Token** — whichever your Claude.ai version labels it) as the auth type and paste the token from `~/.um/auth-token`.
+
+**Claude Desktop (app) config:** add a `headers` entry to the config block. Example:
+
+```json
+{
+  "mcpServers": {
+    "universal-memory": {
+      "url": "https://<your-device>.<tailnet>.ts.net/mcp",
+      "transport": "http",
+      "headers": {
+        "Authorization": "Bearer <paste token from ~/.um/auth-token>"
+      }
+    }
+  }
+}
+```
+
+For a local-only Claude Desktop install (no tunnel, `http://localhost:6335/mcp`), the `headers` block is not required — loopback requests with no forwarded-headers skip auth automatically.
 
 ---
 
