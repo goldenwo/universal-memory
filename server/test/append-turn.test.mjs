@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { Writable } from 'node:stream';
 import { doAppendTurn } from '../lib/append-turn.mjs';
 import { handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
+import { _setLogStreamForTest } from '../lib/logger.mjs';
 
 function mockRes() {
   const res = {
@@ -177,9 +179,11 @@ test('doAppendTurn writes only to the raw-capture file (no spurious files)', asy
 
   assert.equal(result.ok, true);
 
-  // Only the raw .md file (and its .lock sibling) should exist under the project dir
+  // Only the raw .md file should exist after release — the lockdir is rmdir'd on release.
+  // Defensive filter: accept either .lock (pre-B.9) or .lockdir (post-B.9) siblings in case
+  // of transient residue on some filesystems; the assertion is on the non-lock count.
   const files = await fs.readdir(path.join(vault, 'captures/fsdirect/raw'));
-  const nonLock = files.filter((f) => !f.endsWith('.lock'));
+  const nonLock = files.filter((f) => !f.endsWith('.lock') && !f.endsWith('.lockdir'));
   assert.equal(nonLock.length, 1, 'exactly one non-lock file written');
   assert.ok(nonLock[0].endsWith('.md'), 'raw .md file present');
 });
@@ -221,19 +225,10 @@ test('doAppendTurn is flock-safe under concurrent writes', async () => {
 });
 
 // ---------- lock exhaustion (contract preservation) ----------
-
-test('doAppendTurn returns ok=false when lock acquire fails (contract preserved, ctx.lockfile DI)', async () => {
-  const vault = await makeTempVault();
-  const fakeLockfile = {
-    lock: async () => { const e = new Error('fake ELOCKED'); e.code = 'ELOCKED'; throw e; },
-  };
-  const result = await doAppendTurn(
-    { project: 'p', content: 'c', role: 'user' },
-    { vaultDir: vault, lockfile: fakeLockfile }
-  );
-  assert.equal(result.ok, false);
-  assert.match(result.error, /lock_acquire_failed.*ELOCKED/);
-});
+// NOTE: B.9 migrated from proper-lockfile → lockdir (mkdir-based). The DI hook
+// moved from ctx.lockfile → ctx._acquireLockdir; see the new contract test at
+// the bottom of this file ("doAppendTurn returns ok=false when lockdir acquire
+// fails"). Kept the section header so the regression is easy to locate.
 
 // ---------- REST handler unit tests ----------
 
@@ -241,7 +236,14 @@ test('POST /api/append-turn writes a turn and returns compact shape', async () =
   const vault = await makeTempVault();
   const req = { body: { project: 'rest-test', content: 'via REST', role: 'user' } };
   const res = mockRes();
-  await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
+  // No-op reindexFn so the fire-and-forget reindex doesn't try to hit an
+  // uninitialized mem0 binding. This test covers the 200-response shape;
+  // best-effort reindex semantics are covered by a dedicated test below.
+  await handleAppendTurnRequest(req, res, {
+    vaultDir: vault,
+    writesEnabled: true,
+    reindexFn: async () => {},
+  });
   assert.equal(res.statusCode, 200);
   const body = res.jsonBody;
   assert.equal(body.ok, true);
@@ -374,6 +376,86 @@ test('doAppendTurn accepts valid short conversation_id', async () => {
   assert.equal(result.ok, true);
 });
 
+// C.8 (§4.2): typeof-string guard on caller-supplied timestamp.
+// Date.parse() coerces numeric inputs to ms-since-epoch which silently shifts
+// the file-date prefix and breaks since/until windowing on Node major upgrades.
+// Hard-fail with code:'INPUT_INVALID' at the lib boundary.
+test('doAppendTurn rejects numeric timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: 1234567890, // numeric epoch — not an ISO string
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID', `expected stable code INPUT_INVALID, got ${result.code}`);
+});
+
+test('doAppendTurn rejects boolean timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: true,
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID');
+});
+
+test('doAppendTurn rejects object timestamp (typeof-string guard, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: { not: 'a string' },
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /timestamp.*string|must be.*string/i);
+  assert.equal(result.code, 'INPUT_INVALID');
+});
+
+test('doAppendTurn accepts ISO 8601 string timestamp (positive case, §4.2)', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'p',
+    content: 'c',
+    role: 'user',
+    timestamp: '2026-04-24T12:00:00Z',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, true);
+  assert.match(result.path, /2026-04-24\.md$/);
+});
+
+// C.8 (§4.2): HTTP boundary — numeric timestamp surfaces as 400 INPUT_INVALID
+// in the unified envelope (B.13). The lib-layer code:'INPUT_INVALID' bubbles
+// up through handleAppendTurnRequest's lib-error mapping.
+test('POST /api/append-turn with numeric timestamp returns 400 INPUT_INVALID (§4.2)', async () => {
+  const vault = await makeTempVault();
+  const req = {
+    body: {
+      project: 'http-ts',
+      content: 'numeric ts via REST',
+      role: 'user',
+      timestamp: 1234567890, // numeric, not ISO string
+    },
+  };
+  const res = mockRes();
+  await handleAppendTurnRequest(req, res, {
+    vaultDir: vault,
+    writesEnabled: true,
+    reindexFn: async () => {},
+  });
+  assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}`);
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'INPUT_INVALID');
+  assert.match(res.jsonBody.error.message, /timestamp/i);
+});
+
 // Fix 2 (round-4): ancient negative-year timestamp rejected
 test('doAppendTurn rejects timestamp with year outside 1970-9999', async () => {
   const vault = await makeTempVault();
@@ -444,4 +526,179 @@ test('doAppendTurn error returns include schema_version:1', async () => {
   // missing UM_VAULT_DIR
   const r4 = await doAppendTurn({ project: 'p', content: 'c', role: 'user' }, { vaultDir: undefined });
   assert.equal(r4.schema_version, 1, 'missing vaultDir error should have schema_version:1');
+});
+
+// ---------- B.9: lockdir concurrent-write regression ----------
+// Two parallel appendTurn calls against the same date file via Promise.all must
+// produce two complete, distinct turns in the file — no torn writes, no dropped
+// turns, no duplicate content. Exercises the lockdir migration (B.8 → B.9) directly.
+test('concurrent writes to same date file serialize via lockdir — no torn writes, no duplicate IDs', async () => {
+  const vault = await makeTempVault();
+  const ctx = { vaultDir: vault, clock: () => new Date('2026-04-24T12:00:00Z') };
+  const a = { project: 'concurr', content: 'alpha-body-AAA', role: 'user' };
+  const b = { project: 'concurr', content: 'bravo-body-BBB', role: 'assistant' };
+
+  // Fire both in parallel — lockdir must serialize them.
+  const [rA, rB] = await Promise.all([doAppendTurn(a, ctx), doAppendTurn(b, ctx)]);
+  assert.equal(rA.ok, true, `A should succeed: ${rA.error}`);
+  assert.equal(rB.ok, true, `B should succeed: ${rB.error}`);
+
+  const diskPath = path.join(vault, 'captures/concurr/raw/2026-04-24.md');
+  const disk = await fs.readFile(diskPath, 'utf8');
+
+  // Both bodies must be present exactly once each — no torn/interleaved writes.
+  const alphaMatches = (disk.match(/alpha-body-AAA/g) || []).length;
+  const bravoMatches = (disk.match(/bravo-body-BBB/g) || []).length;
+  assert.equal(alphaMatches, 1, 'alpha body should appear exactly once');
+  assert.equal(bravoMatches, 1, 'bravo body should appear exactly once');
+
+  // Header markers — must be exactly 2 turn headers (one per role).
+  const headers = disk.match(/^## 2026-04-24T12:00:00\.000Z (user|assistant)$/gm) || [];
+  assert.equal(headers.length, 2, `expected 2 turn headers, got ${headers.length}: ${disk}`);
+
+  // Lockdir must be released (rmdir'd) after both turns complete.
+  const lockdirStat = await fs.stat(diskPath + '.lockdir').catch(() => null);
+  assert.equal(lockdirStat, null, 'lockdir should be released after both writes');
+});
+
+// ---------- B.9: best-effort reindex per spec §5.4 ----------
+// memory_append_turn is semantically non-blocking: the turn is captured to disk
+// unconditionally, and any reindex is fire-and-forget with logged errors. The
+// HTTP 200 response does NOT depend on reindex outcome.
+test('/api/append-turn reindex is best-effort — succeeds with 200 even when reindex throws', async () => {
+  const vault = await makeTempVault();
+  let reindexCallCount = 0;
+  let reindexRelPath = null;
+  const reindexFn = async (relPath) => {
+    reindexCallCount += 1;
+    reindexRelPath = relPath;
+    throw new Error('simulated reindex failure (vector store down)');
+  };
+
+  // C.3: capture pino-emitted warn lines via the logger test sink — the
+  // structured logger replaced console.warn for handler-path messages.
+  const captured = [];
+  _setLogStreamForTest(new Writable({
+    write(chunk, enc, cb) {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        try { captured.push(JSON.parse(line)); } catch { /* ignore */ }
+      }
+      cb();
+    },
+  }));
+
+  try {
+    const req = { body: { project: 'besteffort', content: 'stays on disk', role: 'user' } };
+    const res = mockRes();
+    await handleAppendTurnRequest(req, res, {
+      vaultDir: vault,
+      writesEnabled: true,
+      reindexFn,
+    });
+
+    // 200 even though reindex threw — turn is on disk, vector index catches up later.
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+    assert.equal(res.jsonBody.ok, true);
+    assert.match(res.jsonBody.path, /captures\/besteffort\/raw/);
+
+    // Turn is durably on disk.
+    const diskContent = await fs.readFile(path.join(vault, res.jsonBody.path), 'utf8');
+    assert.match(diskContent, /stays on disk/);
+
+    // Give the fire-and-forget promise a tick to resolve/reject and hit the .catch handler.
+    await new Promise((r) => setImmediate(r));
+
+    // Reindex was invoked exactly once, on the just-written path.
+    assert.equal(reindexCallCount, 1, 'reindex should be called exactly once');
+    assert.equal(reindexRelPath, res.jsonBody.path, 'reindex called with the capture path');
+
+    // Phase C: structured logger emits a warn line with msg='append-turn reindex failed (best-effort)'.
+    const reindexWarnings = captured.filter(
+      (l) => l.level === 'warn' && /reindex.*(failed|best-effort)/i.test(l.msg ?? ''),
+    );
+    assert.ok(
+      reindexWarnings.length >= 1,
+      `expected a reindex-failure warn log line, got: ${JSON.stringify(captured)}`,
+    );
+  } finally {
+    _setLogStreamForTest(null);
+  }
+});
+
+// B.9: DI shape update — legacy ctx.lockfile path is gone (proper-lockfile dropped).
+// The replacement injection point is ctx._acquireLockdir for failure simulation.
+test('doAppendTurn returns ok=false when lockdir acquire fails (contract preserved, ctx._acquireLockdir DI)', async () => {
+  const vault = await makeTempVault();
+  // Inject a fake acquireLockdir that simulates contention — returns false (timeout).
+  const fakeAcquire = async () => false;
+  const result = await doAppendTurn(
+    { project: 'p', content: 'c', role: 'user' },
+    { vaultDir: vault, _acquireLockdir: fakeAcquire },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /lock_acquire_failed/);
+});
+
+// B.12 followup: kernel-level O_NOFOLLOW symlink-swap defense for append-turn.
+// The pre-existing lstat-based check (Fix 3) refuses to write when the target
+// file is itself a symlink. This test covers the open()-syscall layer: even
+// if an attacker wins the lstat→open race (replaces the path with a symlink
+// to an outside file between lstat and open), O_NOFOLLOW makes open() reject
+// with ELOOP and the redirection fails. Companion to vault-nofollow.test.mjs.
+//
+// Windows note: file-symlink creation requires admin/Developer Mode on
+// Windows, and constants.O_NOFOLLOW is undefined on Windows (coerced to 0;
+// no-op). Skip on win32; the lstat-refusal layer (Fix 3) covers cross-platform.
+test('doAppendTurn with O_NOFOLLOW rejects symlink at the raw capture path', { skip: process.platform === 'win32' }, async () => {
+  const vault = await makeTempVault();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-out-'));
+  try {
+    // Pre-existing file outside the vault — the attacker's redirection target.
+    const outsideTarget = path.join(outside, 'outside.txt');
+    await fs.writeFile(outsideTarget, 'pre-existing-outside-data', 'utf8');
+
+    // Plant a symlink at the raw capture path (captures/<project>/raw/<date>.md)
+    // pointing at the outside file. Since the existing lstat check (Fix 3) will
+    // reject any symlink at the target, we bypass that check by crafting a
+    // capture whose target lstat reports as a symlink — i.e. we intentionally
+    // exercise the same code path the lstat check guards against, to ensure
+    // the kernel-level O_NOFOLLOW also rejects.
+    //
+    // The lstat check fires first and returns ok:false, which is also a valid
+    // defense — but if a future refactor accidentally drops the lstat guard,
+    // O_NOFOLLOW still keeps the outside file safe. The test's invariant is
+    // therefore: outsideTarget MUST NOT be modified, regardless of which
+    // layer fired.
+    const date = '2026-04-22';
+    const projDir = path.join(vault, 'captures', 'symswap-proj', 'raw');
+    await fs.mkdir(projDir, { recursive: true });
+    const linkPath = path.join(projDir, `${date}.md`);
+    await fs.symlink(outsideTarget, linkPath, 'file');
+
+    const result = await doAppendTurn({
+      project: 'symswap-proj',
+      content: 'attacker-injected payload',
+      role: 'user',
+    }, { vaultDir: vault, clock: () => new Date(`${date}T12:00:00Z`) });
+
+    // Either layer firing is acceptable — the invariant is that no write
+    // followed the symlink. The lstat check (Fix 3) returns ok:false with
+    // 'target is a symlink' and the kernel-level open() with O_NOFOLLOW
+    // would surface as a thrown ELOOP if lstat were bypassed.
+    assert.equal(result.ok, false, `expected ok:false from symlink defense, got: ${JSON.stringify(result)}`);
+    assert.match(result.error, /symlink|ELOOP/i);
+
+    // Critical invariant: outside file unchanged. Whichever layer rejected
+    // the write, the redirection MUST NOT have followed the symlink.
+    const outsideContent = await fs.readFile(outsideTarget, 'utf8');
+    assert.equal(
+      outsideContent,
+      'pre-existing-outside-data',
+      'outside file must remain unchanged — symlink defense must not follow the link',
+    );
+  } finally {
+    await fs.rm(vault, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
 });

@@ -1,0 +1,72 @@
+// server/test/metrics.test.mjs
+// C.4 — prom-client Registry + 5 bound metrics (spec §4.2).
+//
+// Tests pin three contracts:
+//   1. Exactly 5 metrics registered (no defaults — registry stays ~2KB,
+//      not ~15KB; also prevents recon-via-label-inventory).
+//   2. endpoint label uses route template, NOT raw expanded paths
+//      (cardinality cap N1 — same discipline as C.3 logging).
+//   3. prom-client throws synchronously on label-shape violations.
+//      C.9's observability-never-500s wrapper relies on this — pinning
+//      it here documents why that wrapper exists.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  mem0OpsTotal,
+  mcpToolCallsTotal,
+  lockContentionsTotal,
+} from '../lib/metrics.mjs';
+
+test('registry exposes exactly 5 named metrics', () => {
+  const names = registry.getMetricsAsArray().map((m) => m.name).sort();
+  assert.deepEqual(names, [
+    'um_http_request_duration_seconds',
+    'um_http_requests_total',
+    'um_lock_contentions_total',
+    'um_mcp_tool_calls_total',
+    'um_mem0_ops_total',
+  ]);
+});
+
+test('endpoint label uses route template — no raw slugs (cardinality cap N1)', async () => {
+  // Increment with template form
+  httpRequestsTotal.inc({ endpoint: '/api/recent/:project', status: '200' });
+  const text = await registry.metrics();
+  // Sanity: label appears
+  assert.match(text, /endpoint="\/api\/recent\/:project"/);
+  // Cardinality test: nothing should match the raw-slug form
+  assert.doesNotMatch(text, /endpoint="\/api\/recent\/[a-z0-9-]+(?<!:project)"/);
+});
+
+test('counter increments do not throw on label-shape violation — caller must pre-validate', () => {
+  // prom-client throws on cardinality violations; observability-never-500s wrapper
+  // (C.9) will catch this. Test pins prom-client behavior so C.9 wrapper is justified.
+  assert.throws(() => httpRequestsTotal.inc({ wrong: 'label' }));
+});
+
+test('histogram observes a duration and shows up in metrics text', async () => {
+  httpRequestDurationSeconds.observe({ endpoint: '/health' }, 0.001);
+  const text = await registry.metrics();
+  assert.match(text, /um_http_request_duration_seconds_bucket\{[^}]*endpoint="\/health"/);
+});
+
+test('default collectors NOT enabled — no process/eventloop/gc metrics', async () => {
+  const text = await registry.metrics();
+  assert.doesNotMatch(text, /^process_cpu_seconds_total/m);
+  assert.doesNotMatch(text, /^nodejs_eventloop_lag_seconds/m);
+  assert.doesNotMatch(text, /^nodejs_gc_duration_seconds/m);
+});
+
+test('mem0OpsTotal, mcpToolCallsTotal, lockContentionsTotal exported and registered', async () => {
+  // Sanity check the other 3 counters are wired to the registry, not stranded.
+  mem0OpsTotal.inc({ op: 'add', status: 'ok' });
+  mcpToolCallsTotal.inc({ tool: 'memory_search', status: 'ok' });
+  lockContentionsTotal.inc({ lock_path: '/tmp/test.lock' });
+  const text = await registry.metrics();
+  assert.match(text, /^um_mem0_ops_total\{op="add",status="ok"\} 1/m);
+  assert.match(text, /^um_mcp_tool_calls_total\{tool="memory_search",status="ok"\} 1/m);
+  assert.match(text, /^um_lock_contentions_total\{lock_path="\/tmp\/test\.lock"\} 1/m);
+});

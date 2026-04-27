@@ -11,34 +11,35 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-# Helper: write a mock curl that emits a canned JSON response
+# Helper: write a mock curl that emits a canned JSON response + "200" status line
+# (wrapper expects body\n<http_code> on the last line via -w $'\n%{http_code}')
 _make_mock_curl() {
   local dir="$1"
   local response="$2"
   mkdir -p "$dir"
   # Write the canned response into a temp file to avoid heredoc quoting issues
   local resp_file="$dir/response.json"
-  printf '%s\n' "$response" > "$resp_file"
+  printf '%s\n200\n' "$response" > "$resp_file"
   cat > "$dir/curl" <<EOF
 #!/bin/bash
-# Mock curl — emits canned response, exit 0
+# Mock curl — emits canned response + 200 status line, exit 0
 cat "$resp_file"
 exit 0
 EOF
   chmod +x "$dir/curl"
 }
 
-# Helper: write a mock curl that records its args AND emits canned JSON
+# Helper: write a mock curl that records its args AND emits canned JSON + "200"
 _make_recording_curl() {
   local dir="$1"
   local response="$2"
   local args_file="$3"
   mkdir -p "$dir"
   local resp_file="$dir/response.json"
-  printf '%s\n' "$response" > "$resp_file"
+  printf '%s\n200\n' "$response" > "$resp_file"
   cat > "$dir/curl" <<EOF
 #!/bin/bash
-# Recording mock curl — saves args to file, emits canned response
+# Recording mock curl — saves args to file, emits canned response + 200 status line
 echo "\$@" > "$args_file"
 cat "$resp_file"
 exit 0
@@ -160,6 +161,21 @@ else
   fail "T7-url-override: $(cat "$args_file" 2>/dev/null || echo 'args file missing')"
 fi
 rm -rf "$tmp"
+
+# ─── T8: v0.6 retrofit — Authorization + User-Agent headers (B.7) ───────────
+echo ""
+echo "=== T8: v0.6 Authorization + User-Agent headers present ==="
+CLI="$BIN"
+if grep -q 'Authorization: Bearer' "$CLI"; then
+  pass "T8-authorization-header"
+else
+  fail "T8-authorization-header: $CLI missing 'Authorization: Bearer' header"
+fi
+if grep -qE 'User-Agent: um-(cli|bridge)/' "$CLI"; then
+  pass "T8-user-agent-header"
+else
+  fail "T8-user-agent-header: $CLI missing UM User-Agent marker"
+fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""

@@ -1,0 +1,20 @@
+# claude-mem-bridge.systemd-user.service — UM v0.6 §4.3
+#
+# Install at: ~/.config/systemd/user/claude-mem-bridge.service
+# Triggered by claude-mem-bridge.timer (every 6h after boot+10min).
+#
+# Required env (place in ~/.um/bridge.env):
+#   UM_SERVER_URL=http://localhost:6335
+#   UM_AUTH_TOKEN=<bearer token from install-cli>
+#   UM_VAULT_DIR=<path to vault>
+# Optional:
+#   UM_BRIDGE_MAX_PER_RUN=50
+#   UM_BRIDGE_JITTER_SEC=0   (systemd uses RandomizedDelaySec; leave 0 here)
+
+[Unit]
+Description=UM claude-mem bridge ingest
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.um/bridge.env
+ExecStart=%h/.local/bin/um-bridge-claude-mem --once

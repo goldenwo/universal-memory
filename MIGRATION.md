@@ -1,5 +1,447 @@
 # Migration guide
 
+## v0.5 → v0.6
+
+### Breaking: `/api/list` response envelope
+
+Before (v0.5): `GET /api/list` returned a bare JSON array.
+
+```bash
+$ curl http://localhost:6335/api/list
+[{"id":"...","text":"...","metadata":{...}}, ...]
+```
+
+After (v0.6): returns `{results: [...]}` matching `/api/search` and `/api/recent`.
+
+```bash
+$ curl http://localhost:6335/api/list
+{"results":[{"id":"...","text":"...","metadata":{...}}, ...]}
+```
+
+Why: consistency across list-shape endpoints; future-proofs for additive top-level siblings (`provider`, `latency_ms` in v0.7+) without another shape change.
+
+### Breaking: unified §5.1 error envelope on every endpoint (Task B.13)
+
+Before (v0.5): error responses were ad-hoc — most paths emitted `{error:
+'<message>'}`, a few emitted `{schema_version: 1, ok: false, error:
+'<message>'}`, and `/mcp` tool errors returned plain `"Error: <msg>"` text.
+
+```bash
+$ curl http://localhost:6335/api/search -d '{}'   # missing query
+{"error":"query is required"}
+```
+
+After (v0.6): every 4xx/5xx response from `/api/*` and the inner text content
+block of `/mcp` tool errors uses the §5.1 unified envelope with a stable §5.2
+error code:
+
+```bash
+$ curl http://localhost:6335/api/search -d '{}'
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"query is required","retryable":false}}
+```
+
+Stable `code` values use one of six prefix-groups: `AUTH_*` (auth), `INPUT_*`
+(caller-shape errors), `STATE_*` (vault/memory ID state), `LIMIT_*` (rate/cap),
+`UPSTREAM_*` (downstream dependencies), `SERVER_*` (server-internal). Full
+table in `docs/plans/2026-04-24-v0.6-design.md` §5.2.
+
+`/mcp` JSON-RPC also gains a dual-shape: outer JSON-RPC `error.code` is a
+numeric `-32xxx` value mapped from the string code (parse-error / method-
+not-found at the transport layer), AND the inner `result.content[0].text`
+carries the unified envelope as a JSON string (tool-level errors).
+
+**Action for clients:** update error parsing to read `body.error.code` (string)
+or `body.error.message` (human-readable) instead of the old `body.error`
+(formerly the message itself). The `retryable` boolean is a new affordance —
+clients can use it to decide whether to retry without baking in code-by-code
+knowledge.
+
+### Breaking: auth required + loopback-only surfaces
+
+Four additional breaking changes ship in v0.6. All are related to hardening the
+server's network surface.
+
+- **`/openapi.yaml` (full spec) is now auth-required + loopback-only.** The
+  `?gpt=1` variant (trimmed spec for GPT plugin discovery) remains exempt.
+  Off-loopback requests without a valid `Authorization: Bearer <token>` header
+  receive `401 AUTH_REQUIRED`. The query-string-param variant
+  (`/openapi.yaml?gpt=1`) continues to require no auth so that GPT and Claude
+  plugin manifests can pull the spec anonymously.
+
+- **`UM_AUTH_TOKEN` is now a required env var for non-loopback operation.**
+  `install.sh` generates a random 64-hex token at first install and writes it
+  to `server/.env` and `~/.um/auth-token`. On loopback (localhost / 127.0.0.1 /
+  ::1) with no forwarded-for proxy headers, auth is skipped by default
+  (`UM_ALLOW_LOOPBACK_NOAUTH=true`). Any request from a routable address
+  without a valid bearer token gets `401 AUTH_REQUIRED`.
+
+- **Mixed-version caveat (v0.5 plugin + v0.6 server on non-loopback).** If you
+  upgraded the server to v0.6 but have not yet re-installed the CLI plugin,
+  requests from non-loopback hosts (tunnel-fronted Docker, published port) will
+  silently `401` on every call. See the retrofitted CLIs section below for the
+  remediation path.
+
+- **Request-body cap (`UM_HTTP_MAX_REQUEST_BYTES`, default 2 MB).** Requests
+  whose body exceeds the cap are rejected early with `413 INPUT_TOO_LARGE`
+  before reaching any route handler. The cap applies to all `POST` and `PUT`
+  endpoints. Increase via env var if you legitimately need larger bodies (e.g.
+  bulk-import scripts).
+
+- **`/metrics` is default-secure.** When `UM_METRICS_LOOPBACK_ONLY=true`
+  (the default), `/metrics` returns `404` for any off-loopback request.
+  When the flag is false and the source is non-loopback, bearer auth is
+  required (`UM_METRICS_AUTH_REQUIRED` auto-true). Prometheus scrapers on the
+  same host are unaffected.
+
+### Per-endpoint error-shape changes
+
+All 12 REST/MCP endpoints now emit the unified §5.1 error envelope described
+in the existing "unified §5.1 error envelope" section above. The examples below
+show the concrete before/after `curl` pairs for each endpoint.
+
+**Convention:** examples use `$UM_AUTH_TOKEN` to reference the bearer token.
+Set it in your shell before running: `export UM_AUTH_TOKEN=$(cat ~/.um/auth-token)`.
+On loopback, the `Authorization` header is optional (skipped by
+`UM_ALLOW_LOOPBACK_NOAUTH`); include it for correctness and to match
+non-loopback behavior.
+
+#### `POST /api/search`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{"query":""}' http://localhost:6335/api/search
+{"error":"query is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{"query":""}' http://localhost:6335/api/search
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"query is required","retryable":false}}
+```
+
+#### `GET /api/search`
+
+**Before (v0.5):**
+```bash
+$ curl -s 'http://localhost:6335/api/search?query='
+{"error":"query is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       'http://localhost:6335/api/search?query='
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"query is required","retryable":false}}
+```
+
+#### `POST /api/add`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{}' http://localhost:6335/api/add
+{"error":"text is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{}' http://localhost:6335/api/add
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"text is required","retryable":false}}
+```
+
+#### `GET /api/list`
+
+**Before (v0.5):** bare array + ad-hoc error string.
+```bash
+$ curl -s http://localhost:6335/api/list
+[{"id":"...","text":"...","metadata":{}}]
+
+# error path
+{"error":"upstream failure"}
+```
+
+**After (v0.6):** `{results:[...]}` envelope (see also the list-envelope section
+above) + unified error on failure.
+```bash
+$ curl -s -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       http://localhost:6335/api/list
+{"results":[{"id":"...","text":"...","metadata":{}}]}
+
+# error path
+{"ok":false,"error":{"code":"UPSTREAM_FAILURE","message":"mem0 unavailable","retryable":true}}
+```
+
+#### `GET /api/recent/{project}`
+
+**Before (v0.5):**
+```bash
+$ curl -s http://localhost:6335/api/recent/nonexistent-project
+{"error":"project not found"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       http://localhost:6335/api/recent/nonexistent-project
+{"ok":false,"error":{"code":"STATE_NOT_FOUND","message":"project not found","retryable":false}}
+```
+
+#### `POST /api/reindex`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST http://localhost:6335/api/reindex
+{"error":"reindex already in progress"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       http://localhost:6335/api/reindex
+{"ok":false,"error":{"code":"STATE_LOCK_CONTENTION","message":"reindex already in progress","retryable":true}}
+```
+
+#### `GET /api/state/{project}`
+
+**Before (v0.5):**
+```bash
+$ curl -s http://localhost:6335/api/state/unknown-project
+{"error":"state file not found"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       http://localhost:6335/api/state/unknown-project
+{"ok":false,"error":{"code":"STATE_NOT_FOUND","message":"state file not found","retryable":false}}
+```
+
+#### `POST /api/append-turn`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{"project":"x","content":"hi"}' \
+       http://localhost:6335/api/append-turn
+{"error":"role is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{"project":"x","content":"hi"}' \
+       http://localhost:6335/api/append-turn
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"role is required","retryable":false}}
+```
+
+#### `POST /api/checkpoint`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{}' http://localhost:6335/api/checkpoint
+{"error":"project is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{}' http://localhost:6335/api/checkpoint
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"project is required","retryable":false}}
+```
+
+#### `POST /api/delete`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{}' http://localhost:6335/api/delete
+{"error":"id is required"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{}' http://localhost:6335/api/delete
+{"ok":false,"error":{"code":"INPUT_INVALID","message":"id is required","retryable":false}}
+```
+
+#### `DELETE /api/{id}`
+
+**Before (v0.5):**
+```bash
+$ curl -s -X DELETE http://localhost:6335/api/no-such-id
+{"error":"memory not found"}
+```
+
+**After (v0.6):**
+```bash
+$ curl -s -X DELETE \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       http://localhost:6335/api/no-such-id
+{"ok":false,"error":{"code":"STATE_NOT_FOUND","message":"memory not found","retryable":false}}
+```
+
+#### `POST /mcp` (JSON-RPC + inner content block)
+
+`/mcp` has a dual-shape error surface: the outer JSON-RPC layer and the inner
+tool-result content block.
+
+**Outer JSON-RPC error (transport / method layer) — before (v0.5):**
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}' \
+       http://localhost:6335/mcp
+{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found: no_such_tool"}}
+```
+
+**Outer JSON-RPC error (transport / method layer) — after (v0.6):**
+Same numeric codes (`-32601` method-not-found, `-32602` invalid-params,
+`-32603` internal, `-32000` series for server errors). No change to the
+outer envelope — JSON-RPC 2.0 compliance is preserved.
+```bash
+$ curl -s -X POST -H 'Content-Type: application/json' \
+       -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}' \
+       http://localhost:6335/mcp
+{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found: no_such_tool"}}
+```
+
+**Inner content block (tool-level error) — before (v0.5):** plain error string.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      { "type": "text", "text": "Error: query is required" }
+    ]
+  }
+}
+```
+
+**Inner content block (tool-level error) — after (v0.6):** `content[0].text`
+carries the §5.1 envelope as a JSON string.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"ok\":false,\"error\":{\"code\":\"INPUT_INVALID\",\"message\":\"query is required\",\"retryable\":false}}"
+      }
+    ]
+  }
+}
+```
+
+**Action for MCP clients:** parse `content[0].text` as JSON; check `ok` before
+consuming the result. The `retryable` boolean lets clients back off automatically
+without a code-by-code allowlist.
+
+### Environment variable manifest
+
+All v0.6 env vars with their defaults and purpose. These live in `server/.env`
+(Docker) or the shell environment (direct-run). `install.sh` writes the
+mandatory vars on first install; optional vars are commented stubs.
+
+| Env | Default | Purpose |
+|---|---|---|
+| `UM_AUTH_TOKEN` | (generated at install) | Bearer token for `/api/*` + `/mcp` |
+| `UM_ALLOW_LOOPBACK_NOAUTH` | `true` | Skip auth when source is loopback AND no proxy headers |
+| `UM_RATE_LIMIT_RPM` | `60` | Sustained requests per minute per IP |
+| `UM_RATE_LIMIT_BURST` | `10` | Burst capacity per IP |
+| `UM_RATE_LIMIT_MAX_IPS` | `10000` | Bounded-map cap with LRU eviction |
+| `UM_METRICS_LOOPBACK_ONLY` | `true` | `/metrics` returns 404 off loopback when true |
+| `UM_METRICS_AUTH_REQUIRED` | (auto-true when loopback-off) | Require bearer on `/metrics` when public |
+| `UM_OPENAPI_AUTH_REQUIRED` | `true` | Full openapi spec auth-required; `?gpt=1` variant stays exempt |
+| `UM_LOG_LEVEL` | `info` | pino log level (`bridge`/CI set `debug`) |
+| `UM_HTTP_MAX_REQUEST_BYTES` | `2097152` | Request-body cap in bytes (fires `INPUT_TOO_LARGE` on excess) |
+| `UM_LOCK_LOW_DISK_THRESHOLD` | `104857600` | Under this bytes, stale-lockdir recovery drops 10 min → 2 min |
+| `UM_UPSTREAM_RETRY_MAX` | `3` | mem0/qdrant retry count before `UPSTREAM_FAILURE` |
+| `UM_BRIDGE_MAX_PER_RUN` | `50` | Per-tick session cap; first-run backfill spans multiple ticks |
+| `UM_BRIDGE_JITTER_SEC` | `600` | CLI startup jitter (launchd/cron consumer; systemd uses native `RandomizedDelaySec`) |
+
+### Token rotation recipe
+
+To rotate `UM_AUTH_TOKEN` without reinstalling:
+
+```bash
+# Linux / macOS / Git Bash on Windows
+NEW_TOKEN=$(openssl rand -hex 32)
+sed -i "s/^UM_AUTH_TOKEN=.*/UM_AUTH_TOKEN=${NEW_TOKEN}/" .env
+echo "$NEW_TOKEN" > ~/.um/auth-token && chmod 600 ~/.um/auth-token
+docker compose restart   # or: systemctl --user restart um-server
+```
+
+> **macOS note:** BSD `sed` requires an explicit backup suffix: `sed -i ''
+> "s/..."`. **Git Bash on Windows:** `sed -i` works if Git for Windows is
+> installed; PowerShell users can use
+> `(Get-Content .env) -replace '^UM_AUTH_TOKEN=.*',"UM_AUTH_TOKEN=$NEW_TOKEN" | Set-Content .env`.
+
+The `~/.um/auth-token` file is the install contract (B.4): `install.sh` writes
+the token there and appends a marker-block trailer to your shell rc
+(`~/.bashrc` / `~/.zshrc`) that `export`s `UM_AUTH_TOKEN` from that file on
+every new shell. After rotating, **re-source your rc** or open a new terminal
+so the updated token is exported:
+
+```bash
+source ~/.bashrc   # or ~/.zshrc
+```
+
+CLIs auto-pick up the new token on the next shell session without any further
+action.
+
+### Retrofitted CLI wrappers
+
+> **Note:** the v0.6 plan originally listed 9 retrofitted CLIs; the actual
+> retrofit in B.7 covered **6 CLIs** (the ones that call non-loopback-safe
+> endpoints). The list below reflects the current state.
+
+Six shell CLIs gained automatic `UM_AUTH_TOKEN` injection (sourced from
+`~/.um/auth-token` via the marker-block trailer) in v0.6:
+
+| CLI | Endpoint(s) | Upgrade note |
+|---|---|---|
+| `um-list.sh` | `GET /api/list` | Requires `UM_AUTH_TOKEN` on non-loopback; auto-sourced after re-install |
+| `um-recent.sh` | `GET /api/recent/{project}` | Same; also gains `{results:[...]}` envelope in output parsing |
+| `um-search.sh` | `POST /api/search` | Requires `UM_AUTH_TOKEN`; error shape updated to §5.1 |
+| `um-state.sh` | `GET /api/state/{project}` | Requires `UM_AUTH_TOKEN` on non-loopback |
+| `um-forget` | `DELETE /api/{id}` + `POST /api/reindex` | Two-step; both calls now send bearer token |
+| `um-supersede` | `DELETE /api/{id}` + `POST /api/add` + `POST /api/reindex` | Three-step; all calls now send bearer token |
+
+**Silent-401 warning:** If you upgraded the server to v0.6 but kept the v0.5
+plugin CLIs (i.e. did not re-run `installer/install.sh --cli`), non-loopback
+installs (tunnel-fronted server, Docker with a published port) will **silently
+401 on every request** — the CLI exits non-zero but may not surface the auth
+error clearly. The marker-block trailer in your shell rc handles this
+automatically AFTER you re-source the rc or open a new terminal; before that,
+manually export the token:
+
+```bash
+export UM_AUTH_TOKEN=$(cat ~/.um/auth-token)
+```
+
+Then re-run the install to pick up the updated wrappers:
+
+```bash
+bash installer/install.sh --cli
+source ~/.bashrc   # or ~/.zshrc
+```
+
+---
+
 ## v0.4.0-alpha → v0.5.0-alpha
 
 Four changes worth knowing about. None are breaking for existing Claude Code

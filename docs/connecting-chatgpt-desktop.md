@@ -14,13 +14,13 @@ Audience: a user who already has UM running locally (via `install.sh` + `docker 
 
 Before starting, you should have:
 
-- UM server running locally. Confirm with:
+- UM server running locally. Confirm with (loopback — no auth header needed):
   ```bash
   curl -sf http://localhost:6335/mcp -X POST \
     -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 200
   ```
-  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing).
+  You should see a JSON response listing **4 default read tools** (`memory_search`, `memory_list`, `memory_state`, `memory_recent`). All 7 write tools appear only when `UM_MCP_WRITE_ENABLED=true` on the server — see [docs/mcp-tools.md](mcp-tools.md#tool-listing). From a tunnel URL, include `Authorization: Bearer $UM_AUTH_TOKEN`.
 - A **publicly reachable URL** for the MCP endpoint. ChatGPT Desktop runs in OpenAI's cloud and cannot reach your `localhost:6335` directly — even though it's a desktop app, the MCP connector calls originate from OpenAI's backend. You need a tunnel. See [Tunnel options](#2-tunnel-options) below.
 - ChatGPT Desktop with a plan that supports custom MCP connectors — typically available on Plus, Pro, or Team plans as of 2026-04-23. See [OpenAI's documentation](https://help.openai.com) for current plan-tier requirements.
 - (Optional but recommended) `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` if you want ChatGPT to write memories, not just read. Read-only is safer for first connection.
@@ -92,7 +92,7 @@ Step-by-step UI clicks. The ChatGPT Desktop UI evolves, so screenshots will be c
    - **Name**: `universal-memory` (any label you want — what ChatGPT will call it)
    - **URL**: your tunnel URL + `/mcp` suffix, e.g. `https://<your-device>.<tailnet>.ts.net/mcp`
    - **Transport**: **HTTP** (may be labeled **Streamable HTTP** or **SSE** — UM speaks plain JSON-RPC HTTP at `POST /mcp`; pick whichever option matches that).
-   - **Auth**: none (UM has no auth layer of its own; auth lives in the tunnel). If the UI requires selecting an auth type, pick **None** or the equivalent no-auth option.
+   - **Auth**: Bearer token — see [Bearer token configuration](#bearer-token-configuration) below.
 
    ![TBD: screenshot of the filled-in connector form](screenshots/chatgpt-desktop-connector-form.png)
 
@@ -101,6 +101,30 @@ Step-by-step UI clicks. The ChatGPT Desktop UI evolves, so screenshots will be c
    ![TBD: screenshot showing the 4 default UM read tools discovered](screenshots/chatgpt-desktop-tools-discovered.png)
 
 6. Enable the connector in a new chat (it may be on by default, or you may need a per-chat toggle — look for a plugin/connector icon in the chat input bar).
+
+---
+
+## 3a. Bearer token configuration
+
+As of v0.6, all requests arriving over a tunnel (or any route where a forwarded-header is present) require an `Authorization: Bearer <token>` header. The token is generated during `install.sh` and stored at `~/.um/auth-token` on the UM host.
+
+**Why auth is required through a tunnel:** when any of the ten forwarded-presence headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`, `CF-Ray`, `True-Client-IP`, `X-Original-Forwarded-For`) is present on an incoming request, UM bypasses the loopback-noauth shortcut and requires a bearer token. This ensures a tunnel or reverse proxy cannot be used to reach UM without credentials.
+
+To find your token:
+
+```bash
+cat ~/.um/auth-token
+```
+
+When filling in the ChatGPT Desktop connector form, select **Bearer Token** (or **API Key / Bearer Token** — whichever label your version uses) as the auth type and paste the value from `~/.um/auth-token`.
+
+If the connector form does not have a native auth field, configure the header in the advanced settings as:
+
+```json
+{
+  "Authorization": "Bearer <paste token from ~/.um/auth-token>"
+}
+```
 
 ---
 
