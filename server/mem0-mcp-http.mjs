@@ -62,7 +62,7 @@ import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig } from './lib/startup-validation.mjs';
-import { getProvider } from './lib/provider/registry.mjs';
+import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -201,7 +201,7 @@ if (IS_MAIN) {
     // Capability check: fail fast if provider doesn't support the assigned surface
     const surface = surfaceMap[slot];
     if (!provider.supports[surface]) {
-      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${Object.keys(surfaceMap).filter(s => s === slot).join(', ')}`);
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${supportingProviders(surface).join(', ')}`);
       process.exit(1);
     }
     if (provider.requires.length === 0) continue; // ollama-style, no key needed
