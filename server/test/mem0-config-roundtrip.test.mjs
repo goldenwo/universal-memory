@@ -94,7 +94,19 @@ for (const name of Object.keys(FACTS_BACKENDS)) {
     };
     withEnv({ OPENAI_API_KEY: TEST_OPENAI_KEY, ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY }, () => {
       const llm = getFactsLlmConfig(env);
-      assert.doesNotThrow(() => new Memory({ embedder: getEmbedderConfig({ ...env, UM_EMBEDDING_PROVIDER: 'openai' }), llm }));
+      let mem;
+      assert.doesNotThrow(() => {
+        mem = new Memory({ embedder: getEmbedderConfig({ ...env, UM_EMBEDDING_PROVIDER: 'openai' }), llm });
+      });
+      // Regression guard: apiKey must be populated for non-ollama providers.
+      // Mirrors the embedder guard above — detects snake_case-to-camelCase drift in mem0 OSS.
+      if (name !== 'ollama') {
+        const apiKey = mem?.config?.llm?.config?.apiKey;
+        assert.ok(
+          typeof apiKey === 'string' && apiKey.length > 0,
+          `factsLlmConfig from ${name}: expected mem.config.llm.config.apiKey populated, got: ${JSON.stringify(apiKey)}`,
+        );
+      }
     });
   });
 }

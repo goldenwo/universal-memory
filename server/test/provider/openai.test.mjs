@@ -70,3 +70,21 @@ test('summarizerInvoke calls injected client and returns shaped result', async (
   assert.equal(result.content, 'summary');
   assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 7 });
 });
+
+test('factsLlmConfig apiKey is populated from env', () => {
+  const cfg = openai.factsLlmConfig({ UM_FACTS_MODEL: 'gpt-4.1-nano-2025-04-14', OPENAI_API_KEY: 'sk-x' });
+  assert.equal(cfg.config.apiKey, 'sk-x');
+});
+
+test('summarizerInvoke without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.summarizerInvoke('p', { env: {} }),
+    (err) => {
+      assert(err instanceof ProviderError, `expected ProviderError, got ${err?.constructor?.name}`);
+      assert.equal(err.class, 'PROVIDER_CONFIG');
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
+});

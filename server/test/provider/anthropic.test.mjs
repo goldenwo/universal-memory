@@ -63,6 +63,24 @@ test('normalizeError strips x-api-key from headers', () => {
   assert.equal(JSON.stringify(out).includes('sk-ant-LEAK'), false);
 });
 
+test('factsLlmConfig apiKey is populated from env', () => {
+  const cfg = anthropic.factsLlmConfig({ UM_FACTS_MODEL: 'claude-haiku-4-5-20251001', ANTHROPIC_API_KEY: 'sk-ant-x' });
+  assert.equal(cfg.config.apiKey, 'sk-ant-x');
+});
+
+test('summarizerInvoke without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => anthropic.summarizerInvoke('p', { env: {} }),
+    (err) => {
+      assert(err instanceof ProviderError, `expected ProviderError, got ${err?.constructor?.name}`);
+      assert.equal(err.class, 'PROVIDER_CONFIG');
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
+});
+
 test('summarizerInvoke wraps Anthropic SDK shape; throws ProviderError on 429', async () => {
   const fakeClient = {
     messages: {

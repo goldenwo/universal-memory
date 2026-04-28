@@ -71,7 +71,23 @@ export function normalizeError(err) {
   };
 }
 
-export async function summarizerInvoke(prompt, { client, model = defaults.summarizerModel, systemPrompt = '' }) {
+export async function summarizerInvoke(prompt, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'openai',
+        status: 401,
+        message: `summarize backend=openai requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: OpenAI } = await import('openai');
+    client = new OpenAI({ apiKey });
+  }
   let raw;
   try {
     raw = await client.chat.completions.create({

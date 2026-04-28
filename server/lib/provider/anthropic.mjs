@@ -62,7 +62,23 @@ export function normalizeError(err) {
   return clean;
 }
 
-export async function summarizerInvoke(prompt, { client, model = defaults.summarizerModel, systemPrompt = '' }) {
+export async function summarizerInvoke(prompt, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'anthropic',
+        status: 401,
+        message: `summarize backend=anthropic requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    client = new Anthropic({ apiKey });
+  }
   let raw;
   try {
     raw = await client.messages.create({

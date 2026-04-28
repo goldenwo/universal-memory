@@ -78,7 +78,23 @@ export function normalizeError(err) {
   return clean;
 }
 
-export async function summarizerInvoke(prompt, { client, model = defaults.summarizerModel, systemPrompt = '' }) {
+export async function summarizerInvoke(prompt, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'google',
+        status: 401,
+        message: `summarize backend=google requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { GoogleGenAI } = await import('@google/genai');
+    client = new GoogleGenAI({ apiKey });
+  }
   let raw;
   try {
     raw = await client.models.generateContent({

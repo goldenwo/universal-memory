@@ -43,6 +43,20 @@ test('factsLlmConfig emits mem0 llm block from env', () => {
   const cfg = google.factsLlmConfig({ UM_FACTS_MODEL: 'gemini-2.0-flash', GOOGLE_API_KEY: 'AIza-x' });
   assert.equal(cfg.provider, 'google');
   assert.equal(cfg.config.model, 'gemini-2.0-flash');
+  assert.equal(cfg.config.apiKey, 'AIza-x');
+});
+
+test('summarizerInvoke without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => google.summarizerInvoke('p', { env: {} }),
+    (err) => {
+      assert(err instanceof ProviderError, `expected ProviderError, got ${err?.constructor?.name}`);
+      assert.equal(err.class, 'PROVIDER_CONFIG');
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
 });
 
 test('extractUsage parses Google response shape', () => {

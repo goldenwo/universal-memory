@@ -177,19 +177,40 @@ const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
 if (IS_MAIN) {
-  // Validate that whatever providers the operator selected have their required keys.
+  // Validate that whatever providers the operator selected have their required keys,
+  // and that each provider supports the surface it's assigned to.
   // This replaces the hard-coded requireEnv('OPENAI_API_KEY') check so that
   // non-openai deployments (e.g., ollama-only, Phase F Path 3) are not blocked.
-  for (const slot of ['UM_EMBEDDING_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_FACTS_PROVIDER']) {
-    const providerName = process.env[slot] || 'openai';
-    const provider = getProvider(providerName);
+  const surfaceMap = {
+    UM_EMBEDDING_PROVIDER: 'embeddings',
+    UM_SUMMARIZER_PROVIDER: 'summarizer',
+    UM_SUMMARIZER_FALLBACK: 'summarizer',
+    UM_FACTS_PROVIDER: 'facts',
+  };
+  for (const slot of ['UM_EMBEDDING_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_FALLBACK', 'UM_FACTS_PROVIDER']) {
+    const rawName = process.env[slot];
+    if (slot === 'UM_SUMMARIZER_FALLBACK' && !rawName) continue; // optional slot
+    const resolved = rawName || 'openai';
+    let provider;
+    try {
+      provider = getProvider(resolved);
+    } catch (err) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} — ${err.message}`);
+      process.exit(1);
+    }
+    // Capability check: fail fast if provider doesn't support the assigned surface
+    const surface = surfaceMap[slot];
+    if (!provider.supports[surface]) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${Object.keys(surfaceMap).filter(s => s === slot).join(', ')}`);
+      process.exit(1);
+    }
     if (provider.requires.length === 0) continue; // ollama-style, no key needed
     if (!provider.resolveApiKey(process.env)) {
-      console.error(`[mem0-mcp] FATAL: ${slot}=${providerName} requires one of: ${provider.requires.join(', ')}`);
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} requires one of: ${provider.requires.join(', ')}`);
       process.exit(1);
     }
   }
-  // R8 mitigation: log info when summarizer fallback is cross-provider.
+  // R8 mitigation: log info when summarizer fallback is cross-provider; warn on legacy UM_SUMMARIZER.
   validateSummarizerConfig(process.env, getLogger());
 }
 
