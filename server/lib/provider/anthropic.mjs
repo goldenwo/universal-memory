@@ -41,7 +41,7 @@ export function factsLlmConfig(env) {
     provider: 'anthropic',
     config: {
       model: env.UM_FACTS_MODEL || defaults.factsModel,
-      api_key: resolveApiKey(env),
+      apiKey: resolveApiKey(env),
     },
   };
 }

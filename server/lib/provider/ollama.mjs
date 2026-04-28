@@ -46,7 +46,7 @@ export function embedderConfig(env) {
   return {
     provider: 'ollama',
     config: {
-      ollama_base_url: env.OLLAMA_HOST || 'http://localhost:11434',
+      baseURL: env.OLLAMA_HOST || 'http://localhost:11434',
       model: env.UM_EMBEDDING_MODEL || defaults.embeddingModel,
     },
   };
@@ -56,7 +56,7 @@ export function factsLlmConfig(env) {
   return {
     provider: 'ollama',
     config: {
-      ollama_base_url: env.OLLAMA_HOST || 'http://localhost:11434',
+      baseURL: env.OLLAMA_HOST || 'http://localhost:11434',
       model: env.UM_FACTS_MODEL || defaults.factsModel,
     },
   };

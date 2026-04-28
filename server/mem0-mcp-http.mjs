@@ -61,6 +61,8 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
+import { validateSummarizerConfig } from './lib/startup-validation.mjs';
+import { getProvider } from './lib/provider/registry.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -174,7 +176,22 @@ const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
-if (IS_MAIN) requireEnv('OPENAI_API_KEY');
+if (IS_MAIN) {
+  // Validate that whatever providers the operator selected have their required keys.
+  // This replaces the hard-coded requireEnv('OPENAI_API_KEY') check so that
+  // non-openai deployments (e.g., ollama-only, Phase F Path 3) are not blocked.
+  for (const slot of ['UM_EMBEDDING_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_FACTS_PROVIDER']) {
+    const providerName = process.env[slot] || 'openai';
+    const provider = getProvider(providerName);
+    if (provider.requires.length === 0) continue; // ollama-style, no key needed
+    if (!provider.resolveApiKey(process.env)) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${providerName} requires one of: ${provider.requires.join(', ')}`);
+      process.exit(1);
+    }
+  }
+  // R8 mitigation: log info when summarizer fallback is cross-provider.
+  validateSummarizerConfig(process.env, getLogger());
+}
 
 let memory;
 async function initMemory() {

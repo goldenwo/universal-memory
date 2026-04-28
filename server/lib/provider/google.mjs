@@ -45,7 +45,7 @@ export function embedderConfig(env) {
     provider: 'google',
     config: {
       model: env.UM_EMBEDDING_MODEL || defaults.embeddingModel,
-      api_key: resolveApiKey(env),
+      apiKey: resolveApiKey(env),
     },
   };
 }
@@ -55,7 +55,7 @@ export function factsLlmConfig(env) {
     provider: 'google',
     config: {
       model: env.UM_FACTS_MODEL || defaults.factsModel,
-      api_key: resolveApiKey(env),
+      apiKey: resolveApiKey(env),
     },
   };
 }

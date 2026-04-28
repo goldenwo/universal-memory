@@ -14,6 +14,10 @@
  * to satisfy mem0's constructor validation; no actual API calls are made.
  *
  * Live calls: 0. Config validation: 7 providers (3 embedder + 4 facts).
+ *
+ * Strengthened (R1 regression guard): after construction, asserts that
+ * mem.config.embedder.config.apiKey reflects the test input value — detects the
+ * class of bug where snake_case keys are silently dropped and apiKey stays empty.
  */
 
 import test from 'node:test';
@@ -22,29 +26,60 @@ import { Memory } from 'mem0ai/oss';
 import { EMBEDDING_BACKENDS, getEmbedderConfig } from '../lib/embed.mjs';
 import { FACTS_BACKENDS, getFactsLlmConfig } from '../lib/facts.mjs';
 
+const TEST_OPENAI_KEY = 'sk-test-1234567890abcdef';
+const TEST_ANTHROPIC_KEY = 'sk-ant-test-1234567890abcdef';
+
+// Helper: save, set, restore env vars using delete-when-undefined semantics.
+// Setting process.env.X = undefined coerces to literal string "undefined" which
+// pollutes the env for subsequent tests — use delete instead.
+function withEnv(vars, fn) {
+  const saved = {};
+  for (const k of Object.keys(vars)) {
+    saved[k] = process.env[k];
+    process.env[k] = vars[k];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const k of Object.keys(vars)) {
+      if (saved[k] === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = saved[k];
+      }
+    }
+  }
+}
+
 // For each provider, asserting Memory constructor accepts the config block.
 // Live calls are NOT made — this is a config-shape compatibility test.
 for (const name of Object.keys(EMBEDDING_BACKENDS)) {
   test(`mem0 Memory accepts embedderConfig from ${name}`, () => {
     const env = {
       UM_EMBEDDING_PROVIDER: name,
-      OPENAI_API_KEY: 'sk-test-1234567890abcdef',
-      UM_ANTHROPIC_API_KEY: 'sk-ant-test-1234567890abcdef',
-      ANTHROPIC_API_KEY: 'sk-ant-test-1234567890abcdef',
+      OPENAI_API_KEY: TEST_OPENAI_KEY,
+      UM_ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY,
+      ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY,
       GOOGLE_API_KEY: 'AIza-test-1234567890abcdef', OLLAMA_HOST: 'http://localhost:11434',
     };
-    // Set environment variables for mem0's constructor validation
-    const saved = { OPENAI_API_KEY: process.env.OPENAI_API_KEY, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
-    process.env.OPENAI_API_KEY = 'sk-test-1234567890abcdef';
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-1234567890abcdef';
-    try {
+    withEnv({ OPENAI_API_KEY: TEST_OPENAI_KEY, ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY }, () => {
       const embedder = getEmbedderConfig(env);
+      let mem;
       // Constructor should not throw — we don't actually run any operations.
-      assert.doesNotThrow(() => new Memory({ embedder, llm: getFactsLlmConfig({ ...env, UM_FACTS_PROVIDER: 'openai' }) }));
-    } finally {
-      process.env.OPENAI_API_KEY = saved.OPENAI_API_KEY;
-      process.env.ANTHROPIC_API_KEY = saved.ANTHROPIC_API_KEY;
-    }
+      assert.doesNotThrow(() => {
+        mem = new Memory({ embedder, llm: getFactsLlmConfig({ ...env, UM_FACTS_PROVIDER: 'openai' }) });
+      });
+      // Regression guard: apiKey must be populated — not empty string (which happens when
+      // snake_case keys like api_key are silently dropped by mem0 OSS camelCase validation).
+      // Only assert for non-ollama providers that actually use an apiKey.
+      if (name !== 'ollama') {
+        const apiKey = mem?.config?.embedder?.config?.apiKey;
+        assert.ok(
+          typeof apiKey === 'string' && apiKey.length > 0,
+          `embedderConfig from ${name}: expected mem.config.embedder.config.apiKey to be populated, got: ${JSON.stringify(apiKey)}`,
+        );
+      }
+    });
   });
 }
 
@@ -52,21 +87,14 @@ for (const name of Object.keys(FACTS_BACKENDS)) {
   test(`mem0 Memory accepts factsLlmConfig from ${name}`, () => {
     const env = {
       UM_FACTS_PROVIDER: name, UM_EMBEDDING_PROVIDER: 'openai',
-      OPENAI_API_KEY: 'sk-test-1234567890abcdef',
-      UM_ANTHROPIC_API_KEY: 'sk-ant-test-1234567890abcdef',
-      ANTHROPIC_API_KEY: 'sk-ant-test-1234567890abcdef',
+      OPENAI_API_KEY: TEST_OPENAI_KEY,
+      UM_ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY,
+      ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY,
       GOOGLE_API_KEY: 'AIza-test-1234567890abcdef', OLLAMA_HOST: 'http://localhost:11434',
     };
-    // Set environment variables for mem0's constructor validation
-    const saved = { OPENAI_API_KEY: process.env.OPENAI_API_KEY, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
-    process.env.OPENAI_API_KEY = 'sk-test-1234567890abcdef';
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-1234567890abcdef';
-    try {
+    withEnv({ OPENAI_API_KEY: TEST_OPENAI_KEY, ANTHROPIC_API_KEY: TEST_ANTHROPIC_KEY }, () => {
       const llm = getFactsLlmConfig(env);
       assert.doesNotThrow(() => new Memory({ embedder: getEmbedderConfig({ ...env, UM_EMBEDDING_PROVIDER: 'openai' }), llm }));
-    } finally {
-      process.env.OPENAI_API_KEY = saved.OPENAI_API_KEY;
-      process.env.ANTHROPIC_API_KEY = saved.ANTHROPIC_API_KEY;
-    }
+    });
   });
 }

@@ -36,7 +36,7 @@ test('embedderConfig emits mem0 block from env', () => {
   const cfg = google.embedderConfig(env);
   assert.equal(cfg.provider, 'google');
   assert.equal(cfg.config.model, 'text-embedding-004-preview');
-  assert.equal(cfg.config.api_key, 'AIza-x');
+  assert.equal(cfg.config.apiKey, 'AIza-x');
 });
 
 test('factsLlmConfig emits mem0 llm block from env', () => {

@@ -25,25 +25,25 @@ test('validateKeyFormat returns true unconditionally (no key validation for loca
   assert.equal(ollama.validateKeyFormat(undefined), true);
 });
 
-test('embedderConfig emits mem0 block with ollama_base_url from env or default', () => {
+test('embedderConfig emits mem0 block with baseURL from env or default', () => {
   const env1 = { UM_EMBEDDING_MODEL: 'nomic-embed-text' };
   const cfg1 = ollama.embedderConfig(env1);
   assert.equal(cfg1.provider, 'ollama');
   assert.equal(cfg1.config.model, 'nomic-embed-text');
-  assert.equal(cfg1.config.ollama_base_url, 'http://localhost:11434');
+  assert.equal(cfg1.config.baseURL, 'http://localhost:11434');
 
   const env2 = { OLLAMA_HOST: 'http://192.168.1.100:11434', UM_EMBEDDING_MODEL: 'custom-embed' };
   const cfg2 = ollama.embedderConfig(env2);
   assert.equal(cfg2.config.model, 'custom-embed');
-  assert.equal(cfg2.config.ollama_base_url, 'http://192.168.1.100:11434');
+  assert.equal(cfg2.config.baseURL, 'http://192.168.1.100:11434');
 });
 
-test('factsLlmConfig emits mem0 llm block with ollama_base_url', () => {
+test('factsLlmConfig emits mem0 llm block with baseURL', () => {
   const env = { UM_FACTS_MODEL: 'llama3', OLLAMA_HOST: 'http://localhost:11434' };
   const cfg = ollama.factsLlmConfig(env);
   assert.equal(cfg.provider, 'ollama');
   assert.equal(cfg.config.model, 'llama3');
-  assert.equal(cfg.config.ollama_base_url, 'http://localhost:11434');
+  assert.equal(cfg.config.baseURL, 'http://localhost:11434');
 });
 
 test('extractUsage parses Ollama response shape (prompt_eval_count → tokensIn, eval_count → tokensOut)', () => {

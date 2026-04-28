@@ -34,7 +34,7 @@ test('embedderConfig emits mem0 block from env', () => {
   const cfg = openai.embedderConfig(env);
   assert.equal(cfg.provider, 'openai');
   assert.equal(cfg.config.model, 'text-embedding-3-large');
-  assert.equal(cfg.config.api_key, 'sk-x');
+  assert.equal(cfg.config.apiKey, 'sk-x');
 });
 
 test('factsLlmConfig emits mem0 llm block from env', () => {
