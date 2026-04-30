@@ -28,8 +28,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
-import { doList, doSearch, doRecent } from '../mem0-mcp-http.mjs';
+import { doList, doSearch, doRecent, createRequestHandler } from '../mem0-mcp-http.mjs';
 
 const stampDoc = { metadata: { id: '_um_embedding_stamp', stamp: { provider: 'openai' } }, memory: 'stamp text' };
 const realDoc = { metadata: { id: 'real-uuid', title: 'Real' }, memory: 'real content' };
@@ -86,5 +88,28 @@ test('doRecent excludes stamp doc from authored vault listing', async () => {
     if (prev === undefined) delete process.env.UM_VAULT_DIR;
     else process.env.UM_VAULT_DIR = prev;
     await fs.rm(vault, { recursive: true, force: true });
+  }
+});
+
+// DE5 forward-flag — /health.memories count must exclude system docs (e.g. the
+// embedding stamp written by the startup guard). Without this filter the count
+// returned to operators would be `real_docs + 1` after upgrade.
+test('GET /health excludes stamp doc from memories count', async () => {
+  const fakeMemory = {
+    getAll: async () => ({ results: [stampDoc, realDoc, { id: 'm2', memory: 'x', metadata: { id: 'doc-2' } }] }),
+  };
+  const handler = createRequestHandler({ memory: fakeMemory });
+  const srv = createServer(handler);
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.memories, 2, 'stamp doc must not be counted');
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
   }
 });

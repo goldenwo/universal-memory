@@ -64,6 +64,8 @@ import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
+import { createStampClient } from './lib/embedding-stamp.mjs';
+import { priceFor } from './lib/pricing.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -216,7 +218,87 @@ if (IS_MAIN) {
 }
 
 let memory;
-async function initMemory() {
+
+/**
+ * DE5 — startup guard wired around Memory init. The DI seam exists so the
+ * three branches (null / match / mismatch) and verifyDim ordering can be
+ * tested without spinning up Qdrant or a real embedder.
+ *
+ * Branches (spec §6.2):
+ *   - null     → writeStamp(currentEnv) + warn(LEGACY_COLLECTION_STAMPED) +
+ *                verifyDim() (R2 mitigation: stamp legacy collections so
+ *                subsequent restarts hit the match branch)
+ *   - match    → verifyDim() only (probe runs whenever a stamp is in place)
+ *   - mismatch → fatal log per spec §6.2 + exit(1) (R3 mitigation: never
+ *                serve under stamp/env disagreement; verifyDim NOT called)
+ *
+ * @param {Object} args
+ * @param {Object} args.memory   already-constructed Memory instance (or stub)
+ * @param {Object} args.stamp    stamp client (createStampClient(...) or stub)
+ * @param {Object} args.log      structured logger (pino-shaped: warn/info/fatal)
+ * @param {Object} args.env      env object to derive expected shape from
+ *                               (must carry UM_EMBEDDING_PROVIDER + UM_EMBEDDING_MODEL)
+ * @param {Function} [args.exit] exit hook (defaults to process.exit; tests inject)
+ * @param {Object} [args.embedder] embedder instance forwarded to verifyDim
+ *                                 (defaults to memory.embedder; tests omit when
+ *                                 stamp.verifyDim is stubbed)
+ */
+export async function initMemoryWithGuard({ memory, stamp, log, env, exit = process.exit, embedder } = {}) {
+  // Derive expected shape from env+pricing. Pricing is the canonical source for
+  // dim per (provider, model) — see spec §6.1 + DE4 plan note ("DE5 owns the
+  // env→shape derivation"). priceFor returns { ..., dim?: number } for embed
+  // entries; if dim is missing we still pass undefined so compareStamp will
+  // trigger a mismatch (and the operator can fix the registry gap).
+  const provider = env?.UM_EMBEDDING_PROVIDER || 'openai';
+  const model = env?.UM_EMBEDDING_MODEL || (provider === 'openai' ? 'text-embedding-3-small' : env?.UM_EMBEDDING_MODEL);
+  const expected = { provider, model, dim: priceFor(provider, model)?.dim };
+
+  const actual = await stamp.read();
+  if (actual === null) {
+    // Null branch — legacy collection. Stamp it so future restarts hit `match`,
+    // then probe live dim. R2 mitigation per spec §6.2.
+    await stamp.write(expected);
+    log.warn(
+      { code: 'LEGACY_COLLECTION_STAMPED', stamp: expected },
+      'Legacy collection stamped with current embedding shape',
+    );
+    await stamp.verifyDim({ embedder, dim: expected.dim });
+    return memory;
+  }
+  // Stamp present — compare shape against env-derived expected.
+  const cmp = stamp.compare ? stamp.compare(actual, expected) : compareInline(actual, expected);
+  if (cmp === 'mismatch') {
+    // Mismatch — fatal. verifyDim NOT called; we never reach a serving state.
+    // Message must satisfy spec §13.1 contract (see the test): contain the CLI
+    // pointer plus both stamped and configured shapes.
+    const msg =
+      `Embedding stamp mismatch. ` +
+      `Stamped: provider=${actual.provider} model=${actual.model} dim=${actual.dim}. ` +
+      `Configured: provider=${expected.provider} model=${expected.model} dim=${expected.dim}. ` +
+      'Run `um-cli reindex --confirm` to migrate.';
+    log.fatal({ code: 'EMBEDDING_STAMP_MISMATCH', stamped: actual, configured: expected }, msg);
+    return exit(1);
+  }
+  // Match — probe live dim to catch silent provider model substitutions (R3).
+  await stamp.verifyDim({ embedder, dim: expected.dim });
+  return memory;
+}
+
+// Inline fallback for stamp shapes that don't ship a `.compare` method
+// (e.g., test stubs that omit it). Mirrors compareStamp from
+// embedding-stamp.mjs by field equality.
+function compareInline(stamp, expected) {
+  if (!stamp || !expected) return 'mismatch';
+  return (
+    stamp.provider === expected.provider &&
+    stamp.model === expected.model &&
+    stamp.dim === expected.dim
+  )
+    ? 'match'
+    : 'mismatch';
+}
+
+export async function initMemory() {
 	memory = new Memory({
 		version: 'v1.1',
 		embedder: getEmbedderConfig(process.env),
@@ -243,7 +325,7 @@ async function initMemory() {
 		try {
 			await memory.getAll({ userId: '__warmup__' });
 			console.log(`[mem0-mcp] Memory initialized, Qdrant reachable (attempt ${i})`);
-			return;
+			break;
 		} catch (err) {
 			if (i === MAX_ATTEMPTS) {
 				console.error(`[mem0-mcp] FATAL: Qdrant unreachable after ${MAX_ATTEMPTS} attempts: ${err.message}`);
@@ -252,6 +334,28 @@ async function initMemory() {
 			await new Promise((r) => setTimeout(r, 2000));
 		}
 	}
+	// DE5 — wire the embedding-stamp guard. The wrapper handles the 3 branches
+	// (null/match/mismatch) and the verifyDim probe. Production deps:
+	//   - memory: the live Memory instance (warmed above)
+	//   - stamp:  createStampClient bound to the same Memory
+	//   - log:    pino logger from getLogger()
+	//   - env:    process.env (UM_EMBEDDING_PROVIDER + UM_EMBEDDING_MODEL drive the expected shape)
+	//   - embedder: mem0 exposes the embedder instance as memory.embedder; we
+	//     adapt its `embed(text)` signature to the `embedQuery(text)` API
+	//     verifyDim expects so the dim probe goes through the same path
+	//     mem0 will use for real reads/writes.
+	const stampClient = createStampClient({ memory });
+	const embedderAdapter = memory.embedder
+		? { embedQuery: (text) => memory.embedder.embed(text) }
+		: undefined;
+	await initMemoryWithGuard({
+		memory,
+		stamp: stampClient,
+		log: getLogger(),
+		env: process.env,
+		embedder: embedderAdapter,
+	});
+	return memory;
 }
 
 export const TOOLS = [
@@ -1639,8 +1743,15 @@ export function createRequestHandler(ctx = {}) {
 	// never set for /health), but we skip ALS + the counter-finish log.
 	if (url.pathname === '/health' && req.method === 'GET') {
 		try {
+			// DE5 / spec §6.1: after the startup guard stamps legacy collections,
+			// getAll() includes the embedding-stamp doc. Filter system docs out of
+			// the count so /health reflects user-facing memories only — preserves
+			// the contract that operators reading this endpoint see real-doc count.
+			const raw = await resolvedMemory().getAll({ userId: USER_ID });
+			const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
+			const memories = filterSystemDocs(items).length;
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, memories: (await resolvedMemory().getAll({ userId: USER_ID }))?.results?.length || 0 }));
+			res.end(JSON.stringify({ ok: true, memories }));
 		} catch (err) {
 			if (!res.headersSent) {
 				res.writeHead(500, { 'Content-Type': 'application/json' });
