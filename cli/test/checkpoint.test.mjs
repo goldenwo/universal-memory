@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { readCheckpoint, writeCheckpoint, addProcessedId, recordPhase, clearError } from '../lib/checkpoint.mjs';
+import { readCheckpoint, writeCheckpoint, addProcessedId, recordPhase, clearError, createCheckpointClient } from '../lib/checkpoint.mjs';
 
 let tmp;
 test.before(async () => { tmp = await mkdtemp(path.join(os.tmpdir(), 'reindex-test-')); });
@@ -24,6 +24,8 @@ test('writeCheckpoint is atomic (tmp + rename)', async () => {
   await writeCheckpoint(p, { schema_version: 1, phase_completed: 0, processed_ids: [] });
   const raw = JSON.parse(await readFile(p, 'utf-8'));
   assert.equal(raw.schema_version, 1);
+  // Verify the .tmp sidecar was renamed (not copied) — no debris left
+  await assert.rejects(() => readFile(p + '.tmp', 'utf-8'), { code: 'ENOENT' });
 });
 
 test('addProcessedId is idempotent (set semantics)', async () => {
@@ -71,4 +73,19 @@ test('target_collection name follows sha8(provider:model) derivation', () => {
   // This test asserts the format pattern (8 hex chars after underscore).
   const tc = 'memories_a1b2c3d4';
   assert.match(tc, /^memories_[0-9a-f]{8}$/);
+});
+
+test('createCheckpointClient binds path; returns DI-friendly object', async () => {
+  const p = path.join(tmp, 'client-test.json');
+  const client = createCheckpointClient(p);
+  assert.equal(typeof client.read, 'function');
+  assert.equal(typeof client.write, 'function');
+  assert.equal(typeof client.addProcessedId, 'function');
+  assert.equal(typeof client.recordPhase, 'function');
+  assert.equal(typeof client.clearError, 'function');
+  // Round-trip: write then read without re-passing path
+  const state = { schema_version: 1, phase_completed: 0, processed_ids: [] };
+  await client.write(state);
+  const back = await client.read();
+  assert.deepEqual(back, state);
 });

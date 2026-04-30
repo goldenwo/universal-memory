@@ -9,6 +9,9 @@
  *
  * Spec ref: §6.4 (reindex state schema, schema_version=1).
  *
+ * Note: distinct from `server/lib/checkpoint.mjs` (session-end summary checkpoint);
+ * this module is for the v0.7 reindex CLI's resumable state.json only.
+ *
  * Design notes:
  *   • Atomic writes: write to <path>.tmp, then rename. Prevents torn writes
  *     on crash; rename is atomic on POSIX and best-effort on NTFS.
@@ -20,7 +23,11 @@
  *     with operator-actionable guidance ("delete or downgrade"). Forward-
  *     compat is opt-in by future schema_version=2 callers.
  *
- * Public API (5 named exports):
+ * NOTE: After `addProcessedId(state, id)`, `state.processed_ids` becomes a Set
+ * (upgraded for O(1) dedup). Use `.size` and spread (`[...state.processed_ids]`)
+ * — not `.length` — until the state is round-tripped through writeCheckpoint+readCheckpoint.
+ *
+ * Public API (6 named exports):
  *   - readCheckpoint(path)             → state | null
  *       Returns null on ENOENT (fresh reindex). Throws on schema mismatch
  *       or malformed JSON.
@@ -34,6 +41,11 @@
  *       Sets state.phase_completed = n. Caller persists via writeCheckpoint.
  *   - clearError(state)                → void
  *       Sets state.last_error = null. Used after successful resume of a phase.
+ *   - createCheckpointClient(path)     → { read, write, addProcessedId, recordPhase, clearError }
+ *       DI-friendly factory: binds path once so DE9-DE12 inject a single
+ *       `checkpoint` dependency rather than re-passing path. Pure state
+ *       mutators (addProcessedId, recordPhase, clearError) keep their
+ *       (state, ...) signature so callers may still treat them as pure.
  */
 
 import { writeFile, readFile, rename } from 'node:fs/promises';
@@ -84,4 +96,14 @@ export function recordPhase(state, n) {
 
 export function clearError(state) {
   state.last_error = null;
+}
+
+export function createCheckpointClient(path) {
+  return {
+    read: () => readCheckpoint(path),
+    write: (state) => writeCheckpoint(path, state),
+    addProcessedId: (state, id) => addProcessedId(state, id),
+    recordPhase: (state, n) => recordPhase(state, n),
+    clearError: (state) => clearError(state),
+  };
 }
