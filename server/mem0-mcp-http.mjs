@@ -61,7 +61,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
 import { createStampClient, compareStamp } from './lib/embedding-stamp.mjs';
@@ -180,6 +180,16 @@ const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
 if (IS_MAIN) {
+  // R9 mitigation (DE6): refuse unsupported (provider, surface) combos at startup
+  // BEFORE initMemory so e.g. UM_EMBEDDING_PROVIDER=anthropic is rejected with a
+  // helpful list of valid embedding providers. validateProviderSupport throws;
+  // catch and exit(1) per server convention.
+  try {
+    validateProviderSupport(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
   // Validate that whatever providers the operator selected have their required keys,
   // and that each provider supports the surface it's assigned to.
   // This replaces the hard-coded requireEnv('OPENAI_API_KEY') check so that

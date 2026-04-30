@@ -3,10 +3,14 @@
  *
  * Host module for validators run at application startup. C3 introduces
  * `validateSummarizerConfig` (R8 visibility — info-log when fallback is cross-provider).
- * DE6 + DE7 will extend with `validateProviderSupport` and `validateModelExists`.
+ * DE6 adds `validateProviderSupport` (R9 mitigation — refuse unsupported
+ * (provider, surface) combos at boot, e.g. anthropic-as-embedder).
+ * DE7 will extend with `validateModelExists`.
  *
- * Cite: design §10.5 R8 (cross-provider fallback visibility).
+ * Cite: design §5.5 step 2 (R9 mitigation), §10.5 R8 (cross-provider fallback visibility).
  */
+
+import { getProvider, supportingProviders } from './provider/registry.mjs';
 
 /**
  * Validates summarizer configuration and logs:
@@ -40,5 +44,39 @@ export function validateSummarizerConfig(env, log) {
       { primary, fallback },
       `summarizer fallback configured: ${primary} → ${fallback} (cross-provider; output style may vary)`,
     );
+  }
+}
+
+/**
+ * R9 mitigation — refuse unsupported (provider, surface) combinations at startup.
+ *
+ * Inspects each surface env var that is actually set (skip-on-missing — no
+ * default synthesis) and verifies the named provider declares support for that
+ * surface. Throws on first violation with a message that includes:
+ *   - the surface name (embeddings|summarizer|facts)
+ *   - the offending provider name
+ *   - for known-but-unsupported: the list of valid providers for that surface
+ *   - for unknown: the registry's `unknown provider: <name>; valid: ...` form
+ *
+ * @param {Record<string, string>} env - Environment variables (typically process.env)
+ * @throws {Error} when any (provider, surface) combination is invalid
+ */
+export function validateProviderSupport(env) {
+  const surfaces = [
+    { envVar: 'UM_EMBEDDING_PROVIDER', surface: 'embeddings' },
+    { envVar: 'UM_SUMMARIZER_PROVIDER', surface: 'summarizer' },
+    { envVar: 'UM_FACTS_PROVIDER', surface: 'facts' },
+  ];
+  for (const { envVar, surface } of surfaces) {
+    const name = env[envVar];
+    if (!name) continue; // skip-on-missing: only validate explicitly set surfaces
+    // getProvider throws "unknown provider: <name>; valid: ..." for unknown names —
+    // that message already satisfies test 3's regex, so let it propagate.
+    const provider = getProvider(name);
+    if (!provider.supports?.[surface]) {
+      throw new Error(
+        `${name} does not support ${surface} (valid: ${supportingProviders(surface).join(', ')})`,
+      );
+    }
   }
 }
