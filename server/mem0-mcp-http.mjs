@@ -63,6 +63,7 @@ import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
+import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -1302,6 +1303,11 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
 		items = applyTemporalDecay(items, halfLife);
 	}
+	// DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+	// AFTER ranking/decay (so scoring never wastes a slot on the stamp) and
+	// BEFORE projection/envelope serialization (so consumers never see it on
+	// any read path). Single touchpoint covers /api/search + memory_search.
+	items = filterSystemDocs(items);
 	// Project to compact or full shape.
 	// - id:    metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
 	// - title: metadata.title if present; falls back to metadata.id (matches doRecent convention)
@@ -1492,7 +1498,14 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
       }
     })
   );
-  const results = resultsRaw.filter(Boolean);
+  // DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+  // before envelope serialization. doRecent reads the vault filesystem and
+  // its records carry id at the top level (no metadata wrapper), so we
+  // match against SYSTEM_METADATA_IDS directly. Single touchpoint covers
+  // /api/recent/:project (the only public surface for doRecent).
+  const results = resultsRaw
+    .filter(Boolean)
+    .filter((rec) => !SYSTEM_METADATA_IDS.includes(rec.id));
 
   return listEnvelope(results);
 }
@@ -1544,7 +1557,11 @@ export async function doList(full = false, limit = null, ctx = {}) {
     memoryClient.getAll({ userId: USER_ID })
       .catch((e) => { throw tagRetryable(e); })
   , { op: 'getAll' });
-  const items = all?.results || all || [];
+  const rawItems = all?.results || all || [];
+  // DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+  // BEFORE limit-slicing so the stamp does not consume one of the user's
+  // requested slots. Single touchpoint covers /api/list + memory_list.
+  const items = filterSystemDocs(rawItems);
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   // §4.1 extensibility contract: additive sibling fields on the memory-client
   // envelope (e.g., future `provider`, `latency_ms` for multi-provider
