@@ -64,7 +64,7 @@ import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
-import { createStampClient } from './lib/embedding-stamp.mjs';
+import { createStampClient, compareStamp } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 
 // ---------------------------------------------------------------------------
@@ -250,7 +250,16 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   // entries; if dim is missing we still pass undefined so compareStamp will
   // trigger a mismatch (and the operator can fix the registry gap).
   const provider = env?.UM_EMBEDDING_PROVIDER || 'openai';
-  const model = env?.UM_EMBEDDING_MODEL || (provider === 'openai' ? 'text-embedding-3-small' : env?.UM_EMBEDDING_MODEL);
+  // Pull the per-provider default from the registry so non-openai operators who
+  // omit UM_EMBEDDING_MODEL still get the right model (rather than `undefined`,
+  // which polluted the stamp and triggered false fatal alarms). Single source
+  // of truth for default models — picks up new providers automatically.
+  // getProvider() throws on unknown names; swallow so a typo in
+  // UM_EMBEDDING_PROVIDER falls through to mismatch (operator-visible) rather
+  // than crashing the guard with an opaque init error.
+  let providerDef;
+  try { providerDef = getProvider(provider); } catch { providerDef = undefined; }
+  const model = env?.UM_EMBEDDING_MODEL || providerDef?.defaults?.embeddingModel;
   const expected = { provider, model, dim: priceFor(provider, model)?.dim };
 
   const actual = await stamp.read();
@@ -266,7 +275,7 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
     return memory;
   }
   // Stamp present — compare shape against env-derived expected.
-  const cmp = stamp.compare ? stamp.compare(actual, expected) : compareInline(actual, expected);
+  const cmp = stamp.compare ? stamp.compare(actual, expected) : compareStamp(actual, expected);
   if (cmp === 'mismatch') {
     // Mismatch — fatal. verifyDim NOT called; we never reach a serving state.
     // Message must satisfy spec §13.1 contract (see the test): contain the CLI
@@ -282,20 +291,6 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   // Match — probe live dim to catch silent provider model substitutions (R3).
   await stamp.verifyDim({ embedder, dim: expected.dim });
   return memory;
-}
-
-// Inline fallback for stamp shapes that don't ship a `.compare` method
-// (e.g., test stubs that omit it). Mirrors compareStamp from
-// embedding-stamp.mjs by field equality.
-function compareInline(stamp, expected) {
-  if (!stamp || !expected) return 'mismatch';
-  return (
-    stamp.provider === expected.provider &&
-    stamp.model === expected.model &&
-    stamp.dim === expected.dim
-  )
-    ? 'match'
-    : 'mismatch';
 }
 
 export async function initMemory() {

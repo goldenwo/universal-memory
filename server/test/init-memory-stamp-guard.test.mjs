@@ -99,6 +99,36 @@ test('mismatch branch: fatal log + does NOT run verifyDim + message contains spe
   assert.ok(!calls.some((c) => c[0] === 'verifyDim'), 'verifyDim must NOT run on mismatch');
 });
 
+test('null stamp branch with provider=google + no UM_EMBEDDING_MODEL uses registry default', async () => {
+  // I1 regression: previous code's ternary returned the (already-falsy)
+  // env.UM_EMBEDDING_MODEL on the non-openai branch, so google/anthropic/ollama
+  // operators got model=undefined into the stamp + a downstream false fatal.
+  // Fix sources the per-provider default from the registry (single SoT).
+  const calls = [];
+  const stamp = {
+    read: async () => null,
+    write: async (s) => calls.push(['write', s]),
+    verifyDim: async () => calls.push(['verifyDim']),
+  };
+  const log = {
+    warn: () => {},
+    info: () => {},
+    fatal: () => { throw new Error('should not fatal'); },
+  };
+  await initMemoryWithGuard({
+    memory: {},
+    stamp,
+    log,
+    env: { UM_EMBEDDING_PROVIDER: 'google' }, // no UM_EMBEDDING_MODEL
+  });
+  const writtenStamp = calls.find((c) => c[0] === 'write')[1];
+  assert.ok(writtenStamp.model, 'model must be derived from registry default');
+  assert.notEqual(writtenStamp.model, undefined, 'model must not be undefined');
+  // Lock the contract to google's current registry default. If google.mjs
+  // changes embeddingModel, this test forces the change to be intentional.
+  assert.equal(writtenStamp.model, 'text-embedding-004');
+});
+
 test('verifyDim failure on match branch propagates as fatal', async () => {
   const stubMemory = {};
   const calls = [];
