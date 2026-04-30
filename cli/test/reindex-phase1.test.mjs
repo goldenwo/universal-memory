@@ -69,3 +69,49 @@ test('phase-1 success writes checkpoint with phase_completed=1 atomically', asyn
   assert.equal(last.phase, 1);
   assert.equal(last.hasEstimate, true);
 });
+
+test('provider+model match but dim differs → proceed=true (dim truncation case)', async () => {
+  // OpenAI text-embedding-3-small supports dim truncation (e.g., 512 instead of
+  // native 1536). A user changing only the dim has a legitimate reindex need —
+  // the no-op gate must NOT falsely block it.
+  const stamp = { read: async () => ({ provider: 'openai', model: 'text-embedding-3-small', dim: 1536 }) };
+  // Pricing stub returns dim=512 to simulate "user wants truncated 512-dim".
+  const pricingWithDim = { priceFor: () => ({ in: 0.00001, out: 0, type: 'embed', dim: 512 }) };
+  const ck = { write: async () => {} };
+  const r = await runPhase1Validate({
+    ...baseDeps,
+    pricing: pricingWithDim,
+    stamp,
+    checkpoint: ck,
+    env: { UM_EMBEDDING_PROVIDER: 'openai', UM_EMBEDDING_MODEL: 'text-embedding-3-small' },
+    noServerProbe: true,
+    confirmInteractive: true,
+  });
+  assert.equal(r.proceed, true);
+  assert.equal(r.toShape.dim, 512);
+  assert.equal(r.fromStamp.dim, 1536);
+});
+
+test('interactive prompt answered "n" → cancellation error', async () => {
+  // Locks the contract gap: when the operator runs without --confirm and
+  // answers "n" at the proceed prompt, runPhase1Validate must throw a clean
+  // cancellation error (not silently return proceed=false, not write a
+  // checkpoint).
+  const stamp = { read: async () => ({ provider: 'openai', model: 'text-embedding-3-small', dim: 1536 }) };
+  const writes = [];
+  const ck = { write: async (state) => writes.push(state) };
+  await assert.rejects(
+    () => runPhase1Validate({
+      ...baseDeps,
+      stamp,
+      checkpoint: ck,
+      noServerProbe: true,
+      confirmInteractive: false,  // run interactively
+      prompt: async () => 'n',     // user says no
+    }),
+    /cancelled|aborted/i,
+  );
+  // Cancellation must NOT have written a checkpoint — phase 1 only writes on
+  // a successful confirm.
+  assert.equal(writes.length, 0);
+});

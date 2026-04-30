@@ -104,7 +104,17 @@ async function countVaultMarkdownFiles(vaultDir) {
   }
   let count = 0;
   async function walk(dir) {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      // Fail-soft on unreadable subdirs (EACCES, EPERM, etc.). Phase 1's
+      // estimate is intentionally an order-of-magnitude preview; the real
+      // count comes from the snapshot phase. A single permission error
+      // shouldn't kill the entire validate gate.
+      process.stderr.write(`[reindex] could not read ${dir}: ${err.code}; estimate may be low\n`);
+      return;
+    }
     for (const entry of entries) {
       const abs = path.join(dir, entry.name);
       // Match server/lib/vault.mjs: ignore symlinks defensively, recurse dirs,
@@ -180,19 +190,27 @@ export async function runPhase1Validate({
   const toProvider = env.UM_EMBEDDING_PROVIDER;
   const toModel = env.UM_EMBEDDING_MODEL;
   // pricing.priceFor returns { in, out, type, dim? }; dim may be undefined for
-  // stub pricing modules used in tests. We accept that — phase 1's no-op
-  // detection compares provider+model only, matching the spec semantics
-  // ("stamp matches env"). The dim is recorded on the checkpoint for DE11's
-  // swap phase but isn't part of the gate.
+  // stub pricing modules used in tests. The no-op gate below compares dim only
+  // when present on both sides (skip-null), so missing dim falls back to
+  // provider+model equality. Dim is also recorded on the checkpoint for DE11's
+  // swap phase.
   const toPrice = pricing.priceFor(toProvider, toModel);
   const toShape = { provider: toProvider, model: toModel, dim: toPrice?.dim };
 
-  // No-op gate: stamp already matches env on (provider, model). Refuse — there
-  // is nothing to reindex.
+  // No-op gate: stamp already matches env on (provider, model[, dim]). Refuse —
+  // there is nothing to reindex.
+  //
+  // Dim handling uses skip-null pattern: if EITHER side lacks dim (e.g., test
+  // pricing stub omits dim, or stamp predates dim recording), we fall back to
+  // provider+model equality. When BOTH sides report dim, we require equality —
+  // this catches the OpenAI text-embedding-3-small dim-truncation case (native
+  // 1536 vs explicit 512), where provider+model match but the user legitimately
+  // wants a reindex into a different-shape collection.
   if (
     fromStamp &&
     fromStamp.provider === toProvider &&
-    fromStamp.model === toModel
+    fromStamp.model === toModel &&
+    (toShape.dim == null || fromStamp.dim == null || fromStamp.dim === toShape.dim)
   ) {
     throw new Error(
       `no-op: stamp matches env (${toProvider}/${toModel}); nothing to reindex`,
