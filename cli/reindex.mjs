@@ -1,17 +1,19 @@
 /**
  * cli/reindex.mjs — Reindex CLI host module (multi-phase pipeline).
  *
- * Spec ref: §6.4 (state schema), §6.5 (phase pipeline). The CLI walks the user
- * through a 5-phase reindex (validate → snapshot → embed-new → swap → cleanup)
- * with checkpointed resumability. Each phase advances `phase_completed` exactly
- * once and writes the full updated state atomically (single writeCheckpoint
- * call per phase boundary) so a crash leaves the checkpoint either fully at
- * phase N or fully at phase N+1, never torn.
+ * Spec ref: §6.3 (stamp-then-swap ordering), §6.4 (state schema), §6.5 (phase
+ * pipeline). The CLI walks the user through a 7-phase reindex (validate →
+ * snapshot → rebuild → stamp → swap → verify → report) with checkpointed
+ * resumability. Each phase advances `phase_completed` exactly once and writes
+ * the full updated state atomically (single writeCheckpoint call per phase
+ * boundary) so a crash leaves the checkpoint either fully at phase N or fully
+ * at phase N+1, never torn.
  *
  * DE9 lands phase 1 (validate). DE10 adds phase 2 (snapshot) and phase 3
- * (rebuild). Each phase exports a `runPhaseN*` function with explicit dependency
- * injection so phases can be unit-tested in isolation without touching real
- * Qdrant, the live server, or the user's vault.
+ * (rebuild). DE11 adds phases 4-7 (stamp → swap → verify → report). Each phase
+ * exports a `runPhaseN*` function with explicit dependency injection so phases
+ * can be unit-tested in isolation without touching real Qdrant, the live
+ * server, or the user's vault.
  *
  * Phase 1 (validate) — three pre-flight gates before the operator commits to
  * reindexing:
@@ -52,16 +54,61 @@
  *     phase 3 finishes but phase_completed stays at 2 — `--resume` then re-runs
  *     the entire phase from scratch (idempotent on processed_ids, but expensive).
  *
+ * Phase 4 (stamp) — write the new embedding stamp into the NEW Qdrant
+ * collection BEFORE the alias swap. Per spec §6.3 (Round-4 Adv-1 ordering
+ * correctness), the stamp lands in `target_collection` first; only after the
+ * stamp is durable does phase 5 swap the public alias. Reverse ordering
+ * (swap-then-stamp) opens a window where readers query the new collection but
+ * the stamp still describes the old shape.
+ *
+ * Phase 5 (swap) — Qdrant alias swap (`alias → target_collection`). Two
+ * defensive contracts:
+ *   • Resume defensive read (Round-4 Adv-finding): on `--resume` after a
+ *     partial reindex (e.g. crash between phase 4 and phase 5),
+ *     `runPhase5Swap` first reads the new collection's stamp via
+ *     `stamp.read({ collection: targetCollection })` and refuses the swap if
+ *     null. Defends against checkpoint-says-phase-4-done-but-it-wasn't
+ *     corruption — the checkpoint counter advanced but the underlying write
+ *     didn't actually durabilize.
+ *   • Old-collection retention default (R10 mitigation): the OLD collection
+ *     is retained by default (`--keep-old=true`); operators must explicitly
+ *     pass `--keep-old=false` to drop it. Phase 5 itself only performs the
+ *     alias swap; an optional cleanup pass (handled in phase 7) drops the
+ *     old collection only when explicitly opted in.
+ *
+ * Phase 6 (verify) — read the active stamp via the alias to confirm the swap
+ * landed and the alias-resolved stamp matches the new shape. Optionally compare
+ * a sample/count against `expectedCount` (snapshot length) for a coarse
+ * sanity check. Returns `{ matches, expected, actual, stamp }` for the report.
+ *
+ * Phase 7 (report) — print summary stats + the operator-facing restart
+ * instruction ("reindex complete; restart the server to load the new
+ * collection"), advance `phase_completed: 7`, and either delete the
+ * checkpoint state file or rename it to `<path>.archive.json` for
+ * post-mortem inspection. The restart instruction is load-bearing: the running
+ * server caches its embedder/Memory client at boot; only a process restart
+ * picks up the new alias target.
+ *
  * Atomic-phase-advance contract (echoed in DE10–DE11): on success, the SAME
  * `checkpoint.write` call persists BOTH the phase outputs AND
  * `phase_completed: N`. Don't write outputs first then bump phase in a separate
  * call — that opens a crash window where the next CLI run sees an incomplete
- * phase but a bumped counter, falsely skipping replay.
+ * phase but a bumped counter, falsely skipping replay. Phases 4-7 each accept
+ * OPTIONAL `state` and `checkpoint` parameters: when both are provided
+ * (production CLI orchestration) the atomic write happens; when omitted (unit
+ * tests focused on phase mechanics) the phase function still completes its
+ * core work but skips the checkpoint write. This mirrors DE10's optional
+ * `oldMemory.listFactIds` pattern — keep test ergonomics simple while
+ * preserving the production atomicity contract.
  *
  * Public API:
  *   - runPhase1Validate({ ... }) → { proceed, estimate, fromStamp, toShape }
  *   - runPhase2Snapshot({ ... }) → { vault_paths, fact_ids }
  *   - runPhase3Rebuild({ ... })  → { processed }
+ *   - runPhase4Stamp({ ... })    → void
+ *   - runPhase5Swap({ ... })     → void
+ *   - runPhase6Verify({ ... })   → { matches, expected, actual, stamp }
+ *   - runPhase7Report({ ... })   → { archivedTo? }
  */
 
 import fs from 'node:fs/promises';
@@ -559,4 +606,300 @@ export async function runPhase3Rebuild({
   }
 
   return { processed: processedThisRun };
+}
+
+/**
+ * Phase 4 (stamp) — write the new embedding stamp into the NEW Qdrant
+ * collection BEFORE the alias swap (spec §6.3, Round-4 Adv-1 ordering).
+ *
+ * The stamp records the active embedding shape ({provider, model, dim}) so
+ * later boots and reindexes can verify the collection's contents match the
+ * configured embedder. This call lands the stamp in `targetCollection` —
+ * NOT in the alias — because the alias still points at the OLD collection
+ * until phase 5 performs the swap. Writing the stamp into the alias here
+ * would mutate the live readers' view before the new vectors are publicly
+ * addressable.
+ *
+ * Atomic-phase-advance: when both `state` and `checkpoint` are provided, the
+ * function advances `phase_completed: 4` in the same `checkpoint.write` call
+ * that follows the stamp write. When either is absent (unit-test path), the
+ * stamp write still happens but the checkpoint advance is skipped — the
+ * caller is expected to be a test exercising the stamp mechanics in
+ * isolation, not the full production pipeline.
+ *
+ * @param {object} params
+ * @param {object} params.memory - Memory instance scoped to `targetCollection`.
+ *   Forwarded to `stamp.write` so the underlying `writeStamp` writes against
+ *   the NEW collection's vector store, not the alias-resolved one.
+ * @param {{ write: (args: { memory: object, collection: string, stamp: object }) => Promise<void> }} params.stamp
+ *   Stamp client; the `write` shape matches `server/lib/embedding-stamp.mjs`'s
+ *   `writeStamp({ memory, collection, stamp })`. Tests pass a mock that
+ *   captures the `collection` arg.
+ * @param {string} params.targetCollection - The new sha8-derived collection name.
+ * @param {object} params.newStampShape - `{ provider, model, dim }` for the new
+ *   embedding model. Sourced from env+pricing in the production CLI; tests
+ *   pass a literal.
+ * @param {object} [params.state] - Mutable checkpoint state (optional).
+ * @param {{ write: (s: object) => Promise<void> }} [params.checkpoint] - Optional
+ *   checkpoint client. When both `state` and `checkpoint` are present, the
+ *   atomic phase-4 advance happens.
+ * @returns {Promise<void>}
+ */
+export async function runPhase4Stamp({
+  memory,
+  stamp,
+  targetCollection,
+  newStampShape,
+  state,
+  checkpoint,
+}) {
+  // Write the stamp into the NEW collection. Per spec §6.3 ordering, this
+  // MUST complete before phase 5's alias swap so the new collection is
+  // self-describing the moment readers can reach it.
+  await stamp.write({ memory, collection: targetCollection, stamp: newStampShape });
+
+  // Atomic-phase-advance — only when production-mode args are present.
+  // Tests exercising stamp.write order in isolation skip this branch.
+  if (state && checkpoint) {
+    state.phase_completed = 4;
+    await checkpoint.write(state);
+  }
+}
+
+/**
+ * Phase 5 (swap) — perform the Qdrant alias swap (`alias → targetCollection`).
+ *
+ * Defensive resume read (Round-4 Adv-finding): the function reads the new
+ * collection's stamp BEFORE swapping. If the stamp is missing — meaning
+ * phase 4 either didn't run, ran partially, or was rolled back since the
+ * checkpoint advanced — phase 5 throws with operator-actionable guidance to
+ * `--resume from phase 4`. This narrows a corruption window that would
+ * otherwise leave the alias pointing at an unstamped collection.
+ *
+ * Atomic-phase-advance: when both `state` and `checkpoint` are provided,
+ * `phase_completed: 5` lands in the same write that occurs after the alias
+ * swap completes. Tests omit these and observe only the swap mechanics.
+ *
+ * Old-collection retention is intentionally NOT performed here. The R10
+ * mitigation default (`--keep-old=true`) keeps the old collection on disk
+ * until the operator explicitly opts in to a drop; that drop happens in
+ * phase 7's report/cleanup pass, not phase 5.
+ *
+ * @param {object} params
+ * @param {{ updateAlias: (args: { alias: string, collection: string }) => Promise<void> }} params.qdrant
+ *   Qdrant client; `updateAlias` performs an atomic alias-redirect.
+ * @param {string} params.alias - Public alias name (e.g. `'memories'`).
+ * @param {string} params.targetCollection - The new collection name to point at.
+ * @param {{ read: (args: { collection: string }) => Promise<object|null> }} params.stamp
+ *   Stamp client; only `read` is called. Returns `null` when no stamp exists.
+ * @param {object} [params.state]
+ * @param {{ write: (s: object) => Promise<void> }} [params.checkpoint]
+ * @returns {Promise<void>}
+ */
+export async function runPhase5Swap({
+  qdrant,
+  alias,
+  targetCollection,
+  stamp,
+  state,
+  checkpoint,
+}) {
+  // Defensive resume read — refuse if phase 4 didn't actually durabilize a
+  // stamp. The error message MUST match `/no stamp.*rerun --resume from
+  // phase 4/i` (test contract) so the CLI surface layer can recognize the
+  // failure and print actionable resume guidance.
+  const targetStamp = await stamp.read({ collection: targetCollection });
+  if (!targetStamp) {
+    throw new Error(
+      `refusing alias swap: target collection ${targetCollection} has no stamp; rerun --resume from phase 4`,
+    );
+  }
+
+  // Stamp present → swap is safe. The alias swap is atomic on Qdrant's side
+  // (it's the whole reason we use an alias rather than mutating a fixed
+  // collection name).
+  await qdrant.updateAlias({ alias, collection: targetCollection });
+
+  if (state && checkpoint) {
+    state.phase_completed = 5;
+    await checkpoint.write(state);
+  }
+}
+
+/**
+ * Phase 6 (verify) — confirm the alias swap landed by reading the stamp via
+ * the alias and (optionally) sanity-checking the entry count.
+ *
+ * The plan tests don't cover phase 6 directly (DE12's e2e fills that role
+ * against a real Qdrant). This implementation is intentionally conservative:
+ *   • Read the alias-resolved stamp. Compare against `newStampShape` if
+ *     provided; otherwise just confirm a stamp exists.
+ *   • Optionally count entries in the alias and compare to `expectedCount`
+ *     when both `qdrant.count` and `expectedCount` are available.
+ *   • Return `{ matches, expected, actual, stamp }` so phase 7's report can
+ *     surface a verification line for the operator.
+ *
+ * `matches` is `true` when the stamp resolves AND (when both sides are
+ * present) the count matches; it is `false` if the stamp is missing or the
+ * counts disagree. The function does NOT throw on mismatch — it returns the
+ * shape so phase 7 can render a clear report. The caller (CLI orchestrator)
+ * decides whether `matches: false` is fatal or just a warning.
+ *
+ * Atomic-phase-advance: same optional-state pattern as phases 4-5.
+ *
+ * @param {object} params
+ * @param {object} [params.memory] - Memory instance scoped to the alias (for
+ *   stamp.read via the public alias).
+ * @param {{ read: (args: { collection: string }) => Promise<object|null> }} params.stamp
+ * @param {object} [params.qdrant] - Optional client exposing `count(alias)`.
+ * @param {string} params.alias - Public alias name.
+ * @param {object} [params.newStampShape] - Expected `{ provider, model, dim }`.
+ * @param {number} [params.expectedCount] - Expected entry count from snapshot.
+ * @param {object} [params.state]
+ * @param {{ write: (s: object) => Promise<void> }} [params.checkpoint]
+ * @returns {Promise<{ matches: boolean, expected: number|null, actual: number|null, stamp: object|null }>}
+ */
+export async function runPhase6Verify({
+  memory,
+  stamp,
+  qdrant,
+  alias,
+  newStampShape,
+  expectedCount,
+  state,
+  checkpoint,
+}) {
+  // Stamp readback — confirm the alias resolves to a stamped collection.
+  const aliasStamp = await stamp.read({ collection: alias });
+
+  // Stamp shape comparison — only when an expected shape was provided.
+  let stampMatches = aliasStamp != null;
+  if (stampMatches && newStampShape) {
+    stampMatches =
+      aliasStamp.provider === newStampShape.provider &&
+      aliasStamp.model === newStampShape.model &&
+      (newStampShape.dim == null ||
+        aliasStamp.dim == null ||
+        aliasStamp.dim === newStampShape.dim);
+  }
+
+  // Count comparison — only when both sides are available.
+  let actualCount = null;
+  let countMatches = true;
+  if (qdrant && typeof qdrant.count === 'function' && typeof expectedCount === 'number') {
+    actualCount = await qdrant.count(alias);
+    countMatches = actualCount === expectedCount;
+  }
+
+  const matches = stampMatches && countMatches;
+
+  if (state && checkpoint) {
+    state.phase_completed = 6;
+    state.verify = { matches, expected: expectedCount ?? null, actual: actualCount, stamp: aliasStamp };
+    await checkpoint.write(state);
+  }
+
+  return {
+    matches,
+    expected: typeof expectedCount === 'number' ? expectedCount : null,
+    actual: actualCount,
+    stamp: aliasStamp,
+  };
+}
+
+/**
+ * Phase 7 (report) — print the operator-facing summary + restart instruction,
+ * advance `phase_completed: 7`, and clean up the checkpoint state file.
+ *
+ * The restart instruction is load-bearing: the running server caches its
+ * embedder and Memory client at boot, so even a successful alias swap won't
+ * be observed by a long-running server until it restarts. The report makes
+ * this requirement explicit.
+ *
+ * Cleanup behavior:
+ *   • If `statePath` is provided, the state file is renamed to
+ *     `<path>.archive.json` (preserves a forensic trail without polluting the
+ *     active checkpoint slot).
+ *   • If the operator passed `--keep-old=false`, that decision is honored at
+ *     the orchestrator level — phase 7 reports it, but the actual collection
+ *     drop is delegated to a separate cleanup pass (out of scope for the
+ *     phase-function unit; DE12's e2e exercises real cleanup).
+ *
+ * Atomic-phase-advance: same optional-state pattern as phases 4-6. Phase 7's
+ * advance is the LAST checkpoint write; after it completes the next
+ * `--resume` will see `phase_completed: 7` and exit cleanly with a "nothing
+ * to do" message.
+ *
+ * @param {object} params
+ * @param {object} [params.state] - Mutable checkpoint state.
+ * @param {{ write: (s: object) => Promise<void> }} [params.checkpoint]
+ * @param {string} [params.statePath] - Path to the checkpoint state file. When
+ *   provided, the file is renamed to `<path>.archive.json` after the final
+ *   atomic write so the state directory is clean for future runs.
+ * @param {{ stdout?: { write: (s: string) => any } }} [params.io] - Output
+ *   sink (DI for tests). Defaults to `process.stdout`.
+ * @param {{ rename?: (a: string, b: string) => Promise<void> }} [params.fs]
+ *   Filesystem injection (tests can stub the rename without touching disk).
+ * @returns {Promise<{ archivedTo: string|null }>}
+ */
+export async function runPhase7Report({
+  state,
+  checkpoint,
+  statePath,
+  io = { stdout: process.stdout },
+  fs: fsLike,
+} = {}) {
+  // Render summary + restart instruction. Use a defensive accessor so a stub
+  // io.stdout that doesn't implement `write` doesn't crash the phase.
+  const out = io && io.stdout && typeof io.stdout.write === 'function'
+    ? io.stdout
+    : { write: () => {} };
+
+  const fromShape = state?.from
+    ? `${state.from.provider}/${state.from.model}/${state.from.dim ?? '?'}`
+    : '(no prior stamp)';
+  const toShape = state?.to
+    ? `${state.to.provider}/${state.to.model}/${state.to.dim ?? '?'}`
+    : '(unknown)';
+  const processedCount = Array.isArray(state?.processed_ids)
+    ? state.processed_ids.length
+    : (state?.processed_ids?.size ?? 0);
+  const verify = state?.verify ?? null;
+
+  out.write(
+    `reindex complete; restart the server to load the new collection\n` +
+    `From: ${fromShape}\n` +
+    `To:   ${toShape}\n` +
+    `Entries processed: ${processedCount}\n` +
+    (state?.estimate
+      ? `Estimate: ${state.estimate.entries} entries / ~${state.estimate.tokens} tokens / ~$${(state.estimate.cost_usd ?? 0).toFixed(4)} USD\n`
+      : '') +
+    (verify
+      ? `Verify: matches=${verify.matches}` +
+        (verify.expected != null ? ` (expected=${verify.expected}, actual=${verify.actual})` : '') +
+        `\n`
+      : '') +
+    `Target collection: ${state?.target_collection ?? '(unknown)'}\n`,
+  );
+
+  // Atomic-phase-advance.
+  if (state && checkpoint) {
+    state.phase_completed = 7;
+    await checkpoint.write(state);
+  }
+
+  // Archive checkpoint state file (best-effort). Renaming preserves a
+  // forensic trail without polluting the active state slot. Errors are
+  // surfaced (not swallowed) — if the rename fails the operator should know
+  // they have a stale state.json sitting around.
+  let archivedTo = null;
+  if (statePath) {
+    const fsImpl = fsLike ?? fs;
+    if (typeof fsImpl.rename === 'function') {
+      archivedTo = `${statePath}.archive.json`;
+      await fsImpl.rename(statePath, archivedTo);
+    }
+  }
+
+  return { archivedTo };
 }
