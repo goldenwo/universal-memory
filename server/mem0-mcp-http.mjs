@@ -61,7 +61,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
 import { createStampClient, compareStamp } from './lib/embedding-stamp.mjs';
@@ -186,6 +186,16 @@ if (IS_MAIN) {
   // catch and exit(1) per server convention.
   try {
     validateProviderSupport(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
+  // Adv-5 mitigation (DE7): refuse models not in PRICING for the configured
+  // provider (e.g. UM_EMBEDDING_PROVIDER=google with UM_EMBEDDING_MODEL=
+  // text-embedding-3-small). Runs AFTER validateProviderSupport (provider
+  // first, model second). Ollama exempt — user-managed local pulls.
+  try {
+    validateModelExists(process.env);
   } catch (err) {
     console.error(`[mem0-mcp] FATAL: ${err.message}`);
     process.exit(1);
