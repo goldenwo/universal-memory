@@ -29,3 +29,9 @@ test('checks all three surfaces independently', () => {
     UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER_MODEL: 'gpt-4o-mini',         // BAD: anthropic doesn't have gpt-4o-mini
   }), /summarizer.*gpt-4o-mini.*not in PRICING.*anthropic/i);
 });
+
+test('silently skips unknown provider (DE6 owns the unknown-provider error)', () => {
+  assert.doesNotThrow(() => validateModelExists({
+    UM_EMBEDDING_PROVIDER: 'cohere', UM_EMBEDDING_MODEL: 'embed-english-v3.0',
+  }));
+});

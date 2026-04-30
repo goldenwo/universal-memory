@@ -25,6 +25,10 @@ export const defaults = {
   embeddingModel: 'nomic-embed-text',
   embeddingDim: 768,
   factsModel: 'llama3',
+  // Adv-5: ollama-class providers (user-managed local model pulls) are exempt
+  // from PRICING-driven model-existence validation. Future LM Studio / llama.cpp
+  // / vllm modules can opt in by declaring this same flag.
+  skipModelValidation: true,
 };
 
 export const requires = [];

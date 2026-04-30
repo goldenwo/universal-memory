@@ -91,9 +91,14 @@ export function validateProviderSupport(env) {
  * model alternatives so operators can self-correct.
  *
  * Iterates the three surface (provider, model) pairs that are explicitly set
- * (skip-on-missing). Ollama is exempt because pulled models are user-managed
- * locally and not enumerated in PRICING. Reads PRICING[provider].models[model]
- * directly (matches actual export shape; see pricing.mjs §8.1).
+ * (skip-on-missing). Providers that declare `defaults.skipModelValidation`
+ * (e.g. ollama — pulled models are user-managed locally and not enumerated
+ * in PRICING) are exempt; future LM Studio / llama.cpp / vllm modules can
+ * opt in via the same registry flag rather than touching this validator.
+ * Unknown providers are silently skipped — `validateProviderSupport` (DE6)
+ * owns the unknown-provider error path; this keeps DE7 self-contained and
+ * order-independent. Reads PRICING[provider].models[model] directly (matches
+ * actual export shape; see pricing.mjs §8.1).
  *
  * @param {Record<string, string>} env - Environment variables (typically process.env)
  * @throws {Error} when a configured (provider, model) is not in PRICING
@@ -108,7 +113,13 @@ export function validateModelExists(env) {
     const provider = env[providerVar];
     const model = env[modelVar];
     if (!provider || !model) continue; // skip-on-missing
-    if (provider === 'ollama') continue; // exempt — user-managed local pulls
+    if (!PRICING[provider]) continue; // unknown provider — DE6/registry owns its own error
+    // Registry-driven exemption: ollama-class providers (skipModelValidation: true)
+    // bypass the PRICING-table check because their model catalogue is user-managed.
+    // try/catch matches DE6 fix-pass pattern (commit ea246e0): unknown providers
+    // fall through safely without depending on validation order.
+    const providerDef = (() => { try { return getProvider(provider); } catch { return null; } })();
+    if (providerDef?.defaults?.skipModelValidation) continue;
     const known = PRICING[provider]?.models;
     if (!known || !known[model]) {
       const list = Object.keys(known || {}).join(', ');
