@@ -442,8 +442,11 @@ async function rebuildOne(newMemory, vault, id) {
  * we write the checkpoint (so the operator's next `--resume` skips everything
  * we already processed) and throw a fresh `ProviderError` whose message
  * includes `--resume` so the CLI surface layer can print actionable guidance.
- * Non-rate-limit errors propagate immediately — phase 3 doesn't second-guess
- * the operator on configuration or data-shape failures.
+ * Non-rate-limit errors (e.g., `PROVIDER_UPSTREAM`, network blips) propagate
+ * immediately — phase 3 doesn't second-guess the operator on configuration or
+ * data-shape failures — but we still best-effort-persist progress made BEFORE
+ * the failed entry so a `--resume` after the operator addresses the root cause
+ * picks up from the last completed entry rather than replaying the whole phase.
  *
  * Atomic phase-advance contract: the FINAL entry's `processed_ids.push` AND
  * `phase_completed = 3` are bundled into a single terminal
@@ -505,7 +508,14 @@ export async function runPhase3Rebuild({
         break;
       } catch (err) {
         const isRateLimit = err instanceof ProviderError && err.class === 'PROVIDER_RATELIMIT';
-        if (!isRateLimit) throw err;
+        if (!isRateLimit) {
+          // Persist progress made before this entry so --resume can pick up
+          // after a transient upstream error (PROVIDER_UPSTREAM, network blip,
+          // etc.). Best-effort: a checkpoint write failure must not mask the
+          // original error the operator needs to see.
+          try { await checkpoint.write(state); } catch (_e) { /* best-effort */ }
+          throw err;
+        }
         if (attempt >= maxRetries) {
           // Exhausted the budget. Persist whatever we managed to complete so
           // the next --resume picks up exactly where we left off, then throw
