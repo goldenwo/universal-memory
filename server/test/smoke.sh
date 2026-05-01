@@ -1469,10 +1469,12 @@ else
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
 
-# Clean up the auth-config tempfile on the success path. Failure paths
-# `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
-# policy. Acceptable per the R1 hardening rationale at the auth setup block.
-_um_smoke_auth_cleanup
+# Auth cleanup deferred to after the boot-smoke gate below — the curl()
+# wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
+# every curl call (so the bearer token never appears in argv). Cleanup
+# must run AFTER the last curl invocation, otherwise the wrapped curl
+# fails with "cannot read config from <deleted-tmpfile>" and the boot-
+# test poll silently 30-times-fails (caught on PR #35 CI run 25235030377).
 
 # 6/6 mocked-SDK boot smoke gate (Task G2.5, spec §9.4)
 # ------------------------------------------------------
@@ -1604,7 +1606,14 @@ else
 
 	if [ "$boot_rc" -ne 0 ]; then
 		echo "[smoke] 6/6 mocked-SDK boot tests FAILED (one or more providers did not boot)" >&2
+		_um_smoke_auth_cleanup
 		exit 1
 	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
 fi
+
+# Clean up the auth-config tempfile on the success path. Failure paths
+# `exit 1` after running the cleanup explicitly above; the file is 0600
+# and OS tmp policy sweeps any leftover. R1 hardening rationale at the
+# auth setup block.
+_um_smoke_auth_cleanup
