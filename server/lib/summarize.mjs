@@ -37,6 +37,13 @@ import * as googleP from './provider/google.mjs';
 import * as ollamaP from './provider/ollama.mjs';
 import { computeCost } from './pricing.mjs';
 
+// G2: no-op default metrics sink. When callers don't inject `ctx.metrics`,
+// emissions go here so production paths without a wired prom-client adapter
+// still complete normally. The actual prom-client backing for um_provider_*
+// is added in a separate task; this orchestrator only depends on the duck-
+// typed `{ counter, histogram }` shape (spec §8.3).
+const NOOP_METRICS = { counter: () => {}, histogram: () => {} };
+
 export const BACKENDS = {
   openai:             { invoke: openaiInvoke,                requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'], defaults: { summarizerModel: 'gpt-4o-mini' } },
   anthropic:          { invoke: anthropicP.summarizerInvoke, requires: anthropicP.requires,                     defaults: anthropicP.defaults },
@@ -94,7 +101,28 @@ export async function summarize(transcript, ctx = {}) {
 
   // Provider override hook for tests — bypasses backend dispatch entirely.
   const invoke = ctx._providerOverride?.summarizerInvoke ?? b.invoke;
-  const raw = await invoke(transcript, { ...ctx, model });
+
+  // G2 (spec §8.3): emit um_provider_* metrics around the provider invocation.
+  // Default to a no-op sink when ctx.metrics is not injected; tests inject a
+  // capturing stub. Surface label is 'summarizer' (singular per §8.3 enum).
+  const metrics = ctx.metrics ?? NOOP_METRICS;
+  const surface = 'summarizer';
+  const labels = { provider: providerName, model, surface };
+  const startNs = process.hrtime.bigint();
+
+  let raw;
+  try {
+    raw = await invoke(transcript, { ...ctx, model });
+  } catch (err) {
+    metrics.counter(
+      'um_provider_errors_total',
+      { ...labels, error_class: err?.class ?? 'UNKNOWN' },
+      1,
+    );
+    throw err;
+  }
+
+  const elapsedSec = Number(process.hrtime.bigint() - startNs) / 1e9;
 
   // Reshape: provider modules return { content, usage: { tokensIn, tokensOut } }.
   // Guard with fallbacks in case a future adapter uses old shape transitionally.
@@ -105,6 +133,11 @@ export async function summarize(transcript, ctx = {}) {
   // ollama is self-hosted; pricing table has no entries → cost is always 0.
   // All other providers compute cost from the PRICING table (single source of truth).
   const costUsd = providerName === 'ollama' ? 0 : computeCost(providerName, model, tokensIn, tokensOut);
+
+  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'in' }, tokensIn);
+  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'out' }, tokensOut);
+  metrics.counter('um_provider_cost_usd_total', labels, costUsd);
+  metrics.histogram('um_provider_request_duration_seconds', labels, elapsedSec);
 
   return { summary, costUsd, tokensIn, tokensOut };
 }
