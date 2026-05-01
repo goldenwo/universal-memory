@@ -8,6 +8,91 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 _No unreleased changes._
 
+## [0.7.0-alpha] — 2026-05-01
+
+Provider-neutrality release. The memory server, MCP HTTP layer, and reindex
+CLI work with **OpenAI, Anthropic, Google, and Ollama** across all three
+LLM surfaces (embedding, summarizer, facts) — previous releases were
+OpenAI-only. Alpha: OpenAI paths and Anthropic-as-summarizer/facts are
+production-ready; Google + Ollama paths are spec-compliant and unit-tested
+but await first-user live validation.
+
+### Added
+
+- **Four-provider neutrality** — pick any combination per surface via
+  `UM_EMBEDDING_PROVIDER`, `UM_SUMMARIZER_PROVIDER`, `UM_FACTS_PROVIDER`
+  (each accepts `openai` | `anthropic` | `google` | `ollama`). Optional
+  `UM_FACTS_FALLBACK` for cross-provider facts fallback.
+- **Provider registry** at `server/lib/provider/registry.mjs`; per-provider
+  modules at `server/lib/provider/{openai,anthropic,google,ollama}.mjs`
+  exposing a uniform contract per spec §3.2.
+- **Surface dispatchers** — `server/lib/embed.mjs` + `server/lib/facts.mjs`
+  (Pattern B: config translation for mem0); `server/lib/summarize.mjs`
+  (Pattern A: direct dispatch).
+- **Embedding-stamp guard** — server reads `_um_embedding_stamp` sentinel
+  doc on boot and refuses to start if the configured embedder doesn't match
+  the recorded provider/model/dim. Operator is pointed at `um-cli reindex`.
+- **`cli/reindex.mjs`** — 7-phase reindex orchestrator with crash-safe
+  resume (Adv-1 stamp-then-swap, Adv-4 atomic phase advance per spec §6.5);
+  wrapped as `um-cli reindex --confirm`. ~941 lines.
+- **`_um_embedding_stamp` system doc** — filtered from all read paths via
+  `isSystemDoc()` so it never surfaces to recall, search, or list.
+- **Wizard 4-path provider picker** — `installer/wizard-lib.sh` offers
+  OpenAI-only / mix-providers / local-Ollama / skip-and-edit during
+  install.sh interactive mode.
+- **`um_provider_*` Prometheus metrics** — `tokens_total`, `cost_total`,
+  `request_duration_seconds`, `errors_total` per provider × surface. The
+  `SURFACES` enum in `server/lib/metrics.mjs` is the single source of truth
+  for metric labels (`'embed'`, `'summarize'`, `'facts'`).
+- **R11 secret redaction** — pino redaction at log emission for `sk-`,
+  `sk-ant-`, `AIza`, and `Bearer` patterns; covers headers, URL params,
+  and free-form message strings. Pattern order matters: `sk-ant-` precedes
+  `sk-` so greedy match doesn't consume the prefix.
+- **Mocked-SDK boot smoke** (`UM_TEST_MOCK_SDK=1`) — every provider config
+  can be smoke-tested without real API keys.
+- **`docs/contributing/add-provider.md`** — 6-touch checklist for adding a
+  fifth provider.
+- **`MIGRATION.md` §`v0.6 → v0.7`** — env-var rename table + reindex
+  decision tree.
+
+### Changed
+
+- **Breaking:** Env-var renames per pre-1.0 hard-break policy (no fallback
+  shims; see `MIGRATION.md` §`v0.6 → v0.7`):
+  - `UM_SUMMARIZER` → `UM_SUMMARIZER_PROVIDER`
+  - `UM_SUMMARIZE_MODEL` → `UM_SUMMARIZER_MODEL`
+  - `MEM0_LLM_MODEL` → `UM_FACTS_MODEL`
+  - `MEM0_EMBEDDER_MODEL` → `UM_EMBEDDING_MODEL`
+- **Breaking:** `installer/install.sh --yes` now refuses on missing API key
+  (was permissive in v0.6).
+- `mem0ai` exact-pinned to `2.4.6` (R1 mitigation — guards against silent
+  SDK-pin drift that pruned `ollama` from `node_modules` and broke 18 test
+  files).
+
+### Fixed
+
+- R11 redaction wired in **both** `makeLogger()` (test path) and
+  `getLogger()` → `base()` → `buildOptions()` (production path). Initial
+  implementation only covered the test path; caught in PR review.
+
+### Security
+
+- Secret patterns redacted from logs at emission time (R11) — covers
+  OpenAI (`sk-`), Anthropic (`sk-ant-`), Google (`AIza`), and any
+  `Bearer <token>` headers.
+
+### Test signal
+
+- 589 server unit tests / 583 pass / 0 fail / 6 skipped
+- 34 wizard tests, 0 fail
+- 66 install tests, 0 fail
+- 36 CLI tests / 33 pass / 3 skipped (UM_LIVE_TESTS-gated)
+- CI: smoke + cross-platform installer (ubuntu + macos) all SUCCESS
+- DE1 §6.1 live spike (real qdrant + openai): mem0 `metadata.id` roundtrips ✅
+- FIN1 anthropic-as-facts: live Claude call extracts facts ✅
+
+### Tracked v0.8 follow-ups (none block this alpha — see `ROADMAP.md` §v0.8)
+
 ## [0.6.0-alpha] — 2026-04-25
 
 ### Added
@@ -318,7 +403,8 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...HEAD
+[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...HEAD
+[0.7.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/goldenwo/universal-memory/releases/tag/v0.4.0-alpha

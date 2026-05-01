@@ -1,27 +1,31 @@
 # Universal-memory — workflow reference
 
-> **Version:** This document describes **v0.6.0-alpha** (tagged 2026-04-27).
+> **Version:** This document describes **v0.7.0-alpha** (tagged 2026-05-01).
 > Three equal-peer surfaces: MCP (every Claude surface + Codex + Custom GPT),
 > REST (OpenAPI 3.1 — Custom GPT Actions, Responses API, HTTP clients), and
 > the standalone `um` CLI (7 subcommands). Progressive disclosure on reads:
 > responses default to compact snippets; full bodies via `?full=1` /
 > `full: true`.
 >
-> **What's new in v0.6**, in one place: see [`CHANGELOG.md`](../CHANGELOG.md)
-> §`[0.6.0-alpha]` — bearer auth, structured pino logging with `request_id`,
-> `/metrics` Prometheus (loopback-only default), per-IP rate limiter,
-> cross-process lockdir, O_NOFOLLOW vault writes, `um-bridge-claude-mem`
-> one-way ingest. Breaking changes (envelope unification, default-secure
-> posture) documented in [`MIGRATION.md`](../MIGRATION.md) §`v0.5 → v0.6`.
+> **What's new in v0.7**, in one place: see [`CHANGELOG.md`](../CHANGELOG.md)
+> §`[0.7.0-alpha]` — provider neutrality across embed/summarizer/facts (four
+> providers: `openai`, `anthropic`, `google`, `ollama` via `UM_*_PROVIDER`
+> env vars), embedding-stamp guard, `um-cli reindex` for safe migrations,
+> R11 secret redaction (`sk-`, `sk-ant-`, `AIza`, `Bearer`),
+> `um_provider_*` Prometheus metrics, mocked-SDK boot smoke. Breaking changes
+> (env-var renames `UM_SUMMARIZER` → `UM_SUMMARIZER_PROVIDER` etc.)
+> documented in [`MIGRATION.md`](../MIGRATION.md) §`v0.6 → v0.7`.
 
 Source-of-truth description of what universal-memory does on this machine
-today. Written against **v0.6.0-alpha** (supersedes v0.5.0-alpha, tagged
-2026-04-24). The body sections below describe the v0.5 baseline plus the
-v0.6 deltas; when a v0.6 surface differs from v0.5, the change is noted
-inline with the v0.6 version tag. For a phase-by-phase history of the
-v0.5→v0.6 work, see `docs/plans/2026-04-24-v0.6-design.md` (gitignored).
-Update this file when the runtime behavior changes — banner version is
-the trigger.
+today. Written against **v0.7.0-alpha** (supersedes v0.6.0-alpha, tagged
+2026-04-25). The body sections below describe the v0.5 baseline plus the
+v0.6 and v0.7 deltas; when a later-version surface differs from v0.5, the
+change is noted inline with the version tag. For phase-by-phase histories
+of the v0.5→v0.6 and v0.6→v0.7 work, see
+`docs/plans/2026-04-24-v0.6-design.md` and
+`docs/plans/2026-04-27-v0.7-provider-neutrality-design.md` (both
+gitignored). Update this file when the runtime behavior changes — banner
+version is the trigger.
 
 Audience: the maintainer (you). Useful when answering "where did X go?", "why didn't Y fire?", "what tool should Claude call for Z?" — or when a fresh session needs to catch up on the runtime picture.
 

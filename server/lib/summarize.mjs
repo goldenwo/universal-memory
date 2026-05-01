@@ -32,6 +32,7 @@ export const EXTERNAL_SUMMARY_META_INSTRUCTION =
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
+import * as openaiP from './provider/openai.mjs';
 import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP from './provider/google.mjs';
 import * as ollamaP from './provider/ollama.mjs';
@@ -39,7 +40,7 @@ import { computeCost } from './pricing.mjs';
 import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
 
 export const BACKENDS = {
-  openai:             { invoke: openaiInvoke,                requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'], defaults: { summarizerModel: 'gpt-4o-mini' } },
+  openai:             { invoke: openaiP.summarizerInvoke,    requires: openaiP.requires,                        defaults: openaiP.defaults },
   anthropic:          { invoke: anthropicP.summarizerInvoke, requires: anthropicP.requires,                     defaults: anthropicP.defaults },
   google:             { invoke: googleP.summarizerInvoke,    requires: googleP.requires,                        defaults: googleP.defaults },
   ollama:             { invoke: ollamaP.summarizerInvoke,    requires: ollamaP.requires,                        defaults: ollamaP.defaults },
@@ -53,11 +54,11 @@ export const BACKENDS = {
  * @param {object} ctx - Options / DI overrides
  * @param {string}  [ctx.provider]          - Provider/backend name (preferred v0.7 name)
  * @param {string}  [ctx.backend]           - Backend name (v0.6 compat alias for ctx.provider)
- * @param {object}  [ctx.openaiClient]      - Pre-made OpenAI client (for test stubbing)
+ * @param {object}  [ctx.client]            - Pre-made provider client (for test stubbing); for openai, ctx.openaiClient is also accepted as a legacy alias
+ * @param {object}  [ctx.openaiClient]      - Legacy alias for ctx.client (openai-only). Prefer ctx.client.
  * @param {Function}[ctx.fetch]             - fetch replacement for ollama (for test stubbing)
  * @param {string}  [ctx.model]             - Model override
  * @param {string}  [ctx.systemPrompt]      - System prompt prepended to transcript
- * @param {number}  [ctx.temperature]       - Temperature override
  * @param {string}  [ctx.host]              - Ollama host override
  * @param {object}  [ctx._providerOverride] - Test seam: object with summarizerInvoke; bypasses backend dispatch
  * @returns {Promise<{summary: string, costUsd: number, tokensIn: number, tokensOut: number}>}
@@ -106,7 +107,11 @@ export async function summarize(transcript, ctx = {}) {
 
   let raw;
   try {
-    raw = await invoke(transcript, { ...ctx, model });
+    // Normalize the legacy openai-only `openaiClient` test seam to the
+    // canonical `client` name used by every provider/*.mjs summarizerInvoke
+    // (per provider contract §3.2). New tests should pass `client` directly;
+    // `openaiClient` continues to work for back-compat with v0.6 tests.
+    raw = await invoke(transcript, { ...ctx, model, client: ctx.client ?? ctx.openaiClient });
   } catch (err) {
     metrics.counter(
       PROVIDER_METRICS.ERRORS_TOTAL,
@@ -136,30 +141,8 @@ export async function summarize(transcript, ctx = {}) {
   return { summary, costUsd, tokensIn, tokensOut };
 }
 
-// DI for tests: openaiInvoke accepts ctx.openaiClient for stubbing.
-// Stays inline through C1; C2 migrates openai to provider/openai.mjs fully.
-
-async function openaiInvoke(transcript, ctx) {
-  // Friendly error if no API key is configured (avoids SDK's cryptic stack trace)
-  if (!ctx.openaiClient && !process.env.UM_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
-    throw new Error('summarize backend=openai requires UM_OPENAI_API_KEY or OPENAI_API_KEY env var');
-  }
-  // Lazy-import openai SDK; in ctx, accept a pre-made client for test stubbing
-  const client = ctx.openaiClient ?? new (await import('openai')).default({
-    apiKey: process.env.UM_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY,
-  });
-  const model = ctx.model ?? process.env.UM_SUMMARIZE_MODEL ?? 'gpt-4o-mini';
-  const systemPrompt = ctx.systemPrompt ?? '';
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-      { role: 'user', content: transcript },
-    ],
-    temperature: ctx.temperature ?? 0.2,
-  });
-  const content = response.choices[0].message.content;
-  const tokensIn = response.usage?.prompt_tokens ?? 0;
-  const tokensOut = response.usage?.completion_tokens ?? 0;
-  return { content, usage: { tokensIn, tokensOut } };
-}
+// C2 migration done: BACKENDS.openai.invoke now points at provider/openai.mjs's
+// summarizerInvoke (the previous inline openaiInvoke duplicated the same logic
+// minus UM_TEST_MOCK_SDK and ProviderError wrapping). Test stubs continue to
+// work via the ctx.openaiClient → ctx.client back-compat translation in the
+// summarize() dispatch above.

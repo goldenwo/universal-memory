@@ -137,8 +137,8 @@ assert_nocontains() {
 }
 
 test_wizard_select_basic() {
-  # Use a here-string so wizard_select runs in the current shell (eval modifies
-  # $CHOICE in this scope). A `... | wizard_select` pipe would put it in a
+  # Use a here-string so wizard_select runs in the current shell (printf -v
+  # modifies $CHOICE in this scope). A `... | wizard_select` pipe would put it in a
   # subshell and the assignment would be lost.
   CHOICE=""
   wizard_select CHOICE "Pick one:" alpha beta gamma <<< $'2\n' >/dev/null

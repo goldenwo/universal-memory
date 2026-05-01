@@ -46,6 +46,9 @@ export function embedderConfig(env) {
     config: {
       model: env.UM_EMBEDDING_MODEL || defaults.embeddingModel,
       apiKey: resolveApiKey(env),
+      // Pre-set the dimension so mem0 doesn't auto-detect at boot — see
+      // the parallel comment in provider/openai.mjs for the rationale.
+      embeddingDims: defaults.embeddingDim,
     },
   };
 }
