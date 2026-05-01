@@ -76,7 +76,9 @@ export async function summarizerInvoke(prompt, opts = {}) {
   // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
   // tests can spin the container up without real API calls (spec §9.4).
   // Mock shape mirrors the real return below: { content, usage }.
-  if (env.UM_TEST_MOCK_SDK) {
+  // Strict `=== '1'` check matches the UM_SKIP_BOOT_SMOKE pattern — avoids
+  // the string-truthy footgun where 'false'/'0' would silently activate.
+  if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: '[MOCK] openai summary',
       usage: { tokensIn: 10, tokensOut: 5 },

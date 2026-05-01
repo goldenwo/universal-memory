@@ -85,7 +85,9 @@ export async function summarizerInvoke(prompt, { fetch = globalThis.fetch, host 
   // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
   // tests can spin the container up without a real Ollama daemon (spec §9.4).
   // Mock shape mirrors the real return below: { content, usage }.
-  if (process.env.UM_TEST_MOCK_SDK) {
+  // Strict `=== '1'` check matches the UM_SKIP_BOOT_SMOKE pattern — avoids
+  // the string-truthy footgun where 'false'/'0' would silently activate.
+  if (process.env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: '[MOCK] ollama summary',
       usage: { tokensIn: 10, tokensOut: 5 },
@@ -143,7 +145,9 @@ export async function probeModel(host, model, { fetch: customFetch = globalThis.
   // smoke-gate boot path does not need a live Ollama daemon (spec §9.4).
   // Returns true unconditionally — the mock-sdk gate is about clean boot,
   // not validating model existence semantics.
-  if (process.env.UM_TEST_MOCK_SDK) {
+  // Strict `=== '1'` check matches the UM_SKIP_BOOT_SMOKE pattern — avoids
+  // the string-truthy footgun where 'false'/'0' would silently activate.
+  if (process.env.UM_TEST_MOCK_SDK === '1') {
     return true;
   }
   let res;

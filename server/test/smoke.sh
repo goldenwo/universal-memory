@@ -1490,10 +1490,27 @@ else
 		UM_SUMMARIZER_PROVIDER="$provider" \
 		UM_FACTS_PROVIDER="$provider" \
 		docker compose -f "$UM_COMPOSE_FILE" up -d --force-recreate
+		# I3: Capture the freshly-recreated container's ID so the curl health
+		# poll can't false-pass against a leftover container that's still
+		# answering on port 6335 from a previous run. `--force-recreate` does
+		# replace the container, but we assert the new ID is `running` before
+		# trusting the curl probe.
+		local container_id
+		container_id=$(docker compose -f "$UM_COMPOSE_FILE" ps --quiet memory-server 2>/dev/null || true)
+		if [ -z "$container_id" ]; then
+			echo "  -> ${provider} container not started" >&2
+			return 1
+		fi
+		local status
+		status=$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+		if [ "$status" != "running" ]; then
+			echo "  -> ${provider} container status=${status} (expected running)" >&2
+			return 1
+		fi
 		# Wait for /api/state to respond OK
 		for i in 1 2 3 4 5 6 7 8 9 10; do
 			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
-				echo "  -> ${provider} booted cleanly"
+				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
 				return 0
 			fi
 			sleep 1
@@ -1504,10 +1521,29 @@ else
 
 	# Run boot-tests for each non-default provider
 	# (anthropic skipped for embeddings — spec §3.2 unsupported-surface contract)
-	test_boot_with_provider openai      # baseline (existing)
-	test_boot_with_provider google      # tests google-embed + google-summ + google-facts
-	test_boot_with_provider ollama      # tests ollama-embed + ollama-summ + ollama-facts
+	#
+	# I2: accumulate failures via `rc` rather than letting `set -euo pipefail`
+	# kill the script on the first failing provider. We want the report to
+	# tell us which providers booted and which didn't; a single failure that
+	# aborts the whole run hides regressions in later providers. The final
+	# `[[ "$rc" == 0 ]]` keeps the script's overall exit status faithful.
+	boot_rc=0
+	test_boot_with_provider openai      || boot_rc=1   # baseline (existing)
+	test_boot_with_provider google      || boot_rc=1   # tests google-embed + google-summ + google-facts
+	test_boot_with_provider ollama      || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
 	# anthropic only for summarizer + facts (separately, with embedding=openai)
-	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed
+	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed || boot_rc=1
+
+	# I1: explicit teardown of the boot-test stack so a failed provider
+	# doesn't leave the container running between local smoke iterations or
+	# poison the next CI step. Always runs (success or failure path); error
+	# from `down` itself is non-fatal — the smoke gate's verdict is `boot_rc`.
+	echo "[smoke]     tearing down boot-test stack"
+	docker compose -f "$UM_COMPOSE_FILE" down >/dev/null 2>&1 || true
+
+	if [ "$boot_rc" -ne 0 ]; then
+		echo "[smoke] 6/6 mocked-SDK boot tests FAILED (one or more providers did not boot)" >&2
+		exit 1
+	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
 fi
