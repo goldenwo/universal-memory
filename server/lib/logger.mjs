@@ -59,8 +59,38 @@ function censorString(value) {
   return out;
 }
 
+// R11 layer 1: structural path-based redaction. pino's built-in fast path.
+const REDACT_CONFIG = Object.freeze({
+  paths: [
+    '*.headers.authorization',
+    '*.headers["x-api-key"]',
+    '*.config.headers.*',
+    '*.request.headers.*',
+    '*.config.url',
+    '*.request.url',
+    '*.config.params.*',
+  ],
+  censor: '[REDACTED]',
+});
+
+// R11 layer 2: value-based censor walks every string field via JSON replacer.
+// Catches leaks in arbitrary positions (error messages, free-form text) that
+// path-based redaction can't reach.
+function censorFormatter(obj) {
+  try {
+    return JSON.parse(JSON.stringify(obj, (k, v) => censorString(v)));
+  } catch {
+    // Circular reference or other JSON failure — return raw obj.
+    // Pino's path-based redact is still in effect; we lose the value-censor
+    // pass for this log line only.
+    return obj;
+  }
+}
+
 /**
  * Build a pino logger configured with R11 two-layer credential redaction.
+ * Used by tests; production code goes through getLogger() → base() which
+ * also applies the same redaction config via buildOptions().
  *
  * @param {object} [opts]
  * @param {NodeJS.WritableStream} [opts.stream] - Destination Writable
@@ -70,33 +100,7 @@ function censorString(value) {
  */
 export function makeLogger(opts = {}) {
   const { stream, ...rest } = opts;
-  const pinoOptions = {
-    redact: {
-      paths: [
-        '*.headers.authorization',
-        '*.headers["x-api-key"]',
-        '*.config.headers.*',
-        '*.request.headers.*',
-        '*.config.url',
-        '*.request.url',
-        '*.config.params.*',
-      ],
-      censor: '[REDACTED]',
-    },
-    formatters: {
-      // Value-based censor: walk every string field and apply regex redaction.
-      log: (obj) => {
-        try {
-          return JSON.parse(JSON.stringify(obj, (k, v) => censorString(v)));
-        } catch {
-          // Circular reference or other JSON failure — return raw obj.
-          // Pino's path-based redact is still in effect; we lose the value-censor pass for this log line.
-          return obj;
-        }
-      },
-    },
-    ...rest,
-  };
+  const pinoOptions = { ...buildOptions(), ...rest };
   return stream ? pino(pinoOptions, stream) : pino(pinoOptions);
 }
 
@@ -110,7 +114,14 @@ function buildOptions() {
   return {
     level: process.env.UM_LOG_LEVEL || 'info',
     base: null,
-    formatters: { level: (label) => ({ level: label }) },
+    // R11 layer 1: see REDACT_CONFIG above. Applies to both production
+    // (getLogger() → base()) AND test-only callers (makeLogger).
+    redact: REDACT_CONFIG,
+    formatters: {
+      level: (label) => ({ level: label }),
+      // R11 layer 2: see censorFormatter above.
+      log: censorFormatter,
+    },
   };
 }
 
