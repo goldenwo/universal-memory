@@ -45,12 +45,12 @@ let testSink = null;
 // arbitrary err.config blobs.
 // ---------------------------------------------------------------------------
 
-const KEY_PATTERNS = [
-  /sk-[A-Za-z0-9_-]+/g,
-  /sk-ant-[A-Za-z0-9_-]+/g,
-  /AIza[A-Za-z0-9_-]+/g,
-  /Bearer [A-Za-z0-9_.+/=-]+/g,
-];
+const KEY_PATTERNS = Object.freeze([
+  /sk-ant-[A-Za-z0-9_-]+/g,    // anthropic — must be BEFORE sk-* (sk- would greedy-match this)
+  /sk-[A-Za-z0-9_-]+/g,        // openai
+  /AIza[A-Za-z0-9_-]+/g,       // google
+  /Bearer [A-Za-z0-9_.+/=-]+/g, // generic Authorization header value
+]);
 
 function censorString(value) {
   if (typeof value !== 'string') return value;
@@ -85,7 +85,15 @@ export function makeLogger(opts = {}) {
     },
     formatters: {
       // Value-based censor: walk every string field and apply regex redaction.
-      log: (obj) => JSON.parse(JSON.stringify(obj, (k, v) => censorString(v))),
+      log: (obj) => {
+        try {
+          return JSON.parse(JSON.stringify(obj, (k, v) => censorString(v)));
+        } catch {
+          // Circular reference or other JSON failure — return raw obj.
+          // Pino's path-based redact is still in effect; we lose the value-censor pass for this log line.
+          return obj;
+        }
+      },
     },
     ...rest,
   };

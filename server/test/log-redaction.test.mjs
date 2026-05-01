@@ -21,6 +21,7 @@ test('pino redacts Authorization header in error context', () => {
   const captured = [];
   const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
   log.error({ err: { config: { headers: { authorization: 'Bearer sk-leak' } } } }, 'failed');
+  assert.equal(captured.length, 1, 'expected exactly one log line emitted');
   assert.ok(!JSON.stringify(captured).includes('sk-leak'));
 });
 
@@ -28,6 +29,7 @@ test('pino redacts Google query-param key in URL', () => {
   const captured = [];
   const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
   log.error({ err: { config: { url: 'https://...?key=AIza-LEAK' } } }, 'failed');
+  assert.equal(captured.length, 1, 'expected exactly one log line emitted');
   assert.ok(!JSON.stringify(captured).includes('AIza-LEAK'));
 });
 
@@ -35,5 +37,6 @@ test('pino redacts sk-ant-LEAK in arbitrary message strings (value-based censor)
   const captured = [];
   const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
   log.error({ msg: 'failed with token sk-ant-LEAK in message' });
+  assert.equal(captured.length, 1, 'expected exactly one log line emitted');
   assert.ok(!JSON.stringify(captured).includes('sk-ant-LEAK'));
 });
