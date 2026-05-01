@@ -9,10 +9,13 @@ test('mem0 metadata.id roundtrips through add() with infer:false', { skip: !proc
   const memory = new Memory({ embedder: getEmbedderConfig(env), llm: getFactsLlmConfig(env) });
   const sentinelId = '_test_stamp_roundtrip_' + Date.now();
   await memory.add('roundtrip test', { userId: 'test_user', metadata: { id: sentinelId, marker: 'spike' }, infer: false });
-  // Read back via list (should include the doc with the sentinel ID)
-  const items = await memory.getAll({ userId: 'test_user' });
-  const found = items.find(i => i.metadata?.id === sentinelId);
-  assert.ok(found, 'mem0 did not roundtrip metadata.id');
+  // Read back via list (should include the doc with the sentinel ID).
+  // mem0 OSS returns either Array OR {results: [...]} shape depending on version —
+  // mirror DE4 readStamp's defensive handling (server/lib/embedding-stamp.mjs).
+  const raw = await memory.getAll({ userId: 'test_user' });
+  const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
+  const found = items.find((i) => i.metadata?.id === sentinelId);
+  assert.ok(found, `mem0 did not roundtrip metadata.id (got ${items.length} items, none matching ${sentinelId})`);
   assert.equal(found.metadata.marker, 'spike');
 });
 
