@@ -263,6 +263,33 @@ Versioned replace.
 
 ---
 
+## Reindex workflow
+
+Reindexing rebuilds the Qdrant collection from the markdown vault — used when switching embedding providers (v0.7+ provider-neutrality), recovering from a corrupted index, or restoring after a Qdrant data wipe. The CLI lives at `cli/reindex.mjs` and is wrapped as `um-cli reindex`.
+
+### Server must be stopped before reindex (or use `--no-server-probe`)
+
+The reindex CLI's phase 1 validation includes a server-probe gate (default ON). If the memory-server is reachable, the CLI refuses to proceed (you can't safely re-embed while writes are happening). If the server is unreachable AND probe is on, the CLI ALSO refuses — explicit-choices behavior, not auto-continue.
+
+To proceed when the server is intentionally stopped, pass `--no-server-probe`:
+
+```bash
+docker compose -f server/docker-compose.yml stop memory-server
+um-cli reindex --confirm --no-server-probe
+```
+
+**Rationale:** ECONNREFUSED has multiple causes (server down on purpose, wrong port, network issue, Docker dead). Forcing explicit acknowledgement prevents writes-to-wrong-collection from misconfigurations. See also `docs/runbook-reindex.md` for the operational checklist (the same rationale appears there from an observability/runbook lens).
+
+---
+
+## Summarizer fallback
+
+The summarizer pipeline accepts a primary provider (`UM_SUMMARIZER_PROVIDER`, default `openai`) and an optional fallback (`UM_SUMMARIZER_FALLBACK`) used when the primary is unavailable (e.g. `claude-agent-sdk` server-side, where Docker can't spawn a host-side CC process).
+
+**Cross-provider fallback caveat:** if `UM_SUMMARIZER_FALLBACK` is set to a different provider than `UM_SUMMARIZER_PROVIDER`, the summary prompt is generic across providers but **output style may vary** (Anthropic Claude tends to be more structured; OpenAI gpt-4o-mini more terse). Same-provider fallback (e.g. anthropic→anthropic on a different model) avoids this. The startup info-log emits a one-shot `cross-provider` notice so the variation is visible (see [server/lib/startup-validation.mjs](../server/lib/startup-validation.mjs)).
+
+---
+
 ## Multi-surface flow
 
 ### Claude Code (fully working)
