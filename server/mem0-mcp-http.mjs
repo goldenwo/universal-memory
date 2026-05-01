@@ -59,6 +59,13 @@ import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
+import { getEmbedderConfig } from './lib/embed.mjs';
+import { getFactsLlmConfig } from './lib/facts.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists } from './lib/startup-validation.mjs';
+import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
+import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
+import { createStampClient } from './lib/embedding-stamp.mjs';
+import { priceFor } from './lib/pricing.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -172,16 +179,168 @@ const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
-if (IS_MAIN) requireEnv('OPENAI_API_KEY');
+if (IS_MAIN) {
+  // R9 mitigation (DE6): refuse unsupported (provider, surface) combos at startup
+  // BEFORE initMemory so e.g. UM_EMBEDDING_PROVIDER=anthropic is rejected with a
+  // helpful list of valid embedding providers. validateProviderSupport throws;
+  // catch and exit(1) per server convention.
+  try {
+    validateProviderSupport(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
+  // Adv-5 mitigation (DE7): refuse models not in PRICING for the configured
+  // provider (e.g. UM_EMBEDDING_PROVIDER=google with UM_EMBEDDING_MODEL=
+  // text-embedding-3-small). Runs AFTER validateProviderSupport (provider
+  // first, model second). Ollama exempt — user-managed local pulls.
+  try {
+    validateModelExists(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
+  // Validate that whatever providers the operator selected have their required keys,
+  // and that each provider supports the surface it's assigned to.
+  // This replaces the hard-coded requireEnv('OPENAI_API_KEY') check so that
+  // non-openai deployments (e.g., ollama-only, Phase F Path 3) are not blocked.
+  const surfaceMap = {
+    UM_EMBEDDING_PROVIDER: 'embeddings',
+    UM_SUMMARIZER_PROVIDER: 'summarizer',
+    UM_SUMMARIZER_FALLBACK: 'summarizer',
+    UM_FACTS_PROVIDER: 'facts',
+  };
+  for (const slot of ['UM_EMBEDDING_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_FALLBACK', 'UM_FACTS_PROVIDER']) {
+    const rawName = process.env[slot];
+    if (slot === 'UM_SUMMARIZER_FALLBACK' && !rawName) continue; // optional slot
+    const resolved = rawName || 'openai';
+    let provider;
+    try {
+      provider = getProvider(resolved);
+    } catch (err) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} — ${err.message}`);
+      process.exit(1);
+    }
+    // Capability check: fail fast if provider doesn't support the assigned surface
+    const surface = surfaceMap[slot];
+    if (!provider.supports[surface]) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${supportingProviders(surface).join(', ')}`);
+      process.exit(1);
+    }
+    if (provider.requires.length === 0) continue; // ollama-style, no key needed
+    if (!provider.resolveApiKey(process.env)) {
+      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} requires one of: ${provider.requires.join(', ')}`);
+      process.exit(1);
+    }
+  }
+  // R8 mitigation: log info when summarizer fallback is cross-provider; warn on legacy UM_SUMMARIZER.
+  validateSummarizerConfig(process.env, getLogger());
+}
 
 let memory;
-async function initMemory() {
+
+/**
+ * DE5 — startup guard wired around Memory init. The DI seam exists so the
+ * three branches (null / match / mismatch) and verifyDim ordering can be
+ * tested without spinning up Qdrant or a real embedder.
+ *
+ * Branches (spec §6.2):
+ *   - null     → writeStamp(currentEnv) + warn(LEGACY_COLLECTION_STAMPED) +
+ *                verifyDim() (R2 mitigation: stamp legacy collections so
+ *                subsequent restarts hit the match branch)
+ *   - match    → verifyDim() only (probe runs whenever a stamp is in place)
+ *   - mismatch → fatal log per spec §6.2 + exit(1) (R3 mitigation: never
+ *                serve under stamp/env disagreement; verifyDim NOT called)
+ *
+ * @param {Object} args
+ * @param {Object} args.memory   already-constructed Memory instance (or stub)
+ * @param {Object} args.stamp    stamp client (createStampClient(...) or stub)
+ * @param {Object} args.log      structured logger (pino-shaped: warn/info/fatal)
+ * @param {Object} args.env      env object to derive expected shape from
+ *                               (must carry UM_EMBEDDING_PROVIDER + UM_EMBEDDING_MODEL)
+ * @param {Function} [args.exit] exit hook (defaults to process.exit; tests inject)
+ * @param {Object} [args.embedder] embedder instance forwarded to verifyDim
+ *                                 (defaults to memory.embedder; tests omit when
+ *                                 stamp.verifyDim is stubbed)
+ */
+export async function initMemoryWithGuard({ memory, stamp, log, env, exit = process.exit, embedder } = {}) {
+  // Derive expected shape from env+pricing. Pricing is the canonical source for
+  // dim per (provider, model) — see spec §6.1 + DE4 plan note ("DE5 owns the
+  // env→shape derivation"). priceFor returns { ..., dim?: number } for embed
+  // entries; if dim is missing we fail-fast below (I3) rather than letting
+  // {dim: undefined} pollute the stamp.
+  const provider = env?.UM_EMBEDDING_PROVIDER || 'openai';
+  // Pull the per-provider default from the registry so non-openai operators who
+  // omit UM_EMBEDDING_MODEL still get the right model (rather than `undefined`,
+  // which polluted the stamp and triggered false fatal alarms). Single source
+  // of truth for default models — picks up new providers automatically.
+  // getProvider() throws on unknown names; swallow so a typo in
+  // UM_EMBEDDING_PROVIDER falls through to mismatch (operator-visible) rather
+  // than crashing the guard with an opaque init error.
+  let providerDef;
+  try { providerDef = getProvider(provider); } catch { providerDef = undefined; }
+  const model = env?.UM_EMBEDDING_MODEL || providerDef?.defaults?.embeddingModel;
+  // I3 (DE5 review fix): gate undefined-dim BEFORE stamp.read(). If the pricing
+  // registry has no entry for (provider, model), `priceFor(...).dim` is
+  // undefined — and writing {dim: undefined} to the stamp on the null branch
+  // would silently bypass the guard on subsequent restarts (undefined ===
+  // undefined → 'match'). Fail-fast tells the operator to fix the registry
+  // gap before booting rather than inviting a future silent drift.
+  const expectedDim = priceFor(provider, model)?.dim;
+  if (typeof expectedDim !== 'number') {
+    log.fatal(
+      { code: 'PRICING_REGISTRY_DIM_MISSING', provider, model },
+      `[mem0-mcp] FATAL: pricing registry has no dim for ${provider}/${model}; add it to server/lib/pricing.mjs before booting`,
+    );
+    return exit(1);
+  }
+  const expected = { provider, model, dim: expectedDim };
+
+  const actual = await stamp.read();
+  if (actual === null) {
+    // Null branch — legacy collection. Stamp it so future restarts hit `match`,
+    // then probe live dim. R2 mitigation per spec §6.2.
+    await stamp.write(expected);
+    log.warn(
+      { code: 'LEGACY_COLLECTION_STAMPED', stamp: expected },
+      'Legacy collection stamped with current embedding shape',
+    );
+    await stamp.verifyDim({ embedder, dim: expectedDim });
+    return memory;
+  }
+  // Stamp present — compare shape against env-derived expected.
+  // I2 (DE5 review fix): drop the dead-code ternary fallback to compareStamp;
+  // createStampClient always exposes `.compare` and tests now mirror that
+  // shape. The else-branch was unreachable production-side.
+  const cmp = stamp.compare(actual, expected);
+  if (cmp === 'mismatch') {
+    // Mismatch — fatal. verifyDim NOT called; we never reach a serving state.
+    // Message must satisfy spec §13.1 contract (see the test): contain the CLI
+    // pointer plus both stamped and configured shapes.
+    const msg =
+      `Embedding stamp mismatch. ` +
+      `Stamped: provider=${actual.provider} model=${actual.model} dim=${actual.dim}. ` +
+      `Configured: provider=${expected.provider} model=${expected.model} dim=${expected.dim}. ` +
+      'Run `um-cli reindex --confirm` to migrate.';
+    log.fatal({ code: 'EMBEDDING_STAMP_MISMATCH', stamped: actual, configured: expected }, msg);
+    return exit(1);
+  }
+  // Match — probe live dim to catch silent provider model substitutions (R3).
+  // I1 (DE5 review fix): emit positive observability signal that the guard ran
+  // and matched, so operators tailing structured logs can confirm the boot
+  // crossed the stamp gate (rather than silently degrading to no-guard).
+  log.info(
+    { code: 'EMBEDDING_STAMP_MATCH', stamp: actual },
+    '[mem0-mcp] embedding stamp matches; verifying dim',
+  );
+  await stamp.verifyDim({ embedder, dim: expectedDim });
+  return memory;
+}
+
+export async function initMemory() {
 	memory = new Memory({
 		version: 'v1.1',
-		embedder: {
-			provider: 'openai',
-			config: { model: process.env.MEM0_EMBEDDER_MODEL || 'text-embedding-3-small' },
-		},
+		embedder: getEmbedderConfig(process.env),
 		vectorStore: {
 			provider: 'qdrant',
 			config: {
@@ -190,10 +349,7 @@ async function initMemory() {
 				collectionName: process.env.QDRANT_COLLECTION || 'memories',
 			},
 		},
-		llm: {
-			provider: 'openai',
-			config: { model: process.env.MEM0_LLM_MODEL || 'gpt-4.1-nano-2025-04-14' },
-		},
+		llm: getFactsLlmConfig(process.env),
 		// mem0's default history DB is "memory.db" relative to CWD. In the container
 		// CWD is /app (root-owned) but we run as USER node — unwritable. Put it in
 		// /tmp by default (ephemeral, always writable). Users who want persistence
@@ -208,7 +364,7 @@ async function initMemory() {
 		try {
 			await memory.getAll({ userId: '__warmup__' });
 			console.log(`[mem0-mcp] Memory initialized, Qdrant reachable (attempt ${i})`);
-			return;
+			break;
 		} catch (err) {
 			if (i === MAX_ATTEMPTS) {
 				console.error(`[mem0-mcp] FATAL: Qdrant unreachable after ${MAX_ATTEMPTS} attempts: ${err.message}`);
@@ -217,6 +373,28 @@ async function initMemory() {
 			await new Promise((r) => setTimeout(r, 2000));
 		}
 	}
+	// DE5 — wire the embedding-stamp guard. The wrapper handles the 3 branches
+	// (null/match/mismatch) and the verifyDim probe. Production deps:
+	//   - memory: the live Memory instance (warmed above)
+	//   - stamp:  createStampClient bound to the same Memory
+	//   - log:    pino logger from getLogger()
+	//   - env:    process.env (UM_EMBEDDING_PROVIDER + UM_EMBEDDING_MODEL drive the expected shape)
+	//   - embedder: mem0 exposes the embedder instance as memory.embedder; we
+	//     adapt its `embed(text)` signature to the `embedQuery(text)` API
+	//     verifyDim expects so the dim probe goes through the same path
+	//     mem0 will use for real reads/writes.
+	const stampClient = createStampClient({ memory });
+	const embedderAdapter = memory.embedder
+		? { embedQuery: (text) => memory.embedder.embed(text) }
+		: undefined;
+	await initMemoryWithGuard({
+		memory,
+		stamp: stampClient,
+		log: getLogger(),
+		env: process.env,
+		embedder: embedderAdapter,
+	});
+	return memory;
 }
 
 export const TOOLS = [
@@ -1268,6 +1446,11 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
 		items = applyTemporalDecay(items, halfLife);
 	}
+	// DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+	// AFTER ranking/decay (so scoring never wastes a slot on the stamp) and
+	// BEFORE projection/envelope serialization (so consumers never see it on
+	// any read path). Single touchpoint covers /api/search + memory_search.
+	items = filterSystemDocs(items);
 	// Project to compact or full shape.
 	// - id:    metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
 	// - title: metadata.title if present; falls back to metadata.id (matches doRecent convention)
@@ -1458,7 +1641,12 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
       }
     })
   );
-  const results = resultsRaw.filter(Boolean);
+  // DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+  // before envelope serialization. doRecent reads the vault filesystem and
+  // its records carry id at the top level (no metadata wrapper), so we use
+  // the top-level-id variant of the helper. Single touchpoint covers
+  // /api/recent/:project (the only public surface for doRecent).
+  const results = filterSystemDocsByTopLevelId(resultsRaw.filter(Boolean));
 
   return listEnvelope(results);
 }
@@ -1510,7 +1698,11 @@ export async function doList(full = false, limit = null, ctx = {}) {
     memoryClient.getAll({ userId: USER_ID })
       .catch((e) => { throw tagRetryable(e); })
   , { op: 'getAll' });
-  const items = all?.results || all || [];
+  const rawItems = all?.results || all || [];
+  // DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
+  // BEFORE limit-slicing so the stamp does not consume one of the user's
+  // requested slots. Single touchpoint covers /api/list + memory_list.
+  const items = filterSystemDocs(rawItems);
   const sliced = (limit !== null && limit > 0) ? items.slice(0, limit) : items;
   // §4.1 extensibility contract: additive sibling fields on the memory-client
   // envelope (e.g., future `provider`, `latency_ms` for multi-provider
@@ -1588,8 +1780,15 @@ export function createRequestHandler(ctx = {}) {
 	// never set for /health), but we skip ALS + the counter-finish log.
 	if (url.pathname === '/health' && req.method === 'GET') {
 		try {
+			// DE5 / spec §6.1: after the startup guard stamps legacy collections,
+			// getAll() includes the embedding-stamp doc. Filter system docs out of
+			// the count so /health reflects user-facing memories only — preserves
+			// the contract that operators reading this endpoint see real-doc count.
+			const raw = await resolvedMemory().getAll({ userId: USER_ID });
+			const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
+			const memories = filterSystemDocs(items).length;
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify({ ok: true, memories: (await resolvedMemory().getAll({ userId: USER_ID }))?.results?.length || 0 }));
+			res.end(JSON.stringify({ ok: true, memories }));
 		} catch (err) {
 			if (!res.headersSent) {
 				res.writeHead(500, { 'Content-Type': 'application/json' });

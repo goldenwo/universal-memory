@@ -1,5 +1,153 @@
 # Migration guide
 
+## v0.6 → v0.7
+
+v0.7 generalises summarizer/facts/embeddings to a four-provider matrix
+(openai / anthropic / google / ollama). Two breaking changes worth your
+attention: env-var renames (no fallback code in the v0.7 server), and a
+stricter `--yes` installer contract. The embedding-collection stamp + reindex
+guard means upgrading without changing your embedding provider/model is a
+no-op; switching providers requires an explicit reindex step.
+
+### Breaking: env-var renames (hard breaks; pre-v1.0 policy, spec §12)
+
+The v0.7 server reads only the new names. There is **no fallback** to the v0.6
+names — a `.env` carrying the old names will fail startup validation with an
+"unknown env var" / "required env var missing" error pointing at the new name.
+
+| v0.6 | v0.7 | Reason |
+|---|---|---|
+| `UM_SUMMARIZER` | `UM_SUMMARIZER_PROVIDER` | provider-vs-mode clarity, parity across surfaces |
+| `UM_SUMMARIZE_MODEL` | `UM_SUMMARIZER_MODEL` | noun-form consistency |
+| `MEM0_LLM_MODEL` | `UM_FACTS_MODEL` | hide mem0 dependency, semantic clarity |
+| `MEM0_EMBEDDER_MODEL` | `UM_EMBEDDING_MODEL` | same |
+| _(new in v0.7)_ | `UM_EMBEDDING_PROVIDER` | required for v0.7 multi-provider |
+| _(new in v0.7)_ | `UM_FACTS_PROVIDER` | required for v0.7 multi-provider |
+| _(new in v0.7)_ | `UM_FACTS_FALLBACK` | optional opt-in for cross-provider facts fallback |
+
+**Action.** Rename the four old vars in `server/.env` (and any deployment
+secret store / CI config) before upgrading. Add `UM_EMBEDDING_PROVIDER` and
+`UM_FACTS_PROVIDER` if you want to be explicit; otherwise both default to
+`openai` (matching v0.6's effective behavior) and pick up `OPENAI_API_KEY`
+via the v0.6 §5.2 key resolution rule.
+
+A typical v0.6 → v0.7 rename in `server/.env`:
+
+```bash
+# Before (v0.6)
+UM_SUMMARIZER=openai
+UM_SUMMARIZE_MODEL=gpt-4o-mini
+MEM0_LLM_MODEL=gpt-4.1-nano-2025-04-14
+MEM0_EMBEDDER_MODEL=text-embedding-3-small
+
+# After (v0.7)
+UM_SUMMARIZER_PROVIDER=openai
+UM_SUMMARIZER_MODEL=gpt-4o-mini
+UM_FACTS_PROVIDER=openai
+UM_FACTS_MODEL=gpt-4.1-nano-2025-04-14
+UM_EMBEDDING_PROVIDER=openai
+UM_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+Per the **pre-v1.0 hard-break policy** (spec §12), v0.7 carries no
+compatibility shim for the old names. Re-running `installer/install.sh` after
+the upgrade will rewrite the managed block in `server/.env.example` with the
+v0.7 names; existing `.env` files are not auto-migrated by design (operator
+owns secrets).
+
+### Breaking: `install.sh --yes` refuses on missing API key
+
+Before (v0.6): `install.sh --yes` was permissive about missing API keys —
+defaults caught the openai-only world, so a `.env` could be written
+successfully even if no key was set, and the server's first start would
+surface the missing-key error.
+
+After (v0.7): `--yes` honors any pre-set `UM_*_PROVIDER` and matching
+`*_API_KEY` env vars, defaults missing provider vars to `openai`, and **fails
+fast with a clear error if a required API key is missing**. It does **not**
+write `.env` in that case.
+
+| Env state at `--yes` invocation | v0.7 result |
+|---|---|
+| All `UM_*_PROVIDER` and matching API keys present | Writes `.env`, no prompts, exit 0 |
+| `UM_*_PROVIDER` unset → defaults to `openai` + `OPENAI_API_KEY` present | Same as above |
+| `UM_*_PROVIDER` set, but matching API key missing | Refuses with `"--yes mode requires <KEY> to be set in env or .env. Re-run interactively or set the key first."` Exits non-zero. |
+| `UM_*_PROVIDER=ollama` + `OLLAMA_HOST` not reachable | Refuses with the spec §10 R5 error message |
+
+**Action for CI scripts.** If your CI / scripted install calls
+`install.sh --yes` without a key in the environment, set `OPENAI_API_KEY`
+(or the matching provider key for whatever `UM_*_PROVIDER` you've chosen)
+before the invocation. The wizard's path 4 ("Skip — I'll edit .env myself")
+remains the deliberate "I know what I'm doing" escape hatch and is distinct
+from `--yes`.
+
+Rationale: `--yes` is for CI / scripted installs where the operator has
+already arranged credentials. Writing a `.env` that fails to start is a worse
+outcome than refusing and pointing at the missing key. Aligns with v0.6's
+discipline of explicit-fail-over-implicit-broken.
+
+### Reindex required only if changing embedding provider / model
+
+v0.7 introduces an **embedding stamp** (sentinel doc inside the Qdrant
+collection at fixed metadata id `_um_embedding_stamp`) recording the active
+provider, model, and dim. On every server start the stamp is compared against
+the configured embedding env vars; mismatch refuses startup.
+
+**Same provider + model (the common case): no reindex needed.** If you upgrade
+v0.6 → v0.7 with the v0.6 default of `openai` + `text-embedding-3-small`,
+the v0.7 server's first start finds **no stamp** in the existing collection,
+writes one from current env, and continues. No operator action required. (See
+spec §6.2 R2 — the "first-startup mitigation" branch.)
+
+**Different provider or model: explicit reindex required.** If you change
+`UM_EMBEDDING_PROVIDER` or `UM_EMBEDDING_MODEL` at upgrade, the server refuses
+to start with a structured error pointing at the migration command:
+
+```
+[fatal] Embedding configuration changed since last start.
+  Stamped:    provider=openai     model=text-embedding-3-small  dim=1536
+  Configured: provider=google     model=text-embedding-004      dim=768
+
+  The Qdrant collection was built with the stamped configuration.
+  Switching embedding providers/models requires re-embedding every vector
+  (vault docs + memory_add facts).
+
+  To migrate, run:    um-cli reindex --confirm
+  To revert, set env: UM_EMBEDDING_PROVIDER=openai
+                      UM_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+The reindex CLI is a separate process from the running server. Operator
+workflow:
+
+```bash
+# 1. Stop the server
+docker compose stop universal-memory
+
+# 2. Update server/.env with the new embedding provider/model (already done
+#    if you've already attempted to start v0.7 and seen the refuse-message)
+
+# 3. Run the reindex CLI from the host (must reach the same Qdrant the
+#    server uses); --confirm acknowledges the cost estimate
+um-cli reindex --confirm
+
+# 4. Restart the server; startup guard reads the new stamp → match → continue
+docker compose start universal-memory
+```
+
+The reindex CLI rebuilds into a new Qdrant collection, atomically swaps the
+canonical alias, and writes the new stamp before the swap. If interrupted,
+re-run with `--resume` — checkpoint state lives at
+`$UM_VAULT_DIR/.um/reindex-state.json`. Cross-provider embedding fallback is
+**deliberately not supported** — different latent space + different dim = silent
+index corruption — so the "switch embedding provider, then reindex" path is the
+only supported way to change embeddings post-install.
+
+There is no `--ignore-stamp` escape hatch in the server. To bypass, you must
+manually delete the stamp doc — explicitly destructive, hard to do by accident.
+
+---
+
 ## v0.5 → v0.6
 
 ### Breaking: `/api/list` response envelope
