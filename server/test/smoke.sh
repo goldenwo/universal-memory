@@ -1540,15 +1540,26 @@ else
 			echo "  -> ${provider} container status=${status} (expected running)" >&2
 			return 1
 		fi
-		# Wait for /api/state to respond OK
-		for i in 1 2 3 4 5 6 7 8 9 10; do
+		# Wait for /api/state to respond OK. Budget 30s — matches
+		# memory-server's initMemory() qdrant-connect retry budget (30 attempts
+		# x 1s) so a slow qdrant cold-start after `--force-recreate` doesn't
+		# false-fail the boot test.
+		local i=0
+		while [ "$i" -lt 30 ]; do
 			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
 				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
 				return 0
 			fi
 			sleep 1
+			i=$((i + 1))
 		done
 		echo "  -> ${provider} FAILED to boot" >&2
+		# Dump the last 80 log lines so CI diagnoses are self-contained
+		# (without this, smoke.sh just prints "FAILED to boot" with no
+		# explanation; operator has to repro locally to see the actual error).
+		echo "  ---- last 80 lines of memory-server logs ----" >&2
+		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" logs --tail=80 memory-server 2>&1 | sed 's/^/  | /' >&2
+		echo "  ---- end logs ----" >&2
 		return 1
 	}
 

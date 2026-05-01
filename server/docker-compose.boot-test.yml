@@ -4,21 +4,35 @@
 #   docker compose -f docker-compose.yml -f docker-compose.boot-test.yml up -d
 #
 # Used exclusively by server/test/smoke.sh's `test_boot_with_provider` loop
-# (spec §9.4, v0.8 G2.5). The five entries below use docker-compose's array-
-# style shell-pass-through (a `- VARNAME` entry with no `=value` propagates
-# the value of $VARNAME from the host shell into the container).
+# (spec §9.4, v0.8 G2.5). Map-style entries use docker-compose's `${VAR:-default}`
+# substitution to forward values from the host shell at compose-up time. The
+# style matches the main compose file (map-style throughout) — mixing array
+# and map across overlays caused boot failures because docker-compose merge
+# behaviour with mixed styles is fragile.
 #
-# These entries are SEPARATED from the main compose file so production
-# / installer-driven runs don't accidentally pick up boot-test-only
-# behaviour. In particular: with `- VARNAME` in the main file, an unset
-# host shell var would silently override `env_file: .env` with empty
-# string — fragile for normal usage but harmless inside the boot-test
-# loop where smoke.sh always sets the vars before invoking compose.
+# Why this overlay is SEPARATED from the main compose: the substitution
+# defaults below would otherwise apply in production runs too. For
+# UM_*_PROVIDER especially, an unset host shell var would silently override
+# `env_file: .env` with an empty string. Sequestering the overlay to the
+# boot-test compose-up call avoids that footgun.
+#
+# Fake API keys for non-OpenAI providers are injected here because mem0's
+# `Memory()` constructor Zod-validates `apiKey` as a string at construct
+# time — a null apiKey throws BEFORE any actual API call. CI only has
+# OPENAI_API_KEY available; without these fakes, google/ollama/anthropic
+# boots crash at initMemory(). Real API calls never happen during the
+# boot test (UM_TEST_MOCK_SDK=1 short-circuits all *Invoke functions, and
+# the boot test only polls /api/state — never triggers add/search).
 services:
   memory-server:
     environment:
-      - UM_TEST_MOCK_SDK
-      - UM_EMBEDDING_PROVIDER
-      - UM_SUMMARIZER_PROVIDER
-      - UM_FACTS_PROVIDER
-      - QDRANT_COLLECTION
+      UM_TEST_MOCK_SDK: ${UM_TEST_MOCK_SDK:-}
+      UM_EMBEDDING_PROVIDER: ${UM_EMBEDDING_PROVIDER:-}
+      UM_SUMMARIZER_PROVIDER: ${UM_SUMMARIZER_PROVIDER:-}
+      UM_FACTS_PROVIDER: ${UM_FACTS_PROVIDER:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-}
+      # Fake keys: only apply when the host shell hasn't already set the
+      # real one, so local dev runs with real keys still hit live providers.
+      UM_GOOGLE_API_KEY: ${UM_GOOGLE_API_KEY:-AIza-boot-smoke-mock-key}
+      UM_ANTHROPIC_API_KEY: ${UM_ANTHROPIC_API_KEY:-sk-ant-boot-smoke-mock-key}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://localhost:11434}
