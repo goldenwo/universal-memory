@@ -1,0 +1,24 @@
+# server/docker-compose.boot-test.yml — overlay for the smoke-gate boot tests.
+#
+# Combine with the main compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.boot-test.yml up -d
+#
+# Used exclusively by server/test/smoke.sh's `test_boot_with_provider` loop
+# (spec §9.4, v0.8 G2.5). The five entries below use docker-compose's array-
+# style shell-pass-through (a `- VARNAME` entry with no `=value` propagates
+# the value of $VARNAME from the host shell into the container).
+#
+# These entries are SEPARATED from the main compose file so production
+# / installer-driven runs don't accidentally pick up boot-test-only
+# behaviour. In particular: with `- VARNAME` in the main file, an unset
+# host shell var would silently override `env_file: .env` with empty
+# string — fragile for normal usage but harmless inside the boot-test
+# loop where smoke.sh always sets the vars before invoking compose.
+services:
+  memory-server:
+    environment:
+      - UM_TEST_MOCK_SDK
+      - UM_EMBEDDING_PROVIDER
+      - UM_SUMMARIZER_PROVIDER
+      - UM_FACTS_PROVIDER
+      - QDRANT_COLLECTION

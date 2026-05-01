@@ -1497,16 +1497,32 @@ else
 	# Caller may still override via UM_COMPOSE_FILE for dev workflows.
 	_SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-$_SMOKE_DIR/../docker-compose.yml}"
+	# Boot-test overlay: shell-pass-through for UM_*_PROVIDER, UM_TEST_MOCK_SDK,
+	# QDRANT_COLLECTION (v0.8 G2.5). Sequestered from the main compose so
+	# production runs don't inherit empty-string env-file overrides.
+	UM_BOOT_OVERLAY="${UM_BOOT_OVERLAY:-$_SMOKE_DIR/../docker-compose.boot-test.yml}"
 
 	test_boot_with_provider() {
 		local provider="$1"
 		echo "== smoke: boot with ${provider} =="
-		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls happen.
+		# Per-provider QDRANT_COLLECTION (v0.8 G2.5 isolation): each boot lands
+		# its embedding-stamp in its own collection so the DE5 startup guard
+		# never sees a stamp from a prior provider's run. Without this,
+		# boot N+1 (different provider) sees boot N's stamp → mismatch fatal.
+		# Sanitize the provider label (anthropic-mixed → anthropic_mixed) so
+		# the collection name is qdrant-safe.
+		local collection
+		collection="boot_smoke_${provider//-/_}"
+		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls
+		# happen. The boot-test overlay (docker-compose.boot-test.yml) declares
+		# these as shell-pass-through entries so the assignments below
+		# propagate into the container.
 		UM_TEST_MOCK_SDK=1 \
 		UM_EMBEDDING_PROVIDER="$provider" \
 		UM_SUMMARIZER_PROVIDER="$provider" \
 		UM_FACTS_PROVIDER="$provider" \
-		docker compose -f "$UM_COMPOSE_FILE" up -d --force-recreate
+		QDRANT_COLLECTION="$collection" \
+		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" up -d --force-recreate
 		# I3: Capture the freshly-recreated container's ID so the curl health
 		# poll can't false-pass against a leftover container that's still
 		# answering on port 6335 from a previous run. `--force-recreate` does
@@ -1556,7 +1572,7 @@ else
 	# poison the next CI step. Always runs (success or failure path); error
 	# from `down` itself is non-fatal — the smoke gate's verdict is `boot_rc`.
 	echo "[smoke]     tearing down boot-test stack"
-	docker compose -f "$UM_COMPOSE_FILE" down >/dev/null 2>&1 || true
+	docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" down >/dev/null 2>&1 || true
 
 	if [ "$boot_rc" -ne 0 ]; then
 		echo "[smoke] 6/6 mocked-SDK boot tests FAILED (one or more providers did not boot)" >&2
