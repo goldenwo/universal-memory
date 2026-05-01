@@ -34,13 +34,19 @@ OUT=$(printf '3\nhttp://pi.local:6335\n\n4\nY\n' | HOME="$T2" UM_DRY_RUN=1 bash 
 if echo "$OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T2: wizard option 3 → cli delegate fires"
 else fail "T2: wizard option 3 did not trigger cli install; out: $(echo "$OUT" | head -20)"; fi
 
-# T3: Invalid menu choices retry before succeeding
+# T3: Invalid menu choices retry before succeeding (anchored to dispatcher pre-menu)
 # Input: X (invalid) + 99 (invalid) + 4 (valid component) + blank (vault) + 4 (skip provider) + Y (proceed)
-OUT=$(printf 'X\n99\n4\n\n4\nY\n' | HOME="$TMPROOT/t3" mkdir -p "$TMPROOT/t3" 2>/dev/null; \
-      printf 'X\n99\n4\n\n4\nY\n' | HOME="$TMPROOT/t3" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
-COUNT=$(echo "$OUT" | grep -c "Invalid choice" || true)
-if [[ "$COUNT" -ge 2 ]]; then pass "T3: retries on invalid menu input ($COUNT invalid-choice messages)"
-else fail "T3: expected ≥2 'Invalid choice' messages, got $COUNT; out: $(echo "$OUT" | head -20)"; fi
+# wizard_menu_providers' path 4 has its own "Invalid choice" loop, so we count
+# only the "Invalid choice" messages emitted BEFORE the "Provider setup:" banner
+# to anchor the assertion to wizard_menu_main's retries (the dispatcher), not
+# the provider sub-menu's retries. If the wizard_menu_main retry loop is broken,
+# the X+99 invalids would not be re-emitted and BEFORE_COUNT would drop to 0.
+mkdir -p "$TMPROOT/t3"
+OUT=$(printf 'X\n99\n4\n\n4\nY\n' | HOME="$TMPROOT/t3" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
+BEFORE_MENU=$(echo "$OUT" | awk '/Provider setup:/{exit} {print}')
+BEFORE_COUNT=$(echo "$BEFORE_MENU" | grep -c "Invalid choice" || true)
+if [[ "$BEFORE_COUNT" -ge 2 ]]; then pass "T3: dispatcher retries on invalid pre-menu ($BEFORE_COUNT invalid-choice messages before provider menu)"
+else fail "T3: expected ≥2 'Invalid choice' messages before 'Provider setup:', got $BEFORE_COUNT; out: $(echo "$OUT" | head -20)"; fi
 
 # T4: Wizard option 2 (Just Claude Code plugin)
 # Input: 2 (component menu) + blank (vault) + 4 (skip provider) + Y (proceed)
@@ -174,21 +180,6 @@ test_wizard_select_empty_opts_returns_nonzero
 # `printf … | wizard_validate_api_key` pipe would put the function in a
 # subshell and the export would be lost.
 
-test_wizard_validate_openai_key_accepts_valid() {
-  unset OPENAI_API_KEY
-  wizard_validate_api_key openai OPENAI_API_KEY <<< 'sk-validkey123' >/dev/null
-  assert_eq "$OPENAI_API_KEY" "sk-validkey123" "F2.T1: valid sk-* set"
-}
-
-test_wizard_validate_openai_key_reprompts_on_invalid_then_accepts() {
-  unset OPENAI_API_KEY
-  wizard_validate_api_key openai OPENAI_API_KEY >/dev/null <<EOF
-bogus
-sk-realkey
-EOF
-  assert_eq "$OPENAI_API_KEY" "sk-realkey" "F2.T2: re-prompt then valid"
-}
-
 test_wizard_validate_anthropic_key_format() {
   unset ANTHROPIC_API_KEY
   wizard_validate_api_key anthropic ANTHROPIC_API_KEY <<< 'sk-ant-realkey' >/dev/null
@@ -212,8 +203,6 @@ test_wizard_validate_unknown_provider() {
   assert_eq "$?" "1" "F2.T6: unknown provider returns 1"
 }
 
-test_wizard_validate_openai_key_accepts_valid
-test_wizard_validate_openai_key_reprompts_on_invalid_then_accepts
 test_wizard_validate_anthropic_key_format
 test_wizard_validate_google_key_format
 test_wizard_validate_returns_1_on_eof

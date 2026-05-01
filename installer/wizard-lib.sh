@@ -67,28 +67,6 @@ wizard_prompt() {
   eval "export $var=\"\$val\""
 }
 
-wizard_validate_openai_key() {
-  # wizard_validate_openai_key <var> <question> <default>
-  # Like wizard_prompt but re-prompts if value doesn't start with sk- (unless it's the defer placeholder).
-  local var="$1" question="$2" default="$3"
-  local _defer_placeholder="<paste later into .env>"
-  while true; do
-    wizard_prompt "$var" "$question" "$default"
-    local _val
-    eval "_val=\"\${$var}\""
-    # Accept the defer placeholder or any sk- prefixed value
-    if [ "$_val" = "$_defer_placeholder" ] || [[ "$_val" == sk-* ]]; then
-      break
-    fi
-    # Non-empty value that doesn't start with sk- — warn and re-prompt
-    if [ -n "$_val" ]; then
-      echo "Warning: OpenAI API keys should start with 'sk-'. Got: ${_val:0:8}... — please re-enter or press Enter to defer." >&2
-    else
-      break
-    fi
-  done
-}
-
 wizard_validate_api_key() {
   # wizard_validate_api_key <provider> <var_name>
   # Side-effect: prompts user for key on stdin; on valid input, sets <var_name>
@@ -137,7 +115,7 @@ wizard_confirm() {
 wizard_select() {
   # wizard_select <var> <prompt> <opt1> [opt2 ...]
   # Side-effect: assigns selected value to <var> via eval (var-by-name pattern,
-  # matches wizard_prompt / wizard_validate_openai_key convention).
+  # matches wizard_prompt / wizard_validate_api_key convention).
   # Returns: 0 on selection, 1 on EOF/abort, 2 on empty opts. Loops until a
   # valid choice is given.
   # shellcheck disable=SC2034,SC2086,SC2154  # eval intentional for var-by-name pattern
