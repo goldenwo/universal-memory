@@ -915,9 +915,13 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false for disabled: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
 err = result.get('error', '')
-accepted = ('MCP writes disabled' in err or 'writes disabled' in err.lower()
-            or 'not implemented' in err or '/um-checkpoint' in err)
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+accepted = ('MCP writes disabled' in err_msg or 'writes disabled' in err_msg.lower()
+            or 'not implemented' in err_msg or '/um-checkpoint' in err_msg
+            or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED'))
 assert accepted, 'expected writes-disabled or stub error: ' + result_text
 print('OK T10-E (writes disabled): returned structured gate error')
 " || { echo "FAIL: T10-E gate-error assertion failed"; exit 1; }
@@ -941,7 +945,12 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
-assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
+err = result.get('error', '')
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+assert ('disabled' in err_msg.lower() or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED')), \
+    'expected disabled message: ' + result_text
 print(f'OK T10-F: $WRITE_TOOL returns error when writes disabled')
 " || { echo "FAIL: T10-F $WRITE_TOOL did not return expected disabled error"; exit 1; }
 	done
@@ -1211,7 +1220,12 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
-assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
+err = result.get('error', '')
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+assert ('disabled' in err_msg.lower() or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED')), \
+    'expected disabled message: ' + result_text
 print('OK T10-K: memory_append_turn returns writes-disabled error (expected)')
 " || { echo "FAIL: T10-K memory_append_turn did not return expected disabled error"; exit 1; }
 fi
