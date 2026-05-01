@@ -165,6 +165,105 @@ wizard_select() {
   done
 }
 
+wizard_collect_keys() {
+  # wizard_collect_keys
+  # Reads UM_*_PROVIDER vars from env, walks the unique set of providers,
+  # prompts for any whose API key is not already in env. Skips ollama.
+  #
+  # The plan-doc snippet uses `done <<< "$providers"`, which redirects the
+  # entire while-loop body's stdin to the provider list herestring — that
+  # would prevent wizard_validate_api_key (called inside the loop) from
+  # reading the user's key off the original stdin. We use FD 3 instead so
+  # the loop reads providers from FD 3 while validate continues to read
+  # the API key from FD 0 (stdin) as expected.
+  local providers
+  providers=$(echo "$UM_EMBEDDING_PROVIDER $UM_SUMMARIZER_PROVIDER $UM_FACTS_PROVIDER" | tr ' ' '\n' | sort -u)
+  while IFS= read -r p <&3; do
+    case "$p" in
+      openai)    [[ -n "${UM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}" ]]    || wizard_validate_api_key openai    OPENAI_API_KEY ;;
+      anthropic) [[ -n "${UM_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}" ]] || wizard_validate_api_key anthropic ANTHROPIC_API_KEY ;;
+      google)    [[ -n "${UM_GOOGLE_API_KEY:-${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}}" ]] || wizard_validate_api_key google GOOGLE_API_KEY ;;
+      ollama)    : ;;  # no key needed
+    esac
+  done 3<<< "$providers"
+}
+
+wizard_menu_providers() {
+  # wizard_menu_providers
+  # Top-level provider picker (4 paths) per design §7.1.
+  # Side-effects: exports UM_EMBEDDING_PROVIDER, UM_SUMMARIZER_PROVIDER,
+  # UM_FACTS_PROVIDER (and OLLAMA_HOST for path 3); calls wizard_collect_keys
+  # for paths 1+2 to gather missing API keys; calls wizard_probe_ollama for
+  # path 3; writes .env from .env.example for path 4 (if available).
+  #
+  # Per-surface provider lists are hardcoded to match the JS registry at
+  # server/lib/provider/registry.mjs (anthropic.supports.embeddings === false
+  # is the only asymmetry today). Bash can't import the JS registry; this
+  # comment + grep is the manual synchronization aid — same convention as
+  # wizard_validate_api_key.
+  # shellcheck disable=SC2034  # vars are exported for caller via export below
+  local choice=""
+  local embed_opts=(openai google ollama)              # NOT anthropic — no embeddings API
+  local summ_opts=(openai anthropic google ollama)
+  local facts_opts=(openai anthropic google ollama)
+
+  echo ""
+  echo "Provider setup:"
+  echo "  1) OpenAI for everything    [recommended for first-time setup; one API key]"
+  echo "  2) Mix providers            [pick per surface — e.g. Anthropic + OpenAI embeds]"
+  echo "  3) Local-only (Ollama)      [no API keys, runs offline]"
+  echo "  4) Skip — I'll edit .env myself"
+  while true; do
+    read -r -p "Choose [1-4]: " choice || return 1
+    [[ "$choice" =~ ^[1-4]$ ]] && break
+    echo "Invalid choice; enter a number 1-4."
+  done
+
+  case "$choice" in
+    1)
+      UM_EMBEDDING_PROVIDER=openai
+      UM_SUMMARIZER_PROVIDER=openai
+      UM_FACTS_PROVIDER=openai
+      export UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER
+      wizard_collect_keys
+      ;;
+    2)
+      # Sub-pickers per surface. embed_opts EXCLUDES anthropic by design.
+      wizard_select UM_EMBEDDING_PROVIDER  "Embeddings provider:"  "${embed_opts[@]}" || return 1
+      wizard_select UM_SUMMARIZER_PROVIDER "Summarizer provider:"  "${summ_opts[@]}"  || return 1
+      wizard_select UM_FACTS_PROVIDER      "Fact-extraction provider:" "${facts_opts[@]}" || return 1
+      export UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER
+      wizard_collect_keys
+      ;;
+    3)
+      UM_EMBEDDING_PROVIDER=ollama
+      UM_SUMMARIZER_PROVIDER=ollama
+      UM_FACTS_PROVIDER=ollama
+      export UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER
+      wizard_prompt OLLAMA_HOST "Ollama host" "http://localhost:11434"
+      if ! wizard_probe_ollama "$OLLAMA_HOST"; then
+        echo "Ollama not reachable at $OLLAMA_HOST — install/start Ollama (https://ollama.com) and re-run." >&2
+        return 1
+      fi
+      ;;
+    4)
+      # Skip — best-effort copy of .env.example to .env if available; otherwise
+      # just succeed silently. The wizard's path 4 is the deliberate
+      # "I know what I'm doing" escape hatch (design §7.3, last paragraph).
+      local example=""
+      if [[ -f .env.example ]]; then
+        example=".env.example"
+      elif [[ -f server/.env.example ]]; then
+        example="server/.env.example"
+      fi
+      if [[ -n "$example" && ! -f .env ]]; then
+        cp "$example" .env
+      fi
+      return 0
+      ;;
+  esac
+}
+
 wizard_summarize() {
   # Show install summary before execution
   echo ""

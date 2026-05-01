@@ -136,11 +136,17 @@ if [[ $MODE == wizard ]]; then
   esac
 
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
-  wizard_validate_openai_key UM_OPENAI_API_KEY "OpenAI API key" "<paste later into .env>"
+  # v0.7: 4-path provider picker replaces the v0.6 single-OpenAI-key prompt.
+  # wizard_menu_providers exports UM_*_PROVIDER + collects keys for the chosen
+  # path; OPENAI_API_KEY (legacy var) is set by wizard_collect_keys when path
+  # 1 or path 2 (with openai selected) collects it.
+  wizard_menu_providers
   # Ensure wizard-set vars are exported so sub-installers inherit them.
   # wizard_prompt already calls eval "export $var=..." since fix-5; these are
   # belts-and-suspenders for any wizard path that goes through direct assignment.
-  export UM_VAULT_DIR UM_OPENAI_API_KEY
+  export UM_VAULT_DIR
+  # Mirror OPENAI_API_KEY → UM_OPENAI_API_KEY for v0.6 sub-installer back-compat.
+  [[ -n "${OPENAI_API_KEY:-}" ]] && export UM_OPENAI_API_KEY="$OPENAI_API_KEY"
   wizard_summarize
   wizard_confirm "Proceed?" || { echo "Aborted."; exit 0; }
   MODE=components  # fall through to dispatcher
