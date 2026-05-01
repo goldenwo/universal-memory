@@ -82,6 +82,15 @@ export function normalizeError(err) {
 }
 
 export async function summarizerInvoke(prompt, { fetch = globalThis.fetch, host = process.env.OLLAMA_HOST || 'http://localhost:11434', model = defaults.summarizerModel, systemPrompt = '' }) {
+  // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
+  // tests can spin the container up without a real Ollama daemon (spec §9.4).
+  // Mock shape mirrors the real return below: { content, usage }.
+  if (process.env.UM_TEST_MOCK_SDK) {
+    return {
+      content: '[MOCK] ollama summary',
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
   let res;
   try {
     res = await fetch(`${host}/api/generate`, {
@@ -130,6 +139,13 @@ export async function summarizerInvoke(prompt, { fetch = globalThis.fetch, host 
  * @throws {ProviderError} - on network/host unreachable errors
  */
 export async function probeModel(host, model, { fetch: customFetch = globalThis.fetch } = {}) {
+  // UM_TEST_MOCK_SDK: short-circuit to a fake model-found response so the
+  // smoke-gate boot path does not need a live Ollama daemon (spec §9.4).
+  // Returns true unconditionally — the mock-sdk gate is about clean boot,
+  // not validating model existence semantics.
+  if (process.env.UM_TEST_MOCK_SDK) {
+    return true;
+  }
   let res;
   try {
     res = await customFetch(`${host}/api/tags`);

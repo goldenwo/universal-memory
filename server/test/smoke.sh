@@ -1459,3 +1459,55 @@ fi
 # `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
 # policy. Acceptable per the R1 hardening rationale at the auth setup block.
 _um_smoke_auth_cleanup
+
+# 6/6 mocked-SDK boot smoke gate (Task G2.5, spec §9.4)
+# ------------------------------------------------------
+# Spin the container up with each non-default UM_*_PROVIDER value and
+# verify clean boot. Uses UM_TEST_MOCK_SDK=1 so provider modules
+# short-circuit to canned responses — no real API calls or live Ollama
+# daemon required.
+#
+# Set UM_SKIP_BOOT_SMOKE=1 to skip (CI without Docker, or local stack
+# that's already configured for a specific provider). The 5/5 baseline
+# block above is the smoke gate's `set` of read/write assertions; this
+# block validates _registry wiring + container startup_ for each
+# alternate provider, which is orthogonal to the data-path tests.
+if [ "${UM_SKIP_BOOT_SMOKE:-}" = "1" ]; then
+	echo "[smoke] 6/6 mocked-SDK boot tests SKIPPED (UM_SKIP_BOOT_SMOKE=1)"
+else
+	echo "[smoke] 6/6 mocked-SDK boot tests (spec §9.4)"
+	# docker-compose.yml lives under server/ — invoke from repo root.
+	# Caller is expected to have run smoke.sh from repo root or set
+	# UM_COMPOSE_FILE to override.
+	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-server/docker-compose.yml}"
+
+	test_boot_with_provider() {
+		local provider="$1"
+		echo "== smoke: boot with ${provider} =="
+		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls happen.
+		UM_TEST_MOCK_SDK=1 \
+		UM_EMBEDDING_PROVIDER="$provider" \
+		UM_SUMMARIZER_PROVIDER="$provider" \
+		UM_FACTS_PROVIDER="$provider" \
+		docker compose -f "$UM_COMPOSE_FILE" up -d --force-recreate
+		# Wait for /api/state to respond OK
+		for i in 1 2 3 4 5 6 7 8 9 10; do
+			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
+				echo "  -> ${provider} booted cleanly"
+				return 0
+			fi
+			sleep 1
+		done
+		echo "  -> ${provider} FAILED to boot" >&2
+		return 1
+	}
+
+	# Run boot-tests for each non-default provider
+	# (anthropic skipped for embeddings — spec §3.2 unsupported-surface contract)
+	test_boot_with_provider openai      # baseline (existing)
+	test_boot_with_provider google      # tests google-embed + google-summ + google-facts
+	test_boot_with_provider ollama      # tests ollama-embed + ollama-summ + ollama-facts
+	# anthropic only for summarizer + facts (separately, with embedding=openai)
+	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed
+	echo "[smoke] 6/6 mocked-SDK boot tests passed"
+fi

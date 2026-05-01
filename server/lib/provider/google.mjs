@@ -80,6 +80,15 @@ export function normalizeError(err) {
 
 export async function summarizerInvoke(prompt, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
+  // tests can spin the container up without real API calls (spec §9.4).
+  // Mock shape mirrors the real return below: { content, usage }.
+  if (env.UM_TEST_MOCK_SDK) {
+    return {
+      content: '[MOCK] google summary',
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
   let client = providedClient;
   if (!client) {
     const apiKey = resolveApiKey(env);
