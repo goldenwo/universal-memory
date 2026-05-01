@@ -64,7 +64,7 @@ import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig, validateProviderSupport, validateModelExists } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
-import { createStampClient, compareStamp } from './lib/embedding-stamp.mjs';
+import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 
 // ---------------------------------------------------------------------------
@@ -267,8 +267,8 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   // Derive expected shape from env+pricing. Pricing is the canonical source for
   // dim per (provider, model) — see spec §6.1 + DE4 plan note ("DE5 owns the
   // env→shape derivation"). priceFor returns { ..., dim?: number } for embed
-  // entries; if dim is missing we still pass undefined so compareStamp will
-  // trigger a mismatch (and the operator can fix the registry gap).
+  // entries; if dim is missing we fail-fast below (I3) rather than letting
+  // {dim: undefined} pollute the stamp.
   const provider = env?.UM_EMBEDDING_PROVIDER || 'openai';
   // Pull the per-provider default from the registry so non-openai operators who
   // omit UM_EMBEDDING_MODEL still get the right model (rather than `undefined`,
@@ -280,7 +280,21 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   let providerDef;
   try { providerDef = getProvider(provider); } catch { providerDef = undefined; }
   const model = env?.UM_EMBEDDING_MODEL || providerDef?.defaults?.embeddingModel;
-  const expected = { provider, model, dim: priceFor(provider, model)?.dim };
+  // I3 (DE5 review fix): gate undefined-dim BEFORE stamp.read(). If the pricing
+  // registry has no entry for (provider, model), `priceFor(...).dim` is
+  // undefined — and writing {dim: undefined} to the stamp on the null branch
+  // would silently bypass the guard on subsequent restarts (undefined ===
+  // undefined → 'match'). Fail-fast tells the operator to fix the registry
+  // gap before booting rather than inviting a future silent drift.
+  const expectedDim = priceFor(provider, model)?.dim;
+  if (typeof expectedDim !== 'number') {
+    log.fatal(
+      { code: 'PRICING_REGISTRY_DIM_MISSING', provider, model },
+      `[mem0-mcp] FATAL: pricing registry has no dim for ${provider}/${model}; add it to server/lib/pricing.mjs before booting`,
+    );
+    return exit(1);
+  }
+  const expected = { provider, model, dim: expectedDim };
 
   const actual = await stamp.read();
   if (actual === null) {
@@ -291,11 +305,14 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
       { code: 'LEGACY_COLLECTION_STAMPED', stamp: expected },
       'Legacy collection stamped with current embedding shape',
     );
-    await stamp.verifyDim({ embedder, dim: expected.dim });
+    await stamp.verifyDim({ embedder, dim: expectedDim });
     return memory;
   }
   // Stamp present — compare shape against env-derived expected.
-  const cmp = stamp.compare ? stamp.compare(actual, expected) : compareStamp(actual, expected);
+  // I2 (DE5 review fix): drop the dead-code ternary fallback to compareStamp;
+  // createStampClient always exposes `.compare` and tests now mirror that
+  // shape. The else-branch was unreachable production-side.
+  const cmp = stamp.compare(actual, expected);
   if (cmp === 'mismatch') {
     // Mismatch — fatal. verifyDim NOT called; we never reach a serving state.
     // Message must satisfy spec §13.1 contract (see the test): contain the CLI
@@ -309,7 +326,14 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
     return exit(1);
   }
   // Match — probe live dim to catch silent provider model substitutions (R3).
-  await stamp.verifyDim({ embedder, dim: expected.dim });
+  // I1 (DE5 review fix): emit positive observability signal that the guard ran
+  // and matched, so operators tailing structured logs can confirm the boot
+  // crossed the stamp gate (rather than silently degrading to no-guard).
+  log.info(
+    { code: 'EMBEDDING_STAMP_MATCH', stamp: actual },
+    '[mem0-mcp] embedding stamp matches; verifying dim',
+  );
+  await stamp.verifyDim({ embedder, dim: expectedDim });
   return memory;
 }
 

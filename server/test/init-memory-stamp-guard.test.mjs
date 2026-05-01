@@ -24,6 +24,7 @@ test('null stamp branch: writes stamp + emits LEGACY_COLLECTION_STAMPED warn + r
     read: async () => null,
     write: async (s) => calls.push(['write', s]),
     verifyDim: async () => calls.push(['verifyDim']),
+    compare: () => 'match', // unused on null branch but mirrors createStampClient shape
   };
   const log = {
     warn: (obj, msg) => calls.push(['warn', obj.code, msg]),
@@ -40,7 +41,7 @@ test('null stamp branch: writes stamp + emits LEGACY_COLLECTION_STAMPED warn + r
   assert.equal(calls.find((c) => c[0] === 'warn')[1], 'LEGACY_COLLECTION_STAMPED');
 });
 
-test('match branch: skips writeStamp, runs verifyDim', async () => {
+test('match branch: skips writeStamp, emits EMBEDDING_STAMP_MATCH info, runs verifyDim', async () => {
   const stubMemory = {};
   const calls = [];
   const currentStamp = { provider: 'openai', model: 'text-embedding-3-small', dim: 1536 };
@@ -48,10 +49,11 @@ test('match branch: skips writeStamp, runs verifyDim', async () => {
     read: async () => currentStamp,
     write: async () => calls.push(['write']),
     verifyDim: async () => calls.push(['verifyDim']),
+    compare: (a, e) => (a.provider === e.provider && a.model === e.model && a.dim === e.dim ? 'match' : 'mismatch'),
   };
   const log = {
     warn: () => calls.push(['warn']),
-    info: () => {},
+    info: (obj, msg) => calls.push(['info', obj.code, msg]),
     fatal: () => { throw new Error('no fatal'); },
   };
   await initMemoryWithGuard({
@@ -60,7 +62,11 @@ test('match branch: skips writeStamp, runs verifyDim', async () => {
     log,
     env: { UM_EMBEDDING_PROVIDER: 'openai', UM_EMBEDDING_MODEL: 'text-embedding-3-small' },
   });
-  assert.deepEqual(calls.map((c) => c[0]), ['verifyDim']);
+  // I1 review fix: match branch must emit positive observability signal
+  // (EMBEDDING_STAMP_MATCH info log) before verifyDim runs.
+  assert.deepEqual(calls.map((c) => c[0]), ['info', 'verifyDim']);
+  const info = calls.find((c) => c[0] === 'info');
+  assert.equal(info[1], 'EMBEDDING_STAMP_MATCH');
 });
 
 test('mismatch branch: fatal log + does NOT run verifyDim + message contains spec §6.2 reindex pointer', async () => {
@@ -69,6 +75,7 @@ test('mismatch branch: fatal log + does NOT run verifyDim + message contains spe
   const stamp = {
     read: async () => ({ provider: 'openai', model: 'text-embedding-3-small', dim: 1536 }),
     verifyDim: async () => calls.push(['verifyDim']),
+    compare: (a, e) => (a.provider === e.provider && a.model === e.model && a.dim === e.dim ? 'match' : 'mismatch'),
   };
   let exited = false;
   const exit = () => { exited = true; throw new Error('process.exit'); };
@@ -109,6 +116,7 @@ test('null stamp branch with provider=google + no UM_EMBEDDING_MODEL uses regist
     read: async () => null,
     write: async (s) => calls.push(['write', s]),
     verifyDim: async () => calls.push(['verifyDim']),
+    compare: () => 'match', // unused on null branch but mirrors createStampClient shape
   };
   const log = {
     warn: () => {},
@@ -136,6 +144,7 @@ test('verifyDim failure on match branch propagates as fatal', async () => {
   const stamp = {
     read: async () => currentStamp,
     verifyDim: async () => { throw new Error('observed dim 768, stamped 1536'); },
+    compare: (a, e) => (a.provider === e.provider && a.model === e.model && a.dim === e.dim ? 'match' : 'mismatch'),
   };
   const log = {
     fatal: (obj, msg) => calls.push(['fatal', msg]),
@@ -152,6 +161,49 @@ test('verifyDim failure on match branch propagates as fatal', async () => {
     }),
     /dim/,
   );
+});
+
+test('I3: undefined registry dim → fatal PRICING_REGISTRY_DIM_MISSING + exit(1) BEFORE stamp.read', async () => {
+  // R3 mitigation: if pricing registry has no dim entry for (provider, model),
+  // priceFor(...).dim is undefined. Without the gate, {dim: undefined} would
+  // pollute the stamp on null branch and silently match on subsequent restarts.
+  // Guard MUST fail-fast before stamp.read() runs.
+  const stubMemory = {};
+  const calls = [];
+  let stampReadCalled = false;
+  const stamp = {
+    read: async () => { stampReadCalled = true; return null; },
+    write: async () => calls.push(['write']),
+    verifyDim: async () => calls.push(['verifyDim']),
+    compare: () => 'match',
+  };
+  let exited = false;
+  const exit = () => { exited = true; throw new Error('process.exit'); };
+  const log = {
+    fatal: (obj, msg) => calls.push(['fatal', obj.code, msg]),
+    info: () => {},
+    warn: () => {},
+  };
+  await assert.rejects(
+    () => initMemoryWithGuard({
+      memory: stubMemory,
+      stamp,
+      log,
+      // anthropic/claude-haiku is a chat-only entry in PRICING — no `dim`
+      // field. This drives priceFor(...).dim === undefined.
+      env: { UM_EMBEDDING_PROVIDER: 'anthropic', UM_EMBEDDING_MODEL: 'claude-haiku-4-5-20251001' },
+      exit,
+    }),
+    /process\.exit/,
+  );
+  assert.equal(exited, true, 'must call exit(1)');
+  assert.equal(stampReadCalled, false, 'stamp.read must NOT run when dim is missing');
+  const fatal = calls.find((c) => c[0] === 'fatal');
+  assert.ok(fatal, 'fatal log must be emitted');
+  assert.equal(fatal[1], 'PRICING_REGISTRY_DIM_MISSING', 'fatal code must be PRICING_REGISTRY_DIM_MISSING');
+  assert.match(fatal[2], /pricing registry has no dim/i, 'message must mention pricing registry');
+  assert.ok(!calls.some((c) => c[0] === 'write'), 'stamp.write must NOT run');
+  assert.ok(!calls.some((c) => c[0] === 'verifyDim'), 'verifyDim must NOT run');
 });
 
 // Live smoke test — confirms the no-arg `initMemory()` wrapper still constructs and
