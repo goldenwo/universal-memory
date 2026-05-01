@@ -15,6 +15,13 @@
 
 set -euo pipefail
 
+# Pre-push hooks (and similar git-invoked contexts) export GIT_DIR/GIT_WORK_TREE
+# pointing at the parent repo's .git, which makes `git rev-parse --show-toplevel`
+# resolve to the parent worktree root rather than THIS worktree's root —
+# breaking PLUGIN_SRC path (gets server/plugins/... instead of plugins/...).
+# Unset so git computes paths from CWD only. Caught by v0.7 FIN gate.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
 INSTALL_SH="$SCRIPT_DIR/install.sh"

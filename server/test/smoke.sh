@@ -915,9 +915,13 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false for disabled: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
 err = result.get('error', '')
-accepted = ('MCP writes disabled' in err or 'writes disabled' in err.lower()
-            or 'not implemented' in err or '/um-checkpoint' in err)
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+accepted = ('MCP writes disabled' in err_msg or 'writes disabled' in err_msg.lower()
+            or 'not implemented' in err_msg or '/um-checkpoint' in err_msg
+            or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED'))
 assert accepted, 'expected writes-disabled or stub error: ' + result_text
 print('OK T10-E (writes disabled): returned structured gate error')
 " || { echo "FAIL: T10-E gate-error assertion failed"; exit 1; }
@@ -941,7 +945,12 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
-assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
+err = result.get('error', '')
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+assert ('disabled' in err_msg.lower() or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED')), \
+    'expected disabled message: ' + result_text
 print(f'OK T10-F: $WRITE_TOOL returns error when writes disabled')
 " || { echo "FAIL: T10-F $WRITE_TOOL did not return expected disabled error"; exit 1; }
 	done
@@ -1211,7 +1220,12 @@ data = json.load(sys.stdin)
 result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
 result = json.loads(result_text)
 assert result.get('ok') is False, 'expected ok:false when writes disabled: ' + result_text
-assert 'disabled' in result.get('error', '').lower(), 'expected disabled message: ' + result_text
+# error is the v0.6 unified envelope dict {code, message, retryable} OR legacy string
+err = result.get('error', '')
+err_msg = err.get('message', '') if isinstance(err, dict) else err
+err_code = err.get('code', '') if isinstance(err, dict) else ''
+assert ('disabled' in err_msg.lower() or err_code in ('MCP_WRITES_DISABLED', 'MCP_NOT_IMPLEMENTED')), \
+    'expected disabled message: ' + result_text
 print('OK T10-K: memory_append_turn returns writes-disabled error (expected)')
 " || { echo "FAIL: T10-K memory_append_turn did not return expected disabled error"; exit 1; }
 fi
@@ -1459,3 +1473,94 @@ fi
 # `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
 # policy. Acceptable per the R1 hardening rationale at the auth setup block.
 _um_smoke_auth_cleanup
+
+# 6/6 mocked-SDK boot smoke gate (Task G2.5, spec §9.4)
+# ------------------------------------------------------
+# Spin the container up with each non-default UM_*_PROVIDER value and
+# verify clean boot. Uses UM_TEST_MOCK_SDK=1 so provider modules
+# short-circuit to canned responses — no real API calls or live Ollama
+# daemon required.
+#
+# Set UM_SKIP_BOOT_SMOKE=1 to skip (CI without Docker, or local stack
+# that's already configured for a specific provider). The 5/5 baseline
+# block above is the smoke gate's `set` of read/write assertions; this
+# block validates _registry wiring + container startup_ for each
+# alternate provider, which is orthogonal to the data-path tests.
+if [ "${UM_SKIP_BOOT_SMOKE:-}" = "1" ]; then
+	echo "[smoke] 6/6 mocked-SDK boot tests SKIPPED (UM_SKIP_BOOT_SMOKE=1)"
+else
+	echo "[smoke] 6/6 mocked-SDK boot tests (spec §9.4)"
+	# docker-compose.yml lives one dir above smoke.sh (smoke.sh is at
+	# server/test/smoke.sh, compose at server/docker-compose.yml).
+	# Resolve relative to BASH_SOURCE so callers can invoke from any cwd
+	# (CI runs from server/, pre-push hook runs from worktree root).
+	# Caller may still override via UM_COMPOSE_FILE for dev workflows.
+	_SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-$_SMOKE_DIR/../docker-compose.yml}"
+
+	test_boot_with_provider() {
+		local provider="$1"
+		echo "== smoke: boot with ${provider} =="
+		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls happen.
+		UM_TEST_MOCK_SDK=1 \
+		UM_EMBEDDING_PROVIDER="$provider" \
+		UM_SUMMARIZER_PROVIDER="$provider" \
+		UM_FACTS_PROVIDER="$provider" \
+		docker compose -f "$UM_COMPOSE_FILE" up -d --force-recreate
+		# I3: Capture the freshly-recreated container's ID so the curl health
+		# poll can't false-pass against a leftover container that's still
+		# answering on port 6335 from a previous run. `--force-recreate` does
+		# replace the container, but we assert the new ID is `running` before
+		# trusting the curl probe.
+		local container_id
+		container_id=$(docker compose -f "$UM_COMPOSE_FILE" ps --quiet memory-server 2>/dev/null || true)
+		if [ -z "$container_id" ]; then
+			echo "  -> ${provider} container not started" >&2
+			return 1
+		fi
+		local status
+		status=$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+		if [ "$status" != "running" ]; then
+			echo "  -> ${provider} container status=${status} (expected running)" >&2
+			return 1
+		fi
+		# Wait for /api/state to respond OK
+		for i in 1 2 3 4 5 6 7 8 9 10; do
+			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
+				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
+				return 0
+			fi
+			sleep 1
+		done
+		echo "  -> ${provider} FAILED to boot" >&2
+		return 1
+	}
+
+	# Run boot-tests for each non-default provider
+	# (anthropic skipped for embeddings — spec §3.2 unsupported-surface contract)
+	#
+	# I2: accumulate failures via `rc` rather than letting `set -euo pipefail`
+	# kill the script on the first failing provider. We want the report to
+	# tell us which providers booted and which didn't; a single failure that
+	# aborts the whole run hides regressions in later providers. The final
+	# `[[ "$rc" == 0 ]]` keeps the script's overall exit status faithful.
+	boot_rc=0
+	test_boot_with_provider openai      || boot_rc=1   # baseline (existing)
+	test_boot_with_provider google      || boot_rc=1   # tests google-embed + google-summ + google-facts
+	test_boot_with_provider ollama      || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
+	# anthropic only for summarizer + facts (separately, with embedding=openai)
+	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed || boot_rc=1
+
+	# I1: explicit teardown of the boot-test stack so a failed provider
+	# doesn't leave the container running between local smoke iterations or
+	# poison the next CI step. Always runs (success or failure path); error
+	# from `down` itself is non-fatal — the smoke gate's verdict is `boot_rc`.
+	echo "[smoke]     tearing down boot-test stack"
+	docker compose -f "$UM_COMPOSE_FILE" down >/dev/null 2>&1 || true
+
+	if [ "$boot_rc" -ne 0 ]; then
+		echo "[smoke] 6/6 mocked-SDK boot tests FAILED (one or more providers did not boot)" >&2
+		exit 1
+	fi
+	echo "[smoke] 6/6 mocked-SDK boot tests passed"
+fi
