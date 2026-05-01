@@ -122,8 +122,28 @@ test_wizard_select_reprompts_on_invalid() {
   assert_eq "$CHOICE" "alpha" "F1.T2: wizard_select re-prompts on bogus + out-of-range, accepts 1 (alpha)"
 }
 
+test_wizard_select_eof_returns_nonzero() {
+  unset CHOICE
+  if wizard_select CHOICE "Pick:" alpha beta < /dev/null; then
+    fail "F1.T3: expected non-zero on EOF, got 0"
+  else
+    pass "F1.T3: wizard_select returns non-zero on EOF"
+  fi
+}
+
+test_wizard_select_empty_opts_returns_nonzero() {
+  unset CHOICE
+  if wizard_select CHOICE "Pick:"; then
+    fail "F1.T4: expected non-zero on empty opts, got 0"
+  else
+    pass "F1.T4: wizard_select returns non-zero on empty opts"
+  fi
+}
+
 test_wizard_select_basic
 test_wizard_select_reprompts_on_invalid
+test_wizard_select_eof_returns_nonzero
+test_wizard_select_empty_opts_returns_nonzero
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

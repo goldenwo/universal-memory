@@ -101,11 +101,16 @@ wizard_select() {
   # wizard_select <var> <prompt> <opt1> [opt2 ...]
   # Side-effect: assigns selected value to <var> via eval (var-by-name pattern,
   # matches wizard_prompt / wizard_validate_openai_key convention).
-  # Returns: 0 on selection. Loops until a valid choice is given.
+  # Returns: 0 on selection, 1 on EOF/abort, 2 on empty opts. Loops until a
+  # valid choice is given.
   # shellcheck disable=SC2034,SC2086,SC2154  # eval intentional for var-by-name pattern
   local var="$1" prompt="$2"
   shift 2
   local opts=("$@")
+  if (( ${#opts[@]} == 0 )); then
+    echo "wizard_select: no options provided" >&2
+    return 2
+  fi
   local i=1
   echo "$prompt"
   for opt in "${opts[@]}"; do
@@ -114,7 +119,7 @@ wizard_select() {
   done
   local choice
   while true; do
-    read -r -p "Choose [1-${#opts[@]}]: " choice
+    read -r -p "Choose [1-${#opts[@]}]: " choice || { echo "Aborted." >&2; return 1; }
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#opts[@]} )); then
       eval "$var=\"\${opts[\$((choice-1))]}\""
       return 0
