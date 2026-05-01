@@ -25,6 +25,73 @@ import pino from 'pino';
 let baseLogger;
 let testSink = null;
 
+// ---------------------------------------------------------------------------
+// G1 / R11 layer 2 — credential redaction.
+//
+// Two-layer defense:
+//   Layer 1 (pino `redact.paths`): structural redaction for known-shape
+//     fields (Authorization headers, x-api-key, config.url, params) — fast,
+//     uses pino's built-in fast-path.
+//   Layer 2 (`formatters.log` value-based censor): walk every string in
+//     the log object and rewrite values matching credential patterns
+//     (sk-*, sk-ant-*, AIza*, Bearer *). Catches leaks in arbitrary
+//     positions (error messages, free-form text) where structural paths
+//     don't match.
+//
+// Performance trade-off: `JSON.parse(JSON.stringify(obj, replacer))`
+// walks the entire log object on every emit. Plan §10.5 R11 accepts this
+// cost — credential leaks are catastrophic, walking a small log object
+// is not. Hot-path callers that need to skip this should not log
+// arbitrary err.config blobs.
+// ---------------------------------------------------------------------------
+
+const KEY_PATTERNS = [
+  /sk-[A-Za-z0-9_-]+/g,
+  /sk-ant-[A-Za-z0-9_-]+/g,
+  /AIza[A-Za-z0-9_-]+/g,
+  /Bearer [A-Za-z0-9_.+/=-]+/g,
+];
+
+function censorString(value) {
+  if (typeof value !== 'string') return value;
+  let out = value;
+  for (const re of KEY_PATTERNS) out = out.replace(re, '[REDACTED]');
+  return out;
+}
+
+/**
+ * Build a pino logger configured with R11 two-layer credential redaction.
+ *
+ * @param {object} [opts]
+ * @param {NodeJS.WritableStream} [opts.stream] - Destination Writable
+ *   (passed to pino as the second positional arg). Tests inject capture
+ *   sinks here. Production callers omit this and pino writes to stdout.
+ * @returns {import('pino').Logger}
+ */
+export function makeLogger(opts = {}) {
+  const { stream, ...rest } = opts;
+  const pinoOptions = {
+    redact: {
+      paths: [
+        '*.headers.authorization',
+        '*.headers["x-api-key"]',
+        '*.config.headers.*',
+        '*.request.headers.*',
+        '*.config.url',
+        '*.request.url',
+        '*.config.params.*',
+      ],
+      censor: '[REDACTED]',
+    },
+    formatters: {
+      // Value-based censor: walk every string field and apply regex redaction.
+      log: (obj) => JSON.parse(JSON.stringify(obj, (k, v) => censorString(v))),
+    },
+    ...rest,
+  };
+  return stream ? pino(pinoOptions, stream) : pino(pinoOptions);
+}
+
 function isTestEnv() {
   return process.env.UM_LOG_TEST === '1'
     || process.env.UM_LOG_TEST === 'true'
