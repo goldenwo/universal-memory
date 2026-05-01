@@ -107,6 +107,14 @@ assert_eq() {
   else fail "$3 (expected=$2 actual=$1)"; fi
 }
 
+assert_ne() {
+  if [[ "$1" != "$2" ]]; then
+    pass "$3"
+  else
+    fail "$3 (got '$1', expected NOT '$2')"
+  fi
+}
+
 test_wizard_select_basic() {
   # Use a here-string so wizard_select runs in the current shell (eval modifies
   # $CHOICE in this scope). A `... | wizard_select` pipe would put it in a
@@ -195,6 +203,38 @@ test_wizard_validate_anthropic_key_format
 test_wizard_validate_google_key_format
 test_wizard_validate_returns_1_on_eof
 test_wizard_validate_unknown_provider
+
+# ─── F3: wizard_probe_ollama unit tests ──────────────────────────────────────
+
+test_wizard_probe_ollama_reachable() {
+  # Stub `curl` with a mock that always returns 0
+  local stub_dir; stub_dir=$(mktemp -d)
+  cat > "$stub_dir/curl" <<'EOF'
+#!/bin/sh
+echo "fake response"
+exit 0
+EOF
+  chmod +x "$stub_dir/curl"
+  PATH="$stub_dir:$PATH" wizard_probe_ollama "http://localhost:11434"
+  assert_eq "$?" "0" "reachable host returns 0"
+  rm -rf "$stub_dir"
+}
+
+test_wizard_probe_ollama_unreachable() {
+  # Stub `curl` with a mock that always returns non-zero
+  local stub_dir; stub_dir=$(mktemp -d)
+  cat > "$stub_dir/curl" <<'EOF'
+#!/bin/sh
+exit 7  # connection refused
+EOF
+  chmod +x "$stub_dir/curl"
+  PATH="$stub_dir:$PATH" wizard_probe_ollama "http://localhost:11434"
+  assert_ne "$?" "0" "unreachable host returns non-zero"
+  rm -rf "$stub_dir"
+}
+
+test_wizard_probe_ollama_reachable
+test_wizard_probe_ollama_unreachable
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

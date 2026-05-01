@@ -119,6 +119,13 @@ wizard_validate_api_key() {
   return 0
 }
 
+wizard_probe_ollama() {
+  # wizard_probe_ollama <host>
+  # Returns: 0 if reachable, non-zero otherwise.
+  local host="$1"
+  curl -fsS --max-time 5 "${host%/}/api/tags" >/dev/null
+}
+
 wizard_confirm() {
   # Y/n confirm with default Y
   local prompt="$1"
