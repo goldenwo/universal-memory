@@ -103,8 +103,12 @@ wizard_validate_api_key() {
   while true; do
     read -r -p "$prompt" key || return 1
     if [[ -z "$key" ]]; then return 1; fi
+    # Provider list MUST stay in sync with server/lib/provider/registry.mjs.
+    # When adding a new provider with an API-key surface, add a case branch
+    # here and a corresponding test in wizard.test.sh. Bash can't import the
+    # JS registry; this comment + grep is the manual synchronization aid.
     case "$provider" in
-      openai)    [[ "$key" == sk-* ]]     && break || echo "Expected sk-* prefix.";;
+      openai)    [[ "$key" == sk-* && "$key" != sk-ant-* ]] && break || echo "Expected sk-* prefix (not sk-ant-*).";;
       anthropic) [[ "$key" == sk-ant-* ]] && break || echo "Expected sk-ant-* prefix.";;
       google)    [[ "$key" == AIza* ]]    && break || echo "Expected AIza* prefix.";;
       *) echo "Unknown provider: $provider" >&2; return 1;;
