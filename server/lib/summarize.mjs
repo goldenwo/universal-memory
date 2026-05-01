@@ -36,13 +36,7 @@ import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP from './provider/google.mjs';
 import * as ollamaP from './provider/ollama.mjs';
 import { computeCost } from './pricing.mjs';
-
-// G2: no-op default metrics sink. When callers don't inject `ctx.metrics`,
-// emissions go here so production paths without a wired prom-client adapter
-// still complete normally. The actual prom-client backing for um_provider_*
-// is added in a separate task; this orchestrator only depends on the duck-
-// typed `{ counter, histogram }` shape (spec §8.3).
-const NOOP_METRICS = { counter: () => {}, histogram: () => {} };
+import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
 
 export const BACKENDS = {
   openai:             { invoke: openaiInvoke,                requires: ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'], defaults: { summarizerModel: 'gpt-4o-mini' } },
@@ -106,7 +100,7 @@ export async function summarize(transcript, ctx = {}) {
   // Default to a no-op sink when ctx.metrics is not injected; tests inject a
   // capturing stub. Surface label is 'summarizer' (singular per §8.3 enum).
   const metrics = ctx.metrics ?? NOOP_METRICS;
-  const surface = 'summarizer';
+  const surface = SURFACES.SUMMARIZER;
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();
 
@@ -115,7 +109,7 @@ export async function summarize(transcript, ctx = {}) {
     raw = await invoke(transcript, { ...ctx, model });
   } catch (err) {
     metrics.counter(
-      'um_provider_errors_total',
+      PROVIDER_METRICS.ERRORS_TOTAL,
       { ...labels, error_class: err?.class ?? 'UNKNOWN' },
       1,
     );
@@ -134,10 +128,10 @@ export async function summarize(transcript, ctx = {}) {
   // All other providers compute cost from the PRICING table (single source of truth).
   const costUsd = providerName === 'ollama' ? 0 : computeCost(providerName, model, tokensIn, tokensOut);
 
-  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'in' }, tokensIn);
-  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'out' }, tokensOut);
-  metrics.counter('um_provider_cost_usd_total', labels, costUsd);
-  metrics.histogram('um_provider_request_duration_seconds', labels, elapsedSec);
+  metrics.counter(PROVIDER_METRICS.TOKENS_TOTAL, { ...labels, direction: 'in' }, tokensIn);
+  metrics.counter(PROVIDER_METRICS.TOKENS_TOTAL, { ...labels, direction: 'out' }, tokensOut);
+  metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
+  metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
   return { summary, costUsd, tokensIn, tokensOut };
 }

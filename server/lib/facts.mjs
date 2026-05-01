@@ -17,6 +17,7 @@
 
 import { providers, getProvider, supportingProviders } from './provider/registry.mjs';
 import { computeCost } from './pricing.mjs';
+import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
 
 export const FACTS_BACKENDS = Object.fromEntries(
   Object.entries(providers).filter(([_, p]) => p.supports.facts),
@@ -30,9 +31,6 @@ export function getFactsLlmConfig(env) {
   }
   return provider.factsLlmConfig(env);
 }
-
-// G2: no-op default metrics sink (see summarize.mjs note).
-const NOOP_METRICS = { counter: () => {}, histogram: () => {} };
 
 /**
  * Extract facts from text via the selected provider, emitting um_provider_*
@@ -58,7 +56,7 @@ export async function facts(text, ctx = {}) {
   const model = ctx.model ?? process.env.UM_FACTS_MODEL ?? provider.defaults?.factsModel;
 
   const metrics = ctx.metrics ?? NOOP_METRICS;
-  const surface = 'facts';
+  const surface = SURFACES.FACTS;
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();
 
@@ -71,7 +69,7 @@ export async function facts(text, ctx = {}) {
     raw = await provider.factsInvoke(text, { ...ctx, model });
   } catch (err) {
     metrics.counter(
-      'um_provider_errors_total',
+      PROVIDER_METRICS.ERRORS_TOTAL,
       { ...labels, error_class: err?.class ?? 'UNKNOWN' },
       1,
     );
@@ -84,10 +82,10 @@ export async function facts(text, ctx = {}) {
   const extracted = raw.facts ?? raw.content ?? null;
   const costUsd = providerName === 'ollama' ? 0 : computeCost(providerName, model, tokensIn, tokensOut);
 
-  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'in' }, tokensIn);
-  metrics.counter('um_provider_tokens_total', { ...labels, direction: 'out' }, tokensOut);
-  metrics.counter('um_provider_cost_usd_total', labels, costUsd);
-  metrics.histogram('um_provider_request_duration_seconds', labels, elapsedSec);
+  metrics.counter(PROVIDER_METRICS.TOKENS_TOTAL, { ...labels, direction: 'in' }, tokensIn);
+  metrics.counter(PROVIDER_METRICS.TOKENS_TOTAL, { ...labels, direction: 'out' }, tokensOut);
+  metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
+  metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
   return { facts: extracted, tokensIn, tokensOut, costUsd };
 }
