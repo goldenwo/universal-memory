@@ -1505,16 +1505,27 @@ else
 	UM_BOOT_OVERLAY="${UM_BOOT_OVERLAY:-$_SMOKE_DIR/../docker-compose.boot-test.yml}"
 
 	test_boot_with_provider() {
-		local provider="$1"
-		echo "== smoke: boot with ${provider} =="
+		# Args: <label> [<embed>] [<summ>] [<facts>]
+		# `label` is the friendly name used in echo + collection naming (e.g.
+		# "anthropic-mixed"). The other three default to label, but can be
+		# overridden positionally to test heterogeneous provider mixes — e.g.
+		# `test_boot_with_provider anthropic-mixed openai anthropic anthropic`
+		# uses openai for embeddings while summarizer/facts use anthropic.
+		# (anthropic doesn't expose an embeddings API per spec §3.2 — must be
+		# overridden when summ/facts=anthropic.)
+		local label="$1"
+		local embed="${2:-$1}"
+		local summ="${3:-$1}"
+		local facts="${4:-$1}"
+		echo "== smoke: boot with ${label} =="
 		# Per-provider QDRANT_COLLECTION (v0.8 G2.5 isolation): each boot lands
 		# its embedding-stamp in its own collection so the DE5 startup guard
 		# never sees a stamp from a prior provider's run. Without this,
 		# boot N+1 (different provider) sees boot N's stamp → mismatch fatal.
-		# Sanitize the provider label (anthropic-mixed → anthropic_mixed) so
-		# the collection name is qdrant-safe.
+		# Sanitize the label (anthropic-mixed → anthropic_mixed) so the
+		# collection name is qdrant-safe.
 		local collection
-		collection="boot_smoke_${provider//-/_}"
+		collection="boot_smoke_${label//-/_}"
 		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real *Invoke API
 		# calls happen. The boot-test overlay (docker-compose.boot-test.yml)
 		# declares these as `${VAR:-default}` substitution entries so the
@@ -1522,9 +1533,9 @@ else
 		# `export` (vs inline prefix) so docker-compose's variable-substitution
 		# pass sees them in its own environment unambiguously.
 		export UM_TEST_MOCK_SDK=1
-		export UM_EMBEDDING_PROVIDER="$provider"
-		export UM_SUMMARIZER_PROVIDER="$provider"
-		export UM_FACTS_PROVIDER="$provider"
+		export UM_EMBEDDING_PROVIDER="$embed"
+		export UM_SUMMARIZER_PROVIDER="$summ"
+		export UM_FACTS_PROVIDER="$facts"
 		export QDRANT_COLLECTION="$collection"
 		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" up -d --force-recreate
 		# I3: Capture the freshly-recreated container's ID so the curl health
@@ -1535,13 +1546,13 @@ else
 		local container_id
 		container_id=$(docker compose -f "$UM_COMPOSE_FILE" ps --quiet memory-server 2>/dev/null || true)
 		if [ -z "$container_id" ]; then
-			echo "  -> ${provider} container not started" >&2
+			echo "  -> ${label} container not started" >&2
 			return 1
 		fi
 		local status
 		status=$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
 		if [ "$status" != "running" ]; then
-			echo "  -> ${provider} container status=${status} (expected running)" >&2
+			echo "  -> ${label} container status=${status} (expected running)" >&2
 			return 1
 		fi
 		# Wait for /health to respond 200. /health is the dedicated liveness
@@ -1553,13 +1564,13 @@ else
 		local i=0
 		while [ "$i" -lt 30 ]; do
 			if curl -fsS "$ENDPOINT/health" >/dev/null 2>&1; then
-				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
+				echo "  -> ${label} booted cleanly (container ${container_id:0:12})"
 				return 0
 			fi
 			sleep 1
 			i=$((i + 1))
 		done
-		echo "  -> ${provider} FAILED to boot" >&2
+		echo "  -> ${label} FAILED to boot" >&2
 		# Dump diagnostics so CI failures are self-contained (without this,
 		# smoke.sh just prints "FAILED to boot" with no explanation).
 		echo "  ---- compose ps (port mapping + status) ----" >&2
@@ -1593,9 +1604,9 @@ else
 	else
 		echo "== smoke: boot with ollama SKIPPED (no daemon at ${OLLAMA_HOST:-http://localhost:11434}) =="
 	fi
-	# anthropic only for summarizer + facts (separately, with embedding=openai)
-	export UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic
-	test_boot_with_provider anthropic-mixed || boot_rc=1
+	# anthropic only for summarizer + facts (separately, with embedding=openai
+	# — anthropic doesn't expose an embeddings API per spec §3.2)
+	test_boot_with_provider anthropic-mixed openai anthropic anthropic || boot_rc=1
 
 	# I1: explicit teardown of the boot-test stack so a failed provider
 	# doesn't leave the container running between local smoke iterations or
