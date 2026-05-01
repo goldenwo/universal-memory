@@ -7,6 +7,12 @@
 
 set -uo pipefail
 
+# Pre-push hook context exports GIT_DIR/GIT_WORK_TREE pointing at the parent
+# repo's .git, which makes `git rev-parse --show-toplevel` resolve incorrectly
+# from worktree subdirs. Unset so git computes paths from CWD only.
+# Caught by v0.7 FIN gate (mirrors server/install.test.sh fix).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
 

@@ -19,6 +19,25 @@
 
 import YAML from 'yaml';
 
+import { providers, supportingProviders } from './lib/provider/registry.mjs';
+
+// ---------------------------------------------------------------------------
+// Provider enums — auto-derived from registry (spec §3.1 #5)
+// ---------------------------------------------------------------------------
+//
+// Per spec §3.1 #5: provider enums in OpenAPI are NOT hand-maintained — they
+// must derive from `lib/provider/registry.mjs` so adding a new provider in
+// one place propagates automatically. The drift-detection test in
+// server/test/openapi-provider-enums.test.mjs asserts these stay in sync.
+//
+// Sorted for stability — schema diffs and test assertions become deterministic
+// across `Object.keys(...)` iteration order quirks.
+
+const ALL_PROVIDERS = Object.keys(providers).sort();
+const EMBED_PROVIDERS = supportingProviders('embeddings').sort();
+const SUMM_PROVIDERS = supportingProviders('summarizer').sort();
+const FACTS_PROVIDERS = supportingProviders('facts').sort();
+
 // ---------------------------------------------------------------------------
 // Shared building blocks
 // ---------------------------------------------------------------------------
@@ -57,6 +76,31 @@ const RESP_500 = {
 // ---------------------------------------------------------------------------
 
 const SCHEMAS = {
+  // ── Provider enums (auto-derived from registry; spec §3.1 #5) ────────────
+  // These appear as named schemas so OpenAPI consumers can `$ref` them; their
+  // `enum` is computed from `supportingProviders(...)` at module load. See the
+  // drift-detection test in server/test/openapi-provider-enums.test.mjs.
+  EmbeddingProvider: {
+    type: 'string',
+    enum: EMBED_PROVIDERS,
+    description:
+      'Embedding provider for the vector index. Drives UM_EMBEDDING_PROVIDER. Must implement embeddings (anthropic excluded — no first-party embeds API). Switching providers requires `um-cli reindex` (spec §5.6, §6).',
+  },
+
+  SummarizerProvider: {
+    type: 'string',
+    enum: SUMM_PROVIDERS,
+    description:
+      'Summarizer provider for session-summary generation. Drives UM_SUMMARIZER_PROVIDER. Cross-provider fallback OK (UM_SUMMARIZER_FALLBACK).',
+  },
+
+  FactsProvider: {
+    type: 'string',
+    enum: FACTS_PROVIDERS,
+    description:
+      'Fact-extraction LLM provider (powers /api/add, memory_add). Drives UM_FACTS_PROVIDER. Optional cross-provider fallback via UM_FACTS_FALLBACK.',
+  },
+
   ErrorResponse: {
     type: 'object',
     description:
@@ -1005,7 +1049,7 @@ function pathOpenapi() {
 // Top-level spec
 // ---------------------------------------------------------------------------
 
-function buildSpec() {
+export function buildSpec() {
   return {
     openapi: '3.1.0',
     info: {

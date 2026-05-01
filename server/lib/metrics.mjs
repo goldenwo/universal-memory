@@ -23,8 +23,48 @@
 // v0.7+ note: this module is the single point through which metrics
 // flow. An OpenTelemetry-aware emitter can swap the backend without
 // touching call sites — same abstraction invariant the logger holds.
+//
+// NOTE: registry's `supports.embeddings` (plural) ≠ metric label `embed` (singular).
+// Spec §8.3 mandates singular metric labels. Use SURFACES.* never the literal strings.
 
 import * as promClient from 'prom-client';
+
+/**
+ * Provider-metric name constants (spec §8.3).
+ * Surface modules (embed/facts/summarize) import these instead of duplicating
+ * literal strings; a typo regresses to a compile/lookup error rather than a
+ * silent un-scraped metric.
+ */
+export const PROVIDER_METRICS = Object.freeze({
+  TOKENS_TOTAL: 'um_provider_tokens_total',
+  COST_USD_TOTAL: 'um_provider_cost_usd_total',
+  REQUEST_DURATION_SECONDS: 'um_provider_request_duration_seconds',
+  ERRORS_TOTAL: 'um_provider_errors_total',
+});
+
+/**
+ * Default no-op metrics sink used when callers don't inject `ctx.metrics`.
+ * Production paths without a wired prom-client adapter still complete normally;
+ * the orchestrators only depend on the duck-typed `{ counter, histogram }` shape.
+ */
+export const NOOP_METRICS = Object.freeze({
+  counter: () => {},
+  histogram: () => {},
+});
+
+/**
+ * Surface-label enum for um_provider_* metrics (spec §8.3).
+ *
+ * Bridges the naming gap between the provider registry's capability key
+ * `supports.embeddings` (PLURAL) and the metric label `embed` (SINGULAR).
+ * Always reference SURFACES.* — never the literal strings — so a typo or
+ * future drift fails loudly at import time.
+ */
+export const SURFACES = Object.freeze({
+  EMBED: 'embed',           // singular per spec §8.3 metric label (not 'embeddings')
+  SUMMARIZER: 'summarizer',
+  FACTS: 'facts',
+});
 
 export const registry = new promClient.Registry();
 

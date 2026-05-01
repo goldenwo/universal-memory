@@ -25,6 +25,85 @@ import pino from 'pino';
 let baseLogger;
 let testSink = null;
 
+// ---------------------------------------------------------------------------
+// G1 / R11 layer 2 — credential redaction.
+//
+// Two-layer defense:
+//   Layer 1 (pino `redact.paths`): structural redaction for known-shape
+//     fields (Authorization headers, x-api-key, config.url, params) — fast,
+//     uses pino's built-in fast-path.
+//   Layer 2 (`formatters.log` value-based censor): walk every string in
+//     the log object and rewrite values matching credential patterns
+//     (sk-*, sk-ant-*, AIza*, Bearer *). Catches leaks in arbitrary
+//     positions (error messages, free-form text) where structural paths
+//     don't match.
+//
+// Performance trade-off: `JSON.parse(JSON.stringify(obj, replacer))`
+// walks the entire log object on every emit. Plan §10.5 R11 accepts this
+// cost — credential leaks are catastrophic, walking a small log object
+// is not. Hot-path callers that need to skip this should not log
+// arbitrary err.config blobs.
+// ---------------------------------------------------------------------------
+
+const KEY_PATTERNS = Object.freeze([
+  /sk-ant-[A-Za-z0-9_-]+/g,    // anthropic — must be BEFORE sk-* (sk- would greedy-match this)
+  /sk-[A-Za-z0-9_-]+/g,        // openai
+  /AIza[A-Za-z0-9_-]+/g,       // google
+  /Bearer [A-Za-z0-9_.+/=-]+/g, // generic Authorization header value
+]);
+
+function censorString(value) {
+  if (typeof value !== 'string') return value;
+  let out = value;
+  for (const re of KEY_PATTERNS) out = out.replace(re, '[REDACTED]');
+  return out;
+}
+
+// R11 layer 1: structural path-based redaction. pino's built-in fast path.
+const REDACT_CONFIG = Object.freeze({
+  paths: [
+    '*.headers.authorization',
+    '*.headers["x-api-key"]',
+    '*.config.headers.*',
+    '*.request.headers.*',
+    '*.config.url',
+    '*.request.url',
+    '*.config.params.*',
+  ],
+  censor: '[REDACTED]',
+});
+
+// R11 layer 2: value-based censor walks every string field via JSON replacer.
+// Catches leaks in arbitrary positions (error messages, free-form text) that
+// path-based redaction can't reach.
+function censorFormatter(obj) {
+  try {
+    return JSON.parse(JSON.stringify(obj, (k, v) => censorString(v)));
+  } catch {
+    // Circular reference or other JSON failure — return raw obj.
+    // Pino's path-based redact is still in effect; we lose the value-censor
+    // pass for this log line only.
+    return obj;
+  }
+}
+
+/**
+ * Build a pino logger configured with R11 two-layer credential redaction.
+ * Used by tests; production code goes through getLogger() → base() which
+ * also applies the same redaction config via buildOptions().
+ *
+ * @param {object} [opts]
+ * @param {NodeJS.WritableStream} [opts.stream] - Destination Writable
+ *   (passed to pino as the second positional arg). Tests inject capture
+ *   sinks here. Production callers omit this and pino writes to stdout.
+ * @returns {import('pino').Logger}
+ */
+export function makeLogger(opts = {}) {
+  const { stream, ...rest } = opts;
+  const pinoOptions = { ...buildOptions(), ...rest };
+  return stream ? pino(pinoOptions, stream) : pino(pinoOptions);
+}
+
 function isTestEnv() {
   return process.env.UM_LOG_TEST === '1'
     || process.env.UM_LOG_TEST === 'true'
@@ -35,7 +114,14 @@ function buildOptions() {
   return {
     level: process.env.UM_LOG_LEVEL || 'info',
     base: null,
-    formatters: { level: (label) => ({ level: label }) },
+    // R11 layer 1: see REDACT_CONFIG above. Applies to both production
+    // (getLogger() → base()) AND test-only callers (makeLogger).
+    redact: REDACT_CONFIG,
+    formatters: {
+      level: (label) => ({ level: label }),
+      // R11 layer 2: see censorFormatter above.
+      log: censorFormatter,
+    },
   };
 }
 

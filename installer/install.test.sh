@@ -194,12 +194,14 @@ if echo "$TF10_OUT" | grep -q "delegate: installer/install-plugin-cc.sh"; then p
 rm -rf "$TF10"
 
 # ─── T-FLAGS-11: --yes propagates to passthrough args ────────────────────────
+# v0.7 contract: --yes + server in scope refuses on missing API key, so we set
+# a fake OPENAI_API_KEY so this delegation-propagation test stays green.
 echo ""
 echo "=== T-FLAGS-11: --yes propagates to delegation line ==="
 TF11=$(mktemp -d)
 make_stubs "$TF11/bin"
 TF11_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF11/repo" \
-  env PATH="$TF11/bin:/usr/bin:/bin" bash "$INSTALLER" --server --yes 2>&1) && TF11_EXIT=0 || TF11_EXIT=$?
+  env PATH="$TF11/bin:/usr/bin:/bin" OPENAI_API_KEY=sk-fake-test-key bash "$INSTALLER" --server --yes 2>&1) && TF11_EXIT=0 || TF11_EXIT=$?
 if [ "$TF11_EXIT" -eq 0 ]; then pass "T-FLAGS-11: exit 0"; else fail "T-FLAGS-11: exit $TF11_EXIT (out: $TF11_OUT)"; fi
 if echo "$TF11_OUT" | grep -q "delegate: server/install.sh.*--yes"; then pass "T-FLAGS-11: --yes in delegation args"; else fail "T-FLAGS-11: --yes not propagated (got: $TF11_OUT)"; fi
 rm -rf "$TF11"
@@ -347,17 +349,71 @@ if ! echo "$TF16_OUT" | grep -q "delegate: installer/install-plugin-cc.sh"; then
 rm -rf "$TF16"
 
 # ─── T-FLAGS-17: --yes alone (no other flags, non-TTY) = --all back-compat ───
+# v0.7 contract: --yes + server in scope (--all back-compat puts it in scope)
+# refuses on missing API key, so we set a fake OPENAI_API_KEY here.
 echo ""
 echo "=== T-FLAGS-17: --yes alone (non-TTY) → treated as --all ==="
 TF17=$(mktemp -d)
 make_stubs "$TF17/bin"
 # Use a fake HOME with no .claude or .codex so plugins are skipped
 TF17_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF17/repo" \
-  env PATH="$TF17/bin:/usr/bin:/bin" HOME="$TF17/fakehome" bash "$INSTALLER" --yes 2>&1 </dev/null) && TF17_EXIT=0 || TF17_EXIT=$?
+  env PATH="$TF17/bin:/usr/bin:/bin" HOME="$TF17/fakehome" OPENAI_API_KEY=sk-fake-test-key bash "$INSTALLER" --yes 2>&1 </dev/null) && TF17_EXIT=0 || TF17_EXIT=$?
 if [ "$TF17_EXIT" -eq 0 ]; then pass "T-FLAGS-17: exit 0"; else fail "T-FLAGS-17: exit $TF17_EXIT (out: $TF17_OUT)"; fi
 if echo "$TF17_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-17: --yes alone triggers server (--all back-compat)"; else fail "T-FLAGS-17: server not triggered (got: $TF17_OUT)"; fi
 if echo "$TF17_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-17: --yes alone triggers cli (--all back-compat)"; else fail "T-FLAGS-17: cli not triggered (got: $TF17_OUT)"; fi
 rm -rf "$TF17"
+
+# ─── T-FLAGS-19 (v0.7 G2.3): --yes + --server WITHOUT API key → exit 1 ───────
+echo ""
+echo "=== T-FLAGS-19: --yes --server WITHOUT API key → refuses with exit 1 (v0.7 contract) ==="
+TF19=$(mktemp -d)
+make_stubs "$TF19/bin"
+# env -i strips OPENAI_API_KEY (and all other inherited vars) so we get a
+# deterministic missing-key state regardless of the runner's shell env.
+TF19_OUT=$(env -i PATH="$TF19/bin:/usr/bin:/bin" HOME="$TF19/fakehome" \
+  UM_DRY_RUN=1 UM_INSTALL_DIR="$TF19/repo" \
+  bash "$INSTALLER" --server --yes 2>&1) && TF19_EXIT=0 || TF19_EXIT=$?
+if [ "$TF19_EXIT" -ne 0 ]; then pass "T-FLAGS-19: non-zero exit (refuses on missing key)"; else fail "T-FLAGS-19: expected non-zero exit, got 0 (out: $TF19_OUT)"; fi
+if echo "$TF19_OUT" | grep -qi "OPENAI_API_KEY"; then pass "T-FLAGS-19: error names the missing var"; else fail "T-FLAGS-19: error didn't name OPENAI_API_KEY (got: $TF19_OUT)"; fi
+if echo "$TF19_OUT" | grep -q "MIGRATION.md"; then pass "T-FLAGS-19: error points at MIGRATION.md"; else fail "T-FLAGS-19: error didn't reference MIGRATION.md (got: $TF19_OUT)"; fi
+rm -rf "$TF19"
+
+# ─── T-FLAGS-20 (v0.7 G2.3): --yes + --cli alone (no server) does NOT require key ─
+echo ""
+echo "=== T-FLAGS-20: --yes --cli alone (no server) does NOT trigger key guard ==="
+TF20=$(mktemp -d)
+make_stubs "$TF20/bin"
+TF20_OUT=$(env -i PATH="$TF20/bin:/usr/bin:/bin" HOME="$TF20/fakehome" \
+  UM_DRY_RUN=1 UM_INSTALL_DIR="$TF20/repo" \
+  bash "$INSTALLER" --cli --yes 2>&1) && TF20_EXIT=0 || TF20_EXIT=$?
+if [ "$TF20_EXIT" -eq 0 ]; then pass "T-FLAGS-20: --cli --yes exits 0 with no key (CLI doesn't need key)"; else fail "T-FLAGS-20: exit $TF20_EXIT (out: $TF20_OUT)"; fi
+if echo "$TF20_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-20: cli still delegated"; else fail "T-FLAGS-20: cli not delegated (got: $TF20_OUT)"; fi
+rm -rf "$TF20"
+
+# ─── T-FLAGS-21 (v0.7 G2.3): --yes + --server with UM_OPENAI_API_KEY also accepted ─
+echo ""
+echo "=== T-FLAGS-21: --yes + --server accepts UM_OPENAI_API_KEY (alt env var) ==="
+TF21=$(mktemp -d)
+make_stubs "$TF21/bin"
+TF21_OUT=$(env -i PATH="$TF21/bin:/usr/bin:/bin" HOME="$TF21/fakehome" \
+  UM_DRY_RUN=1 UM_INSTALL_DIR="$TF21/repo" UM_OPENAI_API_KEY=sk-fake-um-prefix \
+  bash "$INSTALLER" --server --yes 2>&1) && TF21_EXIT=0 || TF21_EXIT=$?
+if [ "$TF21_EXIT" -eq 0 ]; then pass "T-FLAGS-21: exit 0 with UM_OPENAI_API_KEY"; else fail "T-FLAGS-21: exit $TF21_EXIT (out: $TF21_OUT)"; fi
+if echo "$TF21_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-21: server delegated when alt key var set"; else fail "T-FLAGS-21: server not delegated (got: $TF21_OUT)"; fi
+rm -rf "$TF21"
+
+# ─── T-FLAGS-22 (v0.7 G2.3): --yes + Ollama provider does NOT require API key ─
+echo ""
+echo "=== T-FLAGS-22: --yes + UM_*_PROVIDER=ollama does NOT require API key ==="
+TF22=$(mktemp -d)
+make_stubs "$TF22/bin"
+TF22_OUT=$(env -i PATH="$TF22/bin:/usr/bin:/bin" HOME="$TF22/fakehome" \
+  UM_DRY_RUN=1 UM_INSTALL_DIR="$TF22/repo" \
+  UM_EMBEDDING_PROVIDER=ollama UM_SUMMARIZER_PROVIDER=ollama UM_FACTS_PROVIDER=ollama \
+  bash "$INSTALLER" --server --yes 2>&1) && TF22_EXIT=0 || TF22_EXIT=$?
+if [ "$TF22_EXIT" -eq 0 ]; then pass "T-FLAGS-22: ollama path skips key guard"; else fail "T-FLAGS-22: exit $TF22_EXIT (out: $TF22_OUT)"; fi
+if echo "$TF22_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-22: server delegated under ollama config"; else fail "T-FLAGS-22: server not delegated (got: $TF22_OUT)"; fi
+rm -rf "$TF22"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
