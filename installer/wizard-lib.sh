@@ -93,7 +93,8 @@ wizard_validate_api_key() {
     esac
   done
   eval "$var=\"$key\""
-  export "$var"
+  # shellcheck disable=SC2163  # var-by-name export is intentional (the value of $var IS the variable name we want to export)
+  export "${var?}"
   return 0
 }
 
