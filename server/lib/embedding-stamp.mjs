@@ -26,9 +26,17 @@ const STAMP_ID = SYSTEM_METADATA_IDS[0];  // '_um_embedding_stamp'
 const STAMP_TEXT = 'embedding-stamp';
 const DIM_PROBE_TEXT = '_um_dim_probe';
 
+// mem0 OSS requires one of {userId, agentId, runId} on every add()/getAll()
+// call (see node_modules/mem0ai/dist/oss/index.mjs ~line 5038). System docs
+// (the stamp) aren't user-scoped, so we use a sentinel userId. Filtered out
+// of all user-facing read paths by isSystemDoc() in lib/system-docs.mjs.
+// Caught by live boot during v0.7 FIN gate (Apr 30 2026); unit tests with
+// stub memory clients didn't surface the contract violation.
+const SYSTEM_USER_ID = '_um_system';
+
 export async function readStamp({ memory, collection } = {}) {
   if (!memory?.getAll) throw new Error('readStamp: memory.getAll required');
-  const items = await memory.getAll({ collection });
+  const items = await memory.getAll({ userId: SYSTEM_USER_ID, collection });
   const list = Array.isArray(items) ? items : (items?.results ?? []);
   for (const item of list) {
     if (item?.metadata?.id === STAMP_ID) {
@@ -41,6 +49,7 @@ export async function readStamp({ memory, collection } = {}) {
 export async function writeStamp({ memory, collection, stamp } = {}) {
   if (!memory?.add) throw new Error('writeStamp: memory.add required');
   await memory.add(STAMP_TEXT, {
+    userId: SYSTEM_USER_ID,
     metadata: { id: STAMP_ID, collection, stamp },
     infer: false,
   });
