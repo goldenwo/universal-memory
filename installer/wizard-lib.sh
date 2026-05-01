@@ -97,6 +97,32 @@ wizard_confirm() {
   [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
 }
 
+wizard_select() {
+  # wizard_select <var> <prompt> <opt1> [opt2 ...]
+  # Side-effect: assigns selected value to <var> via eval (var-by-name pattern,
+  # matches wizard_prompt / wizard_validate_openai_key convention).
+  # Returns: 0 on selection. Loops until a valid choice is given.
+  # shellcheck disable=SC2034,SC2086,SC2154  # eval intentional for var-by-name pattern
+  local var="$1" prompt="$2"
+  shift 2
+  local opts=("$@")
+  local i=1
+  echo "$prompt"
+  for opt in "${opts[@]}"; do
+    echo "  $i) $opt"
+    i=$((i+1))
+  done
+  local choice
+  while true; do
+    read -r -p "Choose [1-${#opts[@]}]: " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#opts[@]} )); then
+      eval "$var=\"\${opts[\$((choice-1))]}\""
+      return 0
+    fi
+    echo "Invalid choice. Try again."
+  done
+}
+
 wizard_summarize() {
   # Show install summary before execution
   echo ""

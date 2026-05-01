@@ -95,6 +95,36 @@ OUT=$(printf '3\nhttp://pi.local:6335\n\n\nY\n' | HOME="$T12" UM_DRY_RUN=1 bash 
 if echo "$OUT" | grep -q "pi.local:6335"; then pass "T12: custom server URL appears in wizard summary"
 else fail "T12: custom server URL not found in summary; out: $(echo "$OUT" | head -20)"; fi
 
+# ─── F1: wizard_select unit tests ─────────────────────────────────────────────
+# Source wizard-lib.sh to test wizard_select directly via canned stdin.
+
+# shellcheck source=installer/wizard-lib.sh
+. "$SCRIPT_DIR/wizard-lib.sh"
+
+assert_eq() {
+  # assert_eq <actual> <expected> <label>
+  if [ "$1" = "$2" ]; then pass "$3"
+  else fail "$3 (expected=$2 actual=$1)"; fi
+}
+
+test_wizard_select_basic() {
+  # Use a here-string so wizard_select runs in the current shell (eval modifies
+  # $CHOICE in this scope). A `... | wizard_select` pipe would put it in a
+  # subshell and the assignment would be lost.
+  CHOICE=""
+  wizard_select CHOICE "Pick one:" alpha beta gamma <<< $'2\n' >/dev/null
+  assert_eq "$CHOICE" "beta" "F1.T1: wizard_select selects option 2 (beta)"
+}
+
+test_wizard_select_reprompts_on_invalid() {
+  CHOICE=""
+  wizard_select CHOICE "Pick:" alpha beta <<< $'bogus\n9\n1\n' >/dev/null
+  assert_eq "$CHOICE" "alpha" "F1.T2: wizard_select re-prompts on bogus + out-of-range, accepts 1 (alpha)"
+}
+
+test_wizard_select_basic
+test_wizard_select_reprompts_on_invalid
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
