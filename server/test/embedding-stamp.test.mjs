@@ -66,6 +66,26 @@ test('verifyDim probes embedder, refuses on dim mismatch (R3)', async () => {
   await assert.rejects(() => verifyDim({ embedder: fakeEmbed, dim: 1536 }), /dim.*mismatch|substituted/i);
 });
 
+test('verifyDim resolves silently when probe returns correct dim (happy path)', async () => {
+  const fakeEmbed = { embedQuery: async () => new Array(1536) };
+  await assert.doesNotReject(() => verifyDim({ embedder: fakeEmbed, dim: 1536 }));
+});
+
+test('verifyDim tags probe failure distinctly from dim mismatch', async () => {
+  // Probe rejection must surface as 'embedding probe failed', NOT 'embedding dim mismatch'.
+  // Operators need to distinguish a transient embedder/network failure from a genuine
+  // model swap (R3 fence) — same error string would conflate the two failure modes.
+  const fakeEmbed = { embedQuery: async () => { throw new Error('network unreachable'); } };
+  await assert.rejects(
+    () => verifyDim({ embedder: fakeEmbed, dim: 1536 }),
+    (err) => {
+      assert.match(err.message, /embedding probe failed/);
+      assert.doesNotMatch(err.message, /embedding dim mismatch/);
+      return true;
+    },
+  );
+});
+
 test('createStampClient binds memory + collection, returns DI-friendly object', async () => {
   const memory = { getAll: async () => [], add: async () => {} };
   const client = createStampClient({ memory, collection: 'memories_test' });

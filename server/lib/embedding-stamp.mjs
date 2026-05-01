@@ -27,6 +27,7 @@ const STAMP_TEXT = 'embedding-stamp';
 const DIM_PROBE_TEXT = '_um_dim_probe';
 
 export async function readStamp({ memory, collection } = {}) {
+  if (!memory?.getAll) throw new Error('readStamp: memory.getAll required');
   const items = await memory.getAll({ collection });
   const list = Array.isArray(items) ? items : (items?.results ?? []);
   for (const item of list) {
@@ -38,6 +39,7 @@ export async function readStamp({ memory, collection } = {}) {
 }
 
 export async function writeStamp({ memory, collection, stamp } = {}) {
+  if (!memory?.add) throw new Error('writeStamp: memory.add required');
   await memory.add(STAMP_TEXT, {
     metadata: { id: STAMP_ID, collection, stamp },
     infer: false,
@@ -56,11 +58,17 @@ export function compareStamp(stamp, expected) {
 }
 
 export async function verifyDim({ embedder, dim } = {}) {
-  const vec = await embedder.embedQuery(DIM_PROBE_TEXT);
-  const actual = Array.isArray(vec) ? vec.length : (vec?.length ?? -1);
-  if (actual !== dim) {
+  if (!embedder?.embedQuery) throw new Error('verifyDim: embedder.embedQuery required');
+  let probedDim;
+  try {
+    const vec = await embedder.embedQuery(DIM_PROBE_TEXT);
+    probedDim = Array.isArray(vec) ? vec.length : (vec?.length ?? -1);
+  } catch (e) {
+    throw new Error(`embedding probe failed: ${e?.message ?? e}`, { cause: e });
+  }
+  if (probedDim !== dim) {
     throw new Error(
-      `embedding dim mismatch: expected ${dim}, got ${actual} (provider may have substituted a different model)`,
+      `embedding dim mismatch: expected ${dim}, got ${probedDim} (provider may have substituted a different model)`,
     );
   }
 }
