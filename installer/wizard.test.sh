@@ -145,6 +145,57 @@ test_wizard_select_reprompts_on_invalid
 test_wizard_select_eof_returns_nonzero
 test_wizard_select_empty_opts_returns_nonzero
 
+# ─── F2: wizard_validate_api_key unit tests ──────────────────────────────────
+# Use here-strings/here-docs (NOT pipes) so wizard_validate_api_key runs in the
+# current shell and `export "$var"` is visible to the assertions. A
+# `printf … | wizard_validate_api_key` pipe would put the function in a
+# subshell and the export would be lost.
+
+test_wizard_validate_openai_key_accepts_valid() {
+  unset OPENAI_API_KEY
+  wizard_validate_api_key openai OPENAI_API_KEY <<< 'sk-validkey123' >/dev/null
+  assert_eq "$OPENAI_API_KEY" "sk-validkey123" "F2.T1: valid sk-* set"
+}
+
+test_wizard_validate_openai_key_reprompts_on_invalid_then_accepts() {
+  unset OPENAI_API_KEY
+  wizard_validate_api_key openai OPENAI_API_KEY >/dev/null <<EOF
+bogus
+sk-realkey
+EOF
+  assert_eq "$OPENAI_API_KEY" "sk-realkey" "F2.T2: re-prompt then valid"
+}
+
+test_wizard_validate_anthropic_key_format() {
+  unset ANTHROPIC_API_KEY
+  wizard_validate_api_key anthropic ANTHROPIC_API_KEY <<< 'sk-ant-realkey' >/dev/null
+  assert_eq "$ANTHROPIC_API_KEY" "sk-ant-realkey" "F2.T3: anthropic format"
+}
+
+test_wizard_validate_google_key_format() {
+  unset GOOGLE_API_KEY
+  wizard_validate_api_key google GOOGLE_API_KEY <<< 'AIzaRealKey' >/dev/null
+  assert_eq "$GOOGLE_API_KEY" "AIzaRealKey" "F2.T4: google AIza format"
+}
+
+test_wizard_validate_returns_1_on_eof() {
+  unset OPENAI_API_KEY
+  wizard_validate_api_key openai OPENAI_API_KEY < /dev/null >/dev/null
+  assert_eq "$?" "1" "F2.T5: EOF/empty returns 1"
+}
+
+test_wizard_validate_unknown_provider() {
+  wizard_validate_api_key cohere COHERE_KEY <<< 'whatever' 2>/dev/null
+  assert_eq "$?" "1" "F2.T6: unknown provider returns 1"
+}
+
+test_wizard_validate_openai_key_accepts_valid
+test_wizard_validate_openai_key_reprompts_on_invalid_then_accepts
+test_wizard_validate_anthropic_key_format
+test_wizard_validate_google_key_format
+test_wizard_validate_returns_1_on_eof
+test_wizard_validate_unknown_provider
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

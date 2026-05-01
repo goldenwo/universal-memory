@@ -89,6 +89,32 @@ wizard_validate_openai_key() {
   done
 }
 
+wizard_validate_api_key() {
+  # wizard_validate_api_key <provider> <var_name>
+  # Side-effect: prompts user for key on stdin; on valid input, sets <var_name>
+  # in env via eval+export; returns 0. On invalid format: re-prompts (loop).
+  # On EOF / empty input: returns 1, does NOT set the variable.
+  # Recognized providers: openai (sk-*), anthropic (sk-ant-*), google (AIza*).
+  # Unknown provider arg → return 1, error message to stderr.
+  # shellcheck disable=SC2034,SC2086,SC2154  # eval + var-by-name pattern, intentional
+  local provider="$1" var="$2"
+  local prompt="${provider} API key (Ctrl-C to cancel): "
+  local key
+  while true; do
+    read -r -p "$prompt" key || return 1
+    if [[ -z "$key" ]]; then return 1; fi
+    case "$provider" in
+      openai)    [[ "$key" == sk-* ]]     && break || echo "Expected sk-* prefix.";;
+      anthropic) [[ "$key" == sk-ant-* ]] && break || echo "Expected sk-ant-* prefix.";;
+      google)    [[ "$key" == AIza* ]]    && break || echo "Expected AIza* prefix.";;
+      *) echo "Unknown provider: $provider" >&2; return 1;;
+    esac
+  done
+  eval "$var=\"$key\""
+  export "$var"
+  return 0
+}
+
 wizard_confirm() {
   # Y/n confirm with default Y
   local prompt="$1"
