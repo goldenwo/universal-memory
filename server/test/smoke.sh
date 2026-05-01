@@ -1513,15 +1513,17 @@ else
 		# the collection name is qdrant-safe.
 		local collection
 		collection="boot_smoke_${provider//-/_}"
-		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls
-		# happen. The boot-test overlay (docker-compose.boot-test.yml) declares
-		# these as shell-pass-through entries so the assignments below
-		# propagate into the container.
-		UM_TEST_MOCK_SDK=1 \
-		UM_EMBEDDING_PROVIDER="$provider" \
-		UM_SUMMARIZER_PROVIDER="$provider" \
-		UM_FACTS_PROVIDER="$provider" \
-		QDRANT_COLLECTION="$collection" \
+		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real *Invoke API
+		# calls happen. The boot-test overlay (docker-compose.boot-test.yml)
+		# declares these as `${VAR:-default}` substitution entries so the
+		# exports below propagate into the container at compose-up time.
+		# `export` (vs inline prefix) so docker-compose's variable-substitution
+		# pass sees them in its own environment unambiguously.
+		export UM_TEST_MOCK_SDK=1
+		export UM_EMBEDDING_PROVIDER="$provider"
+		export UM_SUMMARIZER_PROVIDER="$provider"
+		export UM_FACTS_PROVIDER="$provider"
+		export QDRANT_COLLECTION="$collection"
 		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" up -d --force-recreate
 		# I3: Capture the freshly-recreated container's ID so the curl health
 		# poll can't false-pass against a leftover container that's still
@@ -1540,13 +1542,15 @@ else
 			echo "  -> ${provider} container status=${status} (expected running)" >&2
 			return 1
 		fi
-		# Wait for /api/state to respond OK. Budget 30s — matches
-		# memory-server's initMemory() qdrant-connect retry budget (30 attempts
-		# x 1s) so a slow qdrant cold-start after `--force-recreate` doesn't
-		# false-fail the boot test.
+		# Wait for /health to respond 200. /health is the dedicated liveness
+		# endpoint — /api/state requires a :project path param and 404s in
+		# its absence (older smoke.sh polled it and false-failed on URL
+		# shape, not server liveness). Budget 30s matches memory-server's
+		# initMemory() qdrant-connect retry budget (30 attempts x 1s) so a
+		# slow qdrant cold-start after --force-recreate doesn't false-fail.
 		local i=0
 		while [ "$i" -lt 30 ]; do
-			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
+			if curl -fsS "$ENDPOINT/health" >/dev/null 2>&1; then
 				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
 				return 0
 			fi
@@ -1574,9 +1578,19 @@ else
 	boot_rc=0
 	test_boot_with_provider openai      || boot_rc=1   # baseline (existing)
 	test_boot_with_provider google      || boot_rc=1   # tests google-embed + google-summ + google-facts
-	test_boot_with_provider ollama      || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
+	# Ollama needs a real daemon for mem0's "ensure model exists" probe at
+	# init — UM_TEST_MOCK_SDK only short-circuits *Invoke functions, not
+	# mem0's internal ollama-init calls. Probe before testing so CI without
+	# ollama (the default) skips with a clear message instead of a generic
+	# boot-failure log dump.
+	if curl -fsS --max-time 2 "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1; then
+		test_boot_with_provider ollama || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
+	else
+		echo "== smoke: boot with ollama SKIPPED (no daemon at ${OLLAMA_HOST:-http://localhost:11434}) =="
+	fi
 	# anthropic only for summarizer + facts (separately, with embedding=openai)
-	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed || boot_rc=1
+	export UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic
+	test_boot_with_provider anthropic-mixed || boot_rc=1
 
 	# I1: explicit teardown of the boot-test stack so a failed provider
 	# doesn't leave the container running between local smoke iterations or
