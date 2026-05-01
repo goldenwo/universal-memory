@@ -63,7 +63,7 @@ import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig, validateProviderSupport, validateModelExists } from './lib/startup-validation.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
-import { filterSystemDocs, SYSTEM_METADATA_IDS } from './lib/system-docs.mjs';
+import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient, compareStamp } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 
@@ -1619,12 +1619,10 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
   );
   // DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
   // before envelope serialization. doRecent reads the vault filesystem and
-  // its records carry id at the top level (no metadata wrapper), so we
-  // match against SYSTEM_METADATA_IDS directly. Single touchpoint covers
+  // its records carry id at the top level (no metadata wrapper), so we use
+  // the top-level-id variant of the helper. Single touchpoint covers
   // /api/recent/:project (the only public surface for doRecent).
-  const results = resultsRaw
-    .filter(Boolean)
-    .filter((rec) => !SYSTEM_METADATA_IDS.includes(rec.id));
+  const results = filterSystemDocsByTopLevelId(resultsRaw.filter(Boolean));
 
   return listEnvelope(results);
 }

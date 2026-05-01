@@ -34,3 +34,22 @@ export function filterSystemDocs(items) {
   if (!Array.isArray(items)) return [];
   return items.filter((i) => !isSystemDoc(i));
 }
+
+/**
+ * Returns a new array with system/internal docs removed, matching against
+ * `id` at the top level of each item (not under `metadata.id`).
+ *
+ * Used by read paths whose records expose `id` directly — e.g. doRecent,
+ * which projects vault files into `{ id, title, snippet }` records before
+ * filtering. Centralizing this shape variant keeps the data-shape decision
+ * inside system-docs.mjs and prevents per-touchpoint re-implementation.
+ *
+ * Defensive against non-array input (returns []) and items with `id` that is
+ * null/undefined/non-string (treated as non-system).
+ * @param {Array<{id?: string}> | null | undefined} items
+ * @returns {Array<{id?: string}>}
+ */
+export function filterSystemDocsByTopLevelId(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((i) => !SYSTEM_METADATA_IDS.includes(i?.id));
+}

@@ -60,6 +60,15 @@ test('doSearch(query, limit, includeSuperseded, full, ctx) excludes stamp doc', 
 test('doRecent excludes stamp doc from authored vault listing', async () => {
   // doRecent walks the vault filesystem; seed both a real doc and a stamp-shaped
   // doc to verify the filter rejects the latter.
+  //
+  // Non-vacuous fixture note: `listVaultFiles` (server/lib/vault.mjs) filters
+  // only by `.md` extension and skips symlinks — it does NOT filter by
+  // underscore-prefixed filenames. So `_um_embedding_stamp.md` IS listed by
+  // the vault walker, and the only thing that excludes it from the result is
+  // the system-docs filter under test. If `listVaultFiles` ever grows an
+  // underscore-prefix filter, this test would become vacuous and the fixture
+  // should be renamed (keeping the frontmatter `id: _um_embedding_stamp` to
+  // prove the filter, not the listing, is what excludes it).
   const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-de3-'));
   const prev = process.env.UM_VAULT_DIR;
   process.env.UM_VAULT_DIR = vault;
