@@ -298,6 +298,21 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
 
   const actual = await stamp.read();
   if (actual === null) {
+    // Mock-SDK boot path (smoke gate, spec §9.4): skip writeStamp + verifyDim.
+    // Both call into the embedder (memory.add embeds the stamp text; verifyDim
+    // calls embedder.embedQuery), which mem0 routes through real provider
+    // SDKs — UM_TEST_MOCK_SDK only short-circuits our *Invoke wrappers, not
+    // mem0's internal embedder. Without this skip, boot smoke for non-openai
+    // providers crashes on `API key not valid` from the fake-key fallback
+    // (PR #35 CI run 25235221732). Stamp-write logic is covered by
+    // server/test/init-memory-stamp-guard.test.mjs and live FIN1 integration.
+    if (env.UM_TEST_MOCK_SDK === '1') {
+      log.info(
+        { code: 'EMBEDDING_STAMP_MOCK_SKIP', expected },
+        '[mem0-mcp] UM_TEST_MOCK_SDK=1 — skipping stamp write + verify on null branch',
+      );
+      return memory;
+    }
     // Null branch — legacy collection. Stamp it so future restarts hit `match`,
     // then probe live dim. R2 mitigation per spec §6.2.
     await stamp.write(expected);
@@ -333,6 +348,12 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
     { code: 'EMBEDDING_STAMP_MATCH', stamp: actual },
     '[mem0-mcp] embedding stamp matches; verifying dim',
   );
+  // Mock-SDK boot path: skip verifyDim (calls embedder.embedQuery → real
+  // provider SDK). Same rationale as the null branch above. Match path
+  // verification is covered by unit tests + production live boot.
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return memory;
+  }
   await stamp.verifyDim({ embedder, dim: expectedDim });
   return memory;
 }
