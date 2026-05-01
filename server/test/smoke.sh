@@ -1558,11 +1558,14 @@ else
 			i=$((i + 1))
 		done
 		echo "  -> ${provider} FAILED to boot" >&2
-		# Dump the last 80 log lines so CI diagnoses are self-contained
-		# (without this, smoke.sh just prints "FAILED to boot" with no
-		# explanation; operator has to repro locally to see the actual error).
+		# Dump diagnostics so CI failures are self-contained (without this,
+		# smoke.sh just prints "FAILED to boot" with no explanation).
+		echo "  ---- compose ps (port mapping + status) ----" >&2
+		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" ps 2>&1 | sed 's/^/  | /' >&2
+		echo "  ---- curl probe of /health (one-off, verbose) ----" >&2
+		curl -v --max-time 3 "$ENDPOINT/health" 2>&1 | sed 's/^/  | /' >&2 || true
 		echo "  ---- last 80 lines of memory-server logs ----" >&2
-		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" logs --tail=80 memory-server 2>&1 | sed 's/^/  | /' >&2
+		docker logs "$container_id" --tail=80 2>&1 | sed 's/^/  | /' >&2
 		echo "  ---- end logs ----" >&2
 		return 1
 	}
