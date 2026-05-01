@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { readCheckpoint, writeCheckpoint, addProcessedId, recordPhase, clearError, createCheckpointClient } from '../lib/checkpoint.mjs';
@@ -19,13 +19,50 @@ test('readCheckpoint rejects schema_version mismatch with helpful message', asyn
   await assert.rejects(() => readCheckpoint(p), /schema.*99.*expected 1.*delete or downgrade/i);
 });
 
-test('writeCheckpoint is atomic (tmp + rename)', async () => {
+test('readCheckpoint wraps JSON.parse errors with operator-actionable message (I3)', async () => {
+  const p = path.join(tmp, 'corrupted.json');
+  // Simulate a hard-crash truncation: valid JSON prefix, no closing brace.
+  await writeFile(p, '{"schema_version": 1, "phase_completed": 0, "processed_ids": [');
+  await assert.rejects(
+    () => readCheckpoint(p),
+    (err) => {
+      assert.match(err.message, /checkpoint corrupted/);
+      assert.match(err.message, /delete the file to start fresh/);
+      assert.ok(err.cause instanceof SyntaxError, 'expected err.cause to be the original SyntaxError');
+      return true;
+    },
+  );
+});
+
+test('writeCheckpoint is atomic (tmp + rename, no debris)', async () => {
   const p = path.join(tmp, 'atomic.json');
   await writeCheckpoint(p, { schema_version: 1, phase_completed: 0, processed_ids: [] });
   const raw = JSON.parse(await readFile(p, 'utf-8'));
   assert.equal(raw.schema_version, 1);
-  // Verify the .tmp sidecar was renamed (not copied) — no debris left
-  await assert.rejects(() => readFile(p + '.tmp', 'utf-8'), { code: 'ENOENT' });
+  // Verify no .tmp sidecar debris remains — randomized suffix means we scan
+  // the dir for anything matching atomic.json.*.tmp (none should exist).
+  const entries = await readdir(tmp);
+  const debris = entries.filter((e) => e.startsWith('atomic.json.') && e.endsWith('.tmp'));
+  assert.deepEqual(debris, [], `unexpected .tmp debris: ${debris.join(', ')}`);
+});
+
+test('writeCheckpoint cleans up .tmp on rename failure (I1)', async () => {
+  // Trigger a real rename failure by making the target path a non-empty
+  // directory (rename onto a non-empty dir fails with ENOTEMPTY/EPERM/EISDIR
+  // across platforms). This avoids brittle module monkey-patching while
+  // exercising the real catch/cleanup path.
+  const p = path.join(tmp, 'rename-fail-target');
+  await mkdir(p);
+  await writeFile(path.join(p, 'sentinel'), 'blocker');
+
+  await assert.rejects(
+    () => writeCheckpoint(p, { schema_version: 1, phase_completed: 0, processed_ids: [] }),
+  );
+
+  // No .tmp sidecar should remain in the dir despite the rename failure.
+  const entries = await readdir(tmp);
+  const debris = entries.filter((e) => e.startsWith('rename-fail-target.') && e.endsWith('.tmp'));
+  assert.deepEqual(debris, [], `orphaned .tmp left behind: ${debris.join(', ')}`);
 });
 
 test('addProcessedId is idempotent (set semantics)', async () => {

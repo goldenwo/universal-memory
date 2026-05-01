@@ -48,7 +48,8 @@
  *       (state, ...) signature so callers may still treat them as pure.
  */
 
-import { writeFile, readFile, rename } from 'node:fs/promises';
+import { writeFile, readFile, rename, unlink } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 
 const SCHEMA_VERSION = 1;
 
@@ -60,7 +61,17 @@ export async function readCheckpoint(path) {
     if (err && err.code === 'ENOENT') return null;
     throw err;
   }
-  const state = JSON.parse(raw);
+  let state;
+  try {
+    state = JSON.parse(raw);
+  } catch (err) {
+    // Truncated mid-write from a hard crash, manual edit gone wrong, etc.
+    // Wrap with operator-actionable hint so the failure surfaces a fix path.
+    throw new Error(
+      `checkpoint corrupted at ${path}: ${err.message}; delete the file to start fresh`,
+      { cause: err },
+    );
+  }
   if (state.schema_version !== SCHEMA_VERSION) {
     throw new Error(
       `checkpoint schema version ${state.schema_version}; expected ${SCHEMA_VERSION}; delete or downgrade`,
@@ -76,9 +87,20 @@ export async function writeCheckpoint(path, state) {
   const persisted = state.processed_ids instanceof Set
     ? { ...state, processed_ids: [...state.processed_ids] }
     : state;
-  const tmpPath = `${path}.tmp`;
+  // Randomized tmp suffix — prevents collisions between concurrent writers
+  // racing on the same checkpoint path (deterministic ${path}.tmp would
+  // clobber). pid + 4 random bytes is unique enough for any realistic CLI
+  // contention scenario.
+  const tmpPath = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmpPath, JSON.stringify(persisted, null, 2));
-  await rename(tmpPath, path);
+  try {
+    await rename(tmpPath, path);
+  } catch (err) {
+    // Best-effort cleanup: if rename fails (EXDEV/EPERM/EBUSY on Windows,
+    // cross-device on POSIX), the .tmp sidecar is otherwise orphaned.
+    try { await unlink(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
 }
 
 export function addProcessedId(state, id) {
