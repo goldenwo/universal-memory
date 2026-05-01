@@ -21,3 +21,35 @@ test('filterSystemDocs strips stamp from a list', () => {
   const out = filterSystemDocs(items);
   assert.deepEqual(out.map(i => i.metadata.id), ['a', 'b']);
 });
+
+test('filterSystemDocs returns [] for empty array', () => {
+  assert.deepEqual(filterSystemDocs([]), []);
+});
+
+test('filterSystemDocs returns [] for null', () => {
+  assert.deepEqual(filterSystemDocs(null), []);
+});
+
+test('filterSystemDocs returns [] for undefined', () => {
+  assert.deepEqual(filterSystemDocs(undefined), []);
+});
+
+test('filterSystemDocs returns [] when every item is a system doc', () => {
+  const items = [
+    { metadata: { id: '_um_embedding_stamp' } },
+    { metadata: { id: '_um_embedding_stamp' } },
+  ];
+  assert.deepEqual(filterSystemDocs(items), []);
+});
+
+test('isSystemDoc returns false for null', () => {
+  assert.equal(isSystemDoc(null), false);
+});
+
+test('isSystemDoc returns false for undefined', () => {
+  assert.equal(isSystemDoc(undefined), false);
+});
+
+test('isSystemDoc returns false when metadata is null', () => {
+  assert.equal(isSystemDoc({ metadata: null }), false);
+});
