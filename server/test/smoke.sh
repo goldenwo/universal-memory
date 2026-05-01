@@ -1490,10 +1490,13 @@ if [ "${UM_SKIP_BOOT_SMOKE:-}" = "1" ]; then
 	echo "[smoke] 6/6 mocked-SDK boot tests SKIPPED (UM_SKIP_BOOT_SMOKE=1)"
 else
 	echo "[smoke] 6/6 mocked-SDK boot tests (spec §9.4)"
-	# docker-compose.yml lives under server/ — invoke from repo root.
-	# Caller is expected to have run smoke.sh from repo root or set
-	# UM_COMPOSE_FILE to override.
-	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-server/docker-compose.yml}"
+	# docker-compose.yml lives one dir above smoke.sh (smoke.sh is at
+	# server/test/smoke.sh, compose at server/docker-compose.yml).
+	# Resolve relative to BASH_SOURCE so callers can invoke from any cwd
+	# (CI runs from server/, pre-push hook runs from worktree root).
+	# Caller may still override via UM_COMPOSE_FILE for dev workflows.
+	_SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-$_SMOKE_DIR/../docker-compose.yml}"
 
 	test_boot_with_provider() {
 		local provider="$1"
