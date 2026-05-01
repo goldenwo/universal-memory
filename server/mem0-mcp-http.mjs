@@ -1083,7 +1083,7 @@ function _classifyToolError(err) {
 function handleMcpMessage(msg, ctx = {}) {
 	const { id, method, params } = msg;
 	if (method === 'initialize') {
-		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.6.0-alpha' }, capabilities: { tools: {} } } };
+		return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', serverInfo: { name: 'universal-memory', version: '0.7.0-alpha' }, capabilities: { tools: {} } } };
 	} else if (method === 'notifications/initialized') {
 		return null;
 	} else if (method === 'tools/list') {

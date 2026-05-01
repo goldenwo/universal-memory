@@ -1,6 +1,6 @@
 # `um` CLI
 
-**Version:** v0.6.0-alpha
+**Version:** v0.7.0-alpha
 **Canonical name:** `um` (per Task 0.6 — no default-installed conflicts on Git Bash / Ubuntu / macOS)
 **Invocation:** `um <subcommand> [flags] [args]`
 
@@ -541,8 +541,8 @@ meta-framework needed.
 
 ## Versioning
 
-`v0.4.0-alpha` was the first release of the `um` CLI. As of **v0.6.0-alpha**
-(tagged 2026-04-27) the following contracts are **stable** and will be
+`v0.4.0-alpha` was the first release of the `um` CLI. As of **v0.7.0-alpha**
+(tagged 2026-05-01) the following contracts are **stable** and will be
 preserved across minor releases:
 
 - Config file format (KEY=value)
