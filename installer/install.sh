@@ -159,6 +159,46 @@ if [[ $INSTALL_ALL -eq 1 ]]; then
   INSTALL_CLI=1
 fi
 
+# ─── --yes API-key guard (G2.3 review-loop, v0.7 contract change) ─────────────
+# v0.6 permitted `--yes` with no API key in env (defaults caught the openai-only
+# world); v0.7 refuses with a clear error pointing at the missing var. The check
+# fires only when the SERVER is in scope — plugins/CLI alone don't need keys.
+# Provider sources mirror wizard_collect_keys precedence (UM_<P>_API_KEY first,
+# fallback to <P>_API_KEY; google also accepts GEMINI_API_KEY). See MIGRATION.md
+# for the v0.6 → v0.7 contract change rationale.
+if [[ $ASSUME_YES -eq 1 && $INSTALL_SERVER -eq 1 ]]; then
+  _providers=$(printf '%s\n' \
+    "${UM_EMBEDDING_PROVIDER:-openai}" \
+    "${UM_SUMMARIZER_PROVIDER:-openai}" \
+    "${UM_FACTS_PROVIDER:-openai}" | sort -u)
+  _missing_keys=()
+  while IFS= read -r _p; do
+    case "$_p" in
+      openai)
+        [[ -n "${OPENAI_API_KEY:-${UM_OPENAI_API_KEY:-}}" ]] \
+          || _missing_keys+=("openai: set OPENAI_API_KEY (or UM_OPENAI_API_KEY)")
+        ;;
+      anthropic)
+        [[ -n "${ANTHROPIC_API_KEY:-${UM_ANTHROPIC_API_KEY:-}}" ]] \
+          || _missing_keys+=("anthropic: set ANTHROPIC_API_KEY (or UM_ANTHROPIC_API_KEY)")
+        ;;
+      google)
+        [[ -n "${GOOGLE_API_KEY:-${UM_GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}}" ]] \
+          || _missing_keys+=("google: set GOOGLE_API_KEY (or GEMINI_API_KEY / UM_GOOGLE_API_KEY)")
+        ;;
+      ollama) : ;;  # local; no API key needed
+    esac
+  done <<< "$_providers"
+  if (( ${#_missing_keys[@]} > 0 )); then
+    echo "ERROR: --yes mode requires API key(s) for the configured provider(s); none found in env." >&2
+    for _msg in "${_missing_keys[@]}"; do echo "  - $_msg" >&2; done
+    echo "" >&2
+    echo "Either set the env var(s) above and re-run, or run interactively without --yes." >&2
+    echo "See MIGRATION.md (v0.6 → v0.7) for the contract change." >&2
+    exit 1
+  fi
+fi
+
 printf '\nUniversal-memory installer\n==========================\n\n'
 
 # ─── Prerequisites ────────────────────────────────────────────────────────────
