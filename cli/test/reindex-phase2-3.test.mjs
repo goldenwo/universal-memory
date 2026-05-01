@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { runPhase2Snapshot, runPhase3Rebuild } from '../reindex.mjs';
+import { runPhase2Snapshot, runPhase3Rebuild, installSigintHandler } from '../reindex.mjs';
 import { ProviderError } from '../../server/lib/provider/errors.mjs';
 
 test('Phase 3 rebuilds entries; writes checkpoint after each', async () => {
@@ -107,4 +107,106 @@ test('Phase 2 snapshot + phase_completed=2 land in single atomic write', async (
   assert.equal(writes.length, 1, 'phase 2 must call checkpoint.write exactly once (atomic advance)');
   assert.equal(writes[0].phase, 2);
   assert.deepEqual(writes[0].snapshot, { vault_paths: [], fact_ids: ['fact-1', 'fact-2'] });
+});
+
+// SIGINT (graceful cancel) — Phase 3 must check abortSignal between entries,
+// persist progress made so far, and return cancelled=true without bumping
+// phase_completed. Resume then picks up from the last completed entry.
+test('Phase 3 honours abortSignal between entries: persists progress, returns cancelled, leaves phase_completed unset', async () => {
+  const writes = [];
+  const controller = new AbortController();
+  let processedCount = 0;
+  const newMemory = {
+    add: async () => {
+      processedCount++;
+      // After the first entry succeeds, request abort. The next iteration of
+      // the rebuild loop must detect the signal BEFORE invoking add() for b.md.
+      if (processedCount === 1) controller.abort();
+    },
+  };
+  const state = {
+    schema_version: 1,
+    snapshot: { vault_paths: ['a.md', 'b.md', 'c.md'], fact_ids: [] },
+    processed_ids: [],
+  };
+  const checkpoint = { write: async (s) => writes.push({ phase: s.phase_completed, processed: [...s.processed_ids] }) };
+  const result = await runPhase3Rebuild({
+    newMemory,
+    state,
+    checkpoint,
+    vault: { read: async (p) => ({ frontmatter: { id: p }, body: 't' }) },
+    abortSignal: controller.signal,
+  });
+  // Only a.md was processed (b.md/c.md aborted before add() invoked).
+  assert.equal(processedCount, 1, 'add() called exactly once before abort caught');
+  assert.equal(result.cancelled, true, 'result.cancelled must be true on abort');
+  assert.equal(result.processed, 1, 'result.processed reflects the single completed entry');
+  // phase_completed must NOT advance to 3 — the phase did not finish.
+  assert.notEqual(state.phase_completed, 3);
+  // Durability: a.md is in processed_ids and at least one checkpoint was written
+  // so --resume picks up from b.md.
+  assert.deepEqual(state.processed_ids, ['a.md']);
+  assert.ok(writes.length >= 1, 'at least one checkpoint write before bailing on abort');
+  const last = writes[writes.length - 1];
+  assert.notEqual(last.phase, 3, 'last checkpoint must not mark phase 3 complete');
+  assert.deepEqual(last.processed, ['a.md']);
+});
+
+// SIGINT (pre-loop) — abortSignal already aborted before the loop body runs
+// must short-circuit cleanly (no add() calls, write checkpoint, return
+// cancelled=true).
+test('Phase 3 honours pre-aborted signal: zero entries processed, cancelled=true', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let addCalls = 0;
+  const newMemory = { add: async () => { addCalls++; } };
+  const state = {
+    schema_version: 1,
+    snapshot: { vault_paths: ['a.md', 'b.md'], fact_ids: [] },
+    processed_ids: [],
+  };
+  const checkpoint = { write: async () => {} };
+  const result = await runPhase3Rebuild({
+    newMemory,
+    state,
+    checkpoint,
+    vault: { read: async (p) => ({ frontmatter: { id: p }, body: 't' }) },
+    abortSignal: controller.signal,
+  });
+  assert.equal(addCalls, 0, 'no add() calls when pre-aborted');
+  assert.equal(result.cancelled, true);
+  assert.equal(result.processed, 0);
+  assert.notEqual(state.phase_completed, 3);
+});
+
+// installSigintHandler — first SIGINT calls controller.abort and logs a
+// graceful-cancellation message. Disposer removes the listener so test
+// processes don't leak handlers across tests.
+test('installSigintHandler: first SIGINT aborts controller, logs message, disposer removes listener', () => {
+  const out = { buf: '', write(s) { this.buf += s; } };
+  const controller = new AbortController();
+  const dispose = installSigintHandler({ controller, out, exitOnSecond: false });
+  try {
+    process.emit('SIGINT');
+    assert.equal(controller.signal.aborted, true, 'first SIGINT aborts the controller');
+    assert.match(out.buf, /cancellation requested/i, 'graceful-cancel message logged to out');
+    // Second emit must not re-abort or re-log (already aborted; idempotent).
+    const bufAfterFirst = out.buf;
+    process.emit('SIGINT');
+    assert.equal(out.buf, bufAfterFirst, 'second SIGINT is idempotent when exitOnSecond=false');
+  } finally {
+    dispose();
+  }
+  // After dispose, emitting SIGINT must NOT re-trigger our handler. node's
+  // default SIGINT behavior would terminate the process — install a no-op
+  // listener for the duration of this assertion to swallow it.
+  const bufAfterDispose = out.buf;
+  const swallow = () => {};
+  process.on('SIGINT', swallow);
+  try {
+    process.emit('SIGINT');
+    assert.equal(out.buf, bufAfterDispose, 'disposer must remove the listener — no further writes to out');
+  } finally {
+    process.off('SIGINT', swallow);
+  }
 });
