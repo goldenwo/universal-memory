@@ -104,11 +104,12 @@
  * Public API:
  *   - runPhase1Validate({ ... }) → { proceed, estimate, fromStamp, toShape }
  *   - runPhase2Snapshot({ ... }) → { vault_paths, fact_ids }
- *   - runPhase3Rebuild({ ... })  → { processed }
+ *   - runPhase3Rebuild({ ... })  → { processed, cancelled? }
  *   - runPhase4Stamp({ ... })    → void
  *   - runPhase5Swap({ ... })     → void
  *   - runPhase6Verify({ ... })   → { matches, expected, actual, stamp }
  *   - runPhase7Report({ ... })   → { archivedTo? }
+ *   - installSigintHandler({ ... }) → disposer
  */
 
 import fs from 'node:fs/promises';
@@ -130,6 +131,54 @@ const ESTIMATE_TOKENS_PER_ENTRY = 200;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_PROGRESS_EVERY = 100;
 const DEFAULT_RETRY_BASE_MS = 100;
+
+/**
+ * Register a SIGINT (Ctrl-C) handler that aborts the provided AbortController
+ * so cancellable phases (currently `runPhase3Rebuild`) stop cleanly between
+ * entries. Pair with `runPhase3Rebuild({ abortSignal: controller.signal })`.
+ *
+ * Behaviour:
+ *   - First Ctrl-C → controller.abort() + a one-line notice on `out`. The
+ *     in-flight rebuild entry finishes; the next loop iteration observes the
+ *     signal, persists progress, and returns `{ cancelled: true }`.
+ *   - Second Ctrl-C → if `exitOnSecond` (default), `process.exit(130)` to
+ *     force-bail when a phase isn't checking the signal yet (e.g. server-probe
+ *     RTT in phase 1). Operators learn the pattern from the first-Ctrl-C
+ *     notice.
+ *
+ * The disposer must be called when the long-running phase is done (success
+ * OR error) to keep the SIGINT listener tightly scoped — leaking it across
+ * phases would silently absorb default Ctrl-C behaviour after reindex exits.
+ *
+ * @param {object} params
+ * @param {AbortController} params.controller - Controller whose signal phases observe.
+ * @param {{ write: (s: string) => void }} [params.out=process.stderr]
+ *   Stream for the cancellation notice. Tests pass a buffer.
+ * @param {boolean} [params.exitOnSecond=true]
+ *   On a SECOND SIGINT, hard-exit with code 130 instead of waiting for graceful
+ *   cancel. Tests disable this to assert idempotency.
+ * @returns {() => void} Disposer that removes the SIGINT listener.
+ */
+export function installSigintHandler({ controller, out = process.stderr, exitOnSecond = true } = {}) {
+  let firstSeen = false;
+  const handler = () => {
+    if (firstSeen) {
+      if (exitOnSecond) {
+        // 128 + SIGINT(2) = 130 — POSIX convention for SIGINT-induced exit.
+        // eslint-disable-next-line n/no-process-exit
+        process.exit(130);
+      }
+      return;
+    }
+    firstSeen = true;
+    controller.abort();
+    out.write(
+      '\n[reindex] cancellation requested; will stop after the current entry, then write a resumable checkpoint. Press Ctrl-C again to force-exit.\n',
+    );
+  };
+  process.on('SIGINT', handler);
+  return () => process.off('SIGINT', handler);
+}
 
 /**
  * Default interactive prompt — reads a single line from stdin. Replaced in
@@ -512,7 +561,11 @@ async function rebuildOne(newMemory, vault, id) {
  * @param {number} [params.maxRetries=3]    - Per-entry retry budget on PROVIDER_RATELIMIT.
  * @param {number} [params.progressEvery=100] - Write a progress checkpoint every N entries.
  * @param {number} [params.retryBaseMs=100] - Base delay for exponential backoff. Tests pass 0.
- * @returns {Promise<{ processed: number }>}
+ * @param {AbortSignal} [params.abortSignal] - Optional cancellation signal. When
+ *   aborted, the rebuild loop persists progress + returns `{ cancelled: true }`
+ *   without bumping `phase_completed`. Pair with `installSigintHandler` to wire
+ *   a Ctrl-C handler in CLI driver scripts.
+ * @returns {Promise<{ processed: number, cancelled?: boolean }>}
  */
 export async function runPhase3Rebuild({
   newMemory,
@@ -522,6 +575,7 @@ export async function runPhase3Rebuild({
   maxRetries = DEFAULT_MAX_RETRIES,
   progressEvery = DEFAULT_PROGRESS_EVERY,
   retryBaseMs = DEFAULT_RETRY_BASE_MS,
+  abortSignal,
 }) {
   const snapshot = state.snapshot || { vault_paths: [], fact_ids: [] };
   // Iterate vault entries first, then fact-only IDs. Order is incidental for
@@ -542,6 +596,15 @@ export async function runPhase3Rebuild({
 
   let processedThisRun = 0;
   for (let i = 0; i < todo.length; i++) {
+    // Graceful-cancel check (SIGINT via installSigintHandler, or any caller-
+    // provided AbortSignal). Stops between entries so the in-flight rebuildOne
+    // is never interrupted mid-write. Persist whatever was completed before
+    // bailing — phase_completed stays unset so a subsequent --resume picks up
+    // here; processed_ids carries the durability of completed entries.
+    if (abortSignal?.aborted) {
+      try { await checkpoint.write(state); } catch (_e) { /* best-effort */ }
+      return { processed: processedThisRun, cancelled: true };
+    }
     const id = todo[i];
     const isLast = i === todo.length - 1;
 

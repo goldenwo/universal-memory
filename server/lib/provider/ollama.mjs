@@ -52,6 +52,13 @@ export function embedderConfig(env) {
     config: {
       baseURL: env.OLLAMA_HOST || 'http://localhost:11434',
       model: env.UM_EMBEDDING_MODEL || defaults.embeddingModel,
+      // Pre-set the dimension so mem0 doesn't auto-detect at boot by
+      // calling the ollama HTTP endpoint — same rationale as openai.mjs.
+      // Note: this does NOT prevent mem0's "ensure model exists" check
+      // for ollama specifically — that requires a real ollama daemon at
+      // baseURL, so smoke.sh skips ollama boot tests when the daemon is
+      // unreachable.
+      embeddingDims: defaults.embeddingDim,
     },
   };
 }

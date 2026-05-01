@@ -1,6 +1,6 @@
 {
   "name": "universal-memory",
-  "version": "0.6.0-alpha",
+  "version": "0.7.0-alpha",
   "description": "Cross-session memory for Codex CLI via MCP. Recall-only through v0.4 — for full session capture + summarization, use Claude Code.",
   "author": {
     "name": "goldenwo",

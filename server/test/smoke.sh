@@ -1469,10 +1469,12 @@ else
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
 
-# Clean up the auth-config tempfile on the success path. Failure paths
-# `exit 1` without cleanup; the file is 0600 and will be swept by OS tmp
-# policy. Acceptable per the R1 hardening rationale at the auth setup block.
-_um_smoke_auth_cleanup
+# Auth cleanup deferred to after the boot-smoke gate below — the curl()
+# wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
+# every curl call (so the bearer token never appears in argv). Cleanup
+# must run AFTER the last curl invocation, otherwise the wrapped curl
+# fails with "cannot read config from <deleted-tmpfile>" and the boot-
+# test poll silently 30-times-fails (caught on PR #35 CI run 25235030377).
 
 # 6/6 mocked-SDK boot smoke gate (Task G2.5, spec §9.4)
 # ------------------------------------------------------
@@ -1497,16 +1499,45 @@ else
 	# Caller may still override via UM_COMPOSE_FILE for dev workflows.
 	_SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	UM_COMPOSE_FILE="${UM_COMPOSE_FILE:-$_SMOKE_DIR/../docker-compose.yml}"
+	# Boot-test overlay: shell-pass-through for UM_*_PROVIDER, UM_TEST_MOCK_SDK,
+	# QDRANT_COLLECTION (v0.8 G2.5). Sequestered from the main compose so
+	# production runs don't inherit empty-string env-file overrides.
+	UM_BOOT_OVERLAY="${UM_BOOT_OVERLAY:-$_SMOKE_DIR/../docker-compose.boot-test.yml}"
 
 	test_boot_with_provider() {
-		local provider="$1"
-		echo "== smoke: boot with ${provider} =="
-		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real API calls happen.
-		UM_TEST_MOCK_SDK=1 \
-		UM_EMBEDDING_PROVIDER="$provider" \
-		UM_SUMMARIZER_PROVIDER="$provider" \
-		UM_FACTS_PROVIDER="$provider" \
-		docker compose -f "$UM_COMPOSE_FILE" up -d --force-recreate
+		# Args: <label> [<embed>] [<summ>] [<facts>]
+		# `label` is the friendly name used in echo + collection naming (e.g.
+		# "anthropic-mixed"). The other three default to label, but can be
+		# overridden positionally to test heterogeneous provider mixes — e.g.
+		# `test_boot_with_provider anthropic-mixed openai anthropic anthropic`
+		# uses openai for embeddings while summarizer/facts use anthropic.
+		# (anthropic doesn't expose an embeddings API per spec §3.2 — must be
+		# overridden when summ/facts=anthropic.)
+		local label="$1"
+		local embed="${2:-$1}"
+		local summ="${3:-$1}"
+		local facts="${4:-$1}"
+		echo "== smoke: boot with ${label} =="
+		# Per-provider QDRANT_COLLECTION (v0.8 G2.5 isolation): each boot lands
+		# its embedding-stamp in its own collection so the DE5 startup guard
+		# never sees a stamp from a prior provider's run. Without this,
+		# boot N+1 (different provider) sees boot N's stamp → mismatch fatal.
+		# Sanitize the label (anthropic-mixed → anthropic_mixed) so the
+		# collection name is qdrant-safe.
+		local collection
+		collection="boot_smoke_${label//-/_}"
+		# Use mocked SDK shims (env: UM_TEST_MOCK_SDK=1) so no real *Invoke API
+		# calls happen. The boot-test overlay (docker-compose.boot-test.yml)
+		# declares these as `${VAR:-default}` substitution entries so the
+		# exports below propagate into the container at compose-up time.
+		# `export` (vs inline prefix) so docker-compose's variable-substitution
+		# pass sees them in its own environment unambiguously.
+		export UM_TEST_MOCK_SDK=1
+		export UM_EMBEDDING_PROVIDER="$embed"
+		export UM_SUMMARIZER_PROVIDER="$summ"
+		export UM_FACTS_PROVIDER="$facts"
+		export QDRANT_COLLECTION="$collection"
+		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" up -d --force-recreate
 		# I3: Capture the freshly-recreated container's ID so the curl health
 		# poll can't false-pass against a leftover container that's still
 		# answering on port 6335 from a previous run. `--force-recreate` does
@@ -1515,24 +1546,40 @@ else
 		local container_id
 		container_id=$(docker compose -f "$UM_COMPOSE_FILE" ps --quiet memory-server 2>/dev/null || true)
 		if [ -z "$container_id" ]; then
-			echo "  -> ${provider} container not started" >&2
+			echo "  -> ${label} container not started" >&2
 			return 1
 		fi
 		local status
 		status=$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
 		if [ "$status" != "running" ]; then
-			echo "  -> ${provider} container status=${status} (expected running)" >&2
+			echo "  -> ${label} container status=${status} (expected running)" >&2
 			return 1
 		fi
-		# Wait for /api/state to respond OK
-		for i in 1 2 3 4 5 6 7 8 9 10; do
-			if curl -fsS "$ENDPOINT/api/state" >/dev/null 2>&1; then
-				echo "  -> ${provider} booted cleanly (container ${container_id:0:12})"
+		# Wait for /health to respond 200. /health is the dedicated liveness
+		# endpoint — /api/state requires a :project path param and 404s in
+		# its absence (older smoke.sh polled it and false-failed on URL
+		# shape, not server liveness). Budget 30s matches memory-server's
+		# initMemory() qdrant-connect retry budget (30 attempts x 1s) so a
+		# slow qdrant cold-start after --force-recreate doesn't false-fail.
+		local i=0
+		while [ "$i" -lt 30 ]; do
+			if curl -fsS "$ENDPOINT/health" >/dev/null 2>&1; then
+				echo "  -> ${label} booted cleanly (container ${container_id:0:12})"
 				return 0
 			fi
 			sleep 1
+			i=$((i + 1))
 		done
-		echo "  -> ${provider} FAILED to boot" >&2
+		echo "  -> ${label} FAILED to boot" >&2
+		# Dump diagnostics so CI failures are self-contained (without this,
+		# smoke.sh just prints "FAILED to boot" with no explanation).
+		echo "  ---- compose ps (port mapping + status) ----" >&2
+		docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" ps 2>&1 | sed 's/^/  | /' >&2
+		echo "  ---- curl probe of /health (one-off, verbose) ----" >&2
+		curl -v --max-time 3 "$ENDPOINT/health" 2>&1 | sed 's/^/  | /' >&2 || true
+		echo "  ---- last 80 lines of memory-server logs ----" >&2
+		docker logs "$container_id" --tail=80 2>&1 | sed 's/^/  | /' >&2
+		echo "  ---- end logs ----" >&2
 		return 1
 	}
 
@@ -1547,20 +1594,37 @@ else
 	boot_rc=0
 	test_boot_with_provider openai      || boot_rc=1   # baseline (existing)
 	test_boot_with_provider google      || boot_rc=1   # tests google-embed + google-summ + google-facts
-	test_boot_with_provider ollama      || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
-	# anthropic only for summarizer + facts (separately, with embedding=openai)
-	UM_EMBEDDING_PROVIDER=openai UM_SUMMARIZER_PROVIDER=anthropic UM_FACTS_PROVIDER=anthropic test_boot_with_provider anthropic-mixed || boot_rc=1
+	# Ollama needs a real daemon for mem0's "ensure model exists" probe at
+	# init — UM_TEST_MOCK_SDK only short-circuits *Invoke functions, not
+	# mem0's internal ollama-init calls. Probe before testing so CI without
+	# ollama (the default) skips with a clear message instead of a generic
+	# boot-failure log dump.
+	if curl -fsS --max-time 2 "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1; then
+		test_boot_with_provider ollama || boot_rc=1   # tests ollama-embed + ollama-summ + ollama-facts
+	else
+		echo "== smoke: boot with ollama SKIPPED (no daemon at ${OLLAMA_HOST:-http://localhost:11434}) =="
+	fi
+	# anthropic only for summarizer + facts (separately, with embedding=openai
+	# — anthropic doesn't expose an embeddings API per spec §3.2)
+	test_boot_with_provider anthropic-mixed openai anthropic anthropic || boot_rc=1
 
 	# I1: explicit teardown of the boot-test stack so a failed provider
 	# doesn't leave the container running between local smoke iterations or
 	# poison the next CI step. Always runs (success or failure path); error
 	# from `down` itself is non-fatal — the smoke gate's verdict is `boot_rc`.
 	echo "[smoke]     tearing down boot-test stack"
-	docker compose -f "$UM_COMPOSE_FILE" down >/dev/null 2>&1 || true
+	docker compose -f "$UM_COMPOSE_FILE" -f "$UM_BOOT_OVERLAY" down >/dev/null 2>&1 || true
 
 	if [ "$boot_rc" -ne 0 ]; then
 		echo "[smoke] 6/6 mocked-SDK boot tests FAILED (one or more providers did not boot)" >&2
+		_um_smoke_auth_cleanup
 		exit 1
 	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
 fi
+
+# Clean up the auth-config tempfile on the success path. Failure paths
+# `exit 1` after running the cleanup explicitly above; the file is 0600
+# and OS tmp policy sweeps any leftover. R1 hardening rationale at the
+# auth setup block.
+_um_smoke_auth_cleanup

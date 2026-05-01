@@ -43,6 +43,12 @@ export function embedderConfig(env) {
     config: {
       model: env.UM_EMBEDDING_MODEL || defaults.embeddingModel,
       apiKey: resolveApiKey(env),
+      // Pre-set the dimension so mem0 doesn't make an embed API call at
+      // boot to auto-detect it (which would require a valid key + working
+      // upstream). Each provider knows its own default dim — this is the
+      // documented opt-out per mem0's "Please set 'embeddingDims' in
+      // embedder.config explicitly" error.
+      embeddingDims: defaults.embeddingDim,
     },
   };
 }

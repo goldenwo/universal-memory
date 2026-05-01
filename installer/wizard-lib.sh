@@ -64,17 +64,18 @@ wizard_prompt() {
   # Trim leading/trailing whitespace
   val="${val#"${val%%[![:space:]]*}"}"
   val="${val%"${val##*[![:space:]]}"}"
-  eval "export $var=\"\$val\""
+  printf -v "$var" '%s' "$val"
+  # shellcheck disable=SC2163  # var-by-name export is intentional
+  export "${var?}"
 }
 
 wizard_validate_api_key() {
   # wizard_validate_api_key <provider> <var_name>
   # Side-effect: prompts user for key on stdin; on valid input, sets <var_name>
-  # in env via eval+export; returns 0. On invalid format: re-prompts (loop).
+  # in env via printf -v + export; returns 0. On invalid format: re-prompts (loop).
   # On EOF / empty input: returns 1, does NOT set the variable.
   # Recognized providers: openai (sk-*), anthropic (sk-ant-*), google (AIza*).
   # Unknown provider arg → return 1, error message to stderr.
-  # shellcheck disable=SC2034,SC2086,SC2154  # eval + var-by-name pattern, intentional
   local provider="$1" var="$2"
   local prompt="${provider} API key (Ctrl-C to cancel): "
   local key
@@ -92,7 +93,7 @@ wizard_validate_api_key() {
       *) echo "Unknown provider: $provider" >&2; return 1;;
     esac
   done
-  eval "$var=\"$key\""
+  printf -v "$var" '%s' "$key"
   # shellcheck disable=SC2163  # var-by-name export is intentional (the value of $var IS the variable name we want to export)
   export "${var?}"
   return 0
@@ -115,11 +116,10 @@ wizard_confirm() {
 
 wizard_select() {
   # wizard_select <var> <prompt> <opt1> [opt2 ...]
-  # Side-effect: assigns selected value to <var> via eval (var-by-name pattern,
-  # matches wizard_prompt / wizard_validate_api_key convention).
+  # Side-effect: assigns selected value to <var> via printf -v (var-by-name
+  # pattern, matches wizard_prompt / wizard_validate_api_key convention).
   # Returns: 0 on selection, 1 on EOF/abort, 2 on empty opts. Loops until a
   # valid choice is given.
-  # shellcheck disable=SC2034,SC2086,SC2154  # eval intentional for var-by-name pattern
   local var="$1" prompt="$2"
   shift 2
   local opts=("$@")
@@ -137,7 +137,7 @@ wizard_select() {
   while true; do
     read -r -p "Choose [1-${#opts[@]}]: " choice || { echo "Aborted." >&2; return 1; }
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#opts[@]} )); then
-      eval "$var=\"\${opts[\$((choice-1))]}\""
+      printf -v "$var" '%s' "${opts[$((choice-1))]}"
       return 0
     fi
     echo "Invalid choice. Try again."

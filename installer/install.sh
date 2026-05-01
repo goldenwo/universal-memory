@@ -175,16 +175,16 @@ if [[ $ASSUME_YES -eq 1 && $INSTALL_SERVER -eq 1 ]]; then
   while IFS= read -r _p; do
     case "$_p" in
       openai)
-        [[ -n "${OPENAI_API_KEY:-${UM_OPENAI_API_KEY:-}}" ]] \
-          || _missing_keys+=("openai: set OPENAI_API_KEY (or UM_OPENAI_API_KEY)")
+        [[ -n "${UM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}" ]] \
+          || _missing_keys+=("openai: set UM_OPENAI_API_KEY (or OPENAI_API_KEY)")
         ;;
       anthropic)
-        [[ -n "${ANTHROPIC_API_KEY:-${UM_ANTHROPIC_API_KEY:-}}" ]] \
-          || _missing_keys+=("anthropic: set ANTHROPIC_API_KEY (or UM_ANTHROPIC_API_KEY)")
+        [[ -n "${UM_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}" ]] \
+          || _missing_keys+=("anthropic: set UM_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY)")
         ;;
       google)
-        [[ -n "${GOOGLE_API_KEY:-${UM_GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}}" ]] \
-          || _missing_keys+=("google: set GOOGLE_API_KEY (or GEMINI_API_KEY / UM_GOOGLE_API_KEY)")
+        [[ -n "${UM_GOOGLE_API_KEY:-${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}}" ]] \
+          || _missing_keys+=("google: set UM_GOOGLE_API_KEY (or GOOGLE_API_KEY / GEMINI_API_KEY)")
         ;;
       ollama) : ;;  # local; no API key needed
     esac
