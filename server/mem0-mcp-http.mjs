@@ -773,10 +773,9 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
-			// C.11: wrap memory.add — transient qdrant errors get up to 3 retries.
-			// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
+			// v0.8 G2: see /api/add migration; same pattern.
 			const result = await withRetry(() =>
-				memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) })
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, ...(args.metadata && { metadata: args.metadata }), infer: true })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
