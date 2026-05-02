@@ -196,7 +196,7 @@ const SCHEMAS = {
       hash: { type: 'string' },
       created_at: { type: ['string', 'null'] },
       updated_at: { type: ['string', 'null'] },
-      user_id: { type: 'string' },
+      user_id: { type: 'string', description: 'Snake-case field name as returned by the mem0 library API (application layer). Note: the underlying Qdrant payload stores this as camelCase `userId` per spec §4.3 — mem0 normalises it back to snake_case in getAll()/search() results.' },
     },
   },
 
