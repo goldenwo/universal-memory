@@ -248,8 +248,11 @@ g2_assert_metric() {
   local pattern="$1" label="$2"
   echo "$g2_metrics" | grep -qE "${pattern}\} ([1-9][0-9]*|[1-9][0-9]*\.[0-9]+|[0-9]+\.[1-9])" || {
     echo "FAIL: $label metric did not fire (pattern: $pattern)"
-    echo "Sampled /metrics body:"
-    echo "$g2_metrics" | grep -E "um_provider_" | head -20
+    echo "[smoke]     g2_metrics body length: $(echo "$g2_metrics" | wc -c) bytes"
+    echo "[smoke]     all um_* lines (filtered to non-comment data):"
+    echo "$g2_metrics" | grep -E '^um_' | sort -u | head -30
+    echo "[smoke]     all um_provider_* HELP/TYPE lines:"
+    echo "$g2_metrics" | grep -E '^# (HELP|TYPE) um_provider_' | head -10
     exit 1
   }
 }
