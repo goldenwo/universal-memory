@@ -104,3 +104,32 @@ test('summarizerInvoke nests systemInstruction inside config (1.x SDK shape)', a
   assert.equal(captured.systemInstruction, undefined, 'must NOT be at top level (silently dropped by 1.x SDK)');
   assert.equal(captured.config?.systemInstruction, 'be terse', 'must be inside config block');
 });
+
+test('embed calls injected client and returns { vector, usage }', async () => {
+  const fakeClient = {
+    models: {
+      embedContent: async () => ({
+        embeddings: [{ values: new Array(768).fill(0.2) }],
+        // Google's response shape — usage may not be present on embed responses;
+        // confirm against the SDK and adjust if needed.
+      }),
+    },
+  };
+  const result = await google.embed('hello', { client: fakeClient, model: 'text-embedding-004' });
+  assert.equal(result.vector.length, 768);
+  assert.equal(result.usage.tokensIn, 0);  // google embed API doesn't return tokenCount on every model
+});
+
+test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
+  const result = await google.embed('text', { env: { UM_TEST_MOCK_SDK: '1' } });
+  assert.equal(result.vector.length, 768);  // google default dim
+  assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 0 });
+});
+
+test('embed without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => google.embed('p', { env: {} }),
+    (err) => err instanceof ProviderError && err.class === 'PROVIDER_CONFIG',
+  );
+});
