@@ -101,6 +101,11 @@ export async function umAdd({
 
     if (items.length === 0) return { results: [] };
 
+    // Hoist client construction OUT of the per-item loop. infer:true with N
+    // extracted facts would otherwise allocate N QdrantClient transports
+    // (round-1 PR review Minor #1).
+    const client = _qdrantClient ?? await getRealClient(memory);
+
     const results = [];
     for (const item of items) {
       const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
@@ -110,9 +115,9 @@ export async function umAdd({
         vector,
         payload: buildPayload({ userId, text: item, metadata }),
       };
-      const client = _qdrantClient ?? await getRealClient(memory);
       // Errors propagate raw — outer call sites (mem0-mcp-http) wrap in
-      // withRetry({op:'add'}); reindex Phase 3 has checkpoint+resume semantics.
+      // withRetry({op:'add'}); reindex Phase 3 wraps via runPhase3Rebuild's
+      // own retry+checkpoint mechanics (Adv-4 spec).
       await client.upsert(collection, { points: [point] });
       results.push({ id, memory: item, event: 'ADD' });
     }
