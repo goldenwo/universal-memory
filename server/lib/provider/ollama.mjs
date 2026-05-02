@@ -220,3 +220,54 @@ export async function probeModel(host, model, { fetch: customFetch = globalThis.
   const data = await res.json();
   return Array.isArray(data?.models) && data.models.some((m) => m.name === model);
 }
+
+const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
+Extract atomic, declarative facts useful for personalization or recall.
+Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
+If no facts can be extracted, output {"facts": []}.`;
+
+function parseFactsJson(content) {
+  const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed?.facts) && parsed.facts.every((f) => typeof f === 'string')) return parsed.facts;
+  } catch { /* fall through */ }
+  return [];
+}
+
+export async function factsInvoke(text, { fetch = globalThis.fetch, host = process.env.OLLAMA_HOST || 'http://localhost:11434', model = defaults.factsModel } = {}) {
+  if (process.env.UM_TEST_MOCK_SDK === '1') {
+    return { facts: ['[MOCK] ollama fact'], usage: { tokensIn: 10, tokensOut: 5 } };
+  }
+  // Ollama's `system` field on /api/generate is supported but inconsistent
+  // across versions. Inline the system prompt before the user text — same
+  // semantics, robust across local model variations.
+  const composed = `${FACTS_SYSTEM_PROMPT}\n\n---\n\n${text}`;
+  let res;
+  try {
+    res = await fetch(`${host}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt: composed, stream: false }),
+    });
+  } catch (cause) {
+    throw new ProviderError({
+      class: 'PROVIDER_UPSTREAM', provider: 'ollama', status: 0,
+      message: cause.message, retryable: true, cause,
+    });
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new ProviderError({
+      class: res.status === 429 ? 'PROVIDER_RATELIMIT' : (res.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'ollama', status: res.status,
+      message: body || `ollama HTTP ${res.status}`,
+      retryable: res.status === 429 || res.status >= 500,
+    });
+  }
+  const raw = await res.json();
+  return {
+    facts: parseFactsJson(raw.response),
+    usage: extractUsage(raw),
+  };
+}

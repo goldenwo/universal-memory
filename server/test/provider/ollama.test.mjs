@@ -136,3 +136,36 @@ test('embed wraps non-2xx response as PROVIDER_UPSTREAM', async () => {
     (err) => err instanceof ProviderError && err.class === 'PROVIDER_UPSTREAM',
   );
 });
+
+test('factsInvoke calls fetch and returns { facts: string[], usage }', async () => {
+  const fakeFetch = async (url, init) => {
+    assert.match(url, /\/api\/generate$/);
+    const body = JSON.parse(init.body);
+    assert.equal(body.system, undefined);  // we send system inline in prompt for ollama
+    return {
+      ok: true,
+      json: async () => ({ response: '{"facts": ["o1"]}', prompt_eval_count: 20, eval_count: 6 }),
+    };
+  };
+  const result = await ollama.factsInvoke('input', { fetch: fakeFetch });
+  assert.deepEqual(result.facts, ['o1']);
+  assert.deepEqual(result.usage, { tokensIn: 20, tokensOut: 6 });
+});
+
+test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits', async () => {
+  process.env.UM_TEST_MOCK_SDK = '1';
+  try {
+    const result = await ollama.factsInvoke('text', { fetch: () => assert.fail('should not call fetch') });
+    assert.ok(result.facts.length >= 1);
+  } finally {
+    delete process.env.UM_TEST_MOCK_SDK;
+  }
+});
+
+test('factsInvoke handles malformed JSON by returning empty facts', async () => {
+  const fakeFetch = async () => ({
+    ok: true, json: async () => ({ response: 'not json', prompt_eval_count: 5, eval_count: 2 }),
+  });
+  const result = await ollama.factsInvoke('text', { fetch: fakeFetch });
+  assert.deepEqual(result.facts, []);
+});
