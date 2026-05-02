@@ -80,7 +80,7 @@ test('umAdd writeStamp → mem0.getAll DE5 roundtrip', { skip: SKIP }, async () 
     embedder: getEmbedderConfig(env),
     llm: getFactsLlmConfig(env),
   });
-  const collection = memory.vectorStoreConfig.collectionName;
+  const collection = memory.config.vectorStore.config.collectionName;
   const stamp = { provider: 'openai', model: 'text-embedding-3-small', dim: 1536, schema_version: 1 };
   await writeStamp({ memory, collection, stamp });
   const round = await readStamp({ memory, collection });
