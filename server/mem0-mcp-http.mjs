@@ -2043,6 +2043,11 @@ export function createRequestHandler(ctx = {}) {
 		// loopback are never 429'd at steady 15s scrape intervals.
 		if (url.pathname === '/metrics' && req.method === 'GET') {
 			const text = await registry.metrics();
+			try {
+				const lines = text.split('\n').filter((l) => l.startsWith('um_provider_'));
+				console.error(`[metrics-debug] /metrics handler — ${lines.length} um_provider_* data lines`);
+				if (lines.length > 0) console.error(`  first: ${lines[0]}`);
+			} catch { /* probe failure must not break /metrics */ }
 			res.writeHead(200, { 'Content-Type': registry.contentType });
 			res.end(text);
 			return;
