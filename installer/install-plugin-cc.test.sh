@@ -94,8 +94,13 @@ run_plugin_cc() {
     if [ "$after_sep" = "1" ]; then script_args+=("$arg")
     else env_vars+=("$arg"); fi
   done
-  env PATH="$fakebin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" "${env_vars[@]}" \
-    bash "$PLUGIN_CC_SH" "${script_args[@]}" 2>&1
+  # Bash 3.2 (macOS default) treats `"${arr[@]}"` on an empty array as an
+  # unbound variable under `set -u`. Use the `${arr[@]+"${arr[@]}"}` idiom
+  # to expand only when set; bash 5+ handles either form. Without this,
+  # tests that pass no `--` script args (T17, T15, T16) fail on macOS.
+  env PATH="$fakebin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" \
+    ${env_vars[@]+"${env_vars[@]}"} \
+    bash "$PLUGIN_CC_SH" ${script_args[@]+"${script_args[@]}"} 2>&1
 }
 
 # ─── T1: Fresh install — plugin copy ─────────────────────────────────────────
