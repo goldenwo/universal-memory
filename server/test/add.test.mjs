@@ -155,7 +155,13 @@ test('umAdd binds {userId, collection, infer} to pino ALS via withRequestContext
 test('umAdd increments um_facts_extracted_total by facts.length per call', async () => {
   const incCalls = [];
   const fakeFactsCounter = { inc: (labels, value) => incCalls.push({ labels, value }) };
+  // Provide `defaults.factsModel` so the facts orchestrator's fallback chain
+  // (ctx.model ?? env ?? provider.defaults?.factsModel) resolves to a real
+  // string. Without this, model falls through to undefined and the counter
+  // emits {provider, model: undefined} — production has no such gap because
+  // real providers always export defaults.
   const factsOverride = {
+    defaults: { factsModel: 'mock-facts-model' },
     factsInvoke: async () => ({ facts: ['a', 'b', 'c'], usage: { tokensIn: 5, tokensOut: 2 } }),
   };
   await umAdd({
