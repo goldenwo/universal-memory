@@ -17,7 +17,7 @@
 
 import { providers, getProvider, supportingProviders } from './provider/registry.mjs';
 import { computeCost } from './pricing.mjs';
-import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
+import { PROVIDER_METRICS, NOOP_METRICS, PROVIDER_METRICS_ADAPTER, SURFACES } from './metrics.mjs';
 
 export const FACTS_BACKENDS = Object.fromEntries(
   Object.entries(providers).filter(([_, p]) => p.supports.facts),
@@ -55,14 +55,16 @@ export async function facts(text, ctx = {}) {
   }
   const model = ctx.model ?? process.env.UM_FACTS_MODEL ?? provider.defaults?.factsModel;
 
-  const metrics = ctx.metrics ?? NOOP_METRICS;
+  // Production default: PROVIDER_METRICS_ADAPTER actually inc's the prom-client
+  // Counter/Histogram instances. Tests can inject NOOP_METRICS for silence
+  // or a fake adapter to capture calls.
+  const metrics = ctx.metrics ?? PROVIDER_METRICS_ADAPTER;
   const surface = SURFACES.FACTS;
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();
 
-  if (typeof provider.factsInvoke !== 'function') {
-    throw new Error(`provider ${providerName} has no factsInvoke() method (G2: real provider.factsInvoke lands in a later task; tests must inject _providerOverride)`);
-  }
+  // After v0.8 G2, every provider in FACTS_BACKENDS exports factsInvoke().
+  // The transition guard is gone — a missing method becomes a TypeError below.
 
   let raw;
   try {
@@ -87,5 +89,5 @@ export async function facts(text, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { facts: extracted, tokensIn, tokensOut, costUsd };
+  return { facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model };
 }

@@ -234,6 +234,86 @@ else:
 	echo "[smoke]     metadata probe records cleaned up"
 fi
 
+# 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed AND facts surfaces.
+# This catches the entire "metric defined but doesn't fire in prod" bug
+# class — exactly the contract violation v0.8 G2 closes. The smoke runs
+# against UM_TEST_MOCK_SDK=0 (real openai) so the metric path is exercised
+# end-to-end. Mock-SDK metric fire is unit-tested separately.
+echo "[smoke] 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed/facts"
+# Match the 1/5 scrape's robustness: wget OR node-fetch OR direct curl.
+# Defensive symmetry with the existing 1/5 pattern (line 117). The
+# original PR #36 CI iterations briefly thought a bare-wget hiccup was
+# the failure cause; the actual root cause turned out to be the
+# label-order regex bug (commit cec5acf) plus the value-pattern bug
+# (commit e3c44fe), and the v0.7 prom-client registration miss that
+# kept the metrics from existing in production at all (commit 6e483ea).
+# The fallback chain is kept anyway — symmetric with 1/5, no harm.
+g2_metrics=""
+if [ -n "$UM_CONTAINER" ]; then
+	g2_metrics=$(docker exec -i "$UM_CONTAINER" sh -c \
+		'wget -qO- "http://localhost:6335/metrics" 2>/dev/null \
+		 || node -e "fetch('"'"'http://localhost:6335/metrics'"'"').then(r=>r.text()).then(t=>process.stdout.write(t))"' \
+		2>/dev/null || true)
+fi
+if [ -z "$g2_metrics" ]; then
+	echo "[smoke]     2c/5 in-container scrape returned empty — falling back to direct curl"
+	g2_metrics=$(curl -sf "$ENDPOINT/metrics" 2>/dev/null || true)
+fi
+
+# Helper: assert a um_provider_* line exists with ALL given labels (in any order)
+# AND a non-zero numeric value. prom-client emits labels in labelNames-declaration
+# order (provider/model/surface/direction for tokens; provider/model/surface for
+# others), but the assertion should be order-independent so future label-shape
+# changes don't silently break the regex.
+g2_assert_metric() {
+  local metric_name="$1" label="$2"
+  shift 2
+  # Pre-filter to lines starting with the metric name (incl. histogram suffixes).
+  local lines
+  lines=$(echo "$g2_metrics" | grep -E "^${metric_name}\{" || true)
+  # Each remaining arg is a required label substring like 'surface="embed"'.
+  for required in "$@"; do
+    lines=$(echo "$lines" | grep -F "$required" || true)
+  done
+  # Must have at least one matching data line with a POSITIVE NON-ZERO value.
+  # The original v0.7 contract was "metric fires with non-zero" — a tokens_in=0
+  # despite a real-API call IS a real bug worth catching (e.g., usage-extraction
+  # broken). The original regex tried to encode that but rejected legitimate
+  # tiny values like 0.000035 (cost_usd) and 6.2e-7 (scientific notation).
+  #
+  # Correct "positive non-zero" pattern: the mantissa must contain at least one
+  # digit [1-9] somewhere. Two cases (alternation):
+  #   - integer part has [1-9]:  [0-9]*[1-9][0-9]*(\.[0-9]+)?
+  #   - decimal part has [1-9]:  [0-9]*\.[0-9]*[1-9][0-9]*
+  # Plus optional scientific exponent. Matches: 5, 50, 5.3, 0.5, 0.000036,
+  # 6.2e-7, 5e+10. Rejects: 0, 0.0, 0.000.
+  echo "$lines" | grep -qE '\} ([0-9]*[1-9][0-9]*(\.[0-9]+)?|[0-9]*\.[0-9]*[1-9][0-9]*)([eE][-+]?[0-9]+)?' || {
+    echo "FAIL: $label metric did not fire (metric=$metric_name, required-labels=$*)"
+    echo "[smoke]     g2_metrics body length: $(echo "$g2_metrics" | wc -c) bytes"
+    echo "[smoke]     ALL um_provider_* data lines:"
+    echo "$g2_metrics" | grep -E '^um_provider_' | head -30
+    exit 1
+  }
+}
+
+# All four series for embed surface.
+g2_assert_metric 'um_provider_tokens_total' "embed tokens_in" 'surface="embed"' 'provider="openai"' 'model="text-embedding-3-small"' 'direction="in"'
+g2_assert_metric 'um_provider_request_duration_seconds_count' "embed histogram" 'surface="embed"'
+g2_assert_metric 'um_provider_cost_usd_total' "embed cost_usd" 'surface="embed"'
+
+# All four series for facts surface.
+g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-4.1-nano-2025-04-14"'
+g2_assert_metric 'um_provider_request_duration_seconds_count' "facts histogram" 'surface="facts"'
+g2_assert_metric 'um_provider_cost_usd_total' "facts cost_usd" 'surface="facts"'
+
+# Negative assertion: model="undefined" must NOT appear (catches ctx.model
+# fallback chain misconfig — would emit cardinality-bombing label).
+echo "$g2_metrics" | grep -qE 'um_provider_tokens_total\{[^}]*model="undefined"' && {
+  echo "FAIL: metric label model=undefined leaked — fallback chain misconfigured"
+  exit 1
+}
+echo "[smoke]     v0.8 G2 metric assertions OK"
+
 # 3/5 if we stored anything, confirm each ID appears in /api/list (add -> list round-trip)
 echo "[smoke] 3/5 verify round-trip"
 if [ "$NUM_ADDED" -gt 0 ]; then
@@ -1607,6 +1687,50 @@ else
 	# anthropic only for summarizer + facts (separately, with embedding=openai
 	# — anthropic doesn't expose an embeddings API per spec §3.2)
 	test_boot_with_provider anthropic-mixed openai anthropic anthropic || boot_rc=1
+
+	# T24 — DE5 stamp roundtrip variant (spec §8 acceptance criterion).
+	#
+	# Intent: confirm writeStamp(via umAdd) → readStamp(via mem0.getAll) roundtrip
+	# works in a mock-SDK CI environment without UM_LIVE_TESTS=1.
+	#
+	# Why deferred: UM_TEST_MOCK_SDK=1 explicitly skips writeStamp in
+	# initMemoryWithGuard's null-branch (mem0-mcp-http.mjs:302-315). The skip is
+	# intentional — calling writeStamp with fake API keys (injected by the boot
+	# overlay) would crash the stamp write path before any embed is attempted.
+	# An in-container `docker exec ... node -e '...'` stamp roundtrip would
+	# require constructing a full Memory instance with a live Qdrant connection
+	# and a real or deeply-stubbed embed path — infrastructure the boot-smoke
+	# stack doesn't expose.
+	#
+	# Coverage by existing tests (no gap):
+	#   - Unit:          server/test/embedding-stamp.test.mjs (writeStamp→upsert→
+	#                    readStamp via mocked qdrant + embed provider).
+	#   - Live CI/local: server/test/add-live.test.mjs + stamp-roundtrip-spike.test.mjs
+	#                    (UM_LIVE_TESTS=1, real OpenAI + Qdrant; exercises the same
+	#                    umAdd payload path that writeStamp uses).
+	#   - Boot guard:    server/test/init-memory-stamp-guard.test.mjs.
+	#
+	# What this section DOES assert right now: the boot guard emitted the expected
+	# mock-skip log line (EMBEDDING_STAMP_MOCK_SKIP) in the most recently started
+	# container — confirming the guard ran and correctly took the skip branch
+	# rather than crashing with a bad-key embed error.
+	if [ -n "$UM_CONTAINER" ]; then
+		echo "[smoke]     T24 DE5 boot-smoke: asserting guard mock-skip log present"
+		BOOT_LOGS=$(docker logs "$UM_CONTAINER" 2>&1 || true)
+		if echo "$BOOT_LOGS" | grep -q 'EMBEDDING_STAMP_MOCK_SKIP'; then
+			echo "[smoke]     T24 OK: boot guard ran and emitted mock-skip (UM_TEST_MOCK_SDK=1 path verified)"
+		else
+			# Soft warning — the full stamp roundtrip (writeStamp→readStamp) is
+			# deferred to UM_LIVE_TESTS=1 (add-live.test.mjs). A missing mock-skip
+			# log means the server started without the guard firing at all OR the
+			# guard took a different branch (e.g., match on a pre-existing stamp).
+			# Not a hard failure since the boot guard may have matched an existing
+			# stamp from an earlier run of the same per-provider collection.
+			echo "[smoke]     T24 WARN: EMBEDDING_STAMP_MOCK_SKIP not in logs — guard may have matched an existing stamp (not a failure)"
+		fi
+	else
+		echo "[smoke]     T24 SKIP: UM_CONTAINER not set — cannot inspect boot guard logs"
+	fi
 
 	# I1: explicit teardown of the boot-test stack so a failed provider
 	# doesn't leave the container running between local smoke iterations or

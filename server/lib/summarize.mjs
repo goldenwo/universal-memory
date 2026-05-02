@@ -37,7 +37,7 @@ import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP from './provider/google.mjs';
 import * as ollamaP from './provider/ollama.mjs';
 import { computeCost } from './pricing.mjs';
-import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
+import { PROVIDER_METRICS, NOOP_METRICS, PROVIDER_METRICS_ADAPTER, SURFACES } from './metrics.mjs';
 
 export const BACKENDS = {
   openai:             { invoke: openaiP.summarizerInvoke,    requires: openaiP.requires,                        defaults: openaiP.defaults },
@@ -98,9 +98,11 @@ export async function summarize(transcript, ctx = {}) {
   const invoke = ctx._providerOverride?.summarizerInvoke ?? b.invoke;
 
   // G2 (spec §8.3): emit um_provider_* metrics around the provider invocation.
-  // Default to a no-op sink when ctx.metrics is not injected; tests inject a
-  // capturing stub. Surface label is 'summarizer' (singular per §8.3 enum).
-  const metrics = ctx.metrics ?? NOOP_METRICS;
+  // Default to PROVIDER_METRICS_ADAPTER (inc's real prom-client instances) so
+  // production /metrics scrape sees the values. Tests inject NOOP_METRICS for
+  // silence or a fake adapter to capture calls. Surface label is 'summarizer'
+  // (singular per §8.3 enum).
+  const metrics = ctx.metrics ?? PROVIDER_METRICS_ADAPTER;
   const surface = SURFACES.SUMMARIZER;
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();

@@ -117,8 +117,14 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import readline from 'node:readline';
 import { ProviderError } from '../server/lib/provider/errors.mjs';
+import { umAdd } from '../server/lib/add.mjs';
 
 const SCHEMA_VERSION = 1;
+// v0.8 G2 — userId resolution for rebuildOne. Mirrors server/mem0-mcp-http.mjs:182
+// (env var MEM0_USER_ID, default 'test-user' since cli is not IS_MAIN). Kept local
+// rather than promoted to a shared constants module because only one CLI call
+// site needs it. Promote if a third call site appears.
+const RESOLVED_USER_ID = process.env.MEM0_USER_ID || 'test-user';
 const DEFAULT_SERVER_PROBE_URL = 'http://localhost:6335';
 // Conservative per-entry token estimate used until snapshot phase (DE10) walks
 // real fact bodies. Phase 1's job is to give an order-of-magnitude cost preview
@@ -508,7 +514,7 @@ function sleep(ms) {
 
 /**
  * Re-embed a single entry through the new Memory instance. Pulls the source
- * text via `vault.read(id)` and calls `newMemory.add(body, { metadata, infer:false })`.
+ * text via `vault.read(id)` and calls `umAdd(body, { metadata, infer:false })`.
  *
  * Per the DE10 test contract: vault.read is called for every entry, regardless
  * of whether it originated from `vault_paths` or `fact_ids`. Real-world
@@ -516,11 +522,16 @@ function sleep(ms) {
  * a fact-only payload as `{ frontmatter: { id }, body: <fact memory text> }`;
  * tests stub it directly.
  */
-async function rebuildOne(newMemory, vault, id) {
+async function rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderOverride } = {}) {
   const { frontmatter, body } = await vault.read(id);
-  await newMemory.add(body, {
+  await umAdd({
+    memory: newMemory,
+    text: body,
+    userId: frontmatter.userId ?? RESOLVED_USER_ID,
     metadata: { id: frontmatter.id, ...frontmatter },
     infer: false,
+    _qdrantClient,
+    _embedProviderOverride,
   });
 }
 
@@ -576,6 +587,8 @@ export async function runPhase3Rebuild({
   progressEvery = DEFAULT_PROGRESS_EVERY,
   retryBaseMs = DEFAULT_RETRY_BASE_MS,
   abortSignal,
+  _qdrantClient,
+  _embedProviderOverride,
 }) {
   const snapshot = state.snapshot || { vault_paths: [], fact_ids: [] };
   // Iterate vault entries first, then fact-only IDs. Order is incidental for
@@ -614,7 +627,7 @@ export async function runPhase3Rebuild({
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        await rebuildOne(newMemory, vault, id);
+        await rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderOverride });
         break;
       } catch (err) {
         const isRateLimit = err instanceof ProviderError && err.class === 'PROVIDER_RATELIMIT';

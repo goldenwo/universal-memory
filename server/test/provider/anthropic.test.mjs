@@ -115,3 +115,38 @@ test('summarizerInvoke wraps Anthropic SDK shape; throws ProviderError on 429', 
     assert.equal(err.retryable, true);
   }
 });
+
+test('factsInvoke calls injected client and returns { facts: string[], usage }', async () => {
+  const fakeClient = {
+    messages: {
+      create: async () => ({
+        content: [{ type: 'text', text: '{"facts": ["fact A", "fact B"]}' }],
+        usage: { input_tokens: 30, output_tokens: 10 },
+      }),
+    },
+  };
+  const result = await anthropic.factsInvoke('input', { client: fakeClient, model: 'claude-haiku-4-5-20251001' });
+  assert.deepEqual(result.facts, ['fact A', 'fact B']);
+  assert.deepEqual(result.usage, { tokensIn: 30, tokensOut: 10 });
+});
+
+test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits', async () => {
+  const result = await anthropic.factsInvoke('text', { env: { UM_TEST_MOCK_SDK: '1' } });
+  assert.ok(Array.isArray(result.facts) && result.facts.length >= 1);
+  assert.deepEqual(result.usage, { tokensIn: 10, tokensOut: 5 });
+});
+
+test('factsInvoke handles malformed JSON by returning empty facts', async () => {
+  const fakeClient = {
+    messages: { create: async () => ({
+      content: [{ type: 'text', text: 'not json' }],
+      usage: { input_tokens: 5, output_tokens: 2 },
+    }) },
+  };
+  const result = await anthropic.factsInvoke('text', { client: fakeClient });
+  assert.deepEqual(result.facts, []);
+});
+
+test('anthropic does NOT export embed (per spec §4.2)', () => {
+  assert.equal(anthropic.embed, undefined, 'anthropic must not export embed — it has no embeddings API');
+});

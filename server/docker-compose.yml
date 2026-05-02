@@ -2,10 +2,23 @@ name: universal-memory
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.11.3
+    # v0.8 G2 — bump to 1.13.0 to match @qdrant/js-client-rest@1.13.0 pulled
+    # transitively by mem0ai 2.4.6 (see server/package.json). Mismatched minor
+    # versions (1.11 ↔ 1.13) emit a runtime warning per qdrant client; bumping
+    # the server eliminates the warning and any future filter-syntax drift.
+    image: qdrant/qdrant:v1.13.0
     restart: unless-stopped
     volumes:
       - ./data/qdrant:/qdrant/storage
+    # Loopback-only host port so:
+    #   (a) local devs can introspect their qdrant via curl/mcp without
+    #       docker exec gymnastics
+    #   (b) the v0.8 G2 add-stamp-roundtrip integration test (CI-runnable
+    #       without API keys) can reach qdrant from the runner
+    # Production deployments override via UM_QDRANT_PORT (or omit by
+    # docker-compose override if external exposure is undesired).
+    ports:
+      - "${UM_QDRANT_PORT:-127.0.0.1:6333}:6333"
 
   memory-server:
     build: .

@@ -114,3 +114,67 @@ export async function summarizerInvoke(prompt, opts = {}) {
     usage: extractUsage(raw),
   };
 }
+
+const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
+Extract atomic, declarative facts useful for personalization or recall.
+Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
+If no facts can be extracted, output {"facts": []}.`;
+
+function parseFactsJson(content) {
+  // Null-guard: SDK may return null content for refusals / content filter.
+  const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed?.facts) && parsed.facts.every((f) => typeof f === 'string')) {
+      return parsed.facts;
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
+export async function factsInvoke(text, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.factsModel } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return { facts: ['[MOCK] anthropic fact'], usage: { tokensIn: 10, tokensOut: 5 } };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'anthropic',
+        status: 401,
+        message: `facts backend=anthropic requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    client = new Anthropic({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.messages.create({
+      model,
+      max_tokens: 1024,
+      system: FACTS_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: text }],
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'anthropic',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  // Anthropic returns content as content blocks; the first text block holds the JSON.
+  const textBlock = raw.content.find((b) => b.type === 'text') ?? raw.content[0];
+  return {
+    facts: parseFactsJson(textBlock.text),
+    usage: extractUsage(raw),
+  };
+}

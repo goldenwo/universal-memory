@@ -19,8 +19,16 @@ test('readStamp returns stamp when present', async () => {
   assert.equal(s.dim, 1536);
 });
 test('writeStamp persists shaped stamp via named-arg signature', async () => {
-  let added;
-  const memory = { add: async (text, opts) => { added = opts; } };
+  let upsertCall;
+  // T20: writeStamp now routes through umAdd, which requires the full memory
+  // config shape (not just memory.add) and a Qdrant upsert. Inject _qdrantClient
+  // to capture the upsert without connecting to a real Qdrant instance, and
+  // _embedProviderOverride so no real embedding API call is made.
+  const memory = {
+    config: { vectorStore: { config: { collectionName: 'test', host: 'localhost', port: 6333 } } },
+  };
+  const _qdrantClient = { upsert: async (col, { points }) => { upsertCall = { col, point: points[0] }; } };
+  const _embedProviderOverride = { embed: async () => ({ vector: [0, 0, 0], usage: { tokensIn: 0, tokensOut: 0 } }), supports: { embeddings: true } };
   // Unified contract: writeStamp({ memory, collection, stamp })
   // - `memory` injected for testability
   // - `collection` optional (defaults to active alias); explicit during reindex
@@ -28,9 +36,12 @@ test('writeStamp persists shaped stamp via named-arg signature', async () => {
   await writeStamp({
     memory,
     stamp: { provider: 'google', model: 'text-embedding-004', dim: 768 },
+    _qdrantClient,
+    _embedProviderOverride,
   });
-  assert.equal(added.metadata.id, '_um_embedding_stamp');
-  assert.equal(added.infer, false);
+  assert.ok(upsertCall, 'upsert must have been called');
+  assert.equal(upsertCall.point.payload.id, '_um_embedding_stamp');
+  assert.equal(upsertCall.point.payload.infer, undefined, 'infer is not stored in payload (umAdd contract)');
 });
 
 test('writeStamp accepts explicit collection (used by reindex Phase 4)', async () => {
@@ -41,15 +52,21 @@ test('writeStamp accepts explicit collection (used by reindex Phase 4)', async (
   let collectionRoutedTo;
   let stampWritten;
   const memory = {
-    add: async (text, opts) => {
-      collectionRoutedTo = opts.metadata?.collection;
-      stampWritten = opts.metadata?.stamp;
+    config: { vectorStore: { config: { collectionName: 'memories_a1b2c3d4', host: 'localhost', port: 6333 } } },
+  };
+  const _qdrantClient = {
+    upsert: async (col, { points }) => {
+      collectionRoutedTo = points[0].payload?.collection;
+      stampWritten = points[0].payload?.stamp;
     },
   };
+  const _embedProviderOverride = { embed: async () => ({ vector: [0, 0, 0], usage: { tokensIn: 0, tokensOut: 0 } }), supports: { embeddings: true } };
   await writeStamp({
     memory,
     collection: 'memories_a1b2c3d4',
     stamp: { provider: 'google', model: 'text-embedding-004', dim: 768 },
+    _qdrantClient,
+    _embedProviderOverride,
   });
   // Real assertions, not tautology
   assert.equal(collectionRoutedTo, 'memories_a1b2c3d4', 'collection name reaches metadata');

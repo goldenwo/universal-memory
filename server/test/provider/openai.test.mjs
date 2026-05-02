@@ -88,3 +88,93 @@ test('summarizerInvoke without client and without key throws ProviderError PROVI
     },
   );
 });
+
+test('embed calls injected client and returns { vector, usage }', async () => {
+  const fakeClient = {
+    embeddings: {
+      create: async () => ({
+        data: [{ embedding: new Array(1536).fill(0.1) }],
+        usage: { prompt_tokens: 7 },
+      }),
+    },
+  };
+  const result = await openai.embed('hello world', { client: fakeClient, model: 'text-embedding-3-small' });
+  assert.equal(result.vector.length, 1536);
+  assert.equal(result.usage.tokensIn, 7);
+  assert.equal(result.usage.tokensOut, 0);  // embeddings have no completion tokens
+});
+
+test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
+  const result = await openai.embed('any text', { env: { UM_TEST_MOCK_SDK: '1' }, model: 'text-embedding-3-small' });
+  assert.equal(result.vector.length, 1536);  // openai default dim
+  assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 0 });
+});
+
+test('embed without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.embed('p', { env: {} }),
+    (err) => {
+      assert(err instanceof ProviderError);
+      assert.equal(err.class, 'PROVIDER_CONFIG');
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
+});
+
+test('embed wraps SDK 429 as PROVIDER_RATELIMIT, retryable:true', async () => {
+  const fakeClient = {
+    embeddings: {
+      create: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); },
+    },
+  };
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.embed('p', { client: fakeClient }),
+    (err) => {
+      assert(err instanceof ProviderError);
+      assert.equal(err.class, 'PROVIDER_RATELIMIT');
+      assert.equal(err.retryable, true);
+      return true;
+    },
+  );
+});
+
+test('factsInvoke calls injected client and returns { facts: string[], usage }', async () => {
+  const fakeClient = {
+    chat: { completions: { create: async () => ({
+      choices: [{ message: { content: '{"facts": ["likes blue", "lives in Tokyo"]}' } }],
+      usage: { prompt_tokens: 50, completion_tokens: 12 },
+    }) } },
+  };
+  const result = await openai.factsInvoke('I like blue. I live in Tokyo.', { client: fakeClient, model: 'gpt-4.1-nano-2025-04-14' });
+  assert.deepEqual(result.facts, ['likes blue', 'lives in Tokyo']);
+  assert.deepEqual(result.usage, { tokensIn: 50, tokensOut: 12 });
+});
+
+test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits to canned facts', async () => {
+  const result = await openai.factsInvoke('any text', { env: { UM_TEST_MOCK_SDK: '1' } });
+  assert.ok(Array.isArray(result.facts));
+  assert.ok(result.facts.length >= 1);
+  assert.deepEqual(result.usage, { tokensIn: 10, tokensOut: 5 });
+});
+
+test('factsInvoke handles malformed JSON by returning empty facts (no throw)', async () => {
+  const fakeClient = {
+    chat: { completions: { create: async () => ({
+      choices: [{ message: { content: 'not json at all' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    }) } },
+  };
+  const result = await openai.factsInvoke('text', { client: fakeClient });
+  assert.deepEqual(result.facts, []);  // graceful degrade — empty-facts counter (Task 15) makes this visible
+});
+
+test('factsInvoke without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.factsInvoke('p', { env: {} }),
+    (err) => err instanceof ProviderError && err.class === 'PROVIDER_CONFIG',
+  );
+});
