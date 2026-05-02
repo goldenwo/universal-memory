@@ -34,6 +34,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # v0.8 G2: forbid mem0.add() / memoryClient.add() / resolvedMemory().add()
+      # / newMemory.add() reappearing in server/+cli/. Reintroducing one
+      # bypasses umAdd's orchestrator-routed metric emission — the contract
+      # gap v0.8 G2 closed. Cheap static check; fail-fast before the stack
+      # comes up.
+      - name: v0.8 G2 grep gate (no mem0.add() in server/+cli/)
+        run: bash scripts/check-no-mem0-add.sh
+
       # install.sh in UM_NONINTERACTIVE=1 mode reads the required values
       # from env vars, fails fast if any are missing, and writes .env
       # itself. We do not pre-write .env — letting install.sh own its
