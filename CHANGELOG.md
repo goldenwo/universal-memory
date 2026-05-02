@@ -32,9 +32,33 @@ into Qdrant via `@qdrant/js-client-rest`.
   reappearance in `server/`/`cli/`.
 - **Live round-trip test** at `server/test/add-live.test.mjs` (gated by
   `UM_LIVE_TESTS=1`, blocks merge when run) — verifies umAdd's payload
-  schema is readable by `mem0.getAll`/`mem0.search`.
+  schema is readable by `mem0.getAll`/`mem0.search`. Mirrors production's
+  explicit `vectorStore: { provider: 'qdrant', config: {...} }` Memory
+  wiring; mem0's default in-memory fallback would silently ship empty
+  reads.
+- **Mock-SDK + real-qdrant DE5 stamp roundtrip** at
+  `server/test/add-stamp-roundtrip.test.mjs` (gated by
+  `UM_QDRANT_INTEGRATION=1`). Companion to the live spike: exercises the
+  full `writeStamp(via umAdd) → readStamp(via mem0.getAll)` chain against
+  the compose-managed qdrant using `UM_TEST_MOCK_SDK=1` internally — no
+  API keys needed. Closes the spec §8 "DE5 stamp roundtrip in boot-smoke"
+  acceptance gap that mock-SDK boot-tests can't reach (they intentionally
+  short-circuit `writeStamp`).
+- **CI grep gate wired into `.github/workflows/smoke.yml`** as the first
+  step after checkout, fail-fast before the stack comes up.
+- **Qdrant host port mapping in `server/docker-compose.yml`** — loopback
+  only by default (`127.0.0.1:6333:6333`), env-overridable via
+  `UM_QDRANT_PORT`. Lets local devs introspect their qdrant via curl/MCP
+  and lets the new integration test reach qdrant from the runner.
 
 ### Changed
+
+- **Qdrant server image bumped `v1.11.3 → v1.13.0`** to match the
+  `@qdrant/js-client-rest` 1.13.0 client pulled transitively by
+  `mem0ai@2.4.6`. Two-minor-version mismatch was emitting a runtime
+  warning on every qdrant client construction. Forward storage-format
+  migration is automatic within a major version; existing operators
+  pull the new image and `docker compose up -d --force-recreate qdrant`.
 
 - **Behavior change for `infer:true`:** umAdd does NOT replicate mem0's
   semantic dedup (existing-memory query + LLM ADD/UPDATE/DELETE). Every
