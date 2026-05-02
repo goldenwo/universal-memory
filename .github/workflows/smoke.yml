@@ -117,6 +117,17 @@ jobs:
         working-directory: server
         # Unquoted glob so bash expands test/*.test.mjs into a file list.
         # node --test treats quoted "test/*.test.mjs" as a literal path and fails.
+        #
+        # v0.8 G2: UM_QDRANT_INTEGRATION=1 un-skips test/add-stamp-roundtrip.test.mjs
+        # which exercises the full DE5 stamp roundtrip (writeStamp via umAdd →
+        # readStamp via mem0.getAll) against the real compose-managed qdrant
+        # using UM_TEST_MOCK_SDK=1 internally — no API keys needed. Closes the
+        # spec §8 "DE5 stamp roundtrip in boot-smoke" acceptance gap that T24
+        # left as documented-gap (mock-SDK boot intentionally skips writeStamp).
+        env:
+          UM_QDRANT_INTEGRATION: "1"
+          QDRANT_HOST: localhost
+          QDRANT_PORT: "6333"
         run: node --test test/*.test.mjs
 
       # Full smoke — install step mounted /tmp/um-vault-ci rw and enabled MCP

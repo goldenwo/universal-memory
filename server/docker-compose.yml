@@ -10,6 +10,15 @@ services:
     restart: unless-stopped
     volumes:
       - ./data/qdrant:/qdrant/storage
+    # Loopback-only host port so:
+    #   (a) local devs can introspect their qdrant via curl/mcp without
+    #       docker exec gymnastics
+    #   (b) the v0.8 G2 add-stamp-roundtrip integration test (CI-runnable
+    #       without API keys) can reach qdrant from the runner
+    # Production deployments override via UM_QDRANT_PORT (or omit by
+    # docker-compose override if external exposure is undesired).
+    ports:
+      - "${UM_QDRANT_PORT:-127.0.0.1:6333}:6333"
 
   memory-server:
     build: .
