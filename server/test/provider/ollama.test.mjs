@@ -101,3 +101,38 @@ test('probeModel throws ProviderError on host unreachable', async () => {
     assert(err.message.includes('ECONNREFUSED') || err.message.includes('ollama'));
   }
 });
+
+test('embed calls fetch and returns { vector, usage }', async () => {
+  const fakeFetch = async (url, init) => {
+    assert.match(url, /\/api\/embeddings$/);
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, 'nomic-embed-text');
+    assert.equal(body.prompt, 'hello world');
+    return {
+      ok: true,
+      json: async () => ({ embedding: new Array(768).fill(0.3) }),
+    };
+  };
+  const result = await ollama.embed('hello world', { fetch: fakeFetch, host: 'http://localhost:11434', model: 'nomic-embed-text' });
+  assert.equal(result.vector.length, 768);
+  assert.deepEqual(result.usage, { tokensIn: 0, tokensOut: 0 });  // ollama embeddings don't expose tokens
+});
+
+test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
+  process.env.UM_TEST_MOCK_SDK = '1';
+  try {
+    const result = await ollama.embed('text', { fetch: () => assert.fail('should not call fetch'), model: 'nomic-embed-text' });
+    assert.equal(result.vector.length, 768);
+  } finally {
+    delete process.env.UM_TEST_MOCK_SDK;
+  }
+});
+
+test('embed wraps non-2xx response as PROVIDER_UPSTREAM', async () => {
+  const fakeFetch = async () => ({ ok: false, status: 503, text: async () => 'unavailable' });
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => ollama.embed('text', { fetch: fakeFetch }),
+    (err) => err instanceof ProviderError && err.class === 'PROVIDER_UPSTREAM',
+  );
+});
