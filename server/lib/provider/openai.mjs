@@ -173,3 +173,66 @@ export async function embed(text, opts = {}) {
     usage: { tokensIn: raw.usage?.prompt_tokens ?? 0, tokensOut: 0 },
   };
 }
+
+const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
+Extract atomic, declarative facts useful for personalization or recall.
+Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
+If no facts can be extracted, output {"facts": []}.`;
+
+function parseFactsJson(content) {
+  // Tolerate accidental markdown fences (```json ... ```) — common LLM drift.
+  const stripped = content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed?.facts) && parsed.facts.every((f) => typeof f === 'string')) {
+      return parsed.facts;
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
+export async function factsInvoke(text, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.factsModel } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return { facts: ['[MOCK] openai fact'], usage: { tokensIn: 10, tokensOut: 5 } };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'openai',
+        status: 401,
+        message: `facts backend=openai requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: OpenAI } = await import('openai');
+    client = new OpenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: FACTS_SYSTEM_PROMPT },
+        { role: 'user', content: text },
+      ],
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'openai',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  return {
+    facts: parseFactsJson(raw.choices[0].message.content),
+    usage: extractUsage(raw),
+  };
+}
