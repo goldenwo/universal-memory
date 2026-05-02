@@ -26,6 +26,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRetry } from './retry.mjs';
+import { withRequestContext, currentRequestId } from './request-context.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -66,31 +67,33 @@ export async function umAdd({
   if (typeof text !== 'string' || text.length === 0) throw new Error('umAdd: text required');
 
   const collection = memory.config.vectorStore.config.collectionName;
-  const items = infer
-    ? (await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics })).facts ?? []
-    : [text];
+  return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
+    const items = infer
+      ? (await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics })).facts ?? []
+      : [text];
 
-  if (items.length === 0) return { results: [] };
+    if (items.length === 0) return { results: [] };
 
-  const results = [];
-  for (const item of items) {
-    const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
-    const id = randomUUID();
-    const point = {
-      id,
-      vector,
-      payload: buildPayload({ userId, text: item, metadata }),
-    };
-    const client = _qdrantClient ?? await getRealClient(memory);
-    await withRetry(
-      () => client.upsert(collection, { points: [point] }).catch((e) => {
-        // Mark transient errors retryable; let withRetry surface UPSTREAM_FAILURE on exhaustion.
-        if (e?.retryable === undefined) e.retryable = true;
-        throw e;
-      }),
-      { op: 'add', ...(_retryOpts ?? {}) },
-    );
-    results.push({ id, memory: item, event: 'ADD' });
-  }
-  return { results };
+    const results = [];
+    for (const item of items) {
+      const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
+      const id = randomUUID();
+      const point = {
+        id,
+        vector,
+        payload: buildPayload({ userId, text: item, metadata }),
+      };
+      const client = _qdrantClient ?? await getRealClient(memory);
+      await withRetry(
+        () => client.upsert(collection, { points: [point] }).catch((e) => {
+          // Mark transient errors retryable; let withRetry surface UPSTREAM_FAILURE on exhaustion.
+          if (e?.retryable === undefined) e.retryable = true;
+          throw e;
+        }),
+        { op: 'add', ...(_retryOpts ?? {}) },
+      );
+      results.push({ id, memory: item, event: 'ADD' });
+    }
+    return { results };
+  });
 }

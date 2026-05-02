@@ -126,6 +126,32 @@ test('umAdd empty facts (infer:true, 0 extracted) returns { results: [] }, no qd
   assert.equal(qdrant.upserts.length, 0);
 });
 
+test('umAdd binds {userId, collection, infer} to pino ALS via withRequestContext', async () => {
+  const { withRequestContext } = await import('../lib/request-context.mjs');
+  let observed;
+  const factsOverride = {
+    factsInvoke: async () => {
+      // Inside the orchestrator call, the ALS store should hold our binding.
+      const { _alsForTest } = await import('../lib/request-context.mjs');
+      observed = _alsForTest().getStore();
+      return { facts: [], usage: { tokensIn: 0, tokensOut: 0 } };
+    },
+  };
+  await withRequestContext({ id: 'req-1' }, async () => {
+    await umAdd({
+      memory: { config: { vectorStore: { config: { collectionName: 'cc', host: 'localhost', port: 6333 } } } },
+      text: 't', userId: 'alice', infer: true,
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: { embed: async () => ({ vector: [], usage: { tokensIn: 0, tokensOut: 0 } }) },
+      _qdrantClient: { upsert: async () => ({}) },
+    });
+  });
+  assert.equal(observed?.userId, 'alice');
+  assert.equal(observed?.collection, 'cc');
+  assert.equal(observed?.infer, true);
+  assert.equal(observed?.id, 'req-1');  // outer request_id preserved
+});
+
 test('umAdd wraps qdrant.upsert in withRetry({op:"add"}) — surfaces UPSTREAM_FAILURE on exhaustion', async () => {
   let calls = 0;
   const flakyClient = {
