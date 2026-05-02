@@ -514,7 +514,7 @@ function sleep(ms) {
 
 /**
  * Re-embed a single entry through the new Memory instance. Pulls the source
- * text via `vault.read(id)` and calls `newMemory.add(body, { metadata, infer:false })`.
+ * text via `vault.read(id)` and calls `umAdd(body, { metadata, infer:false })`.
  *
  * Per the DE10 test contract: vault.read is called for every entry, regardless
  * of whether it originated from `vault_paths` or `fact_ids`. Real-world

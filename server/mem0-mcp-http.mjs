@@ -300,7 +300,7 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   const actual = await stamp.read();
   if (actual === null) {
     // Mock-SDK boot path (smoke gate, spec §9.4): skip writeStamp + verifyDim.
-    // Both call into the embedder (memory.add embeds the stamp text; verifyDim
+    // Both call into the embedder (umAdd/writeStamp embeds the stamp text; verifyDim
     // calls embedder.embedQuery), which mem0 routes through real provider
     // SDKs — UM_TEST_MOCK_SDK only short-circuits our *Invoke wrappers, not
     // mem0's internal embedder. Without this skip, boot smoke for non-openai
