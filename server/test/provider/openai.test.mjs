@@ -88,3 +88,55 @@ test('summarizerInvoke without client and without key throws ProviderError PROVI
     },
   );
 });
+
+test('embed calls injected client and returns { vector, usage }', async () => {
+  const fakeClient = {
+    embeddings: {
+      create: async () => ({
+        data: [{ embedding: new Array(1536).fill(0.1) }],
+        usage: { prompt_tokens: 7 },
+      }),
+    },
+  };
+  const result = await openai.embed('hello world', { client: fakeClient, model: 'text-embedding-3-small' });
+  assert.equal(result.vector.length, 1536);
+  assert.equal(result.usage.tokensIn, 7);
+  assert.equal(result.usage.tokensOut, 0);  // embeddings have no completion tokens
+});
+
+test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
+  const result = await openai.embed('any text', { env: { UM_TEST_MOCK_SDK: '1' }, model: 'text-embedding-3-small' });
+  assert.equal(result.vector.length, 1536);  // openai default dim
+  assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 0 });
+});
+
+test('embed without client and without key throws ProviderError PROVIDER_CONFIG', async () => {
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.embed('p', { env: {} }),
+    (err) => {
+      assert(err instanceof ProviderError);
+      assert.equal(err.class, 'PROVIDER_CONFIG');
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
+});
+
+test('embed wraps SDK 429 as PROVIDER_RATELIMIT, retryable:true', async () => {
+  const fakeClient = {
+    embeddings: {
+      create: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); },
+    },
+  };
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => openai.embed('p', { client: fakeClient }),
+    (err) => {
+      assert(err instanceof ProviderError);
+      assert.equal(err.class, 'PROVIDER_RATELIMIT');
+      assert.equal(err.retryable, true);
+      return true;
+    },
+  );
+});

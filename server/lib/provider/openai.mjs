@@ -130,3 +130,46 @@ export async function summarizerInvoke(prompt, opts = {}) {
     usage: extractUsage(raw),
   };
 }
+
+export async function embed(text, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.embeddingModel } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      vector: new Array(defaults.embeddingDim).fill(0),
+      usage: { tokensIn: 5, tokensOut: 0 },
+    };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'openai',
+        status: 401,
+        message: `embed backend=openai requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: OpenAI } = await import('openai');
+    client = new OpenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.embeddings.create({ model, input: text });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'openai',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  return {
+    vector: raw.data[0].embedding,
+    usage: { tokensIn: raw.usage?.prompt_tokens ?? 0, tokensOut: 0 },
+  };
+}
