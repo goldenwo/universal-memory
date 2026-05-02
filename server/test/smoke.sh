@@ -240,8 +240,21 @@ fi
 # against UM_TEST_MOCK_SDK=0 (real openai) so the metric path is exercised
 # end-to-end. Mock-SDK metric fire is unit-tested separately.
 echo "[smoke] 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed/facts"
-g2_metrics=$(docker exec -i "$UM_CONTAINER" sh -c \
-  'wget -qO- "http://localhost:6335/metrics" 2>/dev/null' 2>/dev/null || true)
+# Match the 1/5 scrape's robustness: wget OR node-fetch OR direct curl.
+# A bare wget had a 1-byte-body failure mode in CI (root cause unclear —
+# possibly post-/api/add timing; the fallback proves whether wget alone
+# was the issue).
+g2_metrics=""
+if [ -n "$UM_CONTAINER" ]; then
+	g2_metrics=$(docker exec -i "$UM_CONTAINER" sh -c \
+		'wget -qO- "http://localhost:6335/metrics" 2>/dev/null \
+		 || node -e "fetch('"'"'http://localhost:6335/metrics'"'"').then(r=>r.text()).then(t=>process.stdout.write(t))"' \
+		2>/dev/null || true)
+fi
+if [ -z "$g2_metrics" ]; then
+	echo "[smoke]     2c/5 in-container scrape returned empty — falling back to direct curl"
+	g2_metrics=$(curl -sf "$ENDPOINT/metrics" 2>/dev/null || true)
+fi
 
 # Helper accepting any positive numeric value (single-digit, multi-digit, decimal).
 g2_assert_metric() {
