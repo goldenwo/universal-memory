@@ -152,6 +152,43 @@ test('umAdd binds {userId, collection, infer} to pino ALS via withRequestContext
   assert.equal(observed?.id, 'req-1');  // outer request_id preserved
 });
 
+test('umAdd increments um_facts_extracted_total by facts.length per call', async () => {
+  const incCalls = [];
+  const fakeFactsCounter = { inc: (labels, value) => incCalls.push({ labels, value }) };
+  const factsOverride = {
+    factsInvoke: async () => ({ facts: ['a', 'b', 'c'], usage: { tokensIn: 5, tokensOut: 2 } }),
+  };
+  await umAdd({
+    memory: { config: { vectorStore: { config: { collectionName: 'c', host: 'localhost', port: 6333 } } } }, text: 't', userId: 'u', infer: true,
+    _factsProviderOverride: factsOverride,
+    _embedProviderOverride: { embed: async () => ({ vector: [0.1], usage: { tokensIn: 0, tokensOut: 0 } }) },
+    _qdrantClient: { upsert: async () => ({}) },
+    _factsCounter: fakeFactsCounter,
+  });
+  assert.equal(incCalls.length, 1);
+  assert.equal(incCalls[0].value, 3);
+  // The labels come from ctx; assert provider+model present (exact values are noop in test).
+  assert.ok('provider' in incCalls[0].labels);
+  assert.ok('model' in incCalls[0].labels);
+});
+
+test('umAdd emits facts.empty INFO log when infer:true extracts zero facts', async () => {
+  const logged = [];
+  const fakeLogger = { info: (obj, msg) => logged.push({ obj, msg }) };
+  await umAdd({
+    memory: { config: { vectorStore: { config: { collectionName: 'c', host: 'localhost', port: 6333 } } } }, text: 't', userId: 'u', infer: true,
+    _factsProviderOverride: { factsInvoke: async () => ({ facts: [], usage: { tokensIn: 5, tokensOut: 1 } }) },
+    _embedProviderOverride: { embed: async () => assert.fail('should not call embed') },
+    _qdrantClient: { upsert: async () => ({}) },
+    _logger: fakeLogger,
+  });
+  const empty = logged.find((l) => l.obj?.event === 'facts.empty');
+  assert.ok(empty, 'facts.empty INFO line emitted');
+  assert.equal(empty.obj.userId, 'u');
+  assert.equal(empty.obj.collection, 'c');
+  assert.equal(typeof empty.obj.textLength, 'number');
+});
+
 test('umAdd wraps qdrant.upsert in withRetry({op:"add"}) — surfaces UPSTREAM_FAILURE on exhaustion', async () => {
   let calls = 0;
   const flakyClient = {

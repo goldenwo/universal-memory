@@ -27,6 +27,8 @@ import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRetry } from './retry.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
+import { umFactsExtractedTotal } from './metrics.mjs';
+import { getLogger } from './logger.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -53,12 +55,16 @@ export async function umAdd({
   userId,
   metadata = {},
   infer = true,
-  // Test seams:
+  // T12 seams:
   _factsProviderOverride,
   _embedProviderOverride,
   _qdrantClient,
   metrics,
+  // T13 seam:
   _retryOpts,
+  // T15 seams (NEW):
+  _factsCounter,
+  _logger,
 } = {}) {
   if (!memory?.config?.vectorStore?.config?.collectionName) {
     throw new Error('umAdd: memory.config.vectorStore.config.collectionName required');
@@ -67,10 +73,25 @@ export async function umAdd({
   if (typeof text !== 'string' || text.length === 0) throw new Error('umAdd: text required');
 
   const collection = memory.config.vectorStore.config.collectionName;
+  const factsCounter = _factsCounter ?? umFactsExtractedTotal;
+  const logger = _logger ?? getLogger();
+
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
-    const items = infer
-      ? (await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics })).facts ?? []
-      : [text];
+    let items;
+    if (infer) {
+      const factsResult = await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics });
+      const extractedFacts = factsResult.facts ?? [];
+      factsCounter.inc(
+        { provider: factsResult.provider, model: factsResult.model },
+        extractedFacts.length,
+      );
+      if (extractedFacts.length === 0) {
+        logger.info({ event: 'facts.empty', userId, collection, textLength: text.length }, 'umAdd: facts() extracted zero');
+      }
+      items = extractedFacts;
+    } else {
+      items = [text];
+    }
 
     if (items.length === 0) return { results: [] };
 
