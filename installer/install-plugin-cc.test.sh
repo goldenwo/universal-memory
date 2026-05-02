@@ -360,6 +360,63 @@ else
   pass "T16: symlink-mode shim check SKIPPED (ln -s fell back to cp on this platform)"
 fi
 
+# ─── T17: stale-symlink replacement at $CLAUDE_PLUGINS_DIR/universal-memory ───
+# Migrated from server/install.test.sh T9 (pre-881f229). v0.5 moved plugin
+# installation from server/install.sh to installer/install-plugin-cc.sh, but
+# the symlink-replacement coverage didn't move with the code. T9 guarded
+# against a v0.4-class regression where the installer wrote through a stale
+# plugin-dir symlink and silently corrupted whatever it was pointing at.
+#
+# Invariants (mirror original T9):
+#   1. install exits 0
+#   2. plugin target is replaced (real dir, or symlink to PLUGIN_SRC), NOT
+#      still pointing at the stale `elsewhere/` target
+#   3. `elsewhere/` is empty — the installer did NOT traverse the stale symlink
+echo ""
+echo "=== T17: stale-symlink replacement at \$CLAUDE_PLUGINS_DIR/universal-memory ==="
+T17="$TMPROOT/t17"
+mkdir -p "$T17/plugins" "$T17/elsewhere" "$T17/home"
+touch "$T17/home/.bashrc"
+make_fakebin "$T17/bin"
+
+# Stale symlink: $T17/plugins/universal-memory -> $T17/elsewhere (a sibling
+# dir that has nothing to do with the plugin source). The installer must
+# replace this with a real plugin without writing into elsewhere/.
+ln -s "$T17/elsewhere" "$T17/plugins/universal-memory" 2>/dev/null || true
+
+if [ ! -L "$T17/plugins/universal-memory" ]; then
+  # ln -s fell back to copy (Windows without Developer Mode) — symlink mode
+  # not available on this platform. Document and skip rather than false-pass.
+  pass "T17: stale-symlink test SKIPPED (ln -s unavailable on this platform)"
+else
+  _tx_capture T17 run_plugin_cc "$T17/bin" \
+    UM_NONINTERACTIVE=1 \
+    CLAUDE_PLUGINS_DIR="$T17/plugins" \
+    SHELL=/bin/bash \
+    HOME="$T17/home"
+  _dump_on_fail T17
+
+  assert_exit_zero "T17: install exits 0 over stale symlink" "$TX_EXIT_T17"
+
+  # Invariant 2: plugin target replaced (no longer the stale symlink).
+  T17_LINK_DEST=$(readlink "$T17/plugins/universal-memory" 2>/dev/null || true)
+  if [ -L "$T17/plugins/universal-memory" ]; then
+    # Still a symlink — must point at PLUGIN_SRC (link-mode), NOT elsewhere/.
+    assert_not_contains "T17: stale symlink target replaced (no longer points at elsewhere/)" \
+      "$T17_LINK_DEST" "$T17/elsewhere"
+  else
+    # Real directory (copy-mode default under UM_NONINTERACTIVE=1).
+    assert_file_exists "T17: plugin installed as real dir over stale symlink" \
+      "$T17/plugins/universal-memory/.claude-plugin/plugin.json"
+  fi
+
+  # Invariant 3: stale symlink target ($T17/elsewhere) was NOT written into.
+  # Catches the v0.4 regression class where install would traverse the
+  # symlink and corrupt the original target.
+  T17_ELSEWHERE_COUNT=$(ls "$T17/elsewhere" 2>/dev/null | wc -l | tr -d ' ')
+  assert_eq "T17: stale symlink target dir not corrupted" "$T17_ELSEWHERE_COUNT" "0"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
