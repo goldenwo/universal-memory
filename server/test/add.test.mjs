@@ -167,9 +167,12 @@ test('umAdd increments um_facts_extracted_total by facts.length per call', async
   });
   assert.equal(incCalls.length, 1);
   assert.equal(incCalls[0].value, 3);
-  // The labels come from ctx; assert provider+model present (exact values are noop in test).
-  assert.ok('provider' in incCalls[0].labels);
-  assert.ok('model' in incCalls[0].labels);
+  // Labels come from the orchestrator return shape (T11 extension). Assert
+  // they're present AND non-undefined strings — a regression that fell through
+  // env resolution and emitted {provider: undefined, model: undefined} would
+  // have passed the weaker `'in' in labels` check.
+  assert.equal(typeof incCalls[0].labels.provider, 'string');
+  assert.equal(typeof incCalls[0].labels.model, 'string');
 });
 
 test('umAdd emits facts.empty INFO log when infer:true extracts zero facts', async () => {

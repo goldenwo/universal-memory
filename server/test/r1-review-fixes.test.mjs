@@ -335,11 +335,14 @@ test('Fix 3 / POST /api/add: transient failure retries and succeeds (was raw 500
   // we inject a transient qdrant mock (_qdrantClient) that throws on the first
   // 2 upserts. Each outer retry re-enters umAdd from facts→embed→upsert, so
   // qdrant.upsertCallCount() counts outer-retry attempts (1 per umAdd call
-  // that reaches upsert). The inner withRetry inside umAdd is for qdrant
-  // blips; we override _retryOpts-like behavior via the outer seam only.
-  // NOTE: inner umAdd withRetry also retries, so upsert counts are per-attempt
-  // across both retry layers. We assert r.status=200 to verify outer-retry
-  // recovery; the withRetry wrap is statically pinned by the assertion below.
+  // that reaches upsert).
+  //
+  // Retry architecture (post-v0.8 G2 final-review Important #2):
+  // umAdd does NOT internally wrap the qdrant upsert. The OUTER withRetry
+  // ({op:'add'}) at every mcp-http call site is the single source of retry
+  // truth. So upsertCallCount === number of outer attempts (1-per-attempt,
+  // not amplified). With UM_UPSTREAM_RETRY_MAX=3 and 2 transient failures,
+  // we expect upsertCallCount() === 3 (initial + 2 retries succeeds on 3rd).
   const memory = makeTransientMemory({ failNTimes: 0 }); // no delete failures needed
   const qdrant = makeTransientQdrant({ failNTimes: 2 });
   const prev = process.env.UM_UPSTREAM_RETRY_MAX;

@@ -35,8 +35,14 @@ const COLLECTION = process.env.QDRANT_COLLECTION ?? 'stamp_roundtrip_test';
 async function ensureCleanCollection() {
   const client = new QdrantClient({ host: QDRANT_HOST, port: QDRANT_PORT });
   // Idempotent reset: delete-if-exists then create. Each test run starts clean
-  // so prior runs' stamps don't shadow the current write.
-  try { await client.deleteCollection(COLLECTION); } catch { /* 404 ok */ }
+  // so prior runs' stamps don't shadow the current write. Narrow the catch to
+  // 404 only — connection-refused / auth failures must NOT be swallowed
+  // (otherwise a qdrant-down would look like a passed test).
+  try {
+    await client.deleteCollection(COLLECTION);
+  } catch (e) {
+    if (e?.status !== 404) throw e;
+  }
   await client.createCollection(COLLECTION, { vectors: { size: 1536, distance: 'Cosine' } });
 }
 
