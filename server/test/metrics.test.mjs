@@ -21,7 +21,7 @@ import {
   umFactsExtractedTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 6 named metrics', () => {
+test('registry exposes exactly 10 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_facts_extracted_total',
@@ -30,6 +30,10 @@ test('registry exposes exactly 6 named metrics', () => {
     'um_lock_contentions_total',
     'um_mcp_tool_calls_total',
     'um_mem0_ops_total',
+    'um_provider_cost_usd_total',
+    'um_provider_errors_total',
+    'um_provider_request_duration_seconds',
+    'um_provider_tokens_total',
   ]);
 });
 

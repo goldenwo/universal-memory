@@ -115,3 +115,79 @@ export const umFactsExtractedTotal = new promClient.Counter({
   labelNames: ['provider', 'model'],
   registers: [registry],
 });
+
+// Provider-surface metrics (spec §8.3). The orchestrators (embed/facts/
+// summarize) call `metrics.counter(...)` / `metrics.histogram(...)` via an
+// injected adapter; production calls fall through to PROVIDER_METRICS_ADAPTER
+// below which actually inc/observes these prom-client instances.
+export const umProviderTokensTotal = new promClient.Counter({
+  name: 'um_provider_tokens_total',
+  help: 'Tokens consumed by provider invocations, by provider/model/surface/direction',
+  labelNames: ['provider', 'model', 'surface', 'direction'],
+  registers: [registry],
+});
+
+export const umProviderCostUsdTotal = new promClient.Counter({
+  name: 'um_provider_cost_usd_total',
+  help: 'USD cost of provider invocations, by provider/model/surface',
+  labelNames: ['provider', 'model', 'surface'],
+  registers: [registry],
+});
+
+export const umProviderRequestDurationSeconds = new promClient.Histogram({
+  name: 'um_provider_request_duration_seconds',
+  help: 'Provider invocation latency in seconds, by provider/model/surface',
+  labelNames: ['provider', 'model', 'surface'],
+  buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+  registers: [registry],
+});
+
+export const umProviderErrorsTotal = new promClient.Counter({
+  name: 'um_provider_errors_total',
+  help: 'Provider invocation errors, by provider/model/surface/error_class',
+  labelNames: ['provider', 'model', 'surface', 'error_class'],
+  registers: [registry],
+});
+
+/**
+ * Production metrics adapter for the orchestrators. Duck-types as
+ * `{ counter, histogram }` (matching the NOOP_METRICS shape) and dispatches
+ * by metric NAME to the appropriate prom-client instance.
+ *
+ * Why this shape: embed.mjs / facts.mjs / summarize.mjs were originally
+ * written to receive a metrics adapter from each call site. v0.8 G2 found
+ * that no production call site actually injects one, so the orchestrators
+ * default to NOOP_METRICS — silent no-op. This adapter closes that gap by
+ * being the real default. Tests can still inject a fake adapter (capturing
+ * calls) or NOOP_METRICS (silence).
+ *
+ * Wrapped in try/catch because prom-client throws synchronously on
+ * label-shape violations; observability MUST NOT poison the request path
+ * (C.9 obs-fallback discipline).
+ */
+export const PROVIDER_METRICS_ADAPTER = Object.freeze({
+  counter: (name, labels, value) => {
+    try {
+      switch (name) {
+        case 'um_provider_tokens_total':
+          umProviderTokensTotal.inc(labels, value);
+          break;
+        case 'um_provider_cost_usd_total':
+          umProviderCostUsdTotal.inc(labels, value);
+          break;
+        case 'um_provider_errors_total':
+          umProviderErrorsTotal.inc(labels, value);
+          break;
+        // Unknown counter name → silent. New metric names should add a case
+        // here AND a Counter declaration above.
+      }
+    } catch { /* fail-safe — observability MUST NOT poison the request path */ }
+  },
+  histogram: (name, labels, value) => {
+    try {
+      if (name === 'um_provider_request_duration_seconds') {
+        umProviderRequestDurationSeconds.observe(labels, value);
+      }
+    } catch { /* fail-safe */ }
+  },
+});

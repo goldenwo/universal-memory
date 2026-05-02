@@ -19,7 +19,7 @@
 
 import { providers, getProvider, supportingProviders } from './provider/registry.mjs';
 import { computeCost } from './pricing.mjs';
-import { PROVIDER_METRICS, NOOP_METRICS, SURFACES } from './metrics.mjs';
+import { PROVIDER_METRICS, NOOP_METRICS, PROVIDER_METRICS_ADAPTER, SURFACES } from './metrics.mjs';
 
 export const EMBEDDING_BACKENDS = Object.fromEntries(
   Object.entries(providers).filter(([_, p]) => p.supports.embeddings),
@@ -60,7 +60,10 @@ export async function embed(text, ctx = {}) {
   }
   const model = ctx.model ?? process.env.UM_EMBEDDING_MODEL ?? provider.defaults?.embeddingModel;
 
-  const metrics = ctx.metrics ?? NOOP_METRICS;
+  // Production default: PROVIDER_METRICS_ADAPTER actually inc's the prom-client
+  // Counter/Histogram instances. Tests can inject NOOP_METRICS for silence
+  // or a fake adapter to capture calls.
+  const metrics = ctx.metrics ?? PROVIDER_METRICS_ADAPTER;
   // SINGULAR per spec §8.3 — bridges from registry surface key 'embeddings'.
   const surface = SURFACES.EMBED;
   const labels = { provider: providerName, model, surface };
