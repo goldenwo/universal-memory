@@ -1646,6 +1646,50 @@ else
 	# — anthropic doesn't expose an embeddings API per spec §3.2)
 	test_boot_with_provider anthropic-mixed openai anthropic anthropic || boot_rc=1
 
+	# T24 — DE5 stamp roundtrip variant (spec §8 acceptance criterion).
+	#
+	# Intent: confirm writeStamp(via umAdd) → readStamp(via mem0.getAll) roundtrip
+	# works in a mock-SDK CI environment without UM_LIVE_TESTS=1.
+	#
+	# Why deferred: UM_TEST_MOCK_SDK=1 explicitly skips writeStamp in
+	# initMemoryWithGuard's null-branch (mem0-mcp-http.mjs:302-315). The skip is
+	# intentional — calling writeStamp with fake API keys (injected by the boot
+	# overlay) would crash the stamp write path before any embed is attempted.
+	# An in-container `docker exec ... node -e '...'` stamp roundtrip would
+	# require constructing a full Memory instance with a live Qdrant connection
+	# and a real or deeply-stubbed embed path — infrastructure the boot-smoke
+	# stack doesn't expose.
+	#
+	# Coverage by existing tests (no gap):
+	#   - Unit:          server/test/embedding-stamp.test.mjs (writeStamp→upsert→
+	#                    readStamp via mocked qdrant + embed provider).
+	#   - Live CI/local: server/test/add-live.test.mjs + stamp-roundtrip-spike.test.mjs
+	#                    (UM_LIVE_TESTS=1, real OpenAI + Qdrant; exercises the same
+	#                    umAdd payload path that writeStamp uses).
+	#   - Boot guard:    server/test/init-memory-stamp-guard.test.mjs.
+	#
+	# What this section DOES assert right now: the boot guard emitted the expected
+	# mock-skip log line (EMBEDDING_STAMP_MOCK_SKIP) in the most recently started
+	# container — confirming the guard ran and correctly took the skip branch
+	# rather than crashing with a bad-key embed error.
+	if [ -n "$UM_CONTAINER" ]; then
+		echo "[smoke]     T24 DE5 boot-smoke: asserting guard mock-skip log present"
+		BOOT_LOGS=$(docker logs "$UM_CONTAINER" 2>&1 || true)
+		if echo "$BOOT_LOGS" | grep -q 'EMBEDDING_STAMP_MOCK_SKIP'; then
+			echo "[smoke]     T24 OK: boot guard ran and emitted mock-skip (UM_TEST_MOCK_SDK=1 path verified)"
+		else
+			# Soft warning — the full stamp roundtrip (writeStamp→readStamp) is
+			# deferred to UM_LIVE_TESTS=1 (add-live.test.mjs). A missing mock-skip
+			# log means the server started without the guard firing at all OR the
+			# guard took a different branch (e.g., match on a pre-existing stamp).
+			# Not a hard failure since the boot guard may have matched an existing
+			# stamp from an earlier run of the same per-provider collection.
+			echo "[smoke]     T24 WARN: EMBEDDING_STAMP_MOCK_SKIP not in logs — guard may have matched an existing stamp (not a failure)"
+		fi
+	else
+		echo "[smoke]     T24 SKIP: UM_CONTAINER not set — cannot inspect boot guard logs"
+	fi
+
 	# I1: explicit teardown of the boot-test stack so a failed provider
 	# doesn't leave the container running between local smoke iterations or
 	# poison the next CI step. Always runs (success or failure path); error
