@@ -103,3 +103,15 @@ export const lockContentionsTotal = new promClient.Counter({
   labelNames: ['lock_path'],
   registers: [registry],
 });
+
+// Empty-extraction visibility (spec §6, §8 acceptance criteria).
+// Sum of facts extracted PER call (not call count). Distinguishes "0 facts
+// from 5 calls" (provider misconfig?) from "5 facts from 5 calls". Operator
+// alert pattern: rate(um_facts_extracted_total[5m]) == 0 while
+// um_provider_request_duration_seconds_count{surface="facts"} > 0.
+export const umFactsExtractedTotal = new promClient.Counter({
+  name: 'um_facts_extracted_total',
+  help: 'Total facts extracted by the facts() orchestrator, summed per (provider, model)',
+  labelNames: ['provider', 'model'],
+  registers: [registry],
+});
