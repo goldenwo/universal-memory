@@ -181,7 +181,9 @@ If no facts can be extracted, output {"facts": []}.`;
 
 function parseFactsJson(content) {
   // Tolerate accidental markdown fences (```json ... ```) — common LLM drift.
-  const stripped = content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  // OpenAI also returns null content for refusals / content-filter stops,
+  // so guard against TypeError before .replace runs.
+  const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
   try {
     const parsed = JSON.parse(stripped);
     if (Array.isArray(parsed?.facts) && parsed.facts.every((f) => typeof f === 'string')) {
