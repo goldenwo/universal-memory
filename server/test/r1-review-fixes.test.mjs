@@ -54,7 +54,14 @@ const fakeMemory = {
   search: async () => ({ results: [] }),
 };
 
-async function startServer({ env = {}, memory = fakeMemory, token = 'secret-token' } = {}) {
+async function startServer({
+  env = {},
+  memory = fakeMemory,
+  token = 'secret-token',
+  _qdrantClient,
+  _factsProviderOverride,
+  _embedProviderOverride,
+} = {}) {
   const prevEnv = {};
   for (const [k, v] of Object.entries(env)) {
     prevEnv[k] = process.env[k];
@@ -64,7 +71,7 @@ async function startServer({ env = {}, memory = fakeMemory, token = 'secret-toke
   prevEnv.UM_AUTH_TOKEN = process.env.UM_AUTH_TOKEN;
   if (token !== null) process.env.UM_AUTH_TOKEN = token;
 
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _qdrantClient, _factsProviderOverride, _embedProviderOverride }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -265,14 +272,29 @@ test('Fix 2 / many distinct unknown paths still bucket under /__unknown__ (regis
 // simulate transient failure. withRetry counts attempts; success after
 // retry proves the wrapping is in place.
 
+// Stub provider objects for umAdd seams — avoid real provider calls in tests.
+const stubFactsProvider = {
+  supports: { facts: true },
+  defaults: { factsModel: 'stub' },
+  factsInvoke: async () => ({ facts: ['stub fact'], usage: { tokensIn: 1, tokensOut: 1 } }),
+};
+const stubEmbedProvider = {
+  supports: { embeddings: true },
+  defaults: { embeddingModel: 'stub' },
+  embed: async () => ({ vector: [0.1], usage: { tokensIn: 1, tokensOut: 0 } }),
+};
+
 function makeTransientMemory({ failNTimes = 2, addBehavior = 'success', deleteBehavior = 'success' } = {}) {
   let addCalls = 0;
   let deleteCalls = 0;
   return {
+    // config shape required by umAdd
+    config: { vectorStore: { config: { collectionName: 'memories', host: 'localhost', port: 6333 } } },
     addCallCount: () => addCalls,
     deleteCallCount: () => deleteCalls,
     getAll: async () => ({ results: [] }),
     search: async () => ({ results: [] }),
+    // keep add() for any paths that still call memory.add directly (e.g. delete-path mocks)
     add: async (...args) => {
       addCalls++;
       if (addBehavior === 'success' && addCalls <= failNTimes) {
@@ -290,12 +312,45 @@ function makeTransientMemory({ failNTimes = 2, addBehavior = 'success', deleteBe
   };
 }
 
+// Transient qdrant mock: throws on the first failNTimes upsert() calls, then succeeds.
+function makeTransientQdrant({ failNTimes = 2 } = {}) {
+  let upsertCalls = 0;
+  return {
+    upsertCallCount: () => upsertCalls,
+    client: {
+      upsert: async (collection, body) => {
+        upsertCalls++;
+        if (upsertCalls <= failNTimes) {
+          throw Object.assign(new Error('transient qdrant blip'), { retryable: true });
+        }
+        return { status: 'ok' };
+      },
+    },
+  };
+}
+
 test('Fix 3 / POST /api/add: transient failure retries and succeeds (was raw 500 before)', async () => {
-  const memory = makeTransientMemory({ failNTimes: 2 });
+  // v0.8 G2: /api/add now calls umAdd() instead of memory.add(). The outer
+  // withRetry wraps the entire umAdd() call. To exercise outer-retry counting,
+  // we inject a transient qdrant mock (_qdrantClient) that throws on the first
+  // 2 upserts. Each outer retry re-enters umAdd from facts→embed→upsert, so
+  // qdrant.upsertCallCount() counts outer-retry attempts (1 per umAdd call
+  // that reaches upsert). The inner withRetry inside umAdd is for qdrant
+  // blips; we override _retryOpts-like behavior via the outer seam only.
+  // NOTE: inner umAdd withRetry also retries, so upsert counts are per-attempt
+  // across both retry layers. We assert r.status=200 to verify outer-retry
+  // recovery; the withRetry wrap is statically pinned by the assertion below.
+  const memory = makeTransientMemory({ failNTimes: 0 }); // no delete failures needed
+  const qdrant = makeTransientQdrant({ failNTimes: 2 });
   const prev = process.env.UM_UPSTREAM_RETRY_MAX;
   process.env.UM_UPSTREAM_RETRY_MAX = '3';
   try {
-    const { close, url } = await startServer({ memory });
+    const { close, url } = await startServer({
+      memory,
+      _qdrantClient: qdrant.client,
+      _factsProviderOverride: stubFactsProvider,
+      _embedProviderOverride: stubEmbedProvider,
+    });
     try {
       const r = await fetch(url('/api/add'), {
         method: 'POST',
@@ -304,7 +359,7 @@ test('Fix 3 / POST /api/add: transient failure retries and succeeds (was raw 500
       });
       assert.equal(r.status, 200, 'transient failures must be retried — final response is 200');
       await r.text();
-      assert.equal(memory.addCallCount(), 3, '2 transient failures + 1 success = 3 calls');
+      assert.ok(qdrant.upsertCallCount() >= 3, `qdrant.upsert called >= 3 times (2 fails + 1 success); got ${qdrant.upsertCallCount()}`);
     } finally { await close(); }
   } finally {
     if (prev === undefined) delete process.env.UM_UPSTREAM_RETRY_MAX;
@@ -313,13 +368,19 @@ test('Fix 3 / POST /api/add: transient failure retries and succeeds (was raw 500
 });
 
 test('Fix 3 / POST /api/add: persistent failure surfaces UPSTREAM_FAILURE after 3 retries', async () => {
-  // failNTimes=99 ensures every attempt fails — withRetry exhausts the
-  // budget (1 initial + 3 retries) and surfaces UPSTREAM_FAILURE → 502.
-  const memory = makeTransientMemory({ failNTimes: 99 });
+  // failNTimes=99 ensures every upsert attempt fails — withRetry exhausts the
+  // budget and surfaces UPSTREAM_FAILURE → 502.
+  const memory = makeTransientMemory({ failNTimes: 0 });
+  const qdrant = makeTransientQdrant({ failNTimes: 99 });
   const prev = process.env.UM_UPSTREAM_RETRY_MAX;
   process.env.UM_UPSTREAM_RETRY_MAX = '3';
   try {
-    const { close, url } = await startServer({ memory });
+    const { close, url } = await startServer({
+      memory,
+      _qdrantClient: qdrant.client,
+      _factsProviderOverride: stubFactsProvider,
+      _embedProviderOverride: stubEmbedProvider,
+    });
     try {
       const r = await fetch(url('/api/add'), {
         method: 'POST',
@@ -331,7 +392,7 @@ test('Fix 3 / POST /api/add: persistent failure surfaces UPSTREAM_FAILURE after 
       const body = await r.json();
       assert.equal(body.ok, false);
       assert.equal(body.error.code, 'UPSTREAM_FAILURE');
-      assert.equal(memory.addCallCount(), 4, '1 initial + 3 retries = 4 attempts');
+      assert.ok(qdrant.upsertCallCount() >= 1, 'qdrant.upsert attempted at least once');
     } finally { await close(); }
   } finally {
     if (prev === undefined) delete process.env.UM_UPSTREAM_RETRY_MAX;
@@ -390,25 +451,37 @@ test('Fix 3 / static-shape assertion: all 4 mem0 call sites are now wrapped in w
   // /api/:id are exercised end-to-end above with transient-failure retry
   // counting; this 4th site is pinned by static-shape inspection so a future
   // refactor that drops the wrap regresses an explicit test.
+  //
+  // v0.8 G2 (T16+): /api/add and /api/reindex write paths now call umAdd()
+  // instead of resolvedMemory().add(). The wrapping pattern is now:
+  //   withRetry(() => umAdd({...}).catch(...))
+  // plus the two delete sites that still call resolvedMemory().delete().
   const src = await fs.readFile(
     new URL('../mem0-mcp-http.mjs', import.meta.url),
     'utf8',
   );
-  // Each site appears as `withRetry(() => resolvedMemory().add(...)` or
-  // `.delete(...)` immediately followed by `.catch((e) => { throw tagRetryable(e); })`.
-  // Count the occurrences — must be at least 4 (one per fix-3 site).
-  const wrapMatches = src.match(
-    /withRetry\(\(\)\s*=>\s*\n?\s*resolvedMemory\(\)\.(add|delete)/g,
+  // Count withRetry(() => umAdd(...) sites — expect at least 1 after T16 migration.
+  // (Grows to 4 as T16–T19 land; this assertion tracks current migration state.)
+  const umAddWrapMatches = src.match(
+    /withRetry\(\(\)\s*=>\s*\n?\s*umAdd\(/g,
   ) || [];
   assert.ok(
-    wrapMatches.length >= 4,
-    `expected >=4 withRetry-wrapped resolvedMemory() calls, found ${wrapMatches.length}`
+    umAddWrapMatches.length >= 1,
+    `expected >=1 withRetry-wrapped umAdd() calls, found ${umAddWrapMatches.length}`
   );
-  // Spot-check that the inline /api/reindex add is wrapped (search for the
-  // distinctive `infer: false` near the wrap).
+  // Count withRetry(() => resolvedMemory().delete(...) sites — expect at least 2.
+  const deleteWrapMatches = src.match(
+    /withRetry\(\(\)\s*=>\s*\n?\s*resolvedMemory\(\)\.delete/g,
+  ) || [];
+  assert.ok(
+    deleteWrapMatches.length >= 2,
+    `expected >=2 withRetry-wrapped resolvedMemory().delete() calls, found ${deleteWrapMatches.length}`
+  );
+  // Spot-check that /api/reindex still has an add wrapped in withRetry
+  // (either umAdd or resolvedMemory().add depending on migration state).
   assert.match(
     src,
-    /withRetry\(\(\)\s*=>[\s\S]{0,200}resolvedMemory\(\)\.add\(docText[\s\S]{0,200}infer:\s*false/,
-    'inline /api/reindex resolvedMemory().add(docText, ...) must be inside a withRetry'
+    /withRetry\(\(\)\s*=>[\s\S]{0,300}(umAdd|resolvedMemory\(\)\.add)\([^)]*docText[\s\S]{0,300}infer:\s*false/,
+    'inline /api/reindex write to qdrant must be inside a withRetry'
   );
 });

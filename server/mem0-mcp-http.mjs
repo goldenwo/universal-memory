@@ -66,6 +66,7 @@ import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
+import { umAdd } from './lib/add.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -2172,11 +2173,11 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
 			const { text, metadata } = JSON.parse(await readBody(req));
-			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
-			// previously surfaced as raw 500; withRetry retries 3× then
-			// surfaces UPSTREAM_FAILURE (mapped to 502 by error-envelope).
+			// v0.8 G2: umAdd routes through embed()/facts() orchestrators which
+			// emit um_provider_*{surface=embed|facts} metrics in prod. The outer
+			// withRetry wrapping is preserved for tagRetryable continuity.
 			const result = await withRetry(() =>
-				resolvedMemory().add(text, { userId: USER_ID, ...(metadata && { metadata }) })
+				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, ...(metadata && { metadata }), infer: true, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
