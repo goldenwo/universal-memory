@@ -2326,12 +2326,9 @@ export function createRequestHandler(ctx = {}) {
 
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
 			const docText = `${fm.title}\n\n${body.trim()}`;
-			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
-			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
-			// retried 3× before UPSTREAM_FAILURE surfaces. Mirrors the
-			// reindexDoc() helper which already uses withRetry.
+			// v0.8 G2: see /api/add migration.
 			await withRetry(() =>
-				resolvedMemory().add(docText, { userId: USER_ID, metadata, infer: false })
+				umAdd({ memory: resolvedMemory(), text: docText, userId: USER_ID, metadata, infer: false })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 
