@@ -66,10 +66,10 @@ export async function embed(text, ctx = {}) {
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();
 
-  // The override (or future provider.embed) returns { vector, usage: { tokensIn, tokensOut } }.
-  if (typeof provider.embed !== 'function') {
-    throw new Error(`provider ${providerName} has no embed() method (G2: real provider.embed lands in a later task; tests must inject _providerOverride)`);
-  }
+  // The provider's embed() returns { vector, usage: { tokensIn, tokensOut } }.
+  // After v0.8 G2, every provider in EMBEDDING_BACKENDS exports embed(). The
+  // guard that previously short-circuited here was a transition-phase aid;
+  // a missing method now becomes a TypeError at the call below — fail-loud.
 
   let raw;
   try {
@@ -94,5 +94,5 @@ export async function embed(text, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { vector, tokensIn, tokensOut, costUsd };
+  return { vector, tokensIn, tokensOut, costUsd, provider: providerName, model };
 }
