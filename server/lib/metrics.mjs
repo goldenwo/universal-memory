@@ -165,6 +165,20 @@ export const umProviderErrorsTotal = new promClient.Counter({
  * label-shape violations; observability MUST NOT poison the request path
  * (C.9 obs-fallback discipline).
  */
+// One-time diagnostic flag — log the FIRST inc/observe failure in each
+// process so CI smoke can see what's actually breaking. v0.8 G2 had a
+// silent-NOOP regression that survived to PR #36 CI; widening the visibility
+// here is cheap and prevents the same class of bug from going undetected.
+let _adapterErrorLogged = false;
+function _logFirstAdapterError(op, name, labels, value, err) {
+  if (_adapterErrorLogged) return;
+  _adapterErrorLogged = true;
+  try {
+    // eslint-disable-next-line no-console
+    console.error(`[provider-metrics-adapter] FIRST ${op} failed for ${name}: ${err?.message ?? err}; labels=${JSON.stringify(labels)} value=${value}`);
+  } catch { /* logger may itself fail — bail */ }
+}
+
 export const PROVIDER_METRICS_ADAPTER = Object.freeze({
   counter: (name, labels, value) => {
     try {
@@ -181,13 +195,19 @@ export const PROVIDER_METRICS_ADAPTER = Object.freeze({
         // Unknown counter name → silent. New metric names should add a case
         // here AND a Counter declaration above.
       }
-    } catch { /* fail-safe — observability MUST NOT poison the request path */ }
+    } catch (e) {
+      _logFirstAdapterError('counter.inc', name, labels, value, e);
+      /* fail-safe — observability MUST NOT poison the request path */
+    }
   },
   histogram: (name, labels, value) => {
     try {
       if (name === 'um_provider_request_duration_seconds') {
         umProviderRequestDurationSeconds.observe(labels, value);
       }
-    } catch { /* fail-safe */ }
+    } catch (e) {
+      _logFirstAdapterError('histogram.observe', name, labels, value, e);
+      /* fail-safe */
+    }
   },
 });
