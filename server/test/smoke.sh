@@ -234,6 +234,44 @@ else:
 	echo "[smoke]     metadata probe records cleaned up"
 fi
 
+# 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed AND facts surfaces.
+# This catches the entire "metric defined but doesn't fire in prod" bug
+# class — exactly the contract violation v0.8 G2 closes. The smoke runs
+# against UM_TEST_MOCK_SDK=0 (real openai) so the metric path is exercised
+# end-to-end. Mock-SDK metric fire is unit-tested separately.
+echo "[smoke] 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed/facts"
+g2_metrics=$(docker exec -i "$UM_CONTAINER" sh -c \
+  'wget -qO- "http://localhost:6335/metrics" 2>/dev/null' 2>/dev/null || true)
+
+# Helper accepting any positive numeric value (single-digit, multi-digit, decimal).
+g2_assert_metric() {
+  local pattern="$1" label="$2"
+  echo "$g2_metrics" | grep -qE "${pattern}\} ([1-9][0-9]*|[1-9][0-9]*\.[0-9]+|[0-9]+\.[1-9])" || {
+    echo "FAIL: $label metric did not fire (pattern: $pattern)"
+    echo "Sampled /metrics body:"
+    echo "$g2_metrics" | grep -E "um_provider_" | head -20
+    exit 1
+  }
+}
+
+# All four series for embed surface.
+g2_assert_metric 'um_provider_tokens_total\{[^}]*surface="embed"[^}]*provider="openai"[^}]*model="text-embedding-3-small"[^}]*direction="in"[^}]*' "embed tokens_in"
+g2_assert_metric 'um_provider_request_duration_seconds_count\{[^}]*surface="embed"[^}]*' "embed histogram"
+g2_assert_metric 'um_provider_cost_usd_total\{[^}]*surface="embed"[^}]*' "embed cost_usd"
+
+# All four series for facts surface (same shape, surface=facts).
+g2_assert_metric 'um_provider_tokens_total\{[^}]*surface="facts"[^}]*provider="openai"[^}]*model="gpt-4.1-nano-2025-04-14"[^}]*' "facts tokens"
+g2_assert_metric 'um_provider_request_duration_seconds_count\{[^}]*surface="facts"[^}]*' "facts histogram"
+g2_assert_metric 'um_provider_cost_usd_total\{[^}]*surface="facts"[^}]*' "facts cost_usd"
+
+# Negative assertion: model="undefined" must NOT appear (catches ctx.model
+# fallback chain misconfig — would emit cardinality-bombing label).
+echo "$g2_metrics" | grep -qE 'um_provider_tokens_total\{[^}]*model="undefined"' && {
+  echo "FAIL: metric label model=undefined leaked — fallback chain misconfigured"
+  exit 1
+}
+echo "[smoke]     v0.8 G2 metric assertions OK"
+
 # 3/5 if we stored anything, confirm each ID appears in /api/list (add -> list round-trip)
 echo "[smoke] 3/5 verify round-trip"
 if [ "$NUM_ADDED" -gt 0 ]; then
