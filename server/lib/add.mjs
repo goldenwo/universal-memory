@@ -1,0 +1,84 @@
+/**
+ * server/lib/add.mjs — umAdd() orchestrator: replaces mem0.add() in production.
+ *
+ * Pipeline (spec §4.3):
+ *   1. infer:true  → facts(text)  → string[]; one embed() per fact; one qdrant upsert per fact.
+ *   2. infer:false → embed(text)  → one vector; one qdrant upsert.
+ *   3. Each call goes through embed/facts orchestrators which emit
+ *      um_provider_* metrics with surface=embed / surface=facts.
+ *
+ * Return shape mirrors mem0's add():
+ *   { results: [{ id, memory, event: 'ADD' }, ...] }
+ *
+ * Qdrant payload schema (LOAD-BEARING — see spec §4.3, §9 risk row 1):
+ *   - camelCase userId, createdAt
+ *   - metadata fields FLATTENED to top level (no sub-object)
+ *   - getAll/search via mem0 must continue to find these writes
+ *
+ * The Qdrant client is injected via `_qdrantClient` (test seam) or
+ * constructed at call time from the memory's host/port config.
+ *
+ * Errors propagate through existing withRetry({op:'add'}) wrapping at the
+ * caller (no new error code introduced — UPSTREAM_FAILURE per spec §6).
+ */
+
+import { randomUUID, createHash } from 'node:crypto';
+import { facts as factsOrchestrator } from './facts.mjs';
+import { embed as embedOrchestrator } from './embed.mjs';
+
+function md5(s) { return createHash('md5').update(s).digest('hex'); }
+
+function buildPayload({ userId, text, metadata }) {
+  return {
+    ...metadata,                       // FLATTENED (mem0 convention) — load-bearing
+    userId,                            // CAMELCASE — mem0's createFilter uses raw key
+    data: text,
+    hash: md5(text),
+    createdAt: new Date().toISOString(),  // CAMELCASE — match mem0
+  };
+}
+
+export async function umAdd({
+  memory,
+  text,
+  userId,
+  metadata = {},
+  infer = true,
+  // Test seams:
+  _factsProviderOverride,
+  _embedProviderOverride,
+  _qdrantClient,
+  metrics,
+} = {}) {
+  if (!memory?.vectorStoreConfig?.collectionName) {
+    throw new Error('umAdd: memory.vectorStoreConfig.collectionName required');
+  }
+  if (!userId) throw new Error('umAdd: userId required');
+  if (typeof text !== 'string' || text.length === 0) throw new Error('umAdd: text required');
+
+  const collection = memory.vectorStoreConfig.collectionName;
+  const items = infer
+    ? (await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics })).facts ?? []
+    : [text];
+
+  if (items.length === 0) return { results: [] };
+
+  const results = [];
+  for (const item of items) {
+    const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
+    const id = randomUUID();
+    const point = {
+      id,
+      vector,
+      payload: buildPayload({ userId, text: item, metadata }),
+    };
+    if (_qdrantClient) {
+      await _qdrantClient.upsert(collection, { points: [point] });
+    } else {
+      // Real qdrant client is wired in Task 13.
+      throw new Error('umAdd: real qdrant client wiring lands in Task 13; tests must inject _qdrantClient');
+    }
+    results.push({ id, memory: item, event: 'ADD' });
+  }
+  return { results };
+}
