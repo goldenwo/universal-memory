@@ -1,9 +1,10 @@
 // server/test/metrics.test.mjs
-// C.4 — prom-client Registry + 5 bound metrics (spec §4.2).
+// C.4 — prom-client Registry + 10 bound metrics (spec §4.2 + §8.3).
 //
 // Tests pin three contracts:
-//   1. Exactly 5 metrics registered (no defaults — registry stays ~2KB,
-//      not ~15KB; also prevents recon-via-label-inventory).
+//   1. Exactly 10 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
+//      4 v0.8 G2 um_provider_*). No defaults — registry body is bounded;
+//      also prevents recon-via-label-inventory.
 //   2. endpoint label uses route template, NOT raw expanded paths
 //      (cardinality cap N1 — same discipline as C.3 logging).
 //   3. prom-client throws synchronously on label-shape violations.

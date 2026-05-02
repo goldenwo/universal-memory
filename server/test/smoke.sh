@@ -241,9 +241,13 @@ fi
 # end-to-end. Mock-SDK metric fire is unit-tested separately.
 echo "[smoke] 2c/5 v0.8 G2: assert um_provider_* metrics fire for embed/facts"
 # Match the 1/5 scrape's robustness: wget OR node-fetch OR direct curl.
-# A bare wget had a 1-byte-body failure mode in CI (root cause unclear —
-# possibly post-/api/add timing; the fallback proves whether wget alone
-# was the issue).
+# Defensive symmetry with the existing 1/5 pattern (line 117). The
+# original PR #36 CI iterations briefly thought a bare-wget hiccup was
+# the failure cause; the actual root cause turned out to be the
+# label-order regex bug (commit cec5acf) plus the value-pattern bug
+# (commit e3c44fe), and the v0.7 prom-client registration miss that
+# kept the metrics from existing in production at all (commit 6e483ea).
+# The fallback chain is kept anyway — symmetric with 1/5, no harm.
 g2_metrics=""
 if [ -n "$UM_CONTAINER" ]; then
 	g2_metrics=$(docker exec -i "$UM_CONTAINER" sh -c \

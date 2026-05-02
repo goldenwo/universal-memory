@@ -70,7 +70,10 @@ test('embed() routes to real openai.embed in mock-SDK mode (no _providerOverride
   try {
     const result = await embed('hello');
     assert.equal(result.vector.length, 1536);  // openai default dim, mock path
-    // Without injected metrics, NOOP_METRICS swallows — but the call must complete.
+    // Without injected metrics, the orchestrator hits PROVIDER_METRICS_ADAPTER
+    // (the production default) — actual prom-client inc's happen but go to the
+    // module-singleton registry. Test pollution is acceptable: counters are
+    // monotonic, no leak across files in node:test fresh-process runs.
   } finally {
     delete process.env.UM_TEST_MOCK_SDK;
     delete process.env.UM_EMBEDDING_PROVIDER;
