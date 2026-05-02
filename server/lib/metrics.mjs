@@ -111,7 +111,7 @@ export const lockContentionsTotal = new promClient.Counter({
 // um_provider_request_duration_seconds_count{surface="facts"} > 0.
 export const umFactsExtractedTotal = new promClient.Counter({
   name: 'um_facts_extracted_total',
-  help: 'Total facts extracted by the facts() orchestrator, summed per (provider, model)',
+  help: 'Facts extracted by the facts() orchestrator, by provider and model',
   labelNames: ['provider', 'model'],
   registers: [registry],
 });
