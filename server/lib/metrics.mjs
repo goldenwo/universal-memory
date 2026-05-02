@@ -179,6 +179,19 @@ function _logFirstAdapterError(op, name, labels, value, err) {
   } catch { /* logger may itself fail — bail */ }
 }
 
+// DIAGNOSTIC: prove at module-load time that the registered Counter is reachable
+// by the same registry /metrics scrapes. If this inc shows up in /metrics with
+// a value of 1 but actual orchestrator inc's don't, the adapter or call path is
+// the issue, NOT registration. Will be removed once root-cause is found.
+try {
+  umProviderTokensTotal.inc({ provider: 'diagnostic', model: 'load-time', surface: 'embed', direction: 'in' }, 1);
+  // eslint-disable-next-line no-console
+  console.error('[provider-metrics-adapter] LOAD-TIME inc succeeded — registry is wired');
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.error('[provider-metrics-adapter] LOAD-TIME inc FAILED:', e?.message ?? e);
+}
+
 export const PROVIDER_METRICS_ADAPTER = Object.freeze({
   counter: (name, labels, value) => {
     try {
