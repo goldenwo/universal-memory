@@ -31,7 +31,7 @@ import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
 import { umFactsExtractedTotal } from './metrics.mjs';
-import { getLogger } from './logger.mjs';
+import { getLogger, getRequestLogger } from './logger.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -75,7 +75,12 @@ export async function umAdd({
 
   const collection = memory.config.vectorStore.config.collectionName;
   const factsCounter = _factsCounter ?? umFactsExtractedTotal;
-  const logger = _logger ?? getLogger();
+  // Bind request_id (from outer ALS store) into the logger child so the
+  // facts.empty INFO line carries the trigger context. The project's pino
+  // config has no global ALS mixin (logger.mjs:113-126) — operators
+  // searching by request_id won't find this line otherwise.
+  const reqId = currentRequestId();
+  const logger = _logger ?? (reqId ? getRequestLogger(reqId) : getLogger());
 
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
     let items;
