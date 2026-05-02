@@ -189,7 +189,12 @@ test('umAdd emits facts.empty INFO log when infer:true extracts zero facts', asy
   assert.equal(typeof empty.obj.textLength, 'number');
 });
 
-test('umAdd wraps qdrant.upsert in withRetry({op:"add"}) — surfaces UPSTREAM_FAILURE on exhaustion', async () => {
+test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {
+  // Spec §6 + add.mjs header: umAdd does NOT internally wrap qdrant.upsert
+  // in withRetry. The mem0-mcp-http call sites (lines 688/778/2179/2338)
+  // each wrap umAdd() in withRetry({op:'add'}) — that's the single source
+  // of retry/UPSTREAM_FAILURE behavior. Wrapping again inside umAdd would
+  // multiply attempts (4×4 = 16) and double-emit um_mem0_ops_total.
   let calls = 0;
   const flakyClient = {
     upsert: async () => { calls++; throw Object.assign(new Error('connection refused'), { retryable: true }); },
@@ -202,9 +207,8 @@ test('umAdd wraps qdrant.upsert in withRetry({op:"add"}) — surfaces UPSTREAM_F
       _factsProviderOverride: factsOverride,
       _embedProviderOverride: embedOverride,
       _qdrantClient: flakyClient,
-      _retryOpts: { maxRetries: 2, baseDelayMs: 1, jitterMaxMs: 0 },  // fast-test override
     }),
-    (err) => err.code === 'UPSTREAM_FAILURE',
+    /connection refused/,
   );
-  assert.equal(calls, 3, 'initial + 2 retries');
+  assert.equal(calls, 1, 'no inner retry — single attempt before throw');
 });

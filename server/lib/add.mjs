@@ -18,14 +18,17 @@
  * The Qdrant client is injected via `_qdrantClient` (test seam) or
  * constructed at call time from the memory's host/port config.
  *
- * Errors propagate through existing withRetry({op:'add'}) wrapping at the
- * caller (no new error code introduced — UPSTREAM_FAILURE per spec §6).
+ * Errors propagate raw to the caller (no internal withRetry wrap). Production
+ * callers (server/mem0-mcp-http.mjs) wrap umAdd() in withRetry({op:'add'})
+ * which surfaces UPSTREAM_FAILURE on exhaustion (§5.2 prefix-class). cli/reindex.mjs
+ * Phase 3 has its own retry+checkpoint mechanics. Wrapping qdrant calls inside
+ * umAdd as well would multiply attempts (4 outer × 4 inner = 16) and
+ * double-emit um_mem0_ops_total{op:'add', status:'fail'} per persistent failure.
  */
 
 import { randomUUID, createHash } from 'node:crypto';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
-import { withRetry } from './retry.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
 import { umFactsExtractedTotal } from './metrics.mjs';
 import { getLogger } from './logger.mjs';
@@ -60,9 +63,7 @@ export async function umAdd({
   _embedProviderOverride,
   _qdrantClient,
   metrics,
-  // T13 seam:
-  _retryOpts,
-  // T15 seams (NEW):
+  // T15 seams:
   _factsCounter,
   _logger,
 } = {}) {
@@ -105,14 +106,9 @@ export async function umAdd({
         payload: buildPayload({ userId, text: item, metadata }),
       };
       const client = _qdrantClient ?? await getRealClient(memory);
-      await withRetry(
-        () => client.upsert(collection, { points: [point] }).catch((e) => {
-          // Mark transient errors retryable; let withRetry surface UPSTREAM_FAILURE on exhaustion.
-          if (e?.retryable === undefined) e.retryable = true;
-          throw e;
-        }),
-        { op: 'add', ...(_retryOpts ?? {}) },
-      );
+      // Errors propagate raw — outer call sites (mem0-mcp-http) wrap in
+      // withRetry({op:'add'}); reindex Phase 3 has checkpoint+resume semantics.
+      await client.upsert(collection, { points: [point] });
       results.push({ id, memory: item, event: 'ADD' });
     }
     return { results };
