@@ -133,3 +133,30 @@ test('embed without client and without key throws ProviderError PROVIDER_CONFIG'
     (err) => err instanceof ProviderError && err.class === 'PROVIDER_CONFIG',
   );
 });
+
+test('factsInvoke calls injected client and returns { facts: string[], usage }', async () => {
+  const fakeClient = {
+    models: {
+      generateContent: async () => ({
+        text: '{"facts": ["g1", "g2"]}',
+        usageMetadata: { promptTokenCount: 25, candidatesTokenCount: 8 },
+      }),
+    },
+  };
+  const result = await google.factsInvoke('input', { client: fakeClient });
+  assert.deepEqual(result.facts, ['g1', 'g2']);
+  assert.deepEqual(result.usage, { tokensIn: 25, tokensOut: 8 });
+});
+
+test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits', async () => {
+  const result = await google.factsInvoke('text', { env: { UM_TEST_MOCK_SDK: '1' } });
+  assert.ok(Array.isArray(result.facts) && result.facts.length >= 1);
+});
+
+test('factsInvoke handles malformed JSON by returning empty facts', async () => {
+  const fakeClient = {
+    models: { generateContent: async () => ({ text: 'not json', usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 } }) },
+  };
+  const result = await google.factsInvoke('text', { client: fakeClient });
+  assert.deepEqual(result.facts, []);
+});
