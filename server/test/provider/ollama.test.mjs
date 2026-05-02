@@ -101,3 +101,71 @@ test('probeModel throws ProviderError on host unreachable', async () => {
     assert(err.message.includes('ECONNREFUSED') || err.message.includes('ollama'));
   }
 });
+
+test('embed calls fetch and returns { vector, usage }', async () => {
+  const fakeFetch = async (url, init) => {
+    assert.match(url, /\/api\/embeddings$/);
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, 'nomic-embed-text');
+    assert.equal(body.prompt, 'hello world');
+    return {
+      ok: true,
+      json: async () => ({ embedding: new Array(768).fill(0.3) }),
+    };
+  };
+  const result = await ollama.embed('hello world', { fetch: fakeFetch, host: 'http://localhost:11434', model: 'nomic-embed-text' });
+  assert.equal(result.vector.length, 768);
+  assert.deepEqual(result.usage, { tokensIn: 0, tokensOut: 0 });  // ollama embeddings don't expose tokens
+});
+
+test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
+  process.env.UM_TEST_MOCK_SDK = '1';
+  try {
+    const result = await ollama.embed('text', { fetch: () => assert.fail('should not call fetch'), model: 'nomic-embed-text' });
+    assert.equal(result.vector.length, 768);
+  } finally {
+    delete process.env.UM_TEST_MOCK_SDK;
+  }
+});
+
+test('embed wraps non-2xx response as PROVIDER_UPSTREAM', async () => {
+  const fakeFetch = async () => ({ ok: false, status: 503, text: async () => 'unavailable' });
+  const { ProviderError } = await import('../../lib/provider/errors.mjs');
+  await assert.rejects(
+    () => ollama.embed('text', { fetch: fakeFetch }),
+    (err) => err instanceof ProviderError && err.class === 'PROVIDER_UPSTREAM',
+  );
+});
+
+test('factsInvoke calls fetch and returns { facts: string[], usage }', async () => {
+  const fakeFetch = async (url, init) => {
+    assert.match(url, /\/api\/generate$/);
+    const body = JSON.parse(init.body);
+    assert.equal(body.system, undefined);  // we send system inline in prompt for ollama
+    return {
+      ok: true,
+      json: async () => ({ response: '{"facts": ["o1"]}', prompt_eval_count: 20, eval_count: 6 }),
+    };
+  };
+  const result = await ollama.factsInvoke('input', { fetch: fakeFetch });
+  assert.deepEqual(result.facts, ['o1']);
+  assert.deepEqual(result.usage, { tokensIn: 20, tokensOut: 6 });
+});
+
+test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits', async () => {
+  process.env.UM_TEST_MOCK_SDK = '1';
+  try {
+    const result = await ollama.factsInvoke('text', { fetch: () => assert.fail('should not call fetch') });
+    assert.ok(result.facts.length >= 1);
+  } finally {
+    delete process.env.UM_TEST_MOCK_SDK;
+  }
+});
+
+test('factsInvoke handles malformed JSON by returning empty facts', async () => {
+  const fakeFetch = async () => ({
+    ok: true, json: async () => ({ response: 'not json', prompt_eval_count: 5, eval_count: 2 }),
+  });
+  const result = await ollama.factsInvoke('text', { fetch: fakeFetch });
+  assert.deepEqual(result.facts, []);
+});

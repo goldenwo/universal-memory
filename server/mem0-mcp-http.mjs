@@ -66,6 +66,7 @@ import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
+import { umAdd } from './lib/add.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -299,7 +300,7 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
   const actual = await stamp.read();
   if (actual === null) {
     // Mock-SDK boot path (smoke gate, spec §9.4): skip writeStamp + verifyDim.
-    // Both call into the embedder (memory.add embeds the stamp text; verifyDim
+    // Both call into the embedder (umAdd/writeStamp embeds the stamp text; verifyDim
     // calls embedder.embedQuery), which mem0 routes through real provider
     // SDKs — UM_TEST_MOCK_SDK only short-circuits our *Invoke wrappers, not
     // mem0's internal embedder. Without this skip, boot smoke for non-openai
@@ -679,13 +680,9 @@ async function reindexDoc(relPath) {
 	await deleteByMetadataId(targetId);
 	const metadata = { schema_version: 1, ...fm };
 	const docText = `${fm.title}\n\n${body.trim()}`;
-	// C.11: wrap memory.add — transient qdrant errors get up to 3 retries before
-	// surfacing UPSTREAM_FAILURE. checkpoint.mjs (B.10) wraps reindexDoc itself
-	// in another withRetry layer for the consistency-point reindex; the inner
-	// retry here covers append-turn (best-effort) and direct /api/reindex calls.
-	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
+	// v0.8 G2: umAdd routes through orchestrators for metric emission.
 	await withRetry(() =>
-		memory.add(docText, { userId: USER_ID, metadata, infer: false })
+		umAdd({ memory, text: docText, userId: USER_ID, metadata, infer: false })
 			.catch((e) => { throw tagRetryable(e); })
 	, { op: 'add' });
 	return { ok: true, path: relPath, id: targetId, indexed: true };
@@ -772,10 +769,9 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				));
 			}
 			const memoryClient = ctx?.memory ?? memory;
-			// C.11: wrap memory.add — transient qdrant errors get up to 3 retries.
-			// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
+			// v0.8 G2: see /api/add migration; same pattern.
 			const result = await withRetry(() =>
-				memoryClient.add(args.text, { userId: USER_ID, ...(args.metadata && { metadata: args.metadata }) })
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, ...(args.metadata && { metadata: args.metadata }), infer: true })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -2172,11 +2168,11 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
 			const { text, metadata } = JSON.parse(await readBody(req));
-			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
-			// previously surfaced as raw 500; withRetry retries 3× then
-			// surfaces UPSTREAM_FAILURE (mapped to 502 by error-envelope).
+			// v0.8 G2: umAdd routes through embed()/facts() orchestrators which
+			// emit um_provider_*{surface=embed|facts} metrics in prod. The outer
+			// withRetry wrapping is preserved for tagRetryable continuity.
 			const result = await withRetry(() =>
-				resolvedMemory().add(text, { userId: USER_ID, ...(metadata && { metadata }) })
+				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, ...(metadata && { metadata }), infer: true, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2330,12 +2326,9 @@ export function createRequestHandler(ctx = {}) {
 
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
 			const docText = `${fm.title}\n\n${body.trim()}`;
-			// infer: false preserves full document text; skipping mem0's LLM extraction which would summarize/split into atomic facts.
-			// R1 review B11, fix #3: wrap mem0.add — transient qdrant blips
-			// retried 3× before UPSTREAM_FAILURE surfaces. Mirrors the
-			// reindexDoc() helper which already uses withRetry.
+			// v0.8 G2: see /api/add migration.
 			await withRetry(() =>
-				resolvedMemory().add(docText, { userId: USER_ID, metadata, infer: false })
+				umAdd({ memory: resolvedMemory(), text: docText, userId: USER_ID, metadata, infer: false })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 

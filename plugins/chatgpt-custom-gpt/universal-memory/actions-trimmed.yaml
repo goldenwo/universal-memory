@@ -670,6 +670,10 @@ components:
             - "null"
         user_id:
           type: string
+          description: "Snake-case field name as returned by the mem0 library API
+            (application layer). Note: the underlying Qdrant payload stores this
+            as camelCase `userId` per spec §4.3 — mem0 normalises it back to
+            snake_case in getAll()/search() results."
     MemoryMetadata:
       type: object
       description: Arbitrary metadata attached to a mem0 document. Fields follow UM

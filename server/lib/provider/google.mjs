@@ -138,3 +138,116 @@ export async function summarizerInvoke(prompt, opts = {}) {
     usage: extractUsage(raw),
   };
 }
+
+export async function embed(text, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.embeddingModel } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      vector: new Array(defaults.embeddingDim).fill(0),
+      usage: { tokensIn: 5, tokensOut: 0 },
+    };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'google',
+        status: 401,
+        message: `embed backend=google requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { GoogleGenAI } = await import('@google/genai');
+    client = new GoogleGenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.models.embedContent({ model, contents: text });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'google',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  // Google SDK returns `embeddings: [{ values: number[] }]`; confirm shape against
+  // installed @google/genai version. If null/empty, throw PROVIDER_UPSTREAM.
+  const vec = raw?.embeddings?.[0]?.values;
+  if (!Array.isArray(vec)) {
+    throw new ProviderError({
+      class: 'PROVIDER_UPSTREAM',
+      provider: 'google',
+      status: 500,
+      message: 'google embedContent returned unexpected shape (no embeddings[0].values)',
+      retryable: false,
+    });
+  }
+  return {
+    vector: vec,
+    usage: { tokensIn: 0, tokensOut: 0 },  // google embed API does not always return tokenCount
+  };
+}
+
+const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
+Extract atomic, declarative facts useful for personalization or recall.
+Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
+If no facts can be extracted, output {"facts": []}.`;
+
+function parseFactsJson(content) {
+  const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed?.facts) && parsed.facts.every((f) => typeof f === 'string')) return parsed.facts;
+  } catch { /* fall through */ }
+  return [];
+}
+
+export async function factsInvoke(text, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.factsModel } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return { facts: ['[MOCK] google fact'], usage: { tokensIn: 10, tokensOut: 5 } };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'google',
+        status: 401,
+        message: `facts backend=google requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { GoogleGenAI } = await import('@google/genai');
+    client = new GoogleGenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text }] }],
+      config: { systemInstruction: FACTS_SYSTEM_PROMPT },
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'google',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  return {
+    facts: parseFactsJson(raw.text),
+    usage: extractUsage(raw),
+  };
+}
