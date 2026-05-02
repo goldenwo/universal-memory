@@ -2548,5 +2548,15 @@ if (IS_MAIN) {
 	server.listen(PORT, '0.0.0.0', () => {
 		console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
 		console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
+		// DIAGNOSTIC — dump registry state at listen-time. If um_provider_* data
+		// lines from the metrics.mjs load-time inc are MISSING here, something
+		// wiped the registry between module-load and server-listen.
+		registry.metrics().then((text) => {
+			const providerLines = text.split('\n').filter((l) => l.startsWith('um_provider_'));
+			console.error(`[metrics-debug] AT LISTEN-TIME registry has ${providerLines.length} um_provider_* lines (data + HELP/TYPE)`);
+			const dataLines = providerLines.filter((l) => !l.startsWith('# '));
+			console.error(`[metrics-debug] AT LISTEN-TIME ${dataLines.length} of those are data lines`);
+			if (dataLines.length > 0) console.error(`  first data: ${dataLines[0]}`);
+		}).catch((e) => console.error('[metrics-debug] AT LISTEN-TIME scrape failed:', e?.message ?? e));
 	});
 }
