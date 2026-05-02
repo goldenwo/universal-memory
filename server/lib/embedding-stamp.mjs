@@ -21,6 +21,7 @@
  */
 
 import { SYSTEM_METADATA_IDS } from './system-docs.mjs';
+import { umAdd } from './add.mjs';
 
 const STAMP_ID = SYSTEM_METADATA_IDS[0];  // '_um_embedding_stamp'
 const STAMP_TEXT = 'embedding-stamp';
@@ -46,12 +47,18 @@ export async function readStamp({ memory, collection } = {}) {
   return null;
 }
 
-export async function writeStamp({ memory, collection, stamp } = {}) {
-  if (!memory?.add) throw new Error('writeStamp: memory.add required');
-  await memory.add(STAMP_TEXT, {
+export async function writeStamp({ memory, collection, stamp, _qdrantClient, _embedProviderOverride } = {}) {
+  if (!memory?.config?.vectorStore?.config?.collectionName) {
+    throw new Error('writeStamp: memory.config.vectorStore.config required');
+  }
+  await umAdd({
+    memory,
+    text: STAMP_TEXT,
     userId: SYSTEM_USER_ID,
     metadata: { id: STAMP_ID, collection, stamp },
     infer: false,
+    _qdrantClient,
+    _embedProviderOverride,
   });
 }
 

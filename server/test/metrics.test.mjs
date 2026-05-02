@@ -1,9 +1,10 @@
 // server/test/metrics.test.mjs
-// C.4 — prom-client Registry + 5 bound metrics (spec §4.2).
+// C.4 — prom-client Registry + 10 bound metrics (spec §4.2 + §8.3).
 //
 // Tests pin three contracts:
-//   1. Exactly 5 metrics registered (no defaults — registry stays ~2KB,
-//      not ~15KB; also prevents recon-via-label-inventory).
+//   1. Exactly 10 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
+//      4 v0.8 G2 um_provider_*). No defaults — registry body is bounded;
+//      also prevents recon-via-label-inventory.
 //   2. endpoint label uses route template, NOT raw expanded paths
 //      (cardinality cap N1 — same discipline as C.3 logging).
 //   3. prom-client throws synchronously on label-shape violations.
@@ -18,16 +19,22 @@ import {
   mem0OpsTotal,
   mcpToolCallsTotal,
   lockContentionsTotal,
+  umFactsExtractedTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 5 named metrics', () => {
+test('registry exposes exactly 10 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
+    'um_facts_extracted_total',
     'um_http_request_duration_seconds',
     'um_http_requests_total',
     'um_lock_contentions_total',
     'um_mcp_tool_calls_total',
     'um_mem0_ops_total',
+    'um_provider_cost_usd_total',
+    'um_provider_errors_total',
+    'um_provider_request_duration_seconds',
+    'um_provider_tokens_total',
   ]);
 });
 
@@ -69,4 +76,14 @@ test('mem0OpsTotal, mcpToolCallsTotal, lockContentionsTotal exported and registe
   assert.match(text, /^um_mem0_ops_total\{op="add",status="ok"\} 1/m);
   assert.match(text, /^um_mcp_tool_calls_total\{tool="memory_search",status="ok"\} 1/m);
   assert.match(text, /^um_lock_contentions_total\{lock_path="\/tmp\/test\.lock"\} 1/m);
+});
+
+test('umFactsExtractedTotal is a prom-client Counter with provider+model labels', () => {
+  assert.equal(typeof umFactsExtractedTotal.inc, 'function');
+  assert.doesNotThrow(() => umFactsExtractedTotal.inc({ provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' }, 3));
+  assert.throws(
+    () => umFactsExtractedTotal.inc({ wrong: 'shape' }, 1),
+    /label/i,
+    'prom-client throws on label-shape violations',
+  );
 });

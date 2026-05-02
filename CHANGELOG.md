@@ -6,7 +6,70 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased changes._
+v0.8 in progress — the first landed slice is **G2 orchestrator wiring**:
+production embed/facts metric emission. v0.7-alpha promised
+`um_provider_tokens_total{surface=facts}` and similar for `embed`, but
+those surfaces emitted zero — `mem0.add()` bypassed our orchestrators.
+v0.8 G2 introduces `umAdd()` (`server/lib/add.mjs`), which routes
+through `embed()` and `facts()` orchestrators, then upserts directly
+into Qdrant via `@qdrant/js-client-rest`.
+
+### Added
+
+- **`server/lib/add.mjs`** — `umAdd()` orchestrator replacing all 6
+  `mem0.add()` call sites (4 in `mem0-mcp-http.mjs`, 1 in
+  `lib/embedding-stamp.mjs`, 1 in `cli/reindex.mjs`).
+- **Provider methods:** real `embed()` on openai/google/ollama;
+  `factsInvoke()` on all four providers (anthropic facts-only).
+- **`um_facts_extracted_total` counter** — sums facts extracted per
+  `(provider, model)`. Powers the operator alert
+  `rate(um_facts_extracted_total[5m]) == 0` while
+  `request_duration_seconds_count > 0` (pipeline succeeding but
+  extracting nothing — provider misconfig?).
+- **`@qdrant/js-client-rest`** promoted from transitive (via mem0) to
+  direct server dependency, pinned to mem0's resolved version.
+- **`scripts/check-no-mem0-add.sh`** — CI gate forbidding `mem0.add()`
+  reappearance in `server/`/`cli/`.
+- **Live round-trip test** at `server/test/add-live.test.mjs` (gated by
+  `UM_LIVE_TESTS=1`, blocks merge when run) — verifies umAdd's payload
+  schema is readable by `mem0.getAll`/`mem0.search`. Mirrors production's
+  explicit `vectorStore: { provider: 'qdrant', config: {...} }` Memory
+  wiring; mem0's default in-memory fallback would silently ship empty
+  reads.
+- **Mock-SDK + real-qdrant DE5 stamp roundtrip** at
+  `server/test/add-stamp-roundtrip.test.mjs` (gated by
+  `UM_QDRANT_INTEGRATION=1`). Companion to the live spike: exercises the
+  full `writeStamp(via umAdd) → readStamp(via mem0.getAll)` chain against
+  the compose-managed qdrant using `UM_TEST_MOCK_SDK=1` internally — no
+  API keys needed. Closes the spec §8 "DE5 stamp roundtrip in boot-smoke"
+  acceptance gap that mock-SDK boot-tests can't reach (they intentionally
+  short-circuit `writeStamp`).
+- **CI grep gate wired into `.github/workflows/smoke.yml`** as the first
+  step after checkout, fail-fast before the stack comes up.
+- **Qdrant host port mapping in `server/docker-compose.yml`** — loopback
+  only by default (`127.0.0.1:6333:6333`), env-overridable via
+  `UM_QDRANT_PORT`. Lets local devs introspect their qdrant via curl/MCP
+  and lets the new integration test reach qdrant from the runner.
+
+### Changed
+
+- **Qdrant server image bumped `v1.11.3 → v1.13.0`** to match the
+  `@qdrant/js-client-rest` 1.13.0 client pulled transitively by
+  `mem0ai@2.4.6`. Two-minor-version mismatch was emitting a runtime
+  warning on every qdrant client construction. Forward storage-format
+  migration is automatic within a major version; existing operators
+  pull the new image and `docker compose up -d --force-recreate qdrant`.
+
+- **Behavior change for `infer:true`:** umAdd does NOT replicate mem0's
+  semantic dedup (existing-memory query + LLM ADD/UPDATE/DELETE). Every
+  extracted fact becomes a new ADD. Re-running the same `/api/add`
+  request twice now creates 2 facts instead of 1. Callers depending on
+  idempotent re-adds must use deterministic `metadata.id` and check
+  before calling. Documented in spec §3 non-goals.
+- **Reindex traffic shares prod metric labels** — v0.8 has no
+  `target`/`caller_class` label on `um_provider_*`. A 10× reindex spike
+  looks identical to a 10× user-write spike on dashboards. Adding a
+  traffic-source label is a v0.9 candidate (spec §10).
 
 ## [0.7.0-alpha] — 2026-05-01
 
