@@ -25,8 +25,16 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
+import { withRetry } from './retry.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
+
+async function getRealClient(memory) {
+  // mem0ai 2.4.6: host/port/collectionName are under memory.config.vectorStore.config
+  const { host, port } = memory.config.vectorStore.config;
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  return new QdrantClient({ host, port });
+}
 
 function buildPayload({ userId, text, metadata }) {
   return {
@@ -49,14 +57,15 @@ export async function umAdd({
   _embedProviderOverride,
   _qdrantClient,
   metrics,
+  _retryOpts,
 } = {}) {
-  if (!memory?.vectorStoreConfig?.collectionName) {
-    throw new Error('umAdd: memory.vectorStoreConfig.collectionName required');
+  if (!memory?.config?.vectorStore?.config?.collectionName) {
+    throw new Error('umAdd: memory.config.vectorStore.config.collectionName required');
   }
   if (!userId) throw new Error('umAdd: userId required');
   if (typeof text !== 'string' || text.length === 0) throw new Error('umAdd: text required');
 
-  const collection = memory.vectorStoreConfig.collectionName;
+  const collection = memory.config.vectorStore.config.collectionName;
   const items = infer
     ? (await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics })).facts ?? []
     : [text];
@@ -72,12 +81,15 @@ export async function umAdd({
       vector,
       payload: buildPayload({ userId, text: item, metadata }),
     };
-    if (_qdrantClient) {
-      await _qdrantClient.upsert(collection, { points: [point] });
-    } else {
-      // Real qdrant client is wired in Task 13.
-      throw new Error('umAdd: real qdrant client wiring lands in Task 13; tests must inject _qdrantClient');
-    }
+    const client = _qdrantClient ?? await getRealClient(memory);
+    await withRetry(
+      () => client.upsert(collection, { points: [point] }).catch((e) => {
+        // Mark transient errors retryable; let withRetry surface UPSTREAM_FAILURE on exhaustion.
+        if (e?.retryable === undefined) e.retryable = true;
+        throw e;
+      }),
+      { op: 'add', ...(_retryOpts ?? {}) },
+    );
     results.push({ id, memory: item, event: 'ADD' });
   }
   return { results };

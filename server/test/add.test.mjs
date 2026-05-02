@@ -14,7 +14,7 @@ function makeMockQdrant() {
 }
 
 function makeMockMemory({ collection = 'memories' } = {}) {
-  return { vectorStoreConfig: { collectionName: collection } };
+  return { config: { vectorStore: { config: { collectionName: collection, host: 'localhost', port: 6333 } } } };
 }
 
 test('umAdd infer:true calls facts() then embed() per fact, then qdrant.upsert per fact', async () => {
@@ -124,4 +124,24 @@ test('umAdd empty facts (infer:true, 0 extracted) returns { results: [] }, no qd
   });
   assert.deepEqual(result, { results: [] });
   assert.equal(qdrant.upserts.length, 0);
+});
+
+test('umAdd wraps qdrant.upsert in withRetry({op:"add"}) — surfaces UPSTREAM_FAILURE on exhaustion', async () => {
+  let calls = 0;
+  const flakyClient = {
+    upsert: async () => { calls++; throw Object.assign(new Error('connection refused'), { retryable: true }); },
+  };
+  const factsOverride = { factsInvoke: async () => ({ facts: ['x'], usage: { tokensIn: 0, tokensOut: 0 } }) };
+  const embedOverride = { embed: async () => ({ vector: [0.1], usage: { tokensIn: 0, tokensOut: 0 } }) };
+  await assert.rejects(
+    () => umAdd({
+      memory: makeMockMemory(), text: 't', userId: 'u', infer: true,
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: flakyClient,
+      _retryOpts: { maxRetries: 2, baseDelayMs: 1, jitterMaxMs: 0 },  // fast-test override
+    }),
+    (err) => err.code === 'UPSTREAM_FAILURE',
+  );
+  assert.equal(calls, 3, 'initial + 2 retries');
 });
