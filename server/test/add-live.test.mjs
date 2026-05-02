@@ -13,21 +13,62 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Memory } from 'mem0ai/oss';
+import { QdrantClient } from '@qdrant/js-client-rest';
 import { umAdd } from '../lib/add.mjs';
 import { getEmbedderConfig } from '../lib/embed.mjs';
 import { getFactsLlmConfig } from '../lib/facts.mjs';
 
 const SKIP = !process.env.UM_LIVE_TESTS;
 
+// Pre-create the qdrant collection so the live tests don't depend on the
+// production boot guard's read-first init flow. mem0's Memory does NOT
+// lazy-create on getAll (returns 404), and umAdd bypasses mem0's write
+// path (which is what would trigger create). In production, the boot
+// guard calls readStamp → ensures collection BEFORE any umAdd.
+async function ensureCollection({ host, port, name, dim }) {
+  const client = new QdrantClient({ host, port, checkCompatibility: false });
+  try {
+    await client.getCollection(name);
+  } catch (e) {
+    if (e?.status === 404) {
+      await client.createCollection(name, { vectors: { size: dim, distance: 'Cosine' } });
+    } else {
+      throw e;
+    }
+  }
+}
+
 test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip: SKIP }, async () => {
   const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
+  // Without an explicit vectorStore config, mem0 falls back to an in-memory
+  // vector store — read paths (mem0.getAll/search) would never see umAdd's
+  // qdrant writes. Mirror production's wiring at server/mem0-mcp-http.mjs:362.
   const memory = new Memory({
     embedder: getEmbedderConfig(env),
     llm: getFactsLlmConfig(env),
+    vectorStore: {
+      provider: 'qdrant',
+      config: {
+        host: process.env.QDRANT_HOST ?? 'localhost',
+        port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+        collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
+      },
+    },
   });
   const userId = `g2-roundtrip-${Date.now()}`;
 
-  // 1. Write via umAdd (real qdrant via memory.vectorStoreConfig).
+  // 0. Pre-create the qdrant collection. Production boots through a guard
+  //    that calls readStamp before any umAdd; here we replicate that
+  //    invariant via direct qdrant client (umAdd bypasses mem0 for writes
+  //    so it can't trigger mem0's lazy collection-create on its own).
+  await ensureCollection({
+    host: process.env.QDRANT_HOST ?? 'localhost',
+    port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+    name: memory.config.vectorStore.config.collectionName,
+    dim: 1536,
+  });
+
+  // 1. Write via umAdd (real qdrant via memory.config.vectorStore.config).
   const writeResult = await umAdd({
     memory,
     text: 'My favorite city is Tokyo.',
@@ -76,11 +117,30 @@ test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip:
 test('umAdd writeStamp → mem0.getAll DE5 roundtrip', { skip: SKIP }, async () => {
   const { writeStamp, readStamp } = await import('../lib/embedding-stamp.mjs');
   const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
+  // Without an explicit vectorStore config, mem0 falls back to an in-memory
+  // vector store — read paths (mem0.getAll/search) would never see umAdd's
+  // qdrant writes. Mirror production's wiring at server/mem0-mcp-http.mjs:362.
   const memory = new Memory({
     embedder: getEmbedderConfig(env),
     llm: getFactsLlmConfig(env),
+    vectorStore: {
+      provider: 'qdrant',
+      config: {
+        host: process.env.QDRANT_HOST ?? 'localhost',
+        port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+        collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
+      },
+    },
   });
   const collection = memory.config.vectorStore.config.collectionName;
+  // Same pre-create as the first test (production: boot guard ensures it
+  // via readStamp before writeStamp).
+  await ensureCollection({
+    host: process.env.QDRANT_HOST ?? 'localhost',
+    port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+    name: collection,
+    dim: 1536,
+  });
   const stamp = { provider: 'openai', model: 'text-embedding-3-small', dim: 1536, schema_version: 1 };
   await writeStamp({ memory, collection, stamp });
   const round = await readStamp({ memory, collection });
