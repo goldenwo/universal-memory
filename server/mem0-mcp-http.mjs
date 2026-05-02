@@ -680,13 +680,9 @@ async function reindexDoc(relPath) {
 	await deleteByMetadataId(targetId);
 	const metadata = { schema_version: 1, ...fm };
 	const docText = `${fm.title}\n\n${body.trim()}`;
-	// C.11: wrap memory.add — transient qdrant errors get up to 3 retries before
-	// surfacing UPSTREAM_FAILURE. checkpoint.mjs (B.10) wraps reindexDoc itself
-	// in another withRetry layer for the consistency-point reindex; the inner
-	// retry here covers append-turn (best-effort) and direct /api/reindex calls.
-	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
+	// v0.8 G2: umAdd routes through orchestrators for metric emission.
 	await withRetry(() =>
-		memory.add(docText, { userId: USER_ID, metadata, infer: false })
+		umAdd({ memory, text: docText, userId: USER_ID, metadata, infer: false })
 			.catch((e) => { throw tagRetryable(e); })
 	, { op: 'add' });
 	return { ok: true, path: relPath, id: targetId, indexed: true };
