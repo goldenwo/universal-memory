@@ -165,31 +165,20 @@ export const umProviderErrorsTotal = new promClient.Counter({
  * label-shape violations; observability MUST NOT poison the request path
  * (C.9 obs-fallback discipline).
  */
-// One-time diagnostic flag — log the FIRST inc/observe failure in each
-// process so CI smoke can see what's actually breaking. v0.8 G2 had a
-// silent-NOOP regression that survived to PR #36 CI; widening the visibility
-// here is cheap and prevents the same class of bug from going undetected.
-let _adapterErrorLogged = false;
-function _logFirstAdapterError(op, name, labels, value, err) {
-  if (_adapterErrorLogged) return;
-  _adapterErrorLogged = true;
-  try {
-    // eslint-disable-next-line no-console
-    console.error(`[provider-metrics-adapter] FIRST ${op} failed for ${name}: ${err?.message ?? err}; labels=${JSON.stringify(labels)} value=${value}`);
-  } catch { /* logger may itself fail — bail */ }
-}
-
-// DIAGNOSTIC: prove at module-load time that the registered Counter is reachable
-// by the same registry /metrics scrapes. If this inc shows up in /metrics with
-// a value of 1 but actual orchestrator inc's don't, the adapter or call path is
-// the issue, NOT registration. Will be removed once root-cause is found.
+// LOAD-TIME diagnostic — inc, then scrape registry directly. If the data
+// shows up in registry.metrics() RIGHT HERE but NOT in /metrics scraped
+// later, something between server-init and /metrics-scrape is creating a
+// second instance.
 try {
   umProviderTokensTotal.inc({ provider: 'diagnostic', model: 'load-time', surface: 'embed', direction: 'in' }, 1);
+  const text = await registry.metrics();
+  const dataLines = text.split('\n').filter((l) => l.startsWith('um_provider_tokens_total{'));
   // eslint-disable-next-line no-console
-  console.error('[provider-metrics-adapter] LOAD-TIME inc succeeded — registry is wired');
+  console.error('[metrics-debug] load-time inc + immediate registry.metrics() —', dataLines.length, 'data lines for um_provider_tokens_total');
+  if (dataLines.length > 0) console.error('  first:', dataLines[0]);
 } catch (e) {
   // eslint-disable-next-line no-console
-  console.error('[provider-metrics-adapter] LOAD-TIME inc FAILED:', e?.message ?? e);
+  console.error('[metrics-debug] LOAD-TIME probe FAILED:', e?.message ?? e);
 }
 
 export const PROVIDER_METRICS_ADAPTER = Object.freeze({
@@ -205,22 +194,15 @@ export const PROVIDER_METRICS_ADAPTER = Object.freeze({
         case 'um_provider_errors_total':
           umProviderErrorsTotal.inc(labels, value);
           break;
-        // Unknown counter name → silent. New metric names should add a case
-        // here AND a Counter declaration above.
+        // Unknown counter name → silent.
       }
-    } catch (e) {
-      _logFirstAdapterError('counter.inc', name, labels, value, e);
-      /* fail-safe — observability MUST NOT poison the request path */
-    }
+    } catch { /* fail-safe — observability MUST NOT poison the request path */ }
   },
   histogram: (name, labels, value) => {
     try {
       if (name === 'um_provider_request_duration_seconds') {
         umProviderRequestDurationSeconds.observe(labels, value);
       }
-    } catch (e) {
-      _logFirstAdapterError('histogram.observe', name, labels, value, e);
-      /* fail-safe */
-    }
+    } catch { /* fail-safe */ }
   },
 });
