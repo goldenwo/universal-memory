@@ -256,29 +256,40 @@ if [ -z "$g2_metrics" ]; then
 	g2_metrics=$(curl -sf "$ENDPOINT/metrics" 2>/dev/null || true)
 fi
 
-# Helper accepting any positive numeric value (single-digit, multi-digit, decimal).
+# Helper: assert a um_provider_* line exists with ALL given labels (in any order)
+# AND a non-zero numeric value. prom-client emits labels in labelNames-declaration
+# order (provider/model/surface/direction for tokens; provider/model/surface for
+# others), but the assertion should be order-independent so future label-shape
+# changes don't silently break the regex.
 g2_assert_metric() {
-  local pattern="$1" label="$2"
-  echo "$g2_metrics" | grep -qE "${pattern}\} ([1-9][0-9]*|[1-9][0-9]*\.[0-9]+|[0-9]+\.[1-9])" || {
-    echo "FAIL: $label metric did not fire (pattern: $pattern)"
+  local metric_name="$1" label="$2"
+  shift 2
+  # Pre-filter to lines starting with the metric name (incl. histogram suffixes).
+  local lines
+  lines=$(echo "$g2_metrics" | grep -E "^${metric_name}\{" || true)
+  # Each remaining arg is a required label substring like 'surface="embed"'.
+  for required in "$@"; do
+    lines=$(echo "$lines" | grep -F "$required" || true)
+  done
+  # Must have at least one line ending in a positive numeric value.
+  echo "$lines" | grep -qE '\} ([1-9][0-9]*|[1-9][0-9]*\.[0-9]+|[0-9]+\.[1-9])' || {
+    echo "FAIL: $label metric did not fire (metric=$metric_name, required-labels=$*)"
     echo "[smoke]     g2_metrics body length: $(echo "$g2_metrics" | wc -c) bytes"
-    echo "[smoke]     all um_* lines (filtered to non-comment data):"
-    echo "$g2_metrics" | grep -E '^um_' | sort -u | head -30
-    echo "[smoke]     all um_provider_* HELP/TYPE lines:"
-    echo "$g2_metrics" | grep -E '^# (HELP|TYPE) um_provider_' | head -10
+    echo "[smoke]     ALL um_provider_* data lines:"
+    echo "$g2_metrics" | grep -E '^um_provider_' | head -30
     exit 1
   }
 }
 
 # All four series for embed surface.
-g2_assert_metric 'um_provider_tokens_total\{[^}]*surface="embed"[^}]*provider="openai"[^}]*model="text-embedding-3-small"[^}]*direction="in"[^}]*' "embed tokens_in"
-g2_assert_metric 'um_provider_request_duration_seconds_count\{[^}]*surface="embed"[^}]*' "embed histogram"
-g2_assert_metric 'um_provider_cost_usd_total\{[^}]*surface="embed"[^}]*' "embed cost_usd"
+g2_assert_metric 'um_provider_tokens_total' "embed tokens_in" 'surface="embed"' 'provider="openai"' 'model="text-embedding-3-small"' 'direction="in"'
+g2_assert_metric 'um_provider_request_duration_seconds_count' "embed histogram" 'surface="embed"'
+g2_assert_metric 'um_provider_cost_usd_total' "embed cost_usd" 'surface="embed"'
 
-# All four series for facts surface (same shape, surface=facts).
-g2_assert_metric 'um_provider_tokens_total\{[^}]*surface="facts"[^}]*provider="openai"[^}]*model="gpt-4.1-nano-2025-04-14"[^}]*' "facts tokens"
-g2_assert_metric 'um_provider_request_duration_seconds_count\{[^}]*surface="facts"[^}]*' "facts histogram"
-g2_assert_metric 'um_provider_cost_usd_total\{[^}]*surface="facts"[^}]*' "facts cost_usd"
+# All four series for facts surface.
+g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-4.1-nano-2025-04-14"'
+g2_assert_metric 'um_provider_request_duration_seconds_count' "facts histogram" 'surface="facts"'
+g2_assert_metric 'um_provider_cost_usd_total' "facts cost_usd" 'surface="facts"'
 
 # Negative assertion: model="undefined" must NOT appear (catches ctx.model
 # fallback chain misconfig — would emit cardinality-bombing label).

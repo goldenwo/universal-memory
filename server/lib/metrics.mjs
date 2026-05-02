@@ -165,22 +165,6 @@ export const umProviderErrorsTotal = new promClient.Counter({
  * label-shape violations; observability MUST NOT poison the request path
  * (C.9 obs-fallback discipline).
  */
-// LOAD-TIME diagnostic — inc, then scrape registry directly. If the data
-// shows up in registry.metrics() RIGHT HERE but NOT in /metrics scraped
-// later, something between server-init and /metrics-scrape is creating a
-// second instance.
-try {
-  umProviderTokensTotal.inc({ provider: 'diagnostic', model: 'load-time', surface: 'embed', direction: 'in' }, 1);
-  const text = await registry.metrics();
-  const dataLines = text.split('\n').filter((l) => l.startsWith('um_provider_tokens_total{'));
-  // eslint-disable-next-line no-console
-  console.error('[metrics-debug] load-time inc + immediate registry.metrics() —', dataLines.length, 'data lines for um_provider_tokens_total');
-  if (dataLines.length > 0) console.error('  first:', dataLines[0]);
-} catch (e) {
-  // eslint-disable-next-line no-console
-  console.error('[metrics-debug] LOAD-TIME probe FAILED:', e?.message ?? e);
-}
-
 export const PROVIDER_METRICS_ADAPTER = Object.freeze({
   counter: (name, labels, value) => {
     try {
