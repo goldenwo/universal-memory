@@ -40,6 +40,27 @@ test('Phase 3 rebuilds entries; writes checkpoint after each', async () => {
   assert.equal(state.phase_completed, 3);
 });
 
+// Issue #37 audit follow-up: the conditional read at rebuildOne (`frontmatter.userId
+// ?? RESOLVED_USER_ID`) is forward-compat for callers that supply explicit camel
+// `userId` in frontmatter. The canonical schema does not define userId, so
+// production today always takes the fallback. This test keeps the conditional
+// branch alive: if frontmatter carries an explicit userId, it MUST win over
+// RESOLVED_USER_ID and reach the qdrant payload unchanged.
+test('Phase 3: explicit frontmatter.userId overrides RESOLVED_USER_ID fallback', async () => {
+  const captured = [];
+  const newMemory = makeMemory();
+  const _qdrantClient = { upsert: async (_col, { points }) => { captured.push(points[0].payload.userId); } };
+  const state = { schema_version: 1, snapshot: { vault_paths: ['a.md'], fact_ids: [] }, processed_ids: [] };
+  const checkpoint = { write: async () => {} };
+  await runPhase3Rebuild({
+    newMemory, state, checkpoint,
+    vault: { read: async () => ({ frontmatter: { id: 'a.md', userId: 'fm-explicit-user' }, body: 't' }) },
+    _qdrantClient,
+    _embedProviderOverride: makeEmbed(),
+  });
+  assert.deepEqual(captured, ['fm-explicit-user'], 'explicit camel userId from frontmatter must reach qdrant payload');
+});
+
 test('Phase 3 retries on PROVIDER_RATELIMIT (429-then-success)', async () => {
   let attempts = 0;
   const newMemory = makeMemory();

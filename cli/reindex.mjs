@@ -527,6 +527,9 @@ async function rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderO
   await umAdd({
     memory: newMemory,
     text: body,
+    // forward-compat: no current writer emits userId in vault frontmatter
+    // (canonical schema in docs/frontmatter-schema.md does not define it),
+    // so RESOLVED_USER_ID is the always-fires path in production.
     userId: frontmatter.userId ?? RESOLVED_USER_ID,
     metadata: { id: frontmatter.id, ...frontmatter },
     infer: false,
