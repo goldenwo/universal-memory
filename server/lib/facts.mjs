@@ -60,9 +60,8 @@ export async function facts(text, ctx = {}) {
   const labels = { provider: providerName, model, surface };
   const startNs = process.hrtime.bigint();
 
-  if (typeof provider.factsInvoke !== 'function') {
-    throw new Error(`provider ${providerName} has no factsInvoke() method (G2: real provider.factsInvoke lands in a later task; tests must inject _providerOverride)`);
-  }
+  // After v0.8 G2, every provider in FACTS_BACKENDS exports factsInvoke().
+  // The transition guard is gone — a missing method becomes a TypeError below.
 
   let raw;
   try {
@@ -87,5 +86,5 @@ export async function facts(text, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { facts: extracted, tokensIn, tokensOut, costUsd };
+  return { facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model };
 }
