@@ -244,6 +244,13 @@ jobs:
       # install.sh:585-602. v0.6 R3 caught that this script was being
       # shellchecked but never run end-to-end — closing that gap here.
       - run: bash installer/install-token.test.sh
+      # install-plugin-cc.test.sh covers the standalone Claude Code plugin
+      # installer, including T17's v0.4-class stale-symlink-replacement
+      # regression guard (issue #22). Was previously shellchecked but never
+      # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
+      # The companion install-plugin-codex.test.sh has the same gap and
+      # will be wired separately.
+      - run: bash installer/install-plugin-cc.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
