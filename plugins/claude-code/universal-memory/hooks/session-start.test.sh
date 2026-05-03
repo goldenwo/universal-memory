@@ -502,6 +502,7 @@ printf '\nTest 10: inline fallback matches canonical rubric\n'
     # we take the last match to be robust to future additions above it).
     # Read the file via stdin so Python doesn't need to parse an MSYS path
     # ("/e/Projects/..." from Git Bash is not understood by Windows Python).
+    # shellcheck disable=SC2002 # cat-pipe is intentional: bypasses MSYS path translation per the comment above
     inline=$(cat "$SCRIPT_DIR/session-start.sh" | python3 -c "
 import re, sys
 text = sys.stdin.read()

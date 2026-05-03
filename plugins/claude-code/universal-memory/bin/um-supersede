@@ -27,6 +27,7 @@ _SELF_DIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$_SELF_DIR/lib/um-curl-wrap.sh"
 LIB_DIR="${UM_LIB_DIR:-$_SELF_DIR/../hooks/lib}"
+# shellcheck source=../hooks/lib/vault.sh
 source "$LIB_DIR/vault.sh"
 
 VAULT=$(vault_path)
@@ -120,8 +121,7 @@ trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
 
 # Atomic write old doc
 TMP="${OLD_PATH}.tmp.$$"
-printf '%s' "$NEW_CONTENT" > "$TMP" && mv "$TMP" "$OLD_PATH"
-if [ $? -ne 0 ]; then
+if ! { printf '%s' "$NEW_CONTENT" > "$TMP" && mv "$TMP" "$OLD_PATH"; }; then
   rm -f "$TMP"
   echo "um-supersede: old doc write failed" >&2
   exit 1
@@ -129,8 +129,8 @@ fi
 
 # Reindex both (best-effort)
 ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
-OLD_REL="${OLD_PATH#$VAULT/}"
-NEW_REL="${NEW_ABS#$VAULT/}"
+OLD_REL="${OLD_PATH#"$VAULT"/}"
+NEW_REL="${NEW_ABS#"$VAULT"/}"
 for rel in "$NEW_REL" "$OLD_REL"; do
   _um_curl_wrap "um-supersede" -fSsm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
     -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \

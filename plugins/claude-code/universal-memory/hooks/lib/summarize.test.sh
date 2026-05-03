@@ -360,7 +360,7 @@ fi
 if grep -q -- '-p' "$A3_1_TMP/args" 2>/dev/null; then
   pass "A3.1: -p flag passed to claude"
 else
-  fail "A3.1: -p flag missing (got args: $(cat $A3_1_TMP/args 2>/dev/null))"
+  fail "A3.1: -p flag missing (got args: $(cat "$A3_1_TMP/args" 2>/dev/null))"
 fi
 if grep -q -- '--output-format' "$A3_1_TMP/args" 2>/dev/null; then
   pass "A3.1: --output-format flag passed"
