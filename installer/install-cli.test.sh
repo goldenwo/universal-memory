@@ -14,7 +14,7 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 
 # shellcheck source=installer/lib/test-harness.sh
 source "$REPO_ROOT/installer/lib/test-harness.sh"
@@ -66,7 +66,6 @@ assert_exit_nonzero() {
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
 # Portable mktemp subdirectory: mktemp -d -p is GNU-only; macOS requires TMPDIR=.
-mktemp_in() { TMPDIR="$1" mktemp -d; }
 mktemp_in_t() { mktemp -d "$1/${2:-tmp.XXXXXX}"; }
 
 # make_fakepython3 <dest_dir>
@@ -88,13 +87,6 @@ make_nopython3() {
   local dest="$1"
   mkdir -p "$dest"
   # Intentionally no python3
-}
-
-# run_cli [HOME_DIR] [extra env=val ...]
-# Runs install-cli.sh with sandboxed HOME and optional extra env vars.
-run_cli() {
-  local fake_home="$1"; shift
-  env HOME="$fake_home" "$@" bash "$INSTALL_CLI" --yes 2>&1
 }
 
 # ─── T1: fresh env → install creates block + um --version works ───────────────
@@ -259,6 +251,9 @@ _dump_on_fail T5
 assert_exit_zero "T5: install exits 0" "$TX_EXIT_T5"
 T5_BASHRC="$(cat "$T5_HOME/.bashrc")"
 # PATH guard must be in the block regardless of caller's PATH
+# Searching for the LITERAL string `case ":$PATH:"` in the rc file — single
+# quotes are intentional so $PATH is not expanded by THIS shell.
+# shellcheck disable=SC2016
 assert_contains "T5: PATH guard present in bashrc" "$T5_BASHRC" 'case ":$PATH:"'
 assert_contains "T5: PATH guard adds .local/bin" "$T5_BASHRC" ".local/bin"
 
@@ -290,6 +285,9 @@ assert_exit_zero "T6: snippet exits 0 with SHELL unset" "$T6_SNIPPET_EXIT"
 assert_contains "T6: continue path fires safely" "$T6_SNIPPET_OUT" "continue_ok"
 
 # (b) Verify that the fix is present in the source — _sh="${SHELL:-}" must appear.
+# Searching for the literal pattern `_sh="${SHELL:-}"` in install-cli.sh —
+# single quotes are intentional so ${SHELL:-} is grepped as a literal string.
+# shellcheck disable=SC2016
 T6_SRC_FIX=$(grep -c '_sh="${SHELL:-}"' "$INSTALL_CLI" || true)
 assert_eq "T6: _sh safe-default present in install-cli.sh" "$T6_SRC_FIX" "1"
 

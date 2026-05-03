@@ -87,9 +87,9 @@ if [ -z "$SESSION_ID" ]; then
   # (changes on restart, stable within a session)
   SESSION_ID=$(printf '%s-%s' "$PPID" "$(
     # Try to get parent process start time for stability
-    cat /proc/"$PPID"/stat 2>/dev/null | awk '{print $22}' ||
+    awk '{print $22}' /proc/"$PPID"/stat 2>/dev/null ||
     stat -c %Y /proc/"$PPID" 2>/dev/null ||
-    echo "$(date +%s)"
+    date +%s
   )" | md5sum 2>/dev/null | cut -c1-16 || printf '%s' "$$-$(date +%s)")
 fi
 # Final safety net

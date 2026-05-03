@@ -247,7 +247,7 @@ if [ -e "$SCRIPT_SELF/.git" ] || [ -e "$SCRIPT_SELF/../.git" ] || [ -e "$SCRIPT_
 fi
 
 # Only do clone/pull if needed (skip for local --cli-only installs)
-if [ $INSTALL_SERVER -eq 1 ] || [ $INSTALL_PLUGIN_CC -eq 1 ] || [ $INSTALL_PLUGIN_CODEX -eq 1 ] || [ $RUNNING_FROM_LOCAL_REPO -eq 0 ]; then
+if [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_PLUGIN_CODEX" -eq 1 ] || [ "$RUNNING_FROM_LOCAL_REPO" -eq 0 ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then
     printf 'Existing clone at %s — pulling latest...\n' "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then
