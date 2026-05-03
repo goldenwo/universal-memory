@@ -250,14 +250,32 @@ _install_bridge_cli() {
   local bridge_src="$_PLUGIN_TARGET/bin/um-bridge-claude-mem"
   local bin_link="${HOME}/.local/bin/um-bridge-claude-mem"
 
-  # 1. Symlink CLI into ~/.local/bin/
+  # 1. Symlink CLI into ~/.local/bin/ — or write a launcher when symlinks aren't
+  #    available. A plain `cp` of $bridge_src is wrong: the bridge CLI uses
+  #    static ESM imports `./translate.mjs` and `./lib/bridge-contract.mjs` that
+  #    resolve relative to import.meta.url. A copy at ~/.local/bin/ has no
+  #    siblings, so Node ≥22 fails with ERR_MODULE_NOT_FOUND before main() runs.
+  #    The launcher exec's node on $bridge_src so resolution stays in the plugin
+  #    install dir where the siblings actually live.
+  #    [ -L ] re-check: git-bash on Windows silently copies on `ln -s` and still
+  #    returns exit 0, so the success branch fires for a non-symlink result —
+  #    we have to verify the link is real before trusting it.
   mkdir -p "${HOME}/.local/bin"
   if [ -L "$bin_link" ] || [ -e "$bin_link" ]; then rm -f "$bin_link"; fi
-  if ln -s "$bridge_src" "$bin_link" 2>/dev/null; then
+  if ln -s "$bridge_src" "$bin_link" 2>/dev/null && [ -L "$bin_link" ]; then
     ok "um-bridge-claude-mem symlinked: $bin_link -> $bridge_src"
   else
-    cp "$bridge_src" "$bin_link" && chmod +x "$bin_link" && \
-      ok "um-bridge-claude-mem copied to $bin_link (symlink unavailable)"
+    rm -f "$bin_link"
+    cat > "$bin_link" <<EOF
+#!/usr/bin/env bash
+# Launcher for um-bridge-claude-mem — written by install-plugin-cc.sh on
+# platforms where filesystem symlinks aren't available (e.g. git-bash on
+# Windows without Developer Mode). Exec's node on the plugin install path so
+# ESM sibling imports (translate.mjs, lib/bridge-contract.mjs) resolve.
+exec node "$bridge_src" "\$@"
+EOF
+    chmod +x "$bin_link"
+    ok "um-bridge-claude-mem launcher written: $bin_link → exec node $bridge_src (symlinks unavailable)"
   fi
 
   # 2. Vendor-copy bridge-contract.mjs + lockdir.mjs into plugin's bin/lib/
