@@ -11,6 +11,12 @@
 # V2 verification (commit e0a5a7f) docs/research/2026-04-24-v0.6-verifications/
 # V2-marker-trailer.md §6.2 explicitly flagged this ordering as the correct
 # fix — the v0.6 spec's original "after" wording was unsafe.
+#
+# All assertions below pass single-quoted EXPRESSIONS to `assert`, which
+# eval's them. Inside those literals, `$trailer_text` etc. are intentionally
+# not expanded by THIS shell — eval expands them at assertion time. Disable
+# SC2016 file-wide rather than at every site.
+# shellcheck disable=SC2016
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

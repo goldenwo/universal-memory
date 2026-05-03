@@ -119,7 +119,7 @@ if ! printf '%s' "$raw_input" | grep -qF -- '===UM-END==='; then
 fi
 
 # Extract old state: text between ===UM-OLD-STATE=== and ===UM-SESSION-SUMMARY===
-old_state=$(printf '%s' "$raw_input" | python3 -c '
+if ! old_state=$(printf '%s' "$raw_input" | python3 -c '
 import sys
 content = sys.stdin.read()
 start_marker = "===UM-OLD-STATE==="
@@ -131,15 +131,13 @@ if start == -1 or end == -1:
 block = content[start + len(start_marker):end]
 # Strip leading/trailing newlines only
 sys.stdout.write(block.strip())
-')
-
-if [ $? -ne 0 ]; then
+'); then
   echo "[um-update-state] failed to parse old state block" >&2
   exit 0
 fi
 
 # Extract session summary: text between ===UM-SESSION-SUMMARY=== and ===UM-END===
-session_summary=$(printf '%s' "$raw_input" | python3 -c '
+if ! session_summary=$(printf '%s' "$raw_input" | python3 -c '
 import sys
 content = sys.stdin.read()
 start_marker = "===UM-SESSION-SUMMARY==="
@@ -150,9 +148,7 @@ if start == -1 or end == -1:
     sys.exit(1)
 block = content[start + len(start_marker):end]
 sys.stdout.write(block.strip())
-')
-
-if [ $? -ne 0 ]; then
+'); then
   echo "[um-update-state] failed to parse session summary block" >&2
   exit 0
 fi

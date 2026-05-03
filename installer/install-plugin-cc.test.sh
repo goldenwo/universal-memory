@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 
 # shellcheck source=installer/lib/test-harness.sh
 source "$REPO_ROOT/installer/lib/test-harness.sh"
@@ -423,7 +423,7 @@ else
   # Invariant 3: stale symlink target ($T17/elsewhere) was NOT written into.
   # Catches the v0.4 regression class where install would traverse the
   # symlink and corrupt the original target.
-  T17_ELSEWHERE_COUNT=$(ls "$T17/elsewhere" 2>/dev/null | wc -l | tr -d ' ')
+  T17_ELSEWHERE_COUNT=$(find "$T17/elsewhere" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
   assert_eq "T17: stale symlink target dir not corrupted" "$T17_ELSEWHERE_COUNT" "0"
 fi
 
