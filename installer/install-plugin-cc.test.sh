@@ -305,8 +305,13 @@ fi
 # every systemd/launchd/cron tick fails with ERR_MODULE_NOT_FOUND before main()
 # runs. --help exits before parseArgs touches anything else, so it's the
 # cheapest possible "the module load chain works" check.
+#
+# Invoke via shebang dispatch (not `node $bin_link`) so the test exercises
+# whichever install variant the platform got: a real symlink on POSIX, a bash
+# launcher on Windows where ln -s silently falls back to copy. Both routes end
+# up running node on the plugin-install-dir bridge file where its siblings live.
 set +e
-T15_HELP_OUT=$(node "$T15_BRIDGE_LINK" --help 2>&1)
+T15_HELP_OUT=$("$T15_BRIDGE_LINK" --help 2>&1)
 T15_HELP_EXIT=$?
 set -e
 if [ "$T15_HELP_EXIT" -eq 0 ] && [[ "$T15_HELP_OUT" == *"um-bridge-claude-mem"* ]]; then
