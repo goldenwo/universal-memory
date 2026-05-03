@@ -50,9 +50,12 @@ else
   else
     # Fallback: full inline rubric if BOTH canonical file and sibling copy missing.
     # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
-    # shellcheck disable=SC2089  # single-quoted literal content (backticks, $) is
-    # deliberately not re-evaluated; variable is env-exported (line 192) and read
-    # as-is by python3 via os.environ.get — no word-splitting at use site.
+    # shellcheck disable=SC2089,SC2016  # single-quoted literal content
+    # (backticks, $vars) is deliberately not re-evaluated; variable is
+    # env-exported (line 192) and read as-is by python3 via os.environ.get —
+    # no word-splitting at use site. SC2016 disabled for the same reason:
+    # the rubric mentions things like `$VAULT` and tool names which must
+    # remain literal.
     UM_ROUTING_RUBRIC='## Memory routing (universal-memory)
 
 Tool note: the bullets below reference `memory_capture`. If that tool is not registered in this session but `memory_add` is (generic mem0), call `memory_add` instead — the routing guidance applies to either.
@@ -100,6 +103,9 @@ for subdir in state captures sessions; do
   fi
 done
 if [ "$has_activity" = false ]; then
+  # The banner contains literal `$VAULT/...` which must remain literal — the
+  # banner is rendered to the user, not eval'd here.
+  # shellcheck disable=SC2016
   UM_WELCOME_BANNER='## Welcome to universal-memory
 
 This is your first session. What happens from here:

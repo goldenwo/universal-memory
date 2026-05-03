@@ -88,7 +88,12 @@ _write_marker_block() {
     # block's final command exits 0. V2 verification §6.2 (commit e0a5a7f)
     # documents this finding; it overrides the v0.6 spec's original
     # "append after PATH guard" wording.
+    # Both printfs emit literal shell snippets that the user's rc file will
+    # source — $HOME/$PATH must be expanded by the user's shell at source-time,
+    # NOT by THIS shell at write-time. Single quotes are essential.
+    # shellcheck disable=SC2016
     printf '%s\n' '[ -r "$HOME/.um/auth-token" ] && export UM_AUTH_TOKEN="$(cat "$HOME/.um/auth-token")"'
+    # shellcheck disable=SC2016
     printf 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
     printf '%s\n' "$marker_end"
   } >> "$tmp"

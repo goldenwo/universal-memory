@@ -93,7 +93,7 @@ if [ ! -d "$PLUGIN_LIB_SRC" ]; then
   fail "Cannot find library source: $PLUGIN_LIB_SRC (is this a full repo clone?)"
 fi
 cp -p "$PLUGIN_LIB_SRC/"*.sh "$LIB_DIR/"
-copied_count=$(ls -1 "$LIB_DIR"/*.sh 2>/dev/null | wc -l)
+copied_count=$(find "$LIB_DIR" -maxdepth 1 -name '*.sh' -type f 2>/dev/null | wc -l)
 if [ "$copied_count" -lt 3 ]; then
   echo "install-cli.sh: library copy failed — only $copied_count files in $LIB_DIR" >&2
   exit 1
