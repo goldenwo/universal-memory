@@ -251,9 +251,12 @@ jobs:
       # installer, including T17's v0.4-class stale-symlink-replacement
       # regression guard (issue #22). Was previously shellchecked but never
       # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
-      # The companion install-plugin-codex.test.sh has the same gap and
-      # will be wired separately.
       - run: bash installer/install-plugin-cc.test.sh
+      # install-plugin-codex.test.sh covers the Codex CLI plugin installer
+      # (T13 detection + T19 absence path). Companion to install-plugin-cc;
+      # was the second half of the same shellchecked-but-unrun gap. Wired
+      # in as a follow-up to PR #39's installer-cc wire-up.
+      - run: bash installer/install-plugin-codex.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
