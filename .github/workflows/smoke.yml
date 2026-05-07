@@ -65,6 +65,13 @@ jobs:
           UM_VAULT_DIR: "/tmp/um-vault-ci"
           UM_MOUNT_MODE: "rw"
           UM_MCP_WRITE_ENABLED: "true"
+          # v1.0 W1.4 — CI builds from local source rather than pulling
+          # from GHCR. The GHCR image is private until the repo flips
+          # public; once it does, this can switch back to pull-mode by
+          # removing the override (or pinning UM_VERSION to a specific
+          # released tag for reproducibility). Build mode also exercises
+          # the Dockerfile path itself, which is what we want to CI.
+          UM_BUILD_LOCAL: "1"
         run: |
           if [ -z "${OPENAI_API_KEY:-}" ]; then
             echo "::error::OPENAI_API_KEY secret is not set on this repo."
