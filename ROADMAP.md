@@ -40,10 +40,12 @@ The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships
   - PR #42 — long-pending Windows T15 launcher fix (`ln -s` silent-fallback handling on git-bash).
   - PR #43 — codex CI wire-up (`install-plugin-codex.test.sh` companion to #39).
 
-**Remaining (candidate for next slice or deferred):**
-- ⏳ Real DE12 e2e test implementation (currently scaffolding; T22 + T24 added in v0.8 G2 may now satisfy; verify before re-attempting).
-- ⏳ Split `cli/reindex.mjs` (~941 lines) into `swap.mjs` + `archive.mjs` (separation of concerns; the two paths share little).
-- ⏳ `um-cli reindex` CLI wrapper (would activate the `installSigintHandler` from PR #35 in a user-facing flow).
+**Remaining (closed 2026-05-07):**
+- ✅ **`um-cli reindex` CLI wrapper** (PR #45, b8259b7). New `runReindex` orchestrator sequences phases 1→7 with `--resume` gating and SIGINT handler. CLI entry parses argv via `node:util` parseArgs; `um reindex` bash subcommand dispatches to the wrapper.
+- ✅ **Real DE12 e2e test implementation** (PR #45, b8259b7). Replaced 3 `assert.fail()` stubs with full implementations: provider flip e2e (openai → google), `--resume` mid-phase-3, `--resume` between phase-4 and phase-5. Operator-driven (UM_LIVE_TESTS-gated).
+- ✅ **Split `cli/reindex.mjs`** (PR #46, be90f32). Pure refactor: `cli/lib/swap.mjs` (phases 4-6), `cli/lib/archive.mjs` (phase 7), behavior preserved via re-export from `cli/reindex.mjs`. File trimmed from 1474 → 1155 lines.
+
+v0.8 backlog is fully closed. v1.0 stabilization is next per the [v1.0](#v10) section.
 
 ### v1.0
 Stable API, externally usable, publicly announced. No new features — the combination of v0.5 + v0.6 + v0.7 reaches the bar defined in [Distribution / release](#distribution--release).
