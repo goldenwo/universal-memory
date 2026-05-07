@@ -21,8 +21,20 @@ services:
       - "${UM_QDRANT_PORT:-127.0.0.1:6333}:6333"
 
   memory-server:
-    build: .
-    image: universal-memory-server:0.7.0-alpha
+    # v1.0 — pull-by-default. Operators pull a published image from GHCR
+    # rather than building locally. release.yml publishes on every `v*.*.*`
+    # tag push (semver-action emits 1.2.3 + 1.2 + latest, prereleases
+    # skip latest). Default `latest` resolves to the most recent stable.
+    #
+    # To pin a specific version, set UM_VERSION=1.0.0 in .env (recommended
+    # for production). For local development against uncommitted source,
+    # use the build override:
+    #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+    #
+    # UM_IMAGE escape hatch: set the full image ref directly (e.g. for a
+    # mirror, private registry, or local-tag dev workflow). Takes precedence
+    # over UM_VERSION.
+    image: ${UM_IMAGE:-ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}}
     restart: unless-stopped
     env_file: .env
     environment:
