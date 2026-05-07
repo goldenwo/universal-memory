@@ -71,6 +71,87 @@ into Qdrant via `@qdrant/js-client-rest`.
   looks identical to a 10× user-write spike on dashboards. Adding a
   traffic-source label is a v0.9 candidate (spec §10).
 
+### v0.8 follow-ups (cleanup queue, 2026-05-02 → 2026-05-07)
+
+A series of small PRs closing the v0.6/v0.8 follow-up backlog. Behavior-
+preserving except where called out. None of these change the public API
+surface; they harden the install path, close test coverage gaps, and
+finish the reindex CLI wiring.
+
+#### Added
+
+- **v0.8.1 vault frontmatter audit** (PR #38, d2b4ecd). Closes #37.
+  Inline doc at `cli/reindex.mjs:530` recording the audit conclusion (no
+  current writer emits `userId`/`user_id` in vault frontmatter; the
+  conditional read is forward-compat). Regression test exercising the
+  explicit-camel-`userId` path.
+- **Stale-symlink replacement test** (PR #39, f6a8fce). Closes #22.
+  T17 in `installer/install-plugin-cc.test.sh` mirrors the v0.4-class
+  T9 invariants against `installer/install-plugin-cc.sh`. Wires
+  `install-plugin-cc.test.sh` into `smoke.yml`'s `installer-test`
+  matrix on ubuntu-latest + macos-latest.
+- **`um-cli reindex` CLI wrapper** (PR #45, b8259b7). Five new exports
+  in `cli/reindex.mjs`: `createMemoryInstance`, `createVaultAdapter`,
+  `wrapOldMemoryForReindex`, `createQdrantClient`, `runReindex`,
+  `main`. Top-level orchestrator sequences phases 1→7 with `--resume`
+  gating per `state.phase_completed`; SIGINT handler around phase 3.
+  CLI argv parsed via `node:util` parseArgs; flags `--confirm`,
+  `--resume`, `--no-server-probe`, `--keep-old`, `--checkpoint-path`,
+  `--dry-run`, `--help`. New `reindex` subcommand in `plugins/claude-
+  code/universal-memory/bin/um` dispatches to the CLI.
+- **DE12 e2e test fill** (PR #45, b8259b7). 3 scenarios in
+  `cli/test/reindex-e2e.test.mjs` (UM_LIVE_TESTS-gated; operator-run):
+  provider flip (openai → google), `--resume` mid-phase-3, `--resume`
+  between phase-4 and phase-5. Replaces previous `assert.fail()`
+  scaffolding.
+- **CI wire-up for `install-plugin-codex.test.sh`** (PR #43, 23fda16).
+  Companion to PR #39; closes the second half of the "shellchecked but
+  never run end-to-end" gap. T13 (Codex detected) + T19 (Codex absent)
+  now run in CI.
+
+#### Changed
+
+- **Shellcheck `--severity=style` restored** (PR #41, f2f11ca). Closes
+  #23. 71 findings addressed: 65 real fixes + 6 justified inline
+  disables. CI flag changes in `smoke.yml`: removed `--severity=
+  warning`, added `-x` (follow `# shellcheck source=` directives), added
+  `-P SCRIPTDIR` (resolve relative source paths against each script's
+  own directory).
+- **Plugin CLI exec bits** (PR #40, 3d6d8ba). Flipped git mode 100644 →
+  100755 on 12 plugin CLIs in `plugins/claude-code/universal-memory/
+  bin/`: `um`, `um-capture(.sh)`, `um-forget`, `um-list.sh`,
+  `um-preview`, `um-recent.sh`, `um-search.sh`, `um-state.sh`,
+  `um-supersede`, `um-tail.sh`, `um-tunnel`. Mode-only changes (blob
+  hashes unchanged). Windows checkouts ignored Unix exec bits, masking
+  the issue locally; fresh clones on Linux/macOS produced non-executable
+  CLIs.
+- **Reindex code split** (PR #46, be90f32). `cli/reindex.mjs` (1474 →
+  1155 lines). Phases 4-6 moved to new `cli/lib/swap.mjs`; phase 7
+  moved to new `cli/lib/archive.mjs`. Pure refactor: re-exports from
+  `cli/reindex.mjs` keep existing imports unchanged.
+
+#### Fixed
+
+- **Windows `ln -s` silent-fallback launcher** (PR #42, 182bb58). Long-
+  pending T15 failure in `installer/install-plugin-cc.test.sh`. git-bash
+  on Windows silently copies on `ln -s` and returns exit 0; the bridge
+  CLI's static ESM imports then fail with `ERR_MODULE_NOT_FOUND` on a
+  flat copy at `~/.local/bin/`. `installer/install-plugin-cc.sh` now
+  re-checks `[ -L "$bin_link" ]` after `ln -s`; when false, writes a
+  bash launcher that `exec`s node on the bridge source in the plugin
+  install dir (where sibling files resolve).
+- **macOS bash 3.2 empty-array under `set -u`** (PR #39, f6a8fce).
+  `installer/install-plugin-cc.test.sh:97` `run_plugin_cc` helper
+  expanded `"${env_vars[@]}"` directly. Bash 3.2 (macOS default) treats
+  this as unbound when the array is empty. Fixed via `${arr[@]+
+  "${arr[@]}"}` idiom.
+
+#### Docs
+
+- **ROADMAP refresh** (PR #44, df8ba39). Marked v0.8 G2 + v0.8.1 audit +
+  cleanup queue as shipped. Updated operational debt to reflect Qdrant
+  alignment as resolved.
+
 ## [0.7.0-alpha] — 2026-05-01
 
 Provider-neutrality release. The memory server, MCP HTTP layer, and reindex
