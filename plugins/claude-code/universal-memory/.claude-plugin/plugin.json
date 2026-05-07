@@ -1,12 +1,26 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "universal-memory",
   "description": "Cross-session, cross-device memory for Claude Code. Markdown-first captures, vector-backed recall. Points at any universal-memory server — local Docker, remote self-hosted, or cloud-backed. Auto-starts the server on demand when configured to.",
   "version": "0.7.0-alpha",
   "author": {
-    "name": "goldenwo"
+    "name": "goldenwo",
+    "url": "https://github.com/goldenwo",
+    "email": "68965162+goldenwo@users.noreply.github.com"
   },
   "homepage": "https://github.com/goldenwo/universal-memory",
   "repository": "https://github.com/goldenwo/universal-memory",
   "license": "MIT",
-  "keywords": ["memory", "mem0", "context", "cross-session", "self-hosted", "markdown"]
+  "keywords": [
+    "memory",
+    "mem0",
+    "context",
+    "cross-session",
+    "self-hosted",
+    "markdown",
+    "mcp",
+    "session-continuity",
+    "claude-code",
+    "rag"
+  ]
 }
