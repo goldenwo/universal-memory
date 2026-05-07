@@ -1243,7 +1243,11 @@ export async function runReindex(opts) {
       env,
       pricing,
       noServerProbe,
-      confirmInteractive: !confirm,
+      // confirmInteractive=true means "operator pre-approved via --confirm,
+      // skip the prompt" (per phase 1's JSDoc at line 305-307). Pass the
+      // flag through unchanged — earlier inversion was a B1-class bug
+      // caught in PR #45 review.
+      confirmInteractive: !!confirm,
       checkpoint,
     });
     if (!result.proceed) {
