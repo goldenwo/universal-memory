@@ -27,12 +27,23 @@ Foundations shipped alongside v0.1.0:
 The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
 
 ### v0.8 — v0.7 follow-ups + cleanup
-Forward-tracked from v0.7 alpha:
-- Wire `embed()` / `facts()` orchestrators into production dispatch (closes G2 production-emission gap — orchestrators exist + tested but not yet called from hot paths).
-- Coordinated `wizard-lib.sh` cleanup (eval → `printf -v` + var-precedence chain alignment across all wizard helpers).
-- SIGINT handler for `cli/reindex.mjs` (clean cancellation during long migrations — currently leaves partial state on Ctrl-C).
-- Real DE12 e2e test implementation (currently scaffolding; subsumed by FIN1 manual matrix in v0.7-alpha).
-- Split `cli/reindex.mjs` (941 lines) into `swap.mjs` + `archive.mjs` (separation of concerns; the two paths share little).
+
+**Already on main (awaiting tag):**
+- ✅ **v0.8 G2 — orchestrator wiring** (PR #36, 71f1450). Wired `embed()` / `facts()` orchestrators into production dispatch; closed the v0.7-alpha contract gap (orchestrators existed + tested but not yet called from hot paths). Added `prom-client` registration for `um_provider_*` counters/histograms (closing the same NOOP-default gap that PR #35 c7930f1 had for summarize-surface). Bumped Qdrant server image 1.11.3 → 1.13.0 to match `@qdrant/js-client-rest@1.13.0` (now a direct dep). CI grep gate forbidding `mem0.add()` reappearance.
+- ✅ **v0.8.1 vault frontmatter audit** (PR #38, d2b4ecd). Closes #37. Confirmed no current writer emits `userId`/`user_id` in vault frontmatter; `RESOLVED_USER_ID` fallback is the always-fires path; conditional read in `cli/reindex.mjs:530` is forward-compat.
+- ✅ **Coordinated `wizard-lib.sh` cleanup** — most landed in PR #35 (post-v0.7 loose ends, 1b90582); remainder closed via PR #39 (#22, f6a8fce).
+- ✅ **SIGINT handler for `cli/reindex.mjs`** — shipped in PR #35 commit `dc0c8ed`.
+- ✅ **v0.6 follow-up cleanup queue** (this session, 2026-05-02 to 2026-05-03):
+  - PR #39 (#22 closed) — T17 stale-symlink replacement test + CI wire-up of `install-plugin-cc.test.sh`.
+  - PR #40 — git mode 100644 → 100755 on 12 plugin CLIs.
+  - PR #41 (#23 closed) — shellcheck `--severity=style` restored; 71 findings addressed.
+  - PR #42 — long-pending Windows T15 launcher fix (`ln -s` silent-fallback handling on git-bash).
+  - PR #43 — codex CI wire-up (`install-plugin-codex.test.sh` companion to #39).
+
+**Remaining (candidate for next slice or deferred):**
+- ⏳ Real DE12 e2e test implementation (currently scaffolding; T22 + T24 added in v0.8 G2 may now satisfy; verify before re-attempting).
+- ⏳ Split `cli/reindex.mjs` (~941 lines) into `swap.mjs` + `archive.mjs` (separation of concerns; the two paths share little).
+- ⏳ `um-cli reindex` CLI wrapper (would activate the `installSigintHandler` from PR #35 in a user-facing flow).
 
 ### v1.0
 Stable API, externally usable, publicly announced. No new features — the combination of v0.5 + v0.6 + v0.7 reaches the bar defined in [Distribution / release](#distribution--release).
@@ -115,8 +126,8 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 
 ## Operational debt (lower priority, known)
 
-### Qdrant version alignment
-Current: image pinned to `qdrant/qdrant:v1.11.3`, but `mem0ai`'s bundled client is `1.13.x` — benign warning in logs. Pin image to a matching `v1.13.x` tag and upgrade existing data directories.
+### Qdrant version alignment — ✅ resolved in v0.8 G2
+~~Current: image pinned to `qdrant/qdrant:v1.11.3`, but `mem0ai`'s bundled client is `1.13.x` — benign warning in logs.~~ Closed in PR #36: server image bumped to `v1.13.0` to match `@qdrant/js-client-rest@1.13.0` (now a direct dep, not transitive).
 
 ### Image size
 Current image is ~583 MB. Dominated by mem0ai's transitively-bundled LLM provider SDKs (`@azure` 58 MB, `cloudflare` 52 MB, `@google`, `@mistralai`, `@langchain`) that we don't use. Options: fork mem0ai to mark providers as optional, wait for upstream to move providers to peer deps, or build a custom minimal image.
