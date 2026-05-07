@@ -4,7 +4,57 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — v1.0 stabilization
+
+**v1.0 is the stabilization + public-release milestone.** No new features relative to v0.8; the work is making the existing surface externally consumable: distribution shape, public-repo polish, security review, walkthrough validation, marketplace listing, and release ceremony.
+
+The cumulative arc that v1.0 ships, by version:
+
+- **v0.2 (Apr 2026)** — Session continuity: stop-hook raw capture, LLM session summaries, per-project `state.md`, memory versioning, 10-tool MCP surface.
+- **v0.3** — Cross-platform reach: Codex CLI plugin, Claude.ai / Claude Desktop / ChatGPT Desktop connection guides, OpenAPI 3.1 at `/openapi.yaml`, `um-tunnel` CLI.
+- **v0.4** — Progressive disclosure: compact `{id, title, score, snippet}` reads by default, opt-in `?full=1`; standalone `um` CLI; schema-hygiene `tools/list` filter.
+- **v0.5** — Cross-env first-class capture: `memory_append_turn` + `memory_checkpoint` from any MCP client; modular installer with NONINTERACTIVE overrides.
+- **v0.6** — Bearer auth + ops foundations: per-IP rate limiter, structured logging with request IDs, `/metrics`, container entrypoint guards, claude-mem bridge.
+- **v0.7** — Provider neutrality: openai / anthropic / google / ollama swappable per surface; embedding-stamp guard; `um reindex` CLI.
+- **v0.8** — Orchestrator wiring + cleanup: `umAdd()` replaces `mem0.add()` everywhere; production embed/facts metrics now emit; v0.6 follow-up queue closed.
+- **v1.0 (this release)** — Stabilize + publish (in progress).
+
+### Added
+
+- **`docs/walkthrough/macos-solo-dev.md`** (PR #52, 68318df) — fresh-eyes walkthrough doc for solo developers on macOS. 10 steps with explicit per-step Verify checks; Troubleshooting section; feedback rubric for the W2.2 fresh-eyes runner.
+- **`CONTRIBUTING.md`** (PR #49, b491848) — public contributor guide. PR flow, conventional commits, test-plan format, code-review tiers (Sonnet vs paired-Opus), development principles, phase-boundary discipline.
+- **`docs/decisions/0005-adr-invocation-model.md`** — accepted ADR for the post-v1.0 `create-adr` skill invocation: **Option A (`/adr` slash command)**. Reserves Option C (end-of-session batch) as a future safety net. (ADR file is gitignored locally; canonical record committed via this CHANGELOG entry.)
+- **`server/test/cors-preflight.test.mjs`** — pins the CORS preflight contract: `Authorization` header is always advertised in `Access-Control-Allow-Headers` so browser-origin clients aren't silently broken.
+- **W6.4 logger redaction** — `UM_AUTH_TOKEN` value-redaction pattern (lazy-init at first emit) added to the layer-2 censor's `KEY_PATTERNS`. Defense-in-depth only.
+
+### Changed
+
+- **`SECURITY.md` expanded** (PR #49, b491848) — full disclosure policy via GitHub PVR, response timeline, supported-version table, in/out-of-scope matrix, hardening notes for operators. Preserves the v0.7+ Qdrant write-stamp known-limitation note verbatim.
+- **README tone retuned** (PR #50, 37c3d63) — six version-narrative artifacts retired (`(new in v0.5)`, `(new in v0.6)`, `**In v0.6 they compose**`, `**v0.6 note**`, `**Recall-only through v0.4**`, deferred-Agents-SDK link). Upgrading section reframed to point at MIGRATION + CHANGELOG cumulatively, with a "pin a tag" advice line.
+- **`server/docker-compose.yml` dual-mode** — pull-by-default. Default behavior: `docker compose up -d` pulls `ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}` (~20s vs ~2-5min cold-build). Pin via `UM_VERSION` in `.env`. Build override via new `server/docker-compose.build.yml` (combine with `-f` chaining). `server/install.sh` detects `UM_BUILD_LOCAL=1` and forwards both files.
+- **`compareTokens` hashes inputs to fixed-size SHA-256 digests** before timing-safe compare (`server/lib/auth.mjs`). Replaces the prior length-mismatch dummy-compare scheme. Length-independent timing.
+- **CORS preflight** advertises `Authorization` in `Access-Control-Allow-Headers` (`server/mem0-mcp-http.mjs`). Unblocks browser-origin bearer-auth flows that were silently rejected at the preflight stage.
+
+### Fixed
+
+- **`docs/research/2026-04-24-v0.6-verifications/V1-fixture-prep.sh`** (PR #49, b491848) — replaces hardcoded `REPO_ROOT="E:/Projects/universal-memory"` with `git rev-parse --show-toplevel`. Closes the only "recommended regardless" finding from the W4.1 secrets audit.
+
+### Docs
+
+- **`docs/walkthrough/`** new directory. macOS walkthrough is the first; linux + windows walkthroughs are future-version files.
+- **MIGRATION.md `v0.7 → v0.8` and `v0.8 → v1.0` sections** — operator-facing notes per release transition. `v0.8 → v1.0` covers the distribution-shape change (pull-by-default), the W6.4 hardening trio, the cumulative bearer-auth posture summary, and the formalized post-v1.0 support window.
+- **`server/.env.example`** — new "Image / version pin" section documents `UM_VERSION`, `UM_IMAGE`, `UM_BUILD_LOCAL` knobs. New "Mem0 history DB" guidance documents the persistent volume-mount pair. (PR #51 + this PR.)
+- **15 GitHub topics applied** for discoverability: `ai-memory`, `llm`, `memory`, `claude`, `claude-code`, `mcp`, `model-context-protocol`, `codex-cli`, `mem0`, `qdrant`, `self-hosted`, `markdown`, `rag`, `semantic-search`, `session-continuity`.
+
+### Verification
+
+- W4.1 secrets audit: GO verdict (no real secrets in history; previous `git filter-repo` pass on `docs/decisions/` + `docs/plans/` held).
+- W6.4 security review: 3 Important findings (CORS, compareTokens, logger redaction), 0 Critical. All three fixed.
+- W6.1 history-DB persistence example shipped (PR #51, d3178b1).
+
+---
+
+## [0.8.0-alpha] — 2026-05-07
 
 v0.8 in progress — the first landed slice is **G2 orchestrator wiring**:
 production embed/facts metric emission. v0.7-alpha promised

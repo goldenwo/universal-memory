@@ -1,5 +1,83 @@
 # Migration guide
 
+## v0.8 → v1.0
+
+v1.0 is **stabilization + public release**, not a feature release. There are no env-var renames, no API contract changes, and no operator-facing breakage relative to v0.8. The notable items below are **distribution shape**, **W6.4 security hardening** (3 internal-API hardening fixes), and the formal **post-v1.0 support window**.
+
+### Distribution: pull-by-default
+
+Up to v0.8, `server/docker-compose.yml` shipped with `build: .` + `image: universal-memory-server:0.7.0-alpha`, which built the image locally on every fresh install (~2-5 min cold-build).
+
+v1.0 flips this to pull-by-default:
+
+```yaml
+image: ${UM_IMAGE:-ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}}
+```
+
+**Action for operators upgrading from v0.8 → v1.0:**
+
+- **First-time installs:** zero-config — `docker compose up -d` pulls `:latest` from GHCR (~20s).
+- **Existing v0.8 installs:** `docker compose pull && docker compose up -d` reuses your existing `.env` and vault. The locally-tagged `universal-memory-server:0.7.0-alpha` image is still on disk; `docker image prune` cleans it up.
+- **Pin a version in production:** add `UM_VERSION=1.0.0` to `server/.env`. Recommended for production — `:latest` is a moving target across patch releases.
+- **Local source builds (development):** set `UM_BUILD_LOCAL=1` in your environment and re-run `bash server/install.sh`. Or invoke compose manually with both files: `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d`.
+
+The `release.yml` workflow (multi-arch amd64 + arm64) emits semver tags on every `v*.*.*` tag push: `1.0.0` + `1.0` + `latest` for stable releases; prereleases skip `latest`. v0.7-alpha and v0.8-alpha images exist on GHCR but never claimed `latest`, so the default-to-`:latest` path resolves only to v1.0+.
+
+### W6.4 security hardening (internal — no operator action)
+
+Three internal-API hardening fixes from the v1.0 W6.4 security review pass. None require operator action; documenting here so the auth posture is unambiguous:
+
+1. **CORS preflight allows `Authorization`** — browser-origin clients (Custom GPT Actions, Claude.ai web connector, third-party browser tooling) sending `Authorization: Bearer <token>` were silently rejected before reaching the auth layer. Fixed.
+2. **`compareTokens` hashes inputs to fixed-size SHA-256 digests** before timing-safe compare. Removes any length-dependent timing channel from the prior dummy-compare scheme. Real-world exploitability of the prior scheme was low; the fix is simpler and tighter.
+3. **Logger redacts active `UM_AUTH_TOKEN` value** as a defense-in-depth pattern, in addition to the existing four-pattern static redaction (sk-*, sk-ant-*, AIza*, Bearer *). No current code path logs the raw token; this catches future debug-log or error-context leaks.
+
+### Bearer-auth posture summary (cumulative through v1.0)
+
+For operators consolidating from any pre-v0.6 version:
+
+| Surface | Auth required? | Default |
+|---|---|---|
+| `/api/*` | Yes — `Authorization: Bearer <UM_AUTH_TOKEN>` | Loopback bypass (`127.0.0.1` only, no forwarded headers) is on by default; disable with `UM_ALLOW_LOOPBACK_NOAUTH=false` |
+| `/mcp` | Yes — same as `/api/*` | Same loopback bypass |
+| `/metrics` | Loopback-only | Set `UM_ALLOW_METRICS_PUBLIC=true` to expose externally (put it behind your own auth proxy if you do) |
+| `/health` | No | Liveness probe; intentionally unauthenticated |
+| `/openapi.yaml` | No | Schema endpoint; safe to expose |
+
+Tunnel-fronted installs (Cloudflare Tunnel, ngrok, Tailscale Funnel) trigger the forwarded-headers check and require the bearer token regardless of source IP. install.sh generates `UM_AUTH_TOKEN` automatically and writes it to `~/.um/auth-token` (chmod 600); operators rotate by re-running install.sh or by replacing `UM_AUTH_TOKEN` in `server/.env` and bouncing the container.
+
+### Supported versions (formalized at v1.0)
+
+Per [SECURITY.md](SECURITY.md):
+
+- `v1.0` and later — supported (security fixes target the latest minor + one previous minor for ~6 months)
+- `v0.x-alpha` — unsupported; please upgrade
+
+Pre-1.0 alphas remain installable from GHCR for archaeology / pinning to a known shape, but receive no further security or correctness fixes.
+
+---
+
+## v0.7 → v0.8
+
+v0.8 is a behavior-and-test consolidation release. **No env-var renames, no API contract changes, no breaking flow changes.** The headline shift is internal: v0.7 promised provider metric emission for `embed`/`facts` surfaces but `mem0.add()` bypassed the orchestrators, so those metrics emitted zero. v0.8 G2 introduces `umAdd()` and routes through the orchestrators for real.
+
+### What changed
+
+- **`umAdd()` orchestrator** replaces all 6 `mem0.add()` call sites. Production embed/facts metrics now emit correctly.
+- **Qdrant server image bumped `v1.11.3 → v1.13.0`** to match the `@qdrant/js-client-rest@1.13.0` client pulled transitively by `mem0ai@2.4.6`. Two-minor-version mismatch was emitting a runtime warning on every client construction.
+- **`infer:true` semantics:** umAdd does NOT replicate mem0's semantic dedup. Every extracted fact becomes a new ADD. Re-running the same `/api/add` request twice now creates 2 facts instead of 1. Callers that depended on idempotent re-adds must use deterministic `metadata.id` + a pre-call existence check. (Documented as a v0.8 non-goal in spec §3.)
+- **`um reindex` CLI dispatcher** — operator-driven embedding-provider migrations now run via `um reindex` rather than direct `node cli/reindex.mjs`.
+- **DE12 e2e test fill** — three `assert.fail()` stubs from v0.7 became real e2e implementations (operator-driven, `UM_LIVE_TESTS=1` gated): provider flip openai → google, `--resume` mid-phase-3, `--resume` between phase-4 and phase-5.
+
+### Action for operators
+
+For most operators: **no action needed**. Pull the new image (or rebuild) and `docker compose up -d --force-recreate`. The Qdrant data on disk is forward-compatible across the 1.11 → 1.13 minor bump.
+
+If you call `/api/add` repeatedly with the same input expecting idempotency: pin a deterministic `metadata.id` and check via `/api/list` before calling. The mem0 OSS dedup that v0.7 implicitly inherited is not part of v0.8's contract.
+
+If you've been running `node cli/reindex.mjs` directly: switch to `um reindex` (see `docs/um-cli.md` for flags).
+
+---
+
 ## v0.6 → v0.7
 
 v0.7 generalises summarizer/facts/embeddings to a four-provider matrix
