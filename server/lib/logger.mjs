@@ -45,17 +45,49 @@ let testSink = null;
 // arbitrary err.config blobs.
 // ---------------------------------------------------------------------------
 
-const KEY_PATTERNS = Object.freeze([
+const STATIC_KEY_PATTERNS = Object.freeze([
   /sk-ant-[A-Za-z0-9_-]+/g,    // anthropic — must be BEFORE sk-* (sk- would greedy-match this)
   /sk-[A-Za-z0-9_-]+/g,        // openai
   /AIza[A-Za-z0-9_-]+/g,       // google
   /Bearer [A-Za-z0-9_.+/=-]+/g, // generic Authorization header value
 ]);
 
+// W6.4 hardening — UM_AUTH_TOKEN value-redaction.
+// install.sh generates UM_AUTH_TOKEN as `openssl rand -hex 32` (a 64-char
+// lowercase hex string). That format is not matched by any of the four
+// static patterns above. Adding a generic 64-hex pattern would over-redact
+// (catches innocent SHA-256 digests, etc.). Instead, capture the active
+// UM_AUTH_TOKEN value at first-emit and add it as a literal-match pattern
+// so any code path that accidentally logs the raw token gets redacted.
+//
+// Lazy-init at first call so env vars set after module load (test env,
+// container entrypoint with deferred env-loading) are still captured.
+// Cleared by `_resetKeyPatternsForTest()` so tests can mutate env between cases.
+let _patterns = null;
+function getKeyPatterns() {
+  if (_patterns) return _patterns;
+  const patterns = [...STATIC_KEY_PATTERNS];
+  const tok = process.env.UM_AUTH_TOKEN;
+  if (typeof tok === 'string' && tok.length >= 16) {
+    // Escape regex metachars (defensive — install.sh emits hex but custom
+    // operator-set tokens may include `-`, `+`, `/`, `=`, etc.).
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    patterns.push(new RegExp(escaped, 'g'));
+  }
+  _patterns = Object.freeze(patterns);
+  return _patterns;
+}
+
+/** @internal — test-only. Clears the lazy-init pattern cache so the next
+ * censorString call re-reads UM_AUTH_TOKEN from env. */
+export function _resetKeyPatternsForTest() {
+  _patterns = null;
+}
+
 function censorString(value) {
   if (typeof value !== 'string') return value;
   let out = value;
-  for (const re of KEY_PATTERNS) out = out.replace(re, '[REDACTED]');
+  for (const re of getKeyPatterns()) out = out.replace(re, '[REDACTED]');
   return out;
 }
 
