@@ -19,11 +19,11 @@ Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decisio
 
 - **Session continuity** — a `state.md` file per project is injected at the start of every session. Current focus, in-flight work, recent decisions, next actions — all there without manual setup.
 - **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 11 MCP tools (4 read tools visible by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Progressive disclosure: read responses return compact snippets by default; opt into full bodies via `?full=1` or `full: true`. Work captured in Claude Code is visible from Claude.ai the same day.
-- **Cross-env first-class capture** (new in v0.5) — it's no longer Claude Code-only. Claude.ai, ChatGPT Desktop, and Codex can now use `memory_append_turn` to feed conversation turns directly into the raw-capture pipeline, and `memory_checkpoint` to trigger session summaries and `state.md` refresh — the same pipeline that Claude Code's Stop/SessionEnd hooks drive automatically.
+- **Cross-env first-class capture** — capture is not Claude Code-only. Claude.ai, ChatGPT Desktop, and Codex use `memory_append_turn` to feed conversation turns directly into the raw-capture pipeline, and `memory_checkpoint` to trigger session summaries and `state.md` refresh — the same pipeline that Claude Code's Stop/SessionEnd hooks drive automatically.
 - **Command-line toolkit** — 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts, cron jobs, and power-user workflows. Composable with grep / awk / jq. Installs standalone via `installer/install-cli.sh` against any reachable UM server.
 - **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default.
 - **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
-- **Upstream bridges** (new in v0.6) — one-way ingest from external memory stores. The first bridge, `um-bridge-claude-mem`, mirrors your claude-mem session history into the UM vault as searchable markdown so cross-surface queries see it too. Bridge-emitted content is fenced with `<external-summary source="…">` markers so the summarizer treats it as data, not instruction. See [`docs/bridges.md`](docs/bridges.md).
+- **Upstream bridges** — one-way ingest from external memory stores. The first bridge, `um-bridge-claude-mem`, mirrors your claude-mem session history into the UM vault as searchable markdown so cross-surface queries see it too. Bridge-emitted content is fenced with `<external-summary source="…">` markers so the summarizer treats it as data, not instruction. See [`docs/bridges.md`](docs/bridges.md).
 
 ---
 
@@ -43,7 +43,7 @@ Anyone who uses Claude across multiple sessions and wants continuity. This is no
 
 **vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds on top: session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface. Using mem0 alone means no session state, no catchup mechanism, no document versioning.
 
-**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server. **In v0.6 they compose**: `um-bridge-claude-mem` ingests claude-mem's session history into the UM vault, so a session you logged in Claude Code becomes searchable from Claude.ai too.
+**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server. **The two compose**: `um-bridge-claude-mem` ingests claude-mem's session history into the UM vault, so a session logged in Claude Code becomes searchable from Claude.ai too.
 
 **vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault that a human can open in any editor can also be queried by agents at conversation speed via the MCP surface.
 
@@ -120,7 +120,7 @@ memory_search("query")        # semantic search across all indexed documents
 memory_capture(...)           # write a new document to the vault from the remote surface
 ```
 
-> **v0.6 note — tunnel-fronted installs require a bearer token.** Any request reaching UM through a tunnel or reverse proxy must include `Authorization: Bearer <UM_AUTH_TOKEN>`. See [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) or [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for connector-specific setup. Loopback installs (Claude Desktop → `localhost:6335` directly) do not require auth.
+> **Authentication.** Any request reaching UM through a tunnel or reverse proxy must include `Authorization: Bearer <UM_AUTH_TOKEN>`. See [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) or [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for connector-specific setup. Loopback installs (Claude Desktop → `localhost:6335` directly) do not require auth.
 
 Captures made from any surface are visible in Claude Code sessions and vice versa.
 
@@ -128,8 +128,8 @@ Surface-specific guides:
 - **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
 - **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
 - **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
-- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall-only through v0.4** — Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
-- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end. OpenAI Agents SDK variant [deferred to a future release](examples/openai-agents-sdk/DEFERRED.md).
+- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall-only.** Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
+- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end.
 - **CLI (`um`):** see [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`).
 
 ---
@@ -182,9 +182,14 @@ universal-memory/
 
 ---
 
-## Upgrading from v0.5
+## Upgrading
 
-v0.6 introduces breaking changes — bearer auth, unified error envelopes, `/api/list` envelope shape change, and request-body caps. See [MIGRATION.md](MIGRATION.md) for step-by-step upgrade guidance before updating a production install.
+universal-memory is pre-1.0 and ships breaking changes between minor versions. Before updating a production install, consult both:
+
+- [MIGRATION.md](MIGRATION.md) — step-by-step upgrade guidance per version transition (v0.3 → v0.4 → v0.5 → v0.6 → v0.7).
+- [CHANGELOG.md](CHANGELOG.md) — full per-release notes (Added / Changed / Fixed / Docs).
+
+Pin a release tag rather than tracking `latest` in production.
 
 ---
 
