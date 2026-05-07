@@ -17,6 +17,7 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 | [v0.5.0-alpha](https://github.com/goldenwo/universal-memory/releases/tag/v0.5.0-alpha) | Cross-env first-class release — `memory_append_turn` (raw-capture writes from any MCP client) + `memory_checkpoint` server-side body (non-CC surfaces can trigger session-summary + state.md refresh) + modular installer with wizard mode + NONINTERACTIVE env overrides (`UM_VAULT_DIR`, `UM_MOUNT_MODE`, `UM_MCP_WRITE_ENABLED`, `UM_CONTAINER_USER` validation) + docker-compose `UM_CONTAINER_USER` override for UID-matched rw-mount installs + I4 summarizer-prompt fix. 101 product commits + 13 CI-unblock commits + 1 post-review hardening commit; 13-round paired-Opus review cycle + 2 post-review Opus passes. Closes #5, #6. | Commit `5141887` on `main`, tagged v0.5.0-alpha |
 | v0.6.0-alpha | Bearer auth + ops foundations + claude-mem bridge — bearer auth on `/api/*` + `/mcp` (loopback + 10-header forwarded-deny), pino structured logging with request_id, `/metrics` Prometheus (loopback-only default), per-IP token-bucket rate limiter, cross-process lockdir (Perl flock + proper-lockfile retired), O_NOFOLLOW on all vault writes, typeof-string timestamp guards, mem0/qdrant retry+jitter, request-body cap, `um-bridge-claude-mem` CLI (Node + better-sqlite3 plugin-local) with `<external-summary>` untrusted-content boundary + REJECT-on-literal-marker + path-traversal/UNC/symlink-bypass guards, BRIDGES.md registry + `source:` discriminator, schedule templates (systemd/launchd/cron), container entrypoint guard refusing root+rw+writes (#28), `_dump_on_fail` test harness (#21), `_um_curl_wrap` friendly-error CLI translator, `docs/process/review-playbook.md`. ~80 commits; per-task two-stage review during execution + paired-Opus R1 (1 Critical + 4 Important closed) + R2/R3 zero-finding convergence. Closes #20, #21, #28, #29, #30. | Tagged v0.6.0-alpha |
 | v0.7.0-alpha | Provider neutrality release (alpha) — four providers swappable via env (openai, anthropic, google, ollama) with per-surface dispatch (`UM_EMBEDDING_PROVIDER`, `UM_SUMMARIZER_PROVIDER`, `UM_FACTS_PROVIDER`); embedding-stamp guard prevents cross-provider vector contamination + `um reindex` CLI for safe migrations (swap + archive paths, ~941 lines); mocked-SDK boot smoke covering all four providers; provider-neutral wizard prompts via `wizard-lib.sh`; D-series provider dispatch (DE-series for embed, DS-series for summarizer, DF-series for facts); FIN1 manual matrix validation. Multi-round paired-Opus review during plan + execution. | Tagged v0.7.0-alpha |
+| v0.8.0-alpha | v0.7 follow-ups + cleanup queue close-out — `umAdd()` orchestrator (PR #36) replaces all 6 `mem0.add()` call sites so production embed/facts metrics emit; Qdrant server bumped 1.11.3 → 1.13.0; vault-frontmatter audit (PR #38, closes #37); v0.6 cleanup queue (PRs #39–#44) covering T17 stale-symlink test, CLI exec bit, shellcheck `--severity=style` restore, Windows T15 launcher fix, codex CI wire-up, ROADMAP refresh; reindex CLI orchestrator + DE12 e2e fill (PR #45); split `reindex.mjs` into `swap.mjs` + `archive.mjs` (PR #46); CHANGELOG + ROADMAP final alignment (PR #48). | Tagged v0.8.0-alpha |
 
 Foundations shipped alongside v0.1.0:
 
@@ -26,32 +27,36 @@ Foundations shipped alongside v0.1.0:
 
 The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
 
-### v0.8 — v0.7 follow-ups + cleanup
+### v0.8 — ✅ shipped 2026-05-07
 
-**Already on main (awaiting tag):**
-- ✅ **v0.8 G2 — orchestrator wiring** (PR #36, 71f1450). Wired `embed()` / `facts()` orchestrators into production dispatch; closed the v0.7-alpha contract gap (orchestrators existed + tested but not yet called from hot paths). Added `prom-client` registration for `um_provider_*` counters/histograms (closing the same NOOP-default gap that PR #35 c7930f1 had for summarize-surface). Bumped Qdrant server image 1.11.3 → 1.13.0 to match `@qdrant/js-client-rest@1.13.0` (now a direct dep). CI grep gate forbidding `mem0.add()` reappearance.
-- ✅ **v0.8.1 vault frontmatter audit** (PR #38, d2b4ecd). Closes #37. Confirmed no current writer emits `userId`/`user_id` in vault frontmatter; `RESOLVED_USER_ID` fallback is the always-fires path; conditional read in `cli/reindex.mjs:530` is forward-compat.
-- ✅ **Coordinated `wizard-lib.sh` cleanup** — most landed in PR #35 (post-v0.7 loose ends, 1b90582); remainder closed via PR #39 (#22, f6a8fce).
-- ✅ **SIGINT handler for `cli/reindex.mjs`** — shipped in PR #35 commit `dc0c8ed`.
-- ✅ **v0.6 follow-up cleanup queue** (this session, 2026-05-02 to 2026-05-03):
-  - PR #39 (#22 closed) — T17 stale-symlink replacement test + CI wire-up of `install-plugin-cc.test.sh`.
-  - PR #40 — git mode 100644 → 100755 on 12 plugin CLIs.
-  - PR #41 (#23 closed) — shellcheck `--severity=style` restored; 71 findings addressed.
-  - PR #42 — long-pending Windows T15 launcher fix (`ln -s` silent-fallback handling on git-bash).
-  - PR #43 — codex CI wire-up (`install-plugin-codex.test.sh` companion to #39).
+v0.8 closed the v0.7-alpha orchestrator-wiring gap (production embed/facts metrics emit correctly), shipped the `um reindex` CLI dispatcher, filled the DE12 e2e tests, and cleared the v0.6 follow-up backlog. Tagged `v0.8.0-alpha` at commit `ffad020`. See [Shipped](#shipped) table for the per-PR breakdown and CHANGELOG.md for full notes.
 
-**Remaining (closed 2026-05-07):**
-- ✅ **`um-cli reindex` CLI wrapper** (PR #45, b8259b7). New `runReindex` orchestrator sequences phases 1→7 with `--resume` gating and SIGINT handler. CLI entry parses argv via `node:util` parseArgs; `um reindex` bash subcommand dispatches to the wrapper.
-- ✅ **Real DE12 e2e test implementation** (PR #45, b8259b7). Replaced 3 `assert.fail()` stubs with full implementations: provider flip e2e (openai → google), `--resume` mid-phase-3, `--resume` between phase-4 and phase-5. Operator-driven (UM_LIVE_TESTS-gated).
-- ✅ **Split `cli/reindex.mjs`** (PR #46, be90f32). Pure refactor: `cli/lib/swap.mjs` (phases 4-6), `cli/lib/archive.mjs` (phase 7), behavior preserved via re-export from `cli/reindex.mjs`. File trimmed from 1474 → 1155 lines.
+### v1.0 — in progress
+Stable API, externally usable, publicly announced. **No new features** — the combination of v0.5 + v0.6 + v0.7 + v0.8 reaches the bar defined in [Distribution / release](#distribution--release). Active execution against a 7-workstream plan:
 
-v0.8 backlog is fully closed. v1.0 stabilization is next per the [v1.0](#v10) section.
+| Workstream | Status |
+|---|---|
+| W1 Distribution & build (GHCR publishing, dual-mode compose, install wizard image-mode) | Mostly complete — `release.yml` already publishing; W1.2/W1.4 in progress; W1.3 fresh-VM smoke deferred |
+| W2 External-user walkthrough | W2.1 walkthrough doc shipped (PR #52); W2.2 fresh-eyes runner pending human |
+| W3 ADR invocation model (slash command vs keyword vs batch) | ✅ Decided: Option A (`/adr` slash command) — see ADR-0005 |
+| W4 Public-repo readiness (secrets audit, CONTRIBUTING, SECURITY, README, LICENSE, GitHub topics) | ✅ Complete |
+| W5 Plugin marketplace listing | Pending — submission post public-flip |
+| W6 Stability hardening (history-DB persistence, image size, security review, bearer-auth migration check) | W6.1 + W6.4 done; W6.3 in this PR; W6.2 image-size deferred to v1.1 |
+| W7 Release ceremony (tag, release notes, announcement, doc refresh) | W7.2 release notes drafted in CHANGELOG; W7.1 + W7.3 + W7.4 final |
 
-### v1.0
-Stable API, externally usable, publicly announced. No new features — the combination of v0.5 + v0.6 + v0.7 reaches the bar defined in [Distribution / release](#distribution--release).
+Critical path: W4 → W2 → W7. v1.0 plan tracked locally at `docs/plans/2026-05-07-v1.0-plan.md` (gitignored per CLAUDE.md C3).
 
 ### post-v1.0
-Working examples / demos bundle for adoption (OpenAI Agents SDK, LangChain-style integrations, provider-specific examples, npm client as reference implementation). Plus the power-user enrichment tier: vault web UI (#16), Kuzu graph memory + bi-temporal metadata, synthesis Layer 2 passes (workspace-dream skill, cross-project compile, ADR topic compile), Codex lifecycle hooks (#17 — upstream-gated regardless of timeline).
+
+Bucketed into cohesive themes; final version allocation set when each release approaches:
+
+- **v1.1 — Capture path completeness:** `create-adr` skill (per ADR-0005's Option A), claude-mem bridge expansion if usage justifies, W6.2 image-size reduction (583 MB → ~200 MB) if deferred from v1.0.
+- **v1.2 — Layer 3 foundation:** Kuzu graph memory + bi-temporal metadata (cohesive architectural step, ship together).
+- **v1.3 — Layer 2 synthesis:** workspace-dream skill, cross-project compile pass, ADR topic compile.
+- **v1.x ongoing:** examples bundle (OpenAI Agents SDK / Responses API, LangChain, npm client reference), OpenClaw integration addon, cross-device markdown sync (after sync-mechanism decision), Codex lifecycle hooks (gated on upstream — issue #17).
+- **v2.0 — Reshape:** multi-tenant + cloud-vs-self-hosted decision (substantial public-API change requiring deprecation cycle).
+
+Power-user features tracked in [#16](https://github.com/goldenwo/universal-memory/issues/16) (vault web UI) and [#17](https://github.com/goldenwo/universal-memory/issues/17) (Codex lifecycle hooks, upstream-gated).
 
 ## Near-term — plug-and-play arc
 
