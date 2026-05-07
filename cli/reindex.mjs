@@ -116,6 +116,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import readline from 'node:readline';
+import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { ProviderError } from '../server/lib/provider/errors.mjs';
 import { umAdd } from '../server/lib/add.mjs';
 
@@ -1017,4 +1019,456 @@ export async function runPhase7Report({
   }
 
   return { archivedTo };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// CLI orchestrator (v0.8 — closes the "no end-to-end driver" gap that
+// blocked DE12). Public functions:
+//   - createMemoryInstance({env, collection})   — build a Memory bound to a
+//     specific qdrant collection. Mirrors server/mem0-mcp-http.mjs:initMemory
+//     but parameterised so reindex can construct two instances (old + new).
+//   - createVaultAdapter({vaultDir, oldMemory, userId}) — { dir, read(id) }
+//     adapter consumed by phase 2/3. Reads .md from disk for vault-backed
+//     entries; synthesizes fact-only payloads from oldMemory.getAll().
+//   - wrapOldMemoryForReindex(memory, {userId, vaultPaths}) — adds a
+//     listFactIds() method to a Memory instance (the snapshot-time set
+//     diff against vault paths). Phase 2's contract.
+//   - createQdrantClient({env}) — exposes updateAlias() for phase 5.
+//   - runReindex(opts) — sequences phases 1→7, handles --resume + SIGINT.
+//   - main(argv) — argv parsing + adapter construction + exit-code mapping.
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a Memory instance configured from env + an explicit collection name.
+ * Mirrors `initMemory()` in `server/mem0-mcp-http.mjs` but parameterised so
+ * reindex can construct old + new instances without mutating module state.
+ *
+ * @param {object} params
+ * @param {object} params.env         - Process env (UM_EMBEDDING_PROVIDER, etc.).
+ * @param {string} params.collection  - Qdrant collection name.
+ * @returns {Promise<object>}         - Live mem0ai Memory instance.
+ */
+export async function createMemoryInstance({ env, collection }) {
+  const { Memory } = await import('mem0ai/oss');
+  const { getEmbedderConfig } = await import('../server/lib/embed.mjs');
+  const { getFactsLlmConfig } = await import('../server/lib/facts.mjs');
+  return new Memory({
+    version: 'v1.1',
+    embedder: getEmbedderConfig(env),
+    vectorStore: {
+      provider: 'qdrant',
+      config: {
+        host: env.QDRANT_HOST || 'localhost',
+        port: parseInt(env.QDRANT_PORT || '6333', 10),
+        collectionName: collection,
+      },
+    },
+    llm: getFactsLlmConfig(env),
+    historyDbPath: env.MEM0_HISTORY_DB_PATH || '/tmp/mem0-history.db',
+  });
+}
+
+/**
+ * Vault adapter exposing { dir, read(id) }.
+ *
+ * Resolves IDs via two paths:
+ *   - `*.md` IDs → read file from `vaultDir`, return `parseFrontmatter()` shape.
+ *   - non-`.md` IDs (mem0 UUIDs for fact-only entries) → look up in
+ *     `oldMemory.getAll({userId})` and synthesize `{frontmatter:{id, ...meta},
+ *     body:<text>}`. Mirrors the test-stub shape used in
+ *     `cli/test/reindex-phase2-3.test.mjs`.
+ *
+ * The fact-only fallback caches the `getAll()` result on first miss so
+ * repeated lookups don't re-pull the entire collection.
+ */
+export async function createVaultAdapter({ vaultDir, oldMemory, userId }) {
+  const { parseFrontmatter } = await import('../server/lib/frontmatter.mjs');
+  let factCache = null;
+  async function loadFactCache() {
+    if (factCache != null) return factCache;
+    const all = await oldMemory.getAll({ userId });
+    const byId = new Map();
+    for (const item of all?.results || all || []) {
+      if (item?.id) byId.set(item.id, item);
+    }
+    factCache = byId;
+    return factCache;
+  }
+  return {
+    dir: vaultDir,
+    async read(id) {
+      if (id.endsWith('.md')) {
+        const abs = path.join(vaultDir, id);
+        const text = await fs.readFile(abs, 'utf8');
+        return parseFrontmatter(text);
+      }
+      const cache = await loadFactCache();
+      const item = cache.get(id);
+      if (!item) {
+        throw new Error(`vault.read: fact-only ID not found in oldMemory: ${id}`);
+      }
+      return {
+        frontmatter: { id, ...(item.metadata || {}) },
+        body: item.memory ?? item.text ?? '',
+      };
+    },
+  };
+}
+
+/**
+ * Wrap a Memory instance with `listFactIds()`. Returns the IDs in the
+ * old collection that do NOT correspond to a vault-backed `.md` entry —
+ * those are the fact-only entries that phase 2 must add to the snapshot.
+ *
+ * Implemented as a Proxy so all other Memory methods pass through unchanged.
+ */
+export function wrapOldMemoryForReindex(memory, { userId, vaultPaths }) {
+  const vaultPathSet = new Set((vaultPaths || []).map((p) => p.replace(/\\/g, '/')));
+  return new Proxy(memory, {
+    get(target, prop, receiver) {
+      if (prop === 'listFactIds') {
+        return async () => {
+          const all = await target.getAll({ userId });
+          const out = [];
+          for (const item of all?.results || all || []) {
+            const id = item?.id;
+            if (!id) continue;
+            const metaId = item?.metadata?.id;
+            if (typeof metaId === 'string' && metaId.endsWith('.md') && vaultPathSet.has(metaId)) continue;
+            out.push(id);
+          }
+          return out;
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/**
+ * Build the qdrant adapter consumed by phase 5. Wraps
+ * `@qdrant/js-client-rest`'s `updateCollectionAliases` into a simpler
+ * `updateAlias({alias, collection})` shape.
+ *
+ * The two-action transaction (delete-old + create-new) is atomic on
+ * Qdrant's side — that's the entire reason we use an alias rather than
+ * mutating a fixed collection name.
+ */
+export async function createQdrantClient({ env }) {
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const client = new QdrantClient({
+    host: env.QDRANT_HOST || 'localhost',
+    port: parseInt(env.QDRANT_PORT || '6333', 10),
+  });
+  return {
+    async updateAlias({ alias, collection }) {
+      await client.updateCollectionAliases({
+        actions: [
+          { delete_alias: { alias_name: alias } },
+          { create_alias: { alias_name: alias, collection_name: collection } },
+        ],
+      });
+    },
+  };
+}
+
+/**
+ * Top-level reindex orchestrator. Sequences phases 1→7, handles `--resume`,
+ * wires the SIGINT handler around phase 3. Constructs all adapters from
+ * env/opts.
+ *
+ * Resume contract (per spec §6.3): each phase's atomic-advance writes
+ * `phase_completed=N` and any phase outputs in a single checkpoint write.
+ * On `--resume`, we read the checkpoint and skip every phase whose
+ * `phase_completed` covers it. Phases 1 and 7 are idempotent and may
+ * re-run; phases 2-6 are gated.
+ *
+ * @param {object} opts
+ * @param {object} [opts.env]              - process.env-shaped object.
+ * @param {string} opts.vaultDir           - Absolute UM_VAULT_DIR path.
+ * @param {string} opts.checkpointPath     - Resume checkpoint file path.
+ * @param {boolean} [opts.confirm]         - Skip phase 1 interactive prompt.
+ * @param {boolean} [opts.resume]          - Read existing checkpoint.
+ * @param {boolean} [opts.noServerProbe]   - Skip optional UM server up-check.
+ * @param {boolean} [opts.keepOld]         - Don't archive old collection.
+ * @param {boolean} [opts.dryRun]          - Run phase 1 only.
+ * @param {object}  [opts.io]              - { stdout, stderr } streams.
+ * @returns {Promise<{exitCode:number, message?:string}>}
+ */
+export async function runReindex(opts) {
+  const {
+    env = process.env,
+    vaultDir,
+    checkpointPath,
+    confirm = false,
+    resume = false,
+    noServerProbe = false,
+    keepOld = false,
+    dryRun = false,
+    io = { stdout: process.stdout, stderr: process.stderr },
+  } = opts;
+
+  if (!vaultDir) throw new Error('runReindex: vaultDir is required (set UM_VAULT_DIR)');
+  if (!checkpointPath) throw new Error('runReindex: checkpointPath is required');
+
+  const userId = env.MEM0_USER_ID || RESOLVED_USER_ID;
+  const alias = env.QDRANT_COLLECTION || 'memories';
+
+  const { createCheckpointClient } = await import('./lib/checkpoint.mjs');
+  const { createStampClient } = await import('../server/lib/embedding-stamp.mjs');
+  const pricing = await import('../server/lib/pricing.mjs');
+
+  const checkpoint = createCheckpointClient(checkpointPath);
+  let state = null;
+
+  if (resume) {
+    state = await checkpoint.read();
+    if (!state) {
+      io.stderr.write('[reindex] --resume passed but no checkpoint found; nothing to resume\n');
+      return { exitCode: 1, message: 'no checkpoint to resume from' };
+    }
+    io.stdout.write(`[reindex] resuming from checkpoint (phase_completed=${state.phase_completed})\n`);
+  }
+
+  // oldMemory talks to the alias (current production collection); its stamp
+  // gives phase 1 its `fromStamp`.
+  const oldMemory = await createMemoryInstance({ env, collection: alias });
+  const oldStamp = createStampClient({ memory: oldMemory });
+
+  // Phase 1 — validate. Persists `state` (incl. target_collection) to the
+  // checkpoint. Skipped on resume.
+  if (!state || state.phase_completed < 1) {
+    const result = await runPhase1Validate({
+      stamp: oldStamp,
+      env,
+      pricing,
+      noServerProbe,
+      confirmInteractive: !confirm,
+      checkpoint,
+    });
+    if (!result.proceed) {
+      return { exitCode: 0, message: 'no-op (already on target shape)' };
+    }
+    state = await checkpoint.read();
+  }
+
+  if (dryRun) {
+    return { exitCode: 0, message: 'dry-run complete (phase 1 only)' };
+  }
+
+  // newMemory targets the new collection (state.target_collection).
+  const newMemory = await createMemoryInstance({
+    env,
+    collection: state.target_collection,
+  });
+  const newStamp = createStampClient({ memory: newMemory });
+  const vault = await createVaultAdapter({ vaultDir, oldMemory, userId });
+
+  // Phase 2 — snapshot. Walks vault + lists fact-only IDs from oldMemory.
+  if (state.phase_completed < 2) {
+    const vaultPaths = await listVaultMarkdownPaths(vaultDir);
+    const oldMemoryWrapped = wrapOldMemoryForReindex(oldMemory, { userId, vaultPaths });
+    await runPhase2Snapshot({
+      vault: { dir: vaultDir },
+      oldMemory: oldMemoryWrapped,
+      state,
+      checkpoint,
+    });
+  }
+
+  // Phase 3 — rebuild. SIGINT handler installed for graceful cancel.
+  if (state.phase_completed < 3) {
+    const controller = new AbortController();
+    const dispose = installSigintHandler({ controller, out: io.stderr });
+    try {
+      const result = await runPhase3Rebuild({
+        newMemory,
+        state,
+        checkpoint,
+        vault,
+        abortSignal: controller.signal,
+      });
+      if (result?.cancelled) {
+        const processed = state.processed_ids?.length ?? 0;
+        io.stderr.write(
+          `[reindex] cancelled by SIGINT after ${processed} entries — rerun with --resume to continue\n`,
+        );
+        return { exitCode: 0, message: 'cancelled by SIGINT' };
+      }
+    } finally {
+      dispose();
+    }
+  }
+
+  // Phase 4 — write the new collection's stamp.
+  if (state.phase_completed < 4) {
+    await runPhase4Stamp({
+      memory: newMemory,
+      stamp: newStamp,
+      targetCollection: state.target_collection,
+      newStampShape: state.to,
+      state,
+      checkpoint,
+    });
+  }
+
+  // Phase 5 — alias swap. Phase 5 reads the stamp first as a defensive guard.
+  if (state.phase_completed < 5) {
+    const qdrant = await createQdrantClient({ env });
+    await runPhase5Swap({
+      qdrant,
+      alias,
+      targetCollection: state.target_collection,
+      stamp: newStamp,
+      state,
+      checkpoint,
+    });
+  }
+
+  // Phase 6 — verify alias resolves to a stamped + correctly-sized collection.
+  if (state.phase_completed < 6) {
+    const qdrant = await createQdrantClient({ env });
+    const expectedCount =
+      (state.snapshot?.vault_paths?.length || 0) +
+      (state.snapshot?.fact_ids?.length || 0);
+    const result = await runPhase6Verify({
+      memory: newMemory,
+      stamp: newStamp,
+      qdrant,
+      alias,
+      newStampShape: state.to,
+      expectedCount,
+      state,
+      checkpoint,
+    });
+    if (!result.matches) {
+      io.stderr.write(
+        `[reindex] WARNING phase 6 verify mismatch: expected=${result.expected} actual=${result.actual}\n`,
+      );
+    }
+  }
+
+  // Phase 7 — report (idempotent; archives old collection unless --keep-old).
+  await runPhase7Report({
+    state,
+    checkpoint,
+    statePath: checkpointPath,
+    io,
+    keepOld,
+  });
+
+  return { exitCode: 0 };
+}
+
+/**
+ * CLI entry. Parses argv via node:util parseArgs; calls runReindex; maps
+ * outcome to an exit code. Importable as a function for testing.
+ */
+export async function main(argv = process.argv) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv.slice(2),
+      options: {
+        confirm: { type: 'boolean' },
+        resume: { type: 'boolean' },
+        'no-server-probe': { type: 'boolean' },
+        'keep-old': { type: 'boolean' },
+        'checkpoint-path': { type: 'string' },
+        'dry-run': { type: 'boolean' },
+        help: { type: 'boolean', short: 'h' },
+      },
+      allowPositionals: false,
+    });
+  } catch (err) {
+    process.stderr.write(`error: ${err.message}\nrun with --help for usage\n`);
+    return 2;
+  }
+  const values = parsed.values;
+
+  if (values.help) {
+    process.stdout.write(
+      `um reindex — re-embed all entries under a new provider/model.
+
+Usage: node cli/reindex.mjs [--confirm] [--resume] [--no-server-probe]
+                            [--keep-old] [--dry-run] [--checkpoint-path PATH]
+
+Required env: UM_EMBEDDING_PROVIDER, UM_EMBEDDING_MODEL, UM_VAULT_DIR.
+Optional env: MEM0_USER_ID (default 'test-user'), QDRANT_HOST (localhost),
+              QDRANT_PORT (6333), QDRANT_COLLECTION (default 'memories').
+
+Flags:
+  --confirm             skip the phase-1 estimate prompt
+  --resume              read checkpoint; skip already-completed phases
+  --no-server-probe     skip optional UM server health check
+  --keep-old            do not archive old collection (phase 7)
+  --dry-run             run phase 1 only (validate + estimate)
+  --checkpoint-path     state file path (default: ./reindex.checkpoint.json)
+  --help, -h            print this message
+
+Exit codes:
+  0  reindex complete (or cancelled cleanly via SIGINT)
+  1  validation failure or unrecoverable error
+  2  argv parse error
+`,
+    );
+    return 0;
+  }
+
+  const env = process.env;
+  if (!env.UM_VAULT_DIR) {
+    process.stderr.write('error: UM_VAULT_DIR not set\n');
+    return 1;
+  }
+  if (!env.UM_EMBEDDING_PROVIDER || !env.UM_EMBEDDING_MODEL) {
+    process.stderr.write(
+      'error: UM_EMBEDDING_PROVIDER and UM_EMBEDDING_MODEL must be set\n',
+    );
+    return 1;
+  }
+
+  const checkpointPath =
+    values['checkpoint-path'] ||
+    path.join(process.cwd(), 'reindex.checkpoint.json');
+
+  try {
+    const result = await runReindex({
+      env,
+      vaultDir: env.UM_VAULT_DIR,
+      checkpointPath,
+      confirm: !!values.confirm,
+      resume: !!values.resume,
+      noServerProbe: !!values['no-server-probe'],
+      keepOld: !!values['keep-old'],
+      dryRun: !!values['dry-run'],
+    });
+    process.stdout.write(
+      result.message ? `[reindex] ${result.message}\n` : '[reindex] reindex complete\n',
+    );
+    return result.exitCode;
+  } catch (err) {
+    process.stderr.write(`[reindex] FATAL: ${err.message}\n`);
+    if (err instanceof ProviderError && err.message && /resume/i.test(err.message)) {
+      // ProviderError already includes the resume hint in its message.
+    } else if (err.stack) {
+      process.stderr.write(err.stack + '\n');
+    }
+    return 1;
+  }
+}
+
+// CLI guard — only run main() when invoked directly (`node cli/reindex.mjs`).
+// Importing this module in tests does not trigger main(). Robust against
+// process.argv[1] being undefined (e.g. node -e "...").
+const _calledDirectly =
+  typeof process.argv[1] === 'string' &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+if (_calledDirectly) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      process.stderr.write(`[reindex] uncaught: ${err?.stack || err}\n`);
+      process.exit(1);
+    },
+  );
 }
