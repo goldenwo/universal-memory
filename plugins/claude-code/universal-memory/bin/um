@@ -64,6 +64,7 @@ Subcommands:
   tail [N]              — batch tail of raw captures
   forget <id>           — forget a memory
   supersede <old> <new> — supersede one memory with another
+  reindex [flags]       — re-embed all entries under a new provider/model
   --help | -h           — this help
   --version | -v        — version info
 
@@ -85,7 +86,7 @@ case "$1" in
 Usage: um <subcommand> [args]
 
 Subcommands:
-  search, state, recent, list, capture, tail, forget, supersede
+  search, state, recent, list, capture, tail, forget, supersede, reindex
 
 See docs/um-cli.md for full contract.
 EOF
@@ -122,6 +123,21 @@ EOF
       exit 1
     fi
     exec "$SUBCMD_BIN" "${@:2}"
+    ;;
+  reindex)
+    # cli/reindex.mjs is shipped in the dev tree (not copied to ~/.claude/plugins/)
+    # so this dispatcher only works when UM is installed in symlink/dev mode OR
+    # when _UM_REPO_ROOT explicitly points at a repo checkout. Copy-mode installs
+    # can invoke it directly: `node /path/to/repo/cli/reindex.mjs --help`.
+    REPO_ROOT="${_UM_REPO_ROOT:-$(cd "$PLUGIN_DIR/../../.." 2>/dev/null && pwd)}"
+    REINDEX_MJS="$REPO_ROOT/cli/reindex.mjs"
+    if [ ! -r "$REINDEX_MJS" ]; then
+      echo "um reindex: cli/reindex.mjs not found at $REINDEX_MJS" >&2
+      echo "    set _UM_REPO_ROOT=/path/to/your/repo, or run directly:" >&2
+      echo "    node /path/to/repo/cli/reindex.mjs --help" >&2
+      exit 1
+    fi
+    exec node "$REINDEX_MJS" "${@:2}"
     ;;
   *)
     echo "um: unknown subcommand: $1" >&2
