@@ -30,6 +30,22 @@ jobs:
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository
 
+    # v1.0 W1.4 — UM_IMAGE pinned at the job level so every docker
+    # compose call in this job (install.sh's _compose wrapper AND
+    # direct invocations in later steps like the rate-limit reconfig)
+    # resolves to the same locally-built image. UM_BUILD_LOCAL=1 on
+    # the install step triggers the build via docker-compose.build.yml,
+    # which tags the output as `universal-memory-server:local` —
+    # matching this UM_IMAGE value. Without this pin, direct compose
+    # calls would resolve to the GHCR pull-default and 401 (image is
+    # private until the repo flips public).
+    #
+    # Post-public-flip: this can flip to a specific released tag
+    # (e.g. UM_IMAGE: ghcr.io/goldenwo/universal-memory-server:1.0.0)
+    # to exercise the pull path in CI as well.
+    env:
+      UM_IMAGE: universal-memory-server:local
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
