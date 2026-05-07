@@ -43,6 +43,12 @@ services:
     user: "${UM_CONTAINER_USER:-node}"
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
+      # Optional: persist mem0's history DB across container restarts.
+      # Default MEM0_HISTORY_DB_PATH is /tmp/mem0-history.db — ephemeral,
+      # cleared every restart. To keep mem0's edit/dedup history, uncomment
+      # the next line AND set MEM0_HISTORY_DB_PATH=/var/lib/mem0/history.db
+      # in .env. Host path './data/mem0-history' is created on first up.
+      # - ./data/mem0-history:/var/lib/mem0
     ports:
       - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"
     depends_on:
