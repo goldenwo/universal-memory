@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeLogger, getLogger, _setLogStreamForTest } from '../lib/logger.mjs';
+import { makeLogger, getLogger, _setLogStreamForTest, _resetKeyPatternsForTest } from '../lib/logger.mjs';
 
 test('pino redacts Authorization header in error context', () => {
   const captured = [];
@@ -76,6 +76,61 @@ test('PRODUCTION getLogger() applies value-based censor (sk-ant- in message)', (
   } finally {
     _setLogStreamForTest(null);
   }
+});
+
+// W6.4 hardening — UM_AUTH_TOKEN is `openssl rand -hex 32` (a 64-char
+// lowercase hex string), which is not matched by any of the four static
+// provider patterns. Adding a hex-64 catch-all would over-redact innocent
+// SHA digests; the chosen approach captures the active UM_AUTH_TOKEN value
+// at first emit and adds it as a literal-match pattern.
+test('R11 / W6.4 — active UM_AUTH_TOKEN redacted in arbitrary log strings', () => {
+  const fakeToken = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+  const prevToken = process.env.UM_AUTH_TOKEN;
+  process.env.UM_AUTH_TOKEN = fakeToken;
+  _resetKeyPatternsForTest(); // force re-read of UM_AUTH_TOKEN from env
+  try {
+    const captured = [];
+    const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+    log.error({ msg: `debug dump: token=${fakeToken} in error context` });
+    assert.equal(captured.length, 1, 'expected exactly one log line emitted');
+    assert.ok(
+      !JSON.stringify(captured).includes(fakeToken),
+      'UM_AUTH_TOKEN value must be redacted in arbitrary message strings',
+    );
+  } finally {
+    if (prevToken === undefined) delete process.env.UM_AUTH_TOKEN;
+    else process.env.UM_AUTH_TOKEN = prevToken;
+    _resetKeyPatternsForTest();
+  }
+});
+
+test('R11 / W6.4 — UM_AUTH_TOKEN absent or short (<16 chars) skips dynamic pattern', () => {
+  const prevToken = process.env.UM_AUTH_TOKEN;
+  // Absent
+  delete process.env.UM_AUTH_TOKEN;
+  _resetKeyPatternsForTest();
+  let captured = [];
+  let log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.error({ msg: 'plain message no token' });
+  assert.equal(captured.length, 1);
+  // Should not crash; static patterns still apply
+  assert.ok(JSON.stringify(captured).includes('plain message no token'));
+
+  // Short (defensive — don't redact a too-short value that would over-match)
+  process.env.UM_AUTH_TOKEN = 'short';
+  _resetKeyPatternsForTest();
+  captured = [];
+  log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.error({ msg: 'word containing short fragment' });
+  assert.equal(captured.length, 1);
+  assert.ok(
+    JSON.stringify(captured).includes('short'),
+    'sub-16-char UM_AUTH_TOKEN must NOT be added to redaction patterns',
+  );
+
+  if (prevToken === undefined) delete process.env.UM_AUTH_TOKEN;
+  else process.env.UM_AUTH_TOKEN = prevToken;
+  _resetKeyPatternsForTest();
 });
 
 test('PRODUCTION getLogger() redacts AIza Google key in URL', () => {

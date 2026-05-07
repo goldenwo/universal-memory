@@ -57,6 +57,28 @@ test('extractBearer with multiple Authorization headers — Node normalizes to f
   // Downstream compareTokens will reject this because it is not a legal token byte string.
 });
 
+// W6.4 hardening — compareTokens hashes inputs to fixed 32-byte digests
+// before timing-safe compare, so input length is no longer a timing channel.
+// The earlier scheme used `timingSafeEqual(expected, expected)` as a dummy
+// when received.length !== expected.length — correct in intent but used the
+// wrong operand. The hash-based scheme eliminates the issue entirely.
+test('compareTokens — drastically different lengths still return false (W6.4)', () => {
+  const tinyMismatch = compareTokens('a', 'a'.repeat(64));
+  const hugeMismatch = compareTokens('a'.repeat(10000), 'a'.repeat(64));
+  const longCorrect = compareTokens('a'.repeat(64), 'a'.repeat(64));
+  assert.equal(tinyMismatch, false);
+  assert.equal(hugeMismatch, false);
+  assert.equal(longCorrect, true);
+});
+test('compareTokens — null/undefined received does not crash (W6.4)', () => {
+  // Safety: defensive null-coalesce in compareTokens means a missing-token
+  // request (no Authorization header) ends up as `compareTokens(null, expected)`
+  // somewhere on the path. Should always return false (empty SHA-256 != real).
+  assert.equal(compareTokens(null, 'real-token'), false);
+  assert.equal(compareTokens(undefined, 'real-token'), false);
+  assert.equal(compareTokens('', 'real-token'), false);
+});
+
 test('compareTokens — first-byte-wrong vs last-byte-wrong timing within noise (median-of-7, 4 KiB tokens)', () => {
   // Token length 4096 (not 64): with short tokens, Buffer.from() allocation
   // cost dominates the byte-comparison cost, so a buggy byte-by-byte

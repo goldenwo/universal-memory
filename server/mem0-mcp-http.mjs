@@ -1781,7 +1781,16 @@ export function createRequestHandler(ctx = {}) {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
 	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-	res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+	// W6.4 — include Authorization in the allowlist so browser-origin
+	// clients (Custom GPT Actions, Claude.ai web connectors, third-party
+	// integrations) can send `Authorization: Bearer <token>`. Without it,
+	// the browser's CORS preflight rejects every authenticated request
+	// before it reaches our auth layer — a silent break for v1.0's
+	// public-facing API surface. Wildcard `Access-Control-Allow-Origin: *`
+	// is intentional and compatible with bearer tokens (browsers block
+	// `withCredentials` cookies on wildcard origin, but `Authorization`
+	// headers are not credentials in the CORS sense).
+	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
 	if (req.method === 'OPTIONS') {
 		res.writeHead(200);
