@@ -15,7 +15,10 @@
 set -euo pipefail
 
 DB="$HOME/.claude-mem/claude-mem.db"
-REPO_ROOT="E:/Projects/universal-memory"
+# Derive REPO_ROOT from git so the script works on any clone, not just the
+# original author's box. Falls back to a relative-path resolution if git is
+# unavailable (e.g. archived tarball without .git).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "$0")/../../.." && pwd))"
 FIXTURES_DIR="$REPO_ROOT/server/test/fixtures"
 RESEARCH_DIR="$REPO_ROOT/docs/research/2026-04-24-v0.6-verifications"
 SCHEMA_OUT="$RESEARCH_DIR/claude-mem-schema.sql"
