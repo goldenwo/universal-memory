@@ -1,0 +1,23 @@
+name: universal-memory
+
+# v1.0 build override — combines with docker-compose.yml to build the
+# memory-server image from local source rather than pulling from GHCR.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+#
+# Use cases:
+#   - Local development against uncommitted source changes
+#   - Offline / air-gapped environments where GHCR pull is impractical
+#   - CI builds that exercise the Dockerfile path itself
+#
+# The image tag (universal-memory-server:local) is intentionally distinct
+# from the GHCR-published tags so a build never silently shadows a pinned
+# UM_VERSION. install.sh forwards this override automatically when
+# UM_BUILD_LOCAL=1 is set in the environment.
+
+services:
+  memory-server:
+    build:
+      context: .
+    image: universal-memory-server:local
