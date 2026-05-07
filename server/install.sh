@@ -18,6 +18,25 @@ REPO_ROOT="${_UM_REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/
 ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
+
+# v1.0 W1.4 — image-mode detection. Default is pull-from-GHCR (fast, ~20s
+# first-run). Set UM_BUILD_LOCAL=1 in the calling environment to build
+# from local source instead (~2-5 min cold-build on slow hardware).
+#
+# The two docker-compose files compose: docker-compose.yml is the base
+# (pull mode); docker-compose.build.yml overrides `image:` with a
+# `build:` directive when stacked on top via `-f` chaining.
+#
+# This wrapper centralizes the file selection so every `docker compose`
+# call below honors the same mode without each site repeating the logic.
+_compose() {
+	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
+		docker compose -f "$COMPOSE_FILE" -f "$BUILD_OVERRIDE_FILE" "$@"
+	else
+		docker compose -f "$COMPOSE_FILE" "$@"
+	fi
+}
 
 info()  { printf '\033[1;34m[install]\033[0m %s\n' "$*"; }
 ok()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
@@ -83,6 +102,8 @@ if [ "${1:-}" = "--verify" ]; then
   echo ""
 
   # ── docker-up ──────────────────────────────────────────────────────────────
+  # _vfail uses the base compose file only — read-only `ps` doesn't care
+  # about the build override (image-mode detection is a build-time concern).
   _docker_ps_out=$(${_TIMEOUT_CMD:+$_TIMEOUT_CMD 10} docker compose -f "$COMPOSE_FILE" ps 2>/dev/null || true)
   if echo "$_docker_ps_out" | grep -qiE 'memory-server.*(Up|running)'; then
     _vpass "docker-up" "containers are Up"
@@ -836,8 +857,12 @@ _append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_defau
 if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
 	info "Skipping docker stack start (--skip-docker set)."
 else
-	info "Pulling / building images..."
-	docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/[compose] /'
+	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
+		info "Building images from local source (UM_BUILD_LOCAL=1)..."
+	else
+		info "Pulling images from GHCR (set UM_BUILD_LOCAL=1 to build from source)..."
+	fi
+	_compose up -d 2>&1 | sed 's/^/[compose] /'
 
 	# ─── Poll /health until ready ─────────────────────────────────────────────────
 	# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
@@ -856,7 +881,11 @@ else
 
 	if [ "$READY" != "1" ]; then
 		warn "Server did not become healthy within 180s."
-		warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
+		if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
+			warn "Check logs with: docker compose -f $COMPOSE_FILE -f $BUILD_OVERRIDE_FILE logs memory-server"
+		else
+			warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
+		fi
 		exit 1
 	fi
 fi
