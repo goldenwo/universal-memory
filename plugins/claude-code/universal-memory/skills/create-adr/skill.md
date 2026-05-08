@@ -23,7 +23,7 @@ The `ARGUMENTS:` line contains the user's input after `/adr`. Examples:
 Apply these rules **in this exact order**:
 
 1. **`--help` or `-h`** appears anywhere in args, OR args is empty → invoke `create-adr.sh help`.
-2. **First non-flag token is the literal `sync`** AND second token matches `^[0-9]{4,}$` → invoke `create-adr.sh sync <NNNN>`. (Do NOT treat `/adr 2026 my notes` as sync — only the literal token `sync` triggers sync mode.)
+2. **First non-flag token is the literal `sync`** AND second token matches `^[0-9]+$` → invoke `create-adr.sh sync <NNNN> [--no-path]`. (Do NOT treat `/adr 2026 my notes` as sync — only the literal token `sync` triggers sync mode.) Sync mode only accepts `--no-path` as a flag — if the user passed `--commit` alongside `sync`, reply with `flag --commit is not valid for /adr sync (only --no-path is)` and STOP. Any positional tokens after `<NNNN>` (other than recognized flags) → reply with `unexpected extra arguments after sync NNNN: <tokens>` and STOP.
 3. **POSIX `--` end-of-flags terminator:** anything after `--` is treated as title content with no flag interpretation. `/adr -- --literal title` → title is `--literal title`.
 4. **Recognized flags** (extract before assembling title): `--commit`, `--no-path`. Anything else starting with `--` (other than `--help` handled above and `--` terminator) → reply with `unknown flag: <flag> (recognized: --commit, --no-path, --help)` and STOP — do NOT invoke the helper.
 5. **Remaining tokens form the title.** Whitespace-join them. Strip surrounding shell-quote characters if the args came pre-quoted.
