@@ -36,7 +36,7 @@ Stable API, externally usable, publicly announced. **No new features** — the c
 
 | Workstream | Status |
 |---|---|
-| W1 Distribution & build (GHCR publishing, dual-mode compose, install wizard image-mode) | Mostly complete — `release.yml` already publishing; W1.2/W1.4 in progress; W1.3 fresh-VM smoke deferred |
+| W1 Distribution & build (GHCR publishing, dual-mode compose, install wizard image-mode) | Mostly complete — `release.yml` publishing; W1.2/W1.4 ✅ shipped (PR #54); W1.3 fresh-VM smoke best-effort done via GHCR API (real-VM still TBD) |
 | W2 External-user walkthrough | W2.1 walkthrough doc shipped (PR #52); W2.2 fresh-eyes runner pending human |
 | W3 ADR invocation model (slash command vs keyword vs batch) | ✅ Decided: Option A (`/adr` slash command) — see ADR-0005 |
 | W4 Public-repo readiness (secrets audit, CONTRIBUTING, SECURITY, README, LICENSE, GitHub topics) | ✅ Complete |

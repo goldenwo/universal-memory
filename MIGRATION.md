@@ -39,7 +39,7 @@ For operators consolidating from any pre-v0.6 version:
 |---|---|---|
 | `/api/*` | Yes — `Authorization: Bearer <UM_AUTH_TOKEN>` | Loopback bypass (`127.0.0.1` only, no forwarded headers) is on by default; disable with `UM_ALLOW_LOOPBACK_NOAUTH=false` |
 | `/mcp` | Yes — same as `/api/*` | Same loopback bypass |
-| `/metrics` | Loopback-only | Set `UM_ALLOW_METRICS_PUBLIC=true` to expose externally (put it behind your own auth proxy if you do) |
+| `/metrics` | Loopback-only | Set `UM_METRICS_LOOPBACK_ONLY=false` to expose externally; `UM_METRICS_AUTH_REQUIRED=true` is auto-on when off-loopback (put behind your own auth proxy if exposing publicly) |
 | `/health` | No | Liveness probe; intentionally unauthenticated |
 | `/openapi.yaml` | No | Schema endpoint; safe to expose |
 
