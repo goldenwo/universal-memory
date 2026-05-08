@@ -44,7 +44,11 @@ The cumulative arc that v1.0 ships, by version:
 
 ### Docs
 
-- **`docs/walkthrough/`** new directory. macOS walkthrough is the first; linux + windows walkthroughs are future-version files.
+- **`docs/walkthrough/`** new directory with three platform walkthroughs:
+  - `macos-solo-dev.md` (PR #52, 68318df) — primary, macOS-verified
+  - `linux-solo-dev.md` — derived from macOS; GNU `stat`/`ss` adaptations + docker-group note
+  - `windows-solo-dev.md` — derived from Linux; WSL2-primary path; native PowerShell deferred to v1.1+
+  Both mirrors are unverified on their target platforms and explicitly invite W2.2 runner feedback for paper cuts.
 - **MIGRATION.md `v0.7 → v0.8` and `v0.8 → v1.0` sections** — operator-facing notes per release transition. `v0.8 → v1.0` covers the distribution-shape change (pull-by-default), the W6.4 hardening trio, the cumulative bearer-auth posture summary, and the formalized post-v1.0 support window.
 - **`server/.env.example`** — new "Image / version pin" section documents `UM_VERSION`, `UM_IMAGE`, `UM_BUILD_LOCAL` knobs. New "Mem0 history DB" guidance documents the persistent volume-mount pair. (PR #51 + this PR.)
 - **15 GitHub topics applied** for discoverability: `ai-memory`, `llm`, `memory`, `claude`, `claude-code`, `mcp`, `model-context-protocol`, `codex-cli`, `mem0`, `qdrant`, `self-hosted`, `markdown`, `rag`, `semantic-search`, `session-continuity`.
