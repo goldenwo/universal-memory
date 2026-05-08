@@ -271,27 +271,49 @@ info "Step 2 passed: raw capture size = ${RAW_SIZE} bytes (5 appends)"
 # ===========================================================================
 # Step 3: Run session-end.sh — verify summary + state.md written
 # ===========================================================================
+# Issue #47 mitigation (2026-05-08): live-OpenAI mode occasionally returns
+# empty/malformed output. session-end.sh handles this gracefully ("returned
+# empty, keeping existing state.md") and exits 0 — but on the FIRST session
+# there's no existing state.md to keep, so the file never gets created and
+# Step 3's [ -f "$STATE_FILE" ] check fails. Production users retry this
+# naturally by running another session; the test now matches that pattern
+# with up to 3 attempts. Mocked mode (UM_CONTINUITY_LIVE=0) succeeds on
+# attempt 1 unconditionally — the retry is a no-op there.
 info "Step 3: running session-end.sh (first session)"
-reset_call_counter
 
-SESSION_END_ERR=$(UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/session-end.sh" 2>&1) \
-  || { echo "$SESSION_END_ERR" | tail -40 >&2; fail "session-end.sh exited non-zero"; }
-
-# On any Step 3 failure below, dump session-end output FIRST so CI logs reveal
+# On any Step 3 failure below, dump LAST session-end output so CI logs reveal
 # what update-state / summarize emitted before the assertion that tripped.
 _dump_session_end_on_fail() {
   echo "--- session-end stderr+stdout (last 40 lines) ---" >&2
-  echo "$SESSION_END_ERR" | tail -40 >&2
+  echo "${SESSION_END_ERR:-<empty>}" | tail -40 >&2
   echo "--- end session-end output ---" >&2
 }
 
-# Verify session summary file written
-[ -d "$SUMMARY_DIR" ] || { _dump_session_end_on_fail; fail "sessions dir not created: $SUMMARY_DIR"; }
+SESSION_END_ATTEMPTS=3
+SESSION_END_ERR=""
+for attempt in $(seq 1 $SESSION_END_ATTEMPTS); do
+  reset_call_counter
+  SESSION_END_ERR=$(UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/session-end.sh" 2>&1) \
+    || { echo "$SESSION_END_ERR" | tail -40 >&2; fail "session-end.sh exited non-zero on attempt $attempt"; }
+
+  if [ -f "$STATE_FILE" ]; then
+    [ "$attempt" -gt 1 ] && info "Step 3: state.md created on attempt $attempt (issue #47 transient cleared)"
+    break
+  fi
+
+  if [ "$attempt" -lt "$SESSION_END_ATTEMPTS" ]; then
+    warn "Step 3: state.md not created on attempt $attempt — likely issue #47 transient LLM empty/malformed output; retrying"
+    sleep 2
+  fi
+done
+
+# Verify session summary file written (after retry loop)
+[ -d "$SUMMARY_DIR" ] || { _dump_session_end_on_fail; fail "sessions dir not created after $SESSION_END_ATTEMPTS attempts: $SUMMARY_DIR"; }
 SUMMARY_COUNT=$(find "$SUMMARY_DIR" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-[ "$SUMMARY_COUNT" -ge 1 ] || { _dump_session_end_on_fail; fail "no summary file created (count=$SUMMARY_COUNT)"; }
+[ "$SUMMARY_COUNT" -ge 1 ] || { _dump_session_end_on_fail; fail "no summary file created after $SESSION_END_ATTEMPTS attempts (count=$SUMMARY_COUNT)"; }
 
 # Verify state.md written and has required headers
-[ -f "$STATE_FILE" ] || { _dump_session_end_on_fail; fail "state.md not created at $STATE_FILE"; }
+[ -f "$STATE_FILE" ] || { _dump_session_end_on_fail; fail "state.md not created at $STATE_FILE after $SESSION_END_ATTEMPTS attempts (issue #47)"; }
 grep -q "## Current focus" "$STATE_FILE"   || fail "state.md missing '## Current focus'"
 grep -q "## Recent decisions" "$STATE_FILE" || fail "state.md missing '## Recent decisions'"
 grep -q "## Next actions" "$STATE_FILE"    || fail "state.md missing '## Next actions'"
@@ -428,12 +450,32 @@ TRANSCRIPT_2=$(cat "$FIXTURES_DIR/sample-transcript-2.jsonl")
 echo "$TRANSCRIPT_2" | UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/stop.sh" \
   || fail "stop.sh failed for transcript 2"
 
-reset_call_counter
+# Issue #47 mitigation: same retry pattern as Step 3 — second session-end
+# can also hit the empty/malformed LLM output flake. Step 6 differs from
+# Step 3 in that state.md ALREADY exists from Step 3, so empty output here
+# would just keep the existing state.md (a soft pass with stale content).
+# Rather than letting Step 7 verify against a stale file, retry until the
+# LLM produces real output OR we exhaust attempts.
+SESSION_END_2_ERR=""
+STATE_FILE_PRE_MTIME=$(stat -c '%Y' "$STATE_FILE" 2>/dev/null || stat -f '%m' "$STATE_FILE" 2>/dev/null || echo 0)
+for attempt in $(seq 1 $SESSION_END_ATTEMPTS); do
+  reset_call_counter
+  SESSION_END_2_ERR=$(UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/session-end.sh" 2>&1) \
+    || fail "second session-end.sh exited non-zero on attempt $attempt"
 
-SESSION_END_2_ERR=$(UM_PROJECT="$UM_PROJECT" bash "$HOOKS_DIR/session-end.sh" 2>&1) \
-  || fail "second session-end.sh exited non-zero"
+  STATE_FILE_POST_MTIME=$(stat -c '%Y' "$STATE_FILE" 2>/dev/null || stat -f '%m' "$STATE_FILE" 2>/dev/null || echo 0)
+  if [ "$STATE_FILE_POST_MTIME" != "$STATE_FILE_PRE_MTIME" ]; then
+    [ "$attempt" -gt 1 ] && info "Step 6: state.md updated on attempt $attempt (issue #47 transient cleared)"
+    break
+  fi
 
-# Verify state.md still exists and was updated
+  if [ "$attempt" -lt "$SESSION_END_ATTEMPTS" ]; then
+    warn "Step 6: state.md mtime unchanged on attempt $attempt — likely issue #47; retrying"
+    sleep 2
+  fi
+done
+
+# Verify state.md still exists (the Step 7 grep checks pin content)
 [ -f "$STATE_FILE" ] || fail "state.md gone after second session-end"
 
 NEW_SUMMARY_COUNT=$(find "$SUMMARY_DIR" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
