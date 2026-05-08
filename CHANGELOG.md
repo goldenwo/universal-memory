@@ -18,8 +18,8 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
   [mem0-patch] neo4j-driver not installed (peer-skipped) — expected on boot per W6.2
   ```
   Filter with `docker logs ... | grep -v '\[mem0-patch\]'` if log noise matters; the lines are stable across boots and version-pinned to `mem0ai@2.4.6`. The `— expected on boot per W6.2` suffix is grep-able to this CHANGELOG entry.
-- **Forward-compat for adding a peer-skipped provider later:** if an operator wants to enable e.g. Mistral, they can run a custom build that includes `npm install @mistralai/mistralai`. The corresponding `[mem0-patch]` warn disappears (the dynamic import resolves at boot). The patch is forward-compatible with re-adding any of the 12 peer-skipped packages without modification.
-- **Reconciliation procedure when mem0ai is bumped:** see `server/Dockerfile`'s in-file comment block and `docs/plans/2026-05-07-w6.2-image-size-spec.md` §Patch reconciliation procedure. Source-hash pin lives at `server/patches/mem0ai+2.4.6.source.sha256`.
+- **Forward-compat for adding a peer-skipped provider later (source-build operators only):** the dynamic-import shape resolves at boot if the package is present in `node_modules/`, so an operator running a **custom source build** (`UM_BUILD_LOCAL=1` or directly editing `server/Dockerfile`) can add e.g. `npm install @mistralai/mistralai` to `package.json` AND remove the corresponding line from the Dockerfile's surgical-rm list — the `[mem0-patch] @mistralai/mistralai` warn then disappears at boot. **Operators extending the published GHCR image** (`FROM ghcr.io/goldenwo/universal-memory-server:1.0.0`) cannot just `RUN npm install <pkg>` because the package directory was already removed at the upstream deps stage; they would need to fork the Dockerfile.
+- **Reconciliation procedure when mem0ai is bumped:** see `server/patches/README.md` (durable, in-repo). The source-hash pin at `server/patches/mem0ai+2.4.6.source.sha256` is verified at Docker build time — a mismatched hash fails the build LOUDLY rather than silently applying the patch against a mutated tarball.
 
 ---
 
