@@ -4,7 +4,13 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v1.0 stabilization
+## [Unreleased]
+
+_No changes yet. v1.x cleanup queue accumulates here as it lands._
+
+---
+
+## [1.0.0] — 2026-05-08
 
 **v1.0 is the stabilization + public-release milestone.** No new features relative to v0.8; the work is making the existing surface externally consumable: distribution shape, public-repo polish, security review, walkthrough validation, marketplace listing, and release ceremony.
 
@@ -605,7 +611,8 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...HEAD
+[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...v1.0.0
 [0.8.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...v0.6.0-alpha
