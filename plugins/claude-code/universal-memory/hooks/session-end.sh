@@ -239,8 +239,16 @@ fi
 # ---------------------------------------------------------------------------
 # Step 11: Reindex session summary (best-effort, skip on error)
 # Do NOT reindex state.md — server rejects type=state with 400
+# v1.1: source the shared endpoint resolver. Falls back to legacy inline
+# resolution if the lib file is absent (pre-v1.1 install).
 # ---------------------------------------------------------------------------
-endpoint="${UM_ENDPOINT:-http://localhost:6335}"
+if [ -r "$LIB_DIR/endpoint.sh" ]; then
+  # shellcheck source=lib/endpoint.sh
+  source "$LIB_DIR/endpoint.sh"
+  endpoint=$(um_resolve_endpoint)
+else
+  endpoint="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
+fi
 rel_path="sessions/$project/${summary_id}.md"
 
 curl -sfm 10 -X POST "$endpoint/api/reindex" \
