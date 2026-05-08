@@ -55,12 +55,13 @@ The wizard will prompt for:
 - **`MEM0_USER_ID`** — any string. This is your namespace. `me` works fine for a single-user install.
 - **`OPENAI_API_KEY`** — paste your `sk-…` key.
 - **`UM_VAULT_DIR`** — where your vault lives on the host. The default `~/.um/vault` is fine.
-- **`UM_MOUNT_MODE`** — pick `ro` for now (the server only reads the vault; hooks write to it directly from your shell). You can flip to `rw` later if you want MCP write tools enabled.
+
+The vault is mounted **read-only** by default (server reads, hooks write directly from your shell). To enable MCP write tools later, set `UM_MOUNT_MODE=rw` in your environment before re-running the wizard — `UM_MOUNT_MODE` is an advanced env override, not a wizard prompt.
 
 When the wizard finishes, it runs `docker compose up -d` and polls `/health`. Expected last line:
 
 ```
-[install] memory-server is healthy. Endpoint: http://localhost:6335
+[install] Server is healthy: {"ok":true,"memories":0}
 ```
 
 If you see anything else, jump to [Troubleshooting § Step 2](#step-2-issues).
@@ -167,15 +168,15 @@ When you're done, `/exit` or close the session normally.
 ### Verify capture happened
 
 ```bash
-ls -la ~/.um/vault/raw/<your-project-name>/
-# Expected: a 2026-MM-DDTHH-MM-SS-SSSZ-<sha>.jsonl file (raw capture)
+ls -la ~/.um/vault/captures/<your-project-name>/raw/
+# Expected: a 2026-MM-DD.md file (one daily file, append-only Markdown)
 ```
 
 The exact subdirectory name depends on the project's `package.json`, git remote, or directory name (in that order of preference). If you don't see a project-named subdir, look for `unknown/` — that's the fallback.
 
 ```bash
-wc -l ~/.um/vault/raw/<your-project-name>/*.jsonl
-# Expected: at least a few lines — one JSONL record per assistant message
+wc -l ~/.um/vault/captures/<your-project-name>/raw/*.md
+# Expected: at least a few lines — one section per assistant message, Markdown-formatted
 ```
 
 ---
@@ -295,12 +296,16 @@ Expected layout:
 
 ```
 ~/.um/vault/
-├── raw/
+├── captures/
 │   └── <your-project-name>/
-│       └── 2026-05-07T*-<sha>.jsonl    # raw capture files (one per session)
+│       └── raw/
+│           └── 2026-05-07.md            # daily raw-capture files (append-only Markdown)
+├── sessions/
+│   └── <your-project-name>/
+│       └── *.md                         # per-session LLM-synthesized summaries
 ├── state/
 │   └── <your-project-name>/
-│       └── state.md                     # current synthesized state
+│       └── state.md                     # current synthesized state-of-play
 └── docs/                                # authored documents (ADRs etc.) — empty for now
 ```
 

@@ -597,7 +597,8 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...HEAD
+[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...HEAD
+[0.8.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.4.0-alpha...v0.5.0-alpha
