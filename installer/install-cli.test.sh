@@ -116,10 +116,16 @@ assert_contains "T1: PATH guard in bashrc" "$(cat "$T1_HOME/.bashrc")" ".local/b
 
 # um --version: symlink points at CLI_DIR/um; PLUGIN_DIR = CLI_DIR/.. = DATA_DIR
 # which has .claude-plugin/plugin.json installed above.
+# Match a semver core (N.N.N) anywhere in the output — version-naming-agnostic
+# (passes for 0.x-alpha, 1.0.0, 1.1.0-rc.1, etc.). Stronger than substring check.
 T1_VER_EXIT=0
 T1_VER=$(env PATH="$T1_HOME/.local/bin:$PATH" HOME="$T1_HOME" UM_LIB_DIR="$T1_HOME/.local/share/um/lib" um --version 2>&1) || T1_VER_EXIT=$?
 assert_exit_zero "T1: um --version exits 0" "$T1_VER_EXIT"
-assert_contains "T1: um --version prints a version" "$T1_VER" "alpha"
+if [[ "$T1_VER" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]; then
+  pass "T1: um --version prints a semver"
+else
+  fail_test "T1: um --version prints a semver" "expected N.N.N pattern, got: '${T1_VER:0:200}'"
+fi
 
 # ─── T2: server install ran first with key; CLI install env UNSET → block overwritten empty ─
 echo ""
