@@ -7,7 +7,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=installer/lib/endpoint.sh
+# shellcheck source=endpoint.sh
 source "$SCRIPT_DIR/endpoint.sh"
 
 PASS=0
