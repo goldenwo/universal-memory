@@ -135,12 +135,29 @@ um_compose_with_welcome() {
 
 # ---------------------------------------------------------------------------
 # 2. Bail if endpoint unset — emit rubric-only additionalContext
+# v1.1: source the shared endpoint resolver. Falls back to inline
+# resolution if the lib file is absent (pre-v1.1 install). Resolver emits
+# a deprecation warn on stderr if UM_ENDPOINT is the only one set.
 # ---------------------------------------------------------------------------
-if [ -z "${UM_ENDPOINT:-}" ]; then
-  ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
-  python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
-    "$ac_out" 2>/dev/null || echo '{}'
-  exit 0
+if [ -r "$LIB_DIR/endpoint.sh" ]; then
+  # shellcheck source=lib/endpoint.sh
+  source "$LIB_DIR/endpoint.sh"
+  if ! um_endpoint_configured; then
+    ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
+    python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
+      "$ac_out" 2>/dev/null || echo '{}'
+    exit 0
+  fi
+  endpoint=$(um_resolve_endpoint)
+else
+  # Fail-soft fallback for pre-v1.1 installs.
+  if [ -z "${UM_SERVER_URL:-}${UM_ENDPOINT:-}" ]; then
+    ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
+    python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
+      "$ac_out" 2>/dev/null || echo '{}'
+    exit 0
+  fi
+  endpoint="${UM_SERVER_URL:-${UM_ENDPOINT:-}}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -190,8 +207,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5. Read branch — fetch state.md via API (synchronous, 3s timeout)
+# `endpoint` is set above (resolver path or fallback).
 # ---------------------------------------------------------------------------
-endpoint="${UM_ENDPOINT}"
 response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
 
 # Single Python invocation: parse state, apply staleness rules, emit JSON output.
