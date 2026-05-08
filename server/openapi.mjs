@@ -156,7 +156,7 @@ const SCHEMAS = {
       schema_version: { type: 'integer', description: 'UM metadata schema version (always 1 in v0.3)' },
       type: {
         type: 'string',
-        description: 'Document type (e.g. session_summary, authored, state)',
+        description: 'Document type (e.g. session_summary, authored, state, adr)',
       },
       id: {
         type: 'string',

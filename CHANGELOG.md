@@ -6,6 +6,16 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.1) — `/adr` skill: Architectural Decision Records (W1.1)
+
+- **New Claude Code skill `/adr`** at `~/.claude/skills/create-adr/`. Authors an ADR in the consumer's repo, commits it via git, and registers an atomic decision fact with the universal-memory server. Three subcommands: `/adr "<title>"` to create; `/adr sync NNNN` to re-register an existing ADR (idempotent recovery for hooks-failure / network-failure cases); `/adr --help`.
+- **Architecture: markdown skill + bash helper.** `skill.md` is the LLM-facing prose contract; `create-adr.sh` is the bash helper that does all safety-critical work (file write via `set -C` noclobber + symlink reject, git commit via `git commit -F <tmpfile>`, HTTP POST via `curl`). Sources the W1.5 endpoint resolver directly — no language port, no drift risk.
+- **401 = warn-only for `/adr` create.** A 401 from `memory_add` after the file is written + committed becomes a WARNING line on the third row of success output (`WARNING: not registered with universal-memory — auth failed (set UM_AUTH_TOKEN, see <repo>/server/.env). Run /adr sync NNNN after fixing.`). Exit code 0. **Deliberate asymmetry:** `/adr sync` returns non-zero on 401 — sync IS the recovery command, so a 401 there means auth is still broken and should fail loud.
+- **`.um-self-host` sentinel** at the universal-memory repo root gates the self-application guard: when the skill detects this file (or `package.json#name === "universal-memory-server"`) it skips git commit + memory_add POST, writing only the file. `--commit` flag overrides for explicit self-host commits.
+- **`metadata.type: "adr"`** is now an enumerated value of the OpenAPI `MemoryMetadata.type` description for retrieval-side filtering.
+- **Title sanitization:** strips C0/C1 controls + DEL; rejects Unicode bidi-override codepoints (CVE-2021-42574 "Trojan Source"); slug clamped to lowercase ASCII alphanumerics + hyphens, max 60 chars, `untitled` fallback for empty results.
+- **Auto-numbering:** `max+1` across `docs/decisions/NNNN-*.md`, gap-preserving (`0001, 0003 → 0004`), 4+ digit zero-pad with no upper cap. One collision retry then loud fail.
+
 ### Changed (v1.1) — `UM_ENDPOINT` → `UM_SERVER_URL` consolidation (W1.5)
 
 - **`UM_ENDPOINT` is now deprecated; rename to `UM_SERVER_URL`.** The old variable is still respected with a one-line deprecation warning on stderr; it will be removed in v1.2.

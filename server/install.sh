@@ -918,6 +918,22 @@ EOM
 	unset _added_count
 fi
 
+# ─── v1.1 fresh-install hint: /adr skill ────────────────────────────────────
+# Only on fresh installs (no prior .env). Quiet under UM_QUIET=1. Skipped on
+# upgrades to avoid noise — existing operators learn about /adr via CHANGELOG.
+if [ "${UM_WAS_EXISTING_INSTALL:-0}" = "0" ] && [ -z "${UM_QUIET:-}" ]; then
+	cat <<'EOM'
+
+[install] New in v1.1: the `/adr` Claude Code skill
+  • From any session: /adr "<title>"   → writes docs/decisions/NNNN-<slug>.md,
+                                          commits, and registers atomically
+                                          with the universal-memory server.
+  • /adr sync NNNN   → re-register an existing ADR (recovery for net failures)
+  • /adr --help      → flags + usage
+  • Install path: ~/.claude/skills/create-adr/ (manual copy from the plugin)
+EOM
+fi
+
 # ─── Success banner ──────────────────────────────────────────────────────────
 _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
