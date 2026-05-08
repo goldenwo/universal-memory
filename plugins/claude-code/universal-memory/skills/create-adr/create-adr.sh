@@ -21,16 +21,28 @@ if [ -r "$_UM_LIB_DIR/endpoint.sh" ]; then
   source "$_UM_LIB_DIR/endpoint.sh"
 fi
 if ! command -v um_resolve_endpoint >/dev/null 2>&1; then
+  # Fallback used only when ~/.local/share/um/lib/endpoint.sh is absent
+  # (pre-v1.1 install state). Mirrors the lib's behavior including the
+  # both-set-with-different-values conflict warn so operators upgrading
+  # from a partial install still see the deprecation/conflict signals.
   um_resolve_endpoint() {
     local default_url="http://localhost:6335"
-    if [ -n "${UM_SERVER_URL:-}" ]; then
-      printf '%s\n' "$UM_SERVER_URL"
-    elif [ -n "${UM_ENDPOINT:-}" ]; then
-      printf 'warning: UM_ENDPOINT is deprecated; rename to UM_SERVER_URL.\n' >&2
-      printf '%s\n' "$UM_ENDPOINT"
-    else
-      printf '%s\n' "$default_url"
+    local server_url="${UM_SERVER_URL:-}"
+    local endpoint="${UM_ENDPOINT:-}"
+    if [ -n "$server_url" ]; then
+      if [ -n "$endpoint" ] && [ "$endpoint" != "$server_url" ]; then
+        printf 'warning: UM_ENDPOINT and UM_SERVER_URL both set with different values; using UM_SERVER_URL=%s. UM_ENDPOINT is deprecated, remove it (will be removed in v1.2).\n' \
+          "$server_url" >&2
+      fi
+      printf '%s\n' "$server_url"
+      return 0
     fi
+    if [ -n "$endpoint" ]; then
+      printf 'warning: UM_ENDPOINT is deprecated; rename to UM_SERVER_URL. Will be removed in v1.2 (see MIGRATION.md).\n' >&2
+      printf '%s\n' "$endpoint"
+      return 0
+    fi
+    printf '%s\n' "$default_url"
   }
 fi
 
@@ -83,24 +95,57 @@ _slug() {
   fi
 }
 
+_fm_value() {
+  # Trim leading/trailing whitespace from a frontmatter "key: value" tail,
+  # then if the result is wrapped in double-quotes (matching what
+  # `_yaml_dq` emits), strip them and unescape `\\` and `\"`. Plain
+  # (un-quoted) scalars round-trip unchanged. Single-quote form not
+  # supported because `_yaml_dq` never emits it.
+  local s="$1"
+  s=$(printf '%s' "$s" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  case "$s" in
+    \"*\")
+      s="${s#\"}"
+      s="${s%\"}"
+      s="${s//\\\"/\"}"
+      s="${s//\\\\/\\}"
+      ;;
+  esac
+  printf '%s' "$s"
+}
+
+_yaml_dq() {
+  # Double-quote a YAML scalar: escape `\` and `"`. Caller wraps in quotes.
+  # We always quote the scalars where the value is operator-supplied (title,
+  # decided_by) so a `:` followed by space — common in ADR titles like
+  # "Adopt mem0: a vector store" — doesn't break YAML parsing per the
+  # YAML 1.2 plain-scalar rules.
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '"%s"' "$s"
+}
+
 _render_frontmatter() {
   local nnnn="$1"
   local slug="$2"
   local title="$3"
-  local decided_at decided_by id
+  local decided_at decided_by id title_q decided_by_q
   decided_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
   decided_by=$(git config user.name 2>/dev/null || true)
   id=$(printf '%04d-%s' "$nnnn" "$slug")
+  title_q=$(_yaml_dq "$title")
+  decided_by_q=$(_yaml_dq "$decided_by")
   cat <<EOF
 ---
 schema_version: 1
 id: $id
-title: $title
+title: $title_q
 status: Proposed
 supersedes: []
 superseded_by: null
 decided_at: $decided_at
-decided_by: $decided_by
+decided_by: $decided_by_q
 ---
 
 # $title
@@ -222,12 +267,30 @@ _git_commit_adr() {
   local title="$2"
   local target="$3"
   local short_sha
-  local git_dir tmpfile
+  local git_dir
   git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
-  tmpfile=$(printf '%s/COMMIT_EDITMSG.create-adr.%d' "$git_dir" "$$")
-  trap 'rm -f "$tmpfile"' RETURN
+  # _GIT_TMPFILE is a deliberate global so the EXIT trap (set below) still
+  # has the path in scope after the function returns and `tmpfile` falls
+  # out of `local` scope. Without this, `set -u` makes the trap die with
+  # "tmpfile: unbound variable" and that error leaks into the success
+  # output as a 4th line.
+  _GIT_TMPFILE=$(printf '%s/COMMIT_EDITMSG.create-adr.%d' "$git_dir" "$$")
+  # RETURN cleans up on normal returns; EXIT covers signal-interrupt
+  # (Ctrl-C between git add and git commit) so the tmpfile doesn't leak.
+  # Use parameter-default to keep the trap robust even if _GIT_TMPFILE is
+  # somehow unset by the time the trap fires.
+  trap 'rm -f "${_GIT_TMPFILE:-}"' RETURN EXIT
+  local tmpfile="$_GIT_TMPFILE"
   printf 'docs(adr): %04d %s\n' "$nnnn" "$title" > "$tmpfile" || return 1
-  git add -- "$target" >/dev/null 2>&1 || return 1
+  local add_out add_rc
+  add_out=$(git add -- "$target" 2>&1)
+  add_rc=$?
+  if [ "$add_rc" -ne 0 ]; then
+    # Surface the actual git error (e.g., gitignore match) so the operator
+    # has a breadcrumb instead of just "git commit failed."
+    printf 'git add failed:\n%s\n' "$add_out" >&2
+    return 1
+  fi
   local commit_out
   commit_out=$(git commit -F "$tmpfile" 2>&1)
   local commit_rc=$?
@@ -288,8 +351,15 @@ _post_memory_add() {
       printf 'Registered with universal-memory (%s)' "$endpoint"
       return 0
       ;;
-    401)
-      printf 'WARNING: not registered with universal-memory — auth failed (set UM_AUTH_TOKEN, see <repo>/server/.env). Run /adr sync %s after fixing.' "$id"
+    401|403)
+      # Auth-class: bucket 403 with 401. Both mean "fix auth and sync."
+      printf 'WARNING: not registered with universal-memory — auth failed (HTTP %s; set UM_AUTH_TOKEN, see <repo>/server/.env). Run /adr sync %s after fixing.' "$http_code" "$id"
+      return 0
+      ;;
+    400|422)
+      # Client-error class that re-running won't fix. Suggesting `/adr sync`
+      # would mislead — this is a payload/contract issue worth filing.
+      printf 'WARNING: not registered with universal-memory (HTTP %s; payload rejected). Re-running will not help; check server logs and/or file an issue at https://github.com/goldenwo/universal-memory/issues.' "$http_code"
       return 0
       ;;
     429|5*)
@@ -425,9 +495,23 @@ EOF
 }
 
 cmd_sync() {
-  local nnnn="${1:-}"
+  local nnnn="" no_path_flag=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-path)  no_path_flag=1; shift ;;
+      --)         shift; break ;;
+      -*)         _die 64 "unknown flag for sync: $1 (recognized: --no-path)" ;;
+      *)
+        if [ -z "$nnnn" ]; then
+          nnnn="$1"; shift
+        else
+          _die 64 "unexpected extra argument for sync: $1 (use --no-path or end of args)"
+        fi
+        ;;
+    esac
+  done
   case "$nnnn" in
-    ''|*[!0-9]*) _die 64 "usage: /adr sync NNNN (e.g. /adr sync 0042)" ;;
+    ''|*[!0-9]*) _die 64 "usage: /adr sync NNNN [--no-path] (e.g. /adr sync 0042)" ;;
   esac
   local id
   id=$(printf '%04d' "$((10#$nnnn))")
@@ -463,20 +547,15 @@ cmd_sync() {
     [ "$in_fm" -eq 1 ] || continue
     case "$line" in
       'schema_version:'*)
-        fm_schema_version=$(printf '%s' "${line#schema_version:}" \
-          | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//') ;;
+        fm_schema_version=$(_fm_value "${line#schema_version:}") ;;
       'id:'*)
-        fm_id=$(printf '%s' "${line#id:}" \
-          | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//') ;;
+        fm_id=$(_fm_value "${line#id:}") ;;
       'title:'*)
-        fm_title=$(printf '%s' "${line#title:}" \
-          | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//') ;;
+        fm_title=$(_fm_value "${line#title:}") ;;
       'status:'*)
-        fm_status=$(printf '%s' "${line#status:}" \
-          | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//') ;;
+        fm_status=$(_fm_value "${line#status:}") ;;
       'decided_at:'*)
-        fm_decided_at=$(printf '%s' "${line#decided_at:}" \
-          | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//') ;;
+        fm_decided_at=$(_fm_value "${line#decided_at:}") ;;
     esac
   done < "$adr_file"
 
@@ -491,13 +570,30 @@ cmd_sync() {
   local endpoint token
   endpoint=$(um_resolve_endpoint)
   token=$(_resolve_auth_token)
-  local esc_title esc_target esc_toplevel
+  # Match cmd_create's adr_id shape: just the leading 4-digit prefix, NOT
+  # the full `NNNN-slug` from frontmatter.id. Server-side reconciliation
+  # between create + sync rounds depends on the same adr_id key.
+  local fm_adr_id="${fm_id%%-*}"
+  case "$fm_adr_id" in
+    ''|*[!0-9]*) _die 65 "$adr_file: malformed id field; expected leading 4-digit prefix, got '$fm_id'" ;;
+  esac
+  local esc_title esc_target esc_toplevel esc_id esc_status esc_decided_at
   esc_title=$(_json_escape "$fm_title")
   esc_target=$(_json_escape "$adr_file")
   esc_toplevel=$(_json_escape "$toplevel")
+  # Frontmatter values are operator-controllable (an attacker who lands a
+  # crafted ADR file via PR could inject extra metadata fields once the
+  # operator runs `/adr sync`). Escape every field that flows into JSON.
+  esc_id=$(_json_escape "$fm_adr_id")
+  esc_status=$(_json_escape "$fm_status")
+  esc_decided_at=$(_json_escape "$fm_decided_at")
+  local repo_path_field=""
+  if [ "$no_path_flag" -eq 0 ]; then
+    repo_path_field=$(printf '"repo_path":"%s",' "$esc_toplevel")
+  fi
   local payload
-  payload=$(printf '{"text":"%s","metadata":{"schema_version":1,"type":"adr","adr_id":"%s","adr_status":"%s","repo_path":"%s","decided_at":"%s","file_path":"%s"}}' \
-    "$esc_title" "$fm_id" "$fm_status" "$esc_toplevel" "$fm_decided_at" "$esc_target")
+  payload=$(printf '{"text":"%s","metadata":{"schema_version":1,"type":"adr","adr_id":"%s","adr_status":"%s",%s"decided_at":"%s","file_path":"%s"}}' \
+    "$esc_title" "$esc_id" "$esc_status" "$repo_path_field" "$esc_decided_at" "$esc_target")
   local curl_out http_code
   curl_out=$(mktemp)
   local curl_args=(
@@ -516,22 +612,26 @@ cmd_sync() {
   rm -f "$curl_out"
   case "$http_code" in
     2*)
-      printf 'Re-registered ADR-%s with universal-memory (%s)\n' "$fm_id" "$endpoint"
+      printf 'Re-registered ADR-%s with universal-memory (%s)\n' "$fm_adr_id" "$endpoint"
       return 0
       ;;
-    401)
+    401|403)
       # DELIBERATE asymmetry vs cmd_create: sync IS the recovery command,
-      # so a 401 here means the operator's auth config is still broken.
-      _die 77 "auth failed (HTTP 401) re-registering ADR-${fm_id}; set UM_AUTH_TOKEN (see <repo>/server/.env) and re-run"
+      # so an auth failure here means the operator's auth config is still
+      # broken. Loud-fail surfaces "you still need to fix UM_AUTH_TOKEN."
+      _die 77 "auth failed (HTTP $http_code) re-registering ADR-${fm_adr_id}; set UM_AUTH_TOKEN (see <repo>/server/.env) and re-run"
+      ;;
+    400|422)
+      _die 65 "payload rejected (HTTP $http_code) re-registering ADR-${fm_adr_id}; this is not retryable — check server logs and/or file an issue"
       ;;
     429|5*)
-      _die 75 "transient failure re-registering ADR-${fm_id} (HTTP $http_code); retry later"
+      _die 75 "transient failure re-registering ADR-${fm_adr_id} (HTTP $http_code); retry later"
       ;;
     000)
-      _die 75 "request failed re-registering ADR-${fm_id}; server unreachable at $endpoint"
+      _die 75 "request failed re-registering ADR-${fm_adr_id}; server unreachable at $endpoint"
       ;;
     *)
-      _die 70 "unexpected HTTP $http_code re-registering ADR-${fm_id}"
+      _die 70 "unexpected HTTP $http_code re-registering ADR-${fm_adr_id}"
       ;;
   esac
 }

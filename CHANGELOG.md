@@ -6,6 +6,22 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (v1.1) — `/adr` skill paired-Opus review follow-up (W1.1)
+
+Post-merge paired-Opus review on PR #67 surfaced 1 BLOCKER + 5 IMP findings; this PR closes them out. No surface change for operators on the happy path; failure-mode and round-trip behavior is more correct.
+
+- **BLOCKER (B1) — YAML colon in title produced invalid frontmatter.** Common ADR titles like `"Adopt mem0: a vector store"` rendered as `title: Adopt mem0: a vector store` — valid bash heredoc, INVALID YAML (PyYAML rejects with `ScannerError`). The helper's loose `${line#title:}` parser silently round-tripped the broken file, so the breakage was invisible to `cmd_sync` but tripped every YAML-aware downstream consumer (CI lints, third-party ADR readers, the eventual `/adr supersede` tooling). Fix: `_yaml_dq` helper double-quotes title + decided_by always; new `_fm_value` parser unwraps the quoted form on `cmd_sync`. New regression test asserts round-trip via PyYAML.
+- **IMP (S1) — `cmd_sync` JSON injection via crafted ADR frontmatter.** `fm_id`, `fm_status`, and `fm_decided_at` flowed into the memory_add payload via `printf` with no escaping. A PR-merged ADR file with a crafted frontmatter (e.g., `decided_at: 2026-05-08", "evil_field": "yes`) injected arbitrary metadata fields when an operator ran `/adr sync NNNN`. Fix: pass all frontmatter values through `_json_escape`.
+- **IMP (S2) — `adr_id` shape mismatch between create + sync.** `cmd_create` POSTed `"adr_id":"0001"` (4-digit prefix), `cmd_sync` POSTed `"adr_id":"0001-sync-me"` (full slug). Server-side reconciliation between rounds for the same ADR couldn't match. Fix: `cmd_sync` extracts the leading 4-digit prefix from frontmatter `id:` and uses that.
+- **IMP (D1) — `cmd_sync` ignored `--no-path` privacy contract.** Operators who used `--no-path` on the original create couldn't replicate the privacy contract through sync. Fix: `cmd_sync` accepts `--no-path` and respects it.
+- **IMP (I1) — 403/400/422 fell through to a generic warn that misleads.** A 403 (auth-class) bucketed with the generic "re-run sync" message that operators take as actionable; 400/422 (payload-class) suggested "re-run sync" when re-running won't help. Fix: 403 buckets with 401 (auth-class with `set UM_AUTH_TOKEN` pointer); 400/422 surface `payload rejected; re-running will not help` with an issue-tracker pointer.
+- **IMP (I2) — Inline `um_resolve_endpoint` fallback omitted both-different conflict warn.** When both `UM_SERVER_URL` and `UM_ENDPOINT` were set with different values AND the W1.5 lib was absent (pre-v1.1 install), the fallback silently picked `UM_SERVER_URL` with no warning — diverging from the lib's behavior. Fix: ported the conflict-warn logic into the inline fallback so the parity contract holds.
+- **MIN — `git add` errors are now surfaced verbatim** in the helper's stderr (e.g., gitignore matches), giving operators a breadcrumb instead of just `git commit failed`.
+- **MIN — `_git_commit_adr` tmpfile cleanup hardened** with EXIT trap (in addition to RETURN) so signal-interrupt between `git add` and `git commit` doesn't leak the tmpfile.
+- **skill.md — explicit guidance** for `/adr --commit sync NNNN` (reject) and `/adr sync NNNN extra-junk` (reject).
+
+Test surface grew from 103 to 139 tests, including new round-trips: PyYAML parse of a colon-containing title, shell-metacharacter title pass-through, sync `--no-path`, sync extra-args / wrong-flag rejection, 403/422 bucket assertions, exact 3-line success-output count, empty `git config user.name`, padded `sync 0001`.
+
 ### Added (v1.1) — `/adr` skill: Architectural Decision Records (W1.1)
 
 - **New Claude Code skill `/adr`** at `~/.claude/skills/create-adr/`. Authors an ADR in the consumer's repo, commits it via git, and registers an atomic decision fact with the universal-memory server. Three subcommands: `/adr "<title>"` to create; `/adr sync NNNN` to re-register an existing ADR (idempotent recovery for hooks-failure / network-failure cases); `/adr --help`.
