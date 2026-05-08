@@ -100,6 +100,24 @@ jobs:
           chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
 
+      # W6.2 patch contract — the patch fires `[mem0-patch] <pkg> not
+      # installed (peer-skipped) — expected on boot per W6.2` warns at
+      # module load for each peer-skipped provider. mem0ai@2.4.6 has 14
+      # patched imports, of which 12 fire warns at runtime (better-sqlite3
+      # ×2 succeed because the package is retained for SQLiteManager).
+      # Asserting >= 12 (not = 12) so adding a future patched import in
+      # a mem0 bump doesn't break this gate; CHANGELOG/Dockerfile carry
+      # the canonical count. A regression to 0 = patch silently no-op'd
+      # (see spec §Test strategy "Boot tier" + spec Phase 1 step 4
+      # "patch-package returns success on no-op apply").
+      - name: Verify W6.2 patch fired (boot-tier [mem0-patch] count >= 12)
+        working-directory: server
+        run: |
+          set -o pipefail
+          timeout 30 sh -c 'until [ "$(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")" -ge 12 ]; do sleep 1; done' \
+            || { echo "::error::W6.2 patch contract regressed — expected >=12 [mem0-patch] log lines within 30s, got $(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")"; docker compose logs memory-server 2>&1 | tail -50; exit 1; }
+          echo "[ci] W6.2 patch contract OK ($(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]") [mem0-patch] log lines)"
+
       # v0.6 (Phase C C.6/C.7): rate limiter is per-IP token bucket with
       # default 60 RPM / 10 burst. Smoke fires dozens of /api/* calls in
       # quick succession from the runner's IP — well above 60 RPM — so the
@@ -135,6 +153,16 @@ jobs:
       - name: Install host node deps for unit tests
         working-directory: server
         run: npm ci
+
+      # W6.2: apply mem0ai patch on host so unit tests that import mem0
+      # exercise the same dynamic-import shape as the production image.
+      # The Dockerfile applies it during image build; this mirrors that
+      # for the host-test path. Spec anti-goal forbids `postinstall:
+      # patch-package` (which would auto-patch on every npm install);
+      # we invoke explicitly via a CI step instead.
+      - name: Apply mem0ai patch on host (W6.2 parity)
+        working-directory: server
+        run: npx patch-package
 
       - name: Run server unit tests
         working-directory: server
