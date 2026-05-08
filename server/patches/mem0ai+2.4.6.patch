@@ -1,0 +1,131 @@
+diff --git a/node_modules/mem0ai/dist/oss/index.mjs b/node_modules/mem0ai/dist/oss/index.mjs
+index caed7cb..5d54c16 100644
+--- a/node_modules/mem0ai/dist/oss/index.mjs
++++ b/node_modules/mem0ai/dist/oss/index.mjs
+@@ -358,7 +358,7 @@ var AnthropicLLM = class {
+ };
+ 
+ // src/oss/src/llms/groq.ts
+-import { Groq } from "groq-sdk";
++let Groq; try { ({ Groq } = await import("groq-sdk")); } catch (e) { console.warn("[mem0-patch] groq-sdk not installed (peer-skipped) — expected on boot per W6.2"); }
+ var GroqLLM = class {
+   constructor(config) {
+     const apiKey = config.apiKey || process.env.GROQ_API_KEY;
+@@ -396,7 +396,7 @@ var GroqLLM = class {
+ };
+ 
+ // src/oss/src/llms/mistral.ts
+-import { Mistral } from "@mistralai/mistralai";
++let Mistral; try { ({ Mistral } = await import("@mistralai/mistralai")); } catch (e) { console.warn("[mem0-patch] @mistralai/mistralai not installed (peer-skipped) — expected on boot per W6.2"); }
+ var MistralLLM = class {
+   constructor(config) {
+     if (!config.apiKey) {
+@@ -476,7 +476,7 @@ var MistralLLM = class {
+ };
+ 
+ // src/oss/src/vector_stores/memory.ts
+-import Database from "better-sqlite3";
++let Database; try { Database = (await import("better-sqlite3")).default; } catch (e) { console.warn("[mem0-patch] better-sqlite3 not installed (peer-skipped) — expected on boot per W6.2"); }
+ import fs2 from "fs";
+ import path2 from "path";
+ 
+@@ -903,7 +903,7 @@ var Qdrant = class {
+ };
+ 
+ // src/oss/src/vector_stores/vectorize.ts
+-import Cloudflare from "cloudflare";
++let Cloudflare; try { Cloudflare = (await import("cloudflare")).default; } catch (e) { console.warn("[mem0-patch] cloudflare not installed (peer-skipped) — expected on boot per W6.2"); }
+ var VectorizeDB = class {
+   constructor(config) {
+     this.client = null;
+@@ -1280,7 +1280,7 @@ var VectorizeDB = class {
+ };
+ 
+ // src/oss/src/vector_stores/redis.ts
+-import { createClient } from "redis";
++let createClient; try { ({ createClient } = await import("redis")); } catch (e) { console.warn("[mem0-patch] redis not installed (peer-skipped) — expected on boot per W6.2"); }
+ var DEFAULT_FIELDS = [
+   { name: "memory_id", type: "tag" },
+   { name: "hash", type: "tag" },
+@@ -1874,7 +1874,7 @@ var LMStudioLLM = class extends OpenAILLM {
+ };
+ 
+ // src/oss/src/vector_stores/supabase.ts
+-import { createClient as createClient2 } from "@supabase/supabase-js";
++let createClient2; try { ({ createClient: createClient2 } = await import("@supabase/supabase-js")); } catch (e) { console.warn("[mem0-patch] @supabase/supabase-js not installed (peer-skipped) — expected on boot per W6.2"); }
+ var SupabaseDB = class {
+   constructor(config) {
+     this.client = createClient2(config.supabaseUrl, config.supabaseKey);
+@@ -2117,7 +2117,7 @@ See the SQL migration instructions in the code comments.`
+ };
+ 
+ // src/oss/src/storage/SQLiteManager.ts
+-import Database2 from "better-sqlite3";
++let Database2; try { Database2 = (await import("better-sqlite3")).default; } catch (e) { console.warn("[mem0-patch] better-sqlite3 not installed (peer-skipped) — expected on boot per W6.2"); }
+ var SQLiteManager = class {
+   constructor(dbPath) {
+     ensureSQLiteDirectory(dbPath);
+@@ -2202,7 +2202,7 @@ var MemoryHistoryManager = class {
+ };
+ 
+ // src/oss/src/storage/SupabaseHistoryManager.ts
+-import { createClient as createClient3 } from "@supabase/supabase-js";
++let createClient3; try { ({ createClient: createClient3 } = await import("@supabase/supabase-js")); } catch (e) { console.warn("[mem0-patch] @supabase/supabase-js not installed (peer-skipped) — expected on boot per W6.2"); }
+ import { v4 as uuidv42 } from "uuid";
+ var SupabaseHistoryManager = class {
+   constructor(config) {
+@@ -2461,11 +2461,7 @@ var AzureOpenAIEmbedder = class {
+ };
+ 
+ // src/oss/src/llms/langchain.ts
+-import {
+-  AIMessage,
+-  HumanMessage,
+-  SystemMessage
+-} from "@langchain/core/messages";
++let AIMessage, HumanMessage, SystemMessage; try { ({ AIMessage, HumanMessage, SystemMessage } = await import("@langchain/core/messages")); } catch (e) { console.warn("[mem0-patch] @langchain/core/messages not installed (peer-skipped) — expected on boot per W6.2"); }
+ 
+ // src/oss/src/prompts/index.ts
+ import { z as z2 } from "zod";
+@@ -3067,7 +3063,7 @@ var LangchainEmbedder = class {
+ };
+ 
+ // src/oss/src/vector_stores/langchain.ts
+-import { Document } from "@langchain/core/documents";
++let Document; try { ({ Document } = await import("@langchain/core/documents")); } catch (e) { console.warn("[mem0-patch] @langchain/core/documents not installed (peer-skipped) — expected on boot per W6.2"); }
+ var LangchainVectorStore = class {
+   // Simple in-memory user ID
+   constructor(config) {
+@@ -3215,12 +3211,8 @@ var LangchainVectorStore = class {
+ };
+ 
+ // src/oss/src/vector_stores/azure_ai_search.ts
+-import {
+-  SearchClient,
+-  SearchIndexClient,
+-  AzureKeyCredential
+-} from "@azure/search-documents";
+-import { DefaultAzureCredential } from "@azure/identity";
++let SearchClient, SearchIndexClient, AzureKeyCredential; try { ({ SearchClient, SearchIndexClient, AzureKeyCredential } = await import("@azure/search-documents")); } catch (e) { console.warn("[mem0-patch] @azure/search-documents not installed (peer-skipped) — expected on boot per W6.2"); }
++let DefaultAzureCredential; try { ({ DefaultAzureCredential } = await import("@azure/identity")); } catch (e) { console.warn("[mem0-patch] @azure/identity not installed (peer-skipped) — expected on boot per W6.2"); }
+ var AzureAISearch = class {
+   constructor(config) {
+     this.serviceName = config.serviceName;
+@@ -3664,7 +3656,7 @@ var AzureAISearch = class {
+ };
+ 
+ // src/oss/src/vector_stores/pgvector.ts
+-import pkg from "pg";
++let pkg = {}; try { pkg = (await import("pg")).default; } catch (e) { console.warn("[mem0-patch] pg not installed (peer-skipped) — expected on boot per W6.2"); }
+ var { Client } = pkg;
+ var PGVector = class {
+   constructor(config) {
+@@ -4169,7 +4161,7 @@ var ConfigManager = class {
+ };
+ 
+ // src/oss/src/memory/graph_memory.ts
+-import neo4j from "neo4j-driver";
++let neo4j; try { neo4j = (await import("neo4j-driver")).default; } catch (e) { console.warn("[mem0-patch] neo4j-driver not installed (peer-skipped) — expected on boot per W6.2"); }
+ 
+ // src/oss/src/utils/bm25.ts
+ var BM25 = class {
