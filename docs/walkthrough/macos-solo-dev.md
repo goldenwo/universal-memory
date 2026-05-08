@@ -94,16 +94,28 @@ This installs `um` into your PATH. Verify:
 
 ```bash
 um --version
-um state me   # if you set MEM0_USER_ID=me; substitute your value
+um state                         # auto-resolves to git repo name or $UM_PROJECT
+# Or pass an explicit project name:
+um state my-project-name
 ```
 
-The `um state` call should return an empty/missing-state response — same reason as `memories: 0`. You haven't generated a state yet.
+`um state` takes a **project name** (not your user / namespace ID). With no argument it resolves from `$UM_PROJECT` or the git repo name. The call should return an empty/missing-state response — same reason as `memories: 0`. You haven't generated a state yet.
 
 ---
 
 ## Step 4: Install the Claude Code plugin
 
-In your home dir or any Claude-Code project, edit `~/.claude/settings.json`:
+Two supported paths — pick one:
+
+**Path A (recommended for first-time setup): bash installer.** From the repo root:
+
+```bash
+bash installer/install-plugin-cc.sh
+```
+
+This registers the plugin AND writes a managed shell-rc marker block (`UM_SERVER_URL`, `UM_LIB_DIR`, `UM_CLI_DIR`, PATH guard, `UM_AUTH_TOKEN` loader). After running it, source your shell rc or open a new terminal so the exports take effect.
+
+**Path B (Claude Code marketplace flow): manual JSON edit.** If you prefer to wire the plugin via Claude Code's marketplace UI without the bash installer:
 
 ```json
 {
@@ -118,17 +130,19 @@ In your home dir or any Claude-Code project, edit `~/.claude/settings.json`:
 }
 ```
 
-Reload Claude Code (close + reopen the CLI, or the IDE if you're using the IDE integration). Then enable the `universal-memory` plugin from the plugin list (`/plugin` slash command in Claude Code, then choose `enable`).
+Edit `~/.claude/settings.json`, reload Claude Code, then enable the plugin from `/plugin`. **Path B does NOT write the shell-rc marker block** — you'll need to manually export the env vars below for hooks to function.
 
 ### Set environment variables
 
 The plugin's hooks read these from your shell environment. Add to your `~/.zshenv` (or `~/.bashrc` if you use bash):
 
 ```bash
-export UM_ENDPOINT=http://localhost:6335
-export UM_VAULT_DIR=$HOME/.um/vault          # match what install.sh set
+export UM_ENDPOINT=http://localhost:6335     # consumed by hooks (session-start, user-prompt-submit)
+export UM_VAULT_DIR=$HOME/.um/vault           # match what install.sh set
 export UM_OPENAI_API_KEY=sk-...               # paste your key (or skip if OPENAI_API_KEY is already global)
 ```
+
+> **Note on `UM_ENDPOINT` vs `UM_SERVER_URL`:** the plugin's bash hooks (`session-start.sh`, `user-prompt-submit.sh`) read `UM_ENDPOINT`. The `um` CLI and managed marker block use `UM_SERVER_URL`. Both name the same concept; consolidation to a single canonical name is deferred to v1.1. For v1.0 keep both stable — manual `UM_ENDPOINT` export is required even if the marker block already set `UM_SERVER_URL`.
 
 The install wizard also generated `~/.um/auth-token` and wrote a marker-block trailer to your shell rc that auto-exports `UM_AUTH_TOKEN`. Confirm:
 
@@ -314,6 +328,13 @@ Add `~/.um/vault/` to your watched directories or `.gitignore` so it doesn't get
 
 **`docker compose up` fails with `port is already allocated`**
 Something else is on port `6335` (or `6333` for Qdrant). Find it: `lsof -i :6335`. Either stop the conflicting process or override the port via `MEM0_MCP_PORT` in `server/.env` and `UM_ENDPOINT` in your shell.
+
+**`docker compose pull` fails with `unauthorized` or `denied: requested access to the resource is denied`**
+You cloned the repo before the public-flip and the GHCR image isn't pullable yet. Set `UM_BUILD_LOCAL=1` and re-run install.sh — this builds the server image from source instead of pulling from GHCR:
+```bash
+UM_BUILD_LOCAL=1 bash install.sh
+```
+Once the public-flip lands, the GHCR image is pullable and you can switch back by unsetting `UM_BUILD_LOCAL`.
 
 **`/health` returns `503` or never responds**
 Look at the server log: `docker compose logs memory-server | tail -50`. Most common: missing `OPENAI_API_KEY`, missing `MEM0_USER_ID`, or Qdrant not yet ready (give it another 10s on slow hardware).
