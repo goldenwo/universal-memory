@@ -255,16 +255,36 @@ cd "$tmp" && git init -q ./fm_repo >/dev/null && cd fm_repo \
 fm=$(_render_frontmatter 42 foo-bar "Foo Bar")
 assert_contains "_render_frontmatter has schema_version" "$fm" "schema_version: 1"
 assert_contains "_render_frontmatter has id"             "$fm" "id: 0042-foo-bar"
-assert_contains "_render_frontmatter has title"          "$fm" "title: Foo Bar"
+assert_contains "_render_frontmatter has quoted title"   "$fm" 'title: "Foo Bar"'
 assert_contains "_render_frontmatter has status"         "$fm" "status: Proposed"
 assert_contains "_render_frontmatter has supersedes"     "$fm" "supersedes: []"
 assert_contains "_render_frontmatter has superseded_by"  "$fm" "superseded_by: null"
 assert_contains "_render_frontmatter has decided_at"     "$fm" "decided_at: "
-assert_contains "_render_frontmatter has decided_by"     "$fm" "decided_by: Test User"
+assert_contains "_render_frontmatter has quoted decided_by" "$fm" 'decided_by: "Test User"'
 assert_contains "_render_frontmatter has open delim"     "$fm" "---"
 assert_contains "_render_frontmatter has body header"    "$fm" "## Context"
 
 cd "$SCRIPT_DIR" >/dev/null || exit 1
+
+# ─── Unit tests: _yaml_dq + _fm_value round-trip ───────────────────────────
+echo ""
+echo "=== unit: _yaml_dq + _fm_value round-trip ==="
+
+assert_eq "_yaml_dq plain"     '"hello"'       "$(_yaml_dq 'hello')"
+assert_eq "_yaml_dq quote"     '"a\"b"'        "$(_yaml_dq 'a"b')"
+assert_eq "_yaml_dq backslash" '"a\\\\b"'      "$(_yaml_dq 'a\\b')"
+assert_eq "_yaml_dq colon"     '"foo: bar"'    "$(_yaml_dq 'foo: bar')"
+
+# Round-trip via _fm_value (parser unwraps + unescapes).
+for raw in 'plain' 'with "quote"' 'with \backslash' 'colon: in middle' 'mixed "x" \\ y'; do
+  q=$(_yaml_dq "$raw")
+  back=$(_fm_value " $q ")
+  assert_eq "round-trip <$raw>" "$raw" "$back"
+done
+
+# Unquoted plain values pass through unchanged.
+assert_eq "_fm_value unquoted plain"  "Proposed"  "$(_fm_value " Proposed ")"
+assert_eq "_fm_value trims whitespace"  "x"         "$(_fm_value "    x   ")"
 
 # ─── Unit tests: _json_escape ───────────────────────────────────────────────
 echo ""
@@ -587,7 +607,10 @@ PYEOF
     [ -s "$STUB_BODYF" ] && pass "INT11 sync POST captured" \
       || fail "INT11 sync POST captured" "body empty"
     body=$(head -1 "$STUB_BODYF")
-    assert_contains "INT11 payload adr_id" "$body" '"adr_id":"0001-sync-me"'
+    # Sync sends just NNNN (matching cmd_create's shape), NOT NNNN-slug.
+    # Server-side reconciliation between create + sync rounds depends on
+    # the same adr_id key.
+    assert_contains "INT11 payload adr_id (NNNN-only shape)" "$body" '"adr_id":"0001"'
     stop_stub
   else
     fail "INT11 stub start" "could not start"
@@ -637,6 +660,208 @@ EOF
   [ "$rc" != "0" ] && pass "INT13 invalid frontmatter rc!=0 (rc=$rc)" \
     || fail "INT13 invalid frontmatter rc!=0" "rc=0"
   assert_contains "INT13 missing-field message" "$out" "missing required field: id"
+
+  # ─── INT15: YAML colon in title round-trips through PyYAML ──────────────
+  echo ""
+  echo "--- INT15: title with colon round-trips through PyYAML ---"
+  if start_stub 200; then
+    crepo="$tmp/int15-repo"
+    setup_consumer_repo "$crepo"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" create --title "Adopt mem0: a vector store" 2>&1)
+    rc=$?
+    assert_rc "INT15 cmd_create rc=0" "0" "$rc"
+    adr_file="$crepo/docs/decisions/0001-adopt-mem0-a-vector-store.md"
+    [ -f "$adr_file" ] && pass "INT15 file written" \
+      || fail "INT15 file written" "missing $adr_file"
+    if [ -f "$adr_file" ]; then
+      # Validate YAML frontmatter parses cleanly via PyYAML. Captures
+      # the BLOCKER class (unquoted `:` in plain scalar).
+      yaml_out=$("$PYTHON" -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    text = f.read()
+parts = text.split('---', 2)
+fm = yaml.safe_load(parts[1])
+print(fm['title'])
+" "$adr_file" 2>&1)
+      yaml_rc=$?
+      assert_rc "INT15 PyYAML parse rc=0" "0" "$yaml_rc"
+      assert_eq "INT15 title round-trips" "Adopt mem0: a vector store" "$yaml_out"
+    fi
+    stop_stub
+  else
+    fail "INT15 stub start" "could not start"
+  fi
+
+  # ─── INT16: title with shell metacharacters preserved literally ──────────
+  echo ""
+  echo "--- INT16: shell metachar in title ---"
+  if start_stub 200; then
+    crepo="$tmp/int16-repo"
+    setup_consumer_repo "$crepo"
+    # Backticks, $(...), pipe, semicolon — must not execute, must round-trip.
+    # shellcheck disable=SC2016
+    # Single quotes are deliberate: we want the literal command-substitution
+    # syntax in the title, NOT the expanded result. The whole point of this
+    # test is that the helper passes them through without executing.
+    metachar_title='Title with $(echo HACK) and `id` and ; rm /'
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" create --title "$metachar_title" 2>&1)
+    rc=$?
+    assert_rc "INT16 cmd_create rc=0" "0" "$rc"
+    case "$out" in
+      *HACK*) fail "INT16 no command-substitution leak" "HACK appeared in output: $out" ;;
+      *) pass "INT16 no command-substitution leak" ;;
+    esac
+    body=$(head -1 "$STUB_BODYF" 2>/dev/null)
+    # shellcheck disable=SC2016
+    # Single quotes deliberate: we're searching for the literal characters
+    # `$(echo HACK)` in the captured payload — NOT expanding them.
+    case "$body" in
+      *'$(echo HACK)'*) pass "INT16 metachar preserved in payload" ;;
+      *) fail "INT16 metachar preserved in payload" "got: $body" ;;
+    esac
+    stop_stub
+  else
+    fail "INT16 stub start" "could not start"
+  fi
+
+  # ─── INT17: cmd_sync --no-path omits repo_path ──────────────────────────
+  echo ""
+  echo "--- INT17: cmd_sync --no-path ---"
+  if start_stub 200; then
+    crepo="$tmp/int17-repo"
+    setup_consumer_repo "$crepo"
+    ( cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+        bash "$HELPER" create --title "Sync no-path" >/dev/null 2>&1 )
+    : > "$STUB_BODYF"; : > "$STUB_AUTHF"; : > "$STUB_PATHF"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 1 --no-path 2>&1)
+    rc=$?
+    assert_rc "INT17 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    case "$body" in
+      *'"repo_path":'*) fail "INT17 sync omits repo_path" "found repo_path in: $body" ;;
+      *) pass "INT17 sync omits repo_path" ;;
+    esac
+    stop_stub
+  else
+    fail "INT17 stub start" "could not start"
+  fi
+
+  # ─── INT18: cmd_sync rejects extra positional + invalid flag ─────────────
+  echo ""
+  echo "--- INT18: cmd_sync rejects bad args ---"
+  crepo="$tmp/int18-repo"
+  setup_consumer_repo "$crepo"
+  out=$(cd "$crepo" && bash "$HELPER" sync 1 extra-junk 2>&1); rc=$?
+  assert_rc "INT18 sync extra-arg rc=64" "64" "$rc"
+  assert_contains "INT18 extra-arg message" "$out" "unexpected extra argument"
+
+  out=$(cd "$crepo" && bash "$HELPER" sync 1 --commit 2>&1); rc=$?
+  assert_rc "INT18 sync --commit rc=64" "64" "$rc"
+  assert_contains "INT18 --commit-rejected message" "$out" "unknown flag for sync"
+
+  # ─── INT19: 403 buckets with auth-class warn (cmd_create) ────────────────
+  echo ""
+  echo "--- INT19: 403 → auth-class warn ---"
+  if start_stub 403; then
+    crepo="$tmp/int19-repo"
+    setup_consumer_repo "$crepo"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" create --title "403 test" 2>&1)
+    rc=$?
+    assert_rc "INT19 cmd_create rc=0 (warn-only)" "0" "$rc"
+    assert_contains "INT19 auth-class WARNING" "$out" "auth failed"
+    assert_contains "INT19 token pointer"     "$out" "UM_AUTH_TOKEN"
+    stop_stub
+  else
+    fail "INT19 stub start" "could not start"
+  fi
+
+  # ─── INT20: 422 buckets with not-retryable warn (cmd_create) ─────────────
+  echo ""
+  echo "--- INT20: 422 → not-retryable warn ---"
+  if start_stub 422; then
+    crepo="$tmp/int20-repo"
+    setup_consumer_repo "$crepo"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" create --title "422 test" 2>&1)
+    rc=$?
+    assert_rc "INT20 cmd_create rc=0 (warn-only)" "0" "$rc"
+    assert_contains "INT20 payload-rejected text" "$out" "payload rejected"
+    case "$out" in
+      *"Re-running will not help"*) pass "INT20 not-retryable hint" ;;
+      *) fail "INT20 not-retryable hint" "got: $out" ;;
+    esac
+    stop_stub
+  else
+    fail "INT20 stub start" "could not start"
+  fi
+
+  # ─── INT21: success output is exactly 3 lines ──────────────────────────
+  echo ""
+  echo "--- INT21: success output is exactly 3 lines ---"
+  if start_stub 200; then
+    crepo="$tmp/int21-repo"
+    setup_consumer_repo "$crepo"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" create --title "line count" 2>&1)
+    rc=$?
+    assert_rc "INT21 cmd_create rc=0" "0" "$rc"
+    line_count=$(printf '%s' "$out" | grep -c '^')
+    assert_eq "INT21 success has exactly 3 lines" "3" "$line_count"
+    stop_stub
+  else
+    fail "INT21 stub start" "could not start"
+  fi
+
+  # ─── INT22: empty git config user.name ───────────────────────────────────
+  # Goal: assert _render_frontmatter falls back to `decided_by: ""` when
+  # `git config user.name` returns nothing. Use the self-host sentinel
+  # path so we skip git commit (which requires user.name/email on some
+  # git builds — particularly Linux CI runners). The frontmatter is
+  # written before any commit, so the assertion is unaffected.
+  echo ""
+  echo "--- INT22: empty user.name fallback ---"
+  crepo="$tmp/int22-repo"
+  isolated_home="$tmp/int22-home"
+  mkdir -p "$crepo" "$isolated_home"
+  ( cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 git init -q )
+  touch "$crepo/.um-self-host"  # triggers self-app skip → no commit
+  out=$(cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 \
+          bash "$HELPER" create --title "no name test" 2>&1)
+  rc=$?
+  assert_rc "INT22 cmd_create rc=0 (empty name)" "0" "$rc"
+  if [ -f "$crepo/docs/decisions/0001-no-name-test.md" ]; then
+    if grep -qE 'decided_by: ""' "$crepo/docs/decisions/0001-no-name-test.md"; then
+      pass "INT22 empty decided_by quoted"
+    else
+      fail "INT22 empty decided_by quoted" "got: $(grep decided_by "$crepo/docs/decisions/0001-no-name-test.md")"
+    fi
+  else
+    fail "INT22 file written" "missing"
+  fi
+
+  # ─── INT23: cmd_sync padded NNNN ─────────────────────────────────────────
+  echo ""
+  echo "--- INT23: cmd_sync padded NNNN ---"
+  if start_stub 200; then
+    crepo="$tmp/int23-repo"
+    setup_consumer_repo "$crepo"
+    ( cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+        bash "$HELPER" create --title "Padded sync" >/dev/null 2>&1 )
+    : > "$STUB_BODYF"; : > "$STUB_AUTHF"; : > "$STUB_PATHF"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 0001 2>&1)
+    rc=$?
+    assert_rc "INT23 cmd_sync 0001 rc=0" "0" "$rc"
+    assert_contains "INT23 sync output" "$out" "Re-registered ADR-0001"
+    stop_stub
+  else
+    fail "INT23 stub start" "could not start"
+  fi
 
   # ─── INT14: skill.md frontmatter sanity ───────────────────────────────────
   echo ""
