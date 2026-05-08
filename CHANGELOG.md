@@ -6,6 +6,13 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (v1.1) — `UM_ENDPOINT` → `UM_SERVER_URL` consolidation (W1.5)
+
+- **`UM_ENDPOINT` is now deprecated; rename to `UM_SERVER_URL`.** The old variable is still respected with a one-line deprecation warning on stderr; it will be removed in v1.2.
+- A new shared endpoint resolver lives at `~/.local/share/um/lib/endpoint.sh`. Hooks (`auto-start`, `session-start`, `session-end`, `user-prompt-submit`) source it and call `um_resolve_endpoint` for the canonical URL. The CLI + auto-installed marker block already used `UM_SERVER_URL` directly; no operator-facing change there.
+- If your `.env` or shell rc sets `UM_ENDPOINT`, rename it to `UM_SERVER_URL` (no other change required). If both are set with different values, `UM_SERVER_URL` wins and the resolver names which value was used. See `MIGRATION.md` `## v1.0 → v1.1`.
+- Hook fail-soft fallback: if the resolver lib file isn't installed (pre-v1.1 install state), hooks fall back to inline `${UM_SERVER_URL:-${UM_ENDPOINT:-}}` resolution so they continue to work without re-running `install.sh`.
+
 ### W6.2 — Image size reduction
 
 - **Server image: 598 MB → 288 MB** (310 MB saved, 51.8% reduction; compressed: 94 MB → 60 MB). Achieves the v1.0 W6.2 primary <350 MB target.

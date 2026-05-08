@@ -71,11 +71,25 @@ if [ "${#PROMPT_TEXT}" -lt 5 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Endpoint check — no endpoint means nothing to search
+# 2. Endpoint check — no endpoint means nothing to search.
+# v1.1: source the shared endpoint resolver. Falls back to legacy inline
+# resolution if the lib file is absent (pre-v1.1 install). Resolver emits
+# a deprecation warn on stderr if UM_ENDPOINT is the only one set.
 # ---------------------------------------------------------------------------
-if [ -z "${UM_ENDPOINT:-}" ]; then
-  printf '{}\n'
-  exit 0
+if [ -r "$LIB_DIR/endpoint.sh" ]; then
+  # shellcheck source=lib/endpoint.sh
+  source "$LIB_DIR/endpoint.sh"
+  if ! um_endpoint_configured; then
+    printf '{}\n'
+    exit 0
+  fi
+  ENDPOINT=$(um_resolve_endpoint)
+else
+  if [ -z "${UM_SERVER_URL:-}${UM_ENDPOINT:-}" ]; then
+    printf '{}\n'
+    exit 0
+  fi
+  ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-}}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -127,7 +141,7 @@ fi
 # Cross-project search — no project filter on the query. If project-scoped
 # search is wanted here in the future, compute PROJECT=$(project_name) and
 # pass it via the search payload.
-ENDPOINT="${UM_ENDPOINT}"
+# `ENDPOINT` is set above (resolver path or fallback).
 
 # Build POST body: use 'query' field (not 'q') for POST /api/search
 search_payload=$(printf '%s' "$PROMPT_TEXT" | python3 -c '

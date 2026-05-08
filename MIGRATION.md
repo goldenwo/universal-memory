@@ -1,5 +1,26 @@
 # Migration guide
 
+## v1.0 → v1.1
+
+v1.1 deprecates the `UM_ENDPOINT` environment variable in favor of `UM_SERVER_URL`. The old variable is still respected with a one-line deprecation warning; it will be removed in v1.2.
+
+### `UM_ENDPOINT` deprecated in favor of `UM_SERVER_URL`
+
+Through v1.0, hooks read `UM_ENDPOINT` while the CLI + auto-installed shell marker block used `UM_SERVER_URL`. v1.1 consolidates to a single name (`UM_SERVER_URL`) — the marker block's canonical form.
+
+A new shared resolver at `~/.local/share/um/lib/endpoint.sh` is used by hooks, CLI, and any future skill (e.g., the upcoming `create-adr`). It returns the canonical URL and emits a deprecation warn on stderr if `UM_ENDPOINT` is set without `UM_SERVER_URL`, or if both are set with different values.
+
+**Action for operators:**
+- If your `.env` or shell rc sets `UM_ENDPOINT` directly, rename it to `UM_SERVER_URL`.
+- If you use the auto-installed marker block (the standard install path), no action is needed — the block already exports `UM_SERVER_URL`.
+- If both are set with different values, `UM_SERVER_URL` wins; the warn names which value was used.
+
+**CI / non-interactive callers** see the deprecation warn on every invocation (no warn-once suppression in v1.1's short deprecation window). Migrate before v1.2 ships.
+
+*(Reconfirm the v1.2 removal reference at PR-time; bump if W1.5 slips a release.)*
+
+---
+
 ## v0.8 → v1.0
 
 v1.0 is **stabilization + public release**, not a feature release. There are no env-var renames, no API contract changes, and no operator-facing breakage relative to v0.8. The notable items below are **distribution shape**, **W6.4 security hardening** (3 internal-API hardening fixes), and the formal **post-v1.0 support window**.
