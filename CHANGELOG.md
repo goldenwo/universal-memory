@@ -6,7 +6,20 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No changes yet. v1.x cleanup queue accumulates here as it lands._
+### W6.2 — Image size reduction
+
+- **Server image: 598 MB → 288 MB** (310 MB saved, 51.8% reduction; compressed: 94 MB → 60 MB). Achieves the v1.0 W6.2 primary <350 MB target.
+- Mechanism: a `patch-package`-applied transform of `mem0ai@2.4.6/dist/oss/index.mjs` converts 14 eager imports of unused-provider peerDeps (groq-sdk, @mistralai/mistralai, cloudflare, redis, @langchain/core/messages, @langchain/core/documents, @azure/search-documents, @azure/identity, @supabase/supabase-js ×2, pg, neo4j-driver, plus 2 of better-sqlite3 which mem0 still uses for its history manager) to fail-soft dynamic imports. The Dockerfile then surgically removes the unused-provider directories from `node_modules` after install + patch + prune.
+- **Expected post-upgrade boot-log change:** operators tailing `docker logs` will see 12 new informational warns on every server boot, one per peer-skipped package — these are NOT errors:
+  ```
+  [mem0-patch] groq-sdk not installed (peer-skipped) — expected on boot per W6.2
+  [mem0-patch] @mistralai/mistralai not installed (peer-skipped) — expected on boot per W6.2
+  …
+  [mem0-patch] neo4j-driver not installed (peer-skipped) — expected on boot per W6.2
+  ```
+  Filter with `docker logs ... | grep -v '\[mem0-patch\]'` if log noise matters; the lines are stable across boots and version-pinned to `mem0ai@2.4.6`. The `— expected on boot per W6.2` suffix is grep-able to this CHANGELOG entry.
+- **Forward-compat for adding a peer-skipped provider later:** if an operator wants to enable e.g. Mistral, they can run a custom build that includes `npm install @mistralai/mistralai`. The corresponding `[mem0-patch]` warn disappears (the dynamic import resolves at boot). The patch is forward-compatible with re-adding any of the 12 peer-skipped packages without modification.
+- **Reconciliation procedure when mem0ai is bumped:** see `server/Dockerfile`'s in-file comment block and `docs/plans/2026-05-07-w6.2-image-size-spec.md` §Patch reconciliation procedure. Source-hash pin lives at `server/patches/mem0ai+2.4.6.source.sha256`.
 
 ---
 
