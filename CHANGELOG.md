@@ -38,6 +38,9 @@ The cumulative arc that v1.0 ships, by version:
 ### Fixed
 
 - **`docs/research/2026-04-24-v0.6-verifications/V1-fixture-prep.sh`** (PR #49, b491848) — replaces hardcoded `REPO_ROOT="E:/Projects/universal-memory"` with `git rev-parse --show-toplevel`. Closes the only "recommended regardless" finding from the W4.1 secrets audit.
+- **`server/.env.example` UM_MCP_WRITE_ENABLED warning** — replaced pre-v0.6 stale text claiming "server accepts unauthenticated writes from ANY host" with current accurate description: writes are protected by bearer auth since v0.6; loopback bypass + token semantics referenced. (W6.4 nice-to-have.)
+- **Rate-limit IP-key under reverse proxy** — added `UM_RATE_LIMIT_TRUSTED_PROXY_HEADER` env var (default unset) for installs behind Cloudflare Tunnel / nginx / Tailscale Funnel. When set, the rate limiter keys on the named forwarded-for header instead of the socket peer IP, preventing any client sharing the proxy from trivially bypassing limits. Documented spoof-safety conditions in `.env.example`. (W6.4 nice-to-have.)
+- **`evictOneOldest()` O(n) — accepted as documented intentional design** (W6.4 nice-to-have). The current O(n)-on-admit approach is preferred over a periodic O(n) sweep that would spike p99 latency for unlucky requests. Per `server/lib/rate-limit.mjs:39-41`. No code change; CHANGELOG note records the deliberation. v1.x cleanup may revisit with an LRU rewrite if real-world workloads expose contention.
 
 ### Docs
 
