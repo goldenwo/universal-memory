@@ -52,7 +52,7 @@ import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
 import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
-import { createRateLimiter } from './lib/rate-limit.mjs';
+import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
@@ -2006,7 +2006,7 @@ export function createRequestHandler(ctx = {}) {
 	//   - res.end shim flushes the C.5 metrics counter for status=429
 	//     and the C.3 finish-log on the way out.
 	if (!route.bypassRateLimit && !shouldBypassLoopback(req)) {
-		const ipKey = req.socket?.remoteAddress ?? 'unknown';
+		const ipKey = extractRateLimitKey(req);
 		const decision = admit(ipKey);
 		if (!decision.admitted) {
 			res.writeHead(429, {

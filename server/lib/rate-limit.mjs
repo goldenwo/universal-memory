@@ -84,3 +84,23 @@ export function createRateLimiter(opts = {}) {
     return { admitted: true };
   };
 }
+
+// Extract the rate-limit key from a request. Default: the socket's remote
+// address (correct for direct connections). Behind a reverse proxy, set
+// UM_RATE_LIMIT_TRUSTED_PROXY_HEADER=x-forwarded-for (or similar) to trust
+// that header — takes the leftmost IP per RFC 7239 (the original client).
+//
+// Security note: trusting a forwarded header is spoof-safe ONLY if every
+// untrusted hop is rejected at the network layer. Never enable this on an
+// open port. Default off is the safe shape for direct-connection installs;
+// proxy-fronted installs must opt in deliberately.
+export function extractRateLimitKey(req, env = process.env) {
+  const trustedHeader = env.UM_RATE_LIMIT_TRUSTED_PROXY_HEADER;
+  if (trustedHeader) {
+    const value = req.headers?.[trustedHeader.toLowerCase()];
+    if (value) {
+      return String(value).split(',')[0].trim();
+    }
+  }
+  return req.socket?.remoteAddress ?? 'unknown';
+}
