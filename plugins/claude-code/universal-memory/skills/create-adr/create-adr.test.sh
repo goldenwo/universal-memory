@@ -818,35 +818,30 @@ print(fm['title'])
   fi
 
   # ─── INT22: empty git config user.name ───────────────────────────────────
+  # Goal: assert _render_frontmatter falls back to `decided_by: ""` when
+  # `git config user.name` returns nothing. Use the self-host sentinel
+  # path so we skip git commit (which requires user.name/email on some
+  # git builds — particularly Linux CI runners). The frontmatter is
+  # written before any commit, so the assertion is unaffected.
   echo ""
   echo "--- INT22: empty user.name fallback ---"
-  if start_stub 200; then
-    crepo="$tmp/int22-repo"
-    isolated_home="$tmp/int22-home"
-    mkdir -p "$crepo" "$isolated_home"
-    # HOME override hides the global ~/.gitconfig so user.name has no
-    # source. Local repo gets only user.email and commit.gpgsign.
-    ( cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 \
-        git init -q \
-        && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 git config user.email tester@example.com \
-        && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 git config commit.gpgsign false )
-    out=$(cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 \
-            UM_SERVER_URL="$STUB_URL" \
-            bash "$HELPER" create --title "no name test" 2>&1)
-    rc=$?
-    assert_rc "INT22 cmd_create rc=0 (empty name)" "0" "$rc"
-    if [ -f "$crepo/docs/decisions/0001-no-name-test.md" ]; then
-      if grep -qE 'decided_by: ""' "$crepo/docs/decisions/0001-no-name-test.md"; then
-        pass "INT22 empty decided_by quoted"
-      else
-        fail "INT22 empty decided_by quoted" "got: $(grep decided_by "$crepo/docs/decisions/0001-no-name-test.md")"
-      fi
+  crepo="$tmp/int22-repo"
+  isolated_home="$tmp/int22-home"
+  mkdir -p "$crepo" "$isolated_home"
+  ( cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 git init -q )
+  touch "$crepo/.um-self-host"  # triggers self-app skip → no commit
+  out=$(cd "$crepo" && HOME="$isolated_home" GIT_CONFIG_NOSYSTEM=1 \
+          bash "$HELPER" create --title "no name test" 2>&1)
+  rc=$?
+  assert_rc "INT22 cmd_create rc=0 (empty name)" "0" "$rc"
+  if [ -f "$crepo/docs/decisions/0001-no-name-test.md" ]; then
+    if grep -qE 'decided_by: ""' "$crepo/docs/decisions/0001-no-name-test.md"; then
+      pass "INT22 empty decided_by quoted"
     else
-      fail "INT22 file written" "missing"
+      fail "INT22 empty decided_by quoted" "got: $(grep decided_by "$crepo/docs/decisions/0001-no-name-test.md")"
     fi
-    stop_stub
   else
-    fail "INT22 stub start" "could not start"
+    fail "INT22 file written" "missing"
   fi
 
   # ─── INT23: cmd_sync padded NNNN ─────────────────────────────────────────
