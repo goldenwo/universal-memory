@@ -20,6 +20,7 @@
 import YAML from 'yaml';
 
 import { providers, supportingProviders } from './lib/provider/registry.mjs';
+import { SERVER_VERSION } from './lib/version.mjs';
 
 // ---------------------------------------------------------------------------
 // Provider enums — auto-derived from registry (spec §3.1 #5)
@@ -1054,7 +1055,7 @@ export function buildSpec() {
     openapi: '3.1.0',
     info: {
       title: 'universal-memory',
-      version: '0.7.0-alpha',
+      version: SERVER_VERSION,
       description:
         'HTTP API for universal-memory session continuity layer. Markdown-first vault + vector index via mem0. Exposes REST endpoints under /api/* and an MCP (JSON-RPC 2.0) endpoint at /mcp.',
       license: {
