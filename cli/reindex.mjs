@@ -537,6 +537,12 @@ async function rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderO
     userId: frontmatter.userId ?? RESOLVED_USER_ID,
     metadata: { id: frontmatter.id, ...frontmatter },
     infer: false,
+    // D1 R14: reindex Phase 3 must bypass dedup. Without _systemMigration:true,
+    // a rebuild would inadvertently merge the rebuilt doc into a different
+    // doc's record under the same userId (uuidv5 hash collision). Trusted
+    // server-internal seam (NOT in metadata — see G11 trust boundary in spec
+    // §4.5.1; metadata.systemMigration is REJECTED at umAdd entry).
+    _systemMigration: true,
     _qdrantClient,
     _embedProviderOverride,
   });
