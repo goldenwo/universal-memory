@@ -46,7 +46,7 @@ import { v5 as uuidv5 } from 'uuid';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
-import { umFactsExtractedTotal, umDedupTotal } from './metrics.mjs';
+import { umFactsExtractedTotal } from './metrics.mjs';
 import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
@@ -202,8 +202,14 @@ export async function umAdd({
 
       // Plain upsert path. Point-ID: deterministic uuidv5 if dedup-eligible
       // (TOCTOU-resistant per DP8 / R3), else randomUUID for legacy parity.
+      // NB: hash FIRST then ':' then userId. md5 is always 32 hex chars
+      // [0-9a-f], so the partition is unambiguous regardless of userId chars
+      // (e.g., a userId containing ':' cannot produce a collision because the
+      // hash prefix is always exactly 32 hex chars, never overlapping with the
+      // userId tail). Closes security-review H1 (forward-compat for any
+      // future multi-tenant deployment that may permit ':' in userId).
       const id = dedupEligible
-        ? uuidv5(`${userId}:${itemHash}`, NAMESPACE_UM)
+        ? uuidv5(`${itemHash}:${userId}`, NAMESPACE_UM)
         : randomUUID();
       const point = {
         id,

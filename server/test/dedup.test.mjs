@@ -568,23 +568,37 @@ test('T11b: caller-supplied metadata.systemMigration is rejected (G11 trust boun
   });
 });
 
-test('T12: uuidv5(userId+":"+hash, NAMESPACE_UM) is stable across runs (regression guard against namespace drift)', () => {
+test('T12: uuidv5(hash+":"+userId, NAMESPACE_UM) is stable across runs (regression guard against namespace drift)', () => {
   // If NAMESPACE_UM is ever regenerated, this test breaks loudly — and it
   // SHOULD break, because regenerating the namespace orphans every existing
   // dedup-eligible point.
-  const pinned = uuidv5('user1:abcdef0123456789abcdef0123456789', NAMESPACE_UM);
-  // Computed once at write-time of this test (2026-05-09); rerun must match.
-  // (Regenerate this literal ONLY if NAMESPACE_UM intentionally changes — that
-  // change is itself a load-bearing migration event.)
+  //
+  // Input format: hash FIRST then ':' then userId. md5 is always 32 hex chars
+  // [0-9a-f], so the partition is unambiguous regardless of userId chars.
+  // See add.mjs line ~206 + security-review H1 for the rationale.
+  const HASH = 'abcdef0123456789abcdef0123456789';  // 32 hex chars (md5 shape)
+  const pinned = uuidv5(`${HASH}:user1`, NAMESPACE_UM);
   assert.equal(NAMESPACE_UM, 'e2de504c-45bb-4531-952f-f33a6f60c945');
   // Recompute and compare to itself across two calls (canonical stability).
-  const twice = uuidv5('user1:abcdef0123456789abcdef0123456789', NAMESPACE_UM);
+  const twice = uuidv5(`${HASH}:user1`, NAMESPACE_UM);
   assert.equal(pinned, twice);
-  // Different inputs → different IDs.
-  const other = uuidv5('user2:abcdef0123456789abcdef0123456789', NAMESPACE_UM);
+  // Different userId → different ID.
+  const other = uuidv5(`${HASH}:user2`, NAMESPACE_UM);
   assert.notEqual(pinned, other);
   // UUID v5 format check.
   assert.match(pinned, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'must be valid UUID v5');
+
+  // Security-review H1 colon-safety: a userId containing ':' must NOT collide
+  // with a userId that aliases the colon-split. Concretely: with hash-first
+  // ordering, `${HASH}:alice:bob` (userId='alice:bob') is unambiguous because
+  // the hash prefix is always exactly 32 hex chars (0-9a-f only, never ':').
+  // Verify by constructing two distinct (hash, userId) pairs and asserting
+  // their uuidv5s differ. (Under a hypothetical attacker-controlled hash —
+  // not reachable today since md5 is hex — both `(HASH, 'alice:bob')` and
+  // `(HASH, 'alice')` produce different ID inputs, hence different UUIDs.)
+  const colonUser = uuidv5(`${HASH}:alice:bob`, NAMESPACE_UM);
+  const plainUser = uuidv5(`${HASH}:alice`, NAMESPACE_UM);
+  assert.notEqual(colonUser, plainUser, 'H1 colon-safety: userIds with and without ":" suffix must produce distinct uuidv5');
 });
 
 test('T13: reindex bypass — _systemMigration:true with infer:false (reindex-shaped call) skips dedup', async () => {
