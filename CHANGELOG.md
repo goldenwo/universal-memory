@@ -6,6 +6,14 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.1) — Phase B1: surface coverage parity matrix
+
+- **New [`docs/surfaces.md`](docs/surfaces.md)** — canonical matrix of every surface universal-memory supports today (Claude Code, Claude.ai web, Claude Desktop, ChatGPT Desktop, ChatGPT Custom GPT, Codex CLI, Discord OpenClaw bridge, `um` CLI) with five columns: capture path (`auto` / `partial-auto` / `manual` / `none`), recall path, setup-step count, project/lane signal source, and which of [#72](https://github.com/goldenwo/universal-memory/issues/72)'s vision axes the surface's current tier blocks.
+- **Direct advance of universality axis 6** ("surface coverage parity matrix as living doc"). First vision-axis-advancing PR after the v0.6→v1.1 hygiene streak (per the drift-check verdict on the last 10 merged PRs: 0/10 advanced any axis; recency streak: 10).
+- **Tier ladder explicit:** `none → manual → partial-auto → auto`. PR descriptions that move a surface up a rung now have a documented place to cite the shift.
+- **Three cross-cutting findings surfaced by the matrix layout:** (1) no surface today serves axis 3 (mobile-friendly capture and recall); (2) only Claude Code serves axis 5 (auto context routing) — five of seven surfaces have no host-side project signal at all; (3) every surface has a multi-step setup story — axis 4's gradient is the matrix's "Setup steps" column.
+- **Living-doc commitment** in §"Living-doc commitment" — matrix updates with each release-tag audit; new-surface PRs prepend a row; surface-tier-changing PRs update the relevant row.
+
 ### Fixed (v1.1) — `/adr` skill paired-Opus review follow-up (W1.1)
 
 Post-merge paired-Opus review on PR #67 surfaced 1 BLOCKER + 5 IMP findings; this PR closes them out. No surface change for operators on the happy path; failure-mode and round-trip behavior is more correct.
