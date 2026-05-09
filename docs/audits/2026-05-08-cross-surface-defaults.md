@@ -134,11 +134,20 @@ The reference is Claude Code (CC); every non-CC surface is graded against it.
 
 ### 2.7 Discord OpenClaw bridge (cross-system, mem0-pi today)
 
-- **Status:** today writes to `mem0-pi-mcp` on the Pi, not UM. Audit deferred
-  to **A3** (codebase access required).
-- **UM-side coupling:** none until Phase C (parallel deploy) or F (migration
-  completion).
-- **Effect:** out of scope for this audit; tracked separately.
+- **Status:** Discord OpenClaw uses mem0 via in-process JS import
+  (`@mem0/openclaw-mem0@1.0.6` extension), not over the wire. The
+  `mem0-pi-mcp` HTTP service is a *separate* exposure for external MCP
+  clients. See **§8** for the full Q1–Q4 findings.
+- **UM-side coupling:** none today. C2 (dual-backend bridge) re-scoping
+  required per §8.5 — the "intercept at network" assumption doesn't hold.
+  Phase F (migration completion) needs synthetic project assignment for
+  Pi data (single `userId='golden'` flat bucket, no project dimension).
+- **Effect:** the audit's project-default question doesn't apply directly
+  — OpenClaw's surface has no project parameter at all (§8 Q4). Every
+  capture lands project-less. From the casual user's POV, "remember this"
+  via Discord stores under a single flat namespace; project-scoped
+  retrieval does not work for Pi-side data without a synthetic-project
+  layer.
 
 ---
 
@@ -201,7 +210,7 @@ just unreachable via project-scoped retrieval.
 |---|---|
 | **B1** surface coverage parity matrix | Each surface gets a "project resolution" column; today only CC fills it. The matrix makes F1/F2 visible at a glance. |
 | **B2** `/remember` skill | CC-only target initially. Reuses `resolve-project.sh` chain. Doesn't address non-CC surfaces — F2 stays open. |
-| **C2** dual-backend bridge | Discord OpenClaw → UM cross-write must specify a project. If Discord has no project notion either, `UM_DEFAULT_PROJECT` env (F4) or a per-bridge override is needed before C2 can land. |
+| **C2** dual-backend bridge | A3 reveals the OpenClaw → mem0 path is **in-process JS import**, not wire-protocol — no network boundary to intercept. Bridge strategies are now (a) plugin shim replacing `@mem0/openclaw-mem0`, (b) qdrant-compatible HTTP shim under the extension, or (c) defer to Phase F one-shot migration. All assume `UM_DEFAULT_PROJECT` (F4) since OpenClaw passes no project metadata at all (A3 §8 Q4). |
 | **D1** cross-surface fact dedup | Dedup keys on (text, project, user). Heterogeneous project defaults (F1) mean the same fact captured from CC vs Claude.ai may land under different project slugs and therefore not dedup. F1 must be addressed before D1 can claim "cross-surface dedup" honestly. |
 | **D2** lane / persona schema | Orthogonal to project — but the same "no signal from non-CC surfaces" gap applies to lane. Document the parity once D2 lands. |
 | **E3** LLM context router | Directly addresses F2/F3. Server-side classifier on write-time content lets the user-facing surface skip the project-resolution problem entirely. After E3 lands, the rubric paste-in becomes redundant for non-CC surfaces. |
@@ -228,6 +237,16 @@ just unreachable via project-scoped retrieval.
    in the matrix. Either the soft-default is right (then both should do it) or
    the hard-fail is right (then `memory_capture` should also fail). The
    current asymmetry is a bug pattern, not a design.
+6. **Re-scope Phase C2 design.** Original "intercept at network" assumption
+   doesn't fit (§8 Q2). Three viable bridge strategies are listed in §8.5
+   — pick one (or pick (c) defer-to-F) before C2 enters implementation.
+   Recommended pre-C2 deliverable: a short ADR comparing the three options
+   on coupling, upstream-churn risk, and migration timing.
+7. **Document `mem0-pi-mcp` ≠ Discord OpenClaw integration path.** Older
+   plans and connector docs may conflate these two paths. A short note in
+   `docs/connecting-claude-ai.md` (or a new `docs/architecture/pi-mem0.md`)
+   explaining the two-callers, two-paths model would prevent the same
+   premise inversion (§8 Q2) recurring in future planning rounds.
 
 ---
 
@@ -248,25 +267,182 @@ All findings traced from source files at commit a6c17e9:
   [`plugins/chatgpt-custom-gpt/universal-memory/system-prompt.md`](../../plugins/chatgpt-custom-gpt/universal-memory/system-prompt.md),
   [`plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml`](../../plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml)
 
-A2 (mem0 version on Pi) and A3 (Discord OpenClaw codebase access) findings
-will be appended once maintainer-action items complete; placeholder section
-below.
+A2 + A3 sources (Pi-side, inspected 2026-05-09 via SSH; not in this repo):
+- `~/.config/systemd/user/mem0-mcp.service`,
+  `~/.config/systemd/user/openclaw-gateway.service`
+- `~/.openclaw/scripts/mem0-mcp-http.mjs`
+- `~/.openclaw/extensions/openclaw-mem0/package.json`
+
+A2 and A3 findings landed 2026-05-09 via maintainer-authorized SSH inspection
+of the Pi systemd services and openclaw extension package metadata.
 
 ---
 
-## 7. A2 — mem0 version on Pi (PENDING — needs maintainer SSH)
+## 7. A2 — mem0 version on Pi
 
-> Pending. Run on `pi-openclaw`:
-> ```bash
-> docker exec mem0-pi-mcp pip show mem0ai | grep Version
-> ```
-> Expected: `Version: 2.4.6` (matches UM v1.0). If older, in-place migration
-> requires a mem0 upgrade on the Pi first.
+**Headline:** Pi runs **`mem0ai@2.4.5`** (Node.js, npm). One patch behind
+UM v1.0's `mem0ai@2.4.6`. Phase C1 (in-place migration) is unblocked at
+low risk.
 
-## 8. A3 — Discord OpenClaw integration (PENDING — needs codebase access)
+### 7.1 Premise correction
 
-> Pending. Open questions:
-> - Is the OpenClaw codebase forkable / under maintainer control? Or third-party?
-> - What MCP wire-protocol does the Discord integration expect from `mem0-pi-mcp`?
-> - Is the MCP endpoint URL operator-controllable? (Required for C2 dual-backend bridge.)
-> - Does Discord OpenClaw resolve project per-message, per-user, per-server, or not at all?
+The original probe assumed `docker exec mem0-pi-mcp pip show mem0ai` would
+return a version. **Both halves of that assumption were wrong:**
+
+1. **mem0 is not containerized on the Pi.** Only `qdrant`
+   (`y0mg/qdrant-raspberry-pi:latest`, port 6333) runs in Docker. mem0
+   itself runs as a `systemd --user` service:
+   `~/.config/systemd/user/mem0-mcp.service` →
+   `/usr/bin/node /home/openclaw/.openclaw/scripts/mem0-mcp-http.mjs`.
+2. **mem0 is not Python.** The Pi uses the Node.js `mem0ai` npm package,
+   not the Python `mem0ai` PyPI package. The script imports
+   `Memory` directly from
+   `~/.openclaw/extensions/openclaw-mem0/node_modules/mem0ai/dist/oss/index.mjs`.
+
+### 7.2 Version
+
+The hosting extension is **`@mem0/openclaw-mem0@1.0.6`** (Apache-2.0,
+upstream `mem0ai/mem0` repo, `openclaw` directory). Its `package.json`
+pins `mem0ai: 2.4.5`. UM v1.0 ships with `mem0ai@2.4.6` (cf.
+[`server/patches/mem0ai+2.4.6.patch`](../../server/patches/mem0ai+2.4.6.patch)).
+Patch skew: **`2.4.5 → 2.4.6`**, one minor patch.
+
+### 7.3 Pi server identity + endpoint shape
+
+The HTTP server announces itself in MCP `initialize`:
+
+```json
+{ "serverInfo": { "name": "mem0-pi", "version": "2.0.0" }, ... }
+```
+
+Port: `MEM0_MCP_PORT` env (default `6335`). Listens on two transports:
+
+- **MCP** — JSON-RPC over `POST /mcp` + SSE on `GET /mcp/sse`
+- **REST** — `POST /api/search`, `POST /api/add`, `GET /api/list`,
+  `DELETE /api/:id`
+
+Tool surface (4 tools): `memory_search`, `memory_add`, `memory_list`,
+`memory_delete`. Hardcoded `userId: USER_ID` from `MEM0_USER_ID` env
+(default `'golden'`). **No project parameter on any tool** (carried into
+A3 §8 Q4 below).
+
+### 7.4 Phase C1 implication
+
+In-place migration mental model holds: same vector store (qdrant on the
+Pi), same provider choices (OpenAI for embedding + LLM, qdrant for vector
+store), just bump the npm dep. UM's W6.2 patch
+(`server/patches/mem0ai+2.4.6.patch`) targets the npm package on a UM
+config that exercises it; whether it needs to apply on Pi-side mem0
+depends on which patched code path the Pi's 4-tool MCP touches. Decide
+patch applicability when scheduling C1 implementation.
+
+---
+
+## 8. A3 — Discord OpenClaw integration
+
+**Headline (premise inversion):** Discord OpenClaw does **NOT** consume
+`mem0-pi-mcp` over the wire. The `openclaw-gateway` systemd service loads
+mem0 via **in-process JS import** (`@mem0/openclaw-mem0@1.0.6` extension).
+The `mem0-pi-mcp` HTTP server is a separate exposure for *external* MCP
+clients (e.g., user's Claude Code reaching the Pi over Tailscale serve),
+distinct from how Discord OpenClaw itself talks to mem0.
+
+### 8.1 Q1 — codebase forkable / under maintainer control?
+
+**Answer: third-party.** Confirmed by maintainer 2026-05-09.
+
+- Gateway: `openclaw@2026.4.21` installed at
+  `~/.local/lib/node_modules/openclaw/dist/index.js` (npm-published,
+  third-party).
+- Mem0 plugin: `@mem0/openclaw-mem0@1.0.6` (Apache-2.0, upstream
+  `mem0ai/mem0/openclaw` directory). Forkable in the open-source sense
+  (license permits) but not maintainer-controlled.
+
+### 8.2 Q2 — MCP wire-protocol the Discord integration expects from `mem0-pi-mcp`
+
+**Answer: question's premise is inverted.** Discord OpenClaw does **NOT**
+go over the wire to `mem0-pi-mcp`. Two distinct paths exist on the Pi:
+
+| Caller | Path | Wire? |
+|---|---|---|
+| Discord OpenClaw (`openclaw-gateway` systemd unit) | `import { Memory } from 'mem0ai'` (in-process, JS) via the `@mem0/openclaw-mem0` extension | **No.** |
+| External MCP clients (e.g., user's Claude Code, exposed via Tailscale serve) | HTTP `POST /mcp` (JSON-RPC) or `GET /mcp/sse` (SSE) on port 6335; OR REST at `POST /api/add` etc. | Yes — JSON-RPC MCP or simple REST. |
+
+**Implication:** the Phase C2 design assumption ("intercept Discord
+OpenClaw → `mem0-pi-mcp` at the network boundary") doesn't hold. There
+is no such network boundary.
+
+### 8.3 Q3 — is the MCP endpoint URL operator-controllable?
+
+**Answer: split:**
+
+- **For external exposure (`mem0-mcp.service`):** **yes.** Port via
+  `MEM0_MCP_PORT` env (default `6335`); user namespace via `MEM0_USER_ID`
+  env (default `'golden'`); both read from
+  `~/.openclaw/.env` per the systemd unit's `EnvironmentFile=`.
+- **For Discord OpenClaw's internal use of mem0:** **N/A** — in-process
+  JS import; the "endpoint" is a node_modules path, not a URL. Operator
+  controls qdrant connection (host/port hardcoded `localhost:6333` in
+  `mem0-mcp-http.mjs` — but that's the HTTP-side wiring; the extension
+  may differ — not inspected, scope-limited).
+
+### 8.4 Q4 — does Discord OpenClaw resolve project per-message / per-user / per-server / not at all?
+
+**Answer: not at all.** The 4-tool MCP/REST surface
+(`memory_search`, `memory_add`, `memory_list`, `memory_delete`) has **no
+project field** on any tool input schema. `memory_add` takes only `text`;
+`memory_search` takes only `query` + optional `limit`. The server hardcodes
+`userId` from env (`MEM0_USER_ID`, default `'golden'`) and passes that —
+no project metadata at any layer. Every capture from any caller (Discord,
+external MCP, REST) lands in a single flat `userId='golden'` namespace.
+
+### 8.5 Implications
+
+1. **Phase C2 (dual-backend bridge) must be re-scoped.** The
+   "intercept-at-network" design doesn't fit. Three viable strategies
+   surface:
+   - **(a) Plugin shim** — fork or replace `@mem0/openclaw-mem0` with a
+     UM-aware version that dual-writes (mem0 in-process + UM via HTTP).
+     Tightly coupled to the OpenClaw plugin ABI; brittle to upstream
+     churn.
+   - **(b) Vector-store shim** — point the openclaw-mem0 extension's
+     `vectorStore.config.host` at a UM-fronting qdrant-compatible HTTP
+     proxy. Decouples from OpenClaw plugin churn; UM serves as a qdrant
+     proxy. Implementation cost is the proxy itself.
+   - **(c) Defer to Phase F migration** — accept that OpenClaw + mem0
+     stay coupled until Phase F retires the Pi mem0 entirely. Lowest
+     immediate complexity; biggest delay on cross-surface unification.
+2. **Phase F (migration) needs synthetic project assignment.** All Pi
+   data lives in a single `userId='golden'` bucket with no project
+   dimension. Migration to UM must either (i) bucket all Pi captures into
+   a synthetic project (e.g., `mem0-pi-legacy` or `discord-openclaw`), or
+   (ii) run E3-style content-based project inference on each migrated
+   record.
+3. **Phase D1 (cross-surface dedup) inherits a project-skew.** Pi captures
+   are project-less; UM-side captures are (heterogeneously) project-tagged
+   per F1. Dedup either treats Pi captures as a synthetic project or
+   relaxes the project key for Pi-derived facts only.
+
+### 8.6 Provenance for §7+§8
+
+All findings traced 2026-05-09 from public-facing files via SSH-inspected
+read of:
+
+- systemd unit definitions: `~/.config/systemd/user/mem0-mcp.service`,
+  `~/.config/systemd/user/openclaw-gateway.service`
+- mem0 HTTP server source:
+  `~/.openclaw/scripts/mem0-mcp-http.mjs` (the script itself —
+  imports, port wiring, tool definitions, mem0 SDK invocation)
+- extension package metadata:
+  `~/.openclaw/extensions/openclaw-mem0/package.json` (pinned mem0ai
+  version, openclaw plugin manifest, build metadata)
+
+Internal source code paths (`index.ts`, providers, gateway internals) were
+not inspected — outside the maintainer's authorization scope. Assertions
+about openclaw-gateway's in-process loading model rest on the systemd
+unit's `WorkingDirectory=` pointing inside the extension dir + the
+extension's `dist/index.js` being the systemd-mounted entrypoint of the
+gateway's plugin loader. If a future investigation reveals the gateway
+also makes HTTP calls to `mem0-pi-mcp`, §8 Q2 should be amended; until
+then the in-process model is the working assumption based on the
+public-facing evidence.
