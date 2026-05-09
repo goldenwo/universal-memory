@@ -104,6 +104,31 @@ export const lockContentionsTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Cross-surface dedup metrics (D1 spec §9, plan C.4).
+// `kind` ∈ {'hash','embedding'} — which dedup layer fired.
+// `result` ∈ {'hit','miss','error'} — outcome.
+// `stage` ∈ {'scroll','search','setPayload',''} — which qdrant call attempted
+//   when result='error'. Empty string for hit/miss (label is required-present
+//   per prom-client; '' is the conventional don't-care value).
+// Cardinality: 2 × 3 × 4 = 24 combinations (bounded). All caller-derived
+// label values come from a fixed enum, never user input — A5 closed.
+export const umDedupTotal = new promClient.Counter({
+  name: 'um_dedup_total',
+  help: 'Cross-surface dedup attempts, by layer (hash|embedding), outcome (hit|miss|error), and stage (scroll|search|setPayload|"")',
+  labelNames: ['kind', 'result', 'stage'],
+  registers: [registry],
+});
+
+// Per-stage dedup overhead. Buckets target 1ms..2.5s — qdrant calls in the
+// dedup hot path are typically <100ms; histogram resolves the long tail.
+export const umDedupCheckDurationSeconds = new promClient.Histogram({
+  name: 'um_dedup_check_duration_seconds',
+  help: 'Per-stage dedup query duration in seconds, by kind and stage',
+  labelNames: ['kind', 'stage'],
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+  registers: [registry],
+});
+
 // Empty-extraction visibility (spec §6, §8 acceptance criteria).
 // Sum of facts extracted PER call (not call count). Distinguishes "0 facts
 // from 5 calls" (provider misconfig?) from "5 facts from 5 calls". Operator

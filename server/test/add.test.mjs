@@ -94,6 +94,11 @@ test('umAdd infer:false skips facts(), embeds raw text once, single qdrant upser
   assert.equal(payload.user_id, undefined, 'snake_case user_id MUST NOT appear');
   assert.equal(payload.created_at, undefined, 'snake_case created_at MUST NOT appear');
   assert.equal(payload.metadata, undefined, 'metadata MUST be flattened, not nested');
+  // D1 v1.1 schema additions (always seeded regardless of UM_DEDUP_ENABLED).
+  // Visibility lock: if a future change drops these fields, this assertion
+  // fails loudly rather than silently regressing the dedup contract.
+  assert.equal(payload.dedupCount, 1, 'D1: dedupCount MUST be seeded to 1 on first write');
+  assert.equal(payload.dedupVersion, 1, 'D1: dedupVersion MUST be seeded to 1 (schema-version pin)');
 });
 
 test('umAdd error from facts() propagates without writing to qdrant', async () => {

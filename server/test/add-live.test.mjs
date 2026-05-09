@@ -146,3 +146,154 @@ test('umAdd writeStamp → mem0.getAll DE5 roundtrip', { skip: SKIP }, async () 
   const round = await readStamp({ memory, collection });
   assert.deepEqual(round, stamp, 'DE5 stamp must round-trip via umAdd write + mem0.getAll read');
 });
+
+// ---------------------------------------------------------------------------
+// D1 cross-surface dedup live tests (L1 + L2). Plan E.4 / spec §8.2.
+// Both gated by UM_LIVE_TESTS=1 + UM_DEDUP_ENABLED=true (the second flag is
+// set inside each test for hygiene; restored on finally).
+// ---------------------------------------------------------------------------
+
+test('L1: D1 end-to-end identical-write — write A twice → ONE qdrant point with dedupCount=2 + extended surfaces', { skip: SKIP }, async () => {
+  const prevDedup = process.env.UM_DEDUP_ENABLED;
+  process.env.UM_DEDUP_ENABLED = 'true';
+  try {
+    const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
+    const memory = new Memory({
+      embedder: getEmbedderConfig(env),
+      llm: getFactsLlmConfig(env),
+      vectorStore: {
+        provider: 'qdrant',
+        config: {
+          host: process.env.QDRANT_HOST ?? 'localhost',
+          port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+          collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
+        },
+      },
+    });
+    const userId = `d1-l1-${Date.now()}`;
+    const collection = memory.config.vectorStore.config.collectionName;
+    await ensureCollection({
+      host: process.env.QDRANT_HOST ?? 'localhost',
+      port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+      name: collection,
+      dim: 1536,
+    });
+
+    // 1. First write — surface=cli, project=p1.
+    const r1 = await umAdd({
+      memory,
+      text: 'Tokyo is my favorite city for ramen.',
+      userId,
+      surface: 'cli',
+      metadata: { project: 'p1' },
+      infer: false,
+    });
+    assert.equal(r1.results[0].event, 'ADD');
+    const r1Id = r1.results[0].id;
+
+    // 2. Second write — IDENTICAL text, different surface=mcp, different project=p2.
+    //    Should hit Layer 1 (hash) and merge into r1's point.
+    const r2 = await umAdd({
+      memory,
+      text: 'Tokyo is my favorite city for ramen.',
+      userId,
+      surface: 'mcp',
+      metadata: { project: 'p2' },
+      infer: false,
+    });
+    assert.equal(r2.results[0].event, 'DEDUP_MERGED', 'second identical write should merge');
+    assert.equal(r2.results[0].id, r1Id, 'merge target must be the first-write point');
+
+    // 3. Read back via qdrant scroll — ONE point with surfaces+projects extended.
+    const qdrant = new QdrantClient({
+      host: process.env.QDRANT_HOST ?? 'localhost',
+      port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+    });
+    const scroll = await qdrant.scroll(collection, {
+      filter: { must: [{ key: 'userId', match: { value: userId } }] },
+      limit: 10,
+      with_payload: true,
+    });
+    assert.equal(scroll.points.length, 1, `exactly one point per identical-text + same-userId; got ${scroll.points.length}`);
+    const payload = scroll.points[0].payload;
+    assert.equal(payload.dedupCount, 2);
+    assert.deepEqual(payload.surfaces.sort(), ['cli', 'mcp']);
+    assert.deepEqual(payload.projects.sort(), ['p1', 'p2']);
+    assert.ok(typeof payload.dedupLastSeenAt === 'string');
+
+    // 4. Cleanup.
+    await qdrant.delete(collection, { points: [r1Id] });
+  } finally {
+    if (prevDedup === undefined) delete process.env.UM_DEDUP_ENABLED;
+    else process.env.UM_DEDUP_ENABLED = prevDedup;
+  }
+});
+
+test('L2: D1 end-to-end embedding-near-miss — high-similarity but not exact text dedups via Layer 2', { skip: SKIP }, async () => {
+  const prevDedup = process.env.UM_DEDUP_ENABLED;
+  const prevThresh = process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
+  process.env.UM_DEDUP_ENABLED = 'true';
+  // Use a relaxed threshold so paraphrases reliably merge in CI.
+  // Real-world tuning will dial this in via §10.2 eval.
+  process.env.UM_DEDUP_EMBEDDING_THRESHOLD = '0.85';
+  try {
+    const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
+    const memory = new Memory({
+      embedder: getEmbedderConfig(env),
+      llm: getFactsLlmConfig(env),
+      vectorStore: {
+        provider: 'qdrant',
+        config: {
+          host: process.env.QDRANT_HOST ?? 'localhost',
+          port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+          collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
+        },
+      },
+    });
+    const userId = `d1-l2-${Date.now()}`;
+    const collection = memory.config.vectorStore.config.collectionName;
+    await ensureCollection({
+      host: process.env.QDRANT_HOST ?? 'localhost',
+      port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+      name: collection,
+      dim: 1536,
+    });
+
+    // First write — canonical statement.
+    const r1 = await umAdd({
+      memory,
+      text: 'I prefer the Rust programming language.',
+      userId,
+      surface: 'cli',
+      infer: false,
+    });
+    assert.equal(r1.results[0].event, 'ADD');
+    const r1Id = r1.results[0].id;
+
+    // Second write — paraphrase (high cosine sim, different hash).
+    const r2 = await umAdd({
+      memory,
+      text: 'My preferred programming language is Rust.',
+      userId,
+      surface: 'mcp',
+      infer: false,
+    });
+    // At threshold=0.85 with text-embedding-3-small, two paraphrases of the
+    // same fact typically score 0.88–0.95. If this test ever flakes, lower
+    // the threshold OR pin a deterministic embedding via _embedProviderOverride.
+    assert.equal(r2.results[0].event, 'DEDUP_MERGED', 'paraphrase should merge via Layer 2');
+    assert.equal(r2.results[0].id, r1Id);
+
+    // Cleanup.
+    const qdrant = new QdrantClient({
+      host: process.env.QDRANT_HOST ?? 'localhost',
+      port: parseInt(process.env.QDRANT_PORT ?? '6333', 10),
+    });
+    await qdrant.delete(collection, { points: [r1Id] });
+  } finally {
+    if (prevDedup === undefined) delete process.env.UM_DEDUP_ENABLED;
+    else process.env.UM_DEDUP_ENABLED = prevDedup;
+    if (prevThresh === undefined) delete process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
+    else process.env.UM_DEDUP_EMBEDDING_THRESHOLD = prevThresh;
+  }
+});

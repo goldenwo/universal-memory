@@ -27,6 +27,26 @@ MARKER="smoke-test-$(date +%s)-$$"
 echo "[smoke] endpoint: $ENDPOINT"
 echo "[smoke] marker:   $MARKER"
 
+# D1 S1 — flag-off regression guard (plan E.5, spec §10.1).
+# Landing PR ships UM_DEDUP_ENABLED=false default. Smoke MUST run under that
+# contract — if a future PR accidentally flips the default without updating
+# the rollout, this assertion catches it before the rest of smoke proceeds
+# with potentially-changed semantics.
+case "${UM_DEDUP_ENABLED:-false}" in
+	false|""|0|FALSE|False)
+		echo "[smoke] D1 S1 flag-off regression guard: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset>}' (PASS)"
+		;;
+	*)
+		if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
+			echo "[smoke] D1: dedup ON intentionally (UM_SMOKE_DEDUP_ON=1) — see S2 block at end"
+		else
+			echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' but UM_SMOKE_DEDUP_ON not set." >&2
+			echo "[smoke]   This PR's contract is flag-off default. The flag-flip PR should set UM_SMOKE_DEDUP_ON=1." >&2
+			exit 1
+		fi
+		;;
+esac
+
 # v0.6 auth (Phase B): /api/* and /mcp require bearer auth from non-loopback
 # callers. Smoke runs against a docker-compose stack where the host's
 # `localhost:6335` calls arrive at the container with the bridge gateway IP
@@ -1745,6 +1765,35 @@ else
 		exit 1
 	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
+fi
+
+# D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
+# Gated by UM_SMOKE_DEDUP_ON=1 so this PR (flag-off default) leaves S2 inert.
+# The flag-flip PR will set UM_SMOKE_DEDUP_ON=1 in CI and exercise the full
+# path: two identical /api/memory_capture writes → second response indicates
+# DEDUP_MERGED. Requires the server to have been started with
+# UM_DEDUP_ENABLED=true (S1 above checks the combination).
+if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
+	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
+	d1_text="d1-smoke-$MARKER: tokyo is a great city for ramen"
+	d1_user="d1-smoke-${MARKER}"
+	# Two identical writes via /api/memory_capture (routes through umAdd with
+	# infer:false — exact-text match exercises Layer 1 hash dedup).
+	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
+		-H "Content-Type: application/json" \
+		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
+	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
+		-H "Content-Type: application/json" \
+		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
+	echo "[smoke]     write1: $d1_resp1"
+	echo "[smoke]     write2: $d1_resp2"
+	# Substring check for tolerance to envelope variants.
+	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
+		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke] D1 S2 PASS: second identical write merged"
 fi
 
 # Clean up the auth-config tempfile on the success path. Failure paths

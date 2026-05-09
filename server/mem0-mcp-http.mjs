@@ -682,8 +682,12 @@ async function reindexDoc(relPath) {
 	const metadata = { schema_version: 1, ...fm };
 	const docText = `${fm.title}\n\n${body.trim()}`;
 	// v0.8 G2: umAdd routes through orchestrators for metric emission.
+	// D1 (R14 symmetric): vault reindex deletes-then-rewrites; without
+	// _systemMigration:true, dedup could inadvertently merge the rebuilt doc
+	// into a different doc's record under the same userId. Bypass is the
+	// same class as cli/reindex.mjs's rebuildOne (spec R14).
 	await withRetry(() =>
-		umAdd({ memory, text: docText, userId: USER_ID, metadata, infer: false })
+		umAdd({ memory, text: docText, userId: USER_ID, metadata, infer: false, _systemMigration: true })
 			.catch((e) => { throw tagRetryable(e); })
 	, { op: 'add' });
 	return { ok: true, path: relPath, id: targetId, indexed: true };
@@ -771,8 +775,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			}
 			const memoryClient = ctx?.memory ?? memory;
 			// v0.8 G2: see /api/add migration; same pattern.
+			// D1 F.1: pass caller-supplied `surface` if provided. UA-derivation deferred
+			// (spec §"Out-of-scope" + plan F.1) — this PR only honors caller-passed values.
 			const result = await withRetry(() =>
-				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, ...(args.metadata && { metadata: args.metadata }), infer: true })
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, ...(args.metadata && { metadata: args.metadata }), infer: true, surface: args?.surface })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -2177,12 +2183,14 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		if (url.pathname === '/api/add' && req.method === 'POST') {
-			const { text, metadata } = JSON.parse(await readBody(req));
+			const { text, metadata, surface } = JSON.parse(await readBody(req));
 			// v0.8 G2: umAdd routes through embed()/facts() orchestrators which
 			// emit um_provider_*{surface=embed|facts} metrics in prod. The outer
 			// withRetry wrapping is preserved for tagRetryable continuity.
+			// D1 F.1: pass caller-supplied `surface` (top-level body field) if
+			// present. UA-derivation deferred to a follow-up PR per spec §"Out-of-scope".
 			const result = await withRetry(() =>
-				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, ...(metadata && { metadata }), infer: true, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, ...(metadata && { metadata }), infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2337,8 +2345,11 @@ export function createRequestHandler(ctx = {}) {
 			// Compose a meaningful text to add to mem0 (title + body excerpt)
 			const docText = `${fm.title}\n\n${body.trim()}`;
 			// v0.8 G2: see /api/add migration.
+			// D1 (R14 symmetric): /api/reindex deletes-then-rewrites a vault doc;
+			// _systemMigration:true bypasses dedup so the rebuild can't merge into
+			// an unrelated doc's record. Same class as cli/reindex.mjs (F.2).
 			await withRetry(() =>
-				umAdd({ memory: resolvedMemory(), text: docText, userId: USER_ID, metadata, infer: false })
+				umAdd({ memory: resolvedMemory(), text: docText, userId: USER_ID, metadata, infer: false, _systemMigration: true })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 
