@@ -6,6 +6,16 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.1) — Phase A1: cross-surface defaults audit
+
+- **New audit doc** at [`docs/audits/2026-05-08-cross-surface-defaults.md`](docs/audits/2026-05-08-cross-surface-defaults.md) traces what `metadata.project` value each non-Claude-Code surface (Claude.ai, Claude Desktop, ChatGPT Desktop, ChatGPT Custom GPT, Codex CLI, Discord OpenClaw) actually passes to `memory_capture` / `memory_add` / `memory_append_turn` today. Records six findings (heterogeneous server defaults, CC-only auto-resolution, placeholder rubric strings, `'default'`-collision risk, `memory_append_turn` hard-fail UX, ChatGPT Custom GPT bypassing the soft-default entirely) and links each to the downstream phases that depend on the answer (B1 / D1 / E3 in particular). A2 (mem0 version on Pi) and A3 (Discord OpenClaw codebase access) sections are placeholders pending maintainer-action.
+
+### Fixed (v1.1) — Phase A4: runtime version banner reads from package.json
+
+- **MCP `serverInfo.version`** ([`server/mem0-mcp-http.mjs:1103`](server/mem0-mcp-http.mjs)) and **OpenAPI `info.version`** ([`server/openapi.mjs:1057`](server/openapi.mjs)) had hardcoded `'0.7.0-alpha'` literals that survived through v0.7 → v0.8 → v1.0.0 ship. Operators hitting `/mcp` initialize or `GET /openapi.yaml` were told the server was 0.7.0-alpha despite running the v1.0.0 release image.
+- Fix: new [`server/lib/version.mjs`](server/lib/version.mjs) reads `server/package.json` once at module load and exports `SERVER_VERSION`. Both runtime banners now import it. `package.json` is the canonical source of truth, so version.mjs cannot drift again.
+- [`plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml`](plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml) regenerated from `openapi.mjs`; diff is the single `version` field (`0.7.0-alpha` → `1.0.0`).
+
 ### Fixed (v1.1) — `/adr` skill paired-Opus review follow-up (W1.1)
 
 Post-merge paired-Opus review on PR #67 surfaced 1 BLOCKER + 5 IMP findings; this PR closes them out. No surface change for operators on the happy path; failure-mode and round-trip behavior is more correct.
