@@ -1578,6 +1578,63 @@ else
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
 
+# D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
+# Gated by UM_SMOKE_DEDUP_ON=1 (explicit opt-in) so the dedup probe writes
+# (two POSTs to /api/add) only fire when an operator/CI has asked for them
+# — even though dedup itself is ON by default post-flip. CI smoke step sets
+# UM_SMOKE_DEDUP_ON=1 to exercise the DEDUP_MERGED path: two identical
+# writes → second response carries event=DEDUP_MERGED. Requires the server
+# to have UM_DEDUP_ENABLED=true (the new default).
+#
+# Position note: S2 runs HERE (between step 5/5 and the boot-smoke gate)
+# because the boot-smoke gate below tears the main stack down at its end
+# (`docker compose ... down`), so anything below would hit a closed port.
+if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
+	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
+	# Two identical writes via /api/add. umAdd runs facts extraction (infer:true
+	# is hardcoded in the /api/add handler) then dedup-checks each extracted
+	# fact. Identical input → same extracted fact → Layer 1 hash dedup hit on
+	# the second write → results[].event == 'DEDUP_MERGED'.
+	#
+	# We use a name-shaped fact like step 2 above ("name is X") because mem0's
+	# facts extractor produces a fact reliably for that pattern; arbitrary
+	# sentences sometimes extract nothing. $MARKER scopes the fact to this
+	# smoke run so the test never collides with prior runs in the shared CI
+	# qdrant collection.
+	#
+	# Historical note: `/api/memory_capture` was used pre-PR-77 but does not
+	# exist as a REST endpoint — memory_capture is an MCP tool whose reindex
+	# path passes `_systemMigration:true` and intentionally bypasses dedup,
+	# so it could never have exercised this assertion. /api/add is the only
+	# REST path that routes through umAdd with dedup eligibility.
+	#
+	# Mirror step 2's exact /api/add pattern (proven to work with the auth
+	# wrapper). `-w` appends "HTTP_STATUS=NNN" to stdout so an empty body
+	# does not silently masquerade as a transport failure; `2>&1` captures
+	# curl's own diagnostics into the variable so the FAIL message is
+	# actionable.
+	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
+	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
+	echo "[smoke]     write1: $d1_resp1"
+	echo "[smoke]     write2: $d1_resp2"
+	# Substring check for tolerance to envelope variants. DEDUP_MERGED appears
+	# in the result event when L1 (or L2) catches; dedupCount appears in the
+	# qdrant payload after merge (not in the response envelope, but kept here
+	# as a fallback in case the response shape evolves to surface it).
+	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
+		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke] D1 S2 PASS: second identical write merged"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
@@ -1774,58 +1831,6 @@ else
 		exit 1
 	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
-fi
-
-# D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
-# Gated by UM_SMOKE_DEDUP_ON=1 (explicit opt-in) so the dedup probe writes
-# (two POSTs to /api/memory_capture) only fire when an operator/CI has
-# asked for them — even though dedup itself is ON by default post-flip.
-# CI smoke step sets UM_SMOKE_DEDUP_ON=1 to exercise the DEDUP_MERGED path:
-# two identical writes → second response carries event=DEDUP_MERGED.
-# Requires the server to have UM_DEDUP_ENABLED=true (the new default).
-if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
-	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
-	# Two identical writes via /api/add. umAdd runs facts extraction (infer:true
-	# is hardcoded in the /api/add handler) then dedup-checks each extracted
-	# fact. Identical input → same extracted fact → Layer 1 hash dedup hit on
-	# the second write → results[].event == 'DEDUP_MERGED'.
-	#
-	# We use a name-shaped fact like step 2 above ("name is X") because mem0's
-	# facts extractor produces a fact reliably for that pattern; arbitrary
-	# sentences sometimes extract nothing. $MARKER scopes the fact to this
-	# smoke run so the test never collides with prior runs in the shared CI
-	# qdrant collection.
-	#
-	# Historical note: `/api/memory_capture` was used pre-PR-77 but does not
-	# exist as a REST endpoint — memory_capture is an MCP tool whose reindex
-	# path passes `_systemMigration:true` and intentionally bypasses dedup,
-	# so it could never have exercised this assertion. /api/add is the only
-	# REST path that routes through umAdd with dedup eligibility.
-	# Mirror step 2's exact /api/add pattern (proven to work with the auth
-	# wrapper). `-w` appends "HTTP_STATUS=NNN" to stdout so an empty body
-	# does not silently masquerade as a transport failure; `2>&1` captures
-	# curl's own diagnostics into the variable so the FAIL message is
-	# actionable. Body is inline (not a variable) for parity with step 2.
-	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/add" \
-		-H 'Content-Type: application/json' \
-		-w '\nHTTP_STATUS=%{http_code}\n' \
-		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
-	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/add" \
-		-H 'Content-Type: application/json' \
-		-w '\nHTTP_STATUS=%{http_code}\n' \
-		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
-	echo "[smoke]     write1: $d1_resp1"
-	echo "[smoke]     write2: $d1_resp2"
-	# Substring check for tolerance to envelope variants. DEDUP_MERGED appears
-	# in the result event when L1 (or L2) catches; dedupCount appears in the
-	# qdrant payload after merge (not in the response envelope, but kept here
-	# as a fallback in case the response shape evolves to surface it).
-	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
-		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
-		_um_smoke_auth_cleanup
-		exit 1
-	fi
-	echo "[smoke] D1 S2 PASS: second identical write merged"
 fi
 
 # Clean up the auth-config tempfile on the success path. Failure paths
