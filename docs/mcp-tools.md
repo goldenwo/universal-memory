@@ -43,6 +43,35 @@ server vs hook paths.
 
 ---
 
+## Project soft-default policy (v1.1 F1)
+
+When a **write tool** (`memory_capture`, `memory_add`, `memory_append_turn`,
+`memory_checkpoint`) is called without a `metadata.project` / `project` slug,
+the server falls back to the value of `UM_DEFAULT_PROJECT` (literal `default`
+when unset). A one-line warn appears in the server log so operators can see
+soft-default writes accumulating:
+
+```
+{"level":"warn","tool":"memory_add","project_effective":"default", ...,
+ "reason":"caller_omitted_project","msg":"memory_add: caller omitted project; defaulting to \"default\" (set UM_DEFAULT_PROJECT to override the fallback slug)."}
+```
+
+**Read tools** (`memory_state`, `memory_recent`) intentionally **keep their
+hard-fail** on a missing project — silently returning data from the fallback
+project would be more surprising than the error. `memory_search` remains
+project-optional (post-filter; missing project searches across all).
+
+Wrong-type or regex-failing slugs (e.g. `../escape`, `my project`) still
+hard-fail with `INPUT_INVALID` on every tool — the soft-default only applies
+to the *omitted* arm (undefined / null / empty string).
+
+This policy resolves the heterogeneous-default behavior the
+[A1 audit](audits/2026-05-08-cross-surface-defaults.md) §F1 + §F5 + §F6 called
+out (three different responses to the same omission across the four write
+tools pre-v1.1).
+
+---
+
 ## Tools
 
 ### memory_search
@@ -129,7 +158,7 @@ Add a fact to long-term memory (mem0 extraction pipeline).
 ```json
 {
   "text": "string (required)",
-  "metadata": "object (optional)"
+  "metadata": "object (optional) — when omitted or missing `project`, the soft-default project slug from UM_DEFAULT_PROJECT (or \"default\") is injected. See [Project soft-default policy](#project-soft-default-policy-v11-f1)."
 }
 ```
 
@@ -324,7 +353,7 @@ Write a new authored document to the vault and reindex it.
     "type": "string (required)",
     "id": "string (required) — becomes the filename stem",
     "title": "string (required)",
-    "project": "string (optional, default: default)",
+    "project": "string (optional) — defaults to UM_DEFAULT_PROJECT (or \"default\") when omitted; see [Project soft-default policy](#project-soft-default-policy-v11-f1)",
     "...": "any other frontmatter fields"
   }
 }
@@ -370,7 +399,7 @@ Distinct from `memory_add` (mem0 fact extraction, no project structure) and `mem
 
 | Arg | Required | Default | Purpose |
 |-----|----------|---------|---------|
-| `project` | yes | — | Project slug (`^[a-zA-Z0-9._-]+$`) |
+| `project` | no (v1.1 F1) | `UM_DEFAULT_PROJECT` (or `default`) | Project slug (`^[a-zA-Z0-9._-]+$`). Omitting it triggers the soft-default + a warn log — see [Project soft-default policy](#project-soft-default-policy-v11-f1). Invalid slugs still hard-fail. |
 | `content` | yes | — | Turn text (max 8192 bytes UTF-8; server returns an error if exceeded — split long turns or truncate) |
 | `role` | yes | — | `user` / `assistant` / `system` |
 | `timestamp` | no | now-UTC | ISO 8601 timestamp |
@@ -431,7 +460,7 @@ Trigger a session summary + state refresh for the given project. Pipeline: reads
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `project` | string | — (required) | Project slug |
+| `project` | string | `UM_DEFAULT_PROJECT` (or `default`) since v1.1 F1 | Project slug. Omitting it triggers the soft-default + a warn log — see [Project soft-default policy](#project-soft-default-policy-v11-f1). Invalid slugs still hard-fail. |
 | `since` | string (ISO 8601) | last session_summary.valid_from | Catchup lower bound; optional |
 | `until` | string (ISO 8601) | now | Catchup upper bound; optional |
 | `skip_state_merge` | boolean | false | Summary-only run; omit state.md reindex; optional |

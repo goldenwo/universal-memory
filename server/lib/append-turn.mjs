@@ -5,6 +5,9 @@ import path from 'node:path';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
 import { obsFallback } from './obs-fallback.mjs';
+import { applyDefaultProject } from './default-project.mjs';
+import { getLogger } from './logger.mjs';
+import { currentRequestId } from './request-context.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-day-file expansion would explode cardinality).
@@ -34,7 +37,8 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const MAX_CONTENT_BYTES = 8192;
 const MAX_CONVERSATION_ID_BYTES = 256;
 const CONVERSATION_ID_RE = /^[\x20-\x7E]{0,256}$/;  // printable ASCII only, max 256
-const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
+// PROJECT_SLUG_RE moved to ./default-project.mjs (v1.1 F1) — applyDefaultProject()
+// validates against the same /^[a-zA-Z0-9._-]+$/ pattern. Kept inline pre-F1.
 const ROLES = new Set(['user', 'assistant', 'system']);
 
 export async function doAppendTurn(args, ctx = {}) {
@@ -46,7 +50,18 @@ export async function doAppendTurn(args, ctx = {}) {
   const { project, content, timestamp, conversation_id } = args;
   // Trim whitespace from role before validation
   const role = typeof args.role === 'string' ? args.role.trim() : args.role;
-  if (!project || typeof project !== 'string' || !PROJECT_SLUG_RE.test(project)) {
+  // v1.1 F1 unification: falsy `project` → soft-default to UM_DEFAULT_PROJECT
+  // (caller omitted the project; previously this was a hard-fail — the worst
+  // UX in the matrix per A1 audit finding F5). Wrong-type or regex-mismatch
+  // values still hard-fail, since silently substituting an arbitrary user
+  // value with the default would be both surprising and a data-routing risk.
+  const effectiveProject = applyDefaultProject({
+    project,
+    tool: 'memory_append_turn',
+    logger: ctx.logger ?? getLogger(),
+    requestId: ctx.requestId ?? currentRequestId(),
+  });
+  if (effectiveProject === null) {
     return { schema_version: 1, ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
   }
   if (!content || typeof content !== 'string') {
@@ -93,7 +108,7 @@ export async function doAppendTurn(args, ctx = {}) {
   }
 
   const date = now.toISOString().slice(0, 10);
-  const relPath = `captures/${project}/raw/${date}.md`;
+  const relPath = `captures/${effectiveProject}/raw/${date}.md`;
   const absPath = path.join(vaultDir, relPath);
   await fs.mkdir(path.dirname(absPath), { recursive: true });
 

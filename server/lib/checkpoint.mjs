@@ -45,6 +45,7 @@ import { getLogger } from './logger.mjs';
 import { safeLog, obsFallback } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
+import { applyDefaultProject } from './default-project.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -75,7 +76,8 @@ const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/s
 // lstat-based refusal upstream covers the lstat-refusal layer cross-platform.
 const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
-const VALID_SLUG = /^[a-zA-Z0-9._-]+$/;
+// VALID_SLUG moved to ./default-project.mjs (v1.1 F1) — applyDefaultProject()
+// validates against the same /^[a-zA-Z0-9._-]+$/ pattern. Kept inline pre-F1.
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
 
 // Spec §5.4 retry policy for blocking reindex
@@ -140,18 +142,27 @@ async function markOrphanSummary(tmpPath) {
  */
 export async function doCheckpoint(args, ctx = {}) {
   const {
-    project,
+    project: rawProject,
     since = null,
     until = null,
     skip_state_merge = false,
   } = args;
 
-  // Validate project slug
-  if (!project || !VALID_SLUG.test(project)) {
+  // v1.1 F1 unification: falsy `project` → soft-default to UM_DEFAULT_PROJECT
+  // (caller omitted; was a hard-fail before F1 per A1 audit finding F1+F5).
+  // Wrong-type or regex-mismatch values still hard-fail — silently substituting
+  // would lose the operator's signal and risk wrong-bucket session summaries.
+  const project = applyDefaultProject({
+    project: rawProject,
+    tool: 'memory_checkpoint',
+    logger: getLogger(),
+    requestId: currentRequestId(),
+  });
+  if (project === null) {
     return {
       schema_version: 1,
       ok: false,
-      error: `invalid project: ${JSON.stringify(String(project ?? '').slice(0, 64))}`,
+      error: `invalid project: ${JSON.stringify(String(rawProject ?? '').slice(0, 64))}`,
       code: 'INPUT_INVALID',
     };
   }
