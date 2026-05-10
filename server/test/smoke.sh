@@ -1775,19 +1775,36 @@ fi
 # Requires the server to have UM_DEDUP_ENABLED=true (the new default).
 if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
 	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
-	d1_text="d1-smoke-$MARKER: tokyo is a great city for ramen"
-	d1_user="d1-smoke-${MARKER}"
-	# Two identical writes via /api/memory_capture (routes through umAdd with
-	# infer:false — exact-text match exercises Layer 1 hash dedup).
-	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
-		-H "Content-Type: application/json" \
-		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
-	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
-		-H "Content-Type: application/json" \
-		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
+	# Two identical writes via /api/add. umAdd runs facts extraction (infer:true
+	# is hardcoded in the /api/add handler) then dedup-checks each extracted
+	# fact. Identical input → same extracted fact → Layer 1 hash dedup hit on
+	# the second write → results[].event == 'DEDUP_MERGED'.
+	#
+	# We use a name-shaped fact like step 2 above ("name is X") because mem0's
+	# facts extractor produces a fact reliably for that pattern; arbitrary
+	# sentences sometimes extract nothing. $MARKER scopes the fact to this
+	# smoke run so the test never collides with prior runs in the shared CI
+	# qdrant collection.
+	#
+	# Historical note: `/api/memory_capture` was used pre-PR-77 but does not
+	# exist as a REST endpoint — memory_capture is an MCP tool whose reindex
+	# path passes `_systemMigration:true` and intentionally bypasses dedup,
+	# so it could never have exercised this assertion. /api/add is the only
+	# REST path that routes through umAdd with dedup eligibility.
+	d1_text="The smoke test user's name is dedup-probe-${MARKER}."
+	d1_body="{\"text\": \"$d1_text\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}"
+	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-d "$d1_body" || true)
+	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-d "$d1_body" || true)
 	echo "[smoke]     write1: $d1_resp1"
 	echo "[smoke]     write2: $d1_resp2"
-	# Substring check for tolerance to envelope variants.
+	# Substring check for tolerance to envelope variants. DEDUP_MERGED appears
+	# in the result event when L1 (or L2) catches; dedupCount appears in the
+	# qdrant payload after merge (not in the response envelope, but kept here
+	# as a fallback in case the response shape evolves to surface it).
 	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
 		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
 		_um_smoke_auth_cleanup
