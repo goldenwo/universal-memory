@@ -200,6 +200,12 @@ jobs:
           UM_MCP_WRITE_ENABLED: "true"
           UM_VAULT_DIR: "/tmp/um-vault-ci"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # v1.1 D1 flag-flip — UM_DEDUP_ENABLED defaults to true via the
+          # new .env.example, so install.sh writes it to .env and the
+          # container starts with dedup ON. UM_SMOKE_DEDUP_ON=1 here is the
+          # explicit opt-in that fires the S2 dedup probe (two identical
+          # /api/memory_capture writes; second must return event=DEDUP_MERGED).
+          UM_SMOKE_DEDUP_ON: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
