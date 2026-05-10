@@ -1791,14 +1791,19 @@ if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
 	# path passes `_systemMigration:true` and intentionally bypasses dedup,
 	# so it could never have exercised this assertion. /api/add is the only
 	# REST path that routes through umAdd with dedup eligibility.
-	d1_text="The smoke test user's name is dedup-probe-${MARKER}."
-	d1_body="{\"text\": \"$d1_text\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}"
+	# Mirror step 2's exact /api/add pattern (proven to work with the auth
+	# wrapper). `-w` appends "HTTP_STATUS=NNN" to stdout so an empty body
+	# does not silently masquerade as a transport failure; `2>&1` captures
+	# curl's own diagnostics into the variable so the FAIL message is
+	# actionable. Body is inline (not a variable) for parity with step 2.
 	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/add" \
 		-H 'Content-Type: application/json' \
-		-d "$d1_body" || true)
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
 	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/add" \
 		-H 'Content-Type: application/json' \
-		-d "$d1_body" || true)
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
 	echo "[smoke]     write1: $d1_resp1"
 	echo "[smoke]     write2: $d1_resp2"
 	# Substring check for tolerance to envelope variants. DEDUP_MERGED appears
