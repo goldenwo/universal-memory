@@ -96,7 +96,12 @@ function computeDedupEligible({ metadata, _systemMigration }) {
 function dedupEmbeddingThreshold() {
   const raw = process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
   const n = Number.parseFloat(raw);
-  return Number.isFinite(n) ? n : 0.95;  // spec §4.2 default
+  // Default 0.84 derived from a 50-pair labeled eval against text-embedding-3-small
+  // (F_0.5=0.77 at τ=0.84, plateau midpoint of 8-τ band where precision saturates
+  // at 1.0). See docs/architecture/dedup.md. Keep in lockstep with
+  // server/.env.example UM_DEDUP_EMBEDDING_THRESHOLD and the T2 assertion in
+  // server/test/dedup.test.mjs.
+  return Number.isFinite(n) ? n : 0.84;
 }
 
 export async function umAdd({

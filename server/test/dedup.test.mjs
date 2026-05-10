@@ -188,8 +188,10 @@ test('T2: embedding hit path — Layer 2 fires when hash misses, returns DEDUP_M
     assert.equal(qdrant.upserts.length, 0);
     assert.equal(qdrant.searches.length, 1, 'Layer 2 search ran exactly once');
     assert.equal(qdrant.setPayloads.length, 1);
-    // Verify the search call received the threshold from env (default 0.95)
-    assert.equal(qdrant.searches[0].body.score_threshold, 0.95);
+    // LITERAL match to the runtime default in server/lib/add.mjs dedupEmbeddingThreshold()
+    // and server/.env.example UM_DEDUP_EMBEDDING_THRESHOLD — update all three together.
+    // Default 0.84 from the 2026-05-09 threshold-tuning eval; see docs/architecture/dedup.md.
+    assert.equal(qdrant.searches[0].body.score_threshold, 0.84);
   });
 });
 
