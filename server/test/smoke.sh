@@ -387,21 +387,27 @@ for r in data.get('results', []):
 
 T6_QUERY="xyzzy-task6-filter-probe-$(date +%s)-$$"
 
+# v1.1 D1 flag-flip note: case texts are topic-orthogonal (arctic vs music vs
+# cooking vs butterflies) so the embedding cosines stay below the dedup
+# threshold τ=0.84 and the four writes do not collapse into a single qdrant
+# point. Each text still contains ${T6_QUERY}-LETTER so /api/search keyed
+# on $T6_QUERY retrieves them.
+
 # Case A: status=current doc — must appear in default search
 echo "[smoke]     Case A: status=current doc returned by default search"
-IDS_A=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY status current" '{"status":"current","t6":"a"}')
+IDS_A=$(t6_add "The probe marker ${T6_QUERY}-A is associated with arctic ice core samples collected from Siberian permafrost." '{"status":"current","t6":"a"}')
 T6_IDS="$T6_IDS $IDS_A"
 
 # Case B: status=superseded doc — must NOT appear in default search
 echo "[smoke]     Case B: status=superseded doc excluded by default search"
-IDS_B=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY status superseded" '{"status":"superseded","t6":"b"}')
+IDS_B=$(t6_add "The probe marker ${T6_QUERY}-B is associated with baroque chamber music notation from 17th century Italy." '{"status":"superseded","t6":"b"}')
 T6_IDS="$T6_IDS $IDS_B"
 
 # Case D: no-metadata (legacy) doc — must appear in default search
 echo "[smoke]     Case D: legacy no-metadata doc returned by default search"
 LEGACY_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
 	-H 'Content-Type: application/json' \
-	-d "{\"text\": \"xyzzy-task6-filter-probe: $T6_QUERY legacy no-metadata\"}")
+	-d "{\"text\": \"The probe marker ${T6_QUERY}-D is associated with traditional sourdough bread recipes from Eastern Europe.\"}")
 IDS_D=$(echo "$LEGACY_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -412,7 +418,7 @@ T6_IDS="$T6_IDS $IDS_D"
 
 # Case E: invalidated_at set — must NOT appear in default search
 echo "[smoke]     Case E: invalidated_at doc excluded by default search"
-IDS_E=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY invalidated" '{"invalidated_at":"2024-01-01T00:00:00Z","t6":"e"}')
+IDS_E=$(t6_add "The probe marker ${T6_QUERY}-E is associated with monarch butterfly migration patterns across North America." '{"invalidated_at":"2024-01-01T00:00:00Z","t6":"e"}')
 T6_IDS="$T6_IDS $IDS_E"
 
 # Brief pause to allow mem0 async write to settle before searching
@@ -809,9 +815,13 @@ for r in data.get('results', []):
 
 # Two docs: one with a recent valid_from, one with an old valid_from.
 # With decay OFF the server must still return { results: [...] } without error.
-IDS_T9_RECENT=$(t9_add "$T9_QUERY decay-probe recent" \
+#
+# v1.1 D1 flag-flip note: same hygiene as Task 6 — texts are topic-orthogonal
+# (solar physics vs paleontology) so embedding cosines stay below the dedup
+# threshold τ=0.84. Each text contains ${T9_QUERY}-LABEL for searchability.
+IDS_T9_RECENT=$(t9_add "Reference code ${T9_QUERY}-recent is paired with a study of solar flare cycles observed during the last decade." \
 	"{\"type\":\"authored\",\"id\":\"t9-recent\",\"valid_from\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"t9\":\"recent\"}")
-IDS_T9_OLD=$(t9_add "$T9_QUERY decay-probe old" \
+IDS_T9_OLD=$(t9_add "Reference code ${T9_QUERY}-old is paired with a record of late Cretaceous marine fossils found in Wyoming sedimentary layers." \
 	'{"type":"authored","id":"t9-old","valid_from":"2020-01-01T00:00:00Z","t9":"old"}')
 T9_IDS="$T9_IDS $IDS_T9_RECENT $IDS_T9_OLD"
 
