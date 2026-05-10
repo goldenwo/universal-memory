@@ -27,23 +27,22 @@ MARKER="smoke-test-$(date +%s)-$$"
 echo "[smoke] endpoint: $ENDPOINT"
 echo "[smoke] marker:   $MARKER"
 
-# D1 S1 — flag-off regression guard (plan E.5, spec §10.1).
-# Landing PR ships UM_DEDUP_ENABLED=false default. Smoke MUST run under that
-# contract — if a future PR accidentally flips the default without updating
-# the rollout, this assertion catches it before the rest of smoke proceeds
-# with potentially-changed semantics.
-case "${UM_DEDUP_ENABLED:-false}" in
-	false|""|0|FALSE|False)
-		echo "[smoke] D1 S1 flag-off regression guard: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset>}' (PASS)"
+# D1 S1 — flag-on default regression guard (plan E.5, spec §10.1).
+# Post-flip (v1.1): default is ON. Smoke MUST run under that contract — if a
+# future PR regresses the default to OFF (or fat-fingers the value), this
+# assertion catches it before the rest of smoke proceeds with potentially-
+# changed semantics. Explicit `UM_DEDUP_ENABLED=false` is allowed (operator
+# opt-out) but skips S2.
+case "${UM_DEDUP_ENABLED:-true}" in
+	true|""|1|TRUE|True)
+		echo "[smoke] D1 S1 flag-on default: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset, default-on>}' (PASS)"
+		;;
+	false|0|FALSE|False)
+		echo "[smoke] D1 S1: dedup explicitly disabled (UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}') — S2 will be skipped"
 		;;
 	*)
-		if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
-			echo "[smoke] D1: dedup ON intentionally (UM_SMOKE_DEDUP_ON=1) — see S2 block at end"
-		else
-			echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' but UM_SMOKE_DEDUP_ON not set." >&2
-			echo "[smoke]   This PR's contract is flag-off default. The flag-flip PR should set UM_SMOKE_DEDUP_ON=1." >&2
-			exit 1
-		fi
+		echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' is not a recognized truth value." >&2
+		exit 1
 		;;
 esac
 
@@ -1768,11 +1767,12 @@ else
 fi
 
 # D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
-# Gated by UM_SMOKE_DEDUP_ON=1 so this PR (flag-off default) leaves S2 inert.
-# The flag-flip PR will set UM_SMOKE_DEDUP_ON=1 in CI and exercise the full
-# path: two identical /api/memory_capture writes → second response indicates
-# DEDUP_MERGED. Requires the server to have been started with
-# UM_DEDUP_ENABLED=true (S1 above checks the combination).
+# Gated by UM_SMOKE_DEDUP_ON=1 (explicit opt-in) so the dedup probe writes
+# (two POSTs to /api/memory_capture) only fire when an operator/CI has
+# asked for them — even though dedup itself is ON by default post-flip.
+# CI smoke step sets UM_SMOKE_DEDUP_ON=1 to exercise the DEDUP_MERGED path:
+# two identical writes → second response carries event=DEDUP_MERGED.
+# Requires the server to have UM_DEDUP_ENABLED=true (the new default).
 if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
 	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
 	d1_text="d1-smoke-$MARKER: tokyo is a great city for ramen"
