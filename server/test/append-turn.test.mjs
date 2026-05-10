@@ -702,3 +702,81 @@ test('doAppendTurn with O_NOFOLLOW rejects symlink at the raw capture path', { s
     await fs.rm(outside, { recursive: true, force: true });
   }
 });
+
+// ---------- v1.1 F1: project soft-default ----------
+// Pre-F1 doAppendTurn hard-failed when the caller omitted `project`. Per the
+// A1 audit finding F1+F5, the falsy arm now soft-defaults to UM_DEFAULT_PROJECT
+// (or literal "default" when unset). The wrong-type / invalid-slug arm still
+// hard-fails — see "doAppendTurn rejects invalid project slug" above for the
+// negative case that this F1 change deliberately preserves.
+
+test('F1: doAppendTurn with missing project writes under "default" (env unset)', async () => {
+  const vault = await makeTempVault();
+  const prev = process.env.UM_DEFAULT_PROJECT;
+  delete process.env.UM_DEFAULT_PROJECT;
+  try {
+    const result = await doAppendTurn({
+      // project omitted entirely
+      content: 'F1 probe — project omitted should soft-default',
+      role: 'user',
+    }, { vaultDir: vault, clock: () => new Date('2026-05-10T12:00:00Z') });
+    assert.equal(result.ok, true, `expected ok=true, got error: ${result.error}`);
+    assert.match(result.path, /^captures\/default\/raw\/2026-05-10\.md$/);
+  } finally {
+    if (prev === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prev;
+    await fs.rm(vault, { recursive: true, force: true });
+  }
+});
+
+test('F1: doAppendTurn with project="" writes under "default"', async () => {
+  const vault = await makeTempVault();
+  const prev = process.env.UM_DEFAULT_PROJECT;
+  delete process.env.UM_DEFAULT_PROJECT;
+  try {
+    const result = await doAppendTurn({
+      project: '',
+      content: 'F1 probe — empty-string project should soft-default',
+      role: 'user',
+    }, { vaultDir: vault, clock: () => new Date('2026-05-10T12:00:00Z') });
+    assert.equal(result.ok, true);
+    assert.match(result.path, /^captures\/default\/raw\//);
+  } finally {
+    if (prev === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prev;
+    await fs.rm(vault, { recursive: true, force: true });
+  }
+});
+
+test('F1: doAppendTurn honors UM_DEFAULT_PROJECT env on the falsy arm', async () => {
+  const vault = await makeTempVault();
+  const prev = process.env.UM_DEFAULT_PROJECT;
+  process.env.UM_DEFAULT_PROJECT = 'operator-configured';
+  try {
+    const result = await doAppendTurn({
+      // project omitted
+      content: 'F1 probe — env should pick the slug',
+      role: 'user',
+    }, { vaultDir: vault, clock: () => new Date('2026-05-10T12:00:00Z') });
+    assert.equal(result.ok, true);
+    assert.match(result.path, /^captures\/operator-configured\/raw\//);
+  } finally {
+    if (prev === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prev;
+    await fs.rm(vault, { recursive: true, force: true });
+  }
+});
+
+test('F1: doAppendTurn invalid slug still hard-fails after the F1 flip', async () => {
+  // Regression guard: ensures the F1 change ONLY flipped the falsy arm and
+  // did not weaken validation. A path-traversal slug must still error.
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: '../escape',
+    content: 'should not write',
+    role: 'user',
+  }, { vaultDir: vault });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /invalid project/i);
+  await fs.rm(vault, { recursive: true, force: true });
+});
