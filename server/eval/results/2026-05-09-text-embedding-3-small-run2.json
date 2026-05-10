@@ -1,0 +1,917 @@
+{
+  "timestamp": "2026-05-09T23:58:23.449Z",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "fixtureRev": "1c1fa1263f4be8b096a96f34af5ed648",
+  "fixtureCounts": {
+    "identical": 10,
+    "paraphrase": 25,
+    "unrelated": 15,
+    "total": 50
+  },
+  "fixtureNoisyRealCount": 5,
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32",
+    "openaiSdkVersion": "4.104.0"
+  },
+  "sweep": [
+    {
+      "tau": 0.8,
+      "paraphraseRecall": 0.48,
+      "paraphraseRecallCi": [
+        0.30031003928960015,
+        0.6650178204685269
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.821917808219178,
+      "fHalfCi": [
+        0.6557377049180328,
+        0.9146341463414633
+      ],
+      "combined": 0.48,
+      "paraphraseF1": 0.6486486486486487,
+      "expectedCost": 13
+    },
+    {
+      "tau": 0.81,
+      "paraphraseRecall": 0.44,
+      "paraphraseRecallCi": [
+        0.2666537494700256,
+        0.6293298298043557
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7971014492753624,
+      "fHalfCi": [
+        0.6140350877192982,
+        0.9027777777777778
+      ],
+      "combined": 0.44,
+      "paraphraseF1": 0.6111111111111112,
+      "expectedCost": 14
+    },
+    {
+      "tau": 0.82,
+      "paraphraseRecall": 0.44,
+      "paraphraseRecallCi": [
+        0.2666537494700256,
+        0.6293298298043557
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7971014492753624,
+      "fHalfCi": [
+        0.625,
+        0.8955223880597015
+      ],
+      "combined": 0.44,
+      "paraphraseF1": 0.6111111111111112,
+      "expectedCost": 14
+    },
+    {
+      "tau": 0.83,
+      "paraphraseRecall": 0.4,
+      "paraphraseRecallCi": [
+        0.23403057664190918,
+        0.5926087221487266
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7692307692307692,
+      "fHalfCi": [
+        0.5813953488372093,
+        0.8823529411764706
+      ],
+      "combined": 0.4,
+      "paraphraseF1": 0.5714285714285715,
+      "expectedCost": 15
+    },
+    {
+      "tau": 0.84,
+      "paraphraseRecall": 0.4,
+      "paraphraseRecallCi": [
+        0.23403057664190918,
+        0.5926087221487266
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7692307692307692,
+      "fHalfCi": [
+        0.5813953488372093,
+        0.8783783783783784
+      ],
+      "combined": 0.4,
+      "paraphraseF1": 0.5714285714285715,
+      "expectedCost": 15
+    },
+    {
+      "tau": 0.85,
+      "paraphraseRecall": 0.36,
+      "paraphraseRecallCi": [
+        0.20247656431735636,
+        0.5548184539895337
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7377049180327868,
+      "fHalfCi": [
+        0.5128205128205128,
+        0.8620689655172413
+      ],
+      "combined": 0.36,
+      "paraphraseF1": 0.5294117647058824,
+      "expectedCost": 16
+    },
+    {
+      "tau": 0.86,
+      "paraphraseRecall": 0.32,
+      "paraphraseRecallCi": [
+        0.17204987516891143,
+        0.5159008626542329
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.7017543859649122,
+      "fHalfCi": [
+        0.4545454545454545,
+        0.8333333333333334
+      ],
+      "combined": 0.32,
+      "paraphraseF1": 0.48484848484848486,
+      "expectedCost": 17
+    },
+    {
+      "tau": 0.87,
+      "paraphraseRecall": 0.2,
+      "paraphraseRecallCi": [
+        0.08860454100652487,
+        0.3913133553653824
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.5555555555555556,
+      "fHalfCi": [
+        0.19999999999999998,
+        0.7407407407407408
+      ],
+      "combined": 0.2,
+      "paraphraseF1": 0.33333333333333337,
+      "expectedCost": 20
+    },
+    {
+      "tau": 0.88,
+      "paraphraseRecall": 0.12,
+      "paraphraseRecallCi": [
+        0.04166741357068093,
+        0.2995619218337349
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.4054054054054054,
+      "fHalfCi": [
+        0,
+        0.6382978723404255
+      ],
+      "combined": 0.12,
+      "paraphraseF1": 0.21428571428571425,
+      "expectedCost": 22
+    },
+    {
+      "tau": 0.89,
+      "paraphraseRecall": 0.08,
+      "paraphraseRecallCi": [
+        0.02221993369109193,
+        0.24966512122957818
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.30303030303030304,
+      "fHalfCi": [
+        0,
+        0.5454545454545455
+      ],
+      "combined": 0.08,
+      "paraphraseF1": 0.14814814814814814,
+      "expectedCost": 23
+    },
+    {
+      "tau": 0.9,
+      "paraphraseRecall": 0.08,
+      "paraphraseRecallCi": [
+        0.02221993369109193,
+        0.24966512122957818
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.30303030303030304,
+      "fHalfCi": [
+        0,
+        0.5555555555555556
+      ],
+      "combined": 0.08,
+      "paraphraseF1": 0.14814814814814814,
+      "expectedCost": 23
+    },
+    {
+      "tau": 0.91,
+      "paraphraseRecall": 0.04,
+      "paraphraseRecallCi": [
+        0.007096050386699165,
+        0.19544472405022525
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0.1724137931034483,
+      "fHalfCi": [
+        0,
+        0.42857142857142855
+      ],
+      "combined": 0.04,
+      "paraphraseF1": 0.07692307692307693,
+      "expectedCost": 24
+    },
+    {
+      "tau": 0.92,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.93,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.94,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.9,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.95,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.6,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.96,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.6,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.97,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.5,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.98,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0.2,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 0.99,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    },
+    {
+      "tau": 1,
+      "paraphraseRecall": 0,
+      "paraphraseRecallCi": [
+        0,
+        0.13319649395317873
+      ],
+      "unrelatedPrecision": 1,
+      "unrelatedPrecisionCi": [
+        0.7961107336956521,
+        1
+      ],
+      "identicalRecall": 0,
+      "fHalf": 0,
+      "fHalfCi": [
+        0,
+        0
+      ],
+      "combined": 0,
+      "paraphraseF1": 0,
+      "expectedCost": 25
+    }
+  ],
+  "elbow": {
+    "tau": 0.84,
+    "fHalf": 0.7692307692307692,
+    "fHalfCi": [
+      0.5813953488372093,
+      0.8783783783783784
+    ],
+    "runnerUpTau": 0.83,
+    "delta": 0,
+    "bandTaus": [
+      0.8,
+      0.81,
+      0.82,
+      0.83,
+      0.84,
+      0.85,
+      0.86,
+      0.87
+    ],
+    "plateau": true
+  },
+  "maxCosinePerTier": {
+    "identical": 0.9842111675301933,
+    "paraphrase": 0.9151287119346815,
+    "unrelated": 0.7575117936407271
+  },
+  "hashCollisionRate": 0,
+  "pairScores": [
+    {
+      "aHash": "0826339140eb084385c231d90323211c",
+      "bHash": "92e46c9c1bd0de569e325ac31c5a893f",
+      "label": "identical",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.7660551158804081
+    },
+    {
+      "aHash": "2f6f6c33a125aa84a951adf80d265dd5",
+      "bHash": "a8c3beffffc20ead947133bf7b3e6f95",
+      "label": "identical",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.9755522721420612
+    },
+    {
+      "aHash": "25d1dd5f7949986b3d0e7bfd10500d3b",
+      "bHash": "0ddd04a19dfc2103bb228c85e2b4816b",
+      "label": "identical",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.9604294195516367
+    },
+    {
+      "aHash": "396abe38cedc82db2c4510131f781f50",
+      "bHash": "ff35d3a55a64731ce3f539d0c8057216",
+      "label": "identical",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.9434926916356691
+    },
+    {
+      "aHash": "e0e471acfd9186e141671c97ae4073a0",
+      "bHash": "2f2943a6a9f08098bc13ca6d773f9845",
+      "label": "identical",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.9828365472744086
+    },
+    {
+      "aHash": "a531590e830d92a2f5c94a22fa687fd2",
+      "bHash": "a4b82d488e837b89ca0fb056bce41e2e",
+      "label": "identical",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.9416346907948832
+    },
+    {
+      "aHash": "c3786cd4cdbf966f6de5295b696d090b",
+      "bHash": "45f4f968f3b35c1631e8bdb811be64c4",
+      "label": "identical",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.9794743531218548
+    },
+    {
+      "aHash": "8da2db5a16510c2a84490823f11737e2",
+      "bHash": "1f11f453e136ac4855e0a00937b1a4bb",
+      "label": "identical",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.9842111675301933
+    },
+    {
+      "aHash": "7009712da81826b5679ab15e4fdbf26c",
+      "bHash": "7b169b1bbac1e3dcc1169dd697799116",
+      "label": "identical",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.9715259819134034
+    },
+    {
+      "aHash": "617b6bfe8b0d8f96664bf796561d6dc5",
+      "bHash": "3446a2523a2a40007439c46b90765f67",
+      "label": "identical",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.9494073961113881
+    },
+    {
+      "aHash": "b3df7cc127776dc304824c7034e3f4a2",
+      "bHash": "ec1027f1268f61ad29d8dcdf3bf41c27",
+      "label": "paraphrase",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.8808708767406911
+    },
+    {
+      "aHash": "2f441d8deee768cdba32a4452e1d0640",
+      "bHash": "9dddaab576dbfd89d14596032982d373",
+      "label": "paraphrase",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.6926162012639593
+    },
+    {
+      "aHash": "e8c0b13dc4f8748f65a1b1f8e7e4fc91",
+      "bHash": "173e13df931b6b23b26a274b9564683f",
+      "label": "paraphrase",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.8694858231714458
+    },
+    {
+      "aHash": "756e23edeadfe8c51ca48acf7cb91a68",
+      "bHash": "616fa1b414eca9e1fa7a06f2b1ab07a9",
+      "label": "paraphrase",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.8600812143930572
+    },
+    {
+      "aHash": "1caa66426d630d19479fd8e0319b0ce0",
+      "bHash": "8e47714f6c2b99e6edf05acf7649242a",
+      "label": "paraphrase",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.8771369609698362
+    },
+    {
+      "aHash": "7ebc6c98bb7213a46f8ec825473ffddc",
+      "bHash": "9dc754ce8ba94d2c40f8178f5e5a1394",
+      "label": "paraphrase",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.6885572294268572
+    },
+    {
+      "aHash": "b3e9437c60ed0be195012fac23c697d0",
+      "bHash": "fcfcd7d93ab812d43b5f32f6737b8e10",
+      "label": "paraphrase",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.9006745393036332
+    },
+    {
+      "aHash": "a7ac8c8aaeb23668fc808997df6c6dc9",
+      "bHash": "b8594b56acdf9d0636c86bbe3e506917",
+      "label": "paraphrase",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.8089595600386019
+    },
+    {
+      "aHash": "87f9109f6d0893b7b968dc43a0925195",
+      "bHash": "ec38f88f9b438cfae6f633a1f49f9ab4",
+      "label": "paraphrase",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.7691310726648374
+    },
+    {
+      "aHash": "7c6e74365e8bbfc71c144f64af709d57",
+      "bHash": "bf4e2f3bd8b93b9ee79091c12ff0029b",
+      "label": "paraphrase",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.7964290379016145
+    },
+    {
+      "aHash": "6f077be49e1092349e2d7556f76be36c",
+      "bHash": "b0c27bc2aa5df602087c7c77340d8af7",
+      "label": "paraphrase",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.8212697525946373
+    },
+    {
+      "aHash": "e12917a26ff2850e14c7a799279de6aa",
+      "bHash": "39d4c32b0f7b865d4f9d7b3c78eb04c7",
+      "label": "paraphrase",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.8429167361125701
+    },
+    {
+      "aHash": "f36dde145135b6a482d80e8896b599c1",
+      "bHash": "1306e2d5d602dfaa012b4c85e55df12f",
+      "label": "paraphrase",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.8657087535231999
+    },
+    {
+      "aHash": "f35964537fc531bf8edb08adb1269018",
+      "bHash": "738b1b354bdb5bc7ce455956ed131f5a",
+      "label": "paraphrase",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.9151287119346815
+    },
+    {
+      "aHash": "699ae37ff39521c5f7bde3eef3bdc9d6",
+      "bHash": "872db496deda3015042a24b1e8b5d421",
+      "label": "paraphrase",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.8794572185263023
+    },
+    {
+      "aHash": "99888bf89de900605301b22e88274783",
+      "bHash": "e0037036e823b1795a8ea9961d3233a8",
+      "label": "paraphrase",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.6966450995612429
+    },
+    {
+      "aHash": "52ba4aad9f40d25e6ee21276337d8ecf",
+      "bHash": "00ebabc83f6de9faef75754e433c3fc7",
+      "label": "paraphrase",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.6572449315513211
+    },
+    {
+      "aHash": "04349c7ee54db40c26360773956f9b2b",
+      "bHash": "506ef8c657de4269327b8325859ebe21",
+      "label": "paraphrase",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.7331031096626696
+    },
+    {
+      "aHash": "6e60375cc1ee2e3ac14e1585d14d6fc9",
+      "bHash": "8ac2dbac4dd256e27fa1708eadf47421",
+      "label": "paraphrase",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.5139297690096464
+    },
+    {
+      "aHash": "6f39782e246b65cea07bf7b69902e77c",
+      "bHash": "79042f2b5931fe37f962fd1212ea4887",
+      "label": "paraphrase",
+      "source": "cross_surface",
+      "projectContext": "same-project",
+      "cosine": 0.594709867397652
+    },
+    {
+      "aHash": "0e997deb49ea3e33842dc024ca582fc5",
+      "bHash": "d3ae3e6112c5f09ff69bba2b079cee85",
+      "label": "paraphrase",
+      "source": "noisy_real",
+      "projectContext": "same-project",
+      "cosine": 0.7304981442429259
+    },
+    {
+      "aHash": "083d985ae8d337cb87f1503780dd9577",
+      "bHash": "c5c1b501d4d4a5a9ecad68c16c6046b2",
+      "label": "paraphrase",
+      "source": "noisy_real",
+      "projectContext": "same-project",
+      "cosine": 0.789117138385427
+    },
+    {
+      "aHash": "8f0392aa44b326d868d778268c437e3e",
+      "bHash": "483587d23f41744a145078e3637657d4",
+      "label": "paraphrase",
+      "source": "noisy_real",
+      "projectContext": "same-project",
+      "cosine": 0.7091638532267165
+    },
+    {
+      "aHash": "ca020600b389fda95fb712f61787026d",
+      "bHash": "acbb0bfaedb3ae2432285f1035869611",
+      "label": "paraphrase",
+      "source": "noisy_real",
+      "projectContext": "same-project",
+      "cosine": 0.854216513325127
+    },
+    {
+      "aHash": "f783ebaab16bf0d26132245b4a549366",
+      "bHash": "f64f4bcf400ffb9e583869b9052eaac3",
+      "label": "paraphrase",
+      "source": "noisy_real",
+      "projectContext": "same-project",
+      "cosine": 0.7445522417854478
+    },
+    {
+      "aHash": "dae745b2ca1a0c16cda987d4ba8ac053",
+      "bHash": "520f2f48ecd71ecfdc828f6414a73266",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.2754007235005645
+    },
+    {
+      "aHash": "37a774360fa4b2a1a1f4956911b9c85e",
+      "bHash": "6c32a262ec7326717f009dc05bb27ae3",
+      "label": "unrelated",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.7575117936407271
+    },
+    {
+      "aHash": "2d8acb66bc76166a91cf1ffdd16100b0",
+      "bHash": "e4e2aae48e9786884a4e9b7aa3a5da10",
+      "label": "unrelated",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.6708124718474163
+    },
+    {
+      "aHash": "816084bc2557885365e78920adcf92b2",
+      "bHash": "252080f2eddbb753cf6e704013fa41a4",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.5903054385682134
+    },
+    {
+      "aHash": "f10aebddb23d810a7db1a0c46569651b",
+      "bHash": "30c7b65bfbfd10b14674ef3e5202d474",
+      "label": "unrelated",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.3808079642056395
+    },
+    {
+      "aHash": "74468a3fdd0714984f03a00ae2138e19",
+      "bHash": "3c17dbd501b6aec2dc8223da4ef3ac41",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.6842483275734557
+    },
+    {
+      "aHash": "d00943e5a2b3a5f1abdc71fe6d43a8f6",
+      "bHash": "d9820e18205f8e3631b72132940eac86",
+      "label": "unrelated",
+      "source": "preferences",
+      "projectContext": "same-project",
+      "cosine": 0.2050659555565654
+    },
+    {
+      "aHash": "e0ca76ea91b3b328820161a329bf5450",
+      "bHash": "dd5269c6014fc98b92eb4c0a354c3ec0",
+      "label": "unrelated",
+      "source": "personal_event",
+      "projectContext": "same-project",
+      "cosine": 0.4153171931923501
+    },
+    {
+      "aHash": "54fdf5514f7689b3a969fd88501b3d18",
+      "bHash": "3286be82ba2d62a281dd8b647430c7a9",
+      "label": "unrelated",
+      "source": "procedural",
+      "projectContext": "same-project",
+      "cosine": 0.4446917728785048
+    },
+    {
+      "aHash": "126a6b749e1b69fadce41cec4369a288",
+      "bHash": "b853b3e539451962c376772859df9785",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.2533577972755697
+    },
+    {
+      "aHash": "49b52e5fa64418e82ae631f285428be9",
+      "bHash": "ec548b5585832bf7d2b667e9b86adf5a",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.40695253163810813
+    },
+    {
+      "aHash": "421992a9612c8528015fe127fa22c2eb",
+      "bHash": "aa49aa40598e0fa4d8a0a8cd4358f780",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.111571085391546
+    },
+    {
+      "aHash": "c3495bdd9f793a17414f6824be11cb06",
+      "bHash": "f04da38059daeb319ab382e38c739e45",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.4397824551719427
+    },
+    {
+      "aHash": "24fd2af6d9376e78210c6a9effe485a0",
+      "bHash": "e6ce9ae8ba586b0d7034a2e61c5f69ed",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.31166170618117284
+    },
+    {
+      "aHash": "43d78b31a5adcca036d63b436f677825",
+      "bHash": "d3555350c615ce6b192308de01a7189d",
+      "label": "unrelated",
+      "source": "project_facts",
+      "projectContext": "same-project",
+      "cosine": 0.4588695049009913
+    }
+  ],
+  "cost": {
+    "tokensIn": 926,
+    "tokensOut": 0,
+    "costUsd": 0.00001852000000000001
+  },
+  "repeatability": null
+}

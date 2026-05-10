@@ -1,0 +1,391 @@
+[
+  {
+    "a": "Rust is great.",
+    "b": "rust is great",
+    "label": "identical",
+    "source": "preferences",
+    "projectContext": "same-project",
+    "notes": "casing + punctuation only"
+  },
+  {
+    "a": "Service auth runs on port 8080",
+    "b": "Service auth runs on port 8080.",
+    "label": "identical",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "trailing period only"
+  },
+  {
+    "a": "To deploy, run npm run deploy",
+    "b": "To deploy, run npm run deploy.",
+    "label": "identical",
+    "source": "procedural",
+    "projectContext": "same-project",
+    "notes": "trailing punctuation"
+  },
+  {
+    "a": "user prefers Rust",
+    "b": "user prefers the Rust language",
+    "label": "identical",
+    "source": "preferences",
+    "projectContext": "same-project",
+    "notes": "synonymous trivial reword"
+  },
+  {
+    "a": "Service users runs on port 3001",
+    "b": "Service users runs at port 3001",
+    "label": "identical",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "on/at preposition substitution (load-bearing-equivalent)"
+  },
+  {
+    "a": "Run the unit tests with npm test",
+    "b": "Run unit tests with npm test",
+    "label": "identical",
+    "source": "procedural",
+    "projectContext": "same-project",
+    "notes": "minor article drop"
+  },
+  {
+    "a": "On 2024-09-15, Maya joined the team.",
+    "b": "On 2024-09-15, Maya joined the team",
+    "label": "identical",
+    "source": "personal_event",
+    "projectContext": "same-project",
+    "notes": "trailing period only"
+  },
+  {
+    "a": "auth bug on login\n",
+    "b": "auth bug on login",
+    "label": "identical",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "trailing newline only"
+  },
+  {
+    "a": "User reported a 401 on POST /login",
+    "b": "User reported a 401 on the POST /login endpoint",
+    "label": "identical",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "synonymous reword (added 'the' + 'endpoint')"
+  },
+  {
+    "a": "Lint via npm run lint",
+    "b": "lint via npm run lint",
+    "label": "identical",
+    "source": "procedural",
+    "projectContext": "same-project",
+    "notes": "casing only"
+  },
+
+  {
+    "a": "I prefer the Rust programming language.",
+    "b": "My preferred programming language is Rust.",
+    "label": "paraphrase",
+    "source": "preferences",
+    "projectContext": "same-project",
+    "notes": "matches D1 PR #75 L2 live test seed (cosine 0.881)"
+  },
+  {
+    "a": "I drink my coffee black, no sugar.",
+    "b": "Black coffee, no sugar — that's how I take it.",
+    "label": "paraphrase",
+    "source": "preferences",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "My editor of choice is Neovim.",
+    "b": "I use Neovim as my primary editor.",
+    "label": "paraphrase",
+    "source": "preferences",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "The auth service is reachable at http://auth.internal:8080",
+    "b": "Auth service runs on http://auth.internal:8080.",
+    "label": "paraphrase",
+    "source": "project_facts",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "We use Postgres for the primary application database.",
+    "b": "Postgres is the primary database for our app.",
+    "label": "paraphrase",
+    "source": "project_facts",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "The build is driven by Vite.",
+    "b": "Vite handles our build pipeline.",
+    "label": "paraphrase",
+    "source": "project_facts",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "The staging environment lives at staging.example.com.",
+    "b": "staging.example.com is our staging environment.",
+    "label": "paraphrase",
+    "source": "project_facts",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Run the dev server with `npm start`.",
+    "b": "`npm start` boots the dev server.",
+    "label": "paraphrase",
+    "source": "procedural",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Tests are executed via `npm test`.",
+    "b": "Use `npm test` to run the test suite.",
+    "label": "paraphrase",
+    "source": "procedural",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Run database migrations with `npx knex migrate:latest`.",
+    "b": "`npx knex migrate:latest` applies pending migrations.",
+    "label": "paraphrase",
+    "source": "procedural",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Linting is done by `npm run lint`.",
+    "b": "Use `npm run lint` to lint the project.",
+    "label": "paraphrase",
+    "source": "procedural",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "She moved to Berlin in 2024.",
+    "b": "Berlin became her home in 2024.",
+    "label": "paraphrase",
+    "source": "personal_event",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Maya was promoted to staff engineer last quarter.",
+    "b": "Last quarter, Maya's title changed to staff engineer.",
+    "label": "paraphrase",
+    "source": "personal_event",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "I attended QCon SF in November.",
+    "b": "Was at QCon SF this past November.",
+    "label": "paraphrase",
+    "source": "personal_event",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "Took a two-week trip to Japan in October.",
+    "b": "Spent two weeks in Japan during October.",
+    "label": "paraphrase",
+    "source": "personal_event",
+    "projectContext": "same-project"
+  },
+  {
+    "a": "User reported authentication failure on the /login endpoint, returning HTTP 401.",
+    "b": "auth bug on login — getting 401",
+    "label": "paraphrase",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "CC formal vs OpenClaw casual"
+  },
+  {
+    "a": "Reminder: deploy is scheduled for Friday at 4pm UTC.",
+    "b": "deploy fri 4pm utc",
+    "label": "paraphrase",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "CC formal vs OpenClaw casual"
+  },
+  {
+    "a": "Bug report: the search endpoint returns stale results after a write.",
+    "b": "search returns stale data after writes",
+    "label": "paraphrase",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "CC formal vs OpenClaw casual"
+  },
+  {
+    "a": "Feature request: add Markdown export to the report page.",
+    "b": "want md export on reports",
+    "label": "paraphrase",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "CC formal vs OpenClaw casual"
+  },
+  {
+    "a": "Status update: ingestion pipeline migration is in code review.",
+    "b": "ingestion migration in review",
+    "label": "paraphrase",
+    "source": "cross_surface",
+    "projectContext": "same-project",
+    "notes": "CC formal vs OpenClaw casual"
+  },
+
+  {
+    "a": "tool_result: ```\nERROR  Connection refused at db:5432\n```\nLooks like the DB is unreachable.",
+    "b": "DB at db:5432 is unreachable — connection refused.",
+    "label": "paraphrase",
+    "source": "noisy_real",
+    "projectContext": "same-project",
+    "notes": "tool-output fragment + code fence (R6)"
+  },
+  {
+    "a": "**TL;DR**: we're switching from `webpack` to `vite` next sprint.\n— posted in #frontend",
+    "b": "switching webpack to vite next sprint",
+    "label": "paraphrase",
+    "source": "noisy_real",
+    "projectContext": "same-project",
+    "notes": "Discord markdown remnants + channel-tag (R6)"
+  },
+  {
+    "a": "```\n$ npm test\n[FAIL] auth.test.js\n```\nThe auth test is failing on main.",
+    "b": "auth test failing on main",
+    "label": "paraphrase",
+    "source": "noisy_real",
+    "projectContext": "same-project",
+    "notes": "embedded shell-output code fence + half-sentence (R6)"
+  },
+  {
+    "a": "We're going to bump qdrant to 1.13… actually wait, let me check the changelog first.",
+    "b": "Need to check qdrant 1.13 changelog before we bump.",
+    "label": "paraphrase",
+    "source": "noisy_real",
+    "projectContext": "same-project",
+    "notes": "interrupted thought + ellipsis (R6)"
+  },
+  {
+    "a": "deploy on friday\n\n\n— sent from mobile",
+    "b": "Deploy is scheduled for Friday.",
+    "label": "paraphrase",
+    "source": "noisy_real",
+    "projectContext": "same-project",
+    "notes": "trailing newlines + email signature artifact (R6)"
+  },
+
+  {
+    "a": "Run the deploy on Friday afternoon.",
+    "b": "Deploy notes are tracked in CHANGELOG.md.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "shared keyword 'deploy', different predicates (action vs documentation)"
+  },
+  {
+    "a": "The user loves Berlin.",
+    "b": "The user loves Munich.",
+    "label": "unrelated",
+    "source": "personal_event",
+    "projectContext": "same-project",
+    "notes": "entity-substitution distractor (different city)"
+  },
+  {
+    "a": "Always run `npm test` before pushing.",
+    "b": "Always run `npm install` after pulling.",
+    "label": "unrelated",
+    "source": "procedural",
+    "projectContext": "same-project",
+    "notes": "different commands, different triggers"
+  },
+  {
+    "a": "Auth service runs on port 8080.",
+    "b": "Search service runs on port 9200.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different services + different ports"
+  },
+  {
+    "a": "Rust is a great systems language.",
+    "b": "The Python ecosystem is exceptionally mature.",
+    "label": "unrelated",
+    "source": "preferences",
+    "projectContext": "same-project",
+    "notes": "different subjects + different predicates"
+  },
+  {
+    "a": "Staging deploys happen every Tuesday.",
+    "b": "Production deploys happen every Friday.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different envs + different schedules"
+  },
+  {
+    "a": "ripgrep is much faster than grep.",
+    "b": "fzf supports interactive fuzzy matching.",
+    "label": "unrelated",
+    "source": "preferences",
+    "projectContext": "same-project",
+    "notes": "different tools + different capabilities"
+  },
+  {
+    "a": "Started a new role at Acme in March.",
+    "b": "Moved to a new apartment in October.",
+    "label": "unrelated",
+    "source": "personal_event",
+    "projectContext": "same-project",
+    "notes": "different events + different months"
+  },
+  {
+    "a": "Use `git rebase` to keep history linear.",
+    "b": "`git stash pop` reapplies the most recent stash.",
+    "label": "unrelated",
+    "source": "procedural",
+    "projectContext": "same-project",
+    "notes": "different git commands + different concerns"
+  },
+  {
+    "a": "REST endpoint GET /users returns the user list.",
+    "b": "The GraphQL schema defines a Posts type.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different protocols + different domains"
+  },
+  {
+    "a": "Auth failed: bearer token expired.",
+    "b": "Connection refused: port 5432 closed.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different error classes (auth vs network)"
+  },
+  {
+    "a": "PDF export must use landscape orientation.",
+    "b": "JSON schema validation runs in CI.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different file formats + different concerns"
+  },
+  {
+    "a": "We use Postgres for transactional data.",
+    "b": "We use Redis for ephemeral session storage.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different DBs + different use cases"
+  },
+  {
+    "a": "Sarah owns the auth subsystem.",
+    "b": "Mike owns the billing pipeline.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different owners + different domains"
+  },
+  {
+    "a": "v2.1 added incoming webhooks support.",
+    "b": "v2.2 fixed a memory leak in the worker.",
+    "label": "unrelated",
+    "source": "project_facts",
+    "projectContext": "same-project",
+    "notes": "different versions + different change types"
+  }
+]
