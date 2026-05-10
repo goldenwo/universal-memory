@@ -11,10 +11,10 @@
  *   - Reserved-field guard: assertNoReservedFields runs at entry, OUTSIDE
  *     withRequestContext, so caller-input errors don't acquire a request-id
  *     child logger context.
- *   - Eligibility: dedup runs ONLY when UM_DEDUP_ENABLED=true AND not a
- *     system doc AND _systemMigration !== true. Independent of `infer` per
- *     DP6/DP7 — vault docs (infer:false) CAN duplicate cross-surface and
- *     SHOULD merge.
+ *   - Eligibility: dedup runs UNLESS UM_DEDUP_ENABLED='false' (default ON
+ *     since v1.1 flag-flip; opt-out only) AND not a system doc AND
+ *     _systemMigration !== true. Independent of `infer` per DP6/DP7 —
+ *     vault docs (infer:false) CAN duplicate cross-surface and SHOULD merge.
  *   - Per dedup-eligible item: Layer 1 (hash) → Layer 2 (embedding); on hit,
  *     mergeSurface and emit DEDUP_MERGED event instead of upsert.
  *   - Fail-soft on dedup query error: log+metric, fall through to plain upsert.
@@ -87,7 +87,11 @@ function buildPayload({ userId, text, metadata, surface }) {
  * Independent of `infer` — see DP6/DP7 in spec.
  */
 function computeDedupEligible({ metadata, _systemMigration }) {
-  if (process.env.UM_DEDUP_ENABLED !== 'true') return false;
+  // Default ON since v1.1 flag-flip (PR #76 landed the empirical τ=0.84 default;
+  // this PR flips the runtime gate from opt-in to opt-out). Setting
+  // UM_DEDUP_ENABLED='false' is the only way to disable; any other value
+  // (including unset, '', 'true', '1') keeps dedup ON.
+  if (process.env.UM_DEDUP_ENABLED === 'false') return false;
   if (isSystemDoc({ metadata })) return false;
   if (_systemMigration === true) return false;
   return true;

@@ -27,23 +27,22 @@ MARKER="smoke-test-$(date +%s)-$$"
 echo "[smoke] endpoint: $ENDPOINT"
 echo "[smoke] marker:   $MARKER"
 
-# D1 S1 — flag-off regression guard (plan E.5, spec §10.1).
-# Landing PR ships UM_DEDUP_ENABLED=false default. Smoke MUST run under that
-# contract — if a future PR accidentally flips the default without updating
-# the rollout, this assertion catches it before the rest of smoke proceeds
-# with potentially-changed semantics.
-case "${UM_DEDUP_ENABLED:-false}" in
-	false|""|0|FALSE|False)
-		echo "[smoke] D1 S1 flag-off regression guard: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset>}' (PASS)"
+# D1 S1 — flag-on default regression guard (plan E.5, spec §10.1).
+# Post-flip (v1.1): default is ON. Smoke MUST run under that contract — if a
+# future PR regresses the default to OFF (or fat-fingers the value), this
+# assertion catches it before the rest of smoke proceeds with potentially-
+# changed semantics. Explicit `UM_DEDUP_ENABLED=false` is allowed (operator
+# opt-out) but skips S2.
+case "${UM_DEDUP_ENABLED:-true}" in
+	true|""|1|TRUE|True)
+		echo "[smoke] D1 S1 flag-on default: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset, default-on>}' (PASS)"
+		;;
+	false|0|FALSE|False)
+		echo "[smoke] D1 S1: dedup explicitly disabled (UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}') — S2 will be skipped"
 		;;
 	*)
-		if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
-			echo "[smoke] D1: dedup ON intentionally (UM_SMOKE_DEDUP_ON=1) — see S2 block at end"
-		else
-			echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' but UM_SMOKE_DEDUP_ON not set." >&2
-			echo "[smoke]   This PR's contract is flag-off default. The flag-flip PR should set UM_SMOKE_DEDUP_ON=1." >&2
-			exit 1
-		fi
+		echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' is not a recognized truth value." >&2
+		exit 1
 		;;
 esac
 
@@ -388,21 +387,27 @@ for r in data.get('results', []):
 
 T6_QUERY="xyzzy-task6-filter-probe-$(date +%s)-$$"
 
+# v1.1 D1 flag-flip note: case texts are topic-orthogonal (arctic vs music vs
+# cooking vs butterflies) so the embedding cosines stay below the dedup
+# threshold τ=0.84 and the four writes do not collapse into a single qdrant
+# point. Each text still contains ${T6_QUERY}-LETTER so /api/search keyed
+# on $T6_QUERY retrieves them.
+
 # Case A: status=current doc — must appear in default search
 echo "[smoke]     Case A: status=current doc returned by default search"
-IDS_A=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY status current" '{"status":"current","t6":"a"}')
+IDS_A=$(t6_add "The probe marker ${T6_QUERY}-A is associated with arctic ice core samples collected from Siberian permafrost." '{"status":"current","t6":"a"}')
 T6_IDS="$T6_IDS $IDS_A"
 
 # Case B: status=superseded doc — must NOT appear in default search
 echo "[smoke]     Case B: status=superseded doc excluded by default search"
-IDS_B=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY status superseded" '{"status":"superseded","t6":"b"}')
+IDS_B=$(t6_add "The probe marker ${T6_QUERY}-B is associated with baroque chamber music notation from 17th century Italy." '{"status":"superseded","t6":"b"}')
 T6_IDS="$T6_IDS $IDS_B"
 
 # Case D: no-metadata (legacy) doc — must appear in default search
 echo "[smoke]     Case D: legacy no-metadata doc returned by default search"
 LEGACY_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
 	-H 'Content-Type: application/json' \
-	-d "{\"text\": \"xyzzy-task6-filter-probe: $T6_QUERY legacy no-metadata\"}")
+	-d "{\"text\": \"The probe marker ${T6_QUERY}-D is associated with traditional sourdough bread recipes from Eastern Europe.\"}")
 IDS_D=$(echo "$LEGACY_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -413,7 +418,7 @@ T6_IDS="$T6_IDS $IDS_D"
 
 # Case E: invalidated_at set — must NOT appear in default search
 echo "[smoke]     Case E: invalidated_at doc excluded by default search"
-IDS_E=$(t6_add "xyzzy-task6-filter-probe: $T6_QUERY invalidated" '{"invalidated_at":"2024-01-01T00:00:00Z","t6":"e"}')
+IDS_E=$(t6_add "The probe marker ${T6_QUERY}-E is associated with monarch butterfly migration patterns across North America." '{"invalidated_at":"2024-01-01T00:00:00Z","t6":"e"}')
 T6_IDS="$T6_IDS $IDS_E"
 
 # Brief pause to allow mem0 async write to settle before searching
@@ -810,9 +815,13 @@ for r in data.get('results', []):
 
 # Two docs: one with a recent valid_from, one with an old valid_from.
 # With decay OFF the server must still return { results: [...] } without error.
-IDS_T9_RECENT=$(t9_add "$T9_QUERY decay-probe recent" \
+#
+# v1.1 D1 flag-flip note: same hygiene as Task 6 — texts are topic-orthogonal
+# (solar physics vs paleontology) so embedding cosines stay below the dedup
+# threshold τ=0.84. Each text contains ${T9_QUERY}-LABEL for searchability.
+IDS_T9_RECENT=$(t9_add "Reference code ${T9_QUERY}-recent is paired with a study of solar flare cycles observed during the last decade." \
 	"{\"type\":\"authored\",\"id\":\"t9-recent\",\"valid_from\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"t9\":\"recent\"}")
-IDS_T9_OLD=$(t9_add "$T9_QUERY decay-probe old" \
+IDS_T9_OLD=$(t9_add "Reference code ${T9_QUERY}-old is paired with a record of late Cretaceous marine fossils found in Wyoming sedimentary layers." \
 	'{"type":"authored","id":"t9-old","valid_from":"2020-01-01T00:00:00Z","t9":"old"}')
 T9_IDS="$T9_IDS $IDS_T9_RECENT $IDS_T9_OLD"
 
@@ -1569,6 +1578,63 @@ else
 	echo "[smoke] PASS (baseline=$BASELINE preserved; added+verified+deleted $NUM_ADDED record(s))"
 fi
 
+# D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
+# Gated by UM_SMOKE_DEDUP_ON=1 (explicit opt-in) so the dedup probe writes
+# (two POSTs to /api/add) only fire when an operator/CI has asked for them
+# — even though dedup itself is ON by default post-flip. CI smoke step sets
+# UM_SMOKE_DEDUP_ON=1 to exercise the DEDUP_MERGED path: two identical
+# writes → second response carries event=DEDUP_MERGED. Requires the server
+# to have UM_DEDUP_ENABLED=true (the new default).
+#
+# Position note: S2 runs HERE (between step 5/5 and the boot-smoke gate)
+# because the boot-smoke gate below tears the main stack down at its end
+# (`docker compose ... down`), so anything below would hit a closed port.
+if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
+	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
+	# Two identical writes via /api/add. umAdd runs facts extraction (infer:true
+	# is hardcoded in the /api/add handler) then dedup-checks each extracted
+	# fact. Identical input → same extracted fact → Layer 1 hash dedup hit on
+	# the second write → results[].event == 'DEDUP_MERGED'.
+	#
+	# We use a name-shaped fact like step 2 above ("name is X") because mem0's
+	# facts extractor produces a fact reliably for that pattern; arbitrary
+	# sentences sometimes extract nothing. $MARKER scopes the fact to this
+	# smoke run so the test never collides with prior runs in the shared CI
+	# qdrant collection.
+	#
+	# Historical note: `/api/memory_capture` was used pre-PR-77 but does not
+	# exist as a REST endpoint — memory_capture is an MCP tool whose reindex
+	# path passes `_systemMigration:true` and intentionally bypasses dedup,
+	# so it could never have exercised this assertion. /api/add is the only
+	# REST path that routes through umAdd with dedup eligibility.
+	#
+	# Mirror step 2's exact /api/add pattern (proven to work with the auth
+	# wrapper). `-w` appends "HTTP_STATUS=NNN" to stdout so an empty body
+	# does not silently masquerade as a transport failure; `2>&1` captures
+	# curl's own diagnostics into the variable so the FAIL message is
+	# actionable.
+	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
+	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-w '\nHTTP_STATUS=%{http_code}\n' \
+		-d "{\"text\": \"The smoke test user's name is dedup-probe-${MARKER}.\", \"metadata\": {\"project\": \"d1-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true)
+	echo "[smoke]     write1: $d1_resp1"
+	echo "[smoke]     write2: $d1_resp2"
+	# Substring check for tolerance to envelope variants. DEDUP_MERGED appears
+	# in the result event when L1 (or L2) catches; dedupCount appears in the
+	# qdrant payload after merge (not in the response envelope, but kept here
+	# as a fallback in case the response shape evolves to surface it).
+	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
+		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke] D1 S2 PASS: second identical write merged"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
@@ -1765,35 +1831,6 @@ else
 		exit 1
 	fi
 	echo "[smoke] 6/6 mocked-SDK boot tests passed"
-fi
-
-# D1 S2 — flag-on micro-smoke (plan E.5, spec §8.3 + §10.3 rollout).
-# Gated by UM_SMOKE_DEDUP_ON=1 so this PR (flag-off default) leaves S2 inert.
-# The flag-flip PR will set UM_SMOKE_DEDUP_ON=1 in CI and exercise the full
-# path: two identical /api/memory_capture writes → second response indicates
-# DEDUP_MERGED. Requires the server to have been started with
-# UM_DEDUP_ENABLED=true (S1 above checks the combination).
-if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
-	echo "[smoke] D1 S2 — flag-on micro-smoke (UM_SMOKE_DEDUP_ON=1)"
-	d1_text="d1-smoke-$MARKER: tokyo is a great city for ramen"
-	d1_user="d1-smoke-${MARKER}"
-	# Two identical writes via /api/memory_capture (routes through umAdd with
-	# infer:false — exact-text match exercises Layer 1 hash dedup).
-	d1_resp1=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
-		-H "Content-Type: application/json" \
-		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
-	d1_resp2=$(curl -sS -X POST "$ENDPOINT/api/memory_capture" \
-		-H "Content-Type: application/json" \
-		-d "{\"project\":\"d1-smoke\",\"type\":\"fact\",\"text\":\"$d1_text\",\"user_id\":\"$d1_user\"}" || true)
-	echo "[smoke]     write1: $d1_resp1"
-	echo "[smoke]     write2: $d1_resp2"
-	# Substring check for tolerance to envelope variants.
-	if ! echo "$d1_resp2" | grep -qE 'DEDUP_MERGED|dedupCount'; then
-		echo "[smoke] D1 S2 FAIL: second identical write did not appear to merge" >&2
-		_um_smoke_auth_cleanup
-		exit 1
-	fi
-	echo "[smoke] D1 S2 PASS: second identical write merged"
 fi
 
 # Clean up the auth-config tempfile on the success path. Failure paths

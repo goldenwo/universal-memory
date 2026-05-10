@@ -458,10 +458,11 @@ test('T7: multi-tenant isolation — same hash for userIdA and userIdB → both 
 
 import { makeMockQdrantUpsertOnly } from './fixtures/qdrant-mock.mjs';
 
-test('T9: flag off — UM_DEDUP_ENABLED unset → no scroll/search/setPayload calls (regression guard)', async () => {
-  // Explicitly DELETE the env var (not just empty string).
+test('T9: flag off — UM_DEDUP_ENABLED=false → no scroll/search/setPayload calls (regression guard)', async () => {
+  // Explicit opt-out: since the v1.1 flag-flip, default is ON, so we must
+  // set 'false' (not just delete) to exercise the disabled path.
   const prev = process.env.UM_DEDUP_ENABLED;
-  delete process.env.UM_DEDUP_ENABLED;
+  process.env.UM_DEDUP_ENABLED = 'false';
   try {
     const qdrant = makeMockQdrantUpsertOnly();
     const memory = makeMockMemory();
