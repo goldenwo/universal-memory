@@ -45,8 +45,11 @@ const embedOverride = {
 
 async function runBatch({ enabled, n, qdrant, memory }) {
   const prev = process.env.UM_DEDUP_ENABLED;
+  // Set explicit literals on both arms — default is now ON (v1.1 flag-flip),
+  // so `delete` would no longer mean "off". 'true' for clarity even though
+  // unset would also be ON; 'false' is the only opt-out value.
   if (enabled) process.env.UM_DEDUP_ENABLED = 'true';
-  else delete process.env.UM_DEDUP_ENABLED;
+  else process.env.UM_DEDUP_ENABLED = 'false';
   // Reset miss-state every run.
   qdrant.scrollResult = { points: [] };
   qdrant.searchResult = [];
