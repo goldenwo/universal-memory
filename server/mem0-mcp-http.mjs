@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { applyDefaultProject } from './lib/default-project.mjs';
 import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
@@ -777,8 +778,29 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// v0.8 G2: see /api/add migration; same pattern.
 			// D1 F.1: pass caller-supplied `surface` if provided. UA-derivation deferred
 			// (spec §"Out-of-scope" + plan F.1) — this PR only honors caller-passed values.
+			//
+			// v1.1 F1 unification: when the caller omits metadata.project we inject
+			// the soft-default (UM_DEFAULT_PROJECT or "default") + emit a warn log,
+			// instead of silently dropping the project dimension as v1.0 did. Caller-
+			// supplied non-empty values pass through unchanged — memory_add historically
+			// accepts arbitrary project strings, so F1 does NOT add validation here
+			// (would be a separate breaking change).
+			const callerMetadata = args.metadata ?? {};
+			const callerProject = callerMetadata.project;
+			const projectOmitted = callerProject === undefined || callerProject === null || callerProject === '';
+			const metadataWithDefault = projectOmitted
+				? {
+					...callerMetadata,
+					project: applyDefaultProject({
+						project: callerProject,
+						tool: 'memory_add',
+						logger: getLogger(),
+						requestId: currentRequestId(),
+					}),
+				}
+				: callerMetadata;
 			const result = await withRetry(() =>
-				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, ...(args.metadata && { metadata: args.metadata }), infer: true, surface: args?.surface })
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -849,7 +871,17 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
 				));
 			}
-			const project = metadata.project || 'default';
+			// v1.1 F1 unification: route the soft-default through applyDefaultProject()
+			// so the env-configurable UM_DEFAULT_PROJECT slug + warn-log are honored.
+			// validateSafeName above already throws on a malformed caller-supplied
+			// value, so applyDefaultProject can only return a string here (its null
+			// branch is unreachable from this call site).
+			const project = applyDefaultProject({
+				project: metadata.project,
+				tool: 'memory_capture',
+				logger: getLogger(),
+				requestId: currentRequestId(),
+			});
 			const id = metadata.id;
 			const relPath = `authored/${project}/${id}.md`;
 

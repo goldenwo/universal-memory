@@ -1098,3 +1098,87 @@ test('checkpoint: O_NOFOLLOW rejects symlink at state.md.tmp path (kernel-level 
     await fs.rm(outside, { recursive: true, force: true });
   }
 });
+
+// ---------- v1.1 F1: project soft-default ----------
+// Pre-F1, doCheckpoint hard-failed when the caller omitted `project`. Per the
+// A1 audit finding F1+F5, the falsy arm now soft-defaults to UM_DEFAULT_PROJECT
+// (or literal "default" when unset). Wrong-type / invalid-slug values still
+// hard-fail — see test #9 above ("checkpoint: invalid project slug returns
+// {ok:false, error} without filesystem ops") for the negative case that the F1
+// change deliberately preserves.
+
+test('F1: checkpoint with missing project writes under "default" (env unset)', async () => {
+  const vaultDir = await makeVault();
+  const prev = process.env.UM_DEFAULT_PROJECT;
+  delete process.env.UM_DEFAULT_PROJECT;
+  try {
+    await seedCapture(vaultDir, 'default', '2026-05-10T00.md', '# Session\nF1 probe.');
+    const result = await doCheckpoint(
+      {}, // project omitted
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, true, `expected ok=true, got: ${result.error}`);
+    assert.match(result.summary_path, /^sessions\/default\//,
+      `summary should land under default/, got: ${result.summary_path}`);
+  } finally {
+    if (prev === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prev;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('F1: checkpoint honors UM_DEFAULT_PROJECT env on the falsy arm', async () => {
+  const vaultDir = await makeVault();
+  const prev = process.env.UM_DEFAULT_PROJECT;
+  process.env.UM_DEFAULT_PROJECT = 'env-bucket';
+  try {
+    await seedCapture(vaultDir, 'env-bucket', '2026-05-10T00.md', '# Session\nF1 env probe.');
+    const result = await doCheckpoint(
+      { project: '' }, // empty string → falsy arm
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.match(result.summary_path, /^sessions\/env-bucket\//);
+  } finally {
+    if (prev === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prev;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () => {
+  // Regression guard mirroring the append-turn F1 negative case: the F1 flip
+  // only flipped the falsy arm. A path-traversal slug must still error rather
+  // than getting silently coerced to UM_DEFAULT_PROJECT.
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: '../escape' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'INPUT_INVALID');
+    assert.match(result.error, /invalid project/i);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
