@@ -45,7 +45,7 @@ import { getLogger } from './logger.mjs';
 import { safeLog, obsFallback } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
-import { applyDefaultProject } from './default-project.mjs';
+import { applyDefaultProject, TOOL_IDS } from './default-project.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -76,8 +76,9 @@ const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/s
 // lstat-based refusal upstream covers the lstat-refusal layer cross-platform.
 const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
-// VALID_SLUG moved to ./default-project.mjs (v1.1 F1) — applyDefaultProject()
-// validates against the same /^[a-zA-Z0-9._-]+$/ pattern. Kept inline pre-F1.
+// Project slug validation lives in ./default-project.mjs (v1.1 F1).
+// applyDefaultProject() handles the falsy → soft-default + invalid → null
+// branches; this file no longer carries its own copy of the slug regex.
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
 
 // Spec §5.4 retry policy for blocking reindex
@@ -154,7 +155,7 @@ export async function doCheckpoint(args, ctx = {}) {
   // would lose the operator's signal and risk wrong-bucket session summaries.
   const project = applyDefaultProject({
     project: rawProject,
-    tool: 'memory_checkpoint',
+    tool: TOOL_IDS.MEMORY_CHECKPOINT,
     logger: getLogger(),
     requestId: currentRequestId(),
   });

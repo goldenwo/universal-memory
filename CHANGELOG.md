@@ -6,6 +6,14 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (v1.1) — Phase F1 hygiene — slug regex + tool-id centralization
+
+Tidies the items the PR #79 description flagged as "deferred to a separate hygiene PR." No behavior change; the F1 contract and all four+REST write-tool soft-defaults are unchanged. Verified by adding 4 new tests (PROJECT_SLUG_RE invariant + canonical pattern, TOOL_IDS frozen-shape, helper accepts arbitrary tool strings) without removing any.
+
+- **Canonical project slug regex** centralized to `server/lib/default-project.mjs:PROJECT_SLUG_RE` (exported). The duplicate `SAFE_NAME_RE` const in `server/mem0-mcp-http.mjs` (used by `validateSafeName`) was the fourth identical `/^[a-zA-Z0-9._-]+$/` in the tree — flagged by post-merge review of #78 as having tripped the "if a fourth caller appears" trigger the original F1 helper TODO'd.
+- **`TOOL_IDS` frozen enum** for the `tool` arg of `applyDefaultProject`. All five call sites (`memory_capture` / `memory_add` / `memory_append_turn` / `memory_checkpoint` / REST `api_add`) now import from `default-project.mjs` — typos at a new call site fail at write-time rather than producing a silently-wrong log binding. Named `TOOL_IDS` (not `TOOLS`) to avoid colliding with the existing `export const TOOLS = [...]` MCP tool registry in `mem0-mcp-http.mjs`.
+- **Tombstone comments** in `server/lib/append-turn.mjs` + `server/lib/checkpoint.mjs` rewritten — the old text said "moved to ./default-project.mjs ... Kept inline pre-F1" which read as if the const remained. New wording describes what the file no longer carries.
+
 ### Fixed (v1.1) — Post-merge review follow-ups for PRs #77 + #78
 
 Paired-Opus post-merge review on PRs #77 (D1 flag-flip) + #78 (F1 project soft-default) surfaced one blocker + two important findings; this PR closes them out.
