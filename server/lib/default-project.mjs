@@ -42,6 +42,19 @@ const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
 let _invalidEnvWarnEmitted = false;
 
 /**
+ * Reset the one-shot invalid-env warn flag. **Test-only seam** — production
+ * code MUST NOT call this. Without it, ordering-dependent test runs cannot
+ * deterministically observe the warn (e.g. a later test asserting the warn
+ * fired would silently degrade to a no-op if an earlier test consumed the
+ * one-shot). Post-merge review of PR #78 flagged this as a test-flake hazard.
+ *
+ * @internal
+ */
+export function _resetInvalidEnvWarnForTests() {
+  _invalidEnvWarnEmitted = false;
+}
+
+/**
  * Resolve the operator-configured default project slug.
  *
  * Returns the validated `UM_DEFAULT_PROJECT` env value if it is a non-empty

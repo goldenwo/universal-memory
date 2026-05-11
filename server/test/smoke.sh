@@ -31,17 +31,27 @@ echo "[smoke] marker:   $MARKER"
 # Post-flip (v1.1): default is ON. Smoke MUST run under that contract — if a
 # future PR regresses the default to OFF (or fat-fingers the value), this
 # assertion catches it before the rest of smoke proceeds with potentially-
-# changed semantics. Explicit `UM_DEDUP_ENABLED=false` is allowed (operator
-# opt-out) but skips S2.
+# changed semantics.
+#
+# Truthiness MUST match the runtime gate at server/lib/add.mjs
+# `computeDedupEligible()`, which uses strict `=== 'false'`. Only the literal
+# lowercase string `false` disables dedup at the server; every other value
+# (including '0', 'FALSE', 'False', 'no', typos) keeps dedup ON. If S1
+# accepted broader off-truthy values it would silently advertise "explicitly
+# disabled, skipping S2" while the server actually still has dedup ON —
+# hiding the exact operator-config drift S1 exists to surface (post-merge
+# review of PR #77 caught this gap; this PR tightens it).
 case "${UM_DEDUP_ENABLED:-true}" in
 	true|""|1|TRUE|True)
 		echo "[smoke] D1 S1 flag-on default: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED:-<unset, default-on>}' (PASS)"
 		;;
-	false|0|FALSE|False)
-		echo "[smoke] D1 S1: dedup explicitly disabled (UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}') — S2 will be skipped"
+	false)
+		echo "[smoke] D1 S1: dedup explicitly disabled (UM_DEDUP_ENABLED='false') — S2 will be skipped"
 		;;
 	*)
 		echo "[smoke] D1 S1 FAIL: UM_DEDUP_ENABLED='${UM_DEDUP_ENABLED}' is not a recognized truth value." >&2
+		echo "[smoke]   Runtime gate (server/lib/add.mjs:computeDedupEligible) requires literal lowercase 'false' to disable." >&2
+		echo "[smoke]   Other values (0, FALSE, False, no, typos) keep dedup ON — S1 refuses to PASS them to avoid silently misadvertising 'explicitly disabled'." >&2
 		exit 1
 		;;
 esac

@@ -2221,8 +2221,30 @@ export function createRequestHandler(ctx = {}) {
 			// withRetry wrapping is preserved for tagRetryable continuity.
 			// D1 F.1: pass caller-supplied `surface` (top-level body field) if
 			// present. UA-derivation deferred to a follow-up PR per spec §"Out-of-scope".
+			//
+			// v1.1 F1 unification follow-up: mirror the MCP memory_add handler's
+			// soft-default policy on this REST path. ChatGPT Custom GPT (Actions
+			// API) writes via REST /api/add — the very surface A1 audit §F6 named
+			// as the casualty of the v1.0 silent-drop. The MCP-only F1 fix that
+			// landed in PR #78 missed this REST path; post-merge review of #78
+			// flagged the gap. Caller-supplied non-empty project values still pass
+			// through unchanged — F1 deliberately does NOT add validation here.
+			const callerMetadata = metadata ?? {};
+			const callerProject = callerMetadata.project;
+			const projectOmitted = callerProject === undefined || callerProject === null || callerProject === '';
+			const metadataWithDefault = projectOmitted
+				? {
+					...callerMetadata,
+					project: applyDefaultProject({
+						project: callerProject,
+						tool: 'api_add',
+						logger: getLogger(),
+						requestId: currentRequestId(),
+					}),
+				}
+				: callerMetadata;
 			const result = await withRetry(() =>
-				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, ...(metadata && { metadata }), infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
