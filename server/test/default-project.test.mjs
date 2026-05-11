@@ -12,6 +12,8 @@ import {
   umDefaultProject,
   applyDefaultProject,
   _resetInvalidEnvWarnForTests,
+  PROJECT_SLUG_RE,
+  TOOL_IDS,
 } from '../lib/default-project.mjs';
 
 // Each test runs an isolated env mutation; this helper snapshots+restores
@@ -218,4 +220,100 @@ test('applyDefaultProject: invalid value does NOT emit a soft-default warn', () 
   // The hard-fail path does not log a warn — the caller emits its own
   // error envelope. Avoids double-logging on a single bad write.
   assert.equal(logger.calls.length, 0);
+});
+
+// ── Exports: PROJECT_SLUG_RE + TOOL_IDS (v1.1 F1 hygiene PR) ──────────────
+
+test('PROJECT_SLUG_RE: canonical pattern matches valid slugs', () => {
+  // Sanity-anchor on the exact pattern. If anyone retunes the regex they
+  // also have to retune this test, which catches accidental drift.
+  assert.equal(PROJECT_SLUG_RE.source, '^[a-zA-Z0-9._-]+$');
+  for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d', '.hidden']) {
+    assert.ok(PROJECT_SLUG_RE.test(ok), `expected match: ${ok}`);
+  }
+  // Defense-in-depth lockdown: these inputs currently MATCH the regex
+  // (the char class permits `.` `-` `_` in any position). Path traversal
+  // (`..`) is matched here but rejected at the filesystem layer by
+  // `vault.mjs:safePath()` — that's the existing security model.
+  // Asserting the current behavior so a future regex tightening (e.g.
+  // adding an anti-traversal lookahead) becomes a tracked decision rather
+  // than silently shifting the matched set.
+  for (const lockedMatch of ['.', '..', '...', '-', '_', '-leading-dash', '_lead_under']) {
+    assert.ok(PROJECT_SLUG_RE.test(lockedMatch),
+      `defense-in-depth lockdown: ${JSON.stringify(lockedMatch)} currently matches ` +
+      `(vault safePath is the backstop). If you intentionally tightened the regex, ` +
+      `update this assertion AND verify the FS-layer guard still covers traversal.`);
+  }
+  // Hostile-input coverage. The regex's `^...$` anchors prevent multi-line
+  // bypass (a string like "good\nbad" won't match because the newline isn't
+  // in the char class). NUL bytes, whitespace, Unicode, path separators,
+  // and grouping characters all fail. Asserting these explicitly so a
+  // future regex tightening doesn't silently change behavior.
+  for (const bad of [
+    '',                  // empty
+    '../escape',         // path traversal
+    'my project',        // whitespace
+    'with/slash',        // path separator
+    'curly{brace}',      // shell-substitution chars
+    'a\0b',              // NUL byte
+    'café',              // non-ASCII Unicode
+    'good\nbad',         // multi-line — anchors prevent bypass
+    'good\rbad',         // CR
+    'tab\there',         // embedded tab
+    ' lead',             // leading space
+    'trail ',            // trailing space
+  ]) {
+    assert.ok(!PROJECT_SLUG_RE.test(bad), `expected no match: ${JSON.stringify(bad)}`);
+  }
+});
+
+test('TOOL_IDS: enumerates the five canonical call sites and is frozen', () => {
+  assert.equal(TOOL_IDS.MEMORY_CAPTURE, 'memory_capture');
+  assert.equal(TOOL_IDS.MEMORY_ADD, 'memory_add');
+  assert.equal(TOOL_IDS.MEMORY_APPEND_TURN, 'memory_append_turn');
+  assert.equal(TOOL_IDS.MEMORY_CHECKPOINT, 'memory_checkpoint');
+  assert.equal(TOOL_IDS.API_ADD, 'api_add');
+  assert.ok(Object.isFrozen(TOOL_IDS), 'TOOL_IDS must be frozen to catch typos at write-time');
+  // ESM modules run in strict mode → write to a frozen object throws
+  // TypeError. Confirm at runtime so a future Object.freeze removal would
+  // be caught immediately, not just by the isFrozen() static check.
+  assert.throws(
+    () => { TOOL_IDS.MEMORY_ADD = 'mutated'; },
+    TypeError,
+    'mutating a frozen TOOL_IDS entry must throw under ESM strict mode',
+  );
+  assert.throws(
+    () => { TOOL_IDS.NEW_TOOL = 'added'; },
+    TypeError,
+    'adding a new key to a frozen TOOL_IDS must throw under ESM strict mode',
+  );
+});
+
+test('applyDefaultProject: accepts arbitrary tool strings (no TOOL_IDS-membership check)', () => {
+  // TOOL_IDS is documentation + typo-safety on the CALL site, not validation
+  // inside the helper. A future caller using a literal (e.g. internal CLI
+  // path) must still work — the helper's `tool` arg is forwarded verbatim
+  // to the warn log binding.
+  withEnv(undefined, () => {
+    const logger = makeRecordingLogger();
+    const got = applyDefaultProject({
+      project: undefined,
+      tool: 'some_future_caller',
+      logger,
+    });
+    assert.equal(got, 'default');
+    assert.equal(logger.calls[0][0].tool, 'some_future_caller');
+  });
+});
+
+test('umDefaultProject: returned value always matches PROJECT_SLUG_RE (invariant)', () => {
+  // Documented invariant in the helper JSDoc — exercise it on a sample of
+  // unset / valid / invalid envs.
+  for (const envValue of [undefined, '', 'valid', 'totally bad!', '../escape']) {
+    withEnv(envValue, () => {
+      const got = umDefaultProject();
+      assert.ok(PROJECT_SLUG_RE.test(got),
+        `umDefaultProject() returned ${JSON.stringify(got)} for env=${JSON.stringify(envValue)} — violates slug invariant`);
+    });
+  }
 });

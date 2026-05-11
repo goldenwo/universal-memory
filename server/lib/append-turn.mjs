@@ -5,7 +5,7 @@ import path from 'node:path';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
 import { obsFallback } from './obs-fallback.mjs';
-import { applyDefaultProject } from './default-project.mjs';
+import { applyDefaultProject, TOOL_IDS } from './default-project.mjs';
 import { getLogger } from './logger.mjs';
 import { currentRequestId } from './request-context.mjs';
 
@@ -37,8 +37,9 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const MAX_CONTENT_BYTES = 8192;
 const MAX_CONVERSATION_ID_BYTES = 256;
 const CONVERSATION_ID_RE = /^[\x20-\x7E]{0,256}$/;  // printable ASCII only, max 256
-// PROJECT_SLUG_RE moved to ./default-project.mjs (v1.1 F1) — applyDefaultProject()
-// validates against the same /^[a-zA-Z0-9._-]+$/ pattern. Kept inline pre-F1.
+// Project slug validation lives in ./default-project.mjs (v1.1 F1).
+// applyDefaultProject() handles the falsy → soft-default + invalid → null
+// branches; this file no longer carries its own copy of the slug regex.
 const ROLES = new Set(['user', 'assistant', 'system']);
 
 export async function doAppendTurn(args, ctx = {}) {
@@ -57,7 +58,7 @@ export async function doAppendTurn(args, ctx = {}) {
   // value with the default would be both surprising and a data-routing risk.
   const effectiveProject = applyDefaultProject({
     project,
-    tool: 'memory_append_turn',
+    tool: TOOL_IDS.MEMORY_APPEND_TURN,
     logger: ctx.logger ?? getLogger(),
     requestId: ctx.requestId ?? currentRequestId(),
   });
