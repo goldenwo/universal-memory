@@ -1645,6 +1645,48 @@ if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
 	echo "[smoke] D1 S2 PASS: second identical write merged"
 fi
 
+# B2 S3 — /remember casual-save skill round-trip (gated by UM_SMOKE_REMEMBER_ON=1).
+#
+# Mirrors S2's two-write dedup pattern but exercises the v1.1 B2 /remember
+# bash helper end-to-end instead of raw curl. Two invocations with identical
+# text → second must surface "dedup match" in helper output. Requires the
+# server to have UM_DEDUP_ENABLED=true (the v1.1 default) AND the helper to
+# parse /api/add response shape correctly (results[].event === 'DEDUP_MERGED').
+#
+# Position: AFTER S2 (UM_SMOKE_DEDUP_ON block above) and BEFORE the boot-smoke
+# gate (which tears the stack down), same as S2.
+if [ "${UM_SMOKE_REMEMBER_ON:-}" = "1" ]; then
+	echo "[smoke] B2 S3 — /remember casual-save round-trip (UM_SMOKE_REMEMBER_ON=1)"
+	# Resolve repo root so we can invoke the helper by absolute path.
+	# smoke.sh lives at <repo>/server/test/smoke.sh — dirname is server/test/,
+	# so going up two levels reaches the repo root regardless of CWD.
+	# (CI's working-directory=server is irrelevant here; ${BASH_SOURCE[0]}
+	# is the script's own filesystem location, not the invocation cwd.)
+	_um_repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+	_um_remember_helper="$_um_repo_root/plugins/claude-code/universal-memory/skills/create-remember/create-remember.sh"
+	if [ ! -f "$_um_remember_helper" ]; then
+		echo "[smoke] B2 S3 FAIL: /remember helper not found at $_um_remember_helper" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	# Use $MARKER-scoped text so cross-run dedup never collides (parallel to S2).
+	_um_remember_text="The smoke test user's name is remember-probe-${MARKER}."
+	# First write — expect plain success (ADD event).
+	b2_resp1=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
+		bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+	# Second write — expect dedup-match suffix.
+	b2_resp2=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
+		bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+	echo "[smoke]     write1: $b2_resp1"
+	echo "[smoke]     write2: $b2_resp2"
+	if ! echo "$b2_resp2" | grep -q "dedup match"; then
+		echo "[smoke] B2 S3 FAIL: second identical /remember did not surface dedup match" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke] B2 S3 PASS: /remember dedup-match surfaced on second write"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup

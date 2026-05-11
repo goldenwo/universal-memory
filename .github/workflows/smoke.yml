@@ -206,6 +206,13 @@ jobs:
           # explicit opt-in that fires the S2 dedup probe (two identical
           # /api/add writes; second must return event=DEDUP_MERGED).
           UM_SMOKE_DEDUP_ON: "1"
+          # v1.1 B2 — UM_SMOKE_REMEMBER_ON=1 fires the S3 /remember helper
+          # round-trip (two identical /remember calls via the bash helper;
+          # second must surface "dedup match" in helper output). Builds on
+          # UM_DEDUP_ENABLED=true above — disabling dedup would silently
+          # make this probe a no-op (both writes succeed without merging),
+          # so S3 is dependent on D1 being ON.
+          UM_SMOKE_REMEMBER_ON: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
@@ -292,7 +299,9 @@ jobs:
                      plugins/claude-code/universal-memory/hooks/*.sh \
                      plugins/claude-code/universal-memory/hooks/lib/*.sh \
                      plugins/claude-code/universal-memory/skills/create-adr/create-adr.sh \
-                     plugins/claude-code/universal-memory/skills/create-adr/create-adr.test.sh
+                     plugins/claude-code/universal-memory/skills/create-adr/create-adr.test.sh \
+                     plugins/claude-code/universal-memory/skills/create-remember/create-remember.sh \
+                     plugins/claude-code/universal-memory/skills/create-remember/create-remember.test.sh
       # macOS runners don't ship pyyaml; install-cli.sh preflight checks for it.
       # ubuntu-latest has python3-yaml out of the box; skip on Linux.
       - name: Ensure pyyaml (macOS)
