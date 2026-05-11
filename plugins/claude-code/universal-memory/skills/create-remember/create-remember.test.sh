@@ -549,6 +549,56 @@ PYEOF
   assert_rc "INT13 rc=64" "64" "$rc"
   assert_contains "INT13 message" "$out" "missing required: --text"
 
+  # ─── INT13b: `--text=value` equals form (POSIX --opt=val convention) ──
+  echo ""
+  echo "--- INT13b: --text=value form ---"
+  bodies=$(mktemp)
+  printf '%s\n' '{"results":[{"id":"u1","memory":"m","event":"ADD"}]}' > "$bodies"
+  if start_stub 200 "$bodies"; then
+    out=$(UM_SERVER_URL="$STUB_URL" UM_AUTH_TOKEN="" \
+            HOME="$TMPDIR_INT/empty-home" \
+            bash "$HELPER" remember --text=equals-form 2>&1)
+    rc=$?
+    assert_rc "INT13b --text=value rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    assert_contains "INT13b equals-form preserved in payload" "$body" '"text":"equals-form"'
+    stop_stub
+  else
+    fail "INT13b stub start" "could not start"
+  fi
+
+  # ─── INT13c: unknown helper subcommand → exit 64, help to stdout ──────
+  echo ""
+  echo "--- INT13c: unknown subcommand ---"
+  out=$(bash "$HELPER" not-a-subcommand 2>/dev/null)
+  rc=$?
+  assert_rc "INT13c rc=64" "64" "$rc"
+  # Help text must reach stdout (the LLM-surfaceable channel) even on the
+  # typo branch; "unknown subcommand" diagnostic goes to stderr.
+  assert_contains "INT13c help body on stdout" "$out" "Usage:"
+  err=$(bash "$HELPER" not-a-subcommand 2>&1 >/dev/null)
+  assert_contains "INT13c diagnostic on stderr" "$err" "unknown subcommand"
+
+  # ─── INT13d: response-shape-unknown graceful-degrade w/ note suffix ───
+  echo ""
+  echo "--- INT13d: unknown response shape note suffix ---"
+  bodies=$(mktemp)
+  # Body without a `results` key (server response drift simulation).
+  printf '%s\n' '{"unexpected":"shape"}' > "$bodies"
+  if start_stub 200 "$bodies"; then
+    out=$(UM_SERVER_URL="$STUB_URL" UM_AUTH_TOKEN="" \
+            HOME="$TMPDIR_INT/empty-home" \
+            UM_DEFAULT_PROJECT="" \
+            bash "$HELPER" remember --text "drift sim" 2>&1)
+    rc=$?
+    assert_rc "INT13d rc=0" "0" "$rc"
+    assert_contains "INT13d response-shape-unknown suffix" "$out" "response shape unknown"
+    assert_not_contains "INT13d no false dedup suffix" "$out" "dedup match"
+    stop_stub
+  else
+    fail "INT13d stub start" "could not start"
+  fi
+
   # ─── INT14: skill.md frontmatter sanity ───────────────────────────────
   echo ""
   echo "--- INT14: skill.md frontmatter ---"
@@ -624,10 +674,13 @@ PYEOF
     fail "INT17 stub start" "could not start"
   fi
 
-  # ─── INT18: graceful-degrade on malformed/empty response envelope ─────
+  # ─── INT18: graceful-degrade on `{}` envelope (no results key) ────────
   echo ""
   echo "--- INT18: graceful-degrade ---"
   # Stub returns hardcoded b'{}' (default behavior when bodies file absent).
+  # _parse_event returns "unknown"; success line carries the new
+  # "response shape unknown" suffix (review followup, replaces silent
+  # collapse-to-add behavior).
   if start_stub 200; then
     out=$(UM_SERVER_URL="$STUB_URL" UM_AUTH_TOKEN="" \
             HOME="$TMPDIR_INT/empty-home" \
@@ -637,6 +690,7 @@ PYEOF
     assert_rc "INT18 rc=0" "0" "$rc"
     assert_contains "INT18 line 1 Remembered" "$out" "Remembered: graceful degrade"
     assert_contains "INT18 line 2 registered" "$out" "Registered with universal-memory"
+    assert_contains "INT18 response-shape-unknown suffix" "$out" "response shape unknown"
     assert_not_contains "INT18 no dedup suffix" "$out" "dedup match"
     assert_not_contains "INT18 no zero-facts note" "$out" "zero facts"
     # 2 lines, not crashing on missing results key.

@@ -111,8 +111,27 @@ _codepoint_length() {
     return $?
   fi
   if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import sys; print(len(sys.argv[1]))' "$s"
-    return $?
+    # Pass text via argv. Python3 on Windows uses utf-8 for sys.argv since
+    # PEP 529 (3.6+), so multi-byte content (CJK, emoji) round-trips
+    # correctly. Stdin alternative would inherit cp1252 on Windows shells
+    # and corrupt the codepoint count. Bash passes argv as raw bytes;
+    # Python decodes from sys.getfilesystemencoding(), which is utf-8 on
+    # modern Linux/macOS/Windows.
+    #
+    # Edge case: Windows ARG_MAX is ~32k chars. A 4096-codepoint emoji
+    # input is ~16k bytes — within budget. A maliciously-oversized input
+    # (>32k bytes) would crash python3 before reaching the cap check; we
+    # set _LAST_ERR on the failure path so cmd_remember surfaces an
+    # actionable message instead of an empty `error: ` line.
+    local len
+    len=$(python3 -c 'import sys; print(len(sys.argv[1]))' "$s" 2>/dev/null)
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+      _LAST_ERR="codepoint count failed (input too large or python3 environment error)"
+      return "$rc"
+    fi
+    printf '%s' "$len"
+    return 0
   fi
   _LAST_ERR="python3 required for codepoint counting; install python3 or set UM_CODEPOINT_TOOL"
   return 70
@@ -256,16 +275,14 @@ except Exception:
     printf '%s' "${out:-unknown}"
     return 0
   fi
-  # python3 absent — best-effort string scan. Reports "unknown" rather than
-  # falsely claiming "add" or "dedup". This branch is unreachable in
-  # practice because _codepoint_length already required python3 earlier in
-  # cmd_remember (which is a precondition before reaching the POST step).
-  case "$body" in
-    *'"DEDUP_MERGED"'*) printf 'dedup' ;;
-    *'"results"'*'[]'*) printf 'empty' ;;
-    *'"results"'*'"event"'*) printf 'add' ;;
-    *) printf 'unknown' ;;
-  esac
+  # python3 absent — this branch is unreachable in practice because
+  # _codepoint_length already required python3 earlier in cmd_remember
+  # (precondition before reaching the POST step). A pure-bash string-scan
+  # fallback would mis-classify ambiguous bodies (e.g. `{"results":[...],
+  # "otherKey":[]}` matches a naive `*"results"*"[]"*` pattern as "empty"
+  # when the results array is non-empty). Default to "unknown" so the
+  # success-line surfaces the graceful-degrade note instead of guessing.
+  printf 'unknown'
 }
 
 # ─── subcommand handlers ────────────────────────────────────────────────
@@ -376,8 +393,15 @@ cmd_remember() {
         empty)
           printf 'Registered with universal-memory (%s) project=%s — note: server extracted zero facts\n' "$endpoint" "$project"
           ;;
-        add|unknown)
+        add)
           printf 'Registered with universal-memory (%s) project=%s\n' "$endpoint" "$project"
+          ;;
+        unknown|*)
+          # Server returned 2xx but the response envelope didn't parse to
+          # the documented `{results:[{event:...}]}` shape. POST succeeded;
+          # we surface a diagnostic suffix so operators have an in-band
+          # breadcrumb when the server-side shape drifts in production.
+          printf 'Registered with universal-memory (%s) project=%s — note: response shape unknown\n' "$endpoint" "$project"
           ;;
       esac
       return 0
@@ -419,8 +443,14 @@ if [ "${BASH_SOURCE[0]:-$0}" = "${0}" ]; then
   case "${1:-help}" in
     help|--help|-h)  cmd_help ;;
     remember)        shift; cmd_remember "$@" ;;
-    *)               printf 'unknown subcommand: %s\n\n' "${1:-}" >&2
-                     cmd_help >&2
+    *)               # Diagnostic line goes to stderr (it's a typo signal); the
+                     # help body goes to stdout because skill.md's contract is
+                     # "surface helper output verbatim as the user-facing
+                     # message" and LLMs typically forward stdout, not stderr.
+                     # A typo on the helper subcommand should still show the
+                     # user how to invoke it correctly.
+                     printf 'unknown subcommand: %s\n\n' "${1:-}" >&2
+                     cmd_help
                      exit 64
                      ;;
   esac
