@@ -47,7 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
-import { applyDefaultProject } from './lib/default-project.mjs';
+import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS } from './lib/default-project.mjs';
 import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
@@ -155,16 +155,20 @@ const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
 // Slug validation — C1: id/project fields used as filename components must be safe
 // ---------------------------------------------------------------------------
 
-const SAFE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
-
 /**
- * Throws if value is not a string matching SAFE_NAME_RE.
+ * Throws if value is not a string matching the canonical slug pattern.
+ *
+ * The regex is imported from `./lib/default-project.mjs` (v1.1 F1 hygiene
+ * PR: previously this module declared its own `SAFE_NAME_RE`; that became
+ * the fourth identical regex in the tree and was flagged by post-merge
+ * review of #78). Behavior is byte-identical; only the source-of-truth moved.
+ *
  * @param {string} field  - Human-readable field name for error messages
  * @param {string} value  - The value to validate
  */
 function validateSafeName(field, value) {
-  if (typeof value !== 'string' || !SAFE_NAME_RE.test(value)) {
-    throw new Error(`${field} must match ${SAFE_NAME_RE.source}`);
+  if (typeof value !== 'string' || !PROJECT_SLUG_RE.test(value)) {
+    throw new Error(`${field} must match ${PROJECT_SLUG_RE.source}`);
   }
 }
 
@@ -793,7 +797,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					...callerMetadata,
 					project: applyDefaultProject({
 						project: callerProject,
-						tool: 'memory_add',
+						tool: TOOL_IDS.MEMORY_ADD,
 						logger: getLogger(),
 						requestId: currentRequestId(),
 					}),
@@ -878,7 +882,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// branch is unreachable from this call site).
 			const project = applyDefaultProject({
 				project: metadata.project,
-				tool: 'memory_capture',
+				tool: TOOL_IDS.MEMORY_CAPTURE,
 				logger: getLogger(),
 				requestId: currentRequestId(),
 			});
@@ -1565,8 +1569,8 @@ export async function doState(project, ctx = {}) {
   // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
   // warnings without losing the documented DI surface.
   void ctx;
-  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  if (!project || !PROJECT_SLUG_RE.test(project)) {
+    throw new Error(`Invalid project name: must match ${PROJECT_SLUG_RE.source}`);
   }
   const relPath = `state/${project}/state.md`;
   try {
@@ -1630,8 +1634,8 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
   // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
   // warnings without losing the documented DI surface.
   void ctx;
-  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  if (!project || !PROJECT_SLUG_RE.test(project)) {
+    throw new Error(`Invalid project name: must match ${PROJECT_SLUG_RE.source}`);
   }
 
   const subdir = `authored/${project}`;
@@ -2237,7 +2241,7 @@ export function createRequestHandler(ctx = {}) {
 					...callerMetadata,
 					project: applyDefaultProject({
 						project: callerProject,
-						tool: 'api_add',
+						tool: TOOL_IDS.API_ADD,
 						logger: getLogger(),
 						requestId: currentRequestId(),
 					}),
@@ -2294,12 +2298,13 @@ export function createRequestHandler(ctx = {}) {
 			const projectSegment = decodeURIComponent(url.pathname.slice('/api/state/'.length));
 			// Belt-and-suspenders: REST handler pre-validates and returns HTTP 400
 			// before doState() runs, so REST never hits doState's throw path.
-			// Both checks use the same regex — intentional duplication.
-			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
+			// Both checks use the canonical PROJECT_SLUG_RE from default-project.mjs
+			// (v1.1 F1 hygiene PR centralization).
+			if (!projectSegment || !PROJECT_SLUG_RE.test(projectSegment)) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse(
 					'INPUT_INVALID',
-					'Invalid project name: must match ^[a-zA-Z0-9._-]+$',
+					`Invalid project name: must match ${PROJECT_SLUG_RE.source}`,
 				)));
 				return;
 			}

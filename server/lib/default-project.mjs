@@ -30,10 +30,48 @@
  * tools enforce on caller input.
  */
 
-// Canonical project slug regex — matches append-turn.mjs PROJECT_SLUG_RE and
-// checkpoint.mjs VALID_SLUG. Keep these three in lockstep; centralizing the
-// regex into this module is a follow-up if a fourth caller appears.
-const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
+/**
+ * Canonical project / safe-name slug regex.
+ *
+ * Single source of truth from v1.1 F1 hygiene PR onwards. Pre-#80 the same
+ * pattern was inlined in six locations: `append-turn.mjs:PROJECT_SLUG_RE`,
+ * `checkpoint.mjs:VALID_SLUG`, `mem0-mcp-http.mjs:SAFE_NAME_RE`, and three
+ * inline regex literals in `doState` + `doRecent` + the REST
+ * `/api/state/:project` handler. All six call sites now import this export;
+ * no other definitions of the slug pattern remain in the codebase.
+ *
+ * Exported because both this module's policy helpers AND the caller-input
+ * validation paths (`validateSafeName`, `doState`, `doRecent`, the REST
+ * pre-validator) need the same shape. Consumers needing a predicate can
+ * either call `.test(value)` directly OR (rare) read `.source` for error
+ * messages.
+ */
+export const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * Canonical tool identifiers for the `tool` arg of `applyDefaultProject`.
+ *
+ * The helper accepts any string at runtime (it's used only for the warn log
+ * payload — not for validation), but every call site in the codebase passes
+ * one of these five values. Keep this object frozen so a typo at a new call
+ * site fails at write-time (`TOOL_IDS.MEMRY_ADD` → undefined → typeof check)
+ * rather than producing a silently-wrong log binding.
+ *
+ * Surface coverage:
+ *   - MEMORY_CAPTURE / MEMORY_ADD / MEMORY_APPEND_TURN / MEMORY_CHECKPOINT
+ *     → MCP write tools (server/mem0-mcp-http.mjs + lib/append-turn.mjs +
+ *       lib/checkpoint.mjs)
+ *   - API_ADD → REST POST /api/add (server/mem0-mcp-http.mjs) — distinct
+ *     surface from MEMORY_ADD so the warn log shows which transport saw the
+ *     omission (ChatGPT Custom GPT uses the REST path per A1 audit §F6).
+ */
+export const TOOL_IDS = Object.freeze({
+  MEMORY_CAPTURE: 'memory_capture',
+  MEMORY_ADD: 'memory_add',
+  MEMORY_APPEND_TURN: 'memory_append_turn',
+  MEMORY_CHECKPOINT: 'memory_checkpoint',
+  API_ADD: 'api_add',
+});
 
 // One-shot warn flag for an invalid UM_DEFAULT_PROJECT env value. We warn on
 // the first resolve() call that observes the bad value, then suppress to keep
@@ -101,8 +139,12 @@ export function umDefaultProject({ logger } = {}) {
  *
  * @param {object} args
  * @param {*} args.project — raw caller-supplied value (any type).
- * @param {string} args.tool — tool name for the warn log (memory_add,
- *   memory_capture, memory_append_turn, memory_checkpoint).
+ * @param {string} args.tool — tool identifier for the warn-log payload. Use
+ *   one of `TOOL_IDS.*` (the canonical set: MEMORY_CAPTURE, MEMORY_ADD,
+ *   MEMORY_APPEND_TURN, MEMORY_CHECKPOINT, API_ADD). Free-form strings are
+ *   accepted at runtime (no membership check) so future internal callers
+ *   keep working — TOOL_IDS exists for typo-safety at the call site, not
+ *   for runtime gating.
  * @param {{warn: Function}} [args.logger]
  * @param {string} [args.requestId] — pino ALS-correlated request id, when
  *   available; omitted from the warn payload when not.
