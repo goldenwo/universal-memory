@@ -429,8 +429,8 @@ PYEOF
     assert_eq "INT2 commit subject" "docs(adr): 0001 Adopt mem0 OSS" "$commit_subject"
     [ -s "$STUB_BODYF" ] && pass "INT2 stub captured POST" \
       || fail "INT2 stub captured POST" "body file empty"
-    [ "$(head -1 "$STUB_PATHF")" = "/memory_add" ] && pass "INT2 path is /memory_add" \
-      || fail "INT2 path is /memory_add" "got: $(head -1 "$STUB_PATHF")"
+    [ "$(head -1 "$STUB_PATHF")" = "/api/add" ] && pass "INT2 path is /api/add" \
+      || fail "INT2 path is /api/add" "got: $(head -1 "$STUB_PATHF")"
     body=$(head -1 "$STUB_BODYF")
     assert_contains "INT2 payload type=adr"     "$body" '"type":"adr"'
     assert_contains "INT2 payload adr_id=0001"  "$body" '"adr_id":"0001"'
