@@ -6,6 +6,14 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (v1.1) — `/adr` skill POST route bug
+
+Discovered during B2 (PR [#81](https://github.com/goldenwo/universal-memory/pull/81)) spec authoring and filed as the B2 "Out of scope" hygiene followup: `create-adr.sh` POSTed to `"$endpoint/memory_add"`, but the live UM server exposes no `/memory_add` route — only `/api/add` (`server/mem0-mcp-http.mjs:2221`). Against any real server `/adr` fell into the warn-only 404 path: file written + git-committed, but the universal-memory registration silently failed. The skill's stub-based integration tests passed only because the test stub accepts any POST path; the path assertion just verified the helper sent whatever it sent.
+
+- **Fix in two production sites.** `cmd_create`'s `_post_memory_add` (`create-adr.sh:346`) and `cmd_sync`'s curl_args block (`create-adr.sh:610`) now POST to `"$endpoint/api/add"`. Payload shape (`{text, metadata: {...}}`) was already compatible with the server's `/api/add` handler contract — no payload changes.
+- **Test assertion updated.** INT2 in `create-adr.test.sh:432-433` now asserts the captured stub path equals `/api/add` (was `/memory_add`). INT11 (`cmd_sync` happy path) only asserts body shape, so it's correct by construction.
+- **Hygiene PR per the standing flow carve-out.** Narrow scope: only the POST destination changed; no recursive paired-Opus review.
+
 ### Added (v1.1) — Phase B2: `/remember` casual-save skill (axis 4 advance)
 
 Second instance of the create-adr pattern (W1.1, 2026-05-08). Ships a `/remember <text>` slash-command skill that POSTs a casual fact to the running UM server via REST `/api/add`. Closes issue [#70](https://github.com/goldenwo/universal-memory/issues/70) §3 — the "no `/remember <fact>` skill" gap for Claude Code casual users (no-project sessions, doctype-free explicit save).
