@@ -1657,10 +1657,12 @@ fi
 # gate (which tears the stack down), same as S2.
 if [ "${UM_SMOKE_REMEMBER_ON:-}" = "1" ]; then
 	echo "[smoke] B2 S3 — /remember casual-save round-trip (UM_SMOKE_REMEMBER_ON=1)"
-	# Resolve repo root so we can invoke the helper by relative path. smoke.sh
-	# runs from server/ (working-directory in smoke.yml), so the helper is two
-	# levels up + plugins/claude-code/...
-	_um_repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+	# Resolve repo root so we can invoke the helper by absolute path.
+	# smoke.sh lives at <repo>/server/test/smoke.sh — dirname is server/test/,
+	# so going up two levels reaches the repo root regardless of CWD.
+	# (CI's working-directory=server is irrelevant here; ${BASH_SOURCE[0]}
+	# is the script's own filesystem location, not the invocation cwd.)
+	_um_repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 	_um_remember_helper="$_um_repo_root/plugins/claude-code/universal-memory/skills/create-remember/create-remember.sh"
 	if [ ! -f "$_um_remember_helper" ]; then
 		echo "[smoke] B2 S3 FAIL: /remember helper not found at $_um_remember_helper" >&2
