@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   umDefaultProject,
   applyDefaultProject,
+  _resetInvalidEnvWarnForTests,
 } from '../lib/default-project.mjs';
 
 // Each test runs an isolated env mutation; this helper snapshots+restores
@@ -76,23 +77,25 @@ test('umDefaultProject: invalid env (contains space) falls back to "default"', (
 });
 
 test('umDefaultProject: invalid env emits a one-shot warn via supplied logger', () => {
+  // Reset the module-level one-shot flag so this test deterministically
+  // observes the warn regardless of which other tests ran before it. The
+  // pre-follow-up version of this test degraded to BEHAVIOR_OR_NOOP because
+  // it could not reset the flag — post-merge review of PR #78 flagged that
+  // hazard, and PR #79 added _resetInvalidEnvWarnForTests().
+  _resetInvalidEnvWarnForTests();
   withEnv('bad slug!', () => {
-    // First call emits warn. Subsequent calls in the SAME process do not
-    // re-emit (one-shot). Tests in this file run sequentially; we cannot
-    // easily reset the module-internal warn flag without a reload, so
-    // this test asserts BEHAVIOR_OR_NOOP: either the logger was called
-    // (first observer of bad env in process), or no call happened
-    // (another earlier test consumed the one-shot). Both outcomes
-    // satisfy the contract. The non-trivial assertion is that the
-    // returned value is the fallback regardless.
     const logger = makeRecordingLogger();
     const got = umDefaultProject({ logger });
     assert.equal(got, 'default');
-    if (logger.calls.length > 0) {
-      const [bindings, msg] = logger.calls[0];
-      assert.equal(bindings.um_default_project_env, 'bad slug!');
-      assert.match(msg, /UM_DEFAULT_PROJECT/);
-    }
+    assert.equal(logger.calls.length, 1, 'first call MUST emit the one-shot warn');
+    const [bindings, msg] = logger.calls[0];
+    assert.equal(bindings.um_default_project_env, 'bad slug!');
+    assert.match(msg, /UM_DEFAULT_PROJECT/);
+
+    // Second call with the same bad env should NOT re-warn (one-shot contract).
+    const logger2 = makeRecordingLogger();
+    umDefaultProject({ logger: logger2 });
+    assert.equal(logger2.calls.length, 0, 'one-shot flag suppresses repeat warns until reset');
   });
 });
 
