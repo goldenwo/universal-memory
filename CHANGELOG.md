@@ -6,6 +6,21 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (v1.1) — Phase B2: `/remember` casual-save skill (axis 4 advance)
+
+Second instance of the create-adr pattern (W1.1, 2026-05-08). Ships a `/remember <text>` slash-command skill that POSTs a casual fact to the running UM server via REST `/api/add`. Closes issue [#70](https://github.com/goldenwo/universal-memory/issues/70) §3 — the "no `/remember <fact>` skill" gap for Claude Code casual users (no-project sessions, doctype-free explicit save).
+
+- **New skill at `plugins/claude-code/universal-memory/skills/create-remember/`** — markdown body (`skill.md`) + bash helper (`create-remember.sh`) + 101-assertion test suite (`create-remember.test.sh`). Same install convention as `/adr`: manual copy to `~/.claude/skills/create-remember/` at v1.1.
+- **POST to `/api/add` with `metadata.type: "note"`** and no `metadata.project` — server's F1 soft-default (PR [#78](https://github.com/goldenwo/universal-memory/pull/78) + [#79](https://github.com/goldenwo/universal-memory/pull/79)) injects `UM_DEFAULT_PROJECT` (or literal `"default"`). 2-line success output: `Remembered: <preview>` + `Registered with universal-memory (<endpoint>) project=<resolved>`. When the server response carries any `results[].event === 'DEDUP_MERGED'` (D1 dedup hit, PR [#77](https://github.com/goldenwo/universal-memory/pull/77)), the second line gains a `— dedup match` suffix — running `/remember "X"` twice is idempotent by content (correct semantic for casual saves).
+- **Warn-only contract on transient/auth failures** (HTTP 401/403/429/5xx/000) — single WARNING line, exit 0, sanitized text preview included so the operator can re-run verbatim. Hard-fail (exit 65) only on payload-class errors (400/422) where re-running won't help.
+- **Codepoint-counted 4096 limit** via `python3` primary (`UM_CODEPOINT_TOOL` operator override). Multi-byte content (CJK, emoji) is correctly counted by codepoint, not byte — `awk length()` and bash `${#var}` rejected as broken on BSD/busybox awk and `LC_ALL=C` respectively. 60-codepoint success-output preview uses the same counter.
+- **Text sanitization** — strips C0/C1/DEL, rejects Unicode bidi-override codepoints (CVE-2021-42574 "Trojan Source"), trims, collapses whitespace. JSON payload escaping via pure-bash parameter substitution (no `jq` dependency).
+- **Auth-token resolution chain** — env `UM_AUTH_TOKEN` → `$HOME/.claude/skills/create-remember/config.json` (`auth_token` field, per-skill scoping) → anonymous (loopback-only acceptable).
+- **Smoke gate** — new `UM_SMOKE_REMEMBER_ON=1`-gated block in `server/test/smoke.sh` (mirrors D1's `UM_SMOKE_DEDUP_ON=1` block at line 1602). Two consecutive `/remember` invocations with identical text; second must surface "dedup match". `.github/workflows/smoke.yml` run-smoke step env updated to set the flag at release-gate time.
+- **Spec + plan + 3-round paired-Opus review** — `docs/plans/2026-05-10-b2-remember-skill-spec.md` + `-plan.md` (both gitignored). Methodology + operational lenses CONVERGED at round 3 (7 BLOCKERs + 14 IMPORTANTs resolved across 2 revision passes; 17 NITs folded into PR commits per the standing automated engineering flow carve-out).
+- **Out of scope for B2:** `/forget` (issue #70 §4, future); `--project <slug>` override (stretch); Claude.ai connector / ChatGPT Desktop parity (no slash-command surface there; tracked for v1.2+); the pre-existing `/adr` POSTs-to-`/memory_add`-not-`/api/add` bug (filed as a separate hygiene followup).
+- **Shellcheck CI** — `.github/workflows/smoke.yml` shellcheck step file list extended to cover `create-remember.sh` + `create-remember.test.sh`.
+
 ### Changed (v1.1) — Phase F1 hygiene — slug regex + tool-id centralization
 
 Tidies the items the PR #79 description flagged as "deferred to a separate hygiene PR." No behavior change; the F1 contract and all four+REST write-tool soft-defaults are unchanged. Verified by adding 4 new tests (PROJECT_SLUG_RE invariant + canonical pattern, TOOL_IDS frozen-shape, helper accepts arbitrary tool strings) without removing any.
