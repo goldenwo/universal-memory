@@ -23,7 +23,7 @@ Paired-Opus post-merge review on PRs #77 (D1 flag-flip) + #78 (F1 project soft-d
 - **IMPORTANT (#78) — `_invalidEnvWarnEmitted` was a test-flake hazard.** The module-level one-shot flag in `server/lib/default-project.mjs` had no reset hook, so the test asserting the warn fired degraded to `BEHAVIOR_OR_NOOP` (couldn't distinguish "warn fired" from "earlier test consumed the one-shot"). **Fix:** new `_resetInvalidEnvWarnForTests()` export resets the flag deterministically; the test now asserts strict `equal(logger.calls.length, 1)` on first call AND `equal(0)` on a second call within the same env scope (verifying both halves of the one-shot contract).
 - **Stale-fact cleanups.** `/api/memory_capture` mention in the workflow comment + CHANGELOG entry corrected to `/api/add` (the PR #77 follow-up commit moved the S2 probe to `/api/add`; the comment + changelog didn't catch up). `UM_DEDUP_EMBEDDING_THRESHOLD` default in the v1.1 D1 historical Added entry now strikes-through `0.95` and forward-references the Changed entry's `0.84` so a release-time reader gets the correct current value.
 
-Deferred to a separate hygiene PR: TOOLS enum for `applyDefaultProject`'s `tool` arg (typo-safety), tombstone-comment cleanup in `append-turn.mjs` + `checkpoint.mjs`, and centralizing `PROJECT_SLUG_RE` to a single export (review noted a 4th caller appeared in `validateSafeName`).
+The TOOLS enum / tombstone cleanup / `PROJECT_SLUG_RE` centralization items the original draft of this entry called out as "deferred" landed in the immediately-following hygiene PR (see the "Changed (v1.1) — Phase F1 hygiene" entry above).
 
 ### Changed (v1.1) — Phase F1: project soft-default unification
 

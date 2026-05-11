@@ -1569,8 +1569,8 @@ export async function doState(project, ctx = {}) {
   // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
   // warnings without losing the documented DI surface.
   void ctx;
-  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  if (!project || !PROJECT_SLUG_RE.test(project)) {
+    throw new Error(`Invalid project name: must match ${PROJECT_SLUG_RE.source}`);
   }
   const relPath = `state/${project}/state.md`;
   try {
@@ -1634,8 +1634,8 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
   // ctx.rateLimiter, ctx.auth). The `void ctx` below suppresses "unused param"
   // warnings without losing the documented DI surface.
   void ctx;
-  if (!project || !/^[a-zA-Z0-9._-]+$/.test(project)) {
-    throw new Error('Invalid project name: must match ^[a-zA-Z0-9._-]+$');
+  if (!project || !PROJECT_SLUG_RE.test(project)) {
+    throw new Error(`Invalid project name: must match ${PROJECT_SLUG_RE.source}`);
   }
 
   const subdir = `authored/${project}`;
@@ -2298,12 +2298,13 @@ export function createRequestHandler(ctx = {}) {
 			const projectSegment = decodeURIComponent(url.pathname.slice('/api/state/'.length));
 			// Belt-and-suspenders: REST handler pre-validates and returns HTTP 400
 			// before doState() runs, so REST never hits doState's throw path.
-			// Both checks use the same regex — intentional duplication.
-			if (!projectSegment || !/^[a-zA-Z0-9._-]+$/.test(projectSegment)) {
+			// Both checks use the canonical PROJECT_SLUG_RE from default-project.mjs
+			// (v1.1 F1 hygiene PR centralization).
+			if (!projectSegment || !PROJECT_SLUG_RE.test(projectSegment)) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse(
 					'INPUT_INVALID',
-					'Invalid project name: must match ^[a-zA-Z0-9._-]+$',
+					`Invalid project name: must match ${PROJECT_SLUG_RE.source}`,
 				)));
 				return;
 			}

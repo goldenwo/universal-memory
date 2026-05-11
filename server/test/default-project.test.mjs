@@ -228,11 +228,29 @@ test('PROJECT_SLUG_RE: canonical pattern matches valid slugs', () => {
   // Sanity-anchor on the exact pattern. If anyone retunes the regex they
   // also have to retune this test, which catches accidental drift.
   assert.equal(PROJECT_SLUG_RE.source, '^[a-zA-Z0-9._-]+$');
-  for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d']) {
+  for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d', '.hidden']) {
     assert.ok(PROJECT_SLUG_RE.test(ok), `expected match: ${ok}`);
   }
-  for (const bad of ['', '../escape', 'my project', 'with/slash', 'curly{brace}']) {
-    assert.ok(!PROJECT_SLUG_RE.test(bad), `expected no match: ${bad}`);
+  // Hostile-input coverage. The regex's `^...$` anchors prevent multi-line
+  // bypass (a string like "good\nbad" won't match because the newline isn't
+  // in the char class). NUL bytes, whitespace, Unicode, path separators,
+  // and grouping characters all fail. Asserting these explicitly so a
+  // future regex tightening doesn't silently change behavior.
+  for (const bad of [
+    '',                  // empty
+    '../escape',         // path traversal
+    'my project',        // whitespace
+    'with/slash',        // path separator
+    'curly{brace}',      // shell-substitution chars
+    'a\0b',              // NUL byte
+    'café',              // non-ASCII Unicode
+    'good\nbad',         // multi-line — anchors prevent bypass
+    'good\rbad',         // CR
+    'tab\there',         // embedded tab
+    ' lead',             // leading space
+    'trail ',            // trailing space
+  ]) {
+    assert.ok(!PROJECT_SLUG_RE.test(bad), `expected no match: ${JSON.stringify(bad)}`);
   }
 });
 
@@ -245,6 +263,19 @@ test('TOOL_IDS: enumerates the five canonical call sites and is frozen', () => {
   assert.ok(Object.isFrozen(TOOL_IDS), 'TOOL_IDS must be frozen to catch typos at write-time');
   // Adding a new tool? Update the count + the union below in lockstep.
   assert.equal(Object.keys(TOOL_IDS).length, 5);
+  // ESM modules run in strict mode → write to a frozen object throws
+  // TypeError. Confirm at runtime so a future Object.freeze removal would
+  // be caught immediately, not just by the isFrozen() static check.
+  assert.throws(
+    () => { TOOL_IDS.MEMORY_ADD = 'mutated'; },
+    TypeError,
+    'mutating a frozen TOOL_IDS entry must throw under ESM strict mode',
+  );
+  assert.throws(
+    () => { TOOL_IDS.NEW_TOOL = 'added'; },
+    TypeError,
+    'adding a new key to a frozen TOOL_IDS must throw under ESM strict mode',
+  );
 });
 
 test('applyDefaultProject: accepts arbitrary tool strings (no TOOL_IDS-membership check)', () => {
