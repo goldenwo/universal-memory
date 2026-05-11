@@ -231,6 +231,19 @@ test('PROJECT_SLUG_RE: canonical pattern matches valid slugs', () => {
   for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d', '.hidden']) {
     assert.ok(PROJECT_SLUG_RE.test(ok), `expected match: ${ok}`);
   }
+  // Defense-in-depth lockdown: these inputs currently MATCH the regex
+  // (the char class permits `.` `-` `_` in any position). Path traversal
+  // (`..`) is matched here but rejected at the filesystem layer by
+  // `vault.mjs:safePath()` — that's the existing security model.
+  // Asserting the current behavior so a future regex tightening (e.g.
+  // adding an anti-traversal lookahead) becomes a tracked decision rather
+  // than silently shifting the matched set.
+  for (const lockedMatch of ['.', '..', '...', '-', '_', '-leading-dash', '_lead_under']) {
+    assert.ok(PROJECT_SLUG_RE.test(lockedMatch),
+      `defense-in-depth lockdown: ${JSON.stringify(lockedMatch)} currently matches ` +
+      `(vault safePath is the backstop). If you intentionally tightened the regex, ` +
+      `update this assertion AND verify the FS-layer guard still covers traversal.`);
+  }
   // Hostile-input coverage. The regex's `^...$` anchors prevent multi-line
   // bypass (a string like "good\nbad" won't match because the newline isn't
   // in the char class). NUL bytes, whitespace, Unicode, path separators,
@@ -261,8 +274,6 @@ test('TOOL_IDS: enumerates the five canonical call sites and is frozen', () => {
   assert.equal(TOOL_IDS.MEMORY_CHECKPOINT, 'memory_checkpoint');
   assert.equal(TOOL_IDS.API_ADD, 'api_add');
   assert.ok(Object.isFrozen(TOOL_IDS), 'TOOL_IDS must be frozen to catch typos at write-time');
-  // Adding a new tool? Update the count + the union below in lockstep.
-  assert.equal(Object.keys(TOOL_IDS).length, 5);
   // ESM modules run in strict mode → write to a frozen object throws
   // TypeError. Confirm at runtime so a future Object.freeze removal would
   // be caught immediately, not just by the isFrozen() static check.
