@@ -343,7 +343,7 @@ _post_memory_add() {
   if [ -n "$token" ]; then
     curl_args+=(-H "Authorization: Bearer $token")
   fi
-  curl_args+=(--data "$payload" "$endpoint/memory_add")
+  curl_args+=(--data "$payload" "$endpoint/api/add")
   http_code=$(curl "${curl_args[@]}" 2>/dev/null) || http_code="000"
   rm -f "$curl_out"
   case "$http_code" in
@@ -607,7 +607,7 @@ cmd_sync() {
   if [ -n "$token" ]; then
     curl_args+=(-H "Authorization: Bearer $token")
   fi
-  curl_args+=(--data "$payload" "$endpoint/memory_add")
+  curl_args+=(--data "$payload" "$endpoint/api/add")
   http_code=$(curl "${curl_args[@]}" 2>/dev/null) || http_code="000"
   rm -f "$curl_out"
   case "$http_code" in
