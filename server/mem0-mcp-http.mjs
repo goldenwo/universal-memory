@@ -446,7 +446,7 @@ export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
-		description: 'Semantic search with optional status/metadata filters. Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
+		description: 'Semantic search with optional status / metadata filters (project, type, lane, persona — all AND-combined). Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
