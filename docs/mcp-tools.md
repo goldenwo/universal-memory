@@ -72,6 +72,42 @@ tools pre-v1.1).
 
 ---
 
+## Lane / persona schema (v1.1 D2)
+
+Additive metadata partitions for **qdrant writes**. Both fields are slug-shaped (validated by F1's canonical `PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/`), single-valued, optional. Direct advance of [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 (auto context routing)** — D2 ships the schema substrate; the LLM auto-classifier that populates the fields is D3+ scope.
+
+| Field | Purpose | Examples |
+|---|---|---|
+| `lane` | Topic-area / context partition | `work`, `personal`, `writing`, `side-project` |
+| `persona` | Identity-aspect partition | `me-engineer`, `me-parent`, `me-author` |
+
+**Write surfaces (qdrant-backed) accept lane/persona on `metadata`:**
+
+- `memory_capture` (MCP)
+- `memory_add` (MCP)
+- REST `POST /api/add`
+
+`memory_append_turn` and `memory_checkpoint` are NOT extended in D2 — those tools write to vault filesystem only and do not flow through `umAdd()`. Their lane/persona affordance is deferred to a future phase that introduces vault-frontmatter `lane:` / `persona:` keys.
+
+**Read surface (qdrant-backed) accepts lane/persona on `filters`:**
+
+- `memory_search` (MCP) — `args.filters.{lane, persona}`
+- REST `POST /api/search` — `body.filters.{lane, persona}`
+
+Read filters AND-combine with the existing `filters.project` and `filters.type`. `memory_list`, `memory_recent`, `memory_state` are vault-backed and NOT extended in D2.
+
+**Operator-visible read-filter semantics on pre-D2 points:** an explicit `filters.lane='<slug>'` excludes points whose payload has no `lane` key (the JS post-filter compares `r.metadata.lane === filters.lane` → `undefined !== '<slug>'` → excluded). Pre-D2 points remain visible only on no-filter queries. A future Phase F backfill sweep can retroactively populate lane/persona on legacy points.
+
+**Dedup partition guarantee (interacts with v1.1 D1):** same text + same userId + same (lane, persona) → DEDUP_MERGED (one record). Different lane → 2 records. Different persona (within the same lane) → 2 records. Lane-set new write + legacy no-lane existing point → 2 records (asymmetric back-compat). Legacy + new-write-without-lane → DEDUP_MERGED (symmetric back-compat).
+
+**Absence semantics:** omitted lane/persona (undefined / null / `""` / whitespace-only) → payload contains NO `lane` / `persona` key (not `null`, not `""`, not `"default"`). The validator throws `INPUT_INVALID` BEFORE any side effect on non-string or regex-mismatch input — failure-fast, no partial vault writes.
+
+**No env var.** Lane and persona ship coherent from day one — no historical heterogeneity to unify, no `UM_DEFAULT_LANE` equivalent of F1.
+
+**Qdrant payload index.** Server boot creates payload indexes on `lane` and `persona` (idempotent on 409 conflict; WARN-not-throw on other errors). Filtered queries hit the index; pre-D2 deployments with no indexes degrade to full-scan until a server restart re-runs the init.
+
+---
+
 ## Tools
 
 ### memory_search

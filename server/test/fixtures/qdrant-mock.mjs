@@ -26,7 +26,56 @@
  */
 
 /**
+ * Evaluate a single qdrant filter `must` arm against a point's payload.
+ * Supports the predicates D1 + D2 actually use; returns true (fail-open)
+ * for unknown shapes so forward-compat extensions don't silently exclude.
+ *
+ *   { key, match: { value } }     → strict-equality match
+ *   { is_empty: { key } }         → payload[key] === undefined
+ *   { is_null:  { key } }         → payload[key] === null
+ *
+ * Other qdrant predicates (range, geo, has_id, etc.) are not exercised by
+ * any current dedup / read path and would return fail-open if encountered.
+ */
+function evalFilterArm(payload, arm) {
+  if (arm?.is_empty?.key !== undefined) {
+    return payload?.[arm.is_empty.key] === undefined;
+  }
+  if (arm?.is_null?.key !== undefined) {
+    return payload?.[arm.is_null.key] === null;
+  }
+  if (arm?.key !== undefined && arm?.match !== undefined) {
+    if (arm.match.value !== undefined) {
+      return payload?.[arm.key] === arm.match.value;
+    }
+  }
+  return true;
+}
+
+/**
+ * Apply a qdrant-shaped filter (`{ must: [arm, ...] }`) to an array of
+ * points, returning only those whose payload satisfies ALL `must` arms.
+ * Returns the input list unchanged when the filter is empty/absent.
+ */
+function applyMustFilter(points, filter) {
+  if (!filter?.must || filter.must.length === 0) return points;
+  return points.filter((p) =>
+    filter.must.every((arm) => evalFilterArm(p.payload ?? {}, arm)),
+  );
+}
+
+/**
  * Full mock with all 4 methods. The default for dedup tests.
+ *
+ * D2 (R12): when `mock.honorFilters = true` is set BEFORE the umAdd call,
+ * `scroll` / `search` apply the filter's `must` arms to `scrollResult` /
+ * `searchResult` and return only matching points. This lets D2 tests
+ * exercise real filter behavior (lane / persona partitioning, `is_empty`
+ * absence arms) instead of asserting filter-shape only.
+ *
+ * Pre-D2 tests leave `honorFilters` at its default `false`, so the mock
+ * returns the pre-seeded value unchanged — backward-compatible. Existing
+ * D1 dedup tests do not need to opt in.
  */
 export function makeMockQdrant() {
   const upserts = [];
@@ -45,6 +94,11 @@ export function makeMockQdrant() {
     searchError: null,
     setPayloadError: null,
     upsertError: null,
+    // D2 (R12): opt-in filter evaluation for `scroll` / `search`. When
+    // false (default), the mock returns the pre-seeded result unchanged.
+    // When true, the filter's `must` arms are applied to scrollResult /
+    // searchResult and only matching points are returned.
+    honorFilters: false,
     client: {
       upsert: async (collection, body) => {
         upserts.push({ collection, body });
@@ -54,12 +108,17 @@ export function makeMockQdrant() {
       scroll: async (collection, body) => {
         scrolls.push({ collection, body });
         if (mock.scrollError) throw mock.scrollError;
-        return mock.scrollResult;
+        if (!mock.honorFilters) return mock.scrollResult;
+        const points = mock.scrollResult?.points ?? [];
+        const filtered = applyMustFilter(points, body?.filter);
+        return { ...mock.scrollResult, points: filtered };
       },
       search: async (collection, body) => {
         searches.push({ collection, body });
         if (mock.searchError) throw mock.searchError;
-        return mock.searchResult;
+        if (!mock.honorFilters) return mock.searchResult;
+        const arr = Array.isArray(mock.searchResult) ? mock.searchResult : [];
+        return applyMustFilter(arr, body?.filter);
       },
       setPayload: async (collection, body) => {
         setPayloads.push({ collection, body });

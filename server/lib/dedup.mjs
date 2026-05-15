@@ -56,15 +56,37 @@ async function instrumented(kind, stage, fn) {
 }
 
 /**
- * Layer 1 — exact content-hash dedup (spec §4.1).
+ * Build the `must` arm for a single partition field (lane or persona).
+ * Explicit slug → strict equality. Undefined → `is_empty` matches points
+ * where the field is absent (D2 §4.7).
+ *
+ * D2's `omitEmpty` write pattern guarantees no `null` payload values for
+ * lane/persona, so `is_empty` alone covers the absence arm without
+ * needing the complementary `is_null` predicate.
+ */
+function partitionArm(key, value) {
+  return value !== undefined
+    ? { key, match: { value } }
+    : { is_empty: { key } };
+}
+
+/**
+ * Layer 1 — exact content-hash dedup (spec §4.1; D2 §4.7 cascade).
  *
  * Returns:
- *   { id, payload } existing point if a point with same userId AND same hash exists; else null.
+ *   { id, payload } existing point if a point with same userId AND same hash
+ *   AND same (lane, persona) partition exists; else null.
+ *
+ * D2 extends the filter with `lane` and `persona` arms so two writes that
+ * are textually identical but partitioned differently (e.g. lane=work vs
+ * lane=personal) do NOT dedup-merge. Absence is matched via `is_empty` so
+ * legacy points (no lane / persona keys) only merge with new writes that
+ * also omit those fields — symmetric back-compat.
  *
  * Throws on qdrant transport error; metrics emitted via instrumented(). Caller
  * (umAdd) catches and falls through to plain upsert.
  */
-export async function checkContentHashDedup({ client, collection, userId, hash }) {
+export async function checkContentHashDedup({ client, collection, userId, hash, lane, persona }) {
   if (!client?.scroll) throw new Error('checkContentHashDedup: client.scroll required');
   if (!collection || !userId || !hash) throw new Error('checkContentHashDedup: collection/userId/hash required');
 
@@ -74,6 +96,8 @@ export async function checkContentHashDedup({ client, collection, userId, hash }
         must: [
           { key: 'userId', match: { value: userId } },
           { key: 'hash', match: { value: hash } },
+          partitionArm('lane', lane),
+          partitionArm('persona', persona),
         ],
       },
       limit: 1,
@@ -104,7 +128,7 @@ export async function checkContentHashDedup({ client, collection, userId, hash }
  * scroll() returns { points: [...] }. Asymmetry verified at server/test/add-live.test.mjs:99
  * + qdrant openapi schema. (Spec §3.4.)
  */
-export async function checkEmbeddingDedup({ client, collection, userId, vector, threshold }) {
+export async function checkEmbeddingDedup({ client, collection, userId, vector, threshold, lane, persona }) {
   if (!client?.search) throw new Error('checkEmbeddingDedup: client.search required');
   if (!collection || !userId || !Array.isArray(vector) || vector.length === 0) {
     throw new Error('checkEmbeddingDedup: collection/userId/vector required');
@@ -112,9 +136,19 @@ export async function checkEmbeddingDedup({ client, collection, userId, vector, 
   if (typeof threshold !== 'number') throw new Error('checkEmbeddingDedup: threshold (number) required');
 
   return instrumented('embedding', 'search', async () => {
+    // D2 §4.7 cascade — extends the must filter with lane + persona arms
+    // (NO hash arm — Layer 2 is the near-similar path; hash equality would
+    // defeat its purpose). Absence arm via is_empty per the same rationale
+    // as Layer 1.
     const res = await client.search(collection, {
       vector,
-      filter: { must: [{ key: 'userId', match: { value: userId } }] },
+      filter: {
+        must: [
+          { key: 'userId', match: { value: userId } },
+          partitionArm('lane', lane),
+          partitionArm('persona', persona),
+        ],
+      },
       limit: 1,
       score_threshold: threshold,
       with_payload: true,
