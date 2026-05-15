@@ -48,6 +48,7 @@ import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
+import { ensurePayloadIndexes } from './lib/collection-init.mjs';
 import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
@@ -400,6 +401,22 @@ export async function initMemory() {
 			}
 			await new Promise((r) => setTimeout(r, 2000));
 		}
+	}
+	// D2: ensure qdrant payload indexes for `lane` and `persona` exist. Runs
+	// AFTER the warmup loop (collection guaranteed to exist by mem0 first getAll).
+	// Idempotent on 409 conflict, WARN-not-throw on other errors so boot still
+	// completes even if index creation fails (filtered queries degrade to full-scan).
+	try {
+		const { QdrantClient } = await import("@qdrant/js-client-rest");
+		const { host, port } = memory.config.vectorStore.config;
+		const collectionName = memory.config.vectorStore.config.collectionName;
+		const qdrantClient = new QdrantClient({ host, port });
+		await ensurePayloadIndexes(qdrantClient, collectionName, { logger: getLogger() });
+	} catch (err) {
+		safeLog(() => getLogger().warn(
+			{ event: "collection_init.failed", errorMessage: err?.message },
+			"D2 payload-index init failed; filtered queries will full-scan",
+		), "log:collection_init:failed");
 	}
 	// DE5 — wire the embedding-stamp guard. The wrapper handles the 3 branches
 	// (null/match/mismatch) and the verifyDim probe. Production deps:
