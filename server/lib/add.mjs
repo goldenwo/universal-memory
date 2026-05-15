@@ -217,10 +217,12 @@ export async function umAdd({
       // to plain upsert per spec §4.6.
       if (dedupEligible) {
         try {
-          let hit = await checkContentHashDedup({ client, collection, userId, hash: itemHash });
+          let hit = await checkContentHashDedup({
+            client, collection, userId, hash: itemHash, lane, persona,
+          });
           if (!hit) {
             hit = await checkEmbeddingDedup({
-              client, collection, userId, vector, threshold: dedupThreshold,
+              client, collection, userId, vector, threshold: dedupThreshold, lane, persona,
             });
           }
           if (hit) {
