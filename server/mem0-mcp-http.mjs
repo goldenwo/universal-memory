@@ -47,7 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
-import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS } from './lib/default-project.mjs';
+import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
@@ -456,7 +456,15 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				text: { type: 'string' },
-				metadata: { type: 'object', description: 'Optional key-value metadata to attach to the memory' },
+				metadata: {
+					type: 'object',
+					description: 'Optional key-value metadata to attach to the memory. Free-form, but the following keys have first-class semantics:',
+					properties: {
+						project: { type: 'string', description: 'Project slug (^[a-zA-Z0-9._-]+$). When omitted, the server soft-defaults via UM_DEFAULT_PROJECT (F1).' },
+						lane: { type: 'string', description: 'Optional v1.1 D2 topic-area partition slug (e.g. work, personal). Validated against the project slug regex. Omitted = unpartitioned.' },
+						persona: { type: 'string', description: 'Optional v1.1 D2 identity-aspect partition slug (e.g. me-engineer). Validated against the project slug regex. Omitted = unpartitioned.' },
+					},
+				},
 			},
 			required: ['text'],
 		},
@@ -515,12 +523,14 @@ export const TOOLS = [
 				content: { type: 'string', description: 'Markdown body of the document (no frontmatter — metadata arg supplies that)' },
 				metadata: {
 					type: 'object',
-					description: 'Frontmatter fields. Required: type, id, title. Optional: project, status, valid_from, and any other fields.',
+					description: 'Frontmatter fields. Required: type, id, title. Optional: project, status, valid_from, lane, persona, and any other fields.',
 					properties: {
 						type: { type: 'string' },
 						id: { type: 'string', description: 'Filename stem — must be unique in the vault' },
 						title: { type: 'string' },
 						project: { type: 'string' },
+						lane: { type: 'string', description: 'Optional v1.1 D2 topic-area partition slug (e.g. work, personal). Validated against the project slug regex.' },
+						persona: { type: 'string', description: 'Optional v1.1 D2 identity-aspect partition slug (e.g. me-engineer). Validated against the project slug regex.' },
 					},
 					required: ['type', 'id', 'title'],
 				},
@@ -869,6 +879,12 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// C1: validate filename-path components before any path construction
 			validateSafeName('metadata.id', metadata.id);
 			if (metadata.project != null) validateSafeName('metadata.project', metadata.project);
+			// D2: validate lane/persona upfront so an invalid slug fails BEFORE
+			// the vault write, not after via reindex. Mirrors the validateSafeName
+			// pattern above. The umAdd call inside reindexDoc validates again as
+			// a defense-in-depth layer.
+			validateLanePersonaSlug({ value: metadata.lane, fieldName: 'lane' });
+			validateLanePersonaSlug({ value: metadata.persona, fieldName: 'persona' });
 			if (!isWriteEnabled()) {
 				return JSON.stringify(errorResponse(
 					'INPUT_INVALID',
