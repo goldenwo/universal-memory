@@ -173,3 +173,48 @@ export function applyDefaultProject({ project, tool, logger, requestId } = {}) {
   if (typeof project !== 'string' || !PROJECT_SLUG_RE.test(project)) return null;
   return project;
 }
+
+/**
+ * Validate a `lane` or `persona` slug supplied via `metadata.lane` /
+ * `metadata.persona` on a write, or via `filters.lane` / `filters.persona`
+ * on a read. Reuses `PROJECT_SLUG_RE` — lane and persona share the slug
+ * shape with project per F1 PR #80; the regex is general-purpose.
+ *
+ * Semantics:
+ *   - undefined / null / '' / whitespace-only → returns `undefined` (the
+ *     "not set" case; caller treats as omitted; payload omits the key).
+ *   - non-string input → throws INPUT_INVALID (programmer error; do not
+ *     coerce).
+ *   - string matching the regex → returns the trimmed value.
+ *   - string failing the regex → throws INPUT_INVALID.
+ *
+ * Throws are enveloped via `Object.assign(new Error(msg), { code:
+ * 'INPUT_INVALID' })` to match the helper convention used elsewhere
+ * (bridge-contract.mjs, checkpoint.mjs). The outer HTTP layer maps this
+ * code to a 400 response.
+ *
+ * @param {object} args
+ * @param {*} args.value — caller-supplied value of any type.
+ * @param {string} args.fieldName — 'lane' or 'persona' (only used to
+ *   compose the error message so the caller can disambiguate which field
+ *   failed).
+ * @returns {string|undefined} trimmed slug, or `undefined` when unset.
+ */
+export function validateLanePersonaSlug({ value, fieldName }) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') {
+    throw Object.assign(
+      new Error(`metadata.${fieldName} must be a string`),
+      { code: 'INPUT_INVALID' },
+    );
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') return undefined;
+  if (!PROJECT_SLUG_RE.test(trimmed)) {
+    throw Object.assign(
+      new Error(`metadata.${fieldName} must match ${PROJECT_SLUG_RE.source}`),
+      { code: 'INPUT_INVALID' },
+    );
+  }
+  return trimmed;
+}

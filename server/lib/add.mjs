@@ -18,8 +18,12 @@
  *   - Per dedup-eligible item: Layer 1 (hash) → Layer 2 (embedding); on hit,
  *     mergeSurface and emit DEDUP_MERGED event instead of upsert.
  *   - Fail-soft on dedup query error: log+metric, fall through to plain upsert.
- *   - Point-ID: dedup-eligible writes use uuidv5(`${userId}:${hash}`, NAMESPACE_UM)
- *     for TOCTOU-resistant deterministic IDs; non-dedup writes use randomUUID().
+ *   - Point-ID: dedup-eligible writes use uuidv5(`${itemHash}:${userId}${suffix}`,
+ *     NAMESPACE_UM) for TOCTOU-resistant deterministic IDs. Suffix is empty when
+ *     both lane and persona are unset (D2 back-compat — reduces to the legacy
+ *     `${hash}:${userId}` shape so pre-D2 dedup-eligible IDs are preserved);
+ *     else `:${lane||''}:${persona||''}` so per-(lane, persona) partitions
+ *     collide on writes independently. Non-dedup writes use randomUUID().
  *
  * Return shape mirrors mem0's add():
  *   { results: [{ id, memory, event: 'ADD' | 'DEDUP_MERGED' }, ...] }
@@ -51,6 +55,7 @@ import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
+import { validateLanePersonaSlug } from './default-project.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -61,11 +66,19 @@ async function getRealClient(memory) {
   return new QdrantClient({ host, port });
 }
 
-function buildPayload({ userId, text, metadata, surface }) {
+function buildPayload({ userId, text, metadata, surface, lane, persona }) {
   // Capture metadata.project BEFORE the flatten-spread so we can ALSO seed
   // the `projects` Set field. Both forms (scalar + Set) coexist for backward
   // compat — existing project-scoped readers use the scalar; new readers
   // prefer the Set (D1 spec §4.4, DP2 Option C).
+  //
+  // D2 §4.1: `metadata` arg here is ALREADY-CLEANED — umAdd's entry strips
+  // `lane` and `persona` out of the caller's metadata before invoking
+  // buildPayload, then passes the validated values via explicit lane/persona
+  // params. The conditional spread below adds them back ONLY when set, so
+  // caller `metadata: { lane: null }` produces a payload with NO `lane` key
+  // (locks the anti-goal "Omitted lane/persona are stored as absent payload
+  // keys, not null/empty/default").
   const projectScalar = metadata?.project;
   const surfaces = surface ? [surface] : undefined;
   const projects = projectScalar ? [projectScalar] : undefined;
@@ -75,6 +88,8 @@ function buildPayload({ userId, text, metadata, surface }) {
     data: text,
     hash: md5(text),
     createdAt: new Date().toISOString(),  // CAMELCASE — match mem0
+    ...(lane !== undefined ? { lane } : {}),
+    ...(persona !== undefined ? { persona } : {}),
     ...(surfaces ? { surfaces } : {}),
     ...(projects ? { projects } : {}),
     dedupCount: 1,
@@ -137,6 +152,19 @@ export async function umAdd({
   // a downstream-system error class.
   assertNoReservedFields(metadata);
 
+  // D2 §4.1 — stage out + validate lane/persona BEFORE any side effect so the
+  // metadata-spread in buildPayload doesn't leak null/undefined values into
+  // the payload. Validation throws INPUT_INVALID-enveloped errors per spec
+  // R5 ("both must validate before either is persisted"). Same caller-input
+  // error class as assertNoReservedFields — runs OUTSIDE withRequestContext.
+  const {
+    lane: _rawLane,
+    persona: _rawPersona,
+    ...metadataMinusLanePersona
+  } = metadata;
+  const lane = validateLanePersonaSlug({ value: _rawLane, fieldName: 'lane' });
+  const persona = validateLanePersonaSlug({ value: _rawPersona, fieldName: 'persona' });
+
   const collection = memory.config.vectorStore.config.collectionName;
   const factsCounter = _factsCounter ?? umFactsExtractedTotal;
   // Bind request_id (from outer ALS store) into the logger child so the
@@ -189,10 +217,12 @@ export async function umAdd({
       // to plain upsert per spec §4.6.
       if (dedupEligible) {
         try {
-          let hit = await checkContentHashDedup({ client, collection, userId, hash: itemHash });
+          let hit = await checkContentHashDedup({
+            client, collection, userId, hash: itemHash, lane, persona,
+          });
           if (!hit) {
             hit = await checkEmbeddingDedup({
-              client, collection, userId, vector, threshold: dedupThreshold,
+              client, collection, userId, vector, threshold: dedupThreshold, lane, persona,
             });
           }
           if (hit) {
@@ -217,13 +247,31 @@ export async function umAdd({
       // hash prefix is always exactly 32 hex chars, never overlapping with the
       // userId tail). Closes security-review H1 (forward-compat for any
       // future multi-tenant deployment that may permit ':' in userId).
+      //
+      // D2 §4.7: extend the seed with `:${lane||''}:${persona||''}` ONLY when
+      // at least one of those fields is set, so writes with neither field
+      // reduce to the legacy `${hash}:${userId}` shape (preserves dedup-
+      // eligible IDs for pre-D2 points). Concurrent identical writes with
+      // distinct (lane, persona) values get distinct point IDs — the partition
+      // collides on write per-tuple.
+      const seedSuffix =
+        lane !== undefined || persona !== undefined
+          ? `:${lane ?? ''}:${persona ?? ''}`
+          : '';
       const id = dedupEligible
-        ? uuidv5(`${itemHash}:${userId}`, NAMESPACE_UM)
+        ? uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM)
         : randomUUID();
       const point = {
         id,
         vector,
-        payload: buildPayload({ userId, text: item, metadata, surface }),
+        payload: buildPayload({
+          userId,
+          text: item,
+          metadata: metadataMinusLanePersona,
+          surface,
+          lane,
+          persona,
+        }),
       };
       // Errors propagate raw — outer call sites (mem0-mcp-http) wrap in
       // withRetry({op:'add'}); reindex Phase 3 wraps via runPhase3Rebuild's

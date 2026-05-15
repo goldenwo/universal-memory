@@ -690,3 +690,228 @@ test('T7b: multi-tenant isolation under uuidv5 — different userIds with same h
     assert.match(idBob, uuidRegex);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D2 lane / persona dedup cascade (T13–T18 + T15b).
+// Spec §8 + spec §4.7. Each test uses `mock.honorFilters = true` to exercise
+// the real partition-arm filter behavior (legacy tests rely on the mock
+// returning pre-seeded results regardless of filter for shape-only assertions;
+// D2 tests need filters to actually run).
+// ---------------------------------------------------------------------------
+
+import { createHash } from 'node:crypto';
+function md5Hex(s) { return createHash('md5').update(s).digest('hex'); }
+
+test('T13: same text + same lane + same persona → DEDUP_MERGED', async () => {
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'I work in Go';
+    const hash = md5Hex(text);
+    // Pre-seed an existing point with matching (userId, hash, lane, persona).
+    qdrant.scrollResult = { points: [{
+      id: 'existing-work-eng',
+      payload: { userId: 'u-1', hash, lane: 'work', persona: 'engineer', data: text, surfaces: ['cli'] },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      surface: 'claude-code',
+      infer: false,
+      metadata: { lane: 'work', persona: 'engineer' },
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'DEDUP_MERGED');
+    assert.equal(qdrant.upserts.length, 0, 'no upsert on dedup-merge');
+  });
+});
+
+test('T14: same text, one write has lane set + the other does not → 2 records, NO merge', async () => {
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'cross-lane test';
+    const hash = md5Hex(text);
+    // Pre-seed an existing point with NO lane key.
+    qdrant.scrollResult = { points: [{
+      id: 'existing-no-lane',
+      payload: { userId: 'u-1', hash, data: text },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      infer: false,
+      metadata: { lane: 'work' },     // new write HAS lane
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'ADD', 'lane-set write must not merge into no-lane point');
+    assert.equal(qdrant.upserts.length, 1, 'upserted as new record');
+  });
+});
+
+test('T15: same text + both writes have lane set but different values → 2 records, NO merge', async () => {
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'I prefer Rust';
+    const hash = md5Hex(text);
+    qdrant.scrollResult = { points: [{
+      id: 'existing-work',
+      payload: { userId: 'u-1', hash, lane: 'work', data: text },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      infer: false,
+      metadata: { lane: 'personal' },
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'ADD', 'different lane values must not merge');
+    assert.equal(qdrant.upserts.length, 1);
+  });
+});
+
+test('T15b: legacy point (no lane key) + new write WITH lane → 2 records (asymmetric back-compat)', async () => {
+  // Symmetric counterpart to T18 (legacy + new without lane → MERGE).
+  // The cascade must treat a lane-set new write as a different partition
+  // from a legacy no-lane existing point, even when text + userId match.
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'asymmetric case';
+    const hash = md5Hex(text);
+    qdrant.scrollResult = { points: [{
+      id: 'legacy-point-no-lane',
+      payload: { userId: 'u-1', hash, data: text, surfaces: ['pre-d2'] },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      surface: 'claude-code',
+      infer: false,
+      metadata: { lane: 'work' },
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'ADD');
+    assert.equal(qdrant.upserts.length, 1);
+    const newPayload = qdrant.upserts[0].body.points[0].payload;
+    assert.equal(newPayload.lane, 'work', 'new point has lane=work');
+    assert.equal(newPayload.hash, hash);
+  });
+});
+
+test('T16: same text + same lane + different persona → 2 records, NO merge', async () => {
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'persona partition';
+    const hash = md5Hex(text);
+    qdrant.scrollResult = { points: [{
+      id: 'existing-work-eng',
+      payload: { userId: 'u-1', hash, lane: 'work', persona: 'engineer', data: text },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      infer: false,
+      metadata: { lane: 'work', persona: 'parent' },
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'ADD', 'different persona values must not merge');
+    assert.equal(qdrant.upserts.length, 1);
+  });
+});
+
+test('T17: TOCTOU — two writes with same (lane, persona) → same uuidv5 point-id', async () => {
+  // The cascade's deterministic point-id is the TOCTOU guard: even without
+  // dedup check (e.g. fail-soft fallthrough), concurrent identical writes
+  // with the same partition tuple collide on the SAME id, so qdrant upsert
+  // semantics keep them at one row.
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    // Both writes miss dedup (no pre-seeded points), so both reach the
+    // plain-upsert path. The two upserts MUST share the same point-id.
+    qdrant.honorFilters = true;
+    const text = 'concurrent identical';
+    const args = {
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      infer: false,
+      metadata: { lane: 'work', persona: 'engineer' },
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    };
+    await umAdd(args);
+    await umAdd(args);
+
+    assert.equal(qdrant.upserts.length, 2, 'both writes ran upsert');
+    const id1 = qdrant.upserts[0].body.points[0].id;
+    const id2 = qdrant.upserts[1].body.points[0].id;
+    assert.equal(id1, id2, 'same (userId, hash, lane, persona) → same uuidv5 point-id (TOCTOU collide-on-write)');
+
+    // And a different partition tuple produces a DIFFERENT id.
+    qdrant.upserts.length = 0;
+    await umAdd({ ...args, metadata: { lane: 'personal', persona: 'engineer' } });
+    const id3 = qdrant.upserts[0].body.points[0].id;
+    assert.notEqual(id3, id1, 'different lane → distinct point-id');
+  });
+});
+
+test('T18: legacy point (no lane key) + new write with NO lane → DEDUP_MERGED (back-compat)', async () => {
+  // Symmetric counterpart to T15b. Legacy points (pre-D2) had no lane/persona
+  // keys; a new write that ALSO omits both should merge with them — the
+  // absence arm (`is_empty`) matches both.
+  await withDedupOn(async () => {
+    const qdrant = makeMockQdrant();
+    qdrant.honorFilters = true;
+    const text = 'legacy-compat case';
+    const hash = md5Hex(text);
+    qdrant.scrollResult = { points: [{
+      id: 'legacy-point',
+      payload: { userId: 'u-1', hash, data: text, surfaces: ['pre-d2'] },
+    }] };
+
+    const res = await umAdd({
+      memory: makeMockMemory(),
+      text,
+      userId: 'u-1',
+      surface: 'claude-code',
+      infer: false,
+      // no lane / persona in metadata
+      _factsProviderOverride: factsOverride,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: qdrant.client,
+    });
+
+    assert.equal(res.results[0].event, 'DEDUP_MERGED', 'no-lane new write must merge with legacy no-lane point');
+    assert.equal(qdrant.upserts.length, 0);
+    assert.equal(qdrant.setPayloads.length, 1, 'mergeSurface fired');
+  });
+});

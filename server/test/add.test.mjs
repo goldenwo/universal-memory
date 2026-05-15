@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { v5 as uuidv5 } from 'uuid';
 import { umAdd } from '../lib/add.mjs';
+import { RESERVED_METADATA_FIELDS, NAMESPACE_UM } from '../lib/dedup-constants.mjs';
+
+function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
 // Test fixtures — mock qdrant client + memory shim
 function makeMockQdrant() {
@@ -201,6 +206,190 @@ test('umAdd emits facts.empty INFO log when infer:true extracts zero facts', asy
   assert.equal(empty.obj.userId, 'u');
   assert.equal(empty.obj.collection, 'c');
   assert.equal(typeof empty.obj.textLength, 'number');
+});
+
+// ── D2 lane / persona schema (T7–T12 + T12b) ───────────────────────────
+//
+// Covers the additive metadata fields landing in the qdrant payload, the
+// staging-out pattern that defeats the ...metadata spread, the validation
+// that throws BEFORE any side effect, the reserved-fields-exclusion
+// contract, and the uuidv5 seed continuity for legacy back-compat.
+
+// Mock with empty dedup responses so dedupEligible=true writes still reach
+// the plain-upsert (uuidv5) path without spurious fail-soft logs.
+function makeMockQdrantD2() {
+  const upserts = [];
+  return {
+    upserts,
+    client: {
+      upsert: async (collection, body) => { upserts.push({ collection, body }); return { status: 'ok' }; },
+      scroll: async () => ({ points: [] }),
+      search: async () => [],
+    },
+  };
+}
+
+const factsPassthrough = {
+  factsInvoke: async (text) => ({ facts: [text], usage: { tokensIn: 0, tokensOut: 0 } }),
+};
+const embedDummy = {
+  embed: async () => ({ vector: [0.1, 0.2], usage: { tokensIn: 0, tokensOut: 0 } }),
+};
+
+test('umAdd T7: metadata.lane="work" → payload has lane:"work"', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { lane: 'work', project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.lane, 'work');
+});
+
+test('umAdd T8: no lane → payload has NO lane key (Object.hasOwn === false)', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'lane'), false, 'payload should have no lane key');
+  assert.equal(Object.hasOwn(payload, 'persona'), false, 'payload should have no persona key');
+});
+
+test('umAdd T9: metadata.lane=null is equivalent to omitted — locks anti-spread anti-goal', async () => {
+  // The buildPayload spread of ...metadata would otherwise leak `lane: null`
+  // into the payload. D2 §4.1 stages lane/persona out of the spread; this
+  // test pins the contract.
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { lane: null, persona: null, project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'lane'), false, 'caller lane:null → no lane key in payload');
+  assert.equal(Object.hasOwn(payload, 'persona'), false, 'caller persona:null → no persona key in payload');
+});
+
+test('umAdd T10: both lane + persona set → payload has both keys with validated values', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { lane: 'work', persona: 'me-engineer', project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.lane, 'work');
+  assert.equal(payload.persona, 'me-engineer');
+});
+
+test('umAdd T11: invalid lane rejects BEFORE any facts/embed/qdrant side effect (R5)', async () => {
+  let factsCalled = 0;
+  let embedCalled = 0;
+  const qdrant = makeMockQdrantD2();
+  await assert.rejects(
+    () => umAdd({
+      memory: makeMockMemory(), text: 'hello', userId: 'u', infer: true,
+      metadata: { lane: 'work/personal', project: 'p' },
+      _factsProviderOverride: {
+        factsInvoke: async () => { factsCalled++; return { facts: ['x'], usage: { tokensIn: 0, tokensOut: 0 } }; },
+      },
+      _embedProviderOverride: {
+        embed: async () => { embedCalled++; return { vector: [0.1], usage: { tokensIn: 0, tokensOut: 0 } }; },
+      },
+      _qdrantClient: qdrant.client,
+    }),
+    (err) => err.code === 'INPUT_INVALID' && /lane must match/.test(err.message),
+  );
+  assert.equal(factsCalled, 0, 'facts() must NOT be called when validation fails');
+  assert.equal(embedCalled, 0, 'embed() must NOT be called when validation fails');
+  assert.equal(qdrant.upserts.length, 0, 'no upserts when validation fails');
+});
+
+test('umAdd T12: RESERVED_METADATA_FIELDS does NOT include lane or persona (caller-settable contract)', () => {
+  // Lane/persona are caller-settable, NOT reserved. assertNoReservedFields
+  // protects D1's accumulator fields (surfaces, projects, dedupCount,
+  // dedupVersion, dedupLastSeenAt, systemMigration). D2's lane/persona are
+  // separate, single-valued, caller-settable — they must NEVER appear on
+  // the reserved list, otherwise valid lane/persona writes would hard-fail
+  // at the assertNoReservedFields check.
+  assert.ok(!RESERVED_METADATA_FIELDS.includes('lane'),
+    'lane must not be reserved (caller-settable per D2)');
+  assert.ok(!RESERVED_METADATA_FIELDS.includes('persona'),
+    'persona must not be reserved (caller-settable per D2)');
+  // Defensive: still includes the D1 six (regression guard against future
+  // accidental removal during D2-related code churn).
+  for (const f of ['surfaces', 'projects', 'dedupCount', 'dedupVersion', 'dedupLastSeenAt', 'systemMigration']) {
+    assert.ok(RESERVED_METADATA_FIELDS.includes(f),
+      `${f} must remain reserved (D1 invariant)`);
+  }
+});
+
+test('umAdd T12b: uuidv5 seed extension preserves legacy back-compat + partitions per (lane, persona)', async () => {
+  // When both lane and persona are unset, the extended seed reduces to the
+  // legacy `${hash}:${userId}` shape — so pre-D2 dedup-eligible IDs stay
+  // valid. When either is set, the suffix `:${lane||''}:${persona||''}` is
+  // appended, producing a distinct deterministic ID per partition tuple.
+  const userId = 'u-1';
+  const text = 'hello world';
+  const itemHash = md5(text);
+
+  // No lane / persona — reduces to legacy shape.
+  const noLaneQdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text, userId, infer: false,
+    metadata: {},
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: noLaneQdrant.client,
+  });
+  const noLaneId = noLaneQdrant.upserts[0].body.points[0].id;
+  const expectedLegacy = uuidv5(`${itemHash}:${userId}`, NAMESPACE_UM);
+  assert.equal(noLaneId, expectedLegacy,
+    'no lane/persona seed must equal legacy ${hash}:${userId} shape');
+
+  // Lane set — distinct deterministic ID.
+  const laneQdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text, userId, infer: false,
+    metadata: { lane: 'work' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: laneQdrant.client,
+  });
+  const laneId = laneQdrant.upserts[0].body.points[0].id;
+  const expectedWithLane = uuidv5(`${itemHash}:${userId}:work:`, NAMESPACE_UM);
+  assert.equal(laneId, expectedWithLane,
+    'lane=work seed must equal ${hash}:${userId}:work: shape');
+  assert.notEqual(laneId, noLaneId,
+    'lane-set point-id must differ from no-lane point-id (partition guarantee)');
+
+  // Lane + persona set — different again.
+  const bothQdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text, userId, infer: false,
+    metadata: { lane: 'work', persona: 'engineer' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: bothQdrant.client,
+  });
+  const bothId = bothQdrant.upserts[0].body.points[0].id;
+  const expectedBoth = uuidv5(`${itemHash}:${userId}:work:engineer`, NAMESPACE_UM);
+  assert.equal(bothId, expectedBoth,
+    'lane=work + persona=engineer seed must equal ${hash}:${userId}:work:engineer shape');
+  assert.notEqual(bothId, laneId, 'persona variation must produce a distinct ID');
+  assert.notEqual(bothId, noLaneId, 'lane+persona vs neither must produce a distinct ID');
 });
 
 test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {
