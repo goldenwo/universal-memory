@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   umDefaultProject,
   applyDefaultProject,
+  validateLanePersonaSlug,
   _resetInvalidEnvWarnForTests,
   PROJECT_SLUG_RE,
   TOOL_IDS,
@@ -315,5 +316,79 @@ test('umDefaultProject: returned value always matches PROJECT_SLUG_RE (invariant
       assert.ok(PROJECT_SLUG_RE.test(got),
         `umDefaultProject() returned ${JSON.stringify(got)} for env=${JSON.stringify(envValue)} — violates slug invariant`);
     });
+  }
+});
+
+// ── validateLanePersonaSlug (D2) ───────────────────────────────────────
+//
+// Covers the validator used at MCP/REST write entry (metadata.lane,
+// metadata.persona) and read entry (filters.lane, filters.persona).
+// Reuses PROJECT_SLUG_RE — lane/persona share the slug shape with project
+// per F1. The "not set" arm returns undefined; invalid arms throw
+// INPUT_INVALID-enveloped errors.
+
+test('validateLanePersonaSlug T1: valid slug returns the trimmed string', () => {
+  assert.equal(validateLanePersonaSlug({ value: 'work', fieldName: 'lane' }), 'work');
+  assert.equal(validateLanePersonaSlug({ value: 'me-engineer', fieldName: 'persona' }), 'me-engineer');
+  assert.equal(validateLanePersonaSlug({ value: 'proj.v1_2-alpha9', fieldName: 'lane' }), 'proj.v1_2-alpha9');
+});
+
+test('validateLanePersonaSlug T2: undefined / null / empty string returns undefined (no throw)', () => {
+  assert.equal(validateLanePersonaSlug({ value: undefined, fieldName: 'lane' }), undefined);
+  assert.equal(validateLanePersonaSlug({ value: null, fieldName: 'lane' }), undefined);
+  assert.equal(validateLanePersonaSlug({ value: '', fieldName: 'lane' }), undefined);
+  // Whitespace-only also reduces to "not set" via the post-trim check
+  assert.equal(validateLanePersonaSlug({ value: '   ', fieldName: 'lane' }), undefined);
+});
+
+test('validateLanePersonaSlug T3: non-string types throw INPUT_INVALID', () => {
+  for (const bad of [123, true, false, [], {}, ['work'], { slug: 'work' }, Symbol('x'), () => {}]) {
+    assert.throws(
+      () => validateLanePersonaSlug({ value: bad, fieldName: 'lane' }),
+      (err) => err.code === 'INPUT_INVALID' && /lane must be a string/.test(err.message),
+      `non-string value ${typeof bad} should throw INPUT_INVALID`,
+    );
+  }
+});
+
+test('validateLanePersonaSlug T4: regex-failing strings throw INPUT_INVALID', () => {
+  const bad = [
+    'work/personal',     // slash
+    'with spaces',       // space
+    'café',              // non-ASCII
+    '../escape',         // path-traversal attempt
+    'tab\there',         // embedded tab
+    'work\npersona',     // embedded newline
+    'work!persona',      // disallowed punctuation
+    'work@home',         // disallowed punctuation
+  ];
+  for (const v of bad) {
+    assert.throws(
+      () => validateLanePersonaSlug({ value: v, fieldName: 'lane' }),
+      (err) => err.code === 'INPUT_INVALID' && /lane must match/.test(err.message),
+      `value ${JSON.stringify(v)} should throw INPUT_INVALID`,
+    );
+  }
+});
+
+test('validateLanePersonaSlug T5: leading/trailing whitespace is trimmed before regex check', () => {
+  assert.equal(validateLanePersonaSlug({ value: '  work  ', fieldName: 'lane' }), 'work');
+  assert.equal(validateLanePersonaSlug({ value: '\twork\n', fieldName: 'lane' }), 'work');
+});
+
+test('validateLanePersonaSlug T6: error messages include the fieldName arg so caller can disambiguate', () => {
+  try {
+    validateLanePersonaSlug({ value: 'bad/slug', fieldName: 'lane' });
+    assert.fail('expected throw');
+  } catch (err) {
+    assert.equal(err.code, 'INPUT_INVALID');
+    assert.ok(/metadata\.lane/.test(err.message), `error message should mention 'metadata.lane', got: ${err.message}`);
+  }
+  try {
+    validateLanePersonaSlug({ value: 'bad/slug', fieldName: 'persona' });
+    assert.fail('expected throw');
+  } catch (err) {
+    assert.equal(err.code, 'INPUT_INVALID');
+    assert.ok(/metadata\.persona/.test(err.message), `error message should mention 'metadata.persona', got: ${err.message}`);
   }
 });
