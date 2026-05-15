@@ -6,6 +6,10 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Docs (v1.1) — connector docs surface `UM_DEFAULT_PROJECT` silent-fallback
+
+A new §4a "Project metadata defaults" in both [`docs/connecting-claude-ai.md`](docs/connecting-claude-ai.md) and [`docs/connecting-chatgpt-desktop.md`](docs/connecting-chatgpt-desktop.md) documents v1.1's server-side soft-default behavior: write tools (`memory_capture` / `memory_add` / `memory_append_turn` / `memory_checkpoint` / REST `/api/add`) with an omitted `metadata.project` field route to `UM_DEFAULT_PROJECT` (default `"default"`) rather than failing loud. Closes the F4 visibility concern from the [cross-surface defaults audit](docs/audits/2026-05-08-cross-surface-defaults.md) §F1 + §F5 + §F6 for the connector-user audience — Claude Code users get auto-injection via SessionStart hook; Claude.ai, Claude Desktop, and ChatGPT Desktop users previously had no doc surface explaining the silent fallback. Placement (between rubric paste-in §4 and verification walkthrough §5) surfaces the contract before the user starts running writes.
+
 ### Fixed (v1.1) — `/adr` skill POST route bug
 
 Discovered during B2 (PR [#81](https://github.com/goldenwo/universal-memory/pull/81)) spec authoring and filed as the B2 "Out of scope" hygiene followup: `create-adr.sh` POSTed to `"$endpoint/memory_add"`, but the live UM server exposes no `/memory_add` route — only `/api/add` (`server/mem0-mcp-http.mjs:2221`). Against any real server `/adr` fell into the warn-only 404 path: file written + git-committed, but the universal-memory registration silently failed. The skill's stub-based integration tests passed only because the test stub accepts any POST path; the path assertion just verified the helper sent whatever it sent.
