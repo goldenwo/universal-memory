@@ -157,6 +157,18 @@ This block is the canonical rubric — the source lives at [`docs/memory-routing
 
 ---
 
+## 4a. Project metadata defaults
+
+UM v1.1's server-side soft-default routes write tool calls with an omitted `metadata.project` field (`undefined` / `null` / `""`) to `UM_DEFAULT_PROJECT` (defaults to the literal slug `default`). This applies to `memory_capture`, `memory_add`, `memory_append_turn`, `memory_checkpoint`, and the REST `/api/add` endpoint — the last being the one ChatGPT Custom GPT Actions use.
+
+**Why this matters for connector users:** Claude Code injects a project signal automatically via SessionStart hook; ChatGPT Desktop doesn't. The routing rubric above asks the model to pass an explicit `project:`, but if the model omits it the write silently lands in the fallback slug rather than failing loud — there is no warning surfaced to the connector. Reads (`memory_state` / `memory_search` / `memory_recent` / `memory_list`) still require an explicit project — the soft-default is write-only by design.
+
+To control where omitted-project writes land, set `UM_DEFAULT_PROJECT=<slug>` in `server/.env` and restart the server. To make writes fail loud instead of soft-defaulting, the model-facing fix is the routing rubric (which already asks for an explicit `project:`); the server-side fix is to send the project field on every write you care about filtering later.
+
+For full rationale, see [`docs/audits/2026-05-08-cross-surface-defaults.md`](audits/2026-05-08-cross-surface-defaults.md) §F1 + §F5 + §F6.
+
+---
+
 ## 5. Verification walkthrough
 
 Quick sanity checks that the connector works end-to-end. Run these in a fresh ChatGPT Desktop chat with the UM connector enabled.
