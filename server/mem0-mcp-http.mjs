@@ -438,10 +438,12 @@ export const TOOLS = [
 				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs' },
 				filters: {
 					type: 'object',
-					description: 'Metadata filters',
+					description: 'Metadata filters; AND-combined.',
 					properties: {
 						project: { type: 'string', description: 'Filter by project' },
 						type: { type: 'string', description: 'Filter by doc type (e.g. session_summary)' },
+						lane: { type: 'string', description: 'v1.1 D2 partition filter — matches r.metadata.lane (^[a-zA-Z0-9._-]+$). Excludes pre-D2 points whose lane is absent.' },
+						persona: { type: 'string', description: 'v1.1 D2 partition filter — matches r.metadata.persona (^[a-zA-Z0-9._-]+$). Excludes pre-D2 points whose persona is absent.' },
 					},
 				},
 				full: { type: 'boolean', description: 'Return full bodies instead of compact shape', default: false },
@@ -746,19 +748,35 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			const limit = args.limit || 5;
 			const includeSup = args.include_superseded === true;
 			const clientFull = args.full === true;
+			// D2: validate lane/persona filter inputs upfront — same INPUT_INVALID
+			// envelope as the write-side validator. Mirrors the write-time staging
+			// at umAdd entry. Runs BEFORE doSearch so invalid slugs short-circuit
+			// without touching qdrant.
+			if (args.filters) {
+				validateLanePersonaSlug({ value: args.filters.lane, fieldName: 'lane' });
+				validateLanePersonaSlug({ value: args.filters.persona, fieldName: 'persona' });
+			}
 			// Always call doSearch(full=true) internally so metadata is preserved for
-			// post-filtering (project, type). Then project to compact shape at the end
-			// unless the MCP client explicitly requested full bodies (args.full=true).
+			// post-filtering (project, type, lane, persona). Then project to compact
+			// shape at the end unless the MCP client explicitly requested full bodies.
 			let response = await doSearch(args.query, limit, includeSup, true, ctx);
 			let items = response.results;
 
-			// Apply optional metadata filters (project, type)
+			// Apply optional metadata filters (project, type, lane, persona) — all
+			// AND-combined. D2's lane / persona filter excludes pre-D2 points whose
+			// payload has no lane/persona key (undefined !== '<slug>').
 			if (args.filters) {
 				if (args.filters.project) {
 					items = items.filter((r) => (r.metadata || {}).project === args.filters.project);
 				}
 				if (args.filters.type) {
 					items = items.filter((r) => (r.metadata || {}).type === args.filters.type);
+				}
+				if (args.filters.lane) {
+					items = items.filter((r) => (r.metadata || {}).lane === args.filters.lane);
+				}
+				if (args.filters.persona) {
+					items = items.filter((r) => (r.metadata || {}).persona === args.filters.persona);
 				}
 			}
 
@@ -2159,6 +2177,19 @@ export function createRequestHandler(ctx = {}) {
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'query is required')));
 				return;
 			}
+			// D2: validate lane/persona filter inputs upfront. Throws INPUT_INVALID-
+			// enveloped error caught by the outer handler's error path; mirrors the
+			// MCP memory_search validation order.
+			if (filters && typeof filters === 'object') {
+				try {
+					validateLanePersonaSlug({ value: filters.lane, fieldName: 'lane' });
+					validateLanePersonaSlug({ value: filters.persona, fieldName: 'persona' });
+				} catch (err) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(errorResponse(err.code || 'INPUT_INVALID', err.message)));
+					return;
+				}
+			}
 			const includeSup = include_superseded === true;
 			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
 			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
@@ -2166,11 +2197,17 @@ export function createRequestHandler(ctx = {}) {
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
 			// then project to compact shape at the end if the client did not request full.
 			let response = await doSearch(query, clampedLimitPost, includeSup, true, ctx);
-			// Optional metadata filters (project, type) — post-filter after mem0 recall
+			// Optional metadata filters — post-filter after mem0 recall. D2 adds
+			// lane / persona alongside the existing project / type filters; all
+			// AND-combined. Pre-D2 points (no lane/persona payload key) are
+			// excluded when the corresponding filter is explicit (undefined !==
+			// '<slug>') — operator-visible new behavior documented in mcp-tools.md.
 			if (filters && typeof filters === 'object') {
 				let items = response.results;
 				if (filters.project) items = items.filter((r) => (r.metadata || {}).project === filters.project);
 				if (filters.type) items = items.filter((r) => (r.metadata || {}).type === filters.type);
+				if (filters.lane) items = items.filter((r) => (r.metadata || {}).lane === filters.lane);
+				if (filters.persona) items = items.filter((r) => (r.metadata || {}).persona === filters.persona);
 				// Preserve §4.1 siblings (e.g., provider, latency_ms) that doSearch
 				// propagated from the upstream memory.search() envelope. Only
 				// `results` is replaced; every other top-level key is forwarded.
