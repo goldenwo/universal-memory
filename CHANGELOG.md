@@ -4,7 +4,9 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] — 2026-05-16
+
+**v1.1 is the universality-arc milestone.** Where v1.0 stabilized + published the v0.8 surface, v1.1 advances [#72](https://github.com/goldenwo/universal-memory/issues/72)'s vision axes: B1 surface-coverage matrix (axis 6), D1 cross-surface dedup (axis 1), F1 project soft-default unification (axis 4 partial), B2 `/remember` casual-save skill (axis 4), D2 lane/persona schema substrate (axis 5). Plus the W1.1 `/adr` skill, W1.5 env-var consolidation, W6.2 image-size reduction, the Phase-A pre-migration audits, and connector-doc + `/adr`-route hygiene fixes. See `MIGRATION.md` `## v1.0 → v1.1` for the operator-facing behavior changes (dedup default-ON, project soft-default, lane/persona read-filter semantics).
 
 ### Added (v1.1) — Phase D2: lane / persona schema substrate (axis 5 advance)
 
@@ -765,7 +767,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
-[Unreleased]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...HEAD
+[1.1.0]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...v1.0.0
 [0.8.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.6.0-alpha...v0.7.0-alpha

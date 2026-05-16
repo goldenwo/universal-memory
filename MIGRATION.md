@@ -19,6 +19,34 @@ A new shared resolver at `~/.local/share/um/lib/endpoint.sh` is used by hooks, C
 
 *(Reconfirm the v1.2 removal reference at PR-time; bump if W1.5 slips a release.)*
 
+### Cross-surface dedup is now ON by default (D1)
+
+Through v1.0 the server did no write-time dedup. v1.1 ships a two-layer dedup hook (content-hash + embedding-similarity) on every `umAdd()` write, and **`UM_DEDUP_ENABLED` defaults to `true`**. An upgraded server silently starts collapsing near-duplicate writes that share a `userId`: the same fact captured from Claude Code and Claude.ai lands as ONE qdrant point with the union of `surfaces` / `projects` Sets and an incremented `dedupCount`, rather than two points.
+
+- This is the intended v1.1 behavior — recall stops returning N near-identical hits for the same fact.
+- **Opt out** by setting `UM_DEDUP_ENABLED=false` (the literal string `false`; any other value keeps it ON). Tune the embedding threshold via `UM_DEFAULT_PROJECT`'s sibling `UM_DEDUP_EMBEDDING_THRESHOLD` (default `0.84`, eval-derived).
+- Pre-D1 qdrant points work as-is on read — dedup is forward-only; no backfill or migration is run against existing data.
+
+### Omitted-project writes now soft-default instead of hard-failing (F1)
+
+Pre-v1.1, the four MCP write tools handled an omitted `project` slug **three different ways**: `memory_capture` hardcoded `'default'`, `memory_add` silently dropped the field, and `memory_append_turn` / `memory_checkpoint` hard-failed with `INPUT_INVALID`. v1.1 unifies all four to soft-default through a new `UM_DEFAULT_PROJECT` env var (default `"default"`).
+
+- **Behavior change operators will notice:** `memory_append_turn` / `memory_checkpoint` calls that previously errored on a missing project now **succeed silently**, accumulating turns under the `UM_DEFAULT_PROJECT` slug with a one-line `warn` log. If you relied on the hard-fail as a "you forgot the project" guard, that guard is gone — watch the warn logs or set the project explicitly.
+- `memory_add` no longer silently drops an omitted project — it now lands under the soft-default slug, so previously-unfilterable writes become project-filterable.
+- **Action:** set `UM_DEFAULT_PROJECT=<your-slug>` in `server/.env` if you want omitted-project writes to land somewhere other than the literal `"default"`. Wrong-type / regex-failing project values still hard-fail (only the truly-omitted arm soft-defaults). Reads (`memory_state` / `memory_recent`) keep their hard-fail by design.
+
+### `lane` / `persona` read filters exclude pre-D2 points (D2)
+
+v1.1 adds optional `lane` / `persona` partition fields to the qdrant write/read surface. An explicit `filters.lane` (or `filters.persona`) on `memory_search` / REST `POST /api/search` matches only points whose payload carries that exact slug. **Points written before the D2 upgrade have no `lane` / `persona` key, so an explicit lane/persona filter excludes ALL of them.**
+
+- No-filter and project-only queries are unaffected — legacy points remain fully visible.
+- This only bites if you start filtering by lane/persona before a backfill populates the field on historical points (a Phase F deliverable, not in v1.1).
+- **Action:** none required for the standard upgrade. Just be aware that `filters.lane='work'` will not surface pre-upgrade memories until they are re-written or backfilled.
+
+### Server version string
+
+`server/package.json` is bumped to `1.1.0`. The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` now report `1.1.0`. No operator action — noted so a connected client seeing the version change knows it is expected.
+
 ---
 
 ## v0.8 → v1.0
