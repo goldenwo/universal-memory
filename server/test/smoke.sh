@@ -1871,6 +1871,18 @@ sys.exit(0 if {'$D2_ID_WORK', '$D2_ID_PERSONAL'} <= ids else 1)
 	# absence arm — the no-lane write (whether a fresh legacy ADD or merged
 	# into S2's legacy record) must never surface under an explicit lane
 	# filter (spec §4.5 legacy-point semantics). lane=personal is symmetric.
+	#
+	# Asserted by record-ID set membership ONLY, deliberately not by
+	# re-checking r.metadata.lane (learned from CI run 25967861840 — do not
+	# re-add a metadata check): /api/search returns the COMPACT shape
+	# (id/title/snippet/score, NO metadata) unless ?full=1. The server
+	# applies filters.lane on the internal record's metadata.lane
+	# (mem0-mcp-http.mjs ~:2226) BEFORE serialising the compact view, so
+	# which ids come back IS the authoritative signal that the lane
+	# post-filter ran. A client-side metadata.lane re-check is (1) invalid
+	# against the compact response (metadata absent → every row looks
+	# "wrong") and (2) redundant: a broken/over/under lane filter is
+	# already caught by the present/absent id assertions below.
 	_d2_assert_partition() {
 		# $1 = lane value, $2 = expected-present id, $3 $4 = expected-absent ids
 		local _resp
@@ -1882,13 +1894,10 @@ present, absent1, absent2 = os.environ['PRESENT'], os.environ['ABSENT1'], os.env
 data = json.load(sys.stdin)
 assert isinstance(data, dict) and 'results' in data, 'search response missing {results} wrapper: ' + json.dumps(data)[:200]
 ids = {r.get('id') for r in data['results']}
-bad_lane = [ (r.get('id'), (r.get('metadata') or {}).get('lane')) for r in data['results'] if (r.get('metadata') or {}).get('lane') != lane ]
 if present not in ids:
     print(f'FAIL: lane={lane} filter did not return its own record {present} (got ids={sorted(i for i in ids if i)})'); sys.exit(1)
 if absent1 in ids or absent2 in ids:
     print(f'FAIL: lane={lane} filter leaked a foreign-partition record (absent expected: {absent1}, {absent2}; got ids={sorted(i for i in ids if i)})'); sys.exit(1)
-if bad_lane:
-    print(f'FAIL: lane={lane} filter returned records whose metadata.lane != {lane}: {bad_lane}'); sys.exit(1)
 print(f'OK: lane={lane} filter returns exactly its own partition record {present}')
 " || { echo "[smoke] D2 S4 FAIL: lane=$1 partition assertion failed" >&2; _um_smoke_auth_cleanup; exit 1; }
 	}
