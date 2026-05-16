@@ -18,6 +18,8 @@ Status and open work for **universal-memory**. Items are loosely prioritized; ac
 | v0.6.0-alpha | Bearer auth + ops foundations + claude-mem bridge — bearer auth on `/api/*` + `/mcp` (loopback + 10-header forwarded-deny), pino structured logging with request_id, `/metrics` Prometheus (loopback-only default), per-IP token-bucket rate limiter, cross-process lockdir (Perl flock + proper-lockfile retired), O_NOFOLLOW on all vault writes, typeof-string timestamp guards, mem0/qdrant retry+jitter, request-body cap, `um-bridge-claude-mem` CLI (Node + better-sqlite3 plugin-local) with `<external-summary>` untrusted-content boundary + REJECT-on-literal-marker + path-traversal/UNC/symlink-bypass guards, BRIDGES.md registry + `source:` discriminator, schedule templates (systemd/launchd/cron), container entrypoint guard refusing root+rw+writes (#28), `_dump_on_fail` test harness (#21), `_um_curl_wrap` friendly-error CLI translator, `docs/process/review-playbook.md`. ~80 commits; per-task two-stage review during execution + paired-Opus R1 (1 Critical + 4 Important closed) + R2/R3 zero-finding convergence. Closes #20, #21, #28, #29, #30. | Tagged v0.6.0-alpha |
 | v0.7.0-alpha | Provider neutrality release (alpha) — four providers swappable via env (openai, anthropic, google, ollama) with per-surface dispatch (`UM_EMBEDDING_PROVIDER`, `UM_SUMMARIZER_PROVIDER`, `UM_FACTS_PROVIDER`); embedding-stamp guard prevents cross-provider vector contamination + `um reindex` CLI for safe migrations (swap + archive paths, ~941 lines); mocked-SDK boot smoke covering all four providers; provider-neutral wizard prompts via `wizard-lib.sh`; D-series provider dispatch (DE-series for embed, DS-series for summarizer, DF-series for facts); FIN1 manual matrix validation. Multi-round paired-Opus review during plan + execution. | Tagged v0.7.0-alpha |
 | v0.8.0-alpha | v0.7 follow-ups + cleanup queue close-out — `umAdd()` orchestrator (PR #36) replaces all 6 `mem0.add()` call sites so production embed/facts metrics emit; Qdrant server bumped 1.11.3 → 1.13.0; vault-frontmatter audit (PR #38, closes #37); v0.6 cleanup queue (PRs #39–#44) covering T17 stale-symlink test, CLI exec bit, shellcheck `--severity=style` restore, Windows T15 launcher fix, codex CI wire-up, ROADMAP refresh; reindex CLI orchestrator + DE12 e2e fill (PR #45); split `reindex.mjs` into `swap.mjs` + `archive.mjs` (PR #46); CHANGELOG + ROADMAP final alignment (PR #48). | Tagged v0.8.0-alpha |
+| [v1.0.0](https://github.com/goldenwo/universal-memory/releases/tag/v1.0.0) | Stabilize + publish milestone — **no new features** vs v0.8; the work made the existing surface externally consumable. Server image 598 MB → 288 MB (W6.2), W6.4 hardening (CORS Authorization preflight, HMAC token compare, `UM_AUTH_TOKEN` logger redaction), macOS / Linux / Windows external-user walkthroughs (W2), CONTRIBUTING + SECURITY + ADR-0005 (Option A `/adr` invocation model), marketplace listing prep (W5), pull-by-default Docker compose + install-wizard image-mode (W1.2/W1.4), distribution + release ceremony. 18 PRs (#48–#65). | Commit `9dd70fc` on `main`, tagged v1.0.0 |
+| [v1.1.0](https://github.com/goldenwo/universal-memory/releases/tag/v1.1.0) | Universality-arc milestone — advances [#72](https://github.com/goldenwo/universal-memory/issues/72) vision axes on the v1.0 stabilized surface: **B1** surface-coverage parity matrix (`docs/surfaces.md`, axis 6), **D1** cross-surface fact dedup default-ON at eval-derived τ=0.84 (axis 1), **F1** project soft-default unification (`UM_DEFAULT_PROJECT`, axis 4 partial), **B2** `/remember` casual-save skill (axis 4), **D2** lane/persona schema substrate (axis 5). Plus W1.1 `/adr` skill, W1.5 `UM_SERVER_URL` consolidation, W6.2 image-size reduction, the Phase-A pre-migration audits, and connector-doc + `/adr`-route hygiene. Migration notes: `MIGRATION.md` §"v1.0 → v1.1" (dedup default-ON, project soft-default, lane/persona read-filter). 14 PRs (#73–#86). | Commit `aa415b7` on `main`, tagged v1.1.0 |
 
 Foundations shipped alongside v0.1.0:
 
@@ -25,38 +27,48 @@ Foundations shipped alongside v0.1.0:
 
 ## Planned
 
-The arc from v0.5 through v1.0 is scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. Design spec for the active release lives at `docs/plans/<date>-v0.X-design.md` (gitignored, local-only); this section is the committed public-facing pointer.
+Releases are scoped as micro-releases so each version ships independent value, is reviewable in a single spec, and lets lessons from one inform the next. The active release's paired spec + plan live at `docs/plans/<date>-<phase>-{spec,plan}.md` (gitignored, local-only per CLAUDE.md C3); this section is the committed public-facing pointer, and [North-star tracking](#north-star-tracking-72) is the authoritative lens for universality-axis work.
 
 ### v0.8 — ✅ shipped 2026-05-07
 
 v0.8 closed the v0.7-alpha orchestrator-wiring gap (production embed/facts metrics emit correctly), shipped the `um reindex` CLI dispatcher, filled the DE12 e2e tests, and cleared the v0.6 follow-up backlog. Tagged `v0.8.0-alpha` at commit `ffad020`. See [Shipped](#shipped) table for the per-PR breakdown and CHANGELOG.md for full notes.
 
-### v1.0 — in progress
-Stable API, externally usable, publicly announced. **No new features** — the combination of v0.5 + v0.6 + v0.7 + v0.8 reaches the bar defined in [Distribution / release](#distribution--release). Active execution against a 7-workstream plan:
+### v1.0 — ✅ shipped 2026-05-08
 
-| Workstream | Status |
-|---|---|
-| W1 Distribution & build (GHCR publishing, dual-mode compose, install wizard image-mode) | Mostly complete — `release.yml` publishing; W1.2/W1.4 ✅ shipped (PR #54); W1.3 fresh-VM smoke best-effort done via GHCR API (real-VM still TBD) |
-| W2 External-user walkthrough | W2.1 walkthrough doc shipped (PR #52); W2.2 fresh-eyes runner pending human |
-| W3 ADR invocation model (slash command vs keyword vs batch) | ✅ Decided: Option A (`/adr` slash command) — see ADR-0005 |
-| W4 Public-repo readiness (secrets audit, CONTRIBUTING, SECURITY, README, LICENSE, GitHub topics) | ✅ Complete |
-| W5 Plugin marketplace listing | Pending — submission post public-flip |
-| W6 Stability hardening (history-DB persistence, image size, security review, bearer-auth migration check) | W6.1 + W6.4 done; W6.3 in this PR; W6.2 image-size deferred to v1.1 |
-| W7 Release ceremony (tag, release notes, announcement, doc refresh) | W7.2 release notes drafted in CHANGELOG; W7.1 + W7.3 + W7.4 final |
+v1.0 was the stabilization + public-release milestone: stable API, externally usable, publicly announced, **no new features** (the v0.5+v0.6+v0.7+v0.8 combination reaching the [Distribution / release](#distribution--release) bar). Executed against a 7-workstream plan (W1 distribution/build, W2 external-user walkthrough, W3 ADR invocation model → ADR-0005 Option A, W4 public-repo readiness, W5 marketplace listing prep, W6 stability hardening, W7 release ceremony). Tagged `v1.0.0` at commit `9dd70fc`; 18 PRs (#48–#65). See [Shipped](#shipped) for the summary and CHANGELOG.md `## [1.0.0]` for full notes. The W2.2 fresh-eyes external runner is the one workstream item that remained human-gated past the tag (does not block the release; tracked with the public-flip gating, not here).
 
-Critical path: W4 → W2 → W7. v1.0 plan tracked locally at `docs/plans/2026-05-07-v1.0-plan.md` (gitignored per CLAUDE.md C3).
+### v1.1 — ✅ shipped 2026-05-16
 
-### post-v1.0
+v1.1 became the **universality-arc milestone**, broader than this doc's original "capture path completeness" framing. It is the first release series to systematically advance the [#72](https://github.com/goldenwo/universal-memory/issues/72) vision-gap axes (see [North-star tracking](#north-star-tracking-72) below): B1 surface-coverage matrix (axis 6), D1 cross-surface dedup (axis 1), F1 project soft-default (axis 4 partial), B2 `/remember` skill (axis 4), D2 lane/persona schema substrate (axis 5). The original v1.1 bucket items also landed inside it — `create-adr`/`/adr` (W1.1), W6.2 image-size — and the claude-mem bridge shipped earlier in v0.6. Tagged `v1.1.0` at commit `aa415b7`; 14 PRs (#73–#86). See [Shipped](#shipped) and CHANGELOG.md `## [1.1.0]`.
 
-Bucketed into cohesive themes; final version allocation set when each release approaches:
+### North-star tracking (#72)
 
-- **v1.1 — Capture path completeness:** `create-adr` skill (per ADR-0005's Option A), claude-mem bridge expansion if usage justifies, W6.2 image-size reduction (583 MB → ~200 MB) if deferred from v1.0.
-- **v1.2 — Layer 3 foundation:** Kuzu graph memory + bi-temporal metadata (cohesive architectural step, ship together).
-- **v1.3 — Layer 2 synthesis:** workspace-dream skill, cross-project compile pass, ADR topic compile.
-- **v1.x ongoing:** examples bundle (OpenAI Agents SDK / Responses API, LangChain, npm client reference), OpenClaw integration addon, cross-device markdown sync (after sync-mechanism decision), Codex lifecycle hooks (gated on upstream — issue #17).
-- **v2.0 — Reshape:** multi-tenant + cloud-vs-self-hosted decision (substantial public-API change requiring deprecation cycle).
+Issue [#72](https://github.com/goldenwo/universal-memory/issues/72) is the canonical anchor for the universal claim — *"persistent + quality + automatic memory across all vendors / devices / users."* It enumerates **6 vision gaps**; this table is the authoritative gap → release mapping and supersedes the older free-text "post-v1.0" buckets for anything universality-related:
 
-Power-user features tracked in [#16](https://github.com/goldenwo/universal-memory/issues/16) (vault web UI) and [#17](https://github.com/goldenwo/universal-memory/issues/17) (Codex lifecycle hooks, upstream-gated).
+| #72 gap | What | Status | Release |
+|---|---|---|---|
+| Gap 1 — Cross-surface fact dedup | Same fact from N surfaces → 1 record, not N | ✅ shipped | v1.1 (D1, τ=0.84 default-ON; PRs #75–#77) |
+| Gap 6 — Surface coverage parity matrix | Living `docs/surfaces.md` matrix | ✅ shipped | v1.1 (B1; PR #74) |
+| Gap 5 — Auto context routing (substrate) | `lane`/`persona` orthogonal partition schema | ✅ shipped | v1.1 (D2 schema substrate; PR #84) |
+| **Gap 2 — Auto-supersession on contradiction** | Contradiction-detector marks old fact `superseded` at write time | **next — D3, unblocked** | next release (provisional v1.2) |
+| **Gap 5 — Auto context routing (classifier)** | LLM lane-classifier populating the D2 schema; shares D3's detector path | **next — D3** | next release (with Gap 2) |
+| Gap 3 — Mobile-friendly capture/recall | PWA at `<server>/app`, native client, or hosted thin client | unscheduled | TBD — biggest open "any device" gap |
+| Gap 4 — Zero-setup / hosted entry path | <60s onboarding: hosted free-tier, SQLite single-user mode, or vendor-managed connector | unscheduled | TBD — biggest open "any user" gap |
+
+Gap-linked side-trackers: [#70](https://github.com/goldenwo/universal-memory/issues/70) casual-user retrieval UX (Gap 4 + partial Gap 5), [#71](https://github.com/goldenwo/universal-memory/issues/71) mem0-pi → UM single-backend migration (closes when Gaps 4+5 partially solved), [#69](https://github.com/goldenwo/universal-memory/issues/69) doctype expansion (orthogonal — structured-layer quality, not universality).
+
+### post-v1.0 release buckets
+
+Cohesive themes; **final version allocation set when each release approaches** — numbers below v1.2 are provisional. The #72 table above is authoritative wherever it overlaps these buckets.
+
+- **next release (provisional v1.2) — D3 lane-scoped auto-supersession:** the actual headline next feature (#72 Gap 2 + Gap 5 classifier). Write-time contradiction-detector LLM call against top-K similar facts; high-confidence flips old fact to `superseded` with `supersedes`/`superseded_by` links; lane-scoped so cross-context facts don't false-contradict. Builds directly on the D2 substrate (uuidv5 seed, dedup `partitionArm`, lane/persona absence semantics) and D1's similarity-search path. Per-write LLM cost trade-off; may batch at session-end via the existing summarization stop-hook.
+- **Layer 3 foundation — Kuzu graph memory + bi-temporal metadata:** embedded graph DB for `supersedes`/`depends_on`/`contradicts` multi-hop + `valid_from`/`invalidated_at` fact temporality. Cohesive architectural step, ship together. Was this doc's old "v1.2"; now sequenced **after D3** — bi-temporal metadata is the natural Gap-2 follow-on (durable supersession history), not a precursor.
+- **Layer 2 synthesis:** workspace-dream skill (cron markdown consolidation), cross-project compile pass (`wiki/by-topic/*.md`), ADR topic compile (cross-repo decision timeline).
+- **Universality completion (Gaps 3 + 4) — unscheduled, no version assigned:** mobile-friendly path (PWA / native / hosted thin client) and zero-setup/hosted entry path. These are the **largest remaining universality gaps** and currently have no owner or release; flagged here so the cumulative-drift risk #72 warns about stays visible.
+- **v1.x ongoing:** examples bundle (OpenAI Agents SDK / Responses API, LangChain, npm client reference), OpenClaw integration addon, cross-device markdown sync (after sync-mechanism decision), Codex lifecycle hooks (gated on upstream — issue [#17](https://github.com/goldenwo/universal-memory/issues/17)).
+- **v2.0 — Reshape:** multi-tenant + cloud-vs-self-hosted decision (substantial public-API change requiring deprecation cycle). Likely the home for Gap 4's hosted-service path if that direction is chosen.
+
+Power-user side-trackers: [#16](https://github.com/goldenwo/universal-memory/issues/16) (vault web UI, deferred post-v0.4 — partial Gap 3/4) and [#17](https://github.com/goldenwo/universal-memory/issues/17) (Codex lifecycle hooks, upstream-gated — Gap 6 surface parity).
 
 ## Near-term — plug-and-play arc
 
@@ -66,10 +78,9 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 **Why:** `cp .env.example .env && edit .env && docker compose up -d` is three steps and requires knowing what to edit. An interactive script prompts for the required values, writes `.env`, runs `docker compose up -d`, and polls `/health`. Single command, no editing.
 **Status:** shipped in [v0.1.1](https://github.com/goldenwo/universal-memory/releases/tag/v0.1.1).
 
-### 2. CI workflow + GHCR image publishing
+### 2. CI workflow + GHCR image publishing — ✅ shipped
 **Why:** Two wins at once. (a) CI proves portability continuously: every PR spins up the stack on fresh Ubuntu and runs the smoke test — no more "works on my machine." (b) CI publishes the built image to `ghcr.io/goldenwo/universal-memory-server:<tag>`. Users pull the prebuilt image instead of building locally — first-run latency drops from ~2 min (npm install + build) to ~20 s (image pull).
-**Scope:** small plan. `.github/workflows/ci.yml` with a smoke-test job and a publish job (on tag push). Requires setting `GHCR_TOKEN` secret.
-**Depends on:** install wizard (CI smoke test can invoke it).
+**Status:** CI smoke workflow shipped in the v0.1.x arc; GHCR image publishing completed in v1.0 (W1 — `release.yml` builds + pushes multi-arch images on tag, exercised by every release tag through `v1.1.0`). Pull-by-default compose (W1.2/W1.4) makes the published image the default install path.
 
 ### 3. Claude Code plugin manifest + auto-start hook — ✅ shipped in v0.1.3
 **Why:** The final step to zero-touch. Plugin's SessionStart hook probes the endpoint; if unreachable, runs `docker compose up -d` using a user-configured compose dir. After initial plugin install, user never thinks about Docker again — sessions just work.
@@ -106,16 +117,17 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 
 ## Capture path (Layer 1 — source writes)
 
-### `create-adr` skill + `/adr` slash command
+### `create-adr` skill + `/adr` slash command — ✅ shipped in v1.1 (W1.1)
 **Why:** ADR workflow first-class support. Writes the new ADR file using the template, creates the git commit, posts the atomic fact to the memory server.
-**Scope:** small plan. One skill + slash command + post-commit hook hook.
-**Decisions needed:** invocation model — `/adr` slash command vs keyword detection vs end-of-session batch.
+**Status:** invocation model decided in **ADR-0005** (Option A — `/adr` slash command, over keyword detection / end-of-session batch). Shipped as the W1.1 `/adr` skill in the v1.1 arc (`plugins/claude-code/universal-memory/skills/create-adr/`); the v1.1 PR #82 fix corrected its POST route to `/api/add`. Second instance of the pattern (`/remember`, B2) followed in v1.1.
 
 ### OpenClaw integration addon
 **Why:** For users who also run OpenClaw. `workspace-dream` skill for the Pi's hand-curated workspace markdown + autoCapture retrofit to write markdown before POSTing to the memory server.
 **Scope:** medium plan. Requires coordinating with the `openclaw-mem0` plugin maintainer or forking.
 
-### Claude-mem bridge
+### Claude-mem bridge — ✅ shipped in v0.6
+**Status:** the `um-bridge-claude-mem` CLI shipped in v0.6.0-alpha (one-way claude-mem → UM, as the open question below recommended), with the `<external-summary>` untrusted-content boundary, REJECT-on-literal-marker guard, path-traversal/UNC/symlink-bypass guards, and the `BRIDGES.md` registry + `source:` discriminator. Bidirectional ingestion remains the open question — revisit only if daily use surfaces a need.
+
 **Why:** [Claude-mem](https://github.com/thedotmack/claude-mem) is the leading memory plugin for Claude Code — it does per-session LLM-compressed capture into local SQLite+Chroma, with SSH sync between a user's own machines. Users will reasonably ask: *"how is this different, and can I use both?"*
 
 **The honest difference.** Claude-mem optimizes for one tool (Claude Code) across one user's machines. universal-memory optimizes for **one memory served to every surface** — Claude Code, Claude.ai web (via local MCP), Claude Desktop, Discord OpenClaw, any MCP- or HTTP-speaking agent — from a single cloud-hosted server. Claude-mem's capture breadth inside Claude Code is deeper (5 lifecycle hooks vs our 2); our cross-surface reach is wider and our markdown-first design means the vector store is a replaceable cache rather than the source of truth.
@@ -136,8 +148,8 @@ Three ordered plans that collectively eliminate manual `docker compose` invocati
 ### Qdrant version alignment — ✅ resolved in v0.8 G2
 ~~Current: image pinned to `qdrant/qdrant:v1.11.3`, but `mem0ai`'s bundled client is `1.13.x` — benign warning in logs.~~ Closed in PR #36: server image bumped to `v1.13.0` to match `@qdrant/js-client-rest@1.13.0` (now a direct dep, not transitive).
 
-### Image size
-Current image is ~583 MB. Dominated by mem0ai's transitively-bundled LLM provider SDKs (`@azure` 58 MB, `cloudflare` 52 MB, `@google`, `@mistralai`, `@langchain`) that we don't use. Options: fork mem0ai to mark providers as optional, wait for upstream to move providers to peer deps, or build a custom minimal image.
+### Image size — ✅ resolved in v1.0 (W6.2) + v1.1
+~~Current image is ~583 MB. Dominated by mem0ai's transitively-bundled LLM provider SDKs (`@azure` 58 MB, `cloudflare` 52 MB, `@google`, `@mistralai`, `@langchain`) that we don't use.~~ Closed via W6.2: v1.0 brought the server image **598 MB → 288 MB** (patch-package + surgical `rm` of unused transitive provider SDKs); v1.1 carried the W6.2 follow-up that was deferred from v1.0. No fork of mem0ai was needed.
 
 ### History DB persistence
 Current: `/tmp/mem0-history.db` (ephemeral, reset on container restart). Users who want audit history of mem0 edits should be able to bind-mount a persistent location without editing config. Ship a commented volume mount example in `docker-compose.yml`.
@@ -146,7 +158,6 @@ Current: `/tmp/mem0-history.db` (ephemeral, reset on container restart). Users w
 
 | Topic | Blocking |
 |---|---|
-| ADR invocation model (`/adr` vs keyword vs end-of-session batch) | `create-adr` skill |
 | Cross-device markdown sync mechanism (Syncthing / git / daemon) | Cross-device sync work |
 | Raw capture co-location with Claude Code's per-project `memory/` dir | Stop-hook retrofit usability — deferred until autoDream behavior on custom subdirs is tested |
 | Two deployment modes (cloud via mem0.ai vs self-hosted) | User-facing install flow |
