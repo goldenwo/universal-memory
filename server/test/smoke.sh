@@ -1687,6 +1687,225 @@ if [ "${UM_SMOKE_REMEMBER_ON:-}" = "1" ]; then
 	echo "[smoke] B2 S3 PASS: /remember dedup-match surfaced on second write"
 fi
 
+# D2 S4 — lane-partition positive-path smoke (spec §8 T29; plan ref).
+# Gated by UM_SMOKE_D2_ON=1 (explicit opt-in), mirroring S2/S3. D2 (lane /
+# persona schema substrate — PR #84, v1.1.0) shipped with 23 unit /
+# integration tests but no release-time probe of the *positive* path at the
+# HTTP surface. The existing S3 /remember probe only exercises D2's
+# back-compat arm (no lane/persona → legacy uuidv5 seed). This block closes
+# the pre-D3 gap: it proves two writes with IDENTICAL text + userId but
+# DIFFERENT metadata.lane land as TWO distinct, separately-filterable
+# records (NOT dedup-merged), and that a no-lane write of the same text
+# forms its own legacy partition (merges with neither lane record).
+#
+# Why this must exist before D3: D3 makes lane/persona load-bearing routing
+# axes. A silent regression that strips lane before the uuidv5 seed (spec
+# §4.7) or the dedup `must` filter would collapse the two lane writes onto
+# one legacy point. The probe verifies the partition contract three ways:
+#   (a) the lane=work and lane=personal writes must each be event=ADD —
+#       their lane partitions (hash:userId:work: / :personal:) are EMPTY
+#       for this fact, so a working D2 mints a fresh point for each. A
+#       DEDUP_MERGED here means lane did NOT enter the seed/filter (the
+#       exact D3-blocking regression). This is S2's grep inverted, but
+#       scoped to the two LANE writes only (see the no-lane caveat).
+#   (b) the three /api/add responses must carry three DISTINCT ids — this
+#       doubles as the absence-arm structural check: id_nolane differing
+#       from both lane ids proves the no-lane write did not cross into a
+#       lane partition.
+#   (c) read side (T29): a lane-filtered /api/search returns exactly its
+#       own partition and EXCLUDES the no-lane record and the other lane.
+#
+# No-lane caveat (learned from CI run 25967564655 — do not re-break this):
+# the no-lane write lands in the legacy/no-lane partition, which is SHARED
+# across this userId with S2 (`dedup-probe-${MARKER}`) and S3
+# (`remember-probe-${MARKER}`) — both run earlier whenever
+# UM_SMOKE_DEDUP_ON / _REMEMBER_ON are set (always, in CI). Those
+# sentences are ~90% identical to this probe's, so D2 Layer-2 (embedding
+# near-dup; no hash arm; absence-arm partition) CORRECTLY dedup-merges the
+# no-lane write into the pre-existing S2 legacy record. That is D2 working
+# as designed, not regressing — so the probe must NOT assert "the no-lane
+# write is not DEDUP_MERGED". Only the (empty) lane partitions are
+# required to stay isolated; the no-lane arm is verified structurally via
+# (b) + the read-side exclusion.
+#
+# Requires UM_DEDUP_ENABLED=true (the v1.1 default): with dedup OFF every
+# write is a plain ADD regardless of lane, so assertion (a) loses its
+# regression-detecting power. S4 is therefore dependent on D1 being ON,
+# same as S3.
+#
+# Position: AFTER B2 S3 and BEFORE the boot-smoke gate (which tears the
+# main stack down), identical placement rationale to S2 / S3.
+if [ "${UM_SMOKE_D2_ON:-}" = "1" ]; then
+	echo "[smoke] D2 S4 — lane-partition positive-path (UM_SMOKE_D2_ON=1)"
+	# Identical name-shaped fact across all three writes (extracts reliably
+	# in mem0's facts-extractor distribution — same rationale as step 2 and
+	# S2; arbitrary sentences sometimes extract nothing). The ONLY variable
+	# across the three writes is metadata.lane: work / personal / absent.
+	# Same userId for all three (server-resolved from MEM0_USER_ID — smoke
+	# never passes userId, mirror S2/S3), so the dedup key reduces to
+	# (lane, persona, hash).
+	#
+	# $MARKER scopes the fact against *prior runs*, but WITHIN a run the
+	# no-lane write deliberately shares the legacy partition with the
+	# embedding-near S2/S3 facts (see the no-lane caveat in the header) —
+	# that collision is expected and asserted around, never against.
+	_d2_text="The smoke test user's name is d2-probe-${MARKER}."
+	_d2_add() {
+		# $1 = JSON metadata object. Mirrors S2's exact /api/add curl shape
+		# (proven with the auth wrapper): -w surfaces the HTTP status so an
+		# empty body can't masquerade as a transport success; `2>&1 || true`
+		# keeps `set -euo pipefail` from killing the run on a curl hiccup so
+		# the assertions below own the failure message.
+		curl -sS -X POST "$ENDPOINT/api/add" \
+			-H 'Content-Type: application/json' \
+			-w '\nHTTP_STATUS=%{http_code}\n' \
+			-d "{\"text\": \"$_d2_text\", \"metadata\": $1, \"surface\": \"smoke\"}" 2>&1 || true
+	}
+	d2_resp_work=$(_d2_add '{"project": "d2-smoke", "type": "fact", "lane": "work"}')
+	d2_resp_personal=$(_d2_add '{"project": "d2-smoke", "type": "fact", "lane": "personal"}')
+	d2_resp_nolane=$(_d2_add '{"project": "d2-smoke", "type": "fact"}')
+	echo "[smoke]     write lane=work:     $d2_resp_work"
+	echo "[smoke]     write lane=personal: $d2_resp_personal"
+	echo "[smoke]     write no-lane:       $d2_resp_nolane"
+
+	# Assertion (a): the two LANE writes must be fresh ADDs. Their lane
+	# partitions are empty for this fact regardless of what S2/S3 wrote
+	# (those are all no-lane), so a working D2 mints a new point for each.
+	# The no-lane write is intentionally EXCLUDED here — it legitimately
+	# dedup-merges within the shared legacy partition (header caveat); its
+	# isolation is proven structurally by (b) + the read-side exclusion.
+	# Substring grep on the raw response, same robustness rationale as S2.
+	for _d2_pair in "work:$d2_resp_work" "personal:$d2_resp_personal"; do
+		if printf '%s' "${_d2_pair#*:}" | grep -qE 'DEDUP_MERGED|dedupCount'; then
+			echo "[smoke] D2 S4 FAIL: lane=${_d2_pair%%:*} write reported a dedup merge — its (empty) lane partition did not isolate it; lane is not entering the uuidv5 seed / dedup must-filter (spec §4.7 regressed)" >&2
+			_um_smoke_auth_cleanup
+			exit 1
+		fi
+	done
+
+	# Extract the first result id from each response (strip the -w status
+	# line, then JSON-parse). Helper is defined once and reused — the three
+	# ids drive both the distinctness assertion (b) and the read-side
+	# partition checks.
+	_d2_id() {
+		printf '%s' "$1" | python3 -c "
+import json, sys
+raw = sys.stdin.read().split('HTTP_STATUS=')[0].strip()
+try:
+    obj = json.loads(raw[raw.index('{'):raw.rindex('}') + 1])
+except Exception:
+    print(''); sys.exit(0)
+rs = obj.get('results', [])
+print(rs[0]['id'] if rs and rs[0].get('id') else '')
+"
+	}
+	D2_ID_WORK=$(_d2_id "$d2_resp_work")
+	D2_ID_PERSONAL=$(_d2_id "$d2_resp_personal")
+	D2_ID_NOLANE=$(_d2_id "$d2_resp_nolane")
+	echo "[smoke]     ids: work=$D2_ID_WORK personal=$D2_ID_PERSONAL no-lane=$D2_ID_NOLANE"
+
+	# A missing id means mem0 extracted no fact for this input — not a D2
+	# regression, but the probe cannot verify partitioning without records,
+	# so FAIL loudly and actionably rather than silently pass (a release
+	# gate must not green on "couldn't check"). Name-shaped input makes
+	# this path rare in practice (proven by S2 running green in CI).
+	if [ -z "$D2_ID_WORK" ] || [ -z "$D2_ID_PERSONAL" ] || [ -z "$D2_ID_NOLANE" ]; then
+		echo "[smoke] D2 S4 FAIL: one or more /api/add writes returned no record id — mem0 extracted no fact for the probe input (name-shaped extraction regressed or mem0 unavailable); cannot verify lane partition" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# Assertion (b): three different (lane, persona, hash) seeds → three
+	# different point ids. This doubles as the absence-arm structural
+	# check: id_nolane differing from both lane ids proves the no-lane
+	# write did NOT cross into a lane partition. Equality here is the exact
+	# signature of a stripped-lane regression.
+	if [ "$D2_ID_WORK" = "$D2_ID_PERSONAL" ] || [ "$D2_ID_WORK" = "$D2_ID_NOLANE" ] || [ "$D2_ID_PERSONAL" = "$D2_ID_NOLANE" ]; then
+		echo "[smoke] D2 S4 FAIL: identical record ids across distinct lane partitions (work=$D2_ID_WORK personal=$D2_ID_PERSONAL no-lane=$D2_ID_NOLANE) — lane is not entering the uuidv5 seed (spec §4.7 regressed)" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# Read side (T29 contract). mem0 write→qdrant is eventually consistent
+	# (the 3/5 round-trip block above polls /api/list up to 30s for the
+	# same reason). Poll the UNFILTERED search until BOTH lane records are
+	# visible — they carry this exact fact text so an embedding query on it
+	# ranks them top; limit 20 is ample headroom. The no-lane id is
+	# deliberately NOT in the gate: it may have merged into S2's legacy
+	# record (foreign surface text "dedup-probe-…"), which a "d2-probe-…"
+	# query is not guaranteed to surface — and the partition asserts only
+	# ever need it in the EXCLUDED set, never retrieved.
+	_d2_search() {
+		# $1 = JSON filters object (or {} for none). curl -sf like Task 6 /
+		# step 2b (search returns 200); `|| true` so a transient non-2xx in
+		# the poll loop doesn't abort under set -e — the membership check
+		# owns the verdict.
+		curl -sf -X POST "$ENDPOINT/api/search" \
+			-H 'Content-Type: application/json' \
+			-d "{\"query\": \"$_d2_text\", \"limit\": 20, \"filters\": $1}" 2>/dev/null || true
+	}
+	d2_lanes_visible=0
+	for _i in $(seq 1 15); do
+		if _d2_search '{}' | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if {'$D2_ID_WORK', '$D2_ID_PERSONAL'} <= ids else 1)
+"; then
+			d2_lanes_visible=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$d2_lanes_visible" != "1" ]; then
+		echo "[smoke] D2 S4 FAIL: the lane=work and lane=personal records did not both appear in unfiltered /api/search within 30s — write→qdrant visibility or default-filter regression" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke]     unfiltered search returns both lane records (work, personal)"
+
+	# lane=work filter must return ONLY the work record: contains id_work,
+	# excludes id_personal AND id_nolane. The id_nolane exclusion IS the
+	# absence arm — the no-lane write (whether a fresh legacy ADD or merged
+	# into S2's legacy record) must never surface under an explicit lane
+	# filter (spec §4.5 legacy-point semantics). lane=personal is symmetric.
+	#
+	# Asserted by record-ID set membership ONLY, deliberately not by
+	# re-checking r.metadata.lane (learned from CI run 25967861840 — do not
+	# re-add a metadata check): /api/search returns the COMPACT shape
+	# (id/title/snippet/score, NO metadata) unless ?full=1. The server
+	# applies filters.lane on the internal record's metadata.lane
+	# (mem0-mcp-http.mjs ~:2226) BEFORE serialising the compact view, so
+	# which ids come back IS the authoritative signal that the lane
+	# post-filter ran. A client-side metadata.lane re-check is (1) invalid
+	# against the compact response (metadata absent → every row looks
+	# "wrong") and (2) redundant: a broken/over/under lane filter is
+	# already caught by the present/absent id assertions below.
+	_d2_assert_partition() {
+		# $1 = lane value, $2 = expected-present id, $3 $4 = expected-absent ids
+		local _resp
+		_resp=$(_d2_search "{\"lane\": \"$1\"}")
+		printf '%s' "$_resp" | LANE="$1" PRESENT="$2" ABSENT1="$3" ABSENT2="$4" python3 -c "
+import json, os, sys
+lane = os.environ['LANE']
+present, absent1, absent2 = os.environ['PRESENT'], os.environ['ABSENT1'], os.environ['ABSENT2']
+data = json.load(sys.stdin)
+assert isinstance(data, dict) and 'results' in data, 'search response missing {results} wrapper: ' + json.dumps(data)[:200]
+ids = {r.get('id') for r in data['results']}
+if present not in ids:
+    print(f'FAIL: lane={lane} filter did not return its own record {present} (got ids={sorted(i for i in ids if i)})'); sys.exit(1)
+if absent1 in ids or absent2 in ids:
+    print(f'FAIL: lane={lane} filter leaked a foreign-partition record (absent expected: {absent1}, {absent2}; got ids={sorted(i for i in ids if i)})'); sys.exit(1)
+print(f'OK: lane={lane} filter returns exactly its own partition record {present}')
+" || { echo "[smoke] D2 S4 FAIL: lane=$1 partition assertion failed" >&2; _um_smoke_auth_cleanup; exit 1; }
+	}
+	_d2_assert_partition work "$D2_ID_WORK" "$D2_ID_PERSONAL" "$D2_ID_NOLANE"
+	_d2_assert_partition personal "$D2_ID_PERSONAL" "$D2_ID_WORK" "$D2_ID_NOLANE"
+	echo "[smoke] D2 S4 PASS: lane=work / lane=personal land as 2 distinct, lane-filterable records; the no-lane write stays in a separate legacy partition (distinct id, excluded from both lane filters)"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
