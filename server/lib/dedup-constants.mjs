@@ -35,6 +35,9 @@ export const RESERVED_METADATA_FIELDS = Object.freeze([
   'dedupVersion',
   'dedupLastSeenAt',
   'systemMigration',
+  'status',
+  'supersededBy',
+  'supersededAt',
 ]);
 
 /**
