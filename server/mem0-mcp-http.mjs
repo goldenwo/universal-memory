@@ -834,7 +834,7 @@ function applyOnlySupersededListing(items, { lane, persona, limit, offset, clien
 // Helper: compute effective limit for only_superseded paths.
 // When caller omits limit (null/undefined), default is 50 (not the normal 5).
 // When caller supplies an explicit limit, honor it.
-// Also returns the clamped doSearch fetch limit (caps at 100).
+// Clamping to 100 is applied by each call site (Math.min(..., 100)), not here.
 function effectiveSupLimit(callerLimit) {
 	return callerLimit != null ? callerLimit : 50;
 }
@@ -2347,6 +2347,9 @@ export function createRequestHandler(ctx = {}) {
 				const callerLimit = (hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0)
 					? Math.min(rawLimitPost, 100)
 					: null;
+				// D3.1 review: gate mode-a on `!= null` (not truthy) to standardize POST
+				// onto the MCP reference semantics. Empty-string lane/persona is not a
+				// valid slug, so `!= null` is the deliberate (MCP-aligned) gate.
 				let items = applyOnlySupersededListing(response.results, {
 					lane: (filters && typeof filters === 'object' && filters.lane != null) ? filters.lane : null,
 					persona: (filters && typeof filters === 'object' && filters.persona != null) ? filters.persona : null,
