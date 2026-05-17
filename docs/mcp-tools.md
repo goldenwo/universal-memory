@@ -637,6 +637,51 @@ curl -s http://localhost:6335/mcp \
 }
 ```
 
+#### `unsupersede` action (v1.1 D3.1 — operator undo)
+
+Flip a previously-superseded qdrant-fact point back to `status:'current'`. This is the inverse of the supersede path — an operator undo surface for when a supersession was applied in error or needs reverting.
+
+**Requires `UM_MCP_WRITE_ENABLED=true`.**
+
+**Input schema:**
+
+```json
+{
+  "action": "unsupersede",
+  "id": "string (required) — qdrant point ID of the superseded fact to restore"
+}
+```
+
+The `id` must pass the same `validateSafeName` check as all other write operations (slug-shaped: `/^[a-zA-Z0-9._-]+$/`). The vault-doc path of `memory_supersede` (the `old_id` / `new_doc` form above) is unchanged — `unsupersede` applies only to qdrant-fact points.
+
+**Example:**
+
+```bash
+curl -s http://localhost:6335/mcp \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $UM_AUTH_TOKEN" \
+  -d '{
+    "jsonrpc":"2.0","id":10,"method":"tools/call",
+    "params": {
+      "name": "memory_supersede",
+      "arguments": {
+        "action": "unsupersede",
+        "id": "arch-decision-v1"
+      }
+    }
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "id": "arch-decision-v1",
+  "status": "current"
+}
+```
+
 ---
 
 ## Write tools — enabling
