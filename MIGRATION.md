@@ -43,6 +43,18 @@ v1.1 adds optional `lane` / `persona` partition fields to the qdrant write/read 
 - This only bites if you start filtering by lane/persona before a backfill populates the field on historical points (a Phase F deliverable, not in v1.1).
 - **Action:** none required for the standard upgrade. Just be aware that `filters.lane='work'` will not surface pre-upgrade memories until they are re-written or backfilled.
 
+### Supersession substrate — `memory_supersede` family + `only_superseded` listing (D3.1)
+
+**inert / no behavior change; opt-in only.**
+
+D3.1 ships the supersession substrate: `status:'current'` stamped on new qdrant-fact points, the `supersedePoint()` / `unsupersedePoint()` primitives, the `unsupersede` action on the `memory_supersede` MCP tool, the `only_superseded` two-mode listing on `memory_search` / `POST /api/search` / `GET /api/search`, and dedup-layer exclusion of superseded candidates.
+
+No detector, no LLM, no auto-supersession. An operator who never sets `UM_AUTOSUPERSEDE_ENABLED=true` experiences **nothing different, ever**. The D3.3 flip PR is the only stage that carries a substantive MIGRATION note (parallel to D1's flag-flip PR). D3.1 and D3.2 are both inert substrate; they require **no operator action**.
+
+- Pre-D3 points have no `status` field. The existing recall path treats absence as `'current'` — unchanged behavior.
+- `only_superseded` listing is no-op until a point actually carries `status:'superseded'` (nothing does yet after a fresh D3.1 upgrade).
+- Dedup exclusion of superseded candidates is similarly dormant — no point has `status:'superseded'` in a production vault at D3.1 deploy time.
+
 ### Server version string
 
 `server/package.json` is bumped to `1.1.0`. The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` now report `1.1.0`. No operator action — noted so a connected client seeing the version change knows it is expected.
