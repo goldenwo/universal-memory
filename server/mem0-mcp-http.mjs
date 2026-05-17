@@ -70,7 +70,7 @@ import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
-import { umAdd } from './lib/add.mjs';
+import { umAdd, getRealClient } from './lib/add.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -588,10 +588,10 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				// ── vault-doc supersede (default path) ───────────────────────────────
-				old_id: { type: 'string', description: 'ID of the document to supersede' },
+				old_id: { type: 'string', description: 'ID of the document to supersede (required for the default vault-doc supersede path).' },
 				new_doc: {
 					type: 'object',
-					description: 'New document to create',
+					description: 'New document to create (required for the default vault-doc supersede path).',
 					properties: {
 						type: { type: 'string' },
 						id: { type: 'string', description: 'New document ID (filename stem)' },
@@ -1149,15 +1149,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				}
 				// Resolve qdrant client + collection the same way add.mjs does:
 				// ctx._qdrantClient is the test seam; production falls back to
-				// constructing a real QdrantClient from the memory config.
+				// getRealClient() (shared helper from lib/add.mjs — DRY, rule-of-three).
 				const unsupMemory = ctx?.memory ?? memory;
 				const unsupCollection = unsupMemory.config.vectorStore.config.collectionName;
-				let unsupClient = ctx._qdrantClient;
-				if (!unsupClient) {
-					const { host, port } = unsupMemory.config.vectorStore.config;
-					const { QdrantClient } = await import('@qdrant/js-client-rest');
-					unsupClient = new QdrantClient({ host, port });
-				}
+				const unsupClient = ctx._qdrantClient ?? await getRealClient(unsupMemory);
 				await unsupersedePoint({ client: unsupClient, collection: unsupCollection, id: unsupId });
 				safeLog(() => getLogger().info(
 					{ request_id: currentRequestId(), tool: 'memory_supersede', action: 'unsupersede', id: unsupId },

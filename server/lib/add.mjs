@@ -59,7 +59,7 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
-async function getRealClient(memory) {
+export async function getRealClient(memory) {
   // mem0ai 2.4.6: host/port/collectionName are under memory.config.vectorStore.config
   const { host, port } = memory.config.vectorStore.config;
   const { QdrantClient } = await import('@qdrant/js-client-rest');

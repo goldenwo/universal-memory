@@ -128,17 +128,6 @@ test('D3.1 superseded point is excluded from scroll/search with status:current f
 // unsupersedePoint call (that is already covered by T1.3 above).
 // Fixture: seeded mock qdrant + makeMockMemory providing collection config.
 
-// Helper: minimal memory shim that satisfies the handler's config.vectorStore path.
-function makeHandlerMemory({ collection = 'memories' } = {}) {
-  return {
-    config: {
-      vectorStore: {
-        config: { collectionName: collection, host: 'localhost', port: 6333 },
-      },
-    },
-  };
-}
-
 // T1.7a: happy-path — unsupersede action flips status:superseded → current and clears
 // supersededBy / supersededAt to null via the handler's action routing.
 test('D3.1 unsupersede action on memory_supersede family: flips superseded→current', async () => {
@@ -163,7 +152,7 @@ test('D3.1 unsupersede action on memory_supersede family: flips superseded→cur
     const raw = await handleToolCall(
       'memory_supersede',
       { action: 'unsupersede', id: 'pt-sup-1' },
-      { memory: makeHandlerMemory(), _qdrantClient: mock.client },
+      { memory: makeMockMemory(), _qdrantClient: mock.client },
     );
 
     const result = JSON.parse(raw);
@@ -206,7 +195,7 @@ test('D3.1 unsupersede action — writes disabled returns same envelope as exist
     const unsupRaw = await handleToolCall(
       'memory_supersede',
       { action: 'unsupersede', id: 'pt-dis-1' },
-      { memory: makeHandlerMemory(), _qdrantClient: mock.client },
+      { memory: makeMockMemory(), _qdrantClient: mock.client },
     );
     const unsupEnvelope = JSON.parse(unsupRaw);
 
@@ -241,7 +230,7 @@ test('D3.1 unsupersede action — invalid id rejected by validateSafeName', asyn
       () => handleToolCall(
         'memory_supersede',
         { action: 'unsupersede', id: '../../../etc/passwd' },
-        { memory: makeHandlerMemory(), _qdrantClient: makeMockQdrant().client },
+        { memory: makeMockMemory(), _qdrantClient: makeMockQdrant().client },
       ),
       /must match|validateSafeName|invalid|^\^/i,
       'unsafe id must be rejected by validateSafeName',
