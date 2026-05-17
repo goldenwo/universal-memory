@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { unsupersedePoint } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
 import { withRetry } from './lib/retry.mjs';
@@ -69,7 +70,7 @@ import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
-import { umAdd } from './lib/add.mjs';
+import { umAdd, getRealClient } from './lib/add.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -451,8 +452,10 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				query: { type: 'string', description: 'Semantic search query' },
-				limit: { type: 'number', description: 'Max results (default 5, max 100)' },
+				limit: { type: 'number', description: 'Max results (default 5, max 100; default 50 when only_superseded is set)' },
 				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs' },
+				only_superseded: { type: 'boolean', description: 'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50.' },
+				offset: { type: 'integer', description: 'Pagination offset for only_superseded listing (0-based, default 0). Ignored when only_superseded is false/absent.' },
 				filters: {
 					type: 'object',
 					description: 'Metadata filters; AND-combined.',
@@ -580,14 +583,15 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_supersede',
-		description: 'Replace an existing document with a new one — old doc gets status=superseded, new doc is created (requires UM_MCP_WRITE_ENABLED=true)',
+		description: 'Replace an existing document with a new one — old doc gets status=superseded, new doc is created (requires UM_MCP_WRITE_ENABLED=true). Also supports action="unsupersede" + id to restore a superseded qdrant-fact point to status:current (operator undo, §3.7).',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				old_id: { type: 'string', description: 'ID of the document to supersede' },
+				// ── vault-doc supersede (default path) ───────────────────────────────
+				old_id: { type: 'string', description: 'ID of the document to supersede (required for the default vault-doc supersede path).' },
 				new_doc: {
 					type: 'object',
-					description: 'New document to create',
+					description: 'New document to create (required for the default vault-doc supersede path).',
 					properties: {
 						type: { type: 'string' },
 						id: { type: 'string', description: 'New document ID (filename stem)' },
@@ -597,8 +601,11 @@ export const TOOLS = [
 					},
 					required: ['type', 'id', 'title', 'content'],
 				},
+				// ── D3.1 §3.7 qdrant-fact unsupersede (action path) ─────────────────
+				action: { type: 'string', enum: ['unsupersede'], description: 'Action to perform. "unsupersede": restore a superseded qdrant-fact point to status:current (operator undo).' },
+				id: { type: 'string', description: 'Qdrant-fact point id to restore (required when action="unsupersede").' },
 			},
-			required: ['old_id', 'new_doc'],
+			required: [],
 		},
 	},
 	// ── v0.5: append-turn tool ────────────────────────────────────────────────
@@ -758,11 +765,121 @@ export async function handleToolCall(name, args, ctx = {}) {
 	}
 }
 
+// ── D3.1 shared only_superseded limit constants + helpers ─────────────────────
+//
+// Single source of truth for the only_superseded default limit.
+// All three surfaces (MCP, REST POST, REST GET) reference this constant so a
+// change here propagates everywhere automatically.
+const ONLY_SUPERSEDED_DEFAULT_LIMIT = 50;
+
+// Helper: coerce a raw caller-supplied limit to a clamped positive integer or
+// null.  null signals "no valid explicit limit was given" so effectiveSupLimit
+// can apply the ONLY_SUPERSEDED_DEFAULT_LIMIT default.
+//
+// @param {*}       rawLimit  — the raw limit value received from the caller
+//                              (may be undefined/null/0/NaN/string for degenerate cases)
+// @param {object}  opts
+//   hasExplicit {boolean}  — true only when the caller actually sent a limit
+//                            value (not omitted).  Each call site computes this
+//                            with its own "was limit present?" logic before
+//                            calling here (POST: limitRaw !== undefined/null;
+//                            GET: Number.isFinite(parseInt(...)) && >0).
+// @returns {number|null}  Math.min(rawLimit, 100) when rawLimit is a finite
+//                         positive number AND hasExplicit is true; null otherwise.
+function coerceCallerLimit(rawLimit, { hasExplicit }) {
+	return hasExplicit && Number.isFinite(rawLimit) && rawLimit > 0
+		? Math.min(rawLimit, 100)
+		: null;
+}
+
+// ── D3.1 shared only_superseded post-processing helper ───────────────────────
+//
+// Called from ALL THREE handler surfaces (MCP, REST POST, REST GET) so the
+// inversion → mode-a/b scope → stable sort → pagination contract is ONE
+// source of truth. Rule-of-three satisfied.
+//
+// @param {Array}  items    — raw doSearch results (full metadata already present)
+// @param {object} opts
+//   lane       {string|null}  — mode (a): restrict to this partition, or null for mode (b)
+//   persona    {string|null}  — mode (a): restrict to this partition, or null for mode (b)
+//   limit      {number|null}  — caller-supplied limit (null → use default ONLY_SUPERSEDED_DEFAULT_LIMIT)
+//   offset     {number}       — pagination offset (default 0)
+//   clientFull {boolean}      — true → skip compact projection (caller does it or metadata already full)
+//   buildSnippetFn {Function} — buildSnippet(title, body) needed for compact projection
+// @returns {Array} filtered, sorted, paginated items (compact or full per clientFull)
+function applyOnlySupersededListing(items, { lane, persona, limit, offset, clientFull, buildSnippetFn }) {
+	// 1. Invert: keep only explicitly superseded records (absence-strict)
+	items = items.filter((r) => (r.metadata || {}).status === 'superseded');
+
+	// 2. Mode (a): lane and/or persona given → restrict to that partition.
+	//    Mirrors the D2 post-filter idiom: undefined !== '<slug>' so pre-D2
+	//    points with no lane/persona key are excluded when the filter is explicit.
+	if (lane != null) {
+		items = items.filter((r) => (r.metadata || {}).lane === lane);
+	}
+	if (persona != null) {
+		items = items.filter((r) => (r.metadata || {}).persona === persona);
+	}
+
+	// 3. Stable sort: supersededAt DESC, then id ASC as deterministic tiebreaker.
+	items = [...items].sort((a, b) => {
+		const atA = (a.metadata || {}).supersededAt || '';
+		const atB = (b.metadata || {}).supersededAt || '';
+		if (atA > atB) return -1;
+		if (atA < atB) return 1;
+		if (a.id < b.id) return -1;
+		if (a.id > b.id) return 1;
+		return 0;
+	});
+
+	// 4. Pagination: default limit when none supplied (larger operational window
+	//    than the normal default of 5). Caller-supplied limit takes precedence.
+	//    The canonical value lives in ONLY_SUPERSEDED_DEFAULT_LIMIT above.
+	const supLimit = limit != null ? limit : ONLY_SUPERSEDED_DEFAULT_LIMIT;
+	const supOffset = offset != null ? offset : 0;
+	items = items.slice(supOffset, supOffset + supLimit);
+
+	// 5. Compact projection (skip when clientFull=true — metadata is already
+	//    preserved in the full shape). In compact mode we add supersededAt /
+	//    supersededBy unconditionally, plus lane / persona when non-null, so
+	//    mode-(b) operator calls can identify the partition without full=true.
+	if (!clientFull) {
+		items = items.map((r) => {
+			const md = r.metadata || {};
+			const compact = {
+				id: r.id,
+				title: r.title,
+				score: r.score,
+				snippet: buildSnippetFn(r.title, r.body),
+				supersededAt: md.supersededAt,
+				supersededBy: md.supersededBy,
+			};
+			if (md.lane != null) compact.lane = md.lane;
+			if (md.persona != null) compact.persona = md.persona;
+			return compact;
+		});
+	}
+
+	return items;
+}
+
+// Helper: compute effective fetch/slice limit for only_superseded paths.
+// Accepts the coerced caller limit produced by coerceCallerLimit() (a positive
+// integer ≤ 100, or null when the caller omitted / sent a degenerate value).
+// When null, falls back to ONLY_SUPERSEDED_DEFAULT_LIMIT.
+function effectiveSupLimit(callerLimit) {
+	return callerLimit != null ? callerLimit : ONLY_SUPERSEDED_DEFAULT_LIMIT;
+}
+
 async function _handleToolCallInner(name, args, ctx = {}) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
-			const limit = args.limit || 5;
+			const onlySup = args.only_superseded === true;
+			// D3.1: when only_superseded set, default qdrant fetch limit to
+			// ONLY_SUPERSEDED_DEFAULT_LIMIT so the pagination window is adequately backed.
+			// Caller-supplied limit takes precedence.
+			const limit = args.limit != null ? args.limit : (onlySup ? ONLY_SUPERSEDED_DEFAULT_LIMIT : 5);
 			const includeSup = args.include_superseded === true;
 			const clientFull = args.full === true;
 			// D2: validate lane/persona filter inputs upfront — same INPUT_INVALID
@@ -776,9 +893,31 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// Always call doSearch(full=true) internally so metadata is preserved for
 			// post-filtering (project, type, lane, persona). Then project to compact
 			// shape at the end unless the MCP client explicitly requested full bodies.
-			let response = await doSearch(args.query, limit, includeSup, true, ctx);
+			// D3.1: when only_superseded is set, pass includeSup=true to doSearch so
+			// the upstream status-filter does not pre-exclude superseded records — we
+			// apply the inversion ourselves below. only_superseded takes precedence
+			// over include_superseded when both are present.
+			let response = await doSearch(args.query, limit, onlySup ? true : includeSup, true, ctx);
 			let items = response.results;
 
+			// D3.1 only_superseded branch: delegate to shared helper so MCP, REST POST,
+			// and REST GET all share one implementation.  Behavior is byte-identical
+			// to the previous inline code; existing tests prove it.
+			if (onlySup) {
+				items = applyOnlySupersededListing(items, {
+					lane: args.filters?.lane ?? null,
+					persona: args.filters?.persona ?? null,
+					limit: args.limit ?? null,
+					offset: args.offset ?? null,
+					clientFull,
+					buildSnippetFn: buildSnippet,
+				});
+				// §4.1 extensibility contract preserved
+				const { results: _prev, ...responseExtras } = response;
+				return JSON.stringify(listEnvelope(items, responseExtras));
+			}
+
+			// ── Default / include_superseded path (unchanged) ─────────────────────
 			// Apply optional metadata filters (project, type, lane, persona) — all
 			// AND-combined. D2's lane / persona filter excludes pre-D2 points whose
 			// payload has no lane/persona key (undefined !== '<slug>').
@@ -1019,6 +1158,38 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 		}
 
 		case 'memory_supersede': {
+			// ── D3.1 §3.7: unsupersede action (qdrant-fact operator undo) ────────────
+			// Dispatched BEFORE the vault-doc path so `old_id` guard does not fire
+			// when the caller supplies { action: 'unsupersede', id: '<point-id>' }.
+			// Auth envelope is IDENTICAL to the vault-doc path: same isWriteEnabled()
+			// call, same errorResponse() arguments — no new auth surface.
+			if (args.action === 'unsupersede') {
+				const { id: unsupId } = args;
+				if (!unsupId) throw new Error('id is required for action="unsupersede"');
+				// C1: validate id before using as a qdrant point identifier.
+				validateSafeName('id', unsupId);
+				// Same isWriteEnabled() gate + same error envelope as the vault-doc path below.
+				if (!isWriteEnabled()) {
+					return JSON.stringify(errorResponse(
+						'INPUT_INVALID',
+						'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+					));
+				}
+				// Resolve qdrant client + collection the same way add.mjs does:
+				// ctx._qdrantClient is the test seam; production falls back to
+				// getRealClient() (shared helper from lib/add.mjs — DRY, rule-of-three).
+				const unsupMemory = ctx?.memory ?? memory;
+				const unsupCollection = unsupMemory.config.vectorStore.config.collectionName;
+				const unsupClient = ctx._qdrantClient ?? await getRealClient(unsupMemory);
+				await unsupersedePoint({ client: unsupClient, collection: unsupCollection, id: unsupId });
+				safeLog(() => getLogger().info(
+					{ request_id: currentRequestId(), tool: 'memory_supersede', action: 'unsupersede', id: unsupId },
+					'memory_supersede: unsuperseded point',
+				), 'log:memory_supersede:unsuperseded');
+				return JSON.stringify({ ok: true, id: unsupId, status: 'current' });
+			}
+
+			// ── Default: vault-doc supersede path (byte-identically preserved) ───────
 			const { old_id, new_doc } = args;
 			if (!old_id) throw new Error('old_id is required');
 			if (!new_doc || !new_doc.type || !new_doc.id || !new_doc.title || !new_doc.content) {
@@ -2188,7 +2359,13 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false, filters, full: fullBody } = JSON.parse(await readBody(req));
+			// NOTE: `limit` is intentionally NOT given a destructuring default here so we
+			// can distinguish "caller omitted limit" (null/undefined → only_superseded default
+			// rule applies: 50) from "caller sent limit=5" (explicit → honor 5).
+			const { query, limit: limitRaw, include_superseded = false, only_superseded = false, offset: bodyOffset = 0, filters, full: fullBody } = JSON.parse(await readBody(req));
+			// Apply the normal non-only_superseded default of 5 separately so it's still
+			// visible to downstream non-only_superseded logic.
+			const limit = limitRaw !== undefined && limitRaw !== null ? limitRaw : 5;
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'query is required')));
@@ -2208,12 +2385,52 @@ export function createRequestHandler(ctx = {}) {
 				}
 			}
 			const includeSup = include_superseded === true;
-			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
-			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			const onlySup = only_superseded === true;
+			// hasExplicitLimit: true only when the caller actually sent a `limit` in the
+			// request body (limitRaw !== undefined/null). This distinguishes "sent 5" from
+			// "omitted limit" — the latter triggers the only_superseded default-50 rule.
+			const hasExplicitLimit = limitRaw !== undefined && limitRaw !== null;
+			const rawLimitPost = hasExplicitLimit ? (typeof limitRaw === 'number' ? limitRaw : parseInt(limitRaw, 10)) : NaN;
+			const clampedLimitPost = hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			// For the doSearch fetch window: when only_superseded and no explicit limit,
+			// fetch up to ONLY_SUPERSEDED_DEFAULT_LIMIT so the pagination slice has enough
+			// material. coerceCallerLimit returns null for omitted/degenerate limits, which
+			// effectiveSupLimit maps to the default.
+			const fetchLimitPost = onlySup
+				? effectiveSupLimit(coerceCallerLimit(rawLimitPost, { hasExplicit: hasExplicitLimit }))
+				: clampedLimitPost;
 			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(query, clampedLimitPost, includeSup, true, ctx);
+			// D3.1: when only_superseded set, pass includeSup=true so doSearch keeps
+			// superseded records for inversion below. only_superseded wins over include_superseded.
+			let response = await doSearch(query, fetchLimitPost, onlySup ? true : includeSup, true, ctx);
+
+			// D3.1 only_superseded branch: delegate to shared helper.
+			if (onlySup) {
+				// callerLimit: null when no valid explicit limit supplied (helper then uses
+				// ONLY_SUPERSEDED_DEFAULT_LIMIT). coerceCallerLimit centralizes the
+				// hasExplicit + finite + >0 + clamp-to-100 logic.
+				const callerLimit = coerceCallerLimit(rawLimitPost, { hasExplicit: hasExplicitLimit });
+				// D3.1 review: gate mode-a on `!= null` (not truthy) to standardize POST
+				// onto the MCP reference semantics. Empty-string lane/persona is not a
+				// valid slug, so `!= null` is the deliberate (MCP-aligned) gate.
+				let items = applyOnlySupersededListing(response.results, {
+					lane: (filters && typeof filters === 'object' && filters.lane != null) ? filters.lane : null,
+					persona: (filters && typeof filters === 'object' && filters.persona != null) ? filters.persona : null,
+					limit: callerLimit,
+					offset: bodyOffset,
+					clientFull: fullReq,
+					buildSnippetFn: buildSnippet,
+				});
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(response));
+				return;
+			}
+
+			// ── Default / include_superseded path (unchanged) ─────────────────────
 			// Optional metadata filters — post-filter after mem0 recall. D2 adds
 			// lane / persona alongside the existing project / type filters; all
 			// AND-combined. Pre-D2 points (no lane/persona payload key) are
@@ -2250,9 +2467,11 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/api/search' && req.method === 'GET') {
 			const q = url.searchParams.get('q') || '';
-			const rawLimit = parseInt(url.searchParams.get('limit') || '5', 10);
-			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
+			const rawLimitGet = parseInt(url.searchParams.get('limit') || '', 10);
+			const hasExplicitLimitGet = Number.isFinite(rawLimitGet) && rawLimitGet > 0;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+			const onlySupGet = url.searchParams.get('only_superseded') === 'true';
+			const rawOffsetGet = Number(url.searchParams.get('offset')) || 0;
 			const typeFilter = url.searchParams.get('type') || null;
 			const fullReq = url.searchParams.get('full') === '1';
 			if (!q) {
@@ -2260,9 +2479,35 @@ export function createRequestHandler(ctx = {}) {
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'q parameter is required')));
 				return;
 			}
+			// D3.1 GET parity: for only_superseded, derive the fetch limit using the
+			// same default-ONLY_SUPERSEDED_DEFAULT_LIMIT rule as MCP and REST POST.
+			// coerceCallerLimit handles the finite+>0+clamp logic; effectiveSupLimit
+			// applies the default when no valid explicit limit was given.
+			const fetchLimitGet = onlySupGet
+				? effectiveSupLimit(coerceCallerLimit(rawLimitGet, { hasExplicit: hasExplicitLimitGet }))
+				: (hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : 5);
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(q, limit, includeSuperseded, true, ctx);
+			let response = await doSearch(q, fetchLimitGet, onlySupGet ? true : includeSuperseded, true, ctx);
+
+			// D3.1 only_superseded branch for GET: delegate to shared helper.
+			if (onlySupGet) {
+				const callerLimitGet = coerceCallerLimit(rawLimitGet, { hasExplicit: hasExplicitLimitGet });
+				const items = applyOnlySupersededListing(response.results, {
+					lane: null,  // GET query-string form does not support lane/persona filters
+					persona: null,
+					limit: callerLimitGet,
+					offset: rawOffsetGet,
+					clientFull: fullReq,
+					buildSnippetFn: buildSnippet,
+				});
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(response));
+				return;
+			}
+
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
 				// Preserve §4.1 siblings (e.g., provider, latency_ms) that doSearch
