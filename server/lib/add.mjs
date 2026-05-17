@@ -94,6 +94,7 @@ function buildPayload({ userId, text, metadata, surface, lane, persona }) {
     ...(projects ? { projects } : {}),
     dedupCount: 1,
     dedupVersion: 1,
+    status: 'current',
   };
 }
 
