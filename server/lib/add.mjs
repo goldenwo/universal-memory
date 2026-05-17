@@ -151,7 +151,10 @@ export async function umAdd({
   // Runs OUTSIDE withRequestContext (line below) so caller-input errors don't
   // acquire a request-id child logger context — they're the caller's bug, not
   // a downstream-system error class.
-  assertNoReservedFields(metadata);
+  // trustedServerPath:true on the _systemMigration path exempts the 3 D3.1-managed
+  // supersession-state fields (status/supersededBy/supersededAt) so vault-authored
+  // docs carrying frontmatter `status:` survive reindex (spec §2 / §3.2 fix).
+  assertNoReservedFields(metadata, { trustedServerPath: _systemMigration === true });
 
   // D2 §4.1 — stage out + validate lane/persona BEFORE any side effect so the
   // metadata-spread in buildPayload doesn't leak null/undefined values into

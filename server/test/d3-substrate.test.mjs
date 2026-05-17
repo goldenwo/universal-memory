@@ -217,6 +217,81 @@ test('D3.1 unsupersede action — writes disabled returns same envelope as exist
   }
 });
 
+// ── T1.1b — trustedServerPath exemption (regression guard for CI/spec §2 fix) ─
+// These tests must FAIL before the fix and PASS after.
+
+test('D3.1 assertNoReservedFields: trustedServerPath:true exempts status/supersededBy/supersededAt', () => {
+  // Must NOT throw for the 3 D3.1-managed status fields when trusted path.
+  assert.doesNotThrow(
+    () => assertNoReservedFields({ status: 'current' }, { trustedServerPath: true }),
+    'status must be allowed on trustedServerPath',
+  );
+  assert.doesNotThrow(
+    () => assertNoReservedFields({ supersededBy: 'some-id' }, { trustedServerPath: true }),
+    'supersededBy must be allowed on trustedServerPath',
+  );
+  assert.doesNotThrow(
+    () => assertNoReservedFields({ supersededAt: '2026-01-01T00:00:00.000Z' }, { trustedServerPath: true }),
+    'supersededAt must be allowed on trustedServerPath',
+  );
+  // Mixed: D3.1 field + non-reserved field together — still OK.
+  assert.doesNotThrow(
+    () => assertNoReservedFields({ status: 'superseded', t6: 'a' }, { trustedServerPath: true }),
+    'status + non-reserved key must be allowed on trustedServerPath',
+  );
+});
+
+test('D3.1 assertNoReservedFields: original 6 fields STILL rejected even with trustedServerPath:true', () => {
+  // The R5+G11 trust boundary must not be widened — pre-D3.1 reserved fields
+  // remain blocked regardless of trustedServerPath.
+  for (const f of ['surfaces', 'projects', 'dedupCount', 'dedupVersion', 'dedupLastSeenAt', 'systemMigration']) {
+    assert.throws(
+      () => assertNoReservedFields({ [f]: 'x' }, { trustedServerPath: true }),
+      /reserved/i,
+      `${f} must STILL be rejected even with trustedServerPath:true`,
+    );
+  }
+});
+
+test('D3.1 assertNoReservedFields: status still rejected when trustedServerPath:false (default)', () => {
+  // Spec §3.2 — external callers (no _systemMigration) must not forge supersession state.
+  assert.throws(
+    () => assertNoReservedFields({ status: 'x' }),
+    /reserved/i,
+    'status without trustedServerPath must still throw (default opts)',
+  );
+  assert.throws(
+    () => assertNoReservedFields({ status: 'x' }, { trustedServerPath: false }),
+    /reserved/i,
+    'status with trustedServerPath:false must still throw',
+  );
+});
+
+test('D3.1 umAdd with _systemMigration:true and metadata.status does NOT throw reserved-field error', async () => {
+  // End-to-end guard: reindex path passes frontmatter status; must not be rejected.
+  const qdrant = makeMockQdrantInline();
+  await assert.doesNotReject(
+    () => umAdd({
+      memory: makeMockMemory(),
+      text: 'a session summary doc',
+      userId: 'u-reindex',
+      metadata: { status: 'superseded' },
+      infer: false,
+      _systemMigration: true,
+      _factsProviderOverride: {
+        factsInvoke: async (text) => ({ facts: [text], usage: { tokensIn: 0, tokensOut: 0 } }),
+      },
+      _embedProviderOverride: {
+        supports: { embeddings: true },
+        defaults: { embeddingModel: 'mock' },
+        embed: async () => ({ vector: [0.1, 0.2], usage: { tokensIn: 0, tokensOut: 0 } }),
+      },
+      _qdrantClient: qdrant.client,
+    }),
+    'umAdd with _systemMigration:true and metadata.status:superseded must NOT throw ReservedMetadataFieldError',
+  );
+});
+
 // T1.7c: id validation — an unsafe/invalid id is rejected by the same validateSafeName
 // gate the memory_supersede family already applies.
 test('D3.1 unsupersede action — invalid id rejected by validateSafeName', async () => {
