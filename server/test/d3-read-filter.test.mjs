@@ -126,6 +126,19 @@ async function callRestSearch(origin, extraParams = {}) {
   return env.results;
 }
 
+// Note: callMcpSearch hardcodes full:true; for compact-projection tests that need
+// full:false we call the /mcp endpoint directly (see T1.6 compact-mode-b test).
+
+async function callRestGetSearch(origin, params = {}) {
+  // Builds a GET /api/search?q=test&<params> request.
+  // Deliberately does NOT add full=1 by default (so compact projection is exercised).
+  const qs = new URLSearchParams({ q: 'test', ...params });
+  const res = await fetch(`${origin}/api/search?${qs.toString()}`);
+  assert.equal(res.status, 200);
+  const env = await res.json();
+  return env.results;
+}
+
 // ── Test (a) — superseded fact is EXCLUDED on the default path ───────────────
 
 test('T25a-mcp: status=superseded fact is excluded from default memory_search (MCP)', async () => {
@@ -616,6 +629,233 @@ test('D3.1 only_superseded wins over include_superseded when both set (MCP)', as
     assert.ok(ids.includes('superseded-point'), `superseded-point must be present; got: ${ids.join(', ')}`);
     assert.ok(!ids.includes('current-point'), `current-point must be excluded when only_superseded wins; got: ${ids.join(', ')}`);
     assert.ok(!ids.includes('pre-d3-point'), `pre-d3-point (no status) must be excluded when only_superseded wins; got: ${ids.join(', ')}`);
+  } finally {
+    await close();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T1.6 review fixes — compact mode-b, default-limit-50, GET parity
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Compact mode-(b): verify compact projection exposes supersededAt/supersededBy/lane/persona ──
+//
+// Previous tests used full:true, so the compact code path was never exercised.
+// This test calls only_superseded mode-(b) WITHOUT full:true (compact projection)
+// and asserts that each row carries the extra fields the compact branch adds.
+// Non-tautological: the assertions would fail if the compact projection omitted
+// supersededAt, supersededBy, lane, or persona from the returned items.
+
+test('D3.1 compact mode-b MCP: compact projection exposes supersededAt/supersededBy/lane/persona', async () => {
+  const { origin, close } = await startServer({ memory: makeMockMemoryForT16() });
+  try {
+    // Call WITHOUT full:true — exercises compact projection in applyOnlySupersededListing
+    const res = await fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'memory_search',
+          arguments: { query: 'test', only_superseded: true },
+          // Note: no full:true — compact projection path
+        },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const env = await res.json();
+    const inner = JSON.parse(env.result.content[0].text);
+    const items = inner.results;
+    const ids = items.map((r) => r.id);
+    // Must contain superseded records
+    assert.ok(ids.includes('sup-work-a'), `sup-work-a missing in compact mode-b; got: ${ids.join(', ')}`);
+    assert.ok(ids.includes('sup-personal'), `sup-personal missing in compact mode-b; got: ${ids.join(', ')}`);
+    // Compact shape: standard fields present
+    const rowA = items.find((r) => r.id === 'sup-work-a');
+    assert.ok(rowA, 'sup-work-a row must be present');
+    assert.ok(rowA.title, 'compact row must have title');
+    assert.ok(rowA.score != null, 'compact row must have score');
+    assert.ok(rowA.snippet != null, 'compact row must have snippet');
+    // Compact + only_superseded additions: supersededAt, supersededBy
+    assert.ok(rowA.supersededAt, `sup-work-a must carry supersededAt in compact mode; got: ${JSON.stringify(rowA)}`);
+    assert.ok(rowA.supersededBy, `sup-work-a must carry supersededBy in compact mode; got: ${JSON.stringify(rowA)}`);
+    // lane and persona (non-null on this row) must be exposed
+    assert.equal(rowA.lane, 'work', `sup-work-a compact row must expose lane:work; got: ${JSON.stringify(rowA)}`);
+    assert.equal(rowA.persona, 'engineer', `sup-work-a compact row must expose persona:engineer; got: ${JSON.stringify(rowA)}`);
+    // sup-personal has lane:personal — verify lane exposed there too
+    const rowP = items.find((r) => r.id === 'sup-personal');
+    assert.ok(rowP, 'sup-personal must be present');
+    assert.equal(rowP.lane, 'personal', `sup-personal compact row must expose lane:personal; got: ${JSON.stringify(rowP)}`);
+    // non-superseded must not appear (compact inversion still applies)
+    assert.ok(!ids.includes('cur-work'), `cur-work (status:current) must be excluded; got: ${ids.join(', ')}`);
+  } finally {
+    await close();
+  }
+});
+
+test('D3.1 compact mode-b REST POST: compact projection exposes supersededAt/supersededBy/lane/persona', async () => {
+  const { origin, close } = await startServer({ memory: makeMockMemoryForT16() });
+  try {
+    // POST without full:true — compact projection path
+    const res = await fetch(`${origin}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', only_superseded: true }),
+    });
+    assert.equal(res.status, 200);
+    const env = await res.json();
+    const items = env.results;
+    const ids = items.map((r) => r.id);
+    assert.ok(ids.includes('sup-work-a'), `sup-work-a missing; got: ${ids.join(', ')}`);
+    const rowA = items.find((r) => r.id === 'sup-work-a');
+    assert.ok(rowA.supersededAt, `sup-work-a must carry supersededAt; got: ${JSON.stringify(rowA)}`);
+    assert.ok(rowA.supersededBy, `sup-work-a must carry supersededBy; got: ${JSON.stringify(rowA)}`);
+    assert.equal(rowA.lane, 'work', `sup-work-a must expose lane:work; got: ${JSON.stringify(rowA)}`);
+    assert.equal(rowA.persona, 'engineer', `sup-work-a must expose persona:engineer; got: ${JSON.stringify(rowA)}`);
+  } finally {
+    await close();
+  }
+});
+
+// ── Default-limit-50 REST POST: seed >5 superseded points, no explicit limit → all returned ──
+//
+// Proves the default-limit-50 fix: before the fix, `(clampedLimitPost || 50)` where
+// clampedLimitPost derived from body default `limit=5` → `5 || 50 = 5`, so only
+// 5 of 8 points would be returned. After the fix, null-sentinel path uses 50.
+
+test('D3.1 default-limit-50 REST POST: 8 superseded points, no limit → all 8 returned (not 5)', async () => {
+  const results = Array.from({ length: 8 }, (_, i) => ({
+    id: `sup-dl-${i}-uuid`,
+    memory: `superseded fact ${i}`,
+    metadata: {
+      id: `sup-dl-${String(i).padStart(2, '0')}`,
+      title: `Sup DL ${i}`,
+      project: 'p',
+      status: 'superseded',
+      supersededBy: 'x',
+      supersededAt: `2026-05-${String(10 + i).padStart(2, '0')}T00:00:00Z`,
+    },
+    score: 0.9 - i * 0.01,
+  }));
+  const { origin, close } = await startServer({ memory: { search: async () => ({ results }) } });
+  try {
+    // POST body has NO `limit` field → should use default-50 rule
+    const res = await fetch(`${origin}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', only_superseded: true }),
+    });
+    assert.equal(res.status, 200);
+    const env = await res.json();
+    // 8 < 50 → all 8 must be returned (before the fix only 5 would come back)
+    assert.equal(env.results.length, 8,
+      `default-limit-50 REST POST: expected 8 results (all superseded); got ${env.results.length}`);
+  } finally {
+    await close();
+  }
+});
+
+// ── GET /api/search only_superseded mode-(b) ─────────────────────────────────
+//
+// GET does not support lane/persona filters (query-string form only) so only
+// mode-(b) is relevant. All superseded across partitions must appear; compact
+// projection must expose supersededAt/supersededBy/lane/persona.
+
+test('D3.1 only_superseded GET mode-b: all superseded across partitions, compact fields exposed', async () => {
+  const { origin, close } = await startServer({ memory: makeMockMemoryForT16() });
+  try {
+    // GET without full=1 → compact projection path; no lane filter → mode (b)
+    const items = await callRestGetSearch(origin, { only_superseded: 'true' });
+    const ids = items.map((r) => r.id);
+    // All superseded must appear
+    assert.ok(ids.includes('sup-work-a'), `sup-work-a missing in GET mode-b; got: ${ids.join(', ')}`);
+    assert.ok(ids.includes('sup-work-b'), `sup-work-b missing; got: ${ids.join(', ')}`);
+    assert.ok(ids.includes('sup-personal'), `sup-personal missing; got: ${ids.join(', ')}`);
+    // Non-superseded must be excluded
+    assert.ok(!ids.includes('cur-work'), `cur-work (status:current) must be excluded; got: ${ids.join(', ')}`);
+    assert.ok(!ids.includes('pre-d3-work'), `pre-d3-work (no status) must be excluded; got: ${ids.join(', ')}`);
+    // Compact projection fields
+    const rowA = items.find((r) => r.id === 'sup-work-a');
+    assert.ok(rowA, 'sup-work-a must be present');
+    assert.ok(rowA.supersededAt, `GET compact row must carry supersededAt; got: ${JSON.stringify(rowA)}`);
+    assert.ok(rowA.supersededBy, `GET compact row must carry supersededBy; got: ${JSON.stringify(rowA)}`);
+    assert.equal(rowA.lane, 'work', `GET compact row must expose lane:work; got: ${JSON.stringify(rowA)}`);
+  } finally {
+    await close();
+  }
+});
+
+// ── GET /api/search default-limit-50: 8 superseded, no limit → all 8 ──────────
+
+test('D3.1 default-limit-50 GET: 8 superseded points, no limit → all 8 returned (not 5)', async () => {
+  const results = Array.from({ length: 8 }, (_, i) => ({
+    id: `sup-get-${i}-uuid`,
+    memory: `superseded get fact ${i}`,
+    metadata: {
+      id: `sup-get-${String(i).padStart(2, '0')}`,
+      title: `Sup GET ${i}`,
+      project: 'p',
+      status: 'superseded',
+      supersededBy: 'x',
+      supersededAt: `2026-05-${String(10 + i).padStart(2, '0')}T00:00:00Z`,
+    },
+    score: 0.9 - i * 0.01,
+  }));
+  const { origin, close } = await startServer({ memory: { search: async () => ({ results }) } });
+  try {
+    // GET with only_superseded=true but no limit param → default-50 rule must apply
+    const items = await callRestGetSearch(origin, { only_superseded: 'true' });
+    // 8 < 50 → all 8 must be returned
+    assert.equal(items.length, 8,
+      `default-limit-50 GET: expected 8 results (all superseded); got ${items.length}`);
+  } finally {
+    await close();
+  }
+});
+
+// ── GET /api/search pagination with only_superseded ───────────────────────────
+
+test('D3.1 only_superseded GET pagination: limit=2 returns 2 newest; offset=2 returns remainder', async () => {
+  const { origin, close } = await startServer({ memory: {
+    search: async () => ({
+      results: [
+        {
+          id: 'sup-pg-a-uuid',
+          memory: 'pag A',
+          metadata: { id: 'sup-pg-a', title: 'Pag A', project: 'p',
+            status: 'superseded', supersededBy: 'x', supersededAt: '2026-05-16T10:00:00Z' },
+          score: 0.9,
+        },
+        {
+          id: 'sup-pg-b-uuid',
+          memory: 'pag B',
+          metadata: { id: 'sup-pg-b', title: 'Pag B', project: 'p',
+            status: 'superseded', supersededBy: 'x', supersededAt: '2026-05-16T08:00:00Z' },
+          score: 0.8,
+        },
+        {
+          id: 'sup-pg-c-uuid',
+          memory: 'pag C',
+          metadata: { id: 'sup-pg-c', title: 'Pag C', project: 'p',
+            status: 'superseded', supersededBy: 'x', supersededAt: '2026-05-16T06:00:00Z' },
+          score: 0.7,
+        },
+      ],
+    }),
+  }});
+  try {
+    // Page 1
+    const page1 = await callRestGetSearch(origin, { only_superseded: 'true', limit: 2, offset: 0 });
+    const ids1 = page1.map((r) => r.id);
+    assert.deepEqual(ids1, ['sup-pg-a', 'sup-pg-b'],
+      `GET page1 must be [sup-pg-a, sup-pg-b]; got: ${ids1.join(', ')}`);
+    // Page 2
+    const page2 = await callRestGetSearch(origin, { only_superseded: 'true', limit: 2, offset: 2 });
+    const ids2 = page2.map((r) => r.id);
+    assert.deepEqual(ids2, ['sup-pg-c'],
+      `GET page2 (offset:2) must be [sup-pg-c]; got: ${ids2.join(', ')}`);
   } finally {
     await close();
   }

@@ -451,8 +451,10 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				query: { type: 'string', description: 'Semantic search query' },
-				limit: { type: 'number', description: 'Max results (default 5, max 100)' },
+				limit: { type: 'number', description: 'Max results (default 5, max 100; default 50 when only_superseded is set)' },
 				include_superseded: { type: 'boolean', description: 'Include superseded/deprecated/rejected docs' },
+				only_superseded: { type: 'boolean', description: 'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50.' },
+				offset: { type: 'integer', description: 'Pagination offset for only_superseded listing (0-based, default 0). Ignored when only_superseded is false/absent.' },
 				filters: {
 					type: 'object',
 					description: 'Metadata filters; AND-combined.',
@@ -758,6 +760,85 @@ export async function handleToolCall(name, args, ctx = {}) {
 	}
 }
 
+// ── D3.1 shared only_superseded post-processing helper ───────────────────────
+//
+// Called from ALL THREE handler surfaces (MCP, REST POST, REST GET) so the
+// inversion → mode-a/b scope → stable sort → pagination contract is ONE
+// source of truth. Rule-of-three satisfied.
+//
+// @param {Array}  items    — raw doSearch results (full metadata already present)
+// @param {object} opts
+//   lane       {string|null}  — mode (a): restrict to this partition, or null for mode (b)
+//   persona    {string|null}  — mode (a): restrict to this partition, or null for mode (b)
+//   limit      {number|null}  — caller-supplied limit (null → use default 50)
+//   offset     {number}       — pagination offset (default 0)
+//   clientFull {boolean}      — true → skip compact projection (caller does it or metadata already full)
+//   buildSnippetFn {Function} — buildSnippet(title, body) needed for compact projection
+// @returns {Array} filtered, sorted, paginated items (compact or full per clientFull)
+function applyOnlySupersededListing(items, { lane, persona, limit, offset, clientFull, buildSnippetFn }) {
+	// 1. Invert: keep only explicitly superseded records (absence-strict)
+	items = items.filter((r) => (r.metadata || {}).status === 'superseded');
+
+	// 2. Mode (a): lane and/or persona given → restrict to that partition.
+	//    Mirrors the D2 post-filter idiom: undefined !== '<slug>' so pre-D2
+	//    points with no lane/persona key are excluded when the filter is explicit.
+	if (lane != null) {
+		items = items.filter((r) => (r.metadata || {}).lane === lane);
+	}
+	if (persona != null) {
+		items = items.filter((r) => (r.metadata || {}).persona === persona);
+	}
+
+	// 3. Stable sort: supersededAt DESC, then id ASC as deterministic tiebreaker.
+	items = [...items].sort((a, b) => {
+		const atA = (a.metadata || {}).supersededAt || '';
+		const atB = (b.metadata || {}).supersededAt || '';
+		if (atA > atB) return -1;
+		if (atA < atB) return 1;
+		if (a.id < b.id) return -1;
+		if (a.id > b.id) return 1;
+		return 0;
+	});
+
+	// 4. Pagination: default limit 50 when none supplied (larger operational
+	//    window than the normal default of 5). Caller-supplied limit takes
+	//    precedence.  This is the SINGLE place the default-50 rule lives.
+	const supLimit = limit != null ? limit : 50;
+	const supOffset = offset != null ? offset : 0;
+	items = items.slice(supOffset, supOffset + supLimit);
+
+	// 5. Compact projection (skip when clientFull=true — metadata is already
+	//    preserved in the full shape). In compact mode we add supersededAt /
+	//    supersededBy unconditionally, plus lane / persona when non-null, so
+	//    mode-(b) operator calls can identify the partition without full=true.
+	if (!clientFull) {
+		items = items.map((r) => {
+			const md = r.metadata || {};
+			const compact = {
+				id: r.id,
+				title: r.title,
+				score: r.score,
+				snippet: buildSnippetFn(r.title, r.body),
+				supersededAt: md.supersededAt,
+				supersededBy: md.supersededBy,
+			};
+			if (md.lane != null) compact.lane = md.lane;
+			if (md.persona != null) compact.persona = md.persona;
+			return compact;
+		});
+	}
+
+	return items;
+}
+
+// Helper: compute effective limit for only_superseded paths.
+// When caller omits limit (null/undefined), default is 50 (not the normal 5).
+// When caller supplies an explicit limit, honor it.
+// Also returns the clamped doSearch fetch limit (caps at 100).
+function effectiveSupLimit(callerLimit) {
+	return callerLimit != null ? callerLimit : 50;
+}
+
 async function _handleToolCallInner(name, args, ctx = {}) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
@@ -786,65 +867,18 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			let response = await doSearch(args.query, limit, onlySup ? true : includeSup, true, ctx);
 			let items = response.results;
 
-			// D3.1 only_superseded branch: invert the default exclusion — return ONLY
-			// records with metadata.status === 'superseded'.  Applied before the
-			// D2 lane/persona scoping so mode (a) restricts the inverted set to a
-			// specific partition, and mode (b) (no lane/persona given) returns the
-			// full cross-partition superseded set.
+			// D3.1 only_superseded branch: delegate to shared helper so MCP, REST POST,
+			// and REST GET all share one implementation.  Behavior is byte-identical
+			// to the previous inline code; existing tests prove it.
 			if (onlySup) {
-				// Invert: keep only explicitly superseded records (absence-strict — a
-				// no-status point is NOT returned in only_superseded mode).
-				items = items.filter((r) => (r.metadata || {}).status === 'superseded');
-
-				// Mode (a): lane and/or persona given → restrict to that partition,
-				// mirroring the D2 post-filter mechanism exactly.
-				const hasLane = args.filters?.lane != null;
-				const hasPersona = args.filters?.persona != null;
-				if (hasLane) {
-					items = items.filter((r) => (r.metadata || {}).lane === args.filters.lane);
-				}
-				if (hasPersona) {
-					items = items.filter((r) => (r.metadata || {}).persona === args.filters.persona);
-				}
-
-				// Stable sort: supersededAt DESC, then id ASC as tiebreaker.
-				items = [...items].sort((a, b) => {
-					const atA = (a.metadata || {}).supersededAt || '';
-					const atB = (b.metadata || {}).supersededAt || '';
-					if (atA > atB) return -1;
-					if (atA < atB) return 1;
-					// Tiebreak by id ASC (deterministic across calls)
-					if (a.id < b.id) return -1;
-					if (a.id > b.id) return 1;
-					return 0;
+				items = applyOnlySupersededListing(items, {
+					lane: args.filters?.lane ?? null,
+					persona: args.filters?.persona ?? null,
+					limit: args.limit ?? null,
+					offset: args.offset ?? null,
+					clientFull,
+					buildSnippetFn: buildSnippet,
 				});
-
-				// Pagination: limit defaults to 50 for only_superseded (larger operational
-				// window than the default search limit of 5). offset defaults to 0.
-				const supLimit = args.limit != null ? args.limit : 50;
-				const supOffset = args.offset != null ? args.offset : 0;
-				items = items.slice(supOffset, supOffset + supLimit);
-
-				// Mode (b): no lane/persona filter — each row must expose lane, persona,
-				// supersededBy so the operator can identify the partition.  In full=true
-				// mode the metadata object is already carried through; in compact mode we
-				// include lane/persona/supersededBy alongside the compact shape.
-				if (!clientFull) {
-					items = items.map((r) => {
-						const md = r.metadata || {};
-						const compact = {
-							id: r.id,
-							title: r.title,
-							score: r.score,
-							snippet: buildSnippet(r.title, r.body),
-							supersededAt: md.supersededAt,
-							supersededBy: md.supersededBy,
-						};
-						if (md.lane != null) compact.lane = md.lane;
-						if (md.persona != null) compact.persona = md.persona;
-						return compact;
-					});
-				}
 				// §4.1 extensibility contract preserved
 				const { results: _prev, ...responseExtras } = response;
 				return JSON.stringify(listEnvelope(items, responseExtras));
@@ -2260,7 +2294,13 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false, only_superseded = false, offset: bodyOffset = 0, filters, full: fullBody } = JSON.parse(await readBody(req));
+			// NOTE: `limit` is intentionally NOT given a destructuring default here so we
+			// can distinguish "caller omitted limit" (null/undefined → only_superseded default
+			// rule applies: 50) from "caller sent limit=5" (explicit → honor 5).
+			const { query, limit: limitRaw, include_superseded = false, only_superseded = false, offset: bodyOffset = 0, filters, full: fullBody } = JSON.parse(await readBody(req));
+			// Apply the normal non-only_superseded default of 5 separately so it's still
+			// visible to downstream non-only_superseded logic.
+			const limit = limitRaw !== undefined && limitRaw !== null ? limitRaw : 5;
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'query is required')));
@@ -2281,55 +2321,40 @@ export function createRequestHandler(ctx = {}) {
 			}
 			const includeSup = include_superseded === true;
 			const onlySup = only_superseded === true;
-			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
-			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			// hasExplicitLimit: true only when the caller actually sent a `limit` in the
+			// request body (limitRaw !== undefined/null). This distinguishes "sent 5" from
+			// "omitted limit" — the latter triggers the only_superseded default-50 rule.
+			const hasExplicitLimit = limitRaw !== undefined && limitRaw !== null;
+			const rawLimitPost = hasExplicitLimit ? (typeof limitRaw === 'number' ? limitRaw : parseInt(limitRaw, 10)) : NaN;
+			const clampedLimitPost = hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
+			// For the doSearch fetch window: when only_superseded and no explicit limit,
+			// fetch up to 50 (default) so the pagination slice has enough material.
+			// effectiveSupLimit(null) = 50; effectiveSupLimit(n) = n.
+			const fetchLimitPost = onlySup
+				? Math.min(effectiveSupLimit(hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? rawLimitPost : null), 100)
+				: clampedLimitPost;
 			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
 			// then project to compact shape at the end if the client did not request full.
 			// D3.1: when only_superseded set, pass includeSup=true so doSearch keeps
 			// superseded records for inversion below. only_superseded wins over include_superseded.
-			let response = await doSearch(query, clampedLimitPost, onlySup ? true : includeSup, true, ctx);
+			let response = await doSearch(query, fetchLimitPost, onlySup ? true : includeSup, true, ctx);
 
-			// D3.1 only_superseded branch (mirrors MCP handler exactly).
+			// D3.1 only_superseded branch: delegate to shared helper.
 			if (onlySup) {
-				let items = response.results;
-				// Invert: only explicitly superseded records
-				items = items.filter((r) => (r.metadata || {}).status === 'superseded');
-				// Mode (a): lane/persona filter restricts to that partition
-				if (filters && typeof filters === 'object') {
-					if (filters.lane) items = items.filter((r) => (r.metadata || {}).lane === filters.lane);
-					if (filters.persona) items = items.filter((r) => (r.metadata || {}).persona === filters.persona);
-				}
-				// Stable sort: supersededAt DESC, id ASC tiebreak
-				items = [...items].sort((a, b) => {
-					const atA = (a.metadata || {}).supersededAt || '';
-					const atB = (b.metadata || {}).supersededAt || '';
-					if (atA > atB) return -1;
-					if (atA < atB) return 1;
-					if (a.id < b.id) return -1;
-					if (a.id > b.id) return 1;
-					return 0;
+				// callerLimit: null when no explicit limit supplied (helper uses default 50).
+				// Use the same hasExplicitLimit sentinel to stay consistent with fetchLimitPost.
+				const callerLimit = (hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0)
+					? Math.min(rawLimitPost, 100)
+					: null;
+				let items = applyOnlySupersededListing(response.results, {
+					lane: (filters && typeof filters === 'object' && filters.lane != null) ? filters.lane : null,
+					persona: (filters && typeof filters === 'object' && filters.persona != null) ? filters.persona : null,
+					limit: callerLimit,
+					offset: bodyOffset,
+					clientFull: fullReq,
+					buildSnippetFn: buildSnippet,
 				});
-				// Pagination: default limit 50, offset 0
-				const supLimit = (typeof limit === 'number' ? limit : parseInt(limit, 10)) || 50;
-				items = items.slice(bodyOffset, bodyOffset + supLimit);
-				// Compact projection with lane/persona/supersededBy exposed
-				if (!fullReq) {
-					items = items.map((r) => {
-						const md = r.metadata || {};
-						const compact = {
-							id: r.id,
-							title: r.title,
-							score: r.score,
-							snippet: buildSnippet(r.title, r.body),
-							supersededAt: md.supersededAt,
-							supersededBy: md.supersededBy,
-						};
-						if (md.lane != null) compact.lane = md.lane;
-						if (md.persona != null) compact.persona = md.persona;
-						return compact;
-					});
-				}
 				const { results: _prev, ...responseExtras } = response;
 				response = listEnvelope(items, responseExtras);
 				res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2374,9 +2399,11 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/api/search' && req.method === 'GET') {
 			const q = url.searchParams.get('q') || '';
-			const rawLimit = parseInt(url.searchParams.get('limit') || '5', 10);
-			const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 5;
+			const rawLimitGet = parseInt(url.searchParams.get('limit') || '', 10);
+			const hasExplicitLimitGet = Number.isFinite(rawLimitGet) && rawLimitGet > 0;
 			const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+			const onlySupGet = url.searchParams.get('only_superseded') === 'true';
+			const rawOffsetGet = Number(url.searchParams.get('offset')) || 0;
 			const typeFilter = url.searchParams.get('type') || null;
 			const fullReq = url.searchParams.get('full') === '1';
 			if (!q) {
@@ -2384,9 +2411,33 @@ export function createRequestHandler(ctx = {}) {
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'q parameter is required')));
 				return;
 			}
+			// D3.1 GET parity: for only_superseded, derive the fetch limit using the
+			// same default-50 rule as MCP and REST POST.
+			const fetchLimitGet = onlySupGet
+				? Math.min(effectiveSupLimit(hasExplicitLimitGet ? rawLimitGet : null), 100)
+				: (hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : 5);
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(q, limit, includeSuperseded, true, ctx);
+			let response = await doSearch(q, fetchLimitGet, onlySupGet ? true : includeSuperseded, true, ctx);
+
+			// D3.1 only_superseded branch for GET: delegate to shared helper.
+			if (onlySupGet) {
+				const callerLimitGet = hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : null;
+				const items = applyOnlySupersededListing(response.results, {
+					lane: null,  // GET query-string form does not support lane/persona filters
+					persona: null,
+					limit: callerLimitGet,
+					offset: rawOffsetGet,
+					clientFull: fullReq,
+					buildSnippetFn: buildSnippet,
+				});
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(response));
+				return;
+			}
+
 			if (typeFilter) {
 				const items = (response.results || []).filter((r) => (r.metadata || {}).type === typeFilter);
 				// Preserve §4.1 siblings (e.g., provider, latency_ms) that doSearch

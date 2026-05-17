@@ -93,6 +93,7 @@ Additive metadata partitions for **qdrant writes**. Both fields are slug-shaped 
 
 - `memory_search` (MCP) — `args.filters.{lane, persona}`
 - REST `POST /api/search` — `body.filters.{lane, persona}`
+- REST `GET /api/search` — does NOT support `filters` (query-string form); lane/persona filtering requires POST
 
 Read filters AND-combine with the existing `filters.project` and `filters.type`. `memory_list`, `memory_recent`, `memory_state` are vault-backed and NOT extended in D2.
 
@@ -131,13 +132,15 @@ Semantic search over stored memories using vector similarity, with optional stat
 
 **`only_superseded` — two-mode listing (v1.1 D3.1):**
 
-Used by operators and the auto-supersession system to inspect supersession history. Inverts the default status exclusion: returns ONLY records with `metadata.status === 'superseded'`. A no-status (pre-D3) record is NOT returned in this mode.
+Available on all three search surfaces: `memory_search` (MCP), `POST /api/search`, and `GET /api/search` (query param `only_superseded=true`). Used by operators and the auto-supersession system to inspect supersession history. Inverts the default status exclusion: returns ONLY records with `metadata.status === 'superseded'`. A no-status (pre-D3) record is NOT returned in this mode.
 
 **Mode (a) — partition-scoped (when `filters.lane` and/or `filters.persona` given):**
-Returns superseded records within that lane/persona partition only. Uses the same AND-combined lane/persona JS post-filter as the normal D2 path.
+Returns superseded records within that lane/persona partition only. Uses the same AND-combined lane/persona JS post-filter as the normal D2 path. **Available on MCP and REST POST only** — GET query-string form does not support `filters`, so GET is mode (b) only.
 
 **Mode (b) — cross-partition (neither `filters.lane` nor `filters.persona` given):**
-Returns ALL superseded records for the user across every partition. Each returned row exposes its `lane`, `persona`, and `supersededBy` so the operator can see which partition each record came from. In `full=true` mode these are carried in the `metadata` object; in compact mode they are added as top-level row fields.
+Returns ALL superseded records for the user across every partition. Each returned row exposes its `lane`, `persona`, and `supersededBy` so the operator can see which partition each record came from. In `full=true` mode these are carried in the `metadata` object; in compact mode they are added as top-level row fields. GET always runs in mode (b).
+
+**Pagination on GET:** use `?only_superseded=true&offset=<n>&limit=<n>` (default limit 50, default offset 0).
 
 **Sort:** `supersededAt` DESC (newest supersession first), then `id` ASC as a stable tiebreaker for equal timestamps — deterministic across repeated calls.
 
