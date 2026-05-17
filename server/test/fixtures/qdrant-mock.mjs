@@ -162,8 +162,8 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
     upsertError: null,
     // D2 (R12): opt-in filter evaluation for `scroll` / `search`. When
     // false (default), the mock returns the pre-seeded result unchanged.
-    // When true, the filter's `must` arms are applied to scrollResult /
-    // searchResult and only matching points are returned.
+    // When true, the filter's `must` and `must_not` arms are applied to
+    // scrollResult / searchResult and only matching points are returned.
     // NB: the seeded-_store path ALWAYS applies filters regardless of this flag.
     honorFilters: false,
     client: {
