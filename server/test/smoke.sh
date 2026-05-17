@@ -8,7 +8,8 @@
 #   - If mem0 extracts any facts, /api/list contains their IDs and
 #     DELETE /api/:id removes them cleanly (memory count returns to baseline)
 #   - /api/search returns { results: [...] } wrapper (not bare array)
-#   - Default filter excludes status=superseded/deprecated/rejected and invalidated_at docs
+#   - Default filter excludes docs with invalidated_at set; status is server-managed (D3.1 auto-stamp)
+#   - /api/add rejects caller-supplied reserved metadata fields (D3.1 §3.2 guard)
 #   - include_superseded=true bypasses the filter (POST body + GET query param)
 #   - Legacy docs with no metadata are still returned (backward compat)
 #
@@ -377,7 +378,12 @@ for id in $IDS; do
 done
 [ "$NUM_ADDED" -gt 0 ] && echo "[smoke]     deleted $NUM_ADDED record(s)"
 
-# 4b/5 Task 6: status=current filter tests (Cases A–E)
+# 4b/5 Task 6: D3.1 filter + guard tests (Cases A–E)
+# Case A: auto-stamped current doc (no metadata.status injected; server stamps it)
+#          returned by default search — validates D3.1 auto-stamp E2E
+# Case B: /api/add with reserved metadata.status rejected (D3.1 §3.2 guard) — no doc created
+# Case D: legacy no-metadata doc returned by default search (backward compat)
+# Case E: invalidated_at doc excluded from default search (filter still works)
 echo "[smoke] 4b/5 Task 6 filter tests"
 T6_IDS=""
 
@@ -397,21 +403,43 @@ for r in data.get('results', []):
 
 T6_QUERY="xyzzy-task6-filter-probe-$(date +%s)-$$"
 
-# v1.1 D1 flag-flip note: case texts are topic-orthogonal (arctic vs music vs
-# cooking vs butterflies) so the embedding cosines stay below the dedup
-# threshold τ=0.84 and the four writes do not collapse into a single qdrant
+# v1.1 D1 flag-flip note: case texts are topic-orthogonal (arctic vs sourdough
+# vs butterflies) so the embedding cosines stay below the dedup threshold
+# τ=0.84 and the three writes (A, D, E) do not collapse into a single qdrant
 # point. Each text still contains ${T6_QUERY}-LETTER so /api/search keyed
-# on $T6_QUERY retrieves them.
+# on $T6_QUERY retrieves them. (Case B is a guard-probe only — no doc created.)
 
-# Case A: status=current doc — must appear in default search
-echo "[smoke]     Case A: status=current doc returned by default search"
-IDS_A=$(t6_add "The probe marker ${T6_QUERY}-A is associated with arctic ice core samples collected from Siberian permafrost." '{"status":"current","t6":"a"}')
+# Case A: auto-stamped current doc — must appear in default search.
+# D3.1 change: status is now server-managed; do NOT inject metadata.status.
+# buildPayload auto-stamps status:'current' on every new qdrant fact, so this
+# doc IS a current doc. Also implicitly E2E-validates D3.1 auto-stamp: no
+# injected status, server stamps current, doc is still recalled by default search.
+echo "[smoke]     Case A: auto-stamped (server-managed) current doc returned by default search"
+IDS_A=$(t6_add "The probe marker ${T6_QUERY}-A is associated with arctic ice core samples collected from Siberian permafrost." '{"t6":"a"}')
 T6_IDS="$T6_IDS $IDS_A"
 
-# Case B: status=superseded doc — must NOT appear in default search
-echo "[smoke]     Case B: status=superseded doc excluded by default search"
-IDS_B=$(t6_add "The probe marker ${T6_QUERY}-B is associated with baroque chamber music notation from 17th century Italy." '{"status":"superseded","t6":"b"}')
-T6_IDS="$T6_IDS $IDS_B"
+# Case B: /api/add with reserved metadata.status MUST be rejected (D3.1 §3.2 guard).
+# D3.1 added status/supersededBy/supersededAt to RESERVED_METADATA_FIELDS; assertNoReservedFields
+# now blocks any caller attempting to inject status. No doc is created; IDS_B is intentionally
+# absent from T6_IDS. Use direct curl (not t6_add) to capture both HTTP code and body.
+echo "[smoke]     Case B: /api/add with reserved metadata.status is rejected (D3.1 §3.2 guard)"
+B_BODY=$(curl -s -o - -w '\n__HTTP__%{http_code}' -X POST "$ENDPOINT/api/add" \
+    -H 'Content-Type: application/json' \
+    -d "{\"text\": \"The probe marker ${T6_QUERY}-B is associated with baroque chamber music notation from 17th century Italy.\", \"metadata\": {\"status\":\"superseded\",\"t6\":\"b\"}}")
+B_CODE=$(printf '%s' "$B_BODY" | sed -n 's/.*__HTTP__//p')
+B_JSON=$(printf '%s' "$B_BODY" | sed 's/__HTTP__[0-9]*$//')
+# Assert: server returned an error (HTTP >= 400) with a reserved-field error message.
+if [ -z "$B_CODE" ] || [ "$B_CODE" -lt 400 ]; then
+    echo "FAIL Case B: expected HTTP >=400 rejection for reserved metadata.status, got HTTP ${B_CODE:-<empty>}"
+    echo "  body: $B_JSON"
+    exit 1
+fi
+if ! printf '%s' "$B_JSON" | grep -qi reserved; then
+    echo "FAIL Case B: HTTP ${B_CODE} but body does not mention 'reserved' — guard may not have fired"
+    echo "  body: $B_JSON"
+    exit 1
+fi
+echo "OK Case B: reserved-field guard rejected metadata.status with HTTP ${B_CODE} (expected)"
 
 # Case D: no-metadata (legacy) doc — must appear in default search
 echo "[smoke]     Case D: legacy no-metadata doc returned by default search"
@@ -459,21 +487,6 @@ for id in '$IDS_A'.split():
 " || true
 fi
 
-# Case B: superseded doc excluded from default results
-if [ -n "$IDS_B" ]; then
-	echo "$SHAPE_RESP" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-ids = set(r.get('id','') for r in data['results'])
-for id in '$IDS_B'.split():
-    if id not in ids:
-        print(f'OK Case B: superseded doc {id} excluded from default results (expected)')
-    else:
-        print(f'FAIL Case B: superseded doc {id} appeared in default results — filter not working')
-        sys.exit(1)
-" || { echo "FAIL: Case B superseded filter check failed"; exit 1; }
-fi
-
 # Case E: invalidated_at doc excluded from default results
 if [ -n "$IDS_E" ]; then
 	echo "$SHAPE_RESP" | python3 -c "
@@ -489,40 +502,29 @@ for id in '$IDS_E'.split():
 " || { echo "FAIL: Case E invalidated_at filter check failed"; exit 1; }
 fi
 
-# Case C: include_superseded=true returns superseded docs (POST body form)
-if [ -n "$IDS_B" ]; then
-	echo "[smoke]     Case C: include_superseded=true (POST body) returns superseded doc"
-	INC_RESP=$(curl -sf -X POST "$ENDPOINT/api/search" \
-		-H 'Content-Type: application/json' \
-		-d "{\"query\": \"$T6_QUERY\", \"limit\": 20, \"include_superseded\": true}")
-	echo "$INC_RESP" | python3 -c "
+# Case C: include_superseded=true — shape smoke (no superseded doc in D3.1 scope;
+# the genuine superseded-qdrant-fact E2E is D3.2's planned deliverable, T2.5
+# UM_SMOKE_AUTOSUPERSEDE_ON). Shape-only: assert {results:[...]} wrapper is present.
+echo "[smoke]     Case C: include_superseded=true (POST body) — shape check only"
+INC_RESP=$(curl -sf -X POST "$ENDPOINT/api/search" \
+    -H 'Content-Type: application/json' \
+    -d "{\"query\": \"$T6_QUERY\", \"limit\": 20, \"include_superseded\": true}")
+echo "$INC_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 assert isinstance(data, dict) and 'results' in data, 'FAIL: include_superseded response missing {results} wrapper'
-ids = set(r.get('id','') for r in data['results'])
-for id in '$IDS_B'.split():
-    if id in ids:
-        print(f'OK Case C (POST): superseded doc {id} present when include_superseded=true')
-    else:
-        print(f'WARN Case C (POST): superseded doc {id} not found — may be relevance threshold')
-" || true
+print('OK Case C (POST): include_superseded=true returns {results:[...]} shape')
+" || { echo "FAIL: Case C include_superseded shape check failed"; exit 1; }
 
-	# Case C also: GET ?include_superseded=true
-	echo "[smoke]     Case C: include_superseded=true (GET query param) returns superseded doc"
-	GET_INC_RESP=$(curl -sf "$ENDPOINT/api/search?q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$T6_QUERY'))")&limit=20&include_superseded=true")
-	echo "$GET_INC_RESP" | python3 -c "
+# Case C also: GET ?include_superseded=true — shape check
+echo "[smoke]     Case C: include_superseded=true (GET query param) — shape check only"
+GET_INC_RESP=$(curl -sf "$ENDPOINT/api/search?q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$T6_QUERY'))")&limit=20&include_superseded=true")
+echo "$GET_INC_RESP" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 assert isinstance(data, dict) and 'results' in data, 'FAIL: GET include_superseded response missing {results} wrapper'
-ids = set(r.get('id','') for r in data['results'])
-for id in '$IDS_B'.split():
-    if id in ids:
-        print(f'OK Case C (GET): superseded doc {id} present when include_superseded=true')
-    else:
-        print(f'WARN Case C (GET): superseded doc {id} not found — may be relevance threshold')
-print('OK: GET /api/search with query params works')
-" || true
-fi
+print('OK Case C (GET): GET /api/search with include_superseded=true returns {results:[...]} shape')
+" || { echo "FAIL: Case C GET include_superseded shape check failed"; exit 1; }
 
 # GET /api/search without include_superseded — shape check
 echo "[smoke]     GET /api/search default (no include_superseded)"

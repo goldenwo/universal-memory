@@ -915,3 +915,124 @@ test('T18: legacy point (no lane key) + new write with NO lane → DEDUP_MERGED 
     assert.equal(qdrant.setPayloads.length, 1, 'mergeSurface fired');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D3.1 — Task 1.4: dedup layers exclude status:'superseded' tombstones.
+// R1-Lens-A-G4. Both checkContentHashDedup and checkEmbeddingDedup must return
+// null when the only matching candidate has status:'superseded'. A point with
+// NO status key (pre-D3/legacy) must still return as a dedup hit (absence-
+// tolerance invariant: exclusion = must_not superseded, NOT must current).
+// ---------------------------------------------------------------------------
+
+import { checkContentHashDedup, checkEmbeddingDedup } from '../lib/dedup.mjs';
+
+// T19: hash-dedup skips a superseded tombstone — re-assert produces a fresh point (null hit).
+test('T19: D3.1 hash-dedup skips superseded tombstone (re-assert => fresh point)', async () => {
+  const mock = makeMockQdrant({
+    points: [{ id: 'tombstone-h', payload: { userId: 'u', hash: 'H', status: 'superseded' } }],
+  });
+  const hit = await checkContentHashDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    hash: 'H',
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.equal(hit, null, 'superseded point must NOT be returned as a hash dedup hit');
+});
+
+// T20: embedding-dedup skips a superseded tombstone — same exclusion via search filter.
+test('T20: D3.1 embedding-dedup skips superseded tombstone (re-assert => fresh point)', async () => {
+  const mock = makeMockQdrant({
+    points: [{
+      id: 'tombstone-e',
+      payload: { userId: 'u', status: 'superseded' },
+      // score would make it a hit if not excluded
+      score: 0.99,
+    }],
+  });
+  const hit = await checkEmbeddingDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    vector: [0.1, 0.2],
+    threshold: 0.84,
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.equal(hit, null, 'superseded point must NOT be returned as an embedding dedup hit');
+});
+
+// T21a: absence-tolerance — hash-dedup: a point with NO status key is still a valid dedup hit.
+// Proves the exclusion is "must_not status==superseded", NOT "must status==current".
+// Pre-D3 facts have no status key; they must still dedup-merge normally.
+test('T21a: D3.1 absence-tolerance — hash-dedup: no-status point IS still a dedup hit', async () => {
+  const mock = makeMockQdrant({
+    points: [{ id: 'pre-d3-point', payload: { userId: 'u', hash: 'H' } }],
+    // No 'status' key at all — mimics every pre-D3 fact in production
+  });
+  const hit = await checkContentHashDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    hash: 'H',
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.ok(hit !== null, 'no-status (pre-D3) point must still be returned as a hash dedup hit');
+  assert.equal(hit.id, 'pre-d3-point');
+});
+
+// T21b: absence-tolerance — embedding-dedup: a point with NO status key is still a valid dedup hit.
+test('T21b: D3.1 absence-tolerance — embedding-dedup: no-status point IS still a dedup hit', async () => {
+  const mock = makeMockQdrant({
+    points: [{ id: 'pre-d3-emb', payload: { userId: 'u' }, score: 0.99 }],
+  });
+  const hit = await checkEmbeddingDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    vector: [0.1, 0.2],
+    threshold: 0.84,
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.ok(hit !== null, 'no-status (pre-D3) point must still be returned as an embedding dedup hit');
+  assert.equal(hit.id, 'pre-d3-emb');
+});
+
+// T22a: sanity — hash-dedup: a point with status:'current' is still a valid dedup hit.
+test('T22a: D3.1 sanity — hash-dedup: status:current point IS still a dedup hit', async () => {
+  const mock = makeMockQdrant({
+    points: [{ id: 'current-h', payload: { userId: 'u', hash: 'H', status: 'current' } }],
+  });
+  const hit = await checkContentHashDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    hash: 'H',
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.ok(hit !== null, 'status:current point must still be returned as a hash dedup hit');
+  assert.equal(hit.id, 'current-h');
+});
+
+// T22b: sanity — embedding-dedup: a point with status:'current' is still a valid dedup hit.
+test('T22b: D3.1 sanity — embedding-dedup: status:current point IS still a dedup hit', async () => {
+  const mock = makeMockQdrant({
+    points: [{ id: 'current-e', payload: { userId: 'u', status: 'current' }, score: 0.99 }],
+  });
+  const hit = await checkEmbeddingDedup({
+    client: mock.client,
+    collection: 'c',
+    userId: 'u',
+    vector: [0.1, 0.2],
+    threshold: 0.84,
+    lane: undefined,
+    persona: undefined,
+  });
+  assert.ok(hit !== null, 'status:current point must still be returned as an embedding dedup hit');
+  assert.equal(hit.id, 'current-e');
+});

@@ -35,6 +35,27 @@ export const RESERVED_METADATA_FIELDS = Object.freeze([
   'dedupVersion',
   'dedupLastSeenAt',
   'systemMigration',
+  'status',
+  'supersededBy',
+  'supersededAt',
+]);
+
+/**
+ * Subset of RESERVED_METADATA_FIELDS that D3.1 added for server-managed
+ * supersession state. These three fields appear legitimately in vault-authored
+ * doc frontmatter (e.g. `status: superseded`) and must be accepted by the
+ * trusted server reindex/bulk-import path (_systemMigration:true) so that
+ * pre-existing authored-doc supersession is not broken.
+ *
+ * The exemption is scoped ONLY to these 3 fields and ONLY on the trusted path.
+ * The original 6 pre-D3.1 fields remain blocked unconditionally (spec R5/G11).
+ * See spec §2 ("vault-backed authored-doc supersession … D3.1 does not touch
+ * that path") and §3.2 (external callers must not forge supersession state).
+ */
+export const D3_SERVER_MANAGED_STATUS_FIELDS = Object.freeze([
+  'status',
+  'supersededBy',
+  'supersededAt',
 ]);
 
 /**
@@ -71,10 +92,21 @@ export class ReservedMetadataFieldError extends Error {
  *
  * Runs OUTSIDE withRequestContext (spec §4.5.1 + plan D.1) — caller-input
  * errors should not acquire a request-id child logger.
+ *
+ * @param {object|null|undefined} metadata - Caller-supplied metadata to validate.
+ * @param {object}  [opts]
+ * @param {boolean} [opts.trustedServerPath=false] - When true (set by umAdd on the
+ *   _systemMigration:true path), the 3 D3.1-managed supersession-state fields
+ *   (`status`, `supersededBy`, `supersededAt`) are exempted from rejection.
+ *   These fields appear legitimately in vault-authored doc frontmatter that the
+ *   reindex / bulk-import path passes through as server-trusted input. The
+ *   original 6 pre-D3.1 reserved fields remain blocked regardless (spec R5/G11).
+ *   See D3_SERVER_MANAGED_STATUS_FIELDS and spec §2 / §3.2.
  */
-export function assertNoReservedFields(metadata) {
+export function assertNoReservedFields(metadata, { trustedServerPath = false } = {}) {
   if (!metadata || typeof metadata !== 'object') return;
   for (const field of RESERVED_METADATA_FIELDS) {
+    if (trustedServerPath && D3_SERVER_MANAGED_STATUS_FIELDS.includes(field)) continue;
     if (Object.prototype.hasOwnProperty.call(metadata, field)) {
       throw new ReservedMetadataFieldError(field);
     }

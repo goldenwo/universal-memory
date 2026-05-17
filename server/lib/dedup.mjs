@@ -99,6 +99,12 @@ export async function checkContentHashDedup({ client, collection, userId, hash, 
           partitionArm('lane', lane),
           partitionArm('persona', persona),
         ],
+        // D3.1 §4.1 — exclude superseded tombstones so a re-assert of a
+        // superseded fact creates a fresh point rather than merging into the
+        // dead one. Expressed as must_not (not must status==current) so that
+        // pre-D3 points with NO status key are correctly treated as current
+        // and still match (absence-tolerance invariant).
+        must_not: [{ key: 'status', match: { value: 'superseded' } }],
       },
       limit: 1,
       with_payload: true,
@@ -148,6 +154,10 @@ export async function checkEmbeddingDedup({ client, collection, userId, vector, 
           partitionArm('lane', lane),
           partitionArm('persona', persona),
         ],
+        // D3.1 §4.2 — same superseded-exclusion as Layer 1. must_not so that
+        // pre-D3 points without a status key are still valid dedup candidates
+        // (absence-tolerance invariant: must_not superseded ≠ must current).
+        must_not: [{ key: 'status', match: { value: 'superseded' } }],
       },
       limit: 1,
       score_threshold: threshold,

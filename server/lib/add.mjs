@@ -59,7 +59,7 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
-async function getRealClient(memory) {
+export async function getRealClient(memory) {
   // mem0ai 2.4.6: host/port/collectionName are under memory.config.vectorStore.config
   const { host, port } = memory.config.vectorStore.config;
   const { QdrantClient } = await import('@qdrant/js-client-rest');
@@ -94,6 +94,7 @@ function buildPayload({ userId, text, metadata, surface, lane, persona }) {
     ...(projects ? { projects } : {}),
     dedupCount: 1,
     dedupVersion: 1,
+    status: 'current',
   };
 }
 
@@ -150,7 +151,10 @@ export async function umAdd({
   // Runs OUTSIDE withRequestContext (line below) so caller-input errors don't
   // acquire a request-id child logger context — they're the caller's bug, not
   // a downstream-system error class.
-  assertNoReservedFields(metadata);
+  // trustedServerPath:true on the _systemMigration path exempts the 3 D3.1-managed
+  // supersession-state fields (status/supersededBy/supersededAt) so vault-authored
+  // docs carrying frontmatter `status:` survive reindex (spec §2 / §3.2 fix).
+  assertNoReservedFields(metadata, { trustedServerPath: _systemMigration === true });
 
   // D2 §4.1 — stage out + validate lane/persona BEFORE any side effect so the
   // metadata-spread in buildPayload doesn't leak null/undefined values into

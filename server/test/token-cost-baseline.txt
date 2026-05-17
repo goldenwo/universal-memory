@@ -21,7 +21,7 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   @anthropic-ai/tokenizer: approximation (per package README)
   Surface consumed by: all model surfaces (mixed)
 
-  memory_search       tiktoken=   270  anthropic=   280
+  memory_search       tiktoken=   422  anthropic=   438
   memory_add          tiktoken=   194  anthropic=   204
   memory_list         tiktoken=    79  anthropic=    79
   memory_delete       tiktoken=    30  anthropic=    30
@@ -30,10 +30,10 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
   memory_capture      tiktoken=   227  anthropic=   239
   memory_checkpoint   tiktoken=   125  anthropic=   133
   memory_forget       tiktoken=    64  anthropic=    68
-  memory_supersede    tiktoken=   152  anthropic=   161
+  memory_supersede    tiktoken=   278  anthropic=   287
   memory_append_turn  tiktoken=   190  anthropic=   200
 
-  TOTAL               tiktoken=  1512  anthropic=  1580
+  TOTAL               tiktoken=  1790  anthropic=  1864
   (11 tools measured)
 
 === LOCATION 2: MCP response payloads ===
