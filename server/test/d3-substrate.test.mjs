@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RESERVED_METADATA_FIELDS, assertNoReservedFields } from '../lib/dedup-constants.mjs';
 import { umAdd } from '../lib/add.mjs';
+// T1.3: fixture mock with seed + _get + additive setPayload (D3.1 substrate)
+import { makeMockQdrant as makeSeededMockQdrant } from './fixtures/qdrant-mock.mjs';
 
 // ── Shared mock helpers (mirrors add.test.mjs idiom) ─────────────────────
 function makeMockQdrant() {
@@ -49,4 +51,27 @@ test('D3.1 buildPayload stamps status:current', async () => {
   assert.equal(qdrant.upserts.length, 1, 'expected exactly one upsert');
   const payload = qdrant.upserts[0].body.points[0].payload;
   assert.equal(payload.status, 'current', 'buildPayload must stamp status:current on every new write');
+});
+
+// ── T1.3 ─────────────────────────────────────────────────────────────────
+test('D3.1 supersede then unsupersede round-trip', async () => {
+  const mock = makeSeededMockQdrant({ points: [{ id: 'p1', payload: { userId: 'u', status: 'current', data: 'x' } }] });
+  const { supersedePoint, unsupersedePoint } = await import('../lib/supersede.mjs');
+  await supersedePoint({ client: mock.client, collection: 'c', id: 'p1', supersededBy: 'p2' });
+  let pt = mock.client._get('p1');
+  assert.equal(pt.payload.status, 'superseded');
+  assert.equal(pt.payload.supersededBy, 'p2');
+  assert.ok(pt.payload.supersededAt);
+  await unsupersedePoint({ client: mock.client, collection: 'c', id: 'p1' });
+  pt = mock.client._get('p1');
+  assert.equal(pt.payload.status, 'current');
+  assert.equal(pt.payload.supersededBy, null);
+  assert.equal(pt.payload.supersededAt, null);
+});
+
+test('D3.1 supersede is idempotent (re-apply = same terminal state)', async () => {
+  const mock = makeSeededMockQdrant({ points: [{ id: 'p1', payload: { userId: 'u', status: 'superseded', supersededBy: 'p2' } }] });
+  const { supersedePoint } = await import('../lib/supersede.mjs');
+  await supersedePoint({ client: mock.client, collection: 'c', id: 'p1', supersededBy: 'p2' });
+  assert.equal(mock.client._get('p1').payload.status, 'superseded');
 });

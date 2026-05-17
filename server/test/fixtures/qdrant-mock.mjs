@@ -77,11 +77,23 @@ function applyMustFilter(points, filter) {
  * returns the pre-seeded value unchanged — backward-compatible. Existing
  * D1 dedup tests do not need to opt in.
  */
-export function makeMockQdrant() {
+/**
+ * @param {object} [seed={}] - Optional seed object.
+ * @param {Array}  [seed.points=[]] - Initial points to pre-populate `_store`.
+ *   Each element should be `{ id, payload }`. Enables `client._get(id)` and
+ *   additive `setPayload` mutation for D3 supersede/unsupersede tests.
+ *   Existing callers that pass no args are unaffected (backward-compatible).
+ */
+export function makeMockQdrant({ points: seedPoints = [] } = {}) {
   const upserts = [];
   const scrolls = [];
   const searches = [];
   const setPayloads = [];
+
+  // D3.1: internal point store — supports _get() read-back and additive
+  // setPayload mutation, mirroring real qdrant's partial-merge behaviour.
+  const _store = new Map(seedPoints.map((p) => [p.id, { ...p, payload: { ...(p.payload ?? {}) } }]));
+
   const mock = {
     upserts,
     scrolls,
@@ -123,8 +135,23 @@ export function makeMockQdrant() {
       setPayload: async (collection, body) => {
         setPayloads.push({ collection, body });
         if (mock.setPayloadError) throw mock.setPayloadError;
+        // D3.1: additive merge into _store — mirrors real qdrant setPayload
+        // which partially updates only the supplied keys, leaving others intact.
+        // Keys set to null are stored as null (real qdrant cannot delete keys).
+        const ids = body?.points ?? [];
+        const patch = body?.payload ?? {};
+        for (const id of ids) {
+          if (_store.has(id)) {
+            const stored = _store.get(id);
+            stored.payload = { ...stored.payload, ...patch };
+          }
+        }
         return { status: 'ok' };
       },
+      // D3.1: read-back helper — returns the stored point object (with
+      // current payload after any setPayload mutations) for a given id.
+      // Only works for points pre-seeded via makeMockQdrant({ points: [...] }).
+      _get: (id) => _store.get(id),
     },
   };
   return mock;
