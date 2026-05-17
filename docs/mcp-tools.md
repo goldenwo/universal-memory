@@ -641,7 +641,7 @@ curl -s http://localhost:6335/mcp \
 
 Flip a previously-superseded qdrant-fact point back to `status:'current'`. This is the inverse of the supersede path — an operator undo surface for when a supersession was applied in error or needs reverting.
 
-**Requires `UM_MCP_WRITE_ENABLED=true`.**
+**Requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`.**
 
 **Input schema:**
 
