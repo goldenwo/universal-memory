@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { unsupersedePoint } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
 import { withRetry } from './lib/retry.mjs';
@@ -582,10 +583,11 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_supersede',
-		description: 'Replace an existing document with a new one — old doc gets status=superseded, new doc is created (requires UM_MCP_WRITE_ENABLED=true)',
+		description: 'Replace an existing document with a new one — old doc gets status=superseded, new doc is created (requires UM_MCP_WRITE_ENABLED=true). Also supports action="unsupersede" + id to restore a superseded qdrant-fact point to status:current (operator undo, §3.7).',
 		inputSchema: {
 			type: 'object',
 			properties: {
+				// ── vault-doc supersede (default path) ───────────────────────────────
 				old_id: { type: 'string', description: 'ID of the document to supersede' },
 				new_doc: {
 					type: 'object',
@@ -599,8 +601,11 @@ export const TOOLS = [
 					},
 					required: ['type', 'id', 'title', 'content'],
 				},
+				// ── D3.1 §3.7 qdrant-fact unsupersede (action path) ─────────────────
+				action: { type: 'string', enum: ['unsupersede'], description: 'Action to perform. "unsupersede": restore a superseded qdrant-fact point to status:current (operator undo).' },
+				id: { type: 'string', description: 'Qdrant-fact point id to restore (required when action="unsupersede").' },
 			},
-			required: ['old_id', 'new_doc'],
+			required: [],
 		},
 	},
 	// ── v0.5: append-turn tool ────────────────────────────────────────────────
@@ -1125,6 +1130,43 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 		}
 
 		case 'memory_supersede': {
+			// ── D3.1 §3.7: unsupersede action (qdrant-fact operator undo) ────────────
+			// Dispatched BEFORE the vault-doc path so `old_id` guard does not fire
+			// when the caller supplies { action: 'unsupersede', id: '<point-id>' }.
+			// Auth envelope is IDENTICAL to the vault-doc path: same isWriteEnabled()
+			// call, same errorResponse() arguments — no new auth surface.
+			if (args.action === 'unsupersede') {
+				const { id: unsupId } = args;
+				if (!unsupId) throw new Error('id is required for action="unsupersede"');
+				// C1: validate id before using as a qdrant point identifier.
+				validateSafeName('id', unsupId);
+				// Same isWriteEnabled() gate + same error envelope as the vault-doc path below.
+				if (!isWriteEnabled()) {
+					return JSON.stringify(errorResponse(
+						'INPUT_INVALID',
+						'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+					));
+				}
+				// Resolve qdrant client + collection the same way add.mjs does:
+				// ctx._qdrantClient is the test seam; production falls back to
+				// constructing a real QdrantClient from the memory config.
+				const unsupMemory = ctx?.memory ?? memory;
+				const unsupCollection = unsupMemory.config.vectorStore.config.collectionName;
+				let unsupClient = ctx._qdrantClient;
+				if (!unsupClient) {
+					const { host, port } = unsupMemory.config.vectorStore.config;
+					const { QdrantClient } = await import('@qdrant/js-client-rest');
+					unsupClient = new QdrantClient({ host, port });
+				}
+				await unsupersedePoint({ client: unsupClient, collection: unsupCollection, id: unsupId });
+				safeLog(() => getLogger().info(
+					{ request_id: currentRequestId(), tool: 'memory_supersede', action: 'unsupersede', id: unsupId },
+					'memory_supersede: unsuperseded point',
+				), 'log:memory_supersede:unsuperseded');
+				return JSON.stringify({ ok: true, id: unsupId, status: 'current' });
+			}
+
+			// ── Default: vault-doc supersede path (byte-identically preserved) ───────
 			const { old_id, new_doc } = args;
 			if (!old_id) throw new Error('old_id is required');
 			if (!new_doc || !new_doc.type || !new_doc.id || !new_doc.title || !new_doc.content) {

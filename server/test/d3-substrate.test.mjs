@@ -4,6 +4,8 @@ import { RESERVED_METADATA_FIELDS, assertNoReservedFields } from '../lib/dedup-c
 import { umAdd } from '../lib/add.mjs';
 // T1.3: fixture mock with seed + _get + additive setPayload + _store-backed scroll/search (D3.1 substrate)
 import { makeMockQdrant } from './fixtures/qdrant-mock.mjs';
+// T1.7: MCP handler for unsupersede action routing test
+import { handleToolCall } from '../mem0-mcp-http.mjs';
 
 // ── Shared mock helpers (mirrors add.test.mjs idiom) ─────────────────────
 // Inline weak mock: no _store, scroll/search hardwired empty.
@@ -119,4 +121,133 @@ test('D3.1 superseded point is excluded from scroll/search with status:current f
   const searchIds = searchRes.map((p) => p.id);
   assert.ok(!searchIds.includes('p-target'),  'search: superseded point must NOT appear');
   assert.ok(searchIds.includes('p-sibling'), 'search: current sibling MUST appear');
+});
+
+// ── T1.7 — unsupersede action on memory_supersede MCP family ─────────────
+// Tests route through handleToolCall (MCP handler dispatch), NOT a direct
+// unsupersedePoint call (that is already covered by T1.3 above).
+// Fixture: seeded mock qdrant + makeMockMemory providing collection config.
+
+// Helper: minimal memory shim that satisfies the handler's config.vectorStore path.
+function makeHandlerMemory({ collection = 'memories' } = {}) {
+  return {
+    config: {
+      vectorStore: {
+        config: { collectionName: collection, host: 'localhost', port: 6333 },
+      },
+    },
+  };
+}
+
+// T1.7a: happy-path — unsupersede action flips status:superseded → current and clears
+// supersededBy / supersededAt to null via the handler's action routing.
+test('D3.1 unsupersede action on memory_supersede family: flips superseded→current', async () => {
+  const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
+  try {
+    process.env.UM_MCP_WRITE_ENABLED = 'true';
+
+    const mock = makeMockQdrant({
+      points: [
+        {
+          id: 'pt-sup-1',
+          payload: {
+            userId: 'u',
+            status: 'superseded',
+            supersededBy: 'pt-sup-2',
+            supersededAt: '2026-01-01T00:00:00.000Z',
+          },
+        },
+      ],
+    });
+
+    const raw = await handleToolCall(
+      'memory_supersede',
+      { action: 'unsupersede', id: 'pt-sup-1' },
+      { memory: makeHandlerMemory(), _qdrantClient: mock.client },
+    );
+
+    const result = JSON.parse(raw);
+    assert.equal(result.ok, true, 'result.ok must be true');
+    assert.equal(result.id, 'pt-sup-1', 'result.id must echo the restored id');
+    assert.equal(result.status, 'current', 'result.status must be "current"');
+
+    // Verify the qdrant store was actually mutated.
+    const pt = mock.client._get('pt-sup-1');
+    assert.equal(pt.payload.status, 'current', '_store: status flipped to current');
+    assert.equal(pt.payload.supersededBy, null, '_store: supersededBy cleared to null');
+    assert.equal(pt.payload.supersededAt, null, '_store: supersededAt cleared to null');
+  } finally {
+    if (savedEnv === undefined) delete process.env.UM_MCP_WRITE_ENABLED;
+    else process.env.UM_MCP_WRITE_ENABLED = savedEnv;
+  }
+});
+
+// T1.7b: writes-disabled — unsupersede action returns the IDENTICAL §5.1 error envelope
+// as the existing memory_supersede vault path when UM_MCP_WRITE_ENABLED is false.
+// This is the security-critical test: proves the same isWriteEnabled() gate covers unsupersede.
+test('D3.1 unsupersede action — writes disabled returns same envelope as existing supersede path', async () => {
+  const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
+  try {
+    delete process.env.UM_MCP_WRITE_ENABLED; // writes disabled
+
+    // Call the existing vault supersede path (write-disabled) to capture the reference envelope.
+    const refRaw = await handleToolCall(
+      'memory_supersede',
+      { old_id: 'old-doc', new_doc: { type: 'authored', id: 'new-doc', title: 'T', content: 'c' } },
+      {},
+    );
+    const refEnvelope = JSON.parse(refRaw);
+    assert.equal(refEnvelope.ok, false, 'reference: ok must be false');
+
+    // Call the unsupersede action path (write-disabled) and compare envelope shape.
+    const mock = makeMockQdrant({
+      points: [{ id: 'pt-dis-1', payload: { userId: 'u', status: 'superseded' } }],
+    });
+    const unsupRaw = await handleToolCall(
+      'memory_supersede',
+      { action: 'unsupersede', id: 'pt-dis-1' },
+      { memory: makeHandlerMemory(), _qdrantClient: mock.client },
+    );
+    const unsupEnvelope = JSON.parse(unsupRaw);
+
+    // Both must share the same §5.1 shape: ok:false + error.code + error.message + error.retryable.
+    assert.equal(unsupEnvelope.ok, false, 'unsupersede write-disabled: ok must be false');
+    assert.equal(unsupEnvelope.error.code, refEnvelope.error.code,
+      'unsupersede error.code must match vault supersede error.code (same gate)');
+    assert.equal(unsupEnvelope.error.message, refEnvelope.error.message,
+      'unsupersede error.message must match vault supersede error.message (same gate)');
+    assert.equal(typeof unsupEnvelope.error.retryable, 'boolean',
+      'unsupersede error.retryable must be boolean');
+
+    // Verify the store was NOT mutated (no mutation when writes disabled).
+    const pt = mock.client._get('pt-dis-1');
+    assert.equal(pt.payload.status, 'superseded', '_store: must NOT be mutated when writes disabled');
+  } finally {
+    if (savedEnv === undefined) delete process.env.UM_MCP_WRITE_ENABLED;
+    else process.env.UM_MCP_WRITE_ENABLED = savedEnv;
+  }
+});
+
+// T1.7c: id validation — an unsafe/invalid id is rejected by the same validateSafeName
+// gate the memory_supersede family already applies.
+test('D3.1 unsupersede action — invalid id rejected by validateSafeName', async () => {
+  const savedEnv = process.env.UM_MCP_WRITE_ENABLED;
+  try {
+    process.env.UM_MCP_WRITE_ENABLED = 'true';
+
+    // validateSafeName throws (handler propagates the throw — same behavior as
+    // memory_forget and the vault-doc supersede path for invalid id/old_id).
+    await assert.rejects(
+      () => handleToolCall(
+        'memory_supersede',
+        { action: 'unsupersede', id: '../../../etc/passwd' },
+        { memory: makeHandlerMemory(), _qdrantClient: makeMockQdrant().client },
+      ),
+      /must match|validateSafeName|invalid|^\^/i,
+      'unsafe id must be rejected by validateSafeName',
+    );
+  } finally {
+    if (savedEnv === undefined) delete process.env.UM_MCP_WRITE_ENABLED;
+    else process.env.UM_MCP_WRITE_ENABLED = savedEnv;
+  }
 });
