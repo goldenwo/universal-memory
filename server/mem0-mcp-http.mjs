@@ -2317,10 +2317,31 @@ export function createRequestHandler(ctx = {}) {
 					}),
 				}
 				: callerMetadata;
-			const result = await withRetry(() =>
-				umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
-					.catch((e) => { throw tagRetryable(e); })
-			, { op: 'add' });
+			let result;
+			try {
+				result = await withRetry(() =>
+					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+						.catch((e) => { throw tagRetryable(e); })
+				, { op: 'add' });
+			} catch (err) {
+				// umAdd's entry guards (reserved-field guard, lane/persona
+				// validation) reject caller input with code:'INPUT_INVALID'. That
+				// is a client error, not a server fault. withRetry re-wraps every
+				// thrown error as UPSTREAM_FAILURE with the original in `.cause`
+				// (retry.mjs), so unwrap one level before classifying. Unlike the
+				// other write endpoints, /api/add has no inline validation and
+				// relies solely on the generic outer catch — which has no
+				// INPUT_INVALID branch, so without this the client error is
+				// mislabeled 5xx/retryable. Non-INPUT_INVALID errors rethrow
+				// untouched so the outer catch keeps its 413/502/500 mapping.
+				const inputErr = err?.code === 'INPUT_INVALID'
+					? err
+					: (err?.cause?.code === 'INPUT_INVALID' ? err.cause : null);
+				if (!inputErr) throw err;
+				res.writeHead(httpStatusFor('INPUT_INVALID'), { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', inputErr.message)));
+				return;
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(result));
 			return;
