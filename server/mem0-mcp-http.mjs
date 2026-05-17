@@ -765,6 +765,33 @@ export async function handleToolCall(name, args, ctx = {}) {
 	}
 }
 
+// ── D3.1 shared only_superseded limit constants + helpers ─────────────────────
+//
+// Single source of truth for the only_superseded default limit.
+// All three surfaces (MCP, REST POST, REST GET) reference this constant so a
+// change here propagates everywhere automatically.
+const ONLY_SUPERSEDED_DEFAULT_LIMIT = 50;
+
+// Helper: coerce a raw caller-supplied limit to a clamped positive integer or
+// null.  null signals "no valid explicit limit was given" so effectiveSupLimit
+// can apply the ONLY_SUPERSEDED_DEFAULT_LIMIT default.
+//
+// @param {*}       rawLimit  — the raw limit value received from the caller
+//                              (may be undefined/null/0/NaN/string for degenerate cases)
+// @param {object}  opts
+//   hasExplicit {boolean}  — true only when the caller actually sent a limit
+//                            value (not omitted).  Each call site computes this
+//                            with its own "was limit present?" logic before
+//                            calling here (POST: limitRaw !== undefined/null;
+//                            GET: Number.isFinite(parseInt(...)) && >0).
+// @returns {number|null}  Math.min(rawLimit, 100) when rawLimit is a finite
+//                         positive number AND hasExplicit is true; null otherwise.
+function coerceCallerLimit(rawLimit, { hasExplicit }) {
+	return hasExplicit && Number.isFinite(rawLimit) && rawLimit > 0
+		? Math.min(rawLimit, 100)
+		: null;
+}
+
 // ── D3.1 shared only_superseded post-processing helper ───────────────────────
 //
 // Called from ALL THREE handler surfaces (MCP, REST POST, REST GET) so the
@@ -775,7 +802,7 @@ export async function handleToolCall(name, args, ctx = {}) {
 // @param {object} opts
 //   lane       {string|null}  — mode (a): restrict to this partition, or null for mode (b)
 //   persona    {string|null}  — mode (a): restrict to this partition, or null for mode (b)
-//   limit      {number|null}  — caller-supplied limit (null → use default 50)
+//   limit      {number|null}  — caller-supplied limit (null → use default ONLY_SUPERSEDED_DEFAULT_LIMIT)
 //   offset     {number}       — pagination offset (default 0)
 //   clientFull {boolean}      — true → skip compact projection (caller does it or metadata already full)
 //   buildSnippetFn {Function} — buildSnippet(title, body) needed for compact projection
@@ -805,10 +832,10 @@ function applyOnlySupersededListing(items, { lane, persona, limit, offset, clien
 		return 0;
 	});
 
-	// 4. Pagination: default limit 50 when none supplied (larger operational
-	//    window than the normal default of 5). Caller-supplied limit takes
-	//    precedence.  This is the SINGLE place the default-50 rule lives.
-	const supLimit = limit != null ? limit : 50;
+	// 4. Pagination: default limit when none supplied (larger operational window
+	//    than the normal default of 5). Caller-supplied limit takes precedence.
+	//    The canonical value lives in ONLY_SUPERSEDED_DEFAULT_LIMIT above.
+	const supLimit = limit != null ? limit : ONLY_SUPERSEDED_DEFAULT_LIMIT;
 	const supOffset = offset != null ? offset : 0;
 	items = items.slice(supOffset, supOffset + supLimit);
 
@@ -836,12 +863,12 @@ function applyOnlySupersededListing(items, { lane, persona, limit, offset, clien
 	return items;
 }
 
-// Helper: compute effective limit for only_superseded paths.
-// When caller omits limit (null/undefined), default is 50 (not the normal 5).
-// When caller supplies an explicit limit, honor it.
-// Clamping to 100 is applied by each call site (Math.min(..., 100)), not here.
+// Helper: compute effective fetch/slice limit for only_superseded paths.
+// Accepts the coerced caller limit produced by coerceCallerLimit() (a positive
+// integer ≤ 100, or null when the caller omitted / sent a degenerate value).
+// When null, falls back to ONLY_SUPERSEDED_DEFAULT_LIMIT.
 function effectiveSupLimit(callerLimit) {
-	return callerLimit != null ? callerLimit : 50;
+	return callerLimit != null ? callerLimit : ONLY_SUPERSEDED_DEFAULT_LIMIT;
 }
 
 async function _handleToolCallInner(name, args, ctx = {}) {
@@ -849,9 +876,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
 			const onlySup = args.only_superseded === true;
-			// D3.1: when only_superseded set, default qdrant fetch limit to 50 so the
-			// pagination window is adequately backed. Caller-supplied limit takes precedence.
-			const limit = args.limit != null ? args.limit : (onlySup ? 50 : 5);
+			// D3.1: when only_superseded set, default qdrant fetch limit to
+			// ONLY_SUPERSEDED_DEFAULT_LIMIT so the pagination window is adequately backed.
+			// Caller-supplied limit takes precedence.
+			const limit = args.limit != null ? args.limit : (onlySup ? ONLY_SUPERSEDED_DEFAULT_LIMIT : 5);
 			const includeSup = args.include_superseded === true;
 			const clientFull = args.full === true;
 			// D2: validate lane/persona filter inputs upfront — same INPUT_INVALID
@@ -2365,10 +2393,11 @@ export function createRequestHandler(ctx = {}) {
 			const rawLimitPost = hasExplicitLimit ? (typeof limitRaw === 'number' ? limitRaw : parseInt(limitRaw, 10)) : NaN;
 			const clampedLimitPost = hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
 			// For the doSearch fetch window: when only_superseded and no explicit limit,
-			// fetch up to 50 (default) so the pagination slice has enough material.
-			// effectiveSupLimit(null) = 50; effectiveSupLimit(n) = n.
+			// fetch up to ONLY_SUPERSEDED_DEFAULT_LIMIT so the pagination slice has enough
+			// material. coerceCallerLimit returns null for omitted/degenerate limits, which
+			// effectiveSupLimit maps to the default.
 			const fetchLimitPost = onlySup
-				? Math.min(effectiveSupLimit(hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? rawLimitPost : null), 100)
+				? effectiveSupLimit(coerceCallerLimit(rawLimitPost, { hasExplicit: hasExplicitLimit }))
 				: clampedLimitPost;
 			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
@@ -2379,11 +2408,10 @@ export function createRequestHandler(ctx = {}) {
 
 			// D3.1 only_superseded branch: delegate to shared helper.
 			if (onlySup) {
-				// callerLimit: null when no explicit limit supplied (helper uses default 50).
-				// Use the same hasExplicitLimit sentinel to stay consistent with fetchLimitPost.
-				const callerLimit = (hasExplicitLimit && Number.isFinite(rawLimitPost) && rawLimitPost > 0)
-					? Math.min(rawLimitPost, 100)
-					: null;
+				// callerLimit: null when no valid explicit limit supplied (helper then uses
+				// ONLY_SUPERSEDED_DEFAULT_LIMIT). coerceCallerLimit centralizes the
+				// hasExplicit + finite + >0 + clamp-to-100 logic.
+				const callerLimit = coerceCallerLimit(rawLimitPost, { hasExplicit: hasExplicitLimit });
 				// D3.1 review: gate mode-a on `!= null` (not truthy) to standardize POST
 				// onto the MCP reference semantics. Empty-string lane/persona is not a
 				// valid slug, so `!= null` is the deliberate (MCP-aligned) gate.
@@ -2452,9 +2480,11 @@ export function createRequestHandler(ctx = {}) {
 				return;
 			}
 			// D3.1 GET parity: for only_superseded, derive the fetch limit using the
-			// same default-50 rule as MCP and REST POST.
+			// same default-ONLY_SUPERSEDED_DEFAULT_LIMIT rule as MCP and REST POST.
+			// coerceCallerLimit handles the finite+>0+clamp logic; effectiveSupLimit
+			// applies the default when no valid explicit limit was given.
 			const fetchLimitGet = onlySupGet
-				? Math.min(effectiveSupLimit(hasExplicitLimitGet ? rawLimitGet : null), 100)
+				? effectiveSupLimit(coerceCallerLimit(rawLimitGet, { hasExplicit: hasExplicitLimitGet }))
 				: (hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : 5);
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
 			// then project to compact shape at the end if the client did not request full.
@@ -2462,7 +2492,7 @@ export function createRequestHandler(ctx = {}) {
 
 			// D3.1 only_superseded branch for GET: delegate to shared helper.
 			if (onlySupGet) {
-				const callerLimitGet = hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : null;
+				const callerLimitGet = coerceCallerLimit(rawLimitGet, { hasExplicit: hasExplicitLimitGet });
 				const items = applyOnlySupersededListing(response.results, {
 					lane: null,  // GET query-string form does not support lane/persona filters
 					persona: null,
