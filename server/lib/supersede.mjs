@@ -17,6 +17,9 @@
  * supplied keys; it cannot delete keys. unsupersedePoint therefore clears
  * provenance fields to `null` (not key-delete). Filters in this codebase
  * key on `status` value only, so null provenance is harmless.
+ *
+ * Spec refs: §3.2 (point lifecycle), §3.7 (supersession schema).
+ * Plan refs: D3.1 Task 1.3.
  */
 
 /**

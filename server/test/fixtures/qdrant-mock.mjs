@@ -23,6 +23,24 @@
  * BEFORE any dedup-side method access can pass a mock built via
  * `makeMockQdrantUpsertOnly()` which omits scroll/search/setPayload entirely —
  * those methods will throw `TypeError: client.X is not a function` if reached.
+ *
+ * D3.1 seeded-store plane:
+ *   When `makeMockQdrant({ points: [...] })` is called with a non-empty seed,
+ *   scroll() and search() source candidate points from `_store` (the internal
+ *   Map) and run them through the same `applyMustFilter` machinery, so that
+ *   `setPayload`-driven mutations (e.g. supersede) are immediately visible to
+ *   filtered queries. This unifies the write plane (_store) with the read plane
+ *   (scroll/search) and lets T1.4–T1.6 assert real filter behavior against
+ *   setPayload effects.
+ *
+ *   Discriminator — legacy explicit-result vs seeded-_store:
+ *     `mock.scrollResult` and `mock.searchResult` default to `_UNSET` (a private
+ *     Symbol). If a test assigns them explicitly (legacy path), the assigned value
+ *     is used (and `honorFilters` behavior is preserved). If they remain `_UNSET`,
+ *     scroll/search read from `_store`: if seeded they return live _store data
+ *     through the filter; if unseeded they return the empty default. All pre-D3
+ *     callers that never set seedPoints and never assign scrollResult/searchResult
+ *     continue to receive { points: [] } / [] unchanged.
  */
 
 /**
@@ -64,6 +82,10 @@ function applyMustFilter(points, filter) {
   );
 }
 
+// Private sentinel — distinguishes "test explicitly set scrollResult/searchResult"
+// from "test left it at default". Symbol guarantees no accidental equality match.
+const _UNSET = Symbol('qdrant-mock-unset');
+
 /**
  * Full mock with all 4 methods. The default for dedup tests.
  *
@@ -76,12 +98,20 @@ function applyMustFilter(points, filter) {
  * Pre-D2 tests leave `honorFilters` at its default `false`, so the mock
  * returns the pre-seeded value unchanged — backward-compatible. Existing
  * D1 dedup tests do not need to opt in.
- */
-/**
+ *
+ * D3.1 (R1 store-plane unification): when `points` seed is non-empty,
+ * `scroll` / `search` automatically source from `_store` (honoring filters
+ * exactly as `honorFilters=true` does for explicit results). The seeded
+ * path is active only when `mock.scrollResult` / `mock.searchResult` remain
+ * at their `_UNSET` sentinel — if a test explicitly assigns them, the legacy
+ * explicit-result path takes over unchanged.
+ *
  * @param {object} [seed={}] - Optional seed object.
  * @param {Array}  [seed.points=[]] - Initial points to pre-populate `_store`.
  *   Each element should be `{ id, payload }`. Enables `client._get(id)` and
  *   additive `setPayload` mutation for D3 supersede/unsupersede tests.
+ *   scroll() and search() read from `_store` (filtered) when seeded, so
+ *   setPayload mutations are immediately visible to filtered queries.
  *   Existing callers that pass no args are unaffected (backward-compatible).
  */
 export function makeMockQdrant({ points: seedPoints = [] } = {}) {
@@ -92,16 +122,20 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
 
   // D3.1: internal point store — supports _get() read-back and additive
   // setPayload mutation, mirroring real qdrant's partial-merge behaviour.
+  // Keys set to null are stored as null (real qdrant cannot delete keys).
   const _store = new Map(seedPoints.map((p) => [p.id, { ...p, payload: { ...(p.payload ?? {}) } }]));
+  const _storeSeeded = seedPoints.length > 0;
 
   const mock = {
     upserts,
     scrolls,
     searches,
     setPayloads,
-    // Test pre-seeds
-    scrollResult: { points: [] },
-    searchResult: [],
+    // Test pre-seeds — default _UNSET means "use _store path if seeded, else empty".
+    // Assign explicitly (e.g. mock.scrollResult = { points: [...] }) to use the
+    // legacy explicit-result path (all pre-D3 tests do this).
+    scrollResult: _UNSET,
+    searchResult: _UNSET,
     scrollError: null,
     searchError: null,
     setPayloadError: null,
@@ -110,26 +144,58 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
     // false (default), the mock returns the pre-seeded result unchanged.
     // When true, the filter's `must` arms are applied to scrollResult /
     // searchResult and only matching points are returned.
+    // NB: the seeded-_store path ALWAYS applies filters regardless of this flag.
     honorFilters: false,
     client: {
       upsert: async (collection, body) => {
         upserts.push({ collection, body });
         if (mock.upsertError) throw mock.upsertError;
+        // D3.1: also write each upserted point into _store so a subsequently
+        // superseded-or-queried point is coherently visible via _get / scroll / search.
+        const bodyPoints = body?.points ?? [];
+        for (const pt of bodyPoints) {
+          if (pt?.id !== undefined) {
+            _store.set(pt.id, { id: pt.id, payload: { ...(pt.payload ?? {}) } });
+          }
+        }
         return { status: 'ok' };
       },
       scroll: async (collection, body) => {
         scrolls.push({ collection, body });
         if (mock.scrollError) throw mock.scrollError;
-        if (!mock.honorFilters) return mock.scrollResult;
-        const points = mock.scrollResult?.points ?? [];
+
+        // Seeded-_store path: active when _store was seeded AND the test has not
+        // explicitly overridden mock.scrollResult (sentinel still in place).
+        if (_storeSeeded && mock.scrollResult === _UNSET) {
+          const candidates = [..._store.values()];
+          const filtered = applyMustFilter(candidates, body?.filter);
+          return { points: filtered };
+        }
+
+        // Legacy explicit-result path — used by all pre-D3 callers.
+        // Resolve the actual result: if still _UNSET (no seed, no explicit set)
+        // fall back to empty default.
+        const result = mock.scrollResult === _UNSET ? { points: [] } : mock.scrollResult;
+        if (!mock.honorFilters) return result;
+        const points = result?.points ?? [];
         const filtered = applyMustFilter(points, body?.filter);
-        return { ...mock.scrollResult, points: filtered };
+        return { ...result, points: filtered };
       },
       search: async (collection, body) => {
         searches.push({ collection, body });
         if (mock.searchError) throw mock.searchError;
-        if (!mock.honorFilters) return mock.searchResult;
-        const arr = Array.isArray(mock.searchResult) ? mock.searchResult : [];
+
+        // Seeded-_store path: active when _store was seeded AND the test has not
+        // explicitly overridden mock.searchResult (sentinel still in place).
+        if (_storeSeeded && mock.searchResult === _UNSET) {
+          const candidates = [..._store.values()];
+          return applyMustFilter(candidates, body?.filter);
+        }
+
+        // Legacy explicit-result path.
+        const result = mock.searchResult === _UNSET ? [] : mock.searchResult;
+        if (!mock.honorFilters) return result;
+        const arr = Array.isArray(result) ? result : [];
         return applyMustFilter(arr, body?.filter);
       },
       setPayload: async (collection, body) => {
@@ -150,7 +216,8 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
       },
       // D3.1: read-back helper — returns the stored point object (with
       // current payload after any setPayload mutations) for a given id.
-      // Only works for points pre-seeded via makeMockQdrant({ points: [...] }).
+      // Only works for points pre-seeded via makeMockQdrant({ points: [...] })
+      // or upserted via client.upsert().
       _get: (id) => _store.get(id),
     },
   };
