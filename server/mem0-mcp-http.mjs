@@ -762,7 +762,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 	switch (name) {
 		// ── Original 4 tools ──────────────────────────────────────────────────
 		case 'memory_search': {
-			const limit = args.limit || 5;
+			const onlySup = args.only_superseded === true;
+			// D3.1: when only_superseded set, default qdrant fetch limit to 50 so the
+			// pagination window is adequately backed. Caller-supplied limit takes precedence.
+			const limit = args.limit != null ? args.limit : (onlySup ? 50 : 5);
 			const includeSup = args.include_superseded === true;
 			const clientFull = args.full === true;
 			// D2: validate lane/persona filter inputs upfront — same INPUT_INVALID
@@ -776,9 +779,78 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// Always call doSearch(full=true) internally so metadata is preserved for
 			// post-filtering (project, type, lane, persona). Then project to compact
 			// shape at the end unless the MCP client explicitly requested full bodies.
-			let response = await doSearch(args.query, limit, includeSup, true, ctx);
+			// D3.1: when only_superseded is set, pass includeSup=true to doSearch so
+			// the upstream status-filter does not pre-exclude superseded records — we
+			// apply the inversion ourselves below. only_superseded takes precedence
+			// over include_superseded when both are present.
+			let response = await doSearch(args.query, limit, onlySup ? true : includeSup, true, ctx);
 			let items = response.results;
 
+			// D3.1 only_superseded branch: invert the default exclusion — return ONLY
+			// records with metadata.status === 'superseded'.  Applied before the
+			// D2 lane/persona scoping so mode (a) restricts the inverted set to a
+			// specific partition, and mode (b) (no lane/persona given) returns the
+			// full cross-partition superseded set.
+			if (onlySup) {
+				// Invert: keep only explicitly superseded records (absence-strict — a
+				// no-status point is NOT returned in only_superseded mode).
+				items = items.filter((r) => (r.metadata || {}).status === 'superseded');
+
+				// Mode (a): lane and/or persona given → restrict to that partition,
+				// mirroring the D2 post-filter mechanism exactly.
+				const hasLane = args.filters?.lane != null;
+				const hasPersona = args.filters?.persona != null;
+				if (hasLane) {
+					items = items.filter((r) => (r.metadata || {}).lane === args.filters.lane);
+				}
+				if (hasPersona) {
+					items = items.filter((r) => (r.metadata || {}).persona === args.filters.persona);
+				}
+
+				// Stable sort: supersededAt DESC, then id ASC as tiebreaker.
+				items = [...items].sort((a, b) => {
+					const atA = (a.metadata || {}).supersededAt || '';
+					const atB = (b.metadata || {}).supersededAt || '';
+					if (atA > atB) return -1;
+					if (atA < atB) return 1;
+					// Tiebreak by id ASC (deterministic across calls)
+					if (a.id < b.id) return -1;
+					if (a.id > b.id) return 1;
+					return 0;
+				});
+
+				// Pagination: limit defaults to 50 for only_superseded (larger operational
+				// window than the default search limit of 5). offset defaults to 0.
+				const supLimit = args.limit != null ? args.limit : 50;
+				const supOffset = args.offset != null ? args.offset : 0;
+				items = items.slice(supOffset, supOffset + supLimit);
+
+				// Mode (b): no lane/persona filter — each row must expose lane, persona,
+				// supersededBy so the operator can identify the partition.  In full=true
+				// mode the metadata object is already carried through; in compact mode we
+				// include lane/persona/supersededBy alongside the compact shape.
+				if (!clientFull) {
+					items = items.map((r) => {
+						const md = r.metadata || {};
+						const compact = {
+							id: r.id,
+							title: r.title,
+							score: r.score,
+							snippet: buildSnippet(r.title, r.body),
+							supersededAt: md.supersededAt,
+							supersededBy: md.supersededBy,
+						};
+						if (md.lane != null) compact.lane = md.lane;
+						if (md.persona != null) compact.persona = md.persona;
+						return compact;
+					});
+				}
+				// §4.1 extensibility contract preserved
+				const { results: _prev, ...responseExtras } = response;
+				return JSON.stringify(listEnvelope(items, responseExtras));
+			}
+
+			// ── Default / include_superseded path (unchanged) ─────────────────────
 			// Apply optional metadata filters (project, type, lane, persona) — all
 			// AND-combined. D2's lane / persona filter excludes pre-D2 points whose
 			// payload has no lane/persona key (undefined !== '<slug>').
@@ -2188,7 +2260,7 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
-			const { query, limit = 5, include_superseded = false, filters, full: fullBody } = JSON.parse(await readBody(req));
+			const { query, limit = 5, include_superseded = false, only_superseded = false, offset: bodyOffset = 0, filters, full: fullBody } = JSON.parse(await readBody(req));
 			if (!query || typeof query !== 'string' || !query.trim()) {
 				res.writeHead(400, {'Content-Type': 'application/json'});
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'query is required')));
@@ -2208,12 +2280,64 @@ export function createRequestHandler(ctx = {}) {
 				}
 			}
 			const includeSup = include_superseded === true;
+			const onlySup = only_superseded === true;
 			const rawLimitPost = typeof limit === 'number' ? limit : parseInt(limit, 10);
 			const clampedLimitPost = Number.isFinite(rawLimitPost) && rawLimitPost > 0 ? Math.min(rawLimitPost, 100) : 5;
 			const fullReq = fullBody === true || url.searchParams.get('full') === '1';
 			// Always fetch full results (metadata preserved) so metadata post-filters work,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(query, clampedLimitPost, includeSup, true, ctx);
+			// D3.1: when only_superseded set, pass includeSup=true so doSearch keeps
+			// superseded records for inversion below. only_superseded wins over include_superseded.
+			let response = await doSearch(query, clampedLimitPost, onlySup ? true : includeSup, true, ctx);
+
+			// D3.1 only_superseded branch (mirrors MCP handler exactly).
+			if (onlySup) {
+				let items = response.results;
+				// Invert: only explicitly superseded records
+				items = items.filter((r) => (r.metadata || {}).status === 'superseded');
+				// Mode (a): lane/persona filter restricts to that partition
+				if (filters && typeof filters === 'object') {
+					if (filters.lane) items = items.filter((r) => (r.metadata || {}).lane === filters.lane);
+					if (filters.persona) items = items.filter((r) => (r.metadata || {}).persona === filters.persona);
+				}
+				// Stable sort: supersededAt DESC, id ASC tiebreak
+				items = [...items].sort((a, b) => {
+					const atA = (a.metadata || {}).supersededAt || '';
+					const atB = (b.metadata || {}).supersededAt || '';
+					if (atA > atB) return -1;
+					if (atA < atB) return 1;
+					if (a.id < b.id) return -1;
+					if (a.id > b.id) return 1;
+					return 0;
+				});
+				// Pagination: default limit 50, offset 0
+				const supLimit = (typeof limit === 'number' ? limit : parseInt(limit, 10)) || 50;
+				items = items.slice(bodyOffset, bodyOffset + supLimit);
+				// Compact projection with lane/persona/supersededBy exposed
+				if (!fullReq) {
+					items = items.map((r) => {
+						const md = r.metadata || {};
+						const compact = {
+							id: r.id,
+							title: r.title,
+							score: r.score,
+							snippet: buildSnippet(r.title, r.body),
+							supersededAt: md.supersededAt,
+							supersededBy: md.supersededBy,
+						};
+						if (md.lane != null) compact.lane = md.lane;
+						if (md.persona != null) compact.persona = md.persona;
+						return compact;
+					});
+				}
+				const { results: _prev, ...responseExtras } = response;
+				response = listEnvelope(items, responseExtras);
+				res.writeHead(200, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(response));
+				return;
+			}
+
+			// ── Default / include_superseded path (unchanged) ─────────────────────
 			// Optional metadata filters — post-filter after mem0 recall. D2 adds
 			// lane / persona alongside the existing project / type filters; all
 			// AND-combined. Pre-D2 points (no lane/persona payload key) are

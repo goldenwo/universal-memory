@@ -119,11 +119,33 @@ Semantic search over stored memories using vector similarity, with optional stat
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `query` | string | — (required) | Semantic search query |
-| `limit` | number | 5 | Max results (max 100) |
+| `limit` | number | 5 (50 when `only_superseded`) | Max results (max 100 on normal path; pagination window on `only_superseded` path) |
+| `offset` | number | 0 | Pagination offset — used with `only_superseded` |
 | `include_superseded` | boolean | false | Include docs with status: superseded/deprecated/rejected |
+| `only_superseded` | boolean | false | Return ONLY superseded records (inverts the default exclusion). See below. |
 | `filters.project` | string | — | Filter by project name |
 | `filters.type` | string | — | Filter by doc type (e.g. `session_summary`, `authored`, `state`) |
+| `filters.lane` | string | — | Filter by lane partition (v1.1 D2) |
+| `filters.persona` | string | — | Filter by persona partition (v1.1 D2) |
 | `full` | boolean | false | Return full bodies instead of compact shape |
+
+**`only_superseded` — two-mode listing (v1.1 D3.1):**
+
+Used by operators and the auto-supersession system to inspect supersession history. Inverts the default status exclusion: returns ONLY records with `metadata.status === 'superseded'`. A no-status (pre-D3) record is NOT returned in this mode.
+
+**Mode (a) — partition-scoped (when `filters.lane` and/or `filters.persona` given):**
+Returns superseded records within that lane/persona partition only. Uses the same AND-combined lane/persona JS post-filter as the normal D2 path.
+
+**Mode (b) — cross-partition (neither `filters.lane` nor `filters.persona` given):**
+Returns ALL superseded records for the user across every partition. Each returned row exposes its `lane`, `persona`, and `supersededBy` so the operator can see which partition each record came from. In `full=true` mode these are carried in the `metadata` object; in compact mode they are added as top-level row fields.
+
+**Sort:** `supersededAt` DESC (newest supersession first), then `id` ASC as a stable tiebreaker for equal timestamps — deterministic across repeated calls.
+
+**Pagination:** `limit` (default **50** when `only_superseded` is set; caller-supplied value takes precedence) and `offset` (default 0). After sort, returns `slice(offset, offset + limit)`. Page 2 example: `limit: 10, offset: 10`.
+
+**Precedence:** if both `only_superseded: true` and `include_superseded: true` are passed, `only_superseded` wins — it is the more specific intent. The result set contains ONLY superseded records.
+
+**Inert when unset:** when `only_superseded` is absent or false, the handler behaves exactly as before — the default exclusion path is byte-identical and unaffected.
 
 **Compact response (default):**
 
