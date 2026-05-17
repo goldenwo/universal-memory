@@ -71,15 +71,35 @@ function evalFilterArm(payload, arm) {
 }
 
 /**
- * Apply a qdrant-shaped filter (`{ must: [arm, ...] }`) to an array of
- * points, returning only those whose payload satisfies ALL `must` arms.
- * Returns the input list unchanged when the filter is empty/absent.
+ * Apply a qdrant-shaped filter to an array of points, returning only those
+ * whose payload satisfies:
+ *   - ALL `must` arms (each arm must evaluate to true), AND
+ *   - NONE of the `must_not` arms (no arm may evaluate to true).
+ *
+ * Mirrors real qdrant filter semantics exactly:
+ *   - `must` → conjunction (AND) — every arm must match
+ *   - `must_not` → exclusion — any matching arm disqualifies the point
+ *
+ * `must_not` is evaluated generically via the same `evalFilterArm` helper
+ * used by `must` — no status-specific special-casing. A point that matches
+ * a `must_not` arm is excluded regardless of what the arm tests.
+ *
+ * Both `must` and `must_not` are purely additive: absent / empty arrays
+ * are strict no-ops, so all callers that pass only a `must` filter (or no
+ * filter at all) continue to behave EXACTLY as before.
  */
 function applyMustFilter(points, filter) {
-  if (!filter?.must || filter.must.length === 0) return points;
-  return points.filter((p) =>
-    filter.must.every((arm) => evalFilterArm(p.payload ?? {}, arm)),
-  );
+  const mustArms = filter?.must ?? [];
+  const mustNotArms = filter?.must_not ?? [];
+  if (mustArms.length === 0 && mustNotArms.length === 0) return points;
+  return points.filter((p) => {
+    const payload = p.payload ?? {};
+    // All must arms must pass.
+    if (mustArms.length > 0 && !mustArms.every((arm) => evalFilterArm(payload, arm))) return false;
+    // No must_not arm may pass.
+    if (mustNotArms.length > 0 && mustNotArms.some((arm) => evalFilterArm(payload, arm))) return false;
+    return true;
+  });
 }
 
 // Private sentinel — distinguishes "test explicitly set scrollResult/searchResult"
