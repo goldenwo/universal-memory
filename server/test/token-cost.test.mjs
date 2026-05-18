@@ -11,8 +11,12 @@
  *   - @anthropic-ai/tokenizer — secondary reference; PRIMARY for
  *     CC-consumed surfaces (SessionStart injection).
  *
- * Baseline written to server/test/token-cost-baseline.txt at end of run.
- * Keep this file small — two test blocks, no reporting framework.
+ * Test 3 is a DRIFT GATE: by default it asserts the committed
+ * server/test/token-cost-baseline.txt matches freshly-generated output
+ * byte-for-byte (so CI fails when a schema/tokenizer change lands without a
+ * deliberate baseline refresh). Set UM_UPDATE_TOKEN_BASELINE=1 to rewrite the
+ * file instead of asserting, then commit the diff.
+ * Keep this file small — two measurement blocks + one gate, no framework.
  *
  * The import below works because mem0-mcp-http.mjs guards its bootstrap
  * (initMemory + server.listen) behind `if (IS_MAIN)` — see its comment at
@@ -326,13 +330,17 @@ test('token-cost: measurement sweep — 4 additional locations', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 3: write baseline report to disk.
+// Test 3: drift gate for server/test/token-cost-baseline.txt.
 //
 // Runs after both measurement tests so reportLines is fully populated.
-// Writes server/test/token-cost-baseline.txt — committed as Task 0.3 output.
+// DEFAULT: assert the committed baseline equals freshly-generated output
+//          byte-for-byte — CI fails on undeclared schema/tokenizer drift.
+// OPT-IN:  UM_UPDATE_TOKEN_BASELINE=1 rewrites the file instead of asserting
+//          (deliberate refresh; commit the resulting diff with the change).
+// Mirrors the byte-for-byte golden pattern in custom-gpt-actions.test.mjs.
 // ---------------------------------------------------------------------------
 
-test('token-cost: write baseline file', () => {
+test('token-cost: baseline matches committed file byte-for-byte (drift gate)', () => {
 	const header = [
 		'universal-memory v0.4 — token-cost baseline',
 		'Phase 0 measurement sweep (Task 0.3)',
@@ -361,12 +369,31 @@ test('token-cost: write baseline file', () => {
 
 	const content = [...header, ...reportLines, ...footer].join('\n') + '\n';
 
-	writeFileSync(BASELINE_PATH, content, 'utf8');
+	// Opt-in regeneration: accept `1` or `true` (case-insensitive) so a
+	// deliberate refresh isn't a confusing footgun. Default is assert-only.
+	const updateMode = ['1', 'true'].includes(
+		(process.env.UM_UPDATE_TOKEN_BASELINE || '').toLowerCase()
+	);
 
-	const lineCount = content.split('\n').length;
-	console.log('');
-	console.log(`Baseline written to: ${BASELINE_PATH}`);
-	console.log(`  ${lineCount} lines`);
+	if (updateMode) {
+		writeFileSync(BASELINE_PATH, content, 'utf8');
+		const lineCount = content.split('\n').length;
+		console.log('');
+		console.log(`Baseline REGENERATED (UM_UPDATE_TOKEN_BASELINE set): ${BASELINE_PATH}`);
+		console.log(`  ${lineCount} lines — commit this file alongside the schema change.`);
+		assert.ok(lineCount > 0, 'regenerated baseline must have content');
+		return;
+	}
 
-	assert.ok(lineCount > 0, 'baseline file must have content');
+	// Default: pure drift gate. Never writes — so a bare `node --test` run
+	// cannot churn the file, and CI fails loudly on undeclared drift.
+	const checkedIn = readFileSync(BASELINE_PATH, 'utf8');
+	assert.strictEqual(
+		checkedIn,
+		content,
+		'token-cost-baseline.txt drift — a tool schema or tokenizer changed ' +
+		'without refreshing the baseline. Regenerate with: ' +
+		'UM_UPDATE_TOKEN_BASELINE=1 node --test server/test/token-cost.test.mjs ' +
+		'(then commit the updated server/test/token-cost-baseline.txt).'
+	);
 });
