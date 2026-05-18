@@ -73,12 +73,22 @@ export const NAMESPACE_UM = 'e2de504c-45bb-4531-952f-f33a6f60c945';
  * Thrown when caller-supplied metadata contains a reserved field. Carries the
  * offending field name for diagnostics. Subclassing Error so callers can
  * `instanceof` check.
+ *
+ * Injecting a reserved field is a CALLER input error, not a server fault, so
+ * the error self-describes its class via the same envelope convention every
+ * sibling validator uses — `code: 'INPUT_INVALID'` (cf. validateLanePersonaSlug
+ * in default-project.mjs, bridge-contract.mjs, frontmatter.mjs). The HTTP layer
+ * maps this to 400. `retryable: false` opts the error out of withRetry's
+ * default-retryable path (retry.mjs) — retrying a malformed request is pointless
+ * and would turn a fast 400 into a slow 502.
  */
 export class ReservedMetadataFieldError extends Error {
   constructor(field) {
     super(`metadata.${field} is reserved by the server for dedup bookkeeping; pass via the appropriate umAdd argument instead`);
     this.name = 'ReservedMetadataFieldError';
     this.field = field;
+    this.code = 'INPUT_INVALID';
+    this.retryable = false;
   }
 }
 
