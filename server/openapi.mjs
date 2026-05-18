@@ -259,6 +259,18 @@ const SCHEMAS = {
         description:
           'If true, return results regardless of status/invalidated_at. Default false (exclude superseded/deprecated/rejected and anything with invalidated_at).',
       },
+      only_superseded: {
+        type: 'boolean',
+        default: false,
+        description:
+          'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
+      },
+      offset: {
+        type: 'integer',
+        minimum: 0,
+        default: 0,
+        description: 'Pagination offset for only_superseded listing (0-based). Ignored when only_superseded is false/absent.',
+      },
       filters: ref('SearchFilters'),
     },
   },
@@ -665,6 +677,20 @@ function pathSearch() {
           in: 'query',
           required: false,
           schema: { type: 'boolean', default: false },
+        },
+        {
+          name: 'only_superseded',
+          in: 'query',
+          required: false,
+          schema: { type: 'boolean', default: false },
+          description: 'Opt-in superseded-only listing — returns ONLY status=superseded records. Mode (b) only (no lane/persona scope; use POST for mode (a)). Default limit 50 when no explicit limit given. Wins over include_superseded.',
+        },
+        {
+          name: 'offset',
+          in: 'query',
+          required: false,
+          schema: { type: 'integer', minimum: 0, default: 0 },
+          description: 'Pagination offset for only_superseded listing (0-based). Ignored when only_superseded is false/absent.',
         },
         {
           name: 'type',
