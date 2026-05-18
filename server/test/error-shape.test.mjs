@@ -44,13 +44,13 @@ const fakeMemory = {
   delete: async () => ({}),
 };
 
-async function startServer({ writes = false } = {}) {
+async function startServer({ writes = false, memory = fakeMemory } = {}) {
   const prevToken = process.env.UM_AUTH_TOKEN;
   const prevWrites = process.env.UM_MCP_WRITE_ENABLED;
   process.env.UM_AUTH_TOKEN = 'test-tok';
   if (writes) process.env.UM_MCP_WRITE_ENABLED = 'true';
   else delete process.env.UM_MCP_WRITE_ENABLED;
-  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  const srv = createServer(createRequestHandler({ memory }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -287,6 +287,44 @@ test('POST /api/delete with neither metadata nor id → INPUT_INVALID envelope',
     const body = await r.json();
     assertUnifiedErrorEnvelope(body, 'POST /api/delete neither shape');
     assert.equal(body.error.code, 'INPUT_INVALID');
+  } finally { await close(); }
+});
+
+// ---------------------------------------------------------------------------
+// /api/add — caller-supplied reserved metadata field is a CLIENT error.
+// Regression pin: ReservedMetadataFieldError (add.mjs:154 guard) used to carry
+// no stable code, so the /api/add outer catch fell through to SERVER_INTERNAL
+// /500 — mislabeling a client input error as a server fault and marking it
+// retryable. It MUST surface as INPUT_INVALID / 400 / retryable:false, the
+// same class as the sibling validateLanePersonaSlug guard on this same path.
+// ---------------------------------------------------------------------------
+
+// umAdd's reserved-field guard runs AFTER its collectionName guard, so the
+// injected memory must carry a vectorStore config for the request to reach
+// assertNoReservedFields. fakeMemory deliberately lacks it (other endpoints
+// never need it); this is the minimum shape that lets the guard fire.
+const addCapableMemory = {
+  ...fakeMemory,
+  config: { vectorStore: { config: { collectionName: 'memories', host: 'localhost', port: 6333 } } },
+};
+
+test('POST /api/add with a reserved metadata field → INPUT_INVALID envelope (4xx, not 500)', async () => {
+  const { close, url } = await startServer({ memory: addCapableMemory });
+  try {
+    const r = await fetch(url('/api/add'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS },
+      // Any RESERVED_METADATA_FIELDS member triggers the guard; use the
+      // D1-era `systemMigration` (the dedup-bypass smuggle field) so this
+      // regression pin holds regardless of later additions to the set.
+      body: JSON.stringify({ text: 'hello world', metadata: { systemMigration: true } }),
+    });
+    assert.equal(r.status, 400, `reserved-field violation is a client error; expected 400, got ${r.status}`);
+    const body = await r.json();
+    assertUnifiedErrorEnvelope(body, 'POST /api/add reserved metadata field');
+    assert.equal(body.error.code, 'INPUT_INVALID');
+    assert.match(body.error.message, /reserved/i);
+    assert.equal(body.error.retryable, false, 'a reserved-field client error must not be retryable');
   } finally { await close(); }
 });
 
