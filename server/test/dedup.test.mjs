@@ -1036,3 +1036,56 @@ test('T22b: D3.1 sanity — embedding-dedup: status:current point IS still a ded
   assert.ok(hit !== null, 'status:current point must still be returned as an embedding dedup hit');
   assert.equal(hit.id, 'current-e');
 });
+
+// ---------------------------------------------------------------------------
+// D3.2 — Task 2.1: findEmbeddingSimilarCandidates (T23).
+// Returns top-K current points in the given partition; excludes superseded
+// tombstones and points outside the lane/persona partition. Pure read — no
+// mutations.
+// ---------------------------------------------------------------------------
+
+import { findEmbeddingSimilarCandidates } from '../lib/dedup.mjs';
+
+// T23: findEmbeddingSimilarCandidates — returns only current lane:work points;
+// excludes superseded tombstone and lane:other point.
+test('T23: D3.2 findEmbeddingSimilarCandidates — current lane:work only (superseded + other-lane excluded)', async () => {
+  const mock = makeMockQdrant({
+    points: [
+      // 2 current points in lane:work
+      { id: 'work-a', payload: { userId: 'u', lane: 'work', status: 'current', data: 'fact A' }, score: 0.91 },
+      { id: 'work-b', payload: { userId: 'u', lane: 'work', status: 'current', data: 'fact B' }, score: 0.88 },
+      // 1 superseded tombstone in lane:work — must be excluded
+      { id: 'work-dead', payload: { userId: 'u', lane: 'work', status: 'superseded', data: 'old fact' }, score: 0.95 },
+      // 1 current point in a different lane — must be excluded
+      { id: 'other-c', payload: { userId: 'u', lane: 'other', status: 'current', data: 'other lane' }, score: 0.90 },
+    ],
+  });
+
+  const candidates = await findEmbeddingSimilarCandidates({
+    client: mock.client,
+    collection: 'col',
+    userId: 'u',
+    vector: [0.1, 0.2],
+    threshold: 0.5,
+    lane: 'work',
+    persona: undefined,
+    limit: 10,
+  });
+
+  // Must return exactly the 2 current lane:work points.
+  assert.equal(candidates.length, 2, 'only the 2 current lane:work points returned');
+  const returnedIds = candidates.map((c) => c.id).sort();
+  assert.deepEqual(returnedIds, ['work-a', 'work-b'].sort(), 'correct point ids returned');
+
+  // Each item must have the shape {id, payload, score}.
+  for (const c of candidates) {
+    assert.ok('id' in c, 'result has id field');
+    assert.ok('payload' in c, 'result has payload field');
+    assert.ok('score' in c, 'result has score field');
+  }
+
+  // Verify the search was called with limit and score_threshold.
+  assert.equal(mock.searches.length, 1, 'client.search called once');
+  assert.equal(mock.searches[0].body.limit, 10, 'limit forwarded to client.search');
+  assert.equal(mock.searches[0].body.score_threshold, 0.5, 'threshold forwarded as score_threshold');
+});

@@ -639,3 +639,23 @@ test('MCP memory_recent and REST doRecent return identical compact shape for sam
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// D3.2 schema tests — memory_checkpoint accepts optional lane/persona
+// ---------------------------------------------------------------------------
+
+test('MCP memory_checkpoint tool schema exposes lane as optional string property', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_checkpoint');
+  assert.ok(tool, 'memory_checkpoint tool must exist in TOOLS');
+  assert.ok(tool.inputSchema.properties.lane, 'lane property must be defined in memory_checkpoint schema');
+  assert.strictEqual(tool.inputSchema.properties.lane.type, 'string', 'lane must be type string');
+  assert.ok(!(tool.inputSchema.required || []).includes('lane'), 'lane must be optional (absent from required)');
+});
+
+test('MCP memory_checkpoint tool schema exposes persona as optional string property', () => {
+  const tool = TOOLS.find((t) => t.name === 'memory_checkpoint');
+  assert.ok(tool, 'memory_checkpoint tool must exist in TOOLS');
+  assert.ok(tool.inputSchema.properties.persona, 'persona property must be defined in memory_checkpoint schema');
+  assert.strictEqual(tool.inputSchema.properties.persona.type, 'string', 'persona must be type string');
+  assert.ok(!(tool.inputSchema.required || []).includes('persona'), 'persona must be optional (absent from required)');
+});

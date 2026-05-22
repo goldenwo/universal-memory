@@ -139,6 +139,57 @@ export async function summarizerInvoke(prompt, opts = {}) {
   };
 }
 
+export async function contradictionJudgeInvoke(prompt, opts = {}) {
+  // Mirrors summarizerInvoke exactly — same auth, same client construction,
+  // same mock-sdk short-circuit. The dispatcher passes systemPrompt with the
+  // §3.4 temporal-context guard already embedded.
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      content: JSON.stringify({ contradicts: false, confidence: 0.1, reasoning: '[MOCK] google judge' }),
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'google',
+        status: 401,
+        message: `contradiction judge backend=google requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { GoogleGenAI } = await import('@google/genai');
+    client = new GoogleGenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      ...(systemPrompt ? { config: { systemInstruction: systemPrompt } } : {}),
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'google',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  // Google GenAI SDK returns text directly on the response object.
+  return {
+    content: raw.text,
+    usage: extractUsage(raw),
+  };
+}
+
 export async function embed(text, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.embeddingModel } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
