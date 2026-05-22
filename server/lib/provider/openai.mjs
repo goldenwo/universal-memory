@@ -131,6 +131,58 @@ export async function summarizerInvoke(prompt, opts = {}) {
   };
 }
 
+export async function contradictionJudgeInvoke(prompt, opts = {}) {
+  // Mirrors summarizerInvoke exactly — same auth, same client construction,
+  // same mock-sdk short-circuit. The dispatcher passes systemPrompt with the
+  // §3.4 temporal-context guard already embedded.
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      content: JSON.stringify({ contradicts: false, confidence: 0.1, reasoning: '[MOCK] openai judge' }),
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'openai',
+        status: 401,
+        message: `contradiction judge backend=openai requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: OpenAI } = await import('openai');
+    client = new OpenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.chat.completions.create({
+      model,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        { role: 'user', content: prompt },
+      ],
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'openai',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  return {
+    content: raw.choices[0].message.content,
+    usage: extractUsage(raw),
+  };
+}
+
 export async function embed(text, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.embeddingModel } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {

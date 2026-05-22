@@ -567,6 +567,8 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				project: { type: 'string', description: 'Project to checkpoint (optional)' },
+				lane: { type: 'string', description: 'Optional v1.1 D2 topic-area partition slug (e.g. work, personal). Validated against the project slug regex. Omitted = unpartitioned. When set (with UM_AUTOSUPERSEDE_ENABLED=true), the D3.2 contradiction detector runs for this partition.' },
+				persona: { type: 'string', description: 'Optional v1.1 D2 identity-aspect partition slug (e.g. me-engineer). Validated against the project slug regex. Omitted = unpartitioned. When set (with UM_AUTOSUPERSEDE_ENABLED=true), the D3.2 contradiction detector runs for this partition.' },
 			},
 		},
 	},
@@ -1111,7 +1113,17 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
 				));
 			}
-			return JSON.stringify(await doCheckpoint(args, { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc }));
+			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc };
+			if (process.env.UM_AUTOSUPERSEDE_ENABLED === 'true') {
+				// Resolve qdrant context for the detector — only when the feature is enabled.
+				// Mirrors the memory_supersede unsupersede path (lines 1181–1183): same
+				// memory-instance source, same collection-name derivation, same userId.
+				const checkpointMemory = ctx?.memory ?? memory;
+				checkpointCtx.qdrantClient = await getRealClient(checkpointMemory);
+				checkpointCtx.collection   = checkpointMemory.config.vectorStore.config.collectionName;
+				checkpointCtx.userId       = USER_ID;
+			}
+			return JSON.stringify(await doCheckpoint(args, checkpointCtx));
 		}
 
 		case 'memory_forget': {

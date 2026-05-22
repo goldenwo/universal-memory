@@ -180,6 +180,63 @@ export async function checkEmbeddingDedup({ client, collection, userId, vector, 
 }
 
 /**
+ * D3.2 — Read-side K-nearest-current-candidates primitive.
+ *
+ * Returns the top-K current (non-superseded) points in the given
+ * lane/persona partition that score ≥ threshold against `vector`.
+ * Pure read — no mutations.
+ *
+ * Shape: ScoredPoint[] where each element is { id, payload, score, ... }.
+ * Empty array if no candidates qualify.
+ *
+ * Mirrors checkEmbeddingDedup's filter exactly:
+ *   - same partitionArm(lane) + partitionArm(persona) must arms
+ *   - same must_not status==superseded exclusion (absence-tolerant)
+ *   - same score_threshold + with_payload options
+ * Differences: `limit` param (default 10); returns the ARRAY (not a single
+ * dedup decision).
+ *
+ * Spec refs: D3.2 Task 2.1; D3.1 §4.1/§4.2 absence-tolerance invariant.
+ */
+export async function findEmbeddingSimilarCandidates({
+  client,
+  collection,
+  userId,
+  vector,
+  threshold,
+  lane,
+  persona,
+  limit = 10,
+}) {
+  if (!client?.search) throw new Error('findEmbeddingSimilarCandidates: client.search required');
+  if (!collection || !userId || !Array.isArray(vector) || vector.length === 0) {
+    throw new Error('findEmbeddingSimilarCandidates: collection/userId/vector required');
+  }
+  if (typeof threshold !== 'number') throw new Error('findEmbeddingSimilarCandidates: threshold (number) required');
+
+  return instrumented('embedding', 'search', async () => {
+    const res = await client.search(collection, {
+      vector,
+      filter: {
+        must: [
+          { key: 'userId', match: { value: userId } },
+          partitionArm('lane', lane),
+          partitionArm('persona', persona),
+        ],
+        // D3.1 absence-tolerance invariant: must_not superseded (not must current)
+        // so pre-D3 points with NO status key are still returned as candidates.
+        must_not: [{ key: 'status', match: { value: 'superseded' } }],
+      },
+      limit,
+      score_threshold: threshold,
+      with_payload: true,
+    });
+    // ScoredPoint[] direct (NOT { points: [...] }) per @qdrant/js-client-rest@1.13.0.
+    return Array.isArray(res) ? res : (res?.points ?? []);
+  });
+}
+
+/**
  * Append-with-uniqueness for Set-typed payload fields.
  * Returns:
  *   - undefined if both existing list and addition are absent (caller omits the field)

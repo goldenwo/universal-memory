@@ -1182,3 +1182,181 @@ test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () 
   }
 });
 
+// ---------- D3.2: UM_AUTOSUPERSEDE_ENABLED flag tests ----------
+
+// D3.2 flag-off: strict opt-in — only literal 'true' enables the detection pass.
+// Parametrize over 4 off-values: undefined, 'false', '0', 'FALSE'.
+// For each: detector stub call-count must be 0 AND checkpoint must still succeed.
+for (const flagValue of [undefined, 'false', '0', 'FALSE']) {
+  const label = flagValue === undefined ? 'undefined' : JSON.stringify(flagValue);
+  test(`D3.2 flag-off: UM_AUTOSUPERSEDE_ENABLED=${label} → detector NOT invoked, checkpoint ok:true`, async () => {
+    const vaultDir = await makeVault();
+    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.2 flag-off probe.');
+
+    const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
+    if (flagValue === undefined) {
+      delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+    } else {
+      process.env.UM_AUTOSUPERSEDE_ENABLED = flagValue;
+    }
+
+    let detectCallCount = 0;
+    const detectStub = async () => { detectCallCount += 1; return []; };
+
+    let result;
+    try {
+      result = await doCheckpoint(
+        { project: 'myproj' },
+        {
+          config: BASE_CONFIG,
+          vaultDir,
+          summarizeFn: makeSummarizeFn(),
+          updateStateFn: makeUpdateStateFn(),
+          reindexFn: async () => {},
+          _detectContradictions: detectStub,
+        },
+      );
+    } finally {
+      if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+      else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
+      await fs.rm(vaultDir, { recursive: true, force: true });
+    }
+
+    assert.equal(detectCallCount, 0,
+      `detector must NOT be called when flag=${label}, got ${detectCallCount} call(s)`);
+    assert.equal(result.ok, true,
+      `checkpoint must still succeed when flag=${label}, got: ${JSON.stringify(result)}`);
+  });
+}
+
+// D3.2 flag-on: UM_AUTOSUPERSEDE_ENABLED='true' with a detected contradiction.
+// Assert: _detectContradictions called once; _supersede called once with correct args;
+// summary file on disk contains the digest; reindexFn called AFTER supersession.
+test('D3.2 flag-on: detector called, supersede called, digest in file, reindex runs after', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.2 flag-on probe.');
+
+  const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
+
+  const callOrder = [];
+
+  let detectCallCount = 0;
+  const detectStub = async (transcript, opts) => {
+    detectCallCount += 1;
+    callOrder.push('detect');
+    return [{ targetId: 'old-1', supersededBy: 'new-1', confidence: 0.95, reasoning: 'test-reason' }];
+  };
+
+  let supersedeCallCount = 0;
+  let supersedeArgs = null;
+  const supersedeStub = async (args) => {
+    supersedeCallCount += 1;
+    supersedeArgs = args;
+    callOrder.push('supersede');
+  };
+
+  let reindexCallCount = 0;
+  const reindexStub = async () => {
+    reindexCallCount += 1;
+    callOrder.push('reindex');
+  };
+
+  let result;
+  try {
+    result = await doCheckpoint(
+      { project: 'myproj', lane: 'work' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: reindexStub,
+        userId: 'test-user',
+        collection: 'test-collection',
+        qdrantClient: { setPayload: async () => {} },
+        _detectContradictions: detectStub,
+        _supersede: supersedeStub,
+      },
+    );
+  } finally {
+    if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+    else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
+  }
+
+  try {
+    assert.equal(result.ok, true, `checkpoint must succeed, got: ${JSON.stringify(result)}`);
+
+    assert.equal(detectCallCount, 1, '_detectContradictions must be called exactly once');
+    assert.equal(supersedeCallCount, 1, '_supersede must be called exactly once');
+    assert.equal(reindexCallCount, 1, 'reindexFn must be called exactly once');
+
+    // supersede called with correct id args
+    assert.equal(supersedeArgs?.id, 'old-1', `_supersede id must be 'old-1', got: ${supersedeArgs?.id}`);
+    assert.equal(supersedeArgs?.supersededBy, 'new-1',
+      `_supersede supersededBy must be 'new-1', got: ${supersedeArgs?.supersededBy}`);
+
+    // ordering: detect → supersede → reindex
+    const detectIdx = callOrder.indexOf('detect');
+    const supersedeIdx = callOrder.indexOf('supersede');
+    const reindexIdx = callOrder.indexOf('reindex');
+    assert.ok(detectIdx < reindexIdx,
+      `detect must run before reindex; order: ${JSON.stringify(callOrder)}`);
+    assert.ok(supersedeIdx < reindexIdx,
+      `supersede must run before reindex; order: ${JSON.stringify(callOrder)}`);
+
+    // digest in the summary file on disk
+    const diskContent = await fs.readFile(path.join(vaultDir, result.summary_path), 'utf8');
+    assert.ok(diskContent.includes('old-1'),
+      `summary file must contain 'old-1' digest; file content: ${diskContent.slice(0, 400)}`);
+    assert.ok(diskContent.includes('Auto-superseded'),
+      `summary file must contain 'Auto-superseded' digest block; file content: ${diskContent.slice(0, 400)}`);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// D3.2: invalid lane slug → INPUT_INVALID, pipeline does not proceed.
+test('D3.2: invalid lane slug returns INPUT_INVALID', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: 'myproj', lane: '../bad-lane' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'INPUT_INVALID');
+    assert.match(result.error, /lane/i);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// D3.2: invalid persona slug → INPUT_INVALID.
+test('D3.2: invalid persona slug returns INPUT_INVALID', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const result = await doCheckpoint(
+      { project: 'myproj', persona: 'bad slug!' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'INPUT_INVALID');
+    assert.match(result.error, /persona/i);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+

@@ -172,6 +172,49 @@ export async function embed(text, { fetch = globalThis.fetch, host = process.env
   };
 }
 
+export async function contradictionJudgeInvoke(prompt, { fetch = globalThis.fetch, host = process.env.OLLAMA_HOST || 'http://localhost:11434', model = defaults.summarizerModel, systemPrompt = '' }) {
+  // Mirrors summarizerInvoke exactly: destructured params (ollama divergence),
+  // reads process.env.UM_TEST_MOCK_SDK directly (not via passed env).
+  if (process.env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      content: JSON.stringify({ contradicts: false, confidence: 0.1, reasoning: '[MOCK] ollama judge' }),
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
+  let res;
+  try {
+    res = await fetch(`${host}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt, system: systemPrompt || undefined, stream: false }),
+    });
+  } catch (cause) {
+    throw new ProviderError({
+      class: 'PROVIDER_UPSTREAM',
+      provider: 'ollama',
+      status: 0,
+      message: cause.message,
+      retryable: true,
+      cause,
+    });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ProviderError({
+      class: res.status === 429 ? 'PROVIDER_RATELIMIT' : (res.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'ollama',
+      status: res.status,
+      message: text || `ollama HTTP ${res.status}`,
+      retryable: res.status === 429 || res.status >= 500,
+    });
+  }
+  const raw = await res.json();
+  return {
+    content: raw.response,
+    usage: extractUsage(raw),
+  };
+}
+
 /**
  * probeModel — R5 mitigation: validate that the user-selected model is
  * actually pulled into the local Ollama instance before attempting requests.
