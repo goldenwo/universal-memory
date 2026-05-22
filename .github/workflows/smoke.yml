@@ -131,7 +131,7 @@ jobs:
       # would preserve these on a re-run, but here we're appending after
       # the first install. Smoke tests the pipeline correctness; load
       # behavior is exercised elsewhere (rate-limit unit tests + perf gates).
-      - name: Tune rate-limit budget for smoke
+      - name: Tune rate-limit budget + enable D3.2 auto-supersession for smoke
         working-directory: server
         run: |
           {
@@ -140,6 +140,17 @@ jobs:
             echo "# calls in quick succession do not 429."
             echo "UM_RATE_LIMIT_RPM=100000"
             echo "UM_RATE_LIMIT_BURST=10000"
+            echo ""
+            echo "# v1.2 D3.2 — enable auto-supersession ON THE SERVER for the S5"
+            echo "# smoke probe. smoke.sh runs in a separate client shell and cannot"
+            echo "# set the running container's env; the server reads"
+            echo "# UM_AUTOSUPERSEDE_ENABLED / _THRESHOLD from its own env at request"
+            echo "# time, so they must be set here (force-recreate below re-reads"
+            echo "# .env; env_file last-wins overrides the .env.example default=false)."
+            echo "# The detector's eligibility gate no-ops on the no-lane checkpoints"
+            echo "# other smoke tasks run, so enabling it for the whole run is safe."
+            echo "UM_AUTOSUPERSEDE_ENABLED=true"
+            echo "UM_AUTOSUPERSEDE_THRESHOLD=0.7"
           } >> .env
           # `restart` reuses the existing container's env vars — does NOT
           # re-read .env. Use `up -d --force-recreate` to rebuild the

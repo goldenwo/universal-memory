@@ -1934,7 +1934,11 @@ fi
 #
 # Requires: UM_MCP_WRITE_ENABLED=true, UM_VAULT_DIR set, OPENAI_API_KEY (or
 # configured contradiction provider key) — same real-infra contract as D2 S4.
-# The block sets UM_AUTOSUPERSEDE_ENABLED=true for its own scope.
+# IMPORTANT: the SERVER process must have UM_AUTOSUPERSEDE_ENABLED=true (it reads
+# the flag from its OWN env at request time). CI sets it on the container via the
+# .env reconfig + force-recreate step in smoke.yml. The in-block exports below
+# affect this client shell only and do NOT reach a separately started server;
+# they are kept solely as a convenience for same-shell local runs.
 if [ "${UM_SMOKE_AUTOSUPERSEDE_ON:-}" = "1" ]; then
 	echo "[smoke] D3.2 S5 — auto-supersession positive-path (UM_SMOKE_AUTOSUPERSEDE_ON=1)"
 
