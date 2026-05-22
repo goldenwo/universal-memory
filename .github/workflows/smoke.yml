@@ -222,6 +222,15 @@ jobs:
           # anti-merge assertion can no longer regress-detect a stripped-lane
           # D2 cascade — so S4, like S3, is dependent on D1 being ON.
           UM_SMOKE_D2_ON: "1"
+          # v1.2 D3.2 — UM_SMOKE_AUTOSUPERSEDE_ON=1 fires the S5 auto-
+          # supersession probe: write contradicting A/B in lane:work, run
+          # checkpoint lane:work (UM_AUTOSUPERSEDE_ENABLED=true set within the
+          # block), assert A superseded + B current, verify include_superseded
+          # / only_superseded filters, restore via unsupersede, and check both
+          # cross-partition (lane:other) and absence-gate (no-lane R1-B1)
+          # controls. Requires UM_MCP_WRITE_ENABLED=true + UM_VAULT_DIR (set
+          # above) + a real LLM key (OPENAI_API_KEY above).
+          UM_SMOKE_AUTOSUPERSEDE_ON: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching

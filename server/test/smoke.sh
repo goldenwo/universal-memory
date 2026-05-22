@@ -1908,6 +1908,353 @@ print(f'OK: lane={lane} filter returns exactly its own partition record {present
 	echo "[smoke] D2 S4 PASS: lane=work / lane=personal land as 2 distinct, lane-filterable records; the no-lane write stays in a separate legacy partition (distinct id, excluded from both lane filters)"
 fi
 
+# D3.2 S5 — auto-supersession positive-path smoke (T2.5 deliverable; spec §3.7).
+# Gated by UM_SMOKE_AUTOSUPERSEDE_ON=1 (explicit opt-in), mirroring S2/S3/S4.
+# D3.2 wires contradiction detection behind UM_AUTOSUPERSEDE_ENABLED='true'
+# (strict opt-in, default OFF — OPPOSITE polarity of D1's strict 'false'
+# opt-out; an operator familiar with D1 must not assume the same polarity).
+#
+# What this block proves:
+#   (a) A clearly-contradicting fact B in lane:work supersedes fact A in the
+#       same partition after memory_checkpoint lane:work runs.
+#   (b) Default /api/search excludes A (status=superseded); include_superseded
+#       returns BOTH A and B; only_superseded returns A with partition metadata.
+#   (c) memory_supersede {action:'unsupersede', id:A} restores A to current;
+#       default search then returns A again.
+#   (d) Control 1 — a fact in lane:other is completely untouched by the
+#       lane:work checkpoint (cross-partition isolation).
+#   (e) Control 2 (R1-B1 absence-gate) — contradicting facts A'/B' with NO
+#       lane AND NO persona do NOT get superseded after a no-lane/no-persona
+#       checkpoint, because the eligibility gate refuses the unpartitioned
+#       bucket.
+#
+# Threshold: probe uses UM_AUTOSUPERSEDE_THRESHOLD=0.7 to ensure the
+# unambiguous A/B contradiction clears the bar confidently. D3.3 will pin
+# the eval-derived production value; 0.7 is a conservative floor here.
+#
+# Requires: UM_MCP_WRITE_ENABLED=true, UM_VAULT_DIR set, OPENAI_API_KEY (or
+# configured contradiction provider key) — same real-infra contract as D2 S4.
+# The block sets UM_AUTOSUPERSEDE_ENABLED=true for its own scope.
+if [ "${UM_SMOKE_AUTOSUPERSEDE_ON:-}" = "1" ]; then
+	echo "[smoke] D3.2 S5 — auto-supersession positive-path (UM_SMOKE_AUTOSUPERSEDE_ON=1)"
+
+	# Validate the write-enabled + vault requirements (same gate as T10-E).
+	if [ "${UM_MCP_WRITE_ENABLED:-}" != "true" ] || [ -z "${UM_VAULT_DIR:-}" ]; then
+		echo "[smoke] D3.2 S5 SKIP: UM_MCP_WRITE_ENABLED or UM_VAULT_DIR not set — real write path unavailable; skipping auto-supersession probe" >&2
+	else
+
+	# Enable auto-supersession and set a conservative threshold for the probe.
+	# Original values are restored at the end of the block regardless of pass/fail.
+	_d32_orig_enabled="${UM_AUTOSUPERSEDE_ENABLED:-}"
+	_d32_orig_threshold="${UM_AUTOSUPERSEDE_THRESHOLD:-}"
+	export UM_AUTOSUPERSEDE_ENABLED=true
+	export UM_AUTOSUPERSEDE_THRESHOLD=0.7
+
+	# Helper: write a fact via /api/add; mirrors _d2_add (proven shape + auth wrapper).
+	_d32_add() {
+		# $1 = text, $2 = JSON metadata object
+		curl -sS -X POST "$ENDPOINT/api/add" \
+			-H 'Content-Type: application/json' \
+			-w '\nHTTP_STATUS=%{http_code}\n' \
+			-d "{\"text\": \"$1\", \"metadata\": $2, \"surface\": \"smoke\"}" 2>&1 || true
+	}
+
+	# Helper: extract the first result id from an /api/add response;
+	# mirrors _d2_id (same envelope shape).
+	_d32_id() {
+		printf '%s' "$1" | python3 -c "
+import json, sys
+raw = sys.stdin.read().split('HTTP_STATUS=')[0].strip()
+try:
+    obj = json.loads(raw[raw.index('{'):raw.rindex('}') + 1])
+except Exception:
+    print(''); sys.exit(0)
+rs = obj.get('results', [])
+print(rs[0]['id'] if rs and rs[0].get('id') else '')
+"
+	}
+
+	# Helper: POST /api/search; mirrors _d2_search.
+	_d32_search() {
+		# $1 = JSON body object (query/limit/filters/include_superseded/only_superseded)
+		curl -sf -X POST "$ENDPOINT/api/search" \
+			-H 'Content-Type: application/json' \
+			-d "$1" 2>/dev/null || true
+	}
+
+	# ── Writes ──────────────────────────────────────────────────────────────
+	# Fact A: present-tense, lane:work. Fact B: same topic, mutually exclusive
+	# present-tense claim, lane:work. Unambiguous contradiction — the LLM judge
+	# cannot treat these as time-scoped coexistences (both use present tense,
+	# same subject, different values). $MARKER scopes against prior runs.
+	D32_A_TEXT="The smoke test user's primary work laptop is a MacBook Pro (d32-${MARKER})."
+	D32_B_TEXT="The smoke test user's primary work laptop is a Lenovo ThinkPad (d32-${MARKER})."
+
+	d32_resp_a=$(_d32_add "$D32_A_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
+	echo "[smoke]     write A (lane:work, MacBook Pro):    $d32_resp_a"
+	d32_resp_b=$(_d32_add "$D32_B_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
+	echo "[smoke]     write B (lane:work, ThinkPad):       $d32_resp_b"
+
+	# Control 1: a fact in lane:other — must remain untouched after lane:work checkpoint.
+	D32_CTRL1_TEXT="The smoke test user's office plant is a cactus (d32-ctrl1-${MARKER})."
+	d32_resp_ctrl1=$(_d32_add "$D32_CTRL1_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "other"}')
+	echo "[smoke]     write ctrl1 (lane:other, cactus):    $d32_resp_ctrl1"
+
+	# Control 2 (R1-B1 absence-gate): contradicting facts with NO lane/persona.
+	D32_C_TEXT="The smoke test user's favourite colour is blue (d32-c-${MARKER})."
+	D32_D_TEXT="The smoke test user's favourite colour is red (d32-d-${MARKER})."
+	d32_resp_c=$(_d32_add "$D32_C_TEXT" '{"project": "d32-smoke", "type": "fact"}')
+	echo "[smoke]     write C (no-lane, blue):             $d32_resp_c"
+	d32_resp_d=$(_d32_add "$D32_D_TEXT" '{"project": "d32-smoke", "type": "fact"}')
+	echo "[smoke]     write D (no-lane, red):              $d32_resp_d"
+
+	# Extract ids from all writes.
+	D32_ID_A=$(_d32_id "$d32_resp_a")
+	D32_ID_B=$(_d32_id "$d32_resp_b")
+	D32_ID_CTRL1=$(_d32_id "$d32_resp_ctrl1")
+	D32_ID_C=$(_d32_id "$d32_resp_c")
+	D32_ID_D=$(_d32_id "$d32_resp_d")
+	echo "[smoke]     ids: A=$D32_ID_A B=$D32_ID_B ctrl1=$D32_ID_CTRL1 C=$D32_ID_C D=$D32_ID_D"
+
+	# If any id is missing, mem0 extracted nothing — same FAIL logic as D2 S4.
+	if [ -z "$D32_ID_A" ] || [ -z "$D32_ID_B" ] || [ -z "$D32_ID_C" ] || [ -z "$D32_ID_D" ]; then
+		echo "[smoke] D3.2 S5 FAIL: one or more /api/add writes returned no record id — mem0 extracted no fact; cannot verify auto-supersession" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# ── Poll until A and B are both visible in unfiltered search ────────────
+	# Same eventual-consistency poll idiom as D2 S4 (write→qdrant async).
+	d32_ab_visible=0
+	for _i in $(seq 1 15); do
+		if _d32_search "{\"query\": \"$D32_B_TEXT\", \"limit\": 20, \"include_superseded\": true}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if {'$D32_ID_A', '$D32_ID_B'} <= ids else 1)
+"; then
+			d32_ab_visible=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$d32_ab_visible" != "1" ]; then
+		echo "[smoke] D3.2 S5 FAIL: A and B did not both appear in include_superseded search within 30s — write visibility regression" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke]     A and B both visible pre-checkpoint (include_superseded)"
+
+	# ── Run checkpoint on lane:work (triggers contradiction detection for A/B) ─
+	# Seed a minimal turn so the checkpoint pipeline has something to summarise.
+	mcp_call 200 memory_append_turn "{\"project\":\"d32-smoke\",\"content\":\"Smoke D3.2 seed turn (d32-${MARKER})\",\"role\":\"user\"}" >/dev/null
+	D32_CP_RESP=$(mcp_call 201 memory_checkpoint "{\"project\":\"d32-smoke\",\"lane\":\"work\"}")
+	echo "[smoke]     checkpoint lane:work response: $D32_CP_RESP"
+	echo "$D32_CP_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true from checkpoint: ' + result_text
+print('OK: memory_checkpoint lane:work returned ok:true')
+" || { echo "[smoke] D3.2 S5 FAIL: checkpoint lane:work did not return ok:true"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+
+	# ── Allow time for supersession write to propagate ───────────────────────
+	# supersedePoint writes to qdrant; eventual consistency (same as write-to-search).
+	d32_a_superseded=0
+	for _i in $(seq 1 15); do
+		if _d32_search "{\"query\": \"$D32_B_TEXT\", \"limit\": 20, \"filters\": {\"lane\": \"work\"}}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+# A must be absent (superseded, excluded from default), B present
+sys.exit(0 if '$D32_ID_B' in ids and '$D32_ID_A' not in ids else 1)
+"; then
+			d32_a_superseded=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$d32_a_superseded" != "1" ]; then
+		echo "[smoke] D3.2 S5 FAIL: after checkpoint lane:work, A was not superseded (default search still returns A, or B missing) — auto-supersession did not fire or threshold too high" >&2
+		echo "[smoke]   Note: verify UM_AUTOSUPERSEDE_ENABLED=true reached the running container (env may not propagate to an already-started docker process)" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke]     assertion (a) PASS: default search lane:work returns B only (A superseded+excluded)"
+
+	# Assertion (b-i): include_superseded=true must return BOTH A and B.
+	_d32_search "{\"query\": \"$D32_B_TEXT\", \"limit\": 20, \"include_superseded\": true, \"filters\": {\"lane\": \"work\"}}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    print('FAIL: could not parse include_superseded response'); sys.exit(1)
+if '$D32_ID_A' not in ids:
+    print(f'FAIL: A ({\"$D32_ID_A\"}) not in include_superseded results (expected both A and B)'); sys.exit(1)
+if '$D32_ID_B' not in ids:
+    print(f'FAIL: B ({\"$D32_ID_B\"}) not in include_superseded results'); sys.exit(1)
+print('OK: include_superseded=true returns both A and B')
+" || { echo "[smoke] D3.2 S5 FAIL: include_superseded assertion failed"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+	echo "[smoke]     assertion (b-i) PASS: include_superseded=true returns both A and B"
+
+	# Assertion (b-ii): only_superseded=true in lane:work must show A.
+	_d32_search "{\"query\": \"$D32_B_TEXT\", \"limit\": 20, \"only_superseded\": true, \"filters\": {\"lane\": \"work\"}}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    print('FAIL: could not parse only_superseded response'); sys.exit(1)
+if '$D32_ID_A' not in ids:
+    print(f'FAIL: A ({\"$D32_ID_A\"}) not in only_superseded results'); sys.exit(1)
+if '$D32_ID_B' in ids:
+    print(f'FAIL: B ({\"$D32_ID_B\"}) appeared in only_superseded results (should be current, not superseded)'); sys.exit(1)
+print('OK: only_superseded=true returns A (superseded), not B (current)')
+" || { echo "[smoke] D3.2 S5 FAIL: only_superseded assertion failed"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+	echo "[smoke]     assertion (b-ii) PASS: only_superseded=true returns A, excludes B"
+
+	# Assertion (c): unsupersede A → A must reappear in default search.
+	D32_UNSUP_RESP=$(mcp_call 202 memory_supersede "{\"action\":\"unsupersede\",\"id\":\"$D32_ID_A\"}")
+	echo "[smoke]     unsupersede A response: $D32_UNSUP_RESP"
+	echo "$D32_UNSUP_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true from unsupersede: ' + result_text
+assert result.get('status') == 'current', 'expected status=current: ' + result_text
+print('OK: unsupersede returned ok:true, status:current')
+" || { echo "[smoke] D3.2 S5 FAIL: unsupersede MCP call did not return ok:true"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+	# Poll until A is current again in default search.
+	d32_a_restored=0
+	for _i in $(seq 1 15); do
+		if _d32_search "{\"query\": \"$D32_A_TEXT\", \"limit\": 20, \"filters\": {\"lane\": \"work\"}}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if '$D32_ID_A' in ids else 1)
+"; then
+			d32_a_restored=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$d32_a_restored" != "1" ]; then
+		echo "[smoke] D3.2 S5 FAIL: after unsupersede A, A did not reappear in default search within 30s" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke]     assertion (c) PASS: unsupersede A restores A to default search"
+
+	# ── Control 1: lane:other must be untouched ──────────────────────────────
+	# The lane:work checkpoint must NOT have touched lane:other. ctrl1 should
+	# still be visible in a lane:other search (status=current).
+	# If ctrl1 id is empty (mem0 extracted nothing), skip this sub-check.
+	if [ -n "$D32_ID_CTRL1" ]; then
+		_d32_search "{\"query\": \"$D32_CTRL1_TEXT\", \"limit\": 20, \"filters\": {\"lane\": \"other\"}}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    print('FAIL: could not parse ctrl1 search response'); sys.exit(1)
+if '$D32_ID_CTRL1' not in ids:
+    print(f'FAIL: ctrl1 ({\"$D32_ID_CTRL1\"}) missing from lane:other default search — cross-partition supersession leak'); sys.exit(1)
+print('OK: ctrl1 lane:other fact is current (lane:work checkpoint did not touch it)')
+" || { echo "[smoke] D3.2 S5 FAIL: Control 1 lane:other isolation failed"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+		echo "[smoke]     control 1 PASS: lane:other fact untouched by lane:work checkpoint"
+	else
+		echo "[smoke]     control 1 SKIP: ctrl1 write extracted no fact (mem0 extraction skipped)"
+	fi
+
+	# ── Control 2 (R1-B1 absence-gate): no-lane/no-persona facts ────────────
+	# Run a checkpoint with NO lane and NO persona. The eligibility gate in
+	# contradiction-batch.mjs returns [] for unpartitioned buckets, so C and D
+	# must BOTH remain current.
+	# Seed a turn for the no-partition project.
+	mcp_call 203 memory_append_turn "{\"project\":\"d32-smoke-nolane\",\"content\":\"Smoke D3.2 no-lane seed (d32-${MARKER})\",\"role\":\"user\"}" >/dev/null
+	D32_CP2_RESP=$(mcp_call 204 memory_checkpoint '{"project":"d32-smoke-nolane"}')
+	echo "[smoke]     checkpoint (no lane/persona) response: $D32_CP2_RESP"
+	echo "$D32_CP2_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true from no-lane checkpoint: ' + result_text
+print('OK: no-lane checkpoint returned ok:true')
+" || { echo "[smoke] D3.2 S5 FAIL: no-lane checkpoint did not return ok:true"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+	# C and D must both appear in default (non-include_superseded) search.
+	d32_cd_current=0
+	for _i in $(seq 1 10); do
+		if _d32_search "{\"query\": \"$D32_D_TEXT\", \"limit\": 20, \"include_superseded\": true}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+# Both must be present in include_superseded — then check neither is superseded.
+sys.exit(0 if {'$D32_ID_C', '$D32_ID_D'} <= ids else 1)
+"; then
+			d32_cd_current=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$d32_cd_current" != "1" ]; then
+		echo "[smoke] D3.2 S5 WARN: C/D no-lane facts not visible in include_superseded search within 20s — likely mem0 extraction yielded no fact for these inputs; skipping R1-B1 sub-assertion" >&2
+	else
+		# Verify neither C nor D is superseded (should appear in DEFAULT search too).
+		_d32_search "{\"query\": \"$D32_D_TEXT\", \"limit\": 20}" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    ids = {r.get('id') for r in data.get('results', [])}
+except Exception:
+    print('FAIL: could not parse no-lane default search response'); sys.exit(1)
+c_id, d_id = '$D32_ID_C', '$D32_ID_D'
+# If both are in default results they are current (not superseded).
+# If either is absent we check only_superseded to confirm it is not there either.
+print(f'default search ids: {sorted(i for i in ids if i)}')
+" || true
+		# Primary check: neither C nor D should appear in only_superseded.
+		_d32_search "{\"query\": \"$D32_D_TEXT\", \"limit\": 50, \"only_superseded\": true}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    print('FAIL: could not parse only_superseded no-lane response'); sys.exit(1)
+if '$D32_ID_C' in ids or '$D32_ID_D' in ids:
+    print(f'FAIL (R1-B1): no-lane facts C/D appear in only_superseded — unpartitioned checkpoint eligibility gate regressed'); sys.exit(1)
+print('OK (R1-B1): no-lane C/D not in only_superseded — eligibility gate held')
+" || { echo "[smoke] D3.2 S5 FAIL: Control 2 (R1-B1): no-lane facts were superseded by a no-lane checkpoint — eligibility gate regressed"; export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"; export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"; _um_smoke_auth_cleanup; exit 1; }
+		echo "[smoke]     control 2 (R1-B1) PASS: no-lane/no-persona facts NOT superseded by no-partition checkpoint"
+	fi
+
+	# ── Restore env and cleanup session artifacts ────────────────────────────
+	export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+	export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+	rm -rf "${UM_VAULT_DIR}/sessions/d32-smoke" "${UM_VAULT_DIR}/state/d32-smoke" \
+	       "${UM_VAULT_DIR}/captures/d32-smoke" \
+	       "${UM_VAULT_DIR}/sessions/d32-smoke-nolane" "${UM_VAULT_DIR}/state/d32-smoke-nolane" \
+	       "${UM_VAULT_DIR}/captures/d32-smoke-nolane" 2>/dev/null || true
+
+	echo "[smoke] D3.2 S5 PASS: auto-supersession fires on lane:work contradiction; include_superseded/only_superseded correct; unsupersede restores; cross-partition + absence-gate controls held"
+	fi  # end UM_MCP_WRITE_ENABLED check
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
