@@ -43,7 +43,7 @@ import { computeFactId } from './add.mjs';
  * @param {string}   opts.userId     — Required. Partition key.
  * @param {string}   [opts.lane]     — Lane slug. If absent AND persona absent → no-op.
  * @param {string}   [opts.persona]  — Persona slug. Same gate as lane.
- * @param {number}   [opts.threshold=0.8] — Minimum confidence for a contradiction to qualify.
+ * @param {number}   [opts.threshold=0.9] — Minimum judge confidence to supersede. Spec §4 conservative bootstrap (0.90); never live until D3.3's eval-derived τ + flip PR.
  * @param {string}   [opts.collection]    — Qdrant collection name.
  * @param {object}   [opts.client]        — Qdrant client (for real _find).
  * @param {Function} [opts._facts]        — DI: replaces facts() orchestrator (test seam).
@@ -59,7 +59,7 @@ export async function detectContradictionsInBatch(transcript, {
   userId,
   lane,
   persona,
-  threshold = 0.8,
+  threshold = 0.9, // spec §4 conservative bootstrap (0.90); D3.3 eval-derives the production τ
   collection,
   client,
   _facts  = realFacts,

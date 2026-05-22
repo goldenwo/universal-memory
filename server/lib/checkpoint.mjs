@@ -523,7 +523,7 @@ export async function doCheckpoint(args, ctx = {}) {
           const personaStr = persona || '-';
           const bullets = detections.map((d) =>
             `- target \`${d.targetId}\` → superseded by \`${d.supersededBy}\` (confidence ${d.confidence})\n` +
-            `  - reason: ${d.reasoning}\n` +
+            `  - reason: ${String(d.reasoning ?? '').replace(/\s+/g, ' ').trim()}\n` +
             `  - undo: \`memory_supersede {"action":"unsupersede","id":"${d.targetId}"}\``
           ).join('\n');
           const digest =
