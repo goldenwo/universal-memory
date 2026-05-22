@@ -59,6 +59,30 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
+/**
+ * Compute the deterministic uuidv5 point-ID for a dedup-eligible fact write.
+ *
+ * Encapsulates the `itemHash + seedSuffix + uuidv5(..., NAMESPACE_UM)` derivation
+ * that umAdd uses on the plain-upsert path (lines ~261-266) so external consumers
+ * (e.g. the D3.2 batch detector's `supersededBy` field) use exactly the same
+ * canonical id formula — prevents silent id drift between writer and detector.
+ *
+ * Contract: only the dedup-eligible branch. When lane/persona are both absent
+ * the suffix is '', reducing to the legacy `${hash}:${userId}` seed so pre-D2
+ * IDs are preserved. When either is set, suffix is `:${lane||''}:${persona||''}`.
+ *
+ * @param {{ userId: string, text: string, lane?: string, persona?: string }} opts
+ * @returns {string} uuidv5-derived point ID
+ */
+export function computeFactId({ userId, text, lane, persona }) {
+  const itemHash = md5(text);
+  const seedSuffix =
+    lane !== undefined || persona !== undefined
+      ? `:${lane ?? ''}:${persona ?? ''}`
+      : '';
+  return uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM);
+}
+
 export async function getRealClient(memory) {
   // mem0ai 2.4.6: host/port/collectionName are under memory.config.vectorStore.config
   const { host, port } = memory.config.vectorStore.config;
@@ -258,12 +282,8 @@ export async function umAdd({
       // eligible IDs for pre-D2 points). Concurrent identical writes with
       // distinct (lane, persona) values get distinct point IDs — the partition
       // collides on write per-tuple.
-      const seedSuffix =
-        lane !== undefined || persona !== undefined
-          ? `:${lane ?? ''}:${persona ?? ''}`
-          : '';
       const id = dedupEligible
-        ? uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM)
+        ? computeFactId({ userId, text: item, lane, persona })
         : randomUUID();
       const point = {
         id,
