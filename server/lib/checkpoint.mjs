@@ -45,7 +45,9 @@ import { getLogger } from './logger.mjs';
 import { safeLog, obsFallback } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
-import { applyDefaultProject, TOOL_IDS } from './default-project.mjs';
+import { applyDefaultProject, TOOL_IDS, validateLanePersonaSlug } from './default-project.mjs';
+import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
+import { supersedePoint as defaultSupersedePoint } from './supersede.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -147,6 +149,8 @@ export async function doCheckpoint(args, ctx = {}) {
     since = null,
     until = null,
     skip_state_merge = false,
+    lane: rawLane = null,
+    persona: rawPersona = null,
   } = args;
 
   // v1.1 F1 unification: falsy `project` → soft-default to UM_DEFAULT_PROJECT
@@ -191,6 +195,21 @@ export async function doCheckpoint(args, ctx = {}) {
     };
   }
 
+  // D3.2: validate lane/persona slugs (same validator as add.mjs; throws INPUT_INVALID on bad input).
+  // Absent (null/undefined/empty) is valid — the detector's own gate handles that case.
+  let lane, persona;
+  try {
+    lane = validateLanePersonaSlug({ value: rawLane, fieldName: 'lane' });
+    persona = validateLanePersonaSlug({ value: rawPersona, fieldName: 'persona' });
+  } catch (slugErr) {
+    return {
+      schema_version: 1,
+      ok: false,
+      error: slugErr.message,
+      code: 'INPUT_INVALID',
+    };
+  }
+
   // Config + DI
   const config = ctx.config ?? JSON.parse(await fs.readFile(DEFAULT_CONFIG_PATH, 'utf8'));
   const vaultDir = ctx.vaultDir ?? process.env.UM_VAULT_DIR;
@@ -199,6 +218,20 @@ export async function doCheckpoint(args, ctx = {}) {
   const reindexFn = ctx.reindexFn ?? (async () => {});
   const retryDelaysMs = ctx.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   const retryJitterMaxMs = ctx.retryJitterMaxMs ?? DEFAULT_RETRY_JITTER_MAX_MS;
+
+  // D3.2: DI hooks for the contradiction detector + supersede.
+  // ctx.qdrantClient / ctx.collection / ctx.userId: operator-supplied partition context.
+  // ctx._detectContradictions: injected in tests; defaults to real detectContradictionsInBatch.
+  // ctx._supersede: injected in tests; defaults to real supersedePoint.
+  const qdrantClient = ctx.qdrantClient ?? undefined;
+  const collection = ctx.collection ?? undefined;
+  const userId = ctx.userId ?? undefined;
+  const _detectContradictions = ctx._detectContradictions ?? defaultDetectContradictions;
+  const _supersede = ctx._supersede ?? defaultSupersedePoint;
+  // Threshold: pass through if set; undefined lets the detector apply its own default.
+  const autoThreshold = process.env.UM_AUTOSUPERSEDE_THRESHOLD
+    ? Number(process.env.UM_AUTOSUPERSEDE_THRESHOLD)
+    : undefined;
 
   // Load summarize system prompt (mirrors update-state.mjs prompt-resolution priority)
   let systemPrompt = ctx.systemPrompt;
@@ -461,6 +494,56 @@ export async function doCheckpoint(args, ctx = {}) {
           : phase2Err.message ?? String(phase2Err),
       };
       return out;
+    }
+
+    // ----- D3.2: auto-supersession contradiction pass (flag-off by default) -----
+    // Strict opt-in: ONLY the literal string 'true' enables this pass.
+    // Runs after the durable summary write (absSummaryPath exists on disk),
+    // before reindex — so a detection failure can never jeopardise the already-
+    // persisted summary (spec §7 warn-not-throw; must never break the pipeline).
+    //
+    // The detector's own eligibility gate (!lane && !persona → return []) means
+    // that when both are absent this block is a fast no-op even when the flag is on.
+    //
+    // reindexFn reads from disk (it receives summaryRelPath, a path string).
+    // Appending the digest to absSummaryPath BEFORE reindex is therefore correct:
+    // the digest travels into the index without any in-memory content patching.
+    if (process.env.UM_AUTOSUPERSEDE_ENABLED === 'true') {
+      try {
+        const detections = await _detectContradictions(transcript, {
+          userId, lane, persona, collection, client: qdrantClient, threshold: autoThreshold,
+        });
+        if (detections.length > 0) {
+          for (const d of detections) {
+            await _supersede({ client: qdrantClient, collection, id: d.targetId, supersededBy: d.supersededBy });
+          }
+          // Build the supersession digest block (spec §3.7 format).
+          // One bullet per superseded pair: target, replacing, partition, confidence, reason, undo.
+          const laneStr = lane || '-';
+          const personaStr = persona || '-';
+          const bullets = detections.map((d) =>
+            `- target \`${d.targetId}\` → superseded by \`${d.supersededBy}\` (confidence ${d.confidence})\n` +
+            `  - reason: ${d.reasoning}\n` +
+            `  - undo: \`memory_supersede {"action":"unsupersede","id":"${d.targetId}"}\``
+          ).join('\n');
+          const digest =
+            `\n\n## Auto-superseded (D3.2)\n\n` +
+            `Partition: lane=${laneStr} persona=${personaStr}\n\n` +
+            `${bullets}\n`;
+          // Append to the already-written summary file so the digest is indexed
+          // by the reindexFn that reads from disk below.
+          await fs.appendFile(absSummaryPath, digest, 'utf8');
+        }
+      } catch (err) {
+        safeLog(
+          () => getLogger().warn({
+            request_id: currentRequestId(),
+            component: 'checkpoint',
+            err_message: err?.message ?? String(err),
+          }, 'auto-supersede pass failed (non-fatal)'),
+          'log:checkpoint:autosupersede-failed',
+        );
+      }
     }
 
     // ----- B.10 Part C: blocking reindex with retry (spec §5.4) -----
