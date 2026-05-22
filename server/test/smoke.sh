@@ -2056,8 +2056,12 @@ sys.exit(0 if {'$D32_ID_A', '$D32_ID_B'} <= ids else 1)
 	echo "[smoke]     A and B both visible pre-checkpoint (include_superseded)"
 
 	# ── Run checkpoint on lane:work (triggers contradiction detection for A/B) ─
-	# Seed a minimal turn so the checkpoint pipeline has something to summarise.
-	mcp_call 200 memory_append_turn "{\"project\":\"d32-smoke\",\"content\":\"Smoke D3.2 seed turn (d32-${MARKER})\",\"role\":\"user\"}" >/dev/null
+	# The newer contradicting claim (B) MUST be in the TRANSCRIPT, not just in
+	# qdrant: the detector extracts NEW facts from the session transcript and
+	# judges them against older STORED facts. A and B were written via /api/add
+	# (qdrant only, never the transcript), so B's claim is seeded here as a turn —
+	# otherwise the detector has no new fact to contradict the older stored A.
+	mcp_call 200 memory_append_turn "{\"project\":\"d32-smoke\",\"content\":\"$D32_B_TEXT\",\"role\":\"user\"}" >/dev/null
 	D32_CP_RESP=$(mcp_call 201 memory_checkpoint "{\"project\":\"d32-smoke\",\"lane\":\"work\"}")
 	echo "[smoke]     checkpoint lane:work response: $D32_CP_RESP"
 	echo "$D32_CP_RESP" | python3 -c "
@@ -2188,8 +2192,11 @@ print('OK: ctrl1 lane:other fact is current (lane:work checkpoint did not touch 
 	# Run a checkpoint with NO lane and NO persona. The eligibility gate in
 	# contradiction-batch.mjs returns [] for unpartitioned buckets, so C and D
 	# must BOTH remain current.
-	# Seed a turn for the no-partition project.
-	mcp_call 203 memory_append_turn "{\"project\":\"d32-smoke-nolane\",\"content\":\"Smoke D3.2 no-lane seed (d32-${MARKER})\",\"role\":\"user\"}" >/dev/null
+	# Seed D's contradicting claim into the no-lane transcript so this control is
+	# a REAL gate regression guard: if the absence-gate were removed, the detector
+	# would extract D, find C, and wrongly supersede C — failing this control.
+	# With the gate intact it returns [] before even reading the transcript.
+	mcp_call 203 memory_append_turn "{\"project\":\"d32-smoke-nolane\",\"content\":\"$D32_D_TEXT\",\"role\":\"user\"}" >/dev/null
 	D32_CP2_RESP=$(mcp_call 204 memory_checkpoint '{"project":"d32-smoke-nolane"}')
 	echo "[smoke]     checkpoint (no lane/persona) response: $D32_CP2_RESP"
 	echo "$D32_CP2_RESP" | python3 -c "
