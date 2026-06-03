@@ -1991,8 +1991,16 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# present-tense claim, lane:work. Unambiguous contradiction — the LLM judge
 	# cannot treat these as time-scoped coexistences (both use present tense,
 	# same subject, different values). $MARKER scopes against prior runs.
-	D32_A_TEXT="The smoke test user's primary work laptop is a MacBook Pro (d32-${MARKER})."
-	D32_B_TEXT="The smoke test user's primary work laptop is a Lenovo ThinkPad (d32-${MARKER})."
+	# A and B must (1) contradict unambiguously in the same present tense + lane so the
+	# judge fires, AND (2) be lexically diverse enough to stay BELOW the D1 dedup
+	# embedding threshold (UM_DEDUP_EMBEDDING_THRESHOLD=0.84) — otherwise B's /api/add
+	# DEDUP_MERGEs into A and there is no second point to supersede. A near-template
+	# old near-template pair ("...laptop is a MacBook Pro" vs "...ThinkPad") measured
+	# ~0.83 cosine — right at the threshold — and merged flakily; this vegan/meat pair
+	# measures ~0.71 (well-separated) yet is STRICTLY mutually exclusive, so the judge
+	# fires reliably and B stays a distinct point. (See the dedup-merge guard below.)
+	D32_A_TEXT="The smoke test user is a committed vegan who eats only plants (d32-${MARKER})."
+	D32_B_TEXT="The smoke test user eats steak and bacon at most meals (d32-${MARKER})."
 
 	d32_resp_a=$(_d32_add "$D32_A_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
 	echo "[smoke]     write A (lane:work, MacBook Pro):    $d32_resp_a"
@@ -2023,6 +2031,18 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# If any id is missing, mem0 extracted nothing — same FAIL logic as D2 S4.
 	if [ -z "$D32_ID_A" ] || [ -z "$D32_ID_B" ] || [ -z "$D32_ID_C" ] || [ -z "$D32_ID_D" ]; then
 		echo "[smoke] D3.2 S5 FAIL: one or more /api/add writes returned no record id — mem0 extracted no fact; cannot verify auto-supersession" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# Guard: B must be a DISTINCT point from A. If D1 dedup merged B into A (their
+	# embeddings were >= UM_DEDUP_EMBEDDING_THRESHOLD), B's id == A's id and there is
+	# no second point to supersede — fail CLEARLY rather than as a confusing
+	# "auto-supersession did not fire" (the real cause of the earlier flake).
+	if [ "$D32_ID_B" = "$D32_ID_A" ]; then
+		echo "[smoke] D3.2 S5 FAIL: write B DEDUP_MERGED into A (same id $D32_ID_A) — S5 fixtures too embedding-similar; auto-supersession needs two distinct points (make D32_A/B_TEXT more lexically distinct)" >&2
 		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
 		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
 		_um_smoke_auth_cleanup
