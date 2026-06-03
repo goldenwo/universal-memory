@@ -1910,9 +1910,9 @@ fi
 
 # D3.2 S5 — auto-supersession positive-path smoke (T2.5 deliverable; spec §3.7).
 # Gated by UM_SMOKE_AUTOSUPERSEDE_ON=1 (explicit opt-in), mirroring S2/S3/S4.
-# D3.2 wires contradiction detection behind UM_AUTOSUPERSEDE_ENABLED='true'
-# (strict opt-in, default OFF — OPPOSITE polarity of D1's strict 'false'
-# opt-out; an operator familiar with D1 must not assume the same polarity).
+# D3.2 wired contradiction detection behind UM_AUTOSUPERSEDE_ENABLED; the v1.2
+# D3.3 flip made it ON by default (opt-out: only literal 'false' disables —
+# same polarity as D1's UM_DEDUP_ENABLED). This probe sets it explicitly anyway.
 #
 # What this block proves:
 #   (a) A clearly-contradicting fact B in lane:work supersedes fact A in the
@@ -1991,13 +1991,25 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# present-tense claim, lane:work. Unambiguous contradiction — the LLM judge
 	# cannot treat these as time-scoped coexistences (both use present tense,
 	# same subject, different values). $MARKER scopes against prior runs.
-	D32_A_TEXT="The smoke test user's primary work laptop is a MacBook Pro (d32-${MARKER})."
-	D32_B_TEXT="The smoke test user's primary work laptop is a Lenovo ThinkPad (d32-${MARKER})."
+	# Two constraints, both learned from CI flakes:
+	#   (1) Each write must extract to a SINGLE mem0 fact so the supersession target is
+	#       unambiguous. Single-claim sentences ("is a vegan" / "eats meat") yield one
+	#       fact each; a compound claim ("vegan who eats only plants") splits into two,
+	#       and the single-highest-confidence rule may then supersede a different fact
+	#       than this probe asserts on.
+	#   (2) A and B must NOT D1-dedup-merge, or there is no second point to supersede.
+	#       Same-topic contradictions sit near the 0.84 embedding threshold — the old
+	#       "MacBook Pro" vs "ThinkPad" pair was ~0.83 and merged on runs where mem0's
+	#       extraction jitter tipped it above 0.84. smoke.yml raises
+	#       UM_DEDUP_EMBEDDING_THRESHOLD to 0.95 for the run so these stay distinct.
+	# (The dedup-merge guard below fails clearly if a future fixture regresses this.)
+	D32_A_TEXT="The smoke test user is a vegan (d32-${MARKER})."
+	D32_B_TEXT="The smoke test user eats meat at every meal (d32-${MARKER})."
 
 	d32_resp_a=$(_d32_add "$D32_A_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
-	echo "[smoke]     write A (lane:work, MacBook Pro):    $d32_resp_a"
+	echo "[smoke]     write A (lane:work, vegan):         $d32_resp_a"
 	d32_resp_b=$(_d32_add "$D32_B_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
-	echo "[smoke]     write B (lane:work, ThinkPad):       $d32_resp_b"
+	echo "[smoke]     write B (lane:work, eats meat):     $d32_resp_b"
 
 	# Control 1: a fact in lane:other — must remain untouched after lane:work checkpoint.
 	D32_CTRL1_TEXT="The smoke test user's office plant is a cactus (d32-ctrl1-${MARKER})."
@@ -2023,6 +2035,18 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# If any id is missing, mem0 extracted nothing — same FAIL logic as D2 S4.
 	if [ -z "$D32_ID_A" ] || [ -z "$D32_ID_B" ] || [ -z "$D32_ID_C" ] || [ -z "$D32_ID_D" ]; then
 		echo "[smoke] D3.2 S5 FAIL: one or more /api/add writes returned no record id — mem0 extracted no fact; cannot verify auto-supersession" >&2
+		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
+		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# Guard: B must be a DISTINCT point from A. If D1 dedup merged B into A (their
+	# embeddings were >= UM_DEDUP_EMBEDDING_THRESHOLD), B's id == A's id and there is
+	# no second point to supersede — fail CLEARLY rather than as a confusing
+	# "auto-supersession did not fire" (the real cause of the earlier flake).
+	if [ "$D32_ID_B" = "$D32_ID_A" ]; then
+		echo "[smoke] D3.2 S5 FAIL: write B DEDUP_MERGED into A (same id $D32_ID_A) — S5 fixtures too embedding-similar; auto-supersession needs two distinct points (make D32_A/B_TEXT more lexically distinct)" >&2
 		export UM_AUTOSUPERSEDE_ENABLED="$_d32_orig_enabled"
 		export UM_AUTOSUPERSEDE_THRESHOLD="$_d32_orig_threshold"
 		_um_smoke_auth_cleanup

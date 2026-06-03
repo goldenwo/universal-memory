@@ -4,6 +4,19 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-06-03
+
+**v1.2 turns auto-supersession ON by default** — the D3.3 flip, the single operator-visible behavior change in the D3 lane-scoped auto-supersession arc (D3.1 substrate + D3.2 detector both shipped inert under v1.1). Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 (auto context routing) / Gap 2**. See `MIGRATION.md` `## v1.1 → v1.2` for the operator-facing note.
+
+### Changed (v1.2) — Phase D3.3: auto-supersession flag-flip ON (eval-validated)
+
+- **`UM_AUTOSUPERSEDE_ENABLED` now defaults to ON** (opt-out polarity, identical to `UM_DEDUP_ENABLED`; only the literal lowercase `false` disables — unset / empty / any other value keeps it ON). Through v1.1 this was a strict-`'true'` opt-in / default OFF. The runtime gates in [`server/lib/checkpoint.mjs`](server/lib/checkpoint.mjs) and [`server/mem0-mcp-http.mjs`](server/mem0-mcp-http.mjs) (`memory_checkpoint`) flip from `=== 'true'` to `!== 'false'`.
+- **Eval-derived thresholds pinned + decoupled (D3.3 PR1, [#92](https://github.com/goldenwo/universal-memory/pull/92)).** A 56-pair labelled contradiction eval ([`server/eval/d3-contradiction-set.jsonl`](server/eval/d3-contradiction-set.jsonl) + [`d3-eval.mjs`](server/eval/d3-eval.mjs), two live runs) found precision 1.000 at every τ — zero false positives across the comparable negatives, including the temporal-non-contradiction precision-killers. Judge confidence τ pinned to **0.80** (`UM_AUTOSUPERSEDE_THRESHOLD`); candidate-retrieval cosine cutoff **decoupled to 0.45** (new `UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD`) because true-contradiction cosines span 0.50–0.87 — all below the old coupled 0.90, which would have retrieved none of them.
+- **Still inert in practice until lanes are populated.** The R1-B1 eligibility gate means auto-supersession acts only on checkpoints carrying an explicit `lane`/`persona`; unpartitioned checkpoints remain a no-op. Existing unpartitioned data is untouched by the flip.
+- **Detection + reversibility (shipped inert in D3.1, now operative).** `memory_search only_superseded:true` lists superseded facts (partition-scoped or all-partitions); `memory_supersede {action:'unsupersede', id}` reverses any supersession; each auto-supersession appears in the session-summary digest with its undo invocation. Supersession is a reversible status flip — nothing is deleted, the vector is retained.
+- **Server version → `1.2.0`** across `server/package.json`, the MCP `serverInfo` banner, `GET /openapi.yaml`, and the committed ChatGPT Custom-GPT actions spec — single source [`server/lib/version.mjs`](server/lib/version.mjs) (reads `package.json`).
+- **Tests + hygiene** — checkpoint flag tests inverted to the opt-out polarity (only `false` disables; unset / any-other value invokes the detector); `.env.example`, MCP `memory_checkpoint` lane/persona tool descriptions, and the smoke S5 comment updated to the new default; `token-cost-baseline.txt` and `actions-trimmed.yaml` drift-gate baselines refreshed for the version bump + updated tool description. The `UM_ENDPOINT` → `UM_SERVER_URL` removal (W1.5) is confirmed deferred past v1.2 in `MIGRATION.md`. Full suite 836 pass / 0 fail / 13 pre-existing skips.
+
 ## [1.1.0] — 2026-05-16
 
 **v1.1 is the universality-arc milestone.** Where v1.0 stabilized + published the v0.8 surface, v1.1 advances [#72](https://github.com/goldenwo/universal-memory/issues/72)'s vision axes: B1 surface-coverage matrix (axis 6), D1 cross-surface dedup (axis 1), F1 project soft-default unification (axis 4 partial), B2 `/remember` casual-save skill (axis 4), D2 lane/persona schema substrate (axis 5). Plus the W1.1 `/adr` skill, W1.5 env-var consolidation, W6.2 image-size reduction, the Phase-A pre-migration audits, and connector-doc + `/adr`-route hygiene fixes. See `MIGRATION.md` `## v1.0 → v1.1` for the operator-facing behavior changes (dedup default-ON, project soft-default, lane/persona read-filter semantics).
@@ -780,6 +793,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
+[1.2.0]: https://github.com/goldenwo/universal-memory/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...v1.0.0
 [0.8.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...v0.8.0-alpha
