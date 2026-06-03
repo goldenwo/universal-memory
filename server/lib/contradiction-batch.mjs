@@ -43,7 +43,8 @@ import { computeFactId } from './add.mjs';
  * @param {string}   opts.userId     — Required. Partition key.
  * @param {string}   [opts.lane]     — Lane slug. If absent AND persona absent → no-op.
  * @param {string}   [opts.persona]  — Persona slug. Same gate as lane.
- * @param {number}   [opts.threshold=0.9] — Minimum judge confidence to supersede. Spec §4 conservative bootstrap (0.90); never live until D3.3's eval-derived τ + flip PR.
+ * @param {number}   [opts.judgeThreshold=0.80]     — Minimum LLM-judge confidence to supersede an older fact. Eval-derived (D3.3 Task 3.2).
+ * @param {number}   [opts.retrievalThreshold=0.45] — Minimum embedding cosine for a candidate to be RETRIEVED (passed to _find as its score_threshold). Eval-derived; kept far below judgeThreshold because true contradictions are only moderately cosine-similar.
  * @param {string}   [opts.collection]    — Qdrant collection name.
  * @param {object}   [opts.client]        — Qdrant client (for real _find).
  * @param {Function} [opts._facts]        — DI: replaces facts() orchestrator (test seam).
@@ -59,7 +60,11 @@ export async function detectContradictionsInBatch(transcript, {
   userId,
   lane,
   persona,
-  threshold = 0.9, // spec §4 conservative bootstrap (0.90); D3.3 eval-derives the production τ
+  // D3.3 Task 3.2: the retrieval cosine cutoff and the judge-confidence cutoff
+  // are INDEPENDENT and must not share a value.
+  // eval-derived 2026-06-02 (server/eval/results/d3-latest.json): judge precision 1.0/recall 1.0 across 2 runs at 0.80; true-contradiction cosines 0.50-0.87 force retrieval far below judge tau
+  judgeThreshold = 0.80,     // judge-confidence gate (supersede iff confidence >= this)
+  retrievalThreshold = 0.45, // candidate-retrieval cosine (passed to _find as score_threshold)
   collection,
   client,
   _facts  = realFacts,
@@ -82,18 +87,20 @@ export async function detectContradictionsInBatch(transcript, {
   if (newFacts.length === 0) return [];
 
   // ── Per-fact: embed → find candidates → judge pairs ─────────────────────
-  // Accumulate ALL qualifying (contradicts===true && confidence>=threshold) pairs.
+  // Accumulate ALL qualifying (contradicts===true && confidence>=judgeThreshold) pairs.
   const qualifying = [];
 
   for (const newFact of newFacts) {
     const { vector } = await _embed(newFact, { metrics });
 
+    // Retrieval uses retrievalThreshold (the cosine score_threshold) — far below
+    // the judge τ so moderately-similar true contradictions are still retrieved.
     const candidates = await _find({
       client,
       collection,
       userId,
       vector,
-      threshold,
+      threshold: retrievalThreshold,
       lane,
       persona,
     });
@@ -110,7 +117,7 @@ export async function detectContradictionsInBatch(transcript, {
       // Directionality: older = candidate (TARGET), newer = newFact (REPLACEMENT).
       const judgment = await _judge(olderFact, newFact);
 
-      if (judgment.contradicts === true && judgment.confidence >= threshold) {
+      if (judgment.contradicts === true && judgment.confidence >= judgeThreshold) {
         qualifying.push({
           targetId:    candidate.id,
           supersededBy: computeFactId({ userId, text: newFact, lane, persona }),
