@@ -19,7 +19,7 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed (v1.2) — anthropic summarizer `max_tokens`
 
-- **`summarizerInvoke` in [`server/lib/provider/anthropic.mjs`](server/lib/provider/anthropic.mjs) now passes the API-required `max_tokens: 1024`.** The Anthropic Messages API rejects a `messages.create` call without `max_tokens`, so the anthropic `summarize` backend would have returned 400 on any real (non-mock) invocation. Same latent-omission class as the contradiction-judge fix that rode [#94](https://github.com/goldenwo/universal-memory/pull/94) — this completes `max_tokens` coverage across all three anthropic `messages.create` call sites (`summarizerInvoke`, `contradictionJudgeInvoke`, `factsInvoke`). Default temperature is retained (only the deterministic contradiction judge pins `temperature: 0`).
+- **`summarizerInvoke` in [`server/lib/provider/anthropic.mjs`](server/lib/provider/anthropic.mjs) now passes the API-required `max_tokens: 1024` ([#95](https://github.com/goldenwo/universal-memory/pull/95)).** The Anthropic Messages API rejects a `messages.create` call without `max_tokens`, so the anthropic `summarize` backend would have returned 400 on any real (non-mock) invocation. Same latent-omission class as the contradiction-judge fix that rode [#94](https://github.com/goldenwo/universal-memory/pull/94) — this completes `max_tokens` coverage across all three anthropic `messages.create` call sites (`summarizerInvoke`, `contradictionJudgeInvoke`, `factsInvoke`). Default temperature is retained (only the deterministic contradiction judge pins `temperature: 0`).
 
 ## [1.1.0] — 2026-05-16
 
