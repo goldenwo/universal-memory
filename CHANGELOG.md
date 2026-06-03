@@ -4,7 +4,7 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] — 2026-06-02
+## [1.2.0] — 2026-06-03
 
 **v1.2 turns auto-supersession ON by default** — the D3.3 flip, the single operator-visible behavior change in the D3 lane-scoped auto-supersession arc (D3.1 substrate + D3.2 detector both shipped inert under v1.1). Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 (auto context routing) / Gap 2**. See `MIGRATION.md` `## v1.1 → v1.2` for the operator-facing note.
 

@@ -1991,24 +1991,25 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# present-tense claim, lane:work. Unambiguous contradiction — the LLM judge
 	# cannot treat these as time-scoped coexistences (both use present tense,
 	# same subject, different values). $MARKER scopes against prior runs.
-	# A and B must (1) contradict unambiguously in the same present tense + lane so the
-	# judge fires, AND (2) be lexically diverse enough to stay BELOW the D1 dedup
-	# embedding threshold (UM_DEDUP_EMBEDDING_THRESHOLD=0.84) — otherwise B's /api/add
-	# DEDUP_MERGEs into A and there is no second point to supersede. A near-template
-	# Each must extract to a SINGLE mem0 fact so the supersession target is unambiguous:
-	# single-claim sentences ("is a vegan" / "eats meat") yield one fact each, whereas a
-	# compound claim ("vegan who eats only plants") splits into two and the single-highest-
-	# confidence rule may then supersede a different fact than this probe checks. D1 dedup
-	# merging A into B is separately prevented by UM_DEDUP_EMBEDDING_THRESHOLD=0.95 set for
-	# the run in smoke.yml (these two claims sit ~0.81 cosine — the default 0.84 would merge
-	# them flakily, as the old "MacBook Pro vs ThinkPad" pair did). (See the guard below.)
+	# Two constraints, both learned from CI flakes:
+	#   (1) Each write must extract to a SINGLE mem0 fact so the supersession target is
+	#       unambiguous. Single-claim sentences ("is a vegan" / "eats meat") yield one
+	#       fact each; a compound claim ("vegan who eats only plants") splits into two,
+	#       and the single-highest-confidence rule may then supersede a different fact
+	#       than this probe asserts on.
+	#   (2) A and B must NOT D1-dedup-merge, or there is no second point to supersede.
+	#       Same-topic contradictions sit near the 0.84 embedding threshold — the old
+	#       "MacBook Pro" vs "ThinkPad" pair was ~0.83 and merged on runs where mem0's
+	#       extraction jitter tipped it above 0.84. smoke.yml raises
+	#       UM_DEDUP_EMBEDDING_THRESHOLD to 0.95 for the run so these stay distinct.
+	# (The dedup-merge guard below fails clearly if a future fixture regresses this.)
 	D32_A_TEXT="The smoke test user is a vegan (d32-${MARKER})."
 	D32_B_TEXT="The smoke test user eats meat at every meal (d32-${MARKER})."
 
 	d32_resp_a=$(_d32_add "$D32_A_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
-	echo "[smoke]     write A (lane:work, MacBook Pro):    $d32_resp_a"
+	echo "[smoke]     write A (lane:work, vegan):         $d32_resp_a"
 	d32_resp_b=$(_d32_add "$D32_B_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
-	echo "[smoke]     write B (lane:work, ThinkPad):       $d32_resp_b"
+	echo "[smoke]     write B (lane:work, eats meat):     $d32_resp_b"
 
 	# Control 1: a fact in lane:other — must remain untouched after lane:work checkpoint.
 	D32_CTRL1_TEXT="The smoke test user's office plant is a cactus (d32-ctrl1-${MARKER})."
