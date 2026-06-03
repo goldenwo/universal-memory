@@ -70,7 +70,8 @@ import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
-import { umAdd, getRealClient } from './lib/add.mjs';
+import { umAdd } from './lib/add.mjs';
+import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -1114,7 +1115,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				));
 			}
 			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc };
-			if (process.env.UM_AUTOSUPERSEDE_ENABLED !== 'false') {
+			if (process.env.UM_AUTOSUPERSEDE_ENABLED?.trim() !== 'false') {
 				// Resolve qdrant context for the detector — ON by default since the v1.2
 				// flip (opt-out: only literal 'false' disables). Resolved only inside the gate.
 				// Mirrors the memory_supersede unsupersede path (lines 1181–1183): same

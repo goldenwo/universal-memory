@@ -161,6 +161,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   try {
     raw = await client.chat.completions.create({
       model,
+      temperature: 0, // deterministic supersession decisions (D3.3 follow-up)
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
