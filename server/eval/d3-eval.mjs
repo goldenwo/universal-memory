@@ -24,8 +24,27 @@
  * NOTE (reproducibility): the shipped judge invoke does NOT set an LLM
  * temperature on any provider (see lib/provider/*.mjs contradictionJudgeInvoke),
  * so judge verdicts run at each provider's API-default temperature. Re-running
- * the live sweep can yield slightly different verdicts. Pinning a deterministic
- * temperature is out of scope for this task (production-code change).
+ * the live sweep can yield slightly different verdicts (the two committed runs
+ * differ on ~12/56 confidences, all 0.9↔1.0 jitter). The τ conclusion is stable
+ * (every true-contradiction confidence stays ≥0.80 in BOTH runs), so this does
+ * not block pinning. FOLLOW-UP for the flip PR: pin the judge to temperature 0
+ * for deterministic supersession decisions (production-code change, out of scope
+ * here), or run ≥3 sweeps and take the conservative τ.
+ *
+ * NOTE (run provenance): run1.json and run2.json are two SEPARATE invocations
+ * (distinct timestamps); d3-latest.json is a copy of the last run — this harness
+ * has no REPEAT-mode synthesis (unlike D1's dedup-threshold-sweep). Re-run via:
+ *   node --env-file=.env eval/d3-eval.mjs \
+ *     --fixture eval/d3-contradiction-set.jsonl \
+ *     --out eval/results/<date>-<provider>-runN.json
+ *
+ * NOTE (coverage caveats): the precision claim is conditioned on the fixture's
+ * hand-authored category coverage (contradiction / temporal-noncontradiction /
+ * unrelated / cross-partition). Production same-partition retrieval at the 0.45
+ * cosine cutoff may surface candidate types under-represented here (near-duplicate
+ * paraphrases, incremental numeric updates); grow the fixture against real
+ * retrieved candidates once the flag is live behind monitoring. The persona axis
+ * is illustrative only (3/56 rows) — lane carries the statistical signal.
  *
  * This file is harness + CLI ONLY. It does not, and must not, modify any
  * production code or the fixture.

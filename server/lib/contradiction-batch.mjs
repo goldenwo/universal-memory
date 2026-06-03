@@ -62,7 +62,13 @@ export async function detectContradictionsInBatch(transcript, {
   persona,
   // D3.3 Task 3.2: the retrieval cosine cutoff and the judge-confidence cutoff
   // are INDEPENDENT and must not share a value.
-  // eval-derived 2026-06-02 (server/eval/results/d3-latest.json): judge precision 1.0/recall 1.0 across 2 runs at 0.80; true-contradiction cosines 0.50-0.87 force retrieval far below judge tau
+  // eval-derived 2026-06-02 (server/eval/results/d3-latest.json): precision is 1.0
+  // at EVERY swept τ (the judge emits zero false positives on the fixture), so the
+  // harness precision-floor rule mechanically recommends τ=0.70 (range floor).
+  // Pinned to 0.80 deliberately: top of the recall=1.0 plateau common to BOTH runs
+  // (P/R still 1.0/1.0), with headroom above the negatives and rejecting sub-0.80
+  // hedged verdicts — the precision-first choice. true-contradiction cosines span
+  // 0.50-0.87 (all below the judge τ), which is why retrieval must decouple lower.
   judgeThreshold = 0.80,     // judge-confidence gate (supersede iff confidence >= this)
   retrievalThreshold = 0.45, // candidate-retrieval cosine (passed to _find as score_threshold)
   collection,
