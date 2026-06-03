@@ -145,6 +145,8 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   try {
     raw = await client.messages.create({
       model,
+      max_tokens: 1024, // required by the Anthropic API; mirrors factsInvoke (was a latent omission)
+      temperature: 0,   // deterministic supersession decisions (D3.3 follow-up)
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });

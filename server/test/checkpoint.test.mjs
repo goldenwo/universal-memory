@@ -1197,41 +1197,44 @@ test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () 
 // literal lowercase 'false' disables the detection pass. This is the inverse of the
 // pre-v1.2 strict-'true' opt-in, and mirrors D1's UM_DEDUP_ENABLED polarity.
 
-// Flag-OFF: only 'false' disables → detector stub NOT invoked; checkpoint still ok:true.
-test(`D3.3 flag-off: UM_AUTOSUPERSEDE_ENABLED='false' → detector NOT invoked, checkpoint ok:true`, async () => {
-  const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 flag-off probe.');
+// Flag-OFF: only 'false' disables, whitespace-trimmed → detector stub NOT invoked.
+// The padded values ' false ' / '\tfalse\n' exercise the gate's ?.trim() (D3.3 follow-up).
+for (const flagValue of ['false', ' false ', '\tfalse\n']) {
+  test(`D3.3 flag-off: UM_AUTOSUPERSEDE_ENABLED=${JSON.stringify(flagValue)} → detector NOT invoked, checkpoint ok:true`, async () => {
+    const vaultDir = await makeVault();
+    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 flag-off probe.');
 
-  const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
-  process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
+    const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
+    process.env.UM_AUTOSUPERSEDE_ENABLED = flagValue;
 
-  let detectCallCount = 0;
-  const detectStub = async () => { detectCallCount += 1; return []; };
+    let detectCallCount = 0;
+    const detectStub = async () => { detectCallCount += 1; return []; };
 
-  let result;
-  try {
-    result = await doCheckpoint(
-      { project: 'myproj' },
-      {
-        config: BASE_CONFIG,
-        vaultDir,
-        summarizeFn: makeSummarizeFn(),
-        updateStateFn: makeUpdateStateFn(),
-        reindexFn: async () => {},
-        _detectContradictions: detectStub,
-      },
-    );
-  } finally {
-    if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
-    else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
-    await fs.rm(vaultDir, { recursive: true, force: true });
-  }
+    let result;
+    try {
+      result = await doCheckpoint(
+        { project: 'myproj' },
+        {
+          config: BASE_CONFIG,
+          vaultDir,
+          summarizeFn: makeSummarizeFn(),
+          updateStateFn: makeUpdateStateFn(),
+          reindexFn: async () => {},
+          _detectContradictions: detectStub,
+        },
+      );
+    } finally {
+      if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+      else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
+      await fs.rm(vaultDir, { recursive: true, force: true });
+    }
 
-  assert.equal(detectCallCount, 0,
-    `detector must NOT be called when flag='false', got ${detectCallCount} call(s)`);
-  assert.equal(result.ok, true,
-    `checkpoint must still succeed when flag='false', got: ${JSON.stringify(result)}`);
-});
+    assert.equal(detectCallCount, 0,
+      `detector must NOT be called when flag=${JSON.stringify(flagValue)} (trims to 'false'), got ${detectCallCount} call(s)`);
+    assert.equal(result.ok, true,
+      `checkpoint must still succeed when flag=${JSON.stringify(flagValue)}, got: ${JSON.stringify(result)}`);
+  });
+}
 
 // Flag default-ON: unset / '' / any non-'false' value enables the pass (opt-out polarity).
 // The detector stub returns [] (no supersession) but MUST be invoked — proves the v1.2 flip.

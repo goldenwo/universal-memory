@@ -170,7 +170,8 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
     raw = await client.models.generateContent({
       model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      ...(systemPrompt ? { config: { systemInstruction: systemPrompt } } : {}),
+      // temperature:0 for deterministic supersession (D3.3 follow-up); systemInstruction when present.
+      config: { temperature: 0, ...(systemPrompt ? { systemInstruction: systemPrompt } : {}) },
     });
   } catch (cause) {
     const norm = normalizeError(cause);

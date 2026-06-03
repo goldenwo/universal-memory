@@ -186,7 +186,7 @@ export async function contradictionJudgeInvoke(prompt, { fetch = globalThis.fetc
     res = await fetch(`${host}/api/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt, system: systemPrompt || undefined, stream: false }),
+      body: JSON.stringify({ model, prompt, system: systemPrompt || undefined, stream: false, options: { temperature: 0 } }),
     });
   } catch (cause) {
     throw new ProviderError({

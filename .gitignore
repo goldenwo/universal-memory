@@ -70,6 +70,11 @@ docs/decisions/
 # Claude Code worktrees (created by superpowers skills / /worktree)
 .claude/worktrees/
 
+# Local maintainer audit trails — snapshot-spec hook (CLAUDE.md C3) + review-loop
+# logs. Intentionally local-only; untracked otherwise (these inflate git status).
+.claude/snapshots/
+.claude/reviews/
+
 # Per-developer Claude Code settings (auto-written by the harness when a
 # user approves a permission). Not appropriate to share across machines.
 .claude/settings.local.json

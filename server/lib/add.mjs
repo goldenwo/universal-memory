@@ -56,6 +56,7 @@ import { isSystemDoc } from './system-docs.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
 import { validateLanePersonaSlug } from './default-project.mjs';
+import { getRealClient } from './qdrant-client-resolver.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -81,13 +82,6 @@ export function computeFactId({ userId, text, lane, persona }) {
       ? `:${lane ?? ''}:${persona ?? ''}`
       : '';
   return uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM);
-}
-
-export async function getRealClient(memory) {
-  // mem0ai 2.4.6: host/port/collectionName are under memory.config.vectorStore.config
-  const { host, port } = memory.config.vectorStore.config;
-  const { QdrantClient } = await import('@qdrant/js-client-rest');
-  return new QdrantClient({ host, port });
 }
 
 function buildPayload({ userId, text, metadata, surface, lane, persona }) {
@@ -131,7 +125,7 @@ function computeDedupEligible({ metadata, _systemMigration }) {
   // this PR flips the runtime gate from opt-in to opt-out). Setting
   // UM_DEDUP_ENABLED='false' is the only way to disable; any other value
   // (including unset, '', 'true', '1') keeps dedup ON.
-  if (process.env.UM_DEDUP_ENABLED === 'false') return false;
+  if (process.env.UM_DEDUP_ENABLED?.trim() === 'false') return false;
   if (isSystemDoc({ metadata })) return false;
   if (_systemMigration === true) return false;
   return true;
