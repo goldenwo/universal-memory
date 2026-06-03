@@ -556,7 +556,9 @@ async function cliMain() {
       ? dirname(args.out)
       : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'd3-eval')}-run1.json`;
-  const latestPath = join(resultsDir, 'latest.json');
+  // D3-specific 'latest' pointer: must NOT be 'latest.json' — that path is
+  // owned by the D1 dedup sweep harness in the same results dir (collision).
+  const latestPath = join(resultsDir, 'd3-latest.json');
 
   await writeJson(primaryPath, result);
   await writeJson(latestPath, result);
