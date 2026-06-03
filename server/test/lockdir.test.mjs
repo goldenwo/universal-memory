@@ -213,3 +213,27 @@ test('acquireLockdir survives a transient error then EEXIST contention then acqu
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Pins the default timeoutMs:0 + transient path that the checkpoint state.md
+// caller relies on for its `checkpoint_in_progress` vs `lock_acquire_failed`
+// split: a transient error with no retry budget converts to a single-attempt
+// `false` return — it must NOT retry once more, and must NOT throw.
+test('acquireLockdir with timeoutMs:0 fail-fasts a transient error to false after one attempt', async () => {
+  const dir = mkWorkDir();
+  const p = join(dir, 'fastfail.lockdir');
+  let calls = 0;
+  const mkdirStub = async () => {
+    calls += 1;
+    const e = new Error('EPERM: operation not permitted, mkdir');
+    e.code = 'EPERM';
+    throw e;
+  };
+  try {
+    const ok = await acquireLockdir(p, { timeoutMs: 0, mkdirStub });  // timeoutMs:0 is the default
+    assert.equal(ok, false, 'no retry budget → immediate false');
+    assert.equal(calls, 1, 'exactly one attempt — no retry, no throw');
+  } finally {
+    // Stub always throws → success path (HELD.add) never reached — nothing to clear.
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
