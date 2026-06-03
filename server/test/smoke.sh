@@ -1910,9 +1910,9 @@ fi
 
 # D3.2 S5 — auto-supersession positive-path smoke (T2.5 deliverable; spec §3.7).
 # Gated by UM_SMOKE_AUTOSUPERSEDE_ON=1 (explicit opt-in), mirroring S2/S3/S4.
-# D3.2 wires contradiction detection behind UM_AUTOSUPERSEDE_ENABLED='true'
-# (strict opt-in, default OFF — OPPOSITE polarity of D1's strict 'false'
-# opt-out; an operator familiar with D1 must not assume the same polarity).
+# D3.2 wired contradiction detection behind UM_AUTOSUPERSEDE_ENABLED; the v1.2
+# D3.3 flip made it ON by default (opt-out: only literal 'false' disables —
+# same polarity as D1's UM_DEDUP_ENABLED). This probe sets it explicitly anyway.
 #
 # What this block proves:
 #   (a) A clearly-contradicting fact B in lane:work supersedes fact A in the
