@@ -186,7 +186,7 @@ universal-memory/
 
 universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult both:
 
-- [MIGRATION.md](MIGRATION.md) — step-by-step upgrade guidance per version transition (v0.3 → v0.4 → v0.5 → v0.6 → v0.7 → v0.8 → v1.0 → v1.1).
+- [MIGRATION.md](MIGRATION.md) — step-by-step upgrade guidance per version transition (v0.3 → v0.4 → v0.5 → v0.6 → v0.7 → v0.8 → v1.0 → v1.1 → v1.2).
 - [CHANGELOG.md](CHANGELOG.md) — full per-release notes (Added / Changed / Fixed / Docs).
 
 Pin a release tag rather than tracking `latest` in production.
