@@ -516,9 +516,9 @@ export async function doCheckpoint(args, ctx = {}) {
     // the digest travels into the index without any in-memory content patching.
     //
     // v1.2 flip (D3.3): ON by default — opt-out polarity (mirrors UM_DEDUP_ENABLED);
-    // only the literal lowercase 'false' disables. The eligibility gate above keeps
-    // this a fast no-op for unpartitioned (no lane/persona) checkpoints even when on.
-    if (process.env.UM_AUTOSUPERSEDE_ENABLED !== 'false') {
+    // only the literal lowercase 'false' (whitespace-trimmed) disables. The eligibility
+    // gate above keeps this a fast no-op for unpartitioned checkpoints even when on.
+    if (process.env.UM_AUTOSUPERSEDE_ENABLED?.trim() !== 'false') {
       try {
         const detections = await _detectContradictions(transcript, {
           userId, lane, persona, collection, client: qdrantClient,

@@ -21,15 +21,13 @@
  * precision-FLOOR (default 0.98): pick the LOWEST τ whose precision clears the
  * floor (which also maximizes recall, since recall is non-increasing in τ).
  *
- * NOTE (reproducibility): the shipped judge invoke does NOT set an LLM
- * temperature on any provider (see lib/provider/*.mjs contradictionJudgeInvoke),
- * so judge verdicts run at each provider's API-default temperature. Re-running
- * the live sweep can yield slightly different verdicts (the two committed runs
- * differ on ~12/56 confidences, all 0.9↔1.0 jitter). The τ conclusion is stable
- * (every true-contradiction confidence stays ≥0.80 in BOTH runs), so this does
- * not block pinning. FOLLOW-UP for the flip PR: pin the judge to temperature 0
- * for deterministic supersession decisions (production-code change, out of scope
- * here), or run ≥3 sweeps and take the conservative τ.
+ * NOTE (reproducibility): the shipped judge invoke now sets temperature 0 on
+ * every provider (D3.3 follow-up, 2026-06-03) for deterministic supersession
+ * decisions. Re-validated at temp 0 (eval/results/2026-06-03-d3-openai-temp0.json):
+ * precision 1.000 AND recall 1.000 from τ=0.70 through τ≥0.85 — the recall plateau
+ * WIDENED vs the original default-temp runs (where one true-contradiction confidence
+ * dipped to 0.80). The pinned judge τ=0.80 sits solidly in that plateau. The original
+ * default-temperature sweeps are kept for the record: 2026-06-02-d3-openai-run{1,2}.
  *
  * NOTE (run provenance): run1.json and run2.json are two SEPARATE invocations
  * (distinct timestamps); d3-latest.json is a copy of the last run — this harness
