@@ -1995,12 +1995,15 @@ print(rs[0]['id'] if rs and rs[0].get('id') else '')
 	# judge fires, AND (2) be lexically diverse enough to stay BELOW the D1 dedup
 	# embedding threshold (UM_DEDUP_EMBEDDING_THRESHOLD=0.84) — otherwise B's /api/add
 	# DEDUP_MERGEs into A and there is no second point to supersede. A near-template
-	# old near-template pair ("...laptop is a MacBook Pro" vs "...ThinkPad") measured
-	# ~0.83 cosine — right at the threshold — and merged flakily; this vegan/meat pair
-	# measures ~0.71 (well-separated) yet is STRICTLY mutually exclusive, so the judge
-	# fires reliably and B stays a distinct point. (See the dedup-merge guard below.)
-	D32_A_TEXT="The smoke test user is a committed vegan who eats only plants (d32-${MARKER})."
-	D32_B_TEXT="The smoke test user eats steak and bacon at most meals (d32-${MARKER})."
+	# Each must extract to a SINGLE mem0 fact so the supersession target is unambiguous:
+	# single-claim sentences ("is a vegan" / "eats meat") yield one fact each, whereas a
+	# compound claim ("vegan who eats only plants") splits into two and the single-highest-
+	# confidence rule may then supersede a different fact than this probe checks. D1 dedup
+	# merging A into B is separately prevented by UM_DEDUP_EMBEDDING_THRESHOLD=0.95 set for
+	# the run in smoke.yml (these two claims sit ~0.81 cosine — the default 0.84 would merge
+	# them flakily, as the old "MacBook Pro vs ThinkPad" pair did). (See the guard below.)
+	D32_A_TEXT="The smoke test user is a vegan (d32-${MARKER})."
+	D32_B_TEXT="The smoke test user eats meat at every meal (d32-${MARKER})."
 
 	d32_resp_a=$(_d32_add "$D32_A_TEXT" '{"project": "d32-smoke", "type": "fact", "lane": "work"}')
 	echo "[smoke]     write A (lane:work, MacBook Pro):    $d32_resp_a"
