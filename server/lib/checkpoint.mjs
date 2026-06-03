@@ -502,8 +502,8 @@ export async function doCheckpoint(args, ctx = {}) {
       return out;
     }
 
-    // ----- D3.2: auto-supersession contradiction pass (flag-off by default) -----
-    // Strict opt-in: ONLY the literal string 'true' enables this pass.
+    // ----- D3.2/D3.3: auto-supersession contradiction pass (default ON since v1.2) -----
+    // Opt-out: only the literal string 'false' disables this pass (mirrors UM_DEDUP_ENABLED).
     // Runs after the durable summary write (absSummaryPath exists on disk),
     // before reindex — so a detection failure can never jeopardise the already-
     // persisted summary (spec §7 warn-not-throw; must never break the pipeline).
@@ -514,7 +514,11 @@ export async function doCheckpoint(args, ctx = {}) {
     // reindexFn reads from disk (it receives summaryRelPath, a path string).
     // Appending the digest to absSummaryPath BEFORE reindex is therefore correct:
     // the digest travels into the index without any in-memory content patching.
-    if (process.env.UM_AUTOSUPERSEDE_ENABLED === 'true') {
+    //
+    // v1.2 flip (D3.3): ON by default — opt-out polarity (mirrors UM_DEDUP_ENABLED);
+    // only the literal lowercase 'false' disables. The eligibility gate above keeps
+    // this a fast no-op for unpartitioned (no lane/persona) checkpoints even when on.
+    if (process.env.UM_AUTOSUPERSEDE_ENABLED !== 'false') {
       try {
         const detections = await _detectContradictions(transcript, {
           userId, lane, persona, collection, client: qdrantClient,

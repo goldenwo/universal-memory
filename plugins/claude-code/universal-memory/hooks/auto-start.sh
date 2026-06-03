@@ -16,7 +16,7 @@
 #
 # Required env (one of):
 #   UM_SERVER_URL       Memory server URL (canonical, v1.1+)
-#   UM_ENDPOINT         Same role; deprecated in v1.1, removed in v1.2.
+#   UM_ENDPOINT         Same role; deprecated in v1.1, removed in a future release.
 #
 # Optional env:
 #   UM_COMPOSE_DIR      Directory containing docker-compose.yml for the server.
