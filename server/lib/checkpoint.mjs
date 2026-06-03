@@ -228,9 +228,15 @@ export async function doCheckpoint(args, ctx = {}) {
   const userId = ctx.userId ?? undefined;
   const _detectContradictions = ctx._detectContradictions ?? defaultDetectContradictions;
   const _supersede = ctx._supersede ?? defaultSupersedePoint;
-  // Threshold: pass through if set; undefined lets the detector apply its own default.
-  const autoThreshold = process.env.UM_AUTOSUPERSEDE_THRESHOLD
+  // Thresholds (D3.3 Task 3.2): two INDEPENDENT cutoffs. Pass through if set;
+  // undefined lets the detector apply its own eval-derived default.
+  //   - UM_AUTOSUPERSEDE_THRESHOLD           → judge-confidence gate (judgeThreshold)
+  //   - UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD → embedding retrieval cosine (retrievalThreshold)
+  const autoJudgeThreshold = process.env.UM_AUTOSUPERSEDE_THRESHOLD
     ? Number(process.env.UM_AUTOSUPERSEDE_THRESHOLD)
+    : undefined;
+  const autoRetrievalThreshold = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD
+    ? Number(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD)
     : undefined;
 
   // Load summarize system prompt (mirrors update-state.mjs prompt-resolution priority)
@@ -511,7 +517,9 @@ export async function doCheckpoint(args, ctx = {}) {
     if (process.env.UM_AUTOSUPERSEDE_ENABLED === 'true') {
       try {
         const detections = await _detectContradictions(transcript, {
-          userId, lane, persona, collection, client: qdrantClient, threshold: autoThreshold,
+          userId, lane, persona, collection, client: qdrantClient,
+          judgeThreshold: autoJudgeThreshold,
+          retrievalThreshold: autoRetrievalThreshold,
         });
         if (detections.length > 0) {
           for (const d of detections) {
