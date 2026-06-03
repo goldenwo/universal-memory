@@ -793,6 +793,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
+[1.2.0]: https://github.com/goldenwo/universal-memory/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...v1.0.0
 [0.8.0-alpha]: https://github.com/goldenwo/universal-memory/compare/v0.7.0-alpha...v0.8.0-alpha

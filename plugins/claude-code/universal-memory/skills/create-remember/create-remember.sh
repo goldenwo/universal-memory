@@ -26,14 +26,14 @@ if ! command -v um_resolve_endpoint >/dev/null 2>&1; then
     local endpoint="${UM_ENDPOINT:-}"
     if [ -n "$server_url" ]; then
       if [ -n "$endpoint" ] && [ "$endpoint" != "$server_url" ]; then
-        printf 'warning: UM_ENDPOINT and UM_SERVER_URL both set with different values; using UM_SERVER_URL=%s. UM_ENDPOINT is deprecated, remove it (will be removed in v1.2).\n' \
+        printf 'warning: UM_ENDPOINT and UM_SERVER_URL both set with different values; using UM_SERVER_URL=%s. UM_ENDPOINT is deprecated, remove it (will be removed in a future release).\n' \
           "$server_url" >&2
       fi
       printf '%s\n' "$server_url"
       return 0
     fi
     if [ -n "$endpoint" ]; then
-      printf 'warning: UM_ENDPOINT is deprecated; rename to UM_SERVER_URL. Will be removed in v1.2 (see MIGRATION.md).\n' >&2
+      printf 'warning: UM_ENDPOINT is deprecated; rename to UM_SERVER_URL. Will be removed in a future release (see MIGRATION.md).\n' >&2
       printf '%s\n' "$endpoint"
       return 0
     fi

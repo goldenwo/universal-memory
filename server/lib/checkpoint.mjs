@@ -502,8 +502,8 @@ export async function doCheckpoint(args, ctx = {}) {
       return out;
     }
 
-    // ----- D3.2: auto-supersession contradiction pass (flag-off by default) -----
-    // Strict opt-in: ONLY the literal string 'true' enables this pass.
+    // ----- D3.2/D3.3: auto-supersession contradiction pass (default ON since v1.2) -----
+    // Opt-out: only the literal string 'false' disables this pass (mirrors UM_DEDUP_ENABLED).
     // Runs after the durable summary write (absSummaryPath exists on disk),
     // before reindex — so a detection failure can never jeopardise the already-
     // persisted summary (spec §7 warn-not-throw; must never break the pipeline).
