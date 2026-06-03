@@ -94,6 +94,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   try {
     raw = await client.messages.create({
       model,
+      max_tokens: 1024, // required by the Anthropic API; mirrors factsInvoke (was a latent omission). Default temperature — only the judge needs temp=0.
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
