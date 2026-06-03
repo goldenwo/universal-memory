@@ -567,8 +567,8 @@ export const TOOLS = [
 			type: 'object',
 			properties: {
 				project: { type: 'string', description: 'Project to checkpoint (optional)' },
-				lane: { type: 'string', description: 'Optional v1.1 D2 topic-area partition slug (e.g. work, personal). Validated against the project slug regex. Omitted = unpartitioned. When set (with UM_AUTOSUPERSEDE_ENABLED=true), the D3.2 contradiction detector runs for this partition.' },
-				persona: { type: 'string', description: 'Optional v1.1 D2 identity-aspect partition slug (e.g. me-engineer). Validated against the project slug regex. Omitted = unpartitioned. When set (with UM_AUTOSUPERSEDE_ENABLED=true), the D3.2 contradiction detector runs for this partition.' },
+				lane: { type: 'string', description: 'Optional v1.1 D2 topic-area partition slug (e.g. work, personal). Validated against the project slug regex. Omitted = unpartitioned. When set, the contradiction detector runs for this partition (ON by default since v1.2; set UM_AUTOSUPERSEDE_ENABLED=false to disable).' },
+				persona: { type: 'string', description: 'Optional v1.1 D2 identity-aspect partition slug (e.g. me-engineer). Validated against the project slug regex. Omitted = unpartitioned. When set, the contradiction detector runs for this partition (ON by default since v1.2; set UM_AUTOSUPERSEDE_ENABLED=false to disable).' },
 			},
 		},
 	},
@@ -1114,8 +1114,9 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				));
 			}
 			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc };
-			if (process.env.UM_AUTOSUPERSEDE_ENABLED === 'true') {
-				// Resolve qdrant context for the detector — only when the feature is enabled.
+			if (process.env.UM_AUTOSUPERSEDE_ENABLED !== 'false') {
+				// Resolve qdrant context for the detector — ON by default since the v1.2
+				// flip (opt-out: only literal 'false' disables). Resolved only inside the gate.
 				// Mirrors the memory_supersede unsupersede path (lines 1181–1183): same
 				// memory-instance source, same collection-name derivation, same userId.
 				const checkpointMemory = ctx?.memory ?? memory;

@@ -151,6 +151,14 @@ jobs:
             echo "# other smoke tasks run, so enabling it for the whole run is safe."
             echo "UM_AUTOSUPERSEDE_ENABLED=true"
             echo "UM_AUTOSUPERSEDE_THRESHOLD=0.7"
+            echo ""
+            echo "# Raise the D1 embedding-dedup threshold for the run so the S5"
+            echo "# auto-supersession probe's contradicting A/B (and C/D control)"
+            echo "# facts — same-topic, near the 0.84 dedup threshold — stay DISTINCT instead of"
+            echo "# DEDUP_MERGEing (which would collapse the pair before the contradiction"
+            echo "# detector runs). Exact-dup (hash) dedup tests are unaffected; no smoke"
+            echo "# test relies on a 0.84 embedding-PARAPHRASE merge (D1 S2 uses exact text)."
+            echo "UM_DEDUP_EMBEDDING_THRESHOLD=0.95"
           } >> .env
           # `restart` reuses the existing container's env vars — does NOT
           # re-read .env. Use `up -d --force-recreate` to rebuild the

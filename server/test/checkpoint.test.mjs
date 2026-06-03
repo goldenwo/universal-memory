@@ -511,6 +511,13 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
   const origVaultDir = process.env.UM_VAULT_DIR;
   process.env.UM_MCP_WRITE_ENABLED = 'true';
   process.env.UM_VAULT_DIR = vaultDir;
+  // Isolate the routing check from the (now default-ON since the v1.2 flip)
+  // autosupersede qdrant resolution: this test only asserts memory_checkpoint
+  // reaches doCheckpoint (not the v0.4 stub). The detector path is covered by the
+  // flag tests above + smoke S5; here an uninitialised `memory` mock would throw a
+  // qdrant-resolution error unrelated to the routing assertion.
+  const origAutosupersede = process.env.UM_AUTOSUPERSEDE_ENABLED;
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
 
   try {
     let raw;
@@ -554,6 +561,8 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
     else process.env.UM_MCP_WRITE_ENABLED = origWriteEnabled;
     if (origVaultDir === undefined) delete process.env.UM_VAULT_DIR;
     else process.env.UM_VAULT_DIR = origVaultDir;
+    if (origAutosupersede === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+    else process.env.UM_AUTOSUPERSEDE_ENABLED = origAutosupersede;
     await fs.rm(vaultDir, { recursive: true, force: true });
   }
 });
@@ -1184,14 +1193,53 @@ test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () 
 
 // ---------- D3.2: UM_AUTOSUPERSEDE_ENABLED flag tests ----------
 
-// D3.2 flag-off: strict opt-in — only literal 'true' enables the detection pass.
-// Parametrize over 4 off-values: undefined, 'false', '0', 'FALSE'.
-// For each: detector stub call-count must be 0 AND checkpoint must still succeed.
-for (const flagValue of [undefined, 'false', '0', 'FALSE']) {
+// D3.3 v1.2 flip: UM_AUTOSUPERSEDE_ENABLED is now ON BY DEFAULT (opt-out) — only the
+// literal lowercase 'false' disables the detection pass. This is the inverse of the
+// pre-v1.2 strict-'true' opt-in, and mirrors D1's UM_DEDUP_ENABLED polarity.
+
+// Flag-OFF: only 'false' disables → detector stub NOT invoked; checkpoint still ok:true.
+test(`D3.3 flag-off: UM_AUTOSUPERSEDE_ENABLED='false' → detector NOT invoked, checkpoint ok:true`, async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 flag-off probe.');
+
+  const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
+
+  let detectCallCount = 0;
+  const detectStub = async () => { detectCallCount += 1; return []; };
+
+  let result;
+  try {
+    result = await doCheckpoint(
+      { project: 'myproj' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+        _detectContradictions: detectStub,
+      },
+    );
+  } finally {
+    if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+    else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+
+  assert.equal(detectCallCount, 0,
+    `detector must NOT be called when flag='false', got ${detectCallCount} call(s)`);
+  assert.equal(result.ok, true,
+    `checkpoint must still succeed when flag='false', got: ${JSON.stringify(result)}`);
+});
+
+// Flag default-ON: unset / '' / any non-'false' value enables the pass (opt-out polarity).
+// The detector stub returns [] (no supersession) but MUST be invoked — proves the v1.2 flip.
+for (const flagValue of [undefined, '', 'true', '0', 'FALSE', 'yes']) {
   const label = flagValue === undefined ? 'undefined' : JSON.stringify(flagValue);
-  test(`D3.2 flag-off: UM_AUTOSUPERSEDE_ENABLED=${label} → detector NOT invoked, checkpoint ok:true`, async () => {
+  test(`D3.3 flag default-on: UM_AUTOSUPERSEDE_ENABLED=${label} → detector INVOKED, checkpoint ok:true`, async () => {
     const vaultDir = await makeVault();
-    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.2 flag-off probe.');
+    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 default-on probe.');
 
     const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
     if (flagValue === undefined) {
@@ -1222,10 +1270,10 @@ for (const flagValue of [undefined, 'false', '0', 'FALSE']) {
       await fs.rm(vaultDir, { recursive: true, force: true });
     }
 
-    assert.equal(detectCallCount, 0,
-      `detector must NOT be called when flag=${label}, got ${detectCallCount} call(s)`);
+    assert.equal(detectCallCount, 1,
+      `detector MUST be called when flag=${label} (default-on / opt-out), got ${detectCallCount} call(s)`);
     assert.equal(result.ok, true,
-      `checkpoint must still succeed when flag=${label}, got: ${JSON.stringify(result)}`);
+      `checkpoint must succeed when flag=${label}, got: ${JSON.stringify(result)}`);
   });
 }
 

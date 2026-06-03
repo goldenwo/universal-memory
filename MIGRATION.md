@@ -1,8 +1,33 @@
 # Migration guide
 
+## v1.1 → v1.2
+
+v1.2 flips **auto-supersession ON by default** — the one operator-visible behavior change in the entire D3 arc (D3.1 substrate + D3.2 detector both shipped inert and required no action). The server version bumps to `1.2.0`.
+
+### Auto-supersession is now ON by default (D3.3 flip)
+
+Through v1.1, the session-end contradiction detector was gated behind `UM_AUTOSUPERSEDE_ENABLED` as a **strict-`'true'` opt-in** (default OFF). v1.2 flips the polarity: **`UM_AUTOSUPERSEDE_ENABLED` now defaults to ON**, opt-out — the same polarity as `UM_DEDUP_ENABLED`. Only the literal lowercase string `false` disables it; unset / empty / any other value keeps it ON.
+
+When ON, at session end `memory_checkpoint` runs an LLM contradiction-judge over the just-summarised transcript: if a newer fact contradicts an older one **in the same explicitly-set lane/persona partition**, the older fact is marked `status:'superseded'` (reversibly) so default recall returns only the current fact.
+
+- **It acts only within explicitly-partitioned checkpoints.** The R1-B1 eligibility gate means a checkpoint with NO `lane` and NO `persona` supersedes nothing — the detector is a fast no-op. Post-D2, virtually all facts live in the unpartitioned bucket, so **in practice v1.2 is effectively inert until you start partitioning checkpoints by lane/persona** (the Gap-5 lane-classifier that auto-populates lanes is a later phase). The flip turns the mechanism ON; it does not retroactively touch existing unpartitioned data.
+- **Eval-validated.** The threshold was derived from a 56-pair labelled eval (two live runs): judge confidence τ = 0.80 at precision 1.000 — zero false positives across both runs, including the temporal "I worked at X until 2024" precision-killers. Candidate retrieval is decoupled (cosine τ = 0.45) so moderately-similar contradictions are still surfaced.
+- **Opt out** by setting `UM_AUTOSUPERSEDE_ENABLED=false` (the literal string `false`; any other value keeps it ON).
+- **Detection + undo (if a supersession was wrong).** List superseded facts via `memory_search` with `only_superseded:true` — two modes: partition-scoped (pass a `lane`/`persona`), or all-partitions (omit them, for the "a fact stopped surfacing but I don't know which lane" case). Reverse any supersession with `memory_supersede {"action":"unsupersede","id":"<point-id>"}`. Each auto-supersession is also recorded in the session-summary digest with its exact undo invocation. **Nothing is ever deleted** — supersession is a reversible status flip and the vector is retained.
+- **Tune** the judge confidence cutoff via `UM_AUTOSUPERSEDE_THRESHOLD` (default 0.80) and the candidate-retrieval cosine cutoff via `UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD` (default 0.45). Provider/model via `UM_CONTRADICTION_PROVIDER` / `UM_CONTRADICTION_MODEL` (falls back to the summarizer provider, then `openai`).
+- **Action for operators:** none required to adopt. If you do NOT want auto-supersession, set `UM_AUTOSUPERSEDE_ENABLED=false` before upgrading. If you DO want it to act, set a `lane` or `persona` on your `memory_checkpoint` calls — otherwise it stays inert.
+
+### Server version string
+
+`server/package.json` → `1.2.0`. The MCP `serverInfo` banner, `GET /openapi.yaml` `info.version`, and the committed ChatGPT Custom-GPT actions spec (`plugins/chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml`) all report `1.2.0` — single source `server/lib/version.mjs` (reads `package.json`). No operator action; noted so a connected client seeing the version change knows it is expected.
+
+### `UM_ENDPOINT` removal deferred past v1.2
+
+The v1.0 → v1.1 note below said `UM_ENDPOINT` (deprecated in favor of `UM_SERVER_URL`) would be removed in v1.2. That removal (W1.5) did **not** ship in v1.2 — `UM_ENDPOINT` is still respected with a deprecation warning. Migrate to `UM_SERVER_URL` at your convenience; removal is deferred to a later release.
+
 ## v1.0 → v1.1
 
-v1.1 deprecates the `UM_ENDPOINT` environment variable in favor of `UM_SERVER_URL`. The old variable is still respected with a one-line deprecation warning; it will be removed in v1.2.
+v1.1 deprecates the `UM_ENDPOINT` environment variable in favor of `UM_SERVER_URL`. The old variable is still respected with a one-line deprecation warning; it will be removed in a future release (the W1.5 removal did not ship in v1.2 — see the v1.1 → v1.2 note above).
 
 ### `UM_ENDPOINT` deprecated in favor of `UM_SERVER_URL`
 
@@ -15,9 +40,9 @@ A new shared resolver at `~/.local/share/um/lib/endpoint.sh` is used by hooks, C
 - If you use the auto-installed marker block (the standard install path), no action is needed — the block already exports `UM_SERVER_URL`.
 - If both are set with different values, `UM_SERVER_URL` wins; the warn names which value was used.
 
-**CI / non-interactive callers** see the deprecation warn on every invocation (no warn-once suppression in v1.1's short deprecation window). Migrate before v1.2 ships.
+**CI / non-interactive callers** see the deprecation warn on every invocation (no warn-once suppression in v1.1's short deprecation window). Migrate at your convenience; the removal is deferred past v1.2.
 
-*(Reconfirm the v1.2 removal reference at PR-time; bump if W1.5 slips a release.)*
+*(W1.5 removal slipped past v1.2; the references above are updated to "a future release".)*
 
 ### Cross-surface dedup is now ON by default (D1)
 
