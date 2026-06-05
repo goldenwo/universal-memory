@@ -207,14 +207,20 @@ export async function umAdd({
   const dedupThreshold = dedupEligible ? dedupEmbeddingThreshold() : null;
 
   // Gap-5 P1: lane-classifier seam (resolved once per call).
-  // classifyActive: only engage the classifier pipeline when the seam is
-  // explicitly injected OR the env-flag is set. When neither is present
-  // (all pre-Gap-5 call sites and tests that don't pass _classifyLane),
-  // the per-item block below is a no-op — preserving pre-Gap-5 behaviour
-  // and preventing the centroid-build from firing in unrelated tests.
+  // classifyActive = the operator opted IN. Three-state model (spec §3.6,
+  // user decision 2026-06-04): env-flag UNSET → fully inert (no classify, no
+  // centroid build — the P1 safe default + keeps pre-Gap-5 call sites/tests
+  // untouched); flag set but not 'true' → SHADOW; flag 'true' → ACTIVE. A test
+  // seam (_classifyLane / _laneClassifierEnabled) also engages the pipeline.
+  // NB P4 flip: when the default flips to opt-out this gate must flip in
+  // lockstep with classifierEnabled (engaged unless flag === 'false') — see
+  // plan P4/T4.1.
   const classifyLaneFn = _classifyLane ?? defaultClassifyLane;
   const laneClassifierEnabled = _laneClassifierEnabled ?? defaultClassifierEnabled();
-  const classifyActive = _classifyLane !== undefined || process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
+  const classifyActive =
+    _classifyLane !== undefined ||
+    _laneClassifierEnabled !== undefined ||
+    process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
   const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
 
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
@@ -247,9 +253,10 @@ export async function umAdd({
 
       // Gap-5 P1: per-fact lane auto-classification. Reuses `vector` (no re-embed of
       // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
-      // SHADOW unless the flag is ON: shadow classifies + logs the would-be lane but
-      // does NOT write it. The centroid build is threaded through the SAME embed seam
-      // as the fact (same vector space in prod; hermetic under the test embed override).
+      // Engaged only when classifyActive (operator opted in): ACTIVE (flag 'true')
+      // writes the classified lane; SHADOW (flag set, not 'true') logs the would-be
+      // lane without writing. The centroid build threads the SAME embed seam as the
+      // fact (same vector space in prod; hermetic under the test embed override).
       let itemLane = lane;
       if (classifyActive && itemLane === undefined && !classifySkip) {
         const { lane: classified, score } = await classifyLaneFn(vector, {
