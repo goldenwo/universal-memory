@@ -37,42 +37,20 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { cosineStrict } from '../lib/vector.mjs';
+import { fHalfFrom, f1From } from './fbeta.mjs';
 
-const F_BETA = 0.5;
-const F_BETA_SQ = F_BETA * F_BETA;          // 0.25
-const F_PREFIX = 1 + F_BETA_SQ;              // 1.25
 const REPEAT_DELTA_THRESHOLD = 0.005;        // spec R7
 const PLATEAU_BAND_MIN = 6;                  // > 5 → plateau (spec §4.5 step 5)
 
 // ---------------------------------------------------------------------------
-// Vector arithmetic
+// Vector arithmetic — shared with the production classifier + lane-eval via
+// lib/vector.mjs (rule of three). This harness wants the FAIL-LOUD contract (a
+// malformed fixture vector is a bug, not a silent 0), so it re-exports
+// cosineStrict under the long-standing `cosine` name its tests + d3-eval import.
 // ---------------------------------------------------------------------------
 
-function dot(a, b) {
-  let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
-  return s;
-}
-
-function norm(v) {
-  let s = 0;
-  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
-  return Math.sqrt(s);
-}
-
-/**
- * Provider-agnostic cosine. Idempotent on L2-normalized inputs (denominator
- * is 1.0 within fp epsilon, so it returns dot product); correct on
- * un-normalized inputs.
- */
-export function cosine(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) {
-    throw new Error('cosine: vectors must be non-empty arrays of equal length');
-  }
-  const denom = norm(a) * norm(b);
-  if (denom === 0) return 0;
-  return dot(a, b) / denom;
-}
+export const cosine = cosineStrict; // local binding (used internally) + public re-export
 
 // ---------------------------------------------------------------------------
 // Statistics
@@ -129,21 +107,9 @@ export function bootstrapCi(pairResults, iterations = 1000) {
   return [samples[loIdx], samples[hiIdx]];
 }
 
-function fHalfFrom(precision, recall) {
-  const denom = F_BETA_SQ * precision + recall;
-  if (denom === 0) return 0;
-  return (F_PREFIX * precision * recall) / denom;
-}
-
 function expectedCostFrom(unrelatedMerged, paraphraseUnmerged) {
   // 5:1 cost ratio per spec §4.4 (false-merge irreversible vs missed-merge benign).
   return 5 * unrelatedMerged + 1 * paraphraseUnmerged;
-}
-
-function f1From(precision, recall) {
-  const denom = precision + recall;
-  if (denom === 0) return 0;
-  return (2 * precision * recall) / denom;
 }
 
 // ---------------------------------------------------------------------------
