@@ -33,6 +33,13 @@ import { judgeContradiction } from './contradiction-judge.mjs';
 /**
  * Mark a qdrant point as superseded.
  *
+ * Idempotent: re-running on an already-superseded point is a harmless rewrite.
+ * Under concurrency the `supersededBy` provenance pointer is last-writer-wins —
+ * if two writers supersede the same older point, the point stays correctly
+ * `superseded` and no fact is lost (each newer fact is independently current),
+ * but the pointer reflects whichever demotion ran last. No read path keys on
+ * `supersededBy` (filters match `status` only), so this is informational.
+ *
  * @param {object} params
  * @param {object} params.client       - Qdrant client with `.setPayload()`
  * @param {string} params.collection   - Collection name
@@ -134,11 +141,16 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * contradiction-overlap band, ask the judge: if it confirms a contradiction at
  * or above the confidence threshold, the caller must NOT keep-older-merge —
  * instead let the newer fact persist as its own status:current point and demote
- * the older one. That is the load-bearing invariant (ADR-0007 line 79): skipping
- * the merge is necessary but NOT sufficient, because supersession only demotes
- * the older point and never upserts the newer. This function only DECIDES; the
- * caller (umAdd) performs the upsert + demotion in a crash-safe order
- * (upsert-newer-first, then demote-older).
+ * the older one. That is the load-bearing invariant (see ADR-0007 Option C, the
+ * "load-bearing invariant" note): skipping the merge is necessary but NOT
+ * sufficient, because supersession only demotes the older point and never upserts
+ * the newer. This function only DECIDES; the caller (umAdd) performs the upsert +
+ * demotion in a crash-safe order (upsert-newer-first, then demote-older).
+ *
+ * PURE w.r.t. metrics — emits none. Callers own the
+ * `um_inband_supersede_total{superseded|declined|demote_error}` emission, keyed
+ * off the returned `{supersede, judged}` plus their own demotion result (the
+ * canonical 3-outcome mapping lives in add.mjs's umAdd).
  *
  * The judge fires ONLY for the eligible-in-band slice (returns `judged:true`):
  * flag-off, unpartitioned, and out-of-band hits short-circuit before any judge

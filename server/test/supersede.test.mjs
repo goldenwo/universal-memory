@@ -30,7 +30,7 @@ function judgeStub(verdict) {
 
 // ---------------------------------------------------------------------------
 // isAutoSupersedeEnabled — opt-out polarity, whitespace-trimmed
-// (must match checkpoint.mjs:521 + mem0-mcp-http.mjs:1118 byte-for-byte)
+// (must match the gate predicate in checkpoint.mjs + mem0-mcp-http.mjs byte-for-byte)
 // ---------------------------------------------------------------------------
 
 test('isAutoSupersedeEnabled: opt-out — unset/empty/true/other → enabled', () => {

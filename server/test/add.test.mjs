@@ -659,6 +659,39 @@ test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
   assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
 });
 
+// Per-item loop-locality: in infer:true, fact 1 contradicts in-band while fact 2 is
+// a clean add. `supersedeOlderId` is declared INSIDE the per-item loop, so the
+// supersede target must NOT leak into fact 2's iteration (a leak would demote
+// fact 1's older point twice / mislabel fact 2 as SUPERSEDED_INBAND).
+test('Gap-5 P3: infer:true — per-fact supersede target does not leak across items', async () => {
+  const olderF1 = { id: 'older-f1', score: 0.85, payload: { data: 'f1 older', lane: 'work', status: 'current' } };
+  let searchCalls = 0;
+  const upserts = [];
+  const setPayloads = [];
+  const client = {
+    scroll: async () => ({ points: [] }),
+    search: async () => { searchCalls += 1; return searchCalls === 1 ? [olderF1] : []; }, // hit on fact 1 only
+    upsert: async (_c, body) => { upserts.push(body.points[0]); return { status: 'ok' }; },
+    setPayload: async (_c, body) => { setPayloads.push(body); return { status: 'ok' }; },
+  };
+  const factsOverride = {
+    supports: { facts: true }, defaults: { factsModel: 'mock' },
+    factsInvoke: async () => ({ facts: ['f1 newer', 'f2 unrelated'], usage: { tokensIn: 0, tokensOut: 0 } }),
+  };
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'mixed', userId: 'u1', metadata: { lane: 'work' }, infer: true,
+    _factsProviderOverride: factsOverride, _embedProviderOverride: embedDummy, _qdrantClient: client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[0].event, 'SUPERSEDED_INBAND', 'fact 1 (in-band contradiction) supersedes');
+  assert.equal(result.results[0].supersededId, 'older-f1');
+  assert.equal(result.results[1].event, 'ADD', 'fact 2 is a plain ADD — the supersede target did not leak across items');
+  const demotions = setPayloads.filter((s) => s.payload.status === 'superseded');
+  assert.equal(demotions.length, 1, 'exactly one demotion — only the contradicting fact demotes an older point');
+  assert.equal(demotions[0].points[0], 'older-f1');
+});
+
 // ---------------------------------------------------------------------------
 
 test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {

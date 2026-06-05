@@ -344,6 +344,18 @@ export async function umAdd({
               // Defer the keep-older merge: fall through to upsert the newer fact
               // as its own status:current point; demote the older one post-upsert.
               supersedeOlderId = embeddingHit.id;
+              // Audit the write-time supersession decision (parity with the
+              // session-end digest, which records confidence + reasoning).
+              logger.info(
+                {
+                  event: 'inband_supersede.confirmed',
+                  olderId: embeddingHit.id,
+                  score: embeddingHit.score,
+                  confidence: decision.confidence,
+                  reasoning: decision.reasoning,
+                },
+                'in-band contradiction confirmed; newer fact will supersede the older point',
+              );
             } else {
               if (decision.judged) {
                 // Judge was consulted (eligible+in-band) but declined → keep-older.
