@@ -1,7 +1,7 @@
 // server/test/lane-classifier.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy, buildCentroids } from '../lib/lane-classifier.mjs';
+import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest } from '../lib/lane-classifier.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,4 +100,48 @@ test('buildCentroids: embeds each exemplar via injected embedFn, mean-pools per 
   assert.equal(centroids.length, 2);
   assert.deepEqual(centroids.find((c) => c.slug === 'work').centroid, [1, 0]);
   assert.deepEqual(centroids.find((c) => c.slug === 'home').centroid, [0, 1]);
+});
+
+const TAX = [{ slug: 'work', exemplars: ['work a'] }, { slug: 'home', exemplars: ['home a'] }];
+const embedStub = async (t) => ({ vector: t.includes('work') ? [1, 0] : [0, 1] });
+
+test('classifyLane: routes above threshold (reuses provided vector, no embed of the fact)', async () => {
+  _resetCentroidsForTest();
+  const r = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: embedStub, threshold: 0.5 });
+  assert.equal(r.lane, 'work');
+});
+
+test('classifyLane: omits below threshold', async () => {
+  _resetCentroidsForTest();
+  const r = await classifyLane([1, 1], { _taxonomy: TAX, _embedFn: embedStub, threshold: 0.95 });
+  assert.equal(r.lane, null);
+});
+
+test('classifyLane: fail-safe — internal throw returns {lane:null}, never rejects', async () => {
+  _resetCentroidsForTest();
+  const boom = async () => { throw new Error('embed down'); };
+  const r = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: boom, threshold: 0.5 });
+  assert.equal(r.lane, null); // did not throw
+});
+
+// Fail-safe robustness: a transient build failure must NOT be permanently cached.
+test('classifyLane: a transient build failure is NOT cached — a later call retries the build', async () => {
+  _resetCentroidsForTest();
+  let calls = 0;
+  const flaky = async (t) => {
+    calls += 1;
+    if (calls === 1) throw new Error('embed down'); // first exemplar embed fails the first build
+    return { vector: t.includes('work') ? [1, 0] : [0, 1] };
+  };
+  const r1 = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: flaky, threshold: 0.5 });
+  assert.equal(r1.lane, null); // first build failed → fail-safe omit
+  const r2 = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: flaky, threshold: 0.5 });
+  assert.equal(r2.lane, 'work'); // rejection not cached → rebuild succeeded
+});
+
+test('classifierEnabled: only strict "true" enables (opt-in, whitespace-trim)', () => {
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'true' }), true);
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: ' true ' }), true);
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'false' }), false);
+  assert.equal(classifierEnabled({}), false);
 });

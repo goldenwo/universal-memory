@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { embed } from './embed.mjs';
+import { getLogger } from './logger.mjs';
+import { umLaneClassifiedTotal } from './metrics.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
 
@@ -62,4 +64,60 @@ export async function buildCentroids(taxonomy, embedFn = embed) {
     centroids.push({ slug, centroid: meanPool(vecs) });
   }
   return centroids;
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: fail-safe entry point + cached centroids + metric
+// ---------------------------------------------------------------------------
+
+let _centroidsPromise = null;
+export function _resetCentroidsForTest() { _centroidsPromise = null; }
+
+async function getCentroids(opts) {
+  if (opts._centroids) return opts._centroids;
+  if (!_centroidsPromise) {
+    const taxonomy = opts._taxonomy ?? loadLaneTaxonomy();
+    // Don't cache a REJECTED build: a transient embed failure during centroid
+    // build must not permanently disable the classifier until process restart.
+    // On failure, clear the cache so the next classify retries the build.
+    _centroidsPromise = buildCentroids(taxonomy, opts._embedFn ?? embed)
+      .catch((err) => { _centroidsPromise = null; throw err; });
+  }
+  return _centroidsPromise;
+}
+
+function laneThreshold(env = process.env) {
+  const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_THRESHOLD);
+  return Number.isFinite(n) ? n : 0.5; // provisional; pinned by the P2 eval
+}
+
+function laneMargin(env = process.env) {
+  const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_MARGIN);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function classifierEnabled(env = process.env) {
+  return env.UM_LANE_CLASSIFIER_ENABLED?.trim() === 'true'; // opt-in; flips to opt-out in P4
+}
+
+// Fail-safe entry used by umAdd. NEVER throws to the caller — any internal
+// error degrades to an unpartitioned write ({ lane: null }). Reuses the
+// caller-provided `vector` (the fact embedding) — no extra embed of the fact.
+export async function classifyLane(vector, opts = {}) {
+  try {
+    const centroids = await getCentroids(opts);
+    const r = classifyByCentroid(vector, centroids, {
+      threshold: opts.threshold ?? laneThreshold(),
+      margin: opts.margin ?? laneMargin(),
+    });
+    umLaneClassifiedTotal.inc({ outcome: r.lane ? 'routed' : 'omitted' });
+    return r;
+  } catch (err) {
+    (opts._logger ?? getLogger()).warn(
+      { event: 'lane.classify_error', err: err?.message },
+      'lane classify failed; writing unpartitioned',
+    );
+    umLaneClassifiedTotal.inc({ outcome: 'error' });
+    return { lane: null, score: 0 };
+  }
 }
