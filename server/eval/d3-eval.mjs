@@ -53,10 +53,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { fHalfFrom, f1From } from './fbeta.mjs';
 
-const F_BETA = 0.5;
-const F_BETA_SQ = F_BETA * F_BETA;          // 0.25
-const F_PREFIX = 1 + F_BETA_SQ;             // 1.25
 const PRECISION_FLOOR = 0.98;               // chosen-τ rule (DP: false-merge is destructive)
 
 // ---------------------------------------------------------------------------
@@ -76,27 +74,6 @@ export function isComparable(pair) {
     (pair.olderLane && pair.olderLane === pair.newerLane) ||
     (pair.olderPersona && pair.olderPersona === pair.newerPersona),
   );
-}
-
-/**
- * F0.5 (precision-weighted F-beta, β=0.5): (1.25·P·R)/(0.25·P + R).
- * Returns 0 when P or R is null, or when the denominator is 0.
- */
-function fHalfFrom(precision, recall) {
-  if (precision == null || recall == null) return 0;
-  const denom = F_BETA_SQ * precision + recall;
-  if (denom === 0) return 0;
-  return (F_PREFIX * precision * recall) / denom;
-}
-
-/**
- * F1 (balanced harmonic mean): 2PR/(P+R). 0 when P/R null or denom 0.
- */
-function f1From(precision, recall) {
-  if (precision == null || recall == null) return 0;
-  const denom = precision + recall;
-  if (denom === 0) return 0;
-  return (2 * precision * recall) / denom;
 }
 
 /**

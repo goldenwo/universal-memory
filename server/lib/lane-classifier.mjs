@@ -10,29 +10,12 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 import { embed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { umLaneClassifiedTotal } from './metrics.mjs';
+// cosineSimilarity + meanPool live in ./vector.mjs (shared with the eval
+// harnesses, rule of three). classifyByCentroid below uses the FAIL-SAFE
+// cosineSimilarity — a bad vector must never throw on the write path.
+import { cosineSimilarity, meanPool } from './vector.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
-
-// Cosine over RAW embedding vectors (embeddings are not guaranteed unit-norm).
-// Fail-safe contract: returns 0 (never throws) — deliberately distinct from
-// eval/dedup-threshold-sweep.mjs's fail-loud `cosine`. When P2's lane-eval becomes
-// the 3rd client-side cosine consumer (rule-of-three), consolidate the shared math
-// into a server/lib/vector.mjs that both layers import.
-export function cosineSimilarity(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-
-export function meanPool(vectors) {
-  if (!vectors.length) return []; // defensive: buildCentroids only ever passes ≥1 same-dim vector
-  const dim = vectors[0].length;
-  const mean = new Array(dim).fill(0);
-  for (const v of vectors) for (let i = 0; i < dim; i++) mean[i] += v[i];
-  for (let i = 0; i < dim; i++) mean[i] /= vectors.length;
-  return mean; // cosineSimilarity normalizes, so no unit-normalization needed here
-}
 
 export function classifyByCentroid(vector, centroids, { threshold, margin = 0 } = {}) {
   if (!centroids.length) return { lane: null, score: 0 };
@@ -90,14 +73,24 @@ async function getCentroids(opts) {
   return _centroidsPromise;
 }
 
+// Eval-pinned defaults (Gap-5 P2, 2026-06-05). τ_lane=0.30 + margin=0.06 cleared
+// the spec §5 ≥0.95 precision floor at 0.953 precision / 0.854 recall on the
+// labelled fixture; the discretized outcomes were identical across two live runs
+// (eval/results/2026-06-05-lane-run{1,2}). The margin is LOAD-BEARING: at margin 0
+// the floor is only reachable at τ≥0.52, where recall collapses to ≤0.15 — the
+// 0.06 margin is what lets τ=0.30 clear the floor at recall 0.854. Drift-gated in
+// test/lane-classifier.test.mjs — update lib + test + server/.env.example together.
+export const LANE_THRESHOLD_DEFAULT = 0.30;
+export const LANE_MARGIN_DEFAULT = 0.06;
+
 function laneThreshold(env = process.env) {
   const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_THRESHOLD);
-  return Number.isFinite(n) ? n : 0.5; // provisional; pinned by the P2 eval
+  return Number.isFinite(n) ? n : LANE_THRESHOLD_DEFAULT;
 }
 
 function laneMargin(env = process.env) {
   const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_MARGIN);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : LANE_MARGIN_DEFAULT;
 }
 
 export function classifierEnabled(env = process.env) {
