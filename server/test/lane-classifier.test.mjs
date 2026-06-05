@@ -144,4 +144,14 @@ test('classifierEnabled: only strict "true" enables (opt-in, whitespace-trim)', 
   assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: ' true ' }), true);
   assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'false' }), false);
   assert.equal(classifierEnabled({}), false);
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: '1' }), false);
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'TRUE' }), false);
+});
+
+test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lanetax-'));
+  const p = join(dir, 'tax.json');
+  writeFileSync(p, JSON.stringify({ lanes: 'work' }));
+  try { assert.deepEqual(loadLaneTaxonomy({ UM_LANE_TAXONOMY_PATH: p }), []); }
+  finally { rmSync(dir, { recursive: true, force: true }); }
 });

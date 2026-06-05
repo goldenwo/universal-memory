@@ -46,7 +46,7 @@ export function loadLaneTaxonomy(env = process.env) {
   let raw;
   try { raw = JSON.parse(readFileSync(path, 'utf8')); }
   catch { return []; } // missing/unreadable taxonomy → inert classifier (fail-safe)
-  return (raw.lanes ?? [])
+  return (Array.isArray(raw.lanes) ? raw.lanes : [])
     .map(({ slug, exemplars }) => ({
       slug: validateLanePersonaSlug({ value: slug, fieldName: 'lane' }), // throws INPUT_INVALID on bad slug
       exemplars: Array.isArray(exemplars) ? exemplars : [],
@@ -59,8 +59,7 @@ export function loadLaneTaxonomy(env = process.env) {
 export async function buildCentroids(taxonomy, embedFn = embed) {
   const centroids = [];
   for (const { slug, exemplars } of taxonomy) {
-    const vecs = [];
-    for (const ex of exemplars) { const { vector } = await embedFn(ex); vecs.push(vector); }
+    const vecs = await Promise.all(exemplars.map(async (ex) => (await embedFn(ex)).vector));
     centroids.push({ slug, centroid: meanPool(vecs) });
   }
   return centroids;
