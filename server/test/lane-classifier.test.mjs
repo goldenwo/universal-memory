@@ -1,7 +1,7 @@
 // server/test/lane-classifier.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy } from '../lib/lane-classifier.mjs';
+import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy, buildCentroids } from '../lib/lane-classifier.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,4 +87,17 @@ test('loadLaneTaxonomy: invalid slug throws INPUT_INVALID (no silent skip)', () 
       (err) => err && err.code === 'INPUT_INVALID',
     );
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('buildCentroids: embeds each exemplar via injected embedFn, mean-pools per lane', async () => {
+  // Deterministic stub embedder: maps text → vector (no network).
+  const embedStub = async (t) => ({ vector: t.includes('work') ? [1, 0] : [0, 1] });
+  const taxonomy = [
+    { slug: 'work', exemplars: ['work a', 'work b'] },
+    { slug: 'home', exemplars: ['home a'] },
+  ];
+  const centroids = await buildCentroids(taxonomy, embedStub);
+  assert.equal(centroids.length, 2);
+  assert.deepEqual(centroids.find((c) => c.slug === 'work').centroid, [1, 0]);
+  assert.deepEqual(centroids.find((c) => c.slug === 'home').centroid, [0, 1]);
 });

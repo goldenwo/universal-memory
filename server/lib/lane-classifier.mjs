@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { validateLanePersonaSlug } from './default-project.mjs';
+import { embed } from './embed.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
 
@@ -49,4 +50,16 @@ export function loadLaneTaxonomy(env = process.env) {
       exemplars: Array.isArray(exemplars) ? exemplars : [],
     }))
     .filter((l) => l.slug && l.exemplars.length > 0);
+}
+
+// Build one centroid per lane. embedFn MUST be the same embedder used for facts
+// (same vector space) — defaults to the production embed(); injected in tests.
+export async function buildCentroids(taxonomy, embedFn = embed) {
+  const centroids = [];
+  for (const { slug, exemplars } of taxonomy) {
+    const vecs = [];
+    for (const ex of exemplars) { const { vector } = await embedFn(ex); vecs.push(vector); }
+    centroids.push({ slug, centroid: meanPool(vecs) });
+  }
+  return centroids;
 }
