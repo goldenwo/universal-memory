@@ -1,0 +1,8 @@
+{
+  "lanes": [
+    { "slug": "work", "exemplars": ["sprint planning and standups", "reviewing a pull request", "the production incident postmortem", "OKRs and quarterly roadmap"] },
+    { "slug": "personal", "exemplars": ["family and friends plans", "health and fitness routine", "personal finance and budgeting", "home and errands"] },
+    { "slug": "research", "exemplars": ["a paper on machine learning", "comparing database architectures", "an experiment and its results", "a literature survey"] },
+    { "slug": "writing", "exemplars": ["drafting a blog post", "editing a chapter of the novel", "narrative voice and tone notes", "an outline for an essay"] }
+  ]
+}

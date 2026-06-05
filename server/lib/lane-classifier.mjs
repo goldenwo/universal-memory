@@ -3,6 +3,13 @@
 // Reuses the fact embedding dedup already computes (add.mjs:231) — no extra LLM call.
 // Spec: docs/plans/2026-06-04-gap5-lane-classifier-spec.md.
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { validateLanePersonaSlug } from './default-project.mjs';
+
+const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
+
 // Cosine over RAW embedding vectors (embeddings are not guaranteed unit-norm).
 export function cosineSimilarity(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -29,4 +36,17 @@ export function classifyByCentroid(vector, centroids, { threshold, margin = 0 } 
   if (top.score < threshold) return { lane: null, score: top.score };
   if (margin > 0 && top.score - second < margin) return { lane: null, score: top.score };
   return { lane: top.slug, score: top.score };
+}
+
+export function loadLaneTaxonomy(env = process.env) {
+  const path = env.UM_LANE_TAXONOMY_PATH || DEFAULT_TAXONOMY_PATH;
+  let raw;
+  try { raw = JSON.parse(readFileSync(path, 'utf8')); }
+  catch { return []; } // missing/unreadable taxonomy → inert classifier (fail-safe)
+  return (raw.lanes ?? [])
+    .map(({ slug, exemplars }) => ({
+      slug: validateLanePersonaSlug({ value: slug, fieldName: 'lane' }), // throws INPUT_INVALID on bad slug
+      exemplars: Array.isArray(exemplars) ? exemplars : [],
+    }))
+    .filter((l) => l.slug && l.exemplars.length > 0);
 }
