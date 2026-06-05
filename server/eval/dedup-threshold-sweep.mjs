@@ -38,10 +38,8 @@ import { dirname, basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cosineStrict } from '../lib/vector.mjs';
+import { fHalfFrom, f1From } from './fbeta.mjs';
 
-const F_BETA = 0.5;
-const F_BETA_SQ = F_BETA * F_BETA;          // 0.25
-const F_PREFIX = 1 + F_BETA_SQ;              // 1.25
 const REPEAT_DELTA_THRESHOLD = 0.005;        // spec R7
 const PLATEAU_BAND_MIN = 6;                  // > 5 → plateau (spec §4.5 step 5)
 
@@ -109,21 +107,9 @@ export function bootstrapCi(pairResults, iterations = 1000) {
   return [samples[loIdx], samples[hiIdx]];
 }
 
-function fHalfFrom(precision, recall) {
-  const denom = F_BETA_SQ * precision + recall;
-  if (denom === 0) return 0;
-  return (F_PREFIX * precision * recall) / denom;
-}
-
 function expectedCostFrom(unrelatedMerged, paraphraseUnmerged) {
   // 5:1 cost ratio per spec §4.4 (false-merge irreversible vs missed-merge benign).
   return 5 * unrelatedMerged + 1 * paraphraseUnmerged;
-}
-
-function f1From(precision, recall) {
-  const denom = precision + recall;
-  if (denom === 0) return 0;
-  return (2 * precision * recall) / denom;
 }
 
 // ---------------------------------------------------------------------------

@@ -75,10 +75,11 @@ async function getCentroids(opts) {
 
 // Eval-pinned defaults (Gap-5 P2, 2026-06-05). τ_lane=0.30 + margin=0.06 cleared
 // the spec §5 ≥0.95 precision floor at 0.953 precision / 0.854 recall on the
-// labelled fixture (two byte-identical runs, eval/results/2026-06-05-lane-run{1,2}).
-// The margin is LOAD-BEARING: at margin 0 no τ clears the floor at non-trivial
-// recall. Drift-gated in test/lane-classifier.test.mjs — update lib + test +
-// server/.env.example together.
+// labelled fixture; the discretized outcomes were identical across two live runs
+// (eval/results/2026-06-05-lane-run{1,2}). The margin is LOAD-BEARING: at margin 0
+// the floor is only reachable at τ≥0.52, where recall collapses to ≤0.15 — the
+// 0.06 margin is what lets τ=0.30 clear the floor at recall 0.854. Drift-gated in
+// test/lane-classifier.test.mjs — update lib + test + server/.env.example together.
 export const LANE_THRESHOLD_DEFAULT = 0.30;
 export const LANE_MARGIN_DEFAULT = 0.06;
 

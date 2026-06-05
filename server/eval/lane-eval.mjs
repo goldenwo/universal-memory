@@ -42,6 +42,13 @@
  * embedding provider itself, so — like D1/D3 — we run TWICE and compare. The
  * embed model is recorded in the result JSON (`model`).
  *
+ * NOTE (fixture is a conservative lower bound): the 16 negatives are weighted
+ * 8 noise / 8 cross-lane — adversarially harder than production, where no-lane
+ * facts are overwhelmingly noise. So measured precision UNDER-estimates the real
+ * value (errs safe for a precision-first gate). The floor currently rests on
+ * n=16 negatives (one extra false route would drop precision below 0.95) — GROW
+ * the negative set, especially noise, before the P4 flip activates routing.
+ *
  * NOTE (run provenance): run1.json and run2.json are two SEPARATE invocations;
  * lane-latest.json is a copy of the last run. Re-run via:
  *   node --env-file=.env eval/lane-eval.mjs \
@@ -57,32 +64,14 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { fHalfFrom, f1From } from './fbeta.mjs';
 
-const F_BETA = 0.5;
-const F_BETA_SQ = F_BETA * F_BETA;          // 0.25
-const F_PREFIX = 1 + F_BETA_SQ;             // 1.25
 const PRECISION_FLOOR = 0.95;               // chosen-cell rule (spec §5)
 const NULL_KEY = 'null';                    // confusion-matrix key for the abstain axis
 
 // ---------------------------------------------------------------------------
 // PURE functions (no I/O) — unit-tested directly in test/lane-eval.test.mjs.
 // ---------------------------------------------------------------------------
-
-/** F0.5 (precision-weighted, β=0.5). 0 when P/R null or denom 0. */
-function fHalfFrom(precision, recall) {
-  if (precision == null || recall == null) return 0;
-  const denom = F_BETA_SQ * precision + recall;
-  if (denom === 0) return 0;
-  return (F_PREFIX * precision * recall) / denom;
-}
-
-/** F1 (balanced). 0 when P/R null or denom 0. */
-function f1From(precision, recall) {
-  if (precision == null || recall == null) return 0;
-  const denom = precision + recall;
-  if (denom === 0) return 0;
-  return (2 * precision * recall) / denom;
-}
 
 /**
  * Routing confusion at one (τ, margin) cell over an array of predictions.
@@ -132,7 +121,6 @@ export function sweepGrid({ rows, taus, margins, classify }) {
       const predictions = rows.map((row) => ({
         predicted: classify(row, { threshold: tau, margin }),
         expected: row.expected_lane,
-        category: row.category,
       }));
       grid.push(computeMetrics(predictions, { tau, margin }));
     }
@@ -151,7 +139,9 @@ export function sweepGrid({ rows, taus, margins, classify }) {
  * @param {{precisionFloor:number}} opts
  */
 export function pickThreshold(grid, { precisionFloor }) {
-  const feasible = grid.filter((c) => c.precision != null && c.precision >= precisionFloor);
+  // recall is non-null whenever precision ≥ a positive floor (precision>0 ⟹ tp>0 ⟹ tp+fn>0),
+  // but guard explicitly so a hypothetical precisionFloor:0 caller can't feed NaN to the sort.
+  const feasible = grid.filter((c) => c.precision != null && c.recall != null && c.precision >= precisionFloor);
   if (feasible.length > 0) {
     feasible.sort((a, b) =>
       (b.recall - a.recall) ||
@@ -471,7 +461,6 @@ async function runOnce({ rows, fixturePath, taxonomyPath }) {
   const predictionsAtCell = rows.map((row) => ({
     predicted: classify(row, cell),
     expected: row.expected_lane,
-    category: row.category,
   }));
   const confusion = buildConfusion(predictionsAtCell, lanes);
 
