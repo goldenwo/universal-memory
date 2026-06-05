@@ -1,0 +1,64 @@
+{"text": "The standup moved to 10am starting next sprint.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Rolled back the deploy after the error rate spiked post-release.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Q3 roadmap review with the VP is on Thursday.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "On-call rotation hands off to the EU team at 6pm UTC.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Approved the database migration PR once the load test passed.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "We breached the p99 latency SLO twice this month.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "The postmortem action items are due before the next retro.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Re-prioritized the backlog so the auth epic ships before the conference.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Squash-merged the lane-classifier PR after CI went green.", "expected_lane": "work", "category": "work", "source": "real_session"}
+{"text": "The architecture review board wants an RFC for the new service.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Closed the flaky-test ticket by pinning the retry count.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Sprint demo is Friday and my task is the search-latency dashboard.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Dentist appointment booked for next Tuesday at 9.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Renew the car registration before the end of the month.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Mom's birthday dinner is at the Italian place on Saturday.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Started a couch-to-5k running plan this week.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "The plumber is coming Friday to fix the kitchen sink.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Booked flights for the family trip to Portugal in August.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Set up an automatic transfer to the emergency savings fund.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Pick up the kids from soccer practice at 5 on weekdays.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Refilled the allergy prescription at the pharmacy.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "The dog's annual vaccination is due next month.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Switched to the cheaper fixed-rate electricity tariff.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Meal-prepping lunches on Sundays to eat healthier.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "The paper shows contrastive pretraining beats supervised learning in low-data regimes.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Ran an ablation: removing the margin term dropped recall by four points.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Reading a survey on retrieval-augmented generation methods.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Reproduced the baseline numbers from the scaling-laws paper.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Hypothesis: centroid separability degrades as categories grow semantically close.", "expected_lane": "research", "category": "research", "source": "real_session"}
+{"text": "The control group used the default temperature setting.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Benchmarked approximate-nearest-neighbor recall at a fixed latency budget.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Skimmed three papers on bi-temporal knowledge representation tonight.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "The dataset's long-tail class imbalance skews the F1 score.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Measured how quantization affects embedding cosine fidelity across models.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Took notes on the related-work section for the literature review.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Read up on how Wilson confidence intervals behave at small sample sizes.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Rewrote the opening paragraph to start in the middle of the action.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "The protagonist's voice feels too modern for the 1920s setting.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Outlined the three-act structure for the short story.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Cut 800 words from the essay to tighten the argument.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "The blog post draft needs a stronger hook in the first sentence.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Switching the chapter from past tense to present for immediacy.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "The dialogue in scene four sounds stilted and needs a read-aloud pass.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "The second act sags and the stakes need to rise faster.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Drafted the author's note for the back matter.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Reworking the essay's thesis so the conclusion lands harder.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Added sensory detail to the market scene to ground the reader.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Brainstorming metaphors for the newsletter's closing section.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "The wifi password is on a sticky note on the fridge.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "It's supposed to rain on Thursday.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Remember to charge the headphones tonight.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The package was left by the back door.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "TODO: follow up on that thing from yesterday.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The elevator on the south side is out of service.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Need to back up the external hard drive soon.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The umbrella is still in the car.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Wrote a blog post analyzing our company's Q3 earnings.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Reading a machine-learning paper to prep next sprint's planning deck.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Journaling to decompress after a brutal on-call week.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Drafting a personal essay about my fitness journey.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Budgeting the cost of GPUs for my weekend research project.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Outlining a conference talk about our production incident.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Editing my resume to highlight the database migration project.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Planning the family budget around the new job's relocation package.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
