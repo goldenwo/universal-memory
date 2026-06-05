@@ -47,7 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
-import { unsupersedePoint } from './lib/supersede.mjs';
+import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
 import { withRetry } from './lib/retry.mjs';
@@ -1115,7 +1115,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				));
 			}
 			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc };
-			if (process.env.UM_AUTOSUPERSEDE_ENABLED?.trim() !== 'false') {
+			if (isAutoSupersedeEnabled()) {
 				// Resolve qdrant context for the detector — ON by default since the v1.2
 				// flip (opt-out: only literal 'false' disables). Resolved only inside the gate.
 				// Mirrors the memory_supersede unsupersede path (lines 1181–1183): same

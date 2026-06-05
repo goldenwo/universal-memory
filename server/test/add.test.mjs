@@ -483,6 +483,216 @@ test('Gap-5 active: infer:true classifies each fact independently', async () => 
 });
 
 // ---------------------------------------------------------------------------
+// Gap-5 P3: ADR-0007 Option C — dedup defers to supersession in-band.
+// ---------------------------------------------------------------------------
+
+// Mock qdrant that can serve a Layer-1 (scroll/hash) or Layer-2 (search/
+// embedding) dedup hit, capture upsert + setPayload, and record call ORDER (for
+// the crash-safe upsert-before-demote assertion). setPayload is used by BOTH
+// mergeSurface (keep-older: payload carries dedupCount, NOT status) and
+// supersedePoint (demote: payload carries status:'superseded') — assertions key
+// on payload CONTENT, not on "setPayload was called".
+function makeMockQdrantInband({ searchHit = null, scrollHit = null, setPayloadThrows = false } = {}) {
+  const calls = [];
+  const upserts = [];
+  const setPayloads = [];
+  return {
+    calls, upserts, setPayloads,
+    client: {
+      scroll: async () => { calls.push({ op: 'scroll' }); return { points: scrollHit ? [scrollHit] : [] }; },
+      search: async () => { calls.push({ op: 'search' }); return searchHit ? [searchHit] : []; },
+      upsert: async (collection, body) => {
+        calls.push({ op: 'upsert', id: body.points[0].id });
+        upserts.push({ collection, body });
+        return { status: 'ok' };
+      },
+      setPayload: async (collection, body) => {
+        calls.push({ op: 'setPayload', payload: body.payload, points: body.points });
+        setPayloads.push({ collection, body });
+        if (setPayloadThrows) throw new Error('qdrant setPayload failed');
+        return { status: 'ok' };
+      },
+    },
+  };
+}
+
+const judgeContradicts = async () => ({ contradicts: true, confidence: 0.9, reasoning: 'newer invalidates older' });
+const judgeDeclines = async () => ({ contradicts: false, confidence: 0.1, reasoning: 'unrelated' });
+
+// (a) THE LOAD-BEARING INVARIANT (spec §4 / ADR-0007 line 79): an in-band
+// eligible contradiction → the NEWER fact persists as its OWN status:current
+// point AND the older point is demoted. Skipping the merge alone is insufficient
+// (supersession only demotes the older; the newer must be upserted).
+test('Gap-5 P3: in-band eligible contradiction → newer persists status:current + older demoted', async () => {
+  const older = { id: 'older-pt-1', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const text = 'I live in Denver now';
+  const result = await umAdd({
+    memory: makeMockMemory(), text, userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  // Newer upserted as its OWN current point (NOT dropped via keep-older).
+  assert.equal(q.upserts.length, 1, 'newer fact must be upserted (not merged away)');
+  const newer = q.upserts[0].body.points[0];
+  assert.equal(newer.payload.status, 'current', 'newer fact is status:current');
+  assert.equal(newer.payload.lane, 'work');
+  assert.equal(newer.payload.data, text);
+  // Older point demoted with supersededBy = newer id.
+  const demote = q.setPayloads.find((s) => s.body.payload.status === 'superseded');
+  assert.ok(demote, 'older point must be demoted to superseded');
+  assert.deepEqual(demote.body.points, ['older-pt-1']);
+  assert.equal(demote.body.payload.supersededBy, newer.id, 'supersededBy points at the newer fact id');
+  // Result reflects the supersession (not a plain DEDUP_MERGED).
+  assert.equal(result.results[0].event, 'SUPERSEDED_INBAND');
+  assert.equal(result.results[0].supersededId, 'older-pt-1');
+});
+
+// Crash-safe ordering: upsert-newer MUST precede demote-older, so a crash
+// between leaves two current points (the accepted D1 trade-off), never the
+// "no current fact" recall-loss D3's precision-first design exists to prevent.
+test('Gap-5 P3: crash-safe order — newer upsert precedes older demotion', async () => {
+  const older = { id: 'older-pt-2', score: 0.85, payload: { data: 'old', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  await umAdd({
+    memory: makeMockMemory(), text: 'new contradicting fact', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  const upsertIdx = q.calls.findIndex((c) => c.op === 'upsert');
+  const demoteIdx = q.calls.findIndex((c) => c.op === 'setPayload' && c.payload.status === 'superseded');
+  assert.ok(upsertIdx >= 0 && demoteIdx >= 0, 'both ops happened');
+  assert.ok(upsertIdx < demoteIdx, 'upsert-newer must come BEFORE demote-older (crash-safety)');
+});
+
+// Fail-soft demotion: if the demote setPayload throws, the write STILL succeeds
+// (newer is current) and umAdd does not throw — no silent data-loss path.
+test('Gap-5 P3: demotion failure is fail-soft — newer stays current, write succeeds', async () => {
+  const older = { id: 'older-pt-3', score: 0.85, payload: { data: 'old', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older, setPayloadThrows: true });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'new contradicting fact', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  assert.equal(q.upserts.length, 1, 'newer fact persisted as current even though demotion failed');
+  assert.equal(q.upserts[0].body.points[0].payload.status, 'current');
+  assert.equal(result.results.length, 1, 'umAdd returned a result (did not throw)');
+});
+
+// (b) out-of-band (cosine above the ceiling) → unchanged keep-older; judge NOT consulted.
+test('Gap-5 P3: out-of-band hit (pure duplicate) → keep-older merge, no supersede, no judge', async () => {
+  let judged = false;
+  const older = { id: 'older-pt-4', score: 0.95, payload: { data: 'dup', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'dup', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true,
+    _judgeContradiction: async () => { judged = true; return { contradicts: true, confidence: 0.9 }; },
+  });
+  assert.equal(judged, false, 'above-ceiling hit must NOT reach the judge');
+  assert.equal(q.upserts.length, 0, 'keep-older: newer not upserted');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion');
+});
+
+// (b) flag off → unchanged keep-older; judge NOT consulted.
+test('Gap-5 P3: autosupersede flag off → keep-older merge, no judge', async () => {
+  let judged = false;
+  const older = { id: 'older-pt-5', score: 0.85, payload: { data: 'x', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'y', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: false,
+    _judgeContradiction: async () => { judged = true; return { contradicts: true, confidence: 0.9 }; },
+  });
+  assert.equal(judged, false, 'flag-off must short-circuit before the judge');
+  assert.equal(q.upserts.length, 0);
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+});
+
+// (b) unpartitioned (no lane/persona) → unchanged keep-older; judge NOT consulted (R1-B1).
+test('Gap-5 P3: unpartitioned hit → keep-older merge, no judge (R1-B1)', async () => {
+  let judged = false;
+  const older = { id: 'older-pt-6', score: 0.85, payload: { data: 'x', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'y', userId: 'u1', metadata: {}, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true,
+    _judgeContradiction: async () => { judged = true; return { contradicts: true, confidence: 0.9 }; },
+  });
+  assert.equal(judged, false, 'unpartitioned write must not reach the judge');
+  assert.equal(q.upserts.length, 0);
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+});
+
+// Layer-1 hash hit (exact text) is never a contradiction → always keep-older, never judged.
+test('Gap-5 P3: exact hash hit → keep-older, judge never consulted (even if eligible+enabled)', async () => {
+  let judged = false;
+  const hashOlder = { id: 'older-h', payload: { data: 'exact same text', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ scrollHit: hashOlder });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'exact same text', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true,
+    _judgeContradiction: async () => { judged = true; return { contradicts: true, confidence: 0.9 }; },
+  });
+  assert.equal(judged, false, 'hash hits are exact duplicates, never contradictions — no judge');
+  assert.equal(q.upserts.length, 0);
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+});
+
+// in-band eligible BUT judge declines → keep-older (newer NOT upserted, older NOT demoted).
+test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
+  const older = { id: 'older-pt-7', score: 0.85, payload: { data: 'related but not contradicting', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'also about work', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeDeclines,
+  });
+  assert.equal(q.upserts.length, 0, 'judge declined → keep-older, newer not upserted');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
+});
+
+// Per-item loop-locality: in infer:true, fact 1 contradicts in-band while fact 2 is
+// a clean add. `supersedeOlderId` is declared INSIDE the per-item loop, so the
+// supersede target must NOT leak into fact 2's iteration (a leak would demote
+// fact 1's older point twice / mislabel fact 2 as SUPERSEDED_INBAND).
+test('Gap-5 P3: infer:true — per-fact supersede target does not leak across items', async () => {
+  const olderF1 = { id: 'older-f1', score: 0.85, payload: { data: 'f1 older', lane: 'work', status: 'current' } };
+  let searchCalls = 0;
+  const upserts = [];
+  const setPayloads = [];
+  const client = {
+    scroll: async () => ({ points: [] }),
+    search: async () => { searchCalls += 1; return searchCalls === 1 ? [olderF1] : []; }, // hit on fact 1 only
+    upsert: async (_c, body) => { upserts.push(body.points[0]); return { status: 'ok' }; },
+    setPayload: async (_c, body) => { setPayloads.push(body); return { status: 'ok' }; },
+  };
+  const factsOverride = {
+    supports: { facts: true }, defaults: { factsModel: 'mock' },
+    factsInvoke: async () => ({ facts: ['f1 newer', 'f2 unrelated'], usage: { tokensIn: 0, tokensOut: 0 } }),
+  };
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'mixed', userId: 'u1', metadata: { lane: 'work' }, infer: true,
+    _factsProviderOverride: factsOverride, _embedProviderOverride: embedDummy, _qdrantClient: client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[0].event, 'SUPERSEDED_INBAND', 'fact 1 (in-band contradiction) supersedes');
+  assert.equal(result.results[0].supersededId, 'older-f1');
+  assert.equal(result.results[1].event, 'ADD', 'fact 2 is a plain ADD — the supersede target did not leak across items');
+  const demotions = setPayloads.filter((s) => s.payload.status === 'superseded');
+  assert.equal(demotions.length, 1, 'exactly one demotion — only the contradicting fact demotes an older point');
+  assert.equal(demotions[0].points[0], 'older-f1');
+});
+
+// ---------------------------------------------------------------------------
 
 test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {
   // Spec §6 + add.mjs header: umAdd does NOT internally wrap qdrant.upsert

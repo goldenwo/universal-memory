@@ -128,6 +128,24 @@ export const umLaneClassifiedTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// In-band supersession outcomes at write time (Gap-5 P3, ADR-0007 Option C).
+// Counts ONLY the supersede-eligible in-band slice that reached the inline judge
+// (flag-on + partitioned + cosine in the contradiction-overlap band). Normal
+// keep-older dedup merges are NOT counted here — they remain under um_dedup_total.
+// `outcome` ∈ {'superseded','declined','demote_error'} — fixed enum, never user
+// input (bounded cardinality):
+//   superseded   — judge confirmed; older point demoted, newer persisted current.
+//   declined     — judge consulted but not a confident contradiction → kept-older.
+//   demote_error — judge confirmed + newer persisted, but the demotion setPayload
+//                  failed (fail-soft: newer is still current; older stays current
+//                  for the session-end detector — never "no current fact").
+export const umInbandSupersedeTotal = new promClient.Counter({
+  name: 'um_inband_supersede_total',
+  help: 'Write-time in-band supersession outcomes (Gap-5 P3): superseded|declined|demote_error',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
 // Per-stage dedup overhead. Buckets target 1ms..2.5s — qdrant calls in the
 // dedup hot path are typically <100ms; histogram resolves the long tail.
 export const umDedupCheckDurationSeconds = new promClient.Histogram({
