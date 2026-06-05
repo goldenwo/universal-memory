@@ -57,6 +57,7 @@ import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
+import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -158,6 +159,9 @@ export async function umAdd({
   // T15 seams:
   _factsCounter,
   _logger,
+  // Gap-5 P1 seams:
+  _classifyLane,
+  _laneClassifierEnabled,
 } = {}) {
   if (!memory?.config?.vectorStore?.config?.collectionName) {
     throw new Error('umAdd: memory.config.vectorStore.config.collectionName required');
@@ -202,6 +206,23 @@ export async function umAdd({
   const dedupEligible = computeDedupEligible({ metadata, _systemMigration });
   const dedupThreshold = dedupEligible ? dedupEmbeddingThreshold() : null;
 
+  // Gap-5 P1: lane-classifier seam (resolved once per call).
+  // classifierEngaged = the operator opted IN. Three-state model (spec §3.6,
+  // user decision 2026-06-04): env-flag UNSET → fully inert (no classify, no
+  // centroid build — the P1 safe default + keeps pre-Gap-5 call sites/tests
+  // untouched); flag set but not 'true' → SHADOW; flag 'true' → ACTIVE. A test
+  // seam (_classifyLane / _laneClassifierEnabled) also engages the pipeline.
+  // NB P4 flip: when the default flips to opt-out this gate must flip in
+  // lockstep with classifierEnabled (engaged unless flag === 'false') — see
+  // plan P4/T4.1.
+  const classifyLaneFn = _classifyLane ?? defaultClassifyLane;
+  const laneClassifierEnabled = _laneClassifierEnabled ?? defaultClassifierEnabled();
+  const classifierEngaged =
+    _classifyLane !== undefined ||
+    _laneClassifierEnabled !== undefined ||
+    process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
+  const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
+
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
     let items;
     if (infer) {
@@ -229,6 +250,36 @@ export async function umAdd({
     const results = [];
     for (const item of items) {
       const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
+
+      // Gap-5 P1: per-fact lane auto-classification. Reuses `vector` (no re-embed of
+      // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
+      // Engaged only when classifierEngaged (operator opted in): ACTIVE (flag 'true')
+      // writes the classified lane; SHADOW (flag set, not 'true') logs the would-be
+      // lane without writing. The centroid build threads the SAME embed seam as the
+      // fact (same vector space in prod; hermetic under the test embed override).
+      let itemLane = lane;
+      if (classifierEngaged && itemLane === undefined && !classifySkip) {
+        try {
+          const { lane: classified, score } = await classifyLaneFn(vector, {
+            _logger: logger,
+            _embedFn: (t) => embedOrchestrator(t, { _providerOverride: _embedProviderOverride, metrics }),
+          });
+          if (laneClassifierEnabled) {
+            // `null` = classifier's "leave unpartitioned" — normalize to `undefined`
+            // so the four sinks treat it as ABSENT (no `lane:null` payload key, the
+            // `is_empty` dedup arm, and the legacy point-ID shape). Persisting
+            // `lane:null` would break the no-null-payload invariant + dedup + ID determinism.
+            itemLane = classified ?? undefined;                                        // active: apply (null→absent)
+          } else {
+            logger.info({ event: 'lane.shadow', wouldBe: classified ?? null, score }, 'lane classifier shadow'); // observe-only
+          }
+        } catch (err) {
+          // Defense-in-depth: classifyLane is contract-fail-safe, but a classifier
+          // fault must NEVER fail the user's write (spec §3.4). Leave itemLane = lane.
+          logger.warn({ event: 'lane.classify_seam_error', err: err?.message }, 'lane classify seam error; writing unpartitioned');
+        }
+      }
+
       const itemHash = md5(item);
       const itemProject = metadata?.project;
 
@@ -240,11 +291,11 @@ export async function umAdd({
       if (dedupEligible) {
         try {
           let hit = await checkContentHashDedup({
-            client, collection, userId, hash: itemHash, lane, persona,
+            client, collection, userId, hash: itemHash, lane: itemLane, persona,
           });
           if (!hit) {
             hit = await checkEmbeddingDedup({
-              client, collection, userId, vector, threshold: dedupThreshold, lane, persona,
+              client, collection, userId, vector, threshold: dedupThreshold, lane: itemLane, persona,
             });
           }
           if (hit) {
@@ -277,7 +328,7 @@ export async function umAdd({
       // distinct (lane, persona) values get distinct point IDs — the partition
       // collides on write per-tuple.
       const id = dedupEligible
-        ? computeFactId({ userId, text: item, lane, persona })
+        ? computeFactId({ userId, text: item, lane: itemLane, persona })
         : randomUUID();
       const point = {
         id,
@@ -287,7 +338,7 @@ export async function umAdd({
           text: item,
           metadata: metadataMinusLanePersona,
           surface,
-          lane,
+          lane: itemLane,
           persona,
         }),
       };

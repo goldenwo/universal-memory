@@ -119,6 +119,15 @@ export const umDedupTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Lane auto-classification outcomes at write time (Gap-5).
+// `outcome` ∈ {'routed','omitted','error'} — fixed enum, never user input (bounded cardinality).
+export const umLaneClassifiedTotal = new promClient.Counter({
+  name: 'um_lane_classified_total',
+  help: 'Lane auto-classification outcomes at write time (Gap-5).',
+  labelNames: ['outcome'], // 'routed' | 'omitted' | 'error'
+  registers: [registry],
+});
+
 // Per-stage dedup overhead. Buckets target 1ms..2.5s — qdrant calls in the
 // dedup hot path are typically <100ms; histogram resolves the long tail.
 export const umDedupCheckDurationSeconds = new promClient.Histogram({
