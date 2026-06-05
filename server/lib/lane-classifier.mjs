@@ -18,3 +18,15 @@ export function meanPool(vectors) {
   for (let i = 0; i < dim; i++) mean[i] /= vectors.length;
   return mean; // cosineSimilarity normalizes, so no unit-normalization needed here
 }
+
+export function classifyByCentroid(vector, centroids, { threshold, margin = 0 } = {}) {
+  if (!centroids.length) return { lane: null, score: 0 };
+  const scored = centroids
+    .map(({ slug, centroid }) => ({ slug, score: cosineSimilarity(vector, centroid) }))
+    .sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  const second = scored[1]?.score ?? -Infinity;
+  if (top.score < threshold) return { lane: null, score: top.score };
+  if (margin > 0 && top.score - second < margin) return { lane: null, score: top.score };
+  return { lane: top.slug, score: top.score };
+}
