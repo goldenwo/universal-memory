@@ -207,7 +207,7 @@ export async function umAdd({
   const dedupThreshold = dedupEligible ? dedupEmbeddingThreshold() : null;
 
   // Gap-5 P1: lane-classifier seam (resolved once per call).
-  // classifyActive = the operator opted IN. Three-state model (spec §3.6,
+  // classifierEngaged = the operator opted IN. Three-state model (spec §3.6,
   // user decision 2026-06-04): env-flag UNSET → fully inert (no classify, no
   // centroid build — the P1 safe default + keeps pre-Gap-5 call sites/tests
   // untouched); flag set but not 'true' → SHADOW; flag 'true' → ACTIVE. A test
@@ -217,7 +217,7 @@ export async function umAdd({
   // plan P4/T4.1.
   const classifyLaneFn = _classifyLane ?? defaultClassifyLane;
   const laneClassifierEnabled = _laneClassifierEnabled ?? defaultClassifierEnabled();
-  const classifyActive =
+  const classifierEngaged =
     _classifyLane !== undefined ||
     _laneClassifierEnabled !== undefined ||
     process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
@@ -253,12 +253,12 @@ export async function umAdd({
 
       // Gap-5 P1: per-fact lane auto-classification. Reuses `vector` (no re-embed of
       // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
-      // Engaged only when classifyActive (operator opted in): ACTIVE (flag 'true')
+      // Engaged only when classifierEngaged (operator opted in): ACTIVE (flag 'true')
       // writes the classified lane; SHADOW (flag set, not 'true') logs the would-be
       // lane without writing. The centroid build threads the SAME embed seam as the
       // fact (same vector space in prod; hermetic under the test embed override).
       let itemLane = lane;
-      if (classifyActive && itemLane === undefined && !classifySkip) {
+      if (classifierEngaged && itemLane === undefined && !classifySkip) {
         try {
           const { lane: classified, score } = await classifyLaneFn(vector, {
             _logger: logger,

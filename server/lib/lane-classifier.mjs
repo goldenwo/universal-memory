@@ -14,6 +14,10 @@ import { umLaneClassifiedTotal } from './metrics.mjs';
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
 
 // Cosine over RAW embedding vectors (embeddings are not guaranteed unit-norm).
+// Fail-safe contract: returns 0 (never throws) — deliberately distinct from
+// eval/dedup-threshold-sweep.mjs's fail-loud `cosine`. When P2's lane-eval becomes
+// the 3rd client-side cosine consumer (rule-of-three), consolidate the shared math
+// into a server/lib/vector.mjs that both layers import.
 export function cosineSimilarity(a, b) {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
@@ -22,6 +26,7 @@ export function cosineSimilarity(a, b) {
 }
 
 export function meanPool(vectors) {
+  if (!vectors.length) return []; // defensive: buildCentroids only ever passes ≥1 same-dim vector
   const dim = vectors[0].length;
   const mean = new Array(dim).fill(0);
   for (const v of vectors) for (let i = 0; i < dim; i++) mean[i] += v[i];
@@ -102,6 +107,10 @@ export function classifierEnabled(env = process.env) {
 // Fail-safe entry used by umAdd. NEVER throws to the caller — any internal
 // error degrades to an unpartitioned write ({ lane: null }). Reuses the
 // caller-provided `vector` (the fact embedding) — no extra embed of the fact.
+// Future (spec §3.3): this is the LaneClassifier dispatch point. The centroid
+// path (getCentroids) is the DEFAULT impl, not a hardcoded choice — an eval-gated
+// LlmClassifier would branch here on UM_LANE_CLASSIFIER_PROVIDER without reworking
+// the umAdd seam.
 export async function classifyLane(vector, opts = {}) {
   try {
     const centroids = await getCentroids(opts);
