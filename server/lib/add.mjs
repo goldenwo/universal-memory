@@ -17,6 +17,12 @@
  *     vault docs (infer:false) CAN duplicate cross-surface and SHOULD merge.
  *   - Per dedup-eligible item: Layer 1 (hash) → Layer 2 (embedding); on hit,
  *     mergeSurface and emit DEDUP_MERGED event instead of upsert.
+ *   - Gap-5 P3 (ADR-0007 Option C): a Layer-2 embedding hit that is
+ *     supersede-eligible (autosupersede on + partitioned) AND in the
+ *     contradiction-overlap band is judged inline; a confirmed contradiction
+ *     DEFERS the keep-older merge — the newer fact is upserted as its own
+ *     status:current point and the older point is demoted afterwards
+ *     (SUPERSEDED_INBAND). Hash hits are exact text → never judged.
  *   - Fail-soft on dedup query error: log+metric, fall through to plain upsert.
  *   - Point-ID: dedup-eligible writes use uuidv5(`${itemHash}:${userId}${suffix}`,
  *     NAMESPACE_UM) for TOCTOU-resistant deterministic IDs. Suffix is empty when
@@ -26,7 +32,8 @@
  *     collide on writes independently. Non-dedup writes use randomUUID().
  *
  * Return shape mirrors mem0's add():
- *   { results: [{ id, memory, event: 'ADD' | 'DEDUP_MERGED' }, ...] }
+ *   { results: [{ id, memory, event: 'ADD' | 'DEDUP_MERGED' | 'SUPERSEDED_INBAND' }, ...] }
+ *   SUPERSEDED_INBAND (Gap-5 P3) additionally carries `supersededId` (the demoted older point).
  *
  * Qdrant payload schema (LOAD-BEARING — see spec §4.3, §9 risk row 1):
  *   - camelCase userId, createdAt
@@ -50,7 +57,7 @@ import { v5 as uuidv5 } from 'uuid';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
-import { umFactsExtractedTotal } from './metrics.mjs';
+import { umFactsExtractedTotal, umInbandSupersedeTotal } from './metrics.mjs';
 import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
@@ -58,6 +65,7 @@ import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedu
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
+import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -162,6 +170,10 @@ export async function umAdd({
   // Gap-5 P1 seams:
   _classifyLane,
   _laneClassifierEnabled,
+  // Gap-5 P3 seams (ADR-0007 Option C):
+  _judgeContradiction,
+  _supersedePoint,
+  _autoSupersedeEnabled,
 } = {}) {
   if (!memory?.config?.vectorStore?.config?.collectionName) {
     throw new Error('umAdd: memory.config.vectorStore.config.collectionName required');
@@ -222,6 +234,12 @@ export async function umAdd({
     _laneClassifierEnabled !== undefined ||
     process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
   const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
+
+  // Gap-5 P3: write-time in-band supersession seam (ADR-0007 Option C), resolved
+  // once per call. The inline judge is left to evaluateInBandSupersession's own
+  // default (judgeContradiction) unless a test injects _judgeContradiction.
+  const autoSupersedeEnabled = _autoSupersedeEnabled ?? isAutoSupersedeEnabled();
+  const supersedeFn = _supersedePoint ?? supersedePoint;
 
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
     let items;
@@ -288,22 +306,67 @@ export async function umAdd({
       // Fail-soft: any dedup-query error logs+metrics inside dedup.mjs's
       // instrumented() wrapper and rethrows; we catch here and fall through
       // to plain upsert per spec §4.6.
+      // Gap-5 P3 (ADR-0007 Option C): set iff a supersede-eligible in-band
+      // contradiction defers the keep-older merge — the older point id to demote
+      // AFTER the newer fact is upserted as status:current below.
+      let supersedeOlderId;
       if (dedupEligible) {
         try {
           let hit = await checkContentHashDedup({
             client, collection, userId, hash: itemHash, lane: itemLane, persona,
           });
+          // Only a Layer-2 EMBEDDING hit is eligible for in-band supersession: a
+          // Layer-1 hash hit is exact text (a true duplicate), never a contradiction.
+          let embeddingHit = null;
           if (!hit) {
-            hit = await checkEmbeddingDedup({
+            embeddingHit = await checkEmbeddingDedup({
               client, collection, userId, vector, threshold: dedupThreshold, lane: itemLane, persona,
             });
+            hit = embeddingHit;
           }
           if (hit) {
-            const merged = await mergeSurface({
-              client, collection, existingPoint: hit, newSurface: surface, newProject: itemProject,
-            });
-            results.push(merged);
-            continue;  // skip upsert — dedup-merge took its place
+            // ADR-0007 Option C: a phrasing-similar contradiction can land in the
+            // embedding-dedup band. Decide inline whether to DEFER to supersession.
+            // The judge fires only for the supersede-eligible in-band slice.
+            const decision = embeddingHit
+              ? await evaluateInBandSupersession({
+                  score: embeddingHit.score,
+                  olderText: embeddingHit.payload?.data,
+                  newerText: item,
+                  lane: itemLane,
+                  persona,
+                  bandFloor: dedupThreshold,
+                  enabled: autoSupersedeEnabled,
+                  _judge: _judgeContradiction,
+                })
+              : { supersede: false, judged: false };
+            if (decision.supersede) {
+              // Defer the keep-older merge: fall through to upsert the newer fact
+              // as its own status:current point; demote the older one post-upsert.
+              supersedeOlderId = embeddingHit.id;
+              // Audit the write-time supersession decision (parity with the
+              // session-end digest, which records confidence + reasoning).
+              logger.info(
+                {
+                  event: 'inband_supersede.confirmed',
+                  olderId: embeddingHit.id,
+                  score: embeddingHit.score,
+                  confidence: decision.confidence,
+                  reasoning: decision.reasoning,
+                },
+                'in-band contradiction confirmed; newer fact will supersede the older point',
+              );
+            } else {
+              if (decision.judged) {
+                // Judge was consulted (eligible+in-band) but declined → keep-older.
+                try { umInbandSupersedeTotal.inc({ outcome: 'declined' }); } catch { /* obs fail-safe */ }
+              }
+              const merged = await mergeSurface({
+                client, collection, existingPoint: hit, newSurface: surface, newProject: itemProject,
+              });
+              results.push(merged);
+              continue;  // skip upsert — dedup-merge took its place
+            }
           }
         } catch (err) {
           // Already logged + metric'd inside dedup.mjs; fall through to upsert.
@@ -346,7 +409,30 @@ export async function umAdd({
       // withRetry({op:'add'}); reindex Phase 3 wraps via runPhase3Rebuild's
       // own retry+checkpoint mechanics (Adv-4 spec).
       await client.upsert(collection, { points: [point] });
-      results.push({ id, memory: item, event: 'ADD' });
+
+      // Gap-5 P3 (ADR-0007 Option C): the newer fact is now persisted as
+      // status:current (the load-bearing invariant). If Option C fired, demote the
+      // older contradicted point — AFTER the upsert, so a crash in between leaves
+      // TWO current points (the accepted D1 keep-both trade-off), never the
+      // "no current fact" recall-loss. Fail-soft: a demotion error must NOT fail
+      // the user's write (the newer is already current); the session-end detector
+      // can still demote the older point on a later run.
+      if (supersedeOlderId) {
+        try {
+          await supersedeFn({ client, collection, id: supersedeOlderId, supersededBy: id });
+          try { umInbandSupersedeTotal.inc({ outcome: 'superseded' }); } catch { /* obs fail-safe */ }
+          results.push({ id, memory: item, event: 'SUPERSEDED_INBAND', supersededId: supersedeOlderId });
+        } catch (err) {
+          try { umInbandSupersedeTotal.inc({ outcome: 'demote_error' }); } catch { /* obs fail-safe */ }
+          logger.warn(
+            { event: 'inband_supersede.demote_error', olderId: supersedeOlderId, newerId: id, err: err?.message },
+            'in-band supersession: newer persisted as current, but demoting the older point failed; left for the session-end detector',
+          );
+          results.push({ id, memory: item, event: 'ADD' });
+        }
+      } else {
+        results.push({ id, memory: item, event: 'ADD' });
+      }
     }
     return { results };
   });

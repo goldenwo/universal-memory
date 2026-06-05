@@ -1,10 +1,11 @@
 // server/test/metrics.test.mjs
-// C.4 — prom-client Registry + 13 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5).
+// C.4 — prom-client Registry + 14 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5).
 //
 // Tests pin three contracts:
-//   1. Exactly 13 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
-//      4 v0.8 G2 um_provider_* + 2 v1.1 D1 dedup metrics + 1 Gap-5 lane-classifier). No defaults —
-//      registry body is bounded; also prevents recon-via-label-inventory.
+//   1. Exactly 14 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
+//      4 v0.8 G2 um_provider_* + 2 v1.1 D1 dedup metrics + 1 Gap-5 lane-classifier +
+//      1 Gap-5 P3 in-band supersede). No defaults — registry body is bounded;
+//      also prevents recon-via-label-inventory.
 //   2. endpoint label uses route template, NOT raw expanded paths
 //      (cardinality cap N1 — same discipline as C.3 logging).
 //   3. prom-client throws synchronously on label-shape violations.
@@ -21,9 +22,10 @@ import {
   lockContentionsTotal,
   umFactsExtractedTotal,
   umLaneClassifiedTotal,
+  umInbandSupersedeTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 13 named metrics', () => {
+test('registry exposes exactly 14 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_dedup_check_duration_seconds',  // D1 §9
@@ -31,6 +33,7 @@ test('registry exposes exactly 13 named metrics', () => {
     'um_facts_extracted_total',
     'um_http_request_duration_seconds',
     'um_http_requests_total',
+    'um_inband_supersede_total',        // Gap-5 P3 (ADR-0007 Option C)
     'um_lane_classified_total',         // Gap-5
     'um_lock_contentions_total',
     'um_mcp_tool_calls_total',
@@ -95,4 +98,12 @@ test('umFactsExtractedTotal is a prom-client Counter with provider+model labels'
 test('umLaneClassifiedTotal counter exists with outcome label', () => {
   assert.equal(typeof umLaneClassifiedTotal.inc, 'function');
   umLaneClassifiedTotal.inc({ outcome: 'routed' }); // throws if label-shape wrong
+});
+
+test('umInbandSupersedeTotal counter exists with outcome label (Gap-5 P3)', () => {
+  assert.equal(typeof umInbandSupersedeTotal.inc, 'function');
+  // Fixed enum — throws synchronously if the label shape is wrong.
+  umInbandSupersedeTotal.inc({ outcome: 'superseded' });
+  umInbandSupersedeTotal.inc({ outcome: 'declined' });
+  umInbandSupersedeTotal.inc({ outcome: 'demote_error' });
 });

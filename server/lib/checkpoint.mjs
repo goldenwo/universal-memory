@@ -47,7 +47,7 @@ import { currentRequestId } from './request-context.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
 import { applyDefaultProject, TOOL_IDS, validateLanePersonaSlug } from './default-project.mjs';
 import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
-import { supersedePoint as defaultSupersedePoint } from './supersede.mjs';
+import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled } from './supersede.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -518,7 +518,9 @@ export async function doCheckpoint(args, ctx = {}) {
     // v1.2 flip (D3.3): ON by default — opt-out polarity (mirrors UM_DEDUP_ENABLED);
     // only the literal lowercase 'false' (whitespace-trimmed) disables. The eligibility
     // gate above keeps this a fast no-op for unpartitioned checkpoints even when on.
-    if (process.env.UM_AUTOSUPERSEDE_ENABLED?.trim() !== 'false') {
+    // Predicate single-sourced in supersede.mjs (Gap-5 P3) — shared with the MCP
+    // memory_checkpoint handler and the write-time in-band decision.
+    if (isAutoSupersedeEnabled()) {
       try {
         const detections = await _detectContradictions(transcript, {
           userId, lane, persona, collection, client: qdrantClient,
