@@ -392,6 +392,64 @@ test('umAdd T12b: uuidv5 seed extension preserves legacy back-compat + partition
   assert.notEqual(bothId, noLaneId, 'lane+persona vs neither must produce a distinct ID');
 });
 
+// ---------------------------------------------------------------------------
+// Gap-5 P1: lane-classifier seam tests
+// ---------------------------------------------------------------------------
+
+// Gap-5 shadow (flag OFF): classified lane is NOT written.
+test('Gap-5 shadow: flag off → lane omitted on write even when classifier would route', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'sprint planning notes', userId: 'u1', metadata: {}, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: qdrant.client,
+    _classifyLane: async () => ({ lane: 'work', score: 0.9 }), // would route
+    _laneClassifierEnabled: false,                              // shadow
+  });
+  assert.equal(qdrant.upserts[0].body.points[0].payload.lane, undefined);
+});
+
+// Gap-5 active (flag ON): classified lane IS written.
+test('Gap-5 active: flag on + caller omits lane → classified lane written to payload', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'sprint planning notes', userId: 'u1', metadata: {}, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: qdrant.client,
+    _classifyLane: async () => ({ lane: 'work', score: 0.9 }),
+    _laneClassifierEnabled: true,
+  });
+  assert.equal(qdrant.upserts[0].body.points[0].payload.lane, 'work');
+});
+
+// Gap-5: explicit caller lane wins over classifier (active).
+test('Gap-5: explicit caller lane wins over classifier (active)', async () => {
+  let classifierCalled = false;
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'x', userId: 'u1', metadata: { lane: 'personal' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: qdrant.client,
+    _classifyLane: async () => { classifierCalled = true; return { lane: 'work', score: 0.9 }; },
+    _laneClassifierEnabled: true,
+  });
+  assert.equal(qdrant.upserts[0].body.points[0].payload.lane, 'personal');
+  assert.equal(classifierCalled, false);
+});
+
+// Gap-5: _systemMigration write skips classification entirely.
+test('Gap-5: _systemMigration write skips the classifier', async () => {
+  let classifierCalled = false;
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'x', userId: 'u1', metadata: {}, infer: false, _systemMigration: true,
+    _embedProviderOverride: embedDummy, _qdrantClient: qdrant.client,
+    _classifyLane: async () => { classifierCalled = true; return { lane: 'work', score: 0.9 }; },
+    _laneClassifierEnabled: true,
+  });
+  assert.equal(classifierCalled, false);
+  assert.equal(qdrant.upserts[0].body.points[0].payload.lane, undefined);
+});
+
+// ---------------------------------------------------------------------------
+
 test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {
   // Spec §6 + add.mjs header: umAdd does NOT internally wrap qdrant.upsert
   // in withRetry. The mem0-mcp-http call sites (lines 688/778/2179/2338)

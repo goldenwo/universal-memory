@@ -57,6 +57,7 @@ import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
+import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
 
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
@@ -158,6 +159,9 @@ export async function umAdd({
   // T15 seams:
   _factsCounter,
   _logger,
+  // Gap-5 P1 seams:
+  _classifyLane,
+  _laneClassifierEnabled,
 } = {}) {
   if (!memory?.config?.vectorStore?.config?.collectionName) {
     throw new Error('umAdd: memory.config.vectorStore.config.collectionName required');
@@ -202,6 +206,17 @@ export async function umAdd({
   const dedupEligible = computeDedupEligible({ metadata, _systemMigration });
   const dedupThreshold = dedupEligible ? dedupEmbeddingThreshold() : null;
 
+  // Gap-5 P1: lane-classifier seam (resolved once per call).
+  // classifyActive: only engage the classifier pipeline when the seam is
+  // explicitly injected OR the env-flag is set. When neither is present
+  // (all pre-Gap-5 call sites and tests that don't pass _classifyLane),
+  // the per-item block below is a no-op — preserving pre-Gap-5 behaviour
+  // and preventing the centroid-build from firing in unrelated tests.
+  const classifyLaneFn = _classifyLane ?? defaultClassifyLane;
+  const laneClassifierEnabled = _laneClassifierEnabled ?? defaultClassifierEnabled();
+  const classifyActive = _classifyLane !== undefined || process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
+  const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
+
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
     let items;
     if (infer) {
@@ -229,6 +244,25 @@ export async function umAdd({
     const results = [];
     for (const item of items) {
       const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
+
+      // Gap-5 P1: per-fact lane auto-classification. Reuses `vector` (no re-embed of
+      // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
+      // SHADOW unless the flag is ON: shadow classifies + logs the would-be lane but
+      // does NOT write it. The centroid build is threaded through the SAME embed seam
+      // as the fact (same vector space in prod; hermetic under the test embed override).
+      let itemLane = lane;
+      if (classifyActive && itemLane === undefined && !classifySkip) {
+        const { lane: classified, score } = await classifyLaneFn(vector, {
+          _logger: logger,
+          _embedFn: (t) => embedOrchestrator(t, { _providerOverride: _embedProviderOverride, metrics }),
+        });
+        if (laneClassifierEnabled) {
+          itemLane = classified;                                                       // active: apply
+        } else {
+          logger.info({ event: 'lane.shadow', wouldBe: classified, score }, 'lane classifier shadow'); // observe-only
+        }
+      }
+
       const itemHash = md5(item);
       const itemProject = metadata?.project;
 
@@ -240,11 +274,11 @@ export async function umAdd({
       if (dedupEligible) {
         try {
           let hit = await checkContentHashDedup({
-            client, collection, userId, hash: itemHash, lane, persona,
+            client, collection, userId, hash: itemHash, lane: itemLane, persona,
           });
           if (!hit) {
             hit = await checkEmbeddingDedup({
-              client, collection, userId, vector, threshold: dedupThreshold, lane, persona,
+              client, collection, userId, vector, threshold: dedupThreshold, lane: itemLane, persona,
             });
           }
           if (hit) {
@@ -277,7 +311,7 @@ export async function umAdd({
       // distinct (lane, persona) values get distinct point IDs — the partition
       // collides on write per-tuple.
       const id = dedupEligible
-        ? computeFactId({ userId, text: item, lane, persona })
+        ? computeFactId({ userId, text: item, lane: itemLane, persona })
         : randomUUID();
       const point = {
         id,
@@ -287,7 +321,7 @@ export async function umAdd({
           text: item,
           metadata: metadataMinusLanePersona,
           surface,
-          lane,
+          lane: itemLane,
           persona,
         }),
       };
