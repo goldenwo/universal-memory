@@ -1,27 +1,13 @@
 // server/test/lane-classifier.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest } from '../lib/lane-classifier.mjs';
+// cosineSimilarity + meanPool moved to ./vector.mjs (rule-of-three extraction);
+// their unit tests live in test/vector.test.mjs. classifyByCentroid (below)
+// exercises cosineSimilarity transitively.
+import { classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest } from '../lib/lane-classifier.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-test('cosineSimilarity: identical vectors = 1, orthogonal = 0', () => {
-  assert.ok(Math.abs(cosineSimilarity([1, 0], [1, 0]) - 1) < 1e-9);
-  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
-});
-
-test('cosineSimilarity: magnitude-invariant (unnormalized embeddings)', () => {
-  assert.ok(Math.abs(cosineSimilarity([2, 0], [5, 0]) - 1) < 1e-9);
-});
-
-test('cosineSimilarity: zero vector returns 0 (no NaN)', () => {
-  assert.equal(cosineSimilarity([0, 0], [1, 1]), 0);
-});
-
-test('meanPool: elementwise mean', () => {
-  assert.deepEqual(meanPool([[2, 4], [4, 8]]), [3, 6]);
-});
 
 const CENTROIDS = [
   { slug: 'work', centroid: [1, 0] },

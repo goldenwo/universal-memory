@@ -10,29 +10,12 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 import { embed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { umLaneClassifiedTotal } from './metrics.mjs';
+// cosineSimilarity + meanPool live in ./vector.mjs (shared with the eval
+// harnesses, rule of three). classifyByCentroid below uses the FAIL-SAFE
+// cosineSimilarity — a bad vector must never throw on the write path.
+import { cosineSimilarity, meanPool } from './vector.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
-
-// Cosine over RAW embedding vectors (embeddings are not guaranteed unit-norm).
-// Fail-safe contract: returns 0 (never throws) — deliberately distinct from
-// eval/dedup-threshold-sweep.mjs's fail-loud `cosine`. When P2's lane-eval becomes
-// the 3rd client-side cosine consumer (rule-of-three), consolidate the shared math
-// into a server/lib/vector.mjs that both layers import.
-export function cosineSimilarity(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-
-export function meanPool(vectors) {
-  if (!vectors.length) return []; // defensive: buildCentroids only ever passes ≥1 same-dim vector
-  const dim = vectors[0].length;
-  const mean = new Array(dim).fill(0);
-  for (const v of vectors) for (let i = 0; i < dim; i++) mean[i] += v[i];
-  for (let i = 0; i < dim; i++) mean[i] /= vectors.length;
-  return mean; // cosineSimilarity normalizes, so no unit-normalization needed here
-}
 
 export function classifyByCentroid(vector, centroids, { threshold, margin = 0 } = {}) {
   if (!centroids.length) return { lane: null, score: 0 };
