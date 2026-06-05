@@ -1,8 +1,9 @@
 {
+  "_comment": "Starter lane taxonomy for the Gap-5 write-time classifier. Exemplars are CONCRETE, fact-like activity phrasings (not abstract category labels): centroids are mean-pooled exemplar embeddings, and concrete facts embed far from abstract labels — an early eval (eval/results/2026-06-05-lane-abstract-baseline-*) showed the abstract starter set missed the 0.95 precision floor (best 0.897), while this concrete set clears it (see 2026-06-05-lane-run*). Operators SHOULD curate these to their own contexts; more distinct, concrete exemplars per lane sharpen the centroid. 'general' is intentionally absent (spec §3.2): a catch-all of low-confidence facts would re-introduce the D3 false positives the absence-gate prevents.",
   "lanes": [
-    { "slug": "work", "exemplars": ["sprint planning and standups", "reviewing a pull request", "the production incident postmortem", "OKRs and quarterly roadmap"] },
-    { "slug": "personal", "exemplars": ["family and friends plans", "health and fitness routine", "personal finance and budgeting", "home and errands"] },
-    { "slug": "research", "exemplars": ["a paper on machine learning", "comparing database architectures", "an experiment and its results", "a literature survey"] },
-    { "slug": "writing", "exemplars": ["drafting a blog post", "editing a chapter of the novel", "narrative voice and tone notes", "an outline for an essay"] }
+    { "slug": "work", "exemplars": ["Closed out a sprint ticket and updated the board.", "Reviewed a pull request before the release.", "Wrote up an incident postmortem for the team.", "Planned the quarter roadmap with stakeholders.", "Deployed a service and monitored the rollout.", "Discussed priorities in the weekly team sync."] },
+    { "slug": "personal", "exemplars": ["Made a doctor appointment for a checkup.", "Did the weekly grocery shopping and chores.", "Went to the gym and tracked the workout.", "Paid household bills and reviewed the budget.", "Made weekend plans with family and friends.", "Took the car in for maintenance."] },
+    { "slug": "research", "exemplars": ["Read an academic paper on a new method.", "Ran an experiment and analyzed the results.", "Benchmarked two approaches on a dataset.", "Studied the theory behind an algorithm.", "Reviewed the methodology of a study.", "Investigated a research question in depth."] },
+    { "slug": "writing", "exemplars": ["Drafted a new chapter of the story.", "Edited prose for clarity and pacing.", "Revised the essay structure and argument.", "Worked on character voice and dialogue.", "Outlined the next section before drafting.", "Polished the blog post introduction."] }
   ]
 }

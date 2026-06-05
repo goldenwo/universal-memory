@@ -1,27 +1,13 @@
 // server/test/lane-classifier.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cosineSimilarity, meanPool, classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest } from '../lib/lane-classifier.mjs';
+// cosineSimilarity + meanPool moved to ./vector.mjs (rule-of-three extraction);
+// their unit tests live in test/vector.test.mjs. classifyByCentroid (below)
+// exercises cosineSimilarity transitively.
+import { classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest, LANE_THRESHOLD_DEFAULT, LANE_MARGIN_DEFAULT } from '../lib/lane-classifier.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-test('cosineSimilarity: identical vectors = 1, orthogonal = 0', () => {
-  assert.ok(Math.abs(cosineSimilarity([1, 0], [1, 0]) - 1) < 1e-9);
-  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
-});
-
-test('cosineSimilarity: magnitude-invariant (unnormalized embeddings)', () => {
-  assert.ok(Math.abs(cosineSimilarity([2, 0], [5, 0]) - 1) < 1e-9);
-});
-
-test('cosineSimilarity: zero vector returns 0 (no NaN)', () => {
-  assert.equal(cosineSimilarity([0, 0], [1, 1]), 0);
-});
-
-test('meanPool: elementwise mean', () => {
-  assert.deepEqual(meanPool([[2, 4], [4, 8]]), [3, 6]);
-});
 
 const CENTROIDS = [
   { slug: 'work', centroid: [1, 0] },
@@ -154,4 +140,36 @@ test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () 
   writeFileSync(p, JSON.stringify({ lanes: 'work' }));
   try { assert.deepEqual(loadLaneTaxonomy({ UM_LANE_TAXONOMY_PATH: p }), []); }
   finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Gap-5 P2 drift gate — the eval-pinned threshold + margin defaults.
+test('Gap-5 P2 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.06', async () => {
+  // LITERAL match to LANE_THRESHOLD_DEFAULT / LANE_MARGIN_DEFAULT in lib/lane-classifier.mjs
+  // and server/.env.example UM_LANE_CLASSIFIER_THRESHOLD / _MARGIN — update all three together.
+  // Pinned by the 2026-06-05 labelled eval: precision 0.953 / recall 0.854 ≥ the 0.95 floor
+  // (eval/results/2026-06-05-lane-run{1,2}.json). The margin is load-bearing: at margin 0 no
+  // τ clears the floor at non-trivial recall.
+  assert.equal(LANE_THRESHOLD_DEFAULT, 0.30);
+  assert.equal(LANE_MARGIN_DEFAULT, 0.06);
+
+  // Behavioral: with the threshold/margin env UNSET, classifyLane applies the pinned
+  // NON-ZERO margin — a top1≈top2 tie (margin 0) is omitted, not routed.
+  const prevT = process.env.UM_LANE_CLASSIFIER_THRESHOLD;
+  const prevM = process.env.UM_LANE_CLASSIFIER_MARGIN;
+  delete process.env.UM_LANE_CLASSIFIER_THRESHOLD;
+  delete process.env.UM_LANE_CLASSIFIER_MARGIN;
+  try {
+    _resetCentroidsForTest();
+    const centroids = [{ slug: 'a', centroid: [1, 0] }, { slug: 'b', centroid: [0, 1] }];
+    // [1,1] → cos 0.707 to both → margin 0 < 0.06 default → abstain.
+    const tie = await classifyLane([1, 1], { _centroids: centroids });
+    assert.equal(tie.lane, null, 'pinned margin (0.06) omits a top1/top2 tie');
+    // [1,0.2] → cos≈0.98 to a, ≈0.20 to b → margin ≫ 0.06, top1 ≥ τ=0.30 → routes a.
+    const clear = await classifyLane([1, 0.2], { _centroids: centroids });
+    assert.equal(clear.lane, 'a', 'clear winner above τ with margin ≥ 0.06 routes');
+  } finally {
+    if (prevT === undefined) delete process.env.UM_LANE_CLASSIFIER_THRESHOLD; else process.env.UM_LANE_CLASSIFIER_THRESHOLD = prevT;
+    if (prevM === undefined) delete process.env.UM_LANE_CLASSIFIER_MARGIN; else process.env.UM_LANE_CLASSIFIER_MARGIN = prevM;
+    _resetCentroidsForTest();
+  }
 });
