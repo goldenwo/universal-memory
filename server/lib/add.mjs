@@ -259,14 +259,24 @@ export async function umAdd({
       // fact (same vector space in prod; hermetic under the test embed override).
       let itemLane = lane;
       if (classifyActive && itemLane === undefined && !classifySkip) {
-        const { lane: classified, score } = await classifyLaneFn(vector, {
-          _logger: logger,
-          _embedFn: (t) => embedOrchestrator(t, { _providerOverride: _embedProviderOverride, metrics }),
-        });
-        if (laneClassifierEnabled) {
-          itemLane = classified;                                                       // active: apply
-        } else {
-          logger.info({ event: 'lane.shadow', wouldBe: classified, score }, 'lane classifier shadow'); // observe-only
+        try {
+          const { lane: classified, score } = await classifyLaneFn(vector, {
+            _logger: logger,
+            _embedFn: (t) => embedOrchestrator(t, { _providerOverride: _embedProviderOverride, metrics }),
+          });
+          if (laneClassifierEnabled) {
+            // `null` = classifier's "leave unpartitioned" — normalize to `undefined`
+            // so the four sinks treat it as ABSENT (no `lane:null` payload key, the
+            // `is_empty` dedup arm, and the legacy point-ID shape). Persisting
+            // `lane:null` would break the no-null-payload invariant + dedup + ID determinism.
+            itemLane = classified ?? undefined;                                        // active: apply (null→absent)
+          } else {
+            logger.info({ event: 'lane.shadow', wouldBe: classified ?? null, score }, 'lane classifier shadow'); // observe-only
+          }
+        } catch (err) {
+          // Defense-in-depth: classifyLane is contract-fail-safe, but a classifier
+          // fault must NEVER fail the user's write (spec §3.4). Leave itemLane = lane.
+          logger.warn({ event: 'lane.classify_seam_error', err: err?.message }, 'lane classify seam error; writing unpartitioned');
         }
       }
 
