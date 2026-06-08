@@ -25,8 +25,12 @@ const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..'
 // health/family/finance/home; research: papers/experiments/stats) are matched by
 // the relevant exemplar instead of a washed-out average. K is clamped to the lane's
 // exemplar count (and to ≥1). Uses the FAIL-SAFE cosineSimilarity (never throws).
-// Eval (2026-06-07): top-3-mean beats single-centroid 0.977/0.875 vs 0.960/0.500
-// precision/recall on the representative fixture — the averaging was the bottleneck.
+// Eval (2026-06-07): top-3-mean over the ENRICHED ~12-exemplar taxonomy scores
+// 0.977/0.875 precision/recall on the representative fixture. The gain is JOINT —
+// mechanism × exemplar richness: top-3-mean on the old 6-exemplar set reaches only
+// 0.479 recall, and the enriched set under a centroid-like K only 0.333. Neither
+// lever alone suffices; top-K-mean over a richer exemplar set recovers the lanes a
+// single mean-pooled centroid washes out.
 function topKMeanCosine(vector, vectors, topK) {
   if (!vectors || vectors.length === 0) return 0;
   const sims = vectors.map((v) => cosineSimilarity(vector, v)).sort((a, b) => b - a);
@@ -104,9 +108,10 @@ async function getPrototypes(opts) {
 // precision floor at 0.977 precision / 0.875 recall on the GROWN representative
 // fixture (82 rows, 34 negatives; eval/results/2026-06-07-lane-run{1,2}). This
 // supersedes the P2 single-centroid pin (0.30/0.06), which fell to 0.479 recall
-// once the negative set was grown to be production-representative. topK is
-// load-bearing: single-centroid (topK=∞/mean) only reaches the floor at ~0.50
-// recall. Drift-gated in test/lane-classifier.test.mjs — update lib + test +
+// once the negative set was grown to be production-representative. topK AND
+// exemplar richness are JOINTLY load-bearing (single-centroid reaches the floor
+// only at ~0.50 recall; the enriched set under a centroid-like K only ~0.33).
+// Drift-gated in test/lane-classifier.test.mjs — update lib + test +
 // server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK together.
 export const LANE_THRESHOLD_DEFAULT = 0.30;
 export const LANE_MARGIN_DEFAULT = 0.08;

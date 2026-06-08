@@ -195,8 +195,10 @@ test('Gap-5 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.08 + topK=3
   // NON-ZERO margin — a top1≈top2 tie (margin 0) is omitted, not routed.
   const prevT = process.env.UM_LANE_CLASSIFIER_THRESHOLD;
   const prevM = process.env.UM_LANE_CLASSIFIER_MARGIN;
+  const prevK = process.env.UM_LANE_CLASSIFIER_TOPK;
   delete process.env.UM_LANE_CLASSIFIER_THRESHOLD;
   delete process.env.UM_LANE_CLASSIFIER_MARGIN;
+  delete process.env.UM_LANE_CLASSIFIER_TOPK;
   try {
     _resetPrototypesForTest();
     const protos = [{ slug: 'a', vectors: [[1, 0]] }, { slug: 'b', vectors: [[0, 1]] }];
@@ -209,6 +211,7 @@ test('Gap-5 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.08 + topK=3
   } finally {
     if (prevT === undefined) delete process.env.UM_LANE_CLASSIFIER_THRESHOLD; else process.env.UM_LANE_CLASSIFIER_THRESHOLD = prevT;
     if (prevM === undefined) delete process.env.UM_LANE_CLASSIFIER_MARGIN; else process.env.UM_LANE_CLASSIFIER_MARGIN = prevM;
+    if (prevK === undefined) delete process.env.UM_LANE_CLASSIFIER_TOPK; else process.env.UM_LANE_CLASSIFIER_TOPK = prevK;
     _resetPrototypesForTest();
   }
 });
