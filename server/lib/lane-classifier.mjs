@@ -1,6 +1,8 @@
 // server/lib/lane-classifier.mjs
-// Gap-5: write-time lane auto-classification via embedding-centroid nearest-match.
-// Reuses the fact embedding dedup already computes (add.mjs:231) — no extra LLM call.
+// Gap-5: write-time lane auto-classification via embedding nearest-prototype match.
+// Each lane is represented by its exemplar VECTORS; a fact is scored against a lane
+// by the mean of its top-K nearest exemplar cosines (multi-prototype), reusing the
+// fact embedding dedup already computes (add.mjs) — no extra LLM call.
 // Spec: docs/plans/2026-06-04-gap5-lane-classifier-spec.md.
 
 import { readFileSync } from 'node:fs';
@@ -10,17 +12,43 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 import { embed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { umLaneClassifiedTotal } from './metrics.mjs';
-// cosineSimilarity + meanPool live in ./vector.mjs (shared with the eval
-// harnesses, rule of three). classifyByCentroid below uses the FAIL-SAFE
-// cosineSimilarity — a bad vector must never throw on the write path.
-import { cosineSimilarity, meanPool } from './vector.mjs';
+// cosineSimilarity lives in ./vector.mjs (shared with the eval harnesses, rule of
+// three). classifyByPrototypes below uses the FAIL-SAFE cosineSimilarity — a bad
+// vector must never throw on the write path.
+import { cosineSimilarity } from './vector.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
 
-export function classifyByCentroid(vector, centroids, { threshold, margin = 0 } = {}) {
-  if (!centroids.length) return { lane: null, score: 0 };
-  const scored = centroids
-    .map(({ slug, centroid }) => ({ slug, score: cosineSimilarity(vector, centroid) }))
+// Mean of the top-K cosines between `vector` and a lane's exemplar vectors.
+// Multi-prototype scoring: a lane is matched by its NEAREST few exemplars, not a
+// single mean-pooled centroid — so semantically multi-modal lanes (personal:
+// health/family/finance/home; research: papers/experiments/stats) are matched by
+// the relevant exemplar instead of a washed-out average. K is clamped to the lane's
+// exemplar count (and to ≥1). Uses the FAIL-SAFE cosineSimilarity (never throws).
+// Eval (2026-06-07): top-3-mean over the ENRICHED ~12-exemplar taxonomy scores
+// 0.977/0.875 precision/recall on the representative fixture. The gain is JOINT —
+// mechanism × exemplar richness: top-3-mean on the old 6-exemplar set reaches only
+// 0.479 recall, and the enriched set under a centroid-like K only 0.333. Neither
+// lever alone suffices; top-K-mean over a richer exemplar set recovers the lanes a
+// single mean-pooled centroid washes out.
+function topKMeanCosine(vector, vectors, topK) {
+  if (!vectors || vectors.length === 0) return 0;
+  const sims = vectors.map((v) => cosineSimilarity(vector, v)).sort((a, b) => b - a);
+  const k = Math.max(1, Math.min(topK, sims.length));
+  let sum = 0;
+  for (let i = 0; i < k; i++) sum += sims[i];
+  return sum / k;
+}
+
+// Classify a fact vector by nearest lane prototypes: score each lane by the
+// top-K-mean cosine over its exemplar vectors, argmax, then abstain (lane:null)
+// when the top score is below `threshold` or within `margin` of the runner-up
+// (the ambiguity guard). `laneProtos` = [{ slug, vectors: number[][] }] from
+// buildLanePrototypes. Below-threshold / low-margin → omit (no `general` lane).
+export function classifyByPrototypes(vector, laneProtos, { threshold, margin = 0, topK = LANE_TOPK_DEFAULT } = {}) {
+  if (!laneProtos.length) return { lane: null, score: 0 };
+  const scored = laneProtos
+    .map(({ slug, vectors }) => ({ slug, score: topKMeanCosine(vector, vectors, topK) }))
     .sort((a, b) => b.score - a.score);
   const top = scored[0];
   const second = scored[1]?.score ?? -Infinity;
@@ -42,46 +70,52 @@ export function loadLaneTaxonomy(env = process.env) {
     .filter((l) => l.slug && l.exemplars.length > 0);
 }
 
-// Build one centroid per lane. embedFn MUST be the same embedder used for facts
-// (same vector space) — defaults to the production embed(); injected in tests.
-export async function buildCentroids(taxonomy, embedFn = embed) {
-  const centroids = [];
+// Build per-lane exemplar PROTOTYPES: retain every exemplar's vector (not a single
+// mean-pooled centroid) so classifyByPrototypes can score by nearest exemplars
+// (top-K-mean). embedFn MUST be the same embedder used for facts (same vector
+// space) — defaults to the production embed(); injected in tests.
+export async function buildLanePrototypes(taxonomy, embedFn = embed) {
+  const protos = [];
   for (const { slug, exemplars } of taxonomy) {
-    const vecs = await Promise.all(exemplars.map(async (ex) => (await embedFn(ex)).vector));
-    centroids.push({ slug, centroid: meanPool(vecs) });
+    const vectors = await Promise.all(exemplars.map(async (ex) => (await embedFn(ex)).vector));
+    protos.push({ slug, vectors });
   }
-  return centroids;
+  return protos;
 }
 
 // ---------------------------------------------------------------------------
-// Task 6: fail-safe entry point + cached centroids + metric
+// Fail-safe entry point + cached prototypes + metric
 // ---------------------------------------------------------------------------
 
-let _centroidsPromise = null;
-export function _resetCentroidsForTest() { _centroidsPromise = null; }
+let _protosPromise = null;
+export function _resetPrototypesForTest() { _protosPromise = null; }
 
-async function getCentroids(opts) {
-  if (opts._centroids) return opts._centroids;
-  if (!_centroidsPromise) {
+async function getPrototypes(opts) {
+  if (opts._prototypes) return opts._prototypes;
+  if (!_protosPromise) {
     const taxonomy = opts._taxonomy ?? loadLaneTaxonomy();
-    // Don't cache a REJECTED build: a transient embed failure during centroid
+    // Don't cache a REJECTED build: a transient embed failure during prototype
     // build must not permanently disable the classifier until process restart.
     // On failure, clear the cache so the next classify retries the build.
-    _centroidsPromise = buildCentroids(taxonomy, opts._embedFn ?? embed)
-      .catch((err) => { _centroidsPromise = null; throw err; });
+    _protosPromise = buildLanePrototypes(taxonomy, opts._embedFn ?? embed)
+      .catch((err) => { _protosPromise = null; throw err; });
   }
-  return _centroidsPromise;
+  return _protosPromise;
 }
 
-// Eval-pinned defaults (Gap-5 P2, 2026-06-05). τ_lane=0.30 + margin=0.06 cleared
-// the spec §5 ≥0.95 precision floor at 0.953 precision / 0.854 recall on the
-// labelled fixture; the discretized outcomes were identical across two live runs
-// (eval/results/2026-06-05-lane-run{1,2}). The margin is LOAD-BEARING: at margin 0
-// the floor is only reachable at τ≥0.52, where recall collapses to ≤0.15 — the
-// 0.06 margin is what lets τ=0.30 clear the floor at recall 0.854. Drift-gated in
-// test/lane-classifier.test.mjs — update lib + test + server/.env.example together.
+// Eval-pinned defaults (Gap-5, re-pinned 2026-06-07 for the multi-prototype
+// mechanism). τ_lane=0.30 + margin=0.08 + topK=3 cleared the spec §5 ≥0.95
+// precision floor at 0.977 precision / 0.875 recall on the GROWN representative
+// fixture (82 rows, 34 negatives; eval/results/2026-06-07-lane-run{1,2}). This
+// supersedes the P2 single-centroid pin (0.30/0.06), which fell to 0.479 recall
+// once the negative set was grown to be production-representative. topK AND
+// exemplar richness are JOINTLY load-bearing (single-centroid reaches the floor
+// only at ~0.50 recall; the enriched set under a centroid-like K only ~0.33).
+// Drift-gated in test/lane-classifier.test.mjs — update lib + test +
+// server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK together.
 export const LANE_THRESHOLD_DEFAULT = 0.30;
-export const LANE_MARGIN_DEFAULT = 0.06;
+export const LANE_MARGIN_DEFAULT = 0.08;
+export const LANE_TOPK_DEFAULT = 3;
 
 function laneThreshold(env = process.env) {
   const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_THRESHOLD);
@@ -93,6 +127,11 @@ function laneMargin(env = process.env) {
   return Number.isFinite(n) ? n : LANE_MARGIN_DEFAULT;
 }
 
+function laneTopK(env = process.env) {
+  const n = Number.parseInt(env.UM_LANE_CLASSIFIER_TOPK, 10);
+  return Number.isInteger(n) && n > 0 ? n : LANE_TOPK_DEFAULT;
+}
+
 export function classifierEnabled(env = process.env) {
   return env.UM_LANE_CLASSIFIER_ENABLED?.trim() === 'true'; // opt-in; flips to opt-out in P4
 }
@@ -100,16 +139,17 @@ export function classifierEnabled(env = process.env) {
 // Fail-safe entry used by umAdd. NEVER throws to the caller — any internal
 // error degrades to an unpartitioned write ({ lane: null }). Reuses the
 // caller-provided `vector` (the fact embedding) — no extra embed of the fact.
-// Future (spec §3.3): this is the LaneClassifier dispatch point. The centroid
-// path (getCentroids) is the DEFAULT impl, not a hardcoded choice — an eval-gated
+// Future (spec §3.3): this is the LaneClassifier dispatch point. The prototype
+// path (getPrototypes) is the DEFAULT impl, not a hardcoded choice — an eval-gated
 // LlmClassifier would branch here on UM_LANE_CLASSIFIER_PROVIDER without reworking
 // the umAdd seam.
 export async function classifyLane(vector, opts = {}) {
   try {
-    const centroids = await getCentroids(opts);
-    const r = classifyByCentroid(vector, centroids, {
+    const protos = await getPrototypes(opts);
+    const r = classifyByPrototypes(vector, protos, {
       threshold: opts.threshold ?? laneThreshold(),
       margin: opts.margin ?? laneMargin(),
+      topK: opts.topK ?? laneTopK(),
     });
     umLaneClassifiedTotal.inc({ outcome: r.lane ? 'routed' : 'omitted' });
     return r;

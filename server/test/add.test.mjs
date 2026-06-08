@@ -692,6 +692,26 @@ test('Gap-5 P3: infer:true — per-fact supersede target does not leak across it
   assert.equal(demotions[0].points[0], 'older-f1');
 });
 
+// Coverage parity: a persona-only partition (no lane) triggers Option C identically.
+test('Gap-5 P3: in-band contradiction on a persona-only partition → newer current + older demoted', async () => {
+  const older = { id: 'older-persona-1', score: 0.85, payload: { data: 'I prefer tabs', persona: 'engineer', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const text = 'I prefer spaces now';
+  const result = await umAdd({
+    memory: makeMockMemory(), text, userId: 'u1', metadata: { persona: 'engineer' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  assert.equal(q.upserts.length, 1, 'newer fact upserted as its own point');
+  const newer = q.upserts[0].body.points[0];
+  assert.equal(newer.payload.status, 'current');
+  assert.equal(newer.payload.persona, 'engineer');
+  const demote = q.setPayloads.find((s) => s.body.payload.status === 'superseded');
+  assert.ok(demote, 'older point demoted');
+  assert.deepEqual(demote.body.points, ['older-persona-1']);
+  assert.equal(result.results[0].event, 'SUPERSEDED_INBAND');
+});
+
 // ---------------------------------------------------------------------------
 
 test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', async () => {

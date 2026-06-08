@@ -221,7 +221,7 @@ export async function umAdd({
   // Gap-5 P1: lane-classifier seam (resolved once per call).
   // classifierEngaged = the operator opted IN. Three-state model (spec §3.6,
   // user decision 2026-06-04): env-flag UNSET → fully inert (no classify, no
-  // centroid build — the P1 safe default + keeps pre-Gap-5 call sites/tests
+  // prototype build — the P1 safe default + keeps pre-Gap-5 call sites/tests
   // untouched); flag set but not 'true' → SHADOW; flag 'true' → ACTIVE. A test
   // seam (_classifyLane / _laneClassifierEnabled) also engages the pipeline.
   // NB P4 flip: when the default flips to opt-out this gate must flip in
@@ -273,7 +273,7 @@ export async function umAdd({
       // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
       // Engaged only when classifierEngaged (operator opted in): ACTIVE (flag 'true')
       // writes the classified lane; SHADOW (flag set, not 'true') logs the would-be
-      // lane without writing. The centroid build threads the SAME embed seam as the
+      // lane without writing. The prototype build threads the SAME embed seam as the
       // fact (same vector space in prod; hermetic under the test embed override).
       let itemLane = lane;
       if (classifierEngaged && itemLane === undefined && !classifySkip) {
