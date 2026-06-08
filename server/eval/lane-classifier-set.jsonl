@@ -62,3 +62,21 @@
 {"text": "Outlining a conference talk about our production incident.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
 {"text": "Editing my resume to highlight the database migration project.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
 {"text": "Planning the family budget around the new job's relocation package.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "The printer on the third floor is out of toner again.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Someone left a blue water bottle in the break room.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "It's supposed to snow over the weekend.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Need to find where I put the spare batteries.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The coffee machine won't be fixed until next week.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "My phone battery is down to nine percent.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "There's roadwork on the main street again.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The vending machine only takes exact change now.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Left my badge at home this morning.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The clock in the hallway is twenty minutes fast.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "A delivery truck is blocking the driveway.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The light in the stairwell keeps flickering.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "The elevator music switched to something new.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "There's a faint smell of popcorn on this floor.", "expected_lane": null, "category": "noise", "source": "synthetic"}
+{"text": "Writing release notes for the new feature launch.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Journaling about my career goals for the next year.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Researching the best budgeting app for my freelance income.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Drafting a toast for my sister's wedding.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}

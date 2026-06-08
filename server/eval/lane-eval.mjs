@@ -4,11 +4,11 @@
  * Sibling of eval/d3-eval.mjs (D3) and eval/dedup-threshold-sweep.mjs (D1). Same
  * structural contract: PURE exported functions (no I/O, unit-tested directly in
  * test/lane-eval.test.mjs) + a CLI shim guarded by IS_MAIN whose live deps
- * (embed / buildCentroids / classifyByCentroid / cosineStrict) are LAZY-imported
+ * (embed / buildLanePrototypes / classifyByPrototypes / cosineStrict) are LAZY-imported
  * inside runOnce — so importing this module from a unit test never pulls the
  * embed SDK into test scope.
  *
- * Purpose: run the SHIPPED classifier (lib/lane-classifier.mjs classifyByCentroid)
+ * Purpose: run the SHIPPED classifier (lib/lane-classifier.mjs classifyByPrototypes)
  * over the labelled fixture (eval/lane-classifier-set.jsonl) and report routing
  * precision / recall across a τ_lane × margin grid, so a human can pin the lane
  * threshold. This is a MULTI-CLASS task with an abstain (omit → unpartitioned)
@@ -31,7 +31,7 @@
  * report diagnostics and the CLI prints the GATE: do NOT flip — escalate to the
  * deferred LlmClassifier (spec §2 / §3.3) rather than ship a low-precision router.
  *
- * FAITHFULNESS: the decision is made by the REAL classifyByCentroid (injected as
+ * FAITHFULNESS: the decision is made by the REAL classifyByPrototypes (injected as
  * `classify` into sweepGrid) — the eval never re-implements argmax/threshold/margin,
  * so it cannot drift from production. cosineStrict (lib/vector.mjs, FAIL-LOUD) is
  * used only for the separability diagnostic (top-centroid cosine distribution by
@@ -42,12 +42,13 @@
  * embedding provider itself, so — like D1/D3 — we run TWICE and compare. The
  * embed model is recorded in the result JSON (`model`).
  *
- * NOTE (fixture is a conservative lower bound): the 16 negatives are weighted
- * 8 noise / 8 cross-lane — adversarially harder than production, where no-lane
- * facts are overwhelmingly noise. So measured precision UNDER-estimates the real
- * value (errs safe for a precision-first gate). The floor currently rests on
- * n=16 negatives (one extra false route would drop precision below 0.95) — GROW
- * the negative set, especially noise, before the P4 flip activates routing.
+ * NOTE (fixture, grown 2026-06-07): 34 negatives weighted 22 noise / 12 cross-lane —
+ * still adversarially harder than production (where no-lane facts are overwhelmingly
+ * noise), so measured precision UNDER-estimates the real value (errs safe for a
+ * precision-first gate). Growing the negatives from n=16 exposed that the single
+ * mean-pooled centroid cleared the floor only at ~0.5 recall (personal/research
+ * collapse); switching to the multi-prototype top-K-mean scorer (lib/lane-classifier.mjs)
+ * fixed it — 0.977 precision / 0.875 recall at τ=0.30 / margin=0.08 / K=3.
  *
  * NOTE (run provenance): run1.json and run2.json are two SEPARATE invocations;
  * lane-latest.json is a copy of the last run. Re-run via:
@@ -108,7 +109,7 @@ export function computeMetrics(predictions, { tau, margin }) {
 
 /**
  * Sweep the full τ × margin grid. `classify(row, {threshold, margin}) -> lane|null`
- * is INJECTED — the CLI passes a closure over the real classifyByCentroid (so no
+ * is INJECTED — the CLI passes a closure over the real classifyByPrototypes (so no
  * decision logic is re-implemented here); unit tests pass a stub. One metrics row
  * per (τ, margin) cell.
  *
@@ -410,7 +411,7 @@ export function parseArgs(argv) {
 
 /**
  * Embed the fixture + taxonomy ONCE, build centroids via the same embed model,
- * then sweep the τ×margin grid using the REAL classifyByCentroid. Live deps are
+ * then sweep the τ×margin grid using the REAL classifyByPrototypes. Live deps are
  * lazy-imported here. Returns the canonical result JSON.
  *
  * @param {{rows:Array, fixturePath:string, taxonomyPath?:string}} args
@@ -418,7 +419,7 @@ export function parseArgs(argv) {
 async function runOnce({ rows, fixturePath, taxonomyPath }) {
   const { embed } = await import('../lib/embed.mjs');
   const { NOOP_METRICS } = await import('../lib/metrics.mjs');
-  const { loadLaneTaxonomy, buildCentroids, classifyByCentroid } = await import('../lib/lane-classifier.mjs');
+  const { loadLaneTaxonomy, buildLanePrototypes, classifyByPrototypes, LANE_TOPK_DEFAULT } = await import('../lib/lane-classifier.mjs');
   const { cosineStrict } = await import('../lib/vector.mjs');
 
   const taxonomy = loadLaneTaxonomy(taxonomyPath ? { UM_LANE_TAXONOMY_PATH: taxonomyPath } : process.env);
@@ -436,7 +437,7 @@ async function runOnce({ rows, fixturePath, taxonomyPath }) {
   }
 
   // Centroids via the SAME embed model the facts use (same vector space).
-  const centroids = await buildCentroids(taxonomy, async (t) => ({ vector: await embedText(t) }));
+  const laneProtos = await buildLanePrototypes(taxonomy, async (t) => ({ vector: await embedText(t) }));
 
   // Embed each fixture row ONCE (cache by text).
   const vecCache = new Map();
@@ -446,7 +447,7 @@ async function runOnce({ rows, fixturePath, taxonomyPath }) {
   const vecOf = (row) => vecCache.get(row.text);
 
   // The decision is the REAL classifier — no re-implementation, no drift.
-  const classify = (row, opts) => classifyByCentroid(vecOf(row), centroids, opts).lane;
+  const classify = (row, opts) => classifyByPrototypes(vecOf(row), laneProtos, opts).lane;
 
   const taus = defaultTaus();
   const margins = defaultMargins();
@@ -466,9 +467,14 @@ async function runOnce({ rows, fixturePath, taxonomyPath }) {
 
   const scoredRows = rows.map((row) => {
     const vec = vecOf(row);
-    // cosineStrict (FAIL-LOUD): a dimension mismatch here is a bug, not a 0.
-    const scored = centroids
-      .map((c) => ({ slug: c.slug, score: cosineStrict(vec, c.centroid) }))
+    // Top-K-mean over each lane's exemplar vectors (mirrors classifyByPrototypes),
+    // via cosineStrict (FAIL-LOUD): a dimension mismatch here is a bug, not a 0.
+    const scored = laneProtos
+      .map((p) => {
+        const sims = p.vectors.map((v) => cosineStrict(vec, v)).sort((a, b) => b - a);
+        const k = Math.max(1, Math.min(LANE_TOPK_DEFAULT, sims.length));
+        return { slug: p.slug, score: sims.slice(0, k).reduce((x, y) => x + y, 0) / k };
+      })
       .sort((a, b) => b.score - a.score);
     const predicted = classify(row, cell);
     const expected = row.expected_lane;
