@@ -1,37 +1,74 @@
 // server/test/lane-classifier.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-// cosineSimilarity + meanPool moved to ./vector.mjs (rule-of-three extraction);
-// their unit tests live in test/vector.test.mjs. classifyByCentroid (below)
-// exercises cosineSimilarity transitively.
-import { classifyByCentroid, loadLaneTaxonomy, buildCentroids, classifyLane, classifierEnabled, _resetCentroidsForTest, LANE_THRESHOLD_DEFAULT, LANE_MARGIN_DEFAULT } from '../lib/lane-classifier.mjs';
+// cosineSimilarity lives in ./vector.mjs (rule-of-three extraction); its unit
+// tests live in test/vector.test.mjs. classifyByPrototypes (below) exercises
+// cosineSimilarity transitively via the top-K-mean scorer.
+import { classifyByPrototypes, loadLaneTaxonomy, buildLanePrototypes, classifyLane, classifierEnabled, _resetPrototypesForTest, LANE_THRESHOLD_DEFAULT, LANE_MARGIN_DEFAULT, LANE_TOPK_DEFAULT } from '../lib/lane-classifier.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const CENTROIDS = [
-  { slug: 'work', centroid: [1, 0] },
-  { slug: 'personal', centroid: [0, 1] },
+// Lane prototypes: each lane carries its exemplar VECTORS (not a mean centroid).
+const LANE_PROTOS = [
+  { slug: 'work', vectors: [[1, 0]] },
+  { slug: 'personal', vectors: [[0, 1]] },
 ];
 
-test('classifyByCentroid: argmax above threshold returns that lane', () => {
-  const r = classifyByCentroid([0.9, 0.1], CENTROIDS, { threshold: 0.5 });
+test('classifyByPrototypes: argmax above threshold returns that lane', () => {
+  const r = classifyByPrototypes([0.9, 0.1], LANE_PROTOS, { threshold: 0.5 });
   assert.equal(r.lane, 'work');
   assert.ok(r.score > 0.5);
 });
 
-test('classifyByCentroid: below threshold returns null (omit)', () => {
-  const r = classifyByCentroid([1, 1], CENTROIDS, { threshold: 0.95 });
+test('classifyByPrototypes: below threshold returns null (omit)', () => {
+  const r = classifyByPrototypes([1, 1], LANE_PROTOS, { threshold: 0.95 });
   assert.equal(r.lane, null); // 45° → cos ≈ 0.707 < 0.95
 });
 
-test('classifyByCentroid: ambiguity margin → null when top1-top2 < margin', () => {
-  const r = classifyByCentroid([1, 1], CENTROIDS, { threshold: 0.5, margin: 0.2 });
+test('classifyByPrototypes: ambiguity margin → null when top1-top2 < margin', () => {
+  const r = classifyByPrototypes([1, 1], LANE_PROTOS, { threshold: 0.5, margin: 0.2 });
   assert.equal(r.lane, null); // both ≈0.707, margin 0 < 0.2
 });
 
-test('classifyByCentroid: empty taxonomy returns null', () => {
-  assert.equal(classifyByCentroid([1, 0], [], { threshold: 0.5 }).lane, null);
+test('classifyByPrototypes: empty taxonomy returns null', () => {
+  assert.equal(classifyByPrototypes([1, 0], [], { threshold: 0.5 }).lane, null);
+});
+
+// --- multi-prototype top-K-mean mechanism (Gap-5 2026-06-07) ----------------
+// The classifier scores a lane by the MEAN of its top-K nearest exemplar cosines,
+// so a multi-modal lane is matched by the relevant exemplar, not a washed-out mean.
+const MULTI = [
+  { slug: 'work', vectors: [[1, 0], [0.8, 0.6]] }, // two work "modes"
+  { slug: 'home', vectors: [[0, 1]] },
+];
+
+test('classifyByPrototypes: topK=1 scores by the NEAREST exemplar (max cosine)', () => {
+  // [1,0] matches work exemplar #1 exactly (cos 1.0); exemplar #2 cos 0.8; home 0.
+  const r = classifyByPrototypes([1, 0], MULTI, { threshold: 0.5, topK: 1 });
+  assert.equal(r.lane, 'work');
+  assert.ok(Math.abs(r.score - 1.0) < 1e-9, 'topK=1 = nearest-exemplar (max)');
+});
+
+test('classifyByPrototypes: topK=2 averages the top-2 exemplar cosines', () => {
+  // work top-2 = mean(1.0, 0.8) = 0.9; home = 0.
+  const r = classifyByPrototypes([1, 0], MULTI, { threshold: 0.5, topK: 2 });
+  assert.equal(r.lane, 'work');
+  assert.ok(Math.abs(r.score - 0.9) < 1e-9, 'topK=2 = mean of the top-2 cosines');
+});
+
+test('classifyByPrototypes: topK clamps to the lane exemplar count', () => {
+  // work has 2 exemplars; topK=5 uses both → identical to topK=2 (0.9).
+  const r = classifyByPrototypes([1, 0], MULTI, { threshold: 0.5, topK: 5 });
+  assert.ok(Math.abs(r.score - 0.9) < 1e-9, 'topK > exemplar count clamps to the count');
+});
+
+test('classifyByPrototypes: a fact near ONE peripheral exemplar still routes (multi-modal capture)', () => {
+  // [0.8,0.6] IS work mode #2 (cos 1.0) but only 0.8 to mode #1 — a single mean-pooled
+  // centroid would dilute it; nearest-exemplar (topK=1) captures it.
+  const r = classifyByPrototypes([0.8, 0.6], MULTI, { threshold: 0.7, topK: 1 });
+  assert.equal(r.lane, 'work');
+  assert.ok(r.score > 0.99);
 });
 
 test('loadLaneTaxonomy: reads {lanes:[{slug,exemplars}]} from UM_LANE_TAXONOMY_PATH', () => {
@@ -75,36 +112,36 @@ test('loadLaneTaxonomy: invalid slug throws INPUT_INVALID (no silent skip)', () 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('buildCentroids: embeds each exemplar via injected embedFn, mean-pools per lane', async () => {
+test('buildLanePrototypes: embeds each exemplar via injected embedFn, retains per-lane vectors', async () => {
   // Deterministic stub embedder: maps text → vector (no network).
   const embedStub = async (t) => ({ vector: t.includes('work') ? [1, 0] : [0, 1] });
   const taxonomy = [
     { slug: 'work', exemplars: ['work a', 'work b'] },
     { slug: 'home', exemplars: ['home a'] },
   ];
-  const centroids = await buildCentroids(taxonomy, embedStub);
-  assert.equal(centroids.length, 2);
-  assert.deepEqual(centroids.find((c) => c.slug === 'work').centroid, [1, 0]);
-  assert.deepEqual(centroids.find((c) => c.slug === 'home').centroid, [0, 1]);
+  const protos = await buildLanePrototypes(taxonomy, embedStub);
+  assert.equal(protos.length, 2);
+  assert.deepEqual(protos.find((c) => c.slug === 'work').vectors, [[1, 0], [1, 0]]);
+  assert.deepEqual(protos.find((c) => c.slug === 'home').vectors, [[0, 1]]);
 });
 
 const TAX = [{ slug: 'work', exemplars: ['work a'] }, { slug: 'home', exemplars: ['home a'] }];
 const embedStub = async (t) => ({ vector: t.includes('work') ? [1, 0] : [0, 1] });
 
 test('classifyLane: routes above threshold (reuses provided vector, no embed of the fact)', async () => {
-  _resetCentroidsForTest();
+  _resetPrototypesForTest();
   const r = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: embedStub, threshold: 0.5 });
   assert.equal(r.lane, 'work');
 });
 
 test('classifyLane: omits below threshold', async () => {
-  _resetCentroidsForTest();
+  _resetPrototypesForTest();
   const r = await classifyLane([1, 1], { _taxonomy: TAX, _embedFn: embedStub, threshold: 0.95 });
   assert.equal(r.lane, null);
 });
 
 test('classifyLane: fail-safe — internal throw returns {lane:null}, never rejects', async () => {
-  _resetCentroidsForTest();
+  _resetPrototypesForTest();
   const boom = async () => { throw new Error('embed down'); };
   const r = await classifyLane([1, 0], { _taxonomy: TAX, _embedFn: boom, threshold: 0.5 });
   assert.equal(r.lane, null); // did not throw
@@ -112,7 +149,7 @@ test('classifyLane: fail-safe — internal throw returns {lane:null}, never reje
 
 // Fail-safe robustness: a transient build failure must NOT be permanently cached.
 test('classifyLane: a transient build failure is NOT cached — a later call retries the build', async () => {
-  _resetCentroidsForTest();
+  _resetPrototypesForTest();
   let calls = 0;
   const flaky = async (t) => {
     calls += 1;
@@ -142,15 +179,17 @@ test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () 
   finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-// Gap-5 P2 drift gate — the eval-pinned threshold + margin defaults.
-test('Gap-5 P2 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.06', async () => {
-  // LITERAL match to LANE_THRESHOLD_DEFAULT / LANE_MARGIN_DEFAULT in lib/lane-classifier.mjs
-  // and server/.env.example UM_LANE_CLASSIFIER_THRESHOLD / _MARGIN — update all three together.
-  // Pinned by the 2026-06-05 labelled eval: precision 0.953 / recall 0.854 ≥ the 0.95 floor
-  // (eval/results/2026-06-05-lane-run{1,2}.json). The margin is load-bearing: at margin 0 no
-  // τ clears the floor at non-trivial recall.
+// Gap-5 drift gate — the eval-pinned multi-prototype defaults (re-pinned 2026-06-07).
+test('Gap-5 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.08 + topK=3', async () => {
+  // LITERAL match to LANE_THRESHOLD_DEFAULT / LANE_MARGIN_DEFAULT / LANE_TOPK_DEFAULT in
+  // lib/lane-classifier.mjs and server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK
+  // — update all three together. Pinned by the 2026-06-07 grown-fixture eval: top-3-mean
+  // multi-prototype scored precision 0.977 / recall 0.875 ≥ the 0.95 floor on the
+  // representative fixture (eval/results/2026-06-07-lane-run{1,2}.json), beating the
+  // superseded P2 single-centroid pin (0.30/0.06, which fell to 0.479 recall on the grown set).
   assert.equal(LANE_THRESHOLD_DEFAULT, 0.30);
-  assert.equal(LANE_MARGIN_DEFAULT, 0.06);
+  assert.equal(LANE_MARGIN_DEFAULT, 0.08);
+  assert.equal(LANE_TOPK_DEFAULT, 3);
 
   // Behavioral: with the threshold/margin env UNSET, classifyLane applies the pinned
   // NON-ZERO margin — a top1≈top2 tie (margin 0) is omitted, not routed.
@@ -159,17 +198,17 @@ test('Gap-5 P2 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.06', asy
   delete process.env.UM_LANE_CLASSIFIER_THRESHOLD;
   delete process.env.UM_LANE_CLASSIFIER_MARGIN;
   try {
-    _resetCentroidsForTest();
-    const centroids = [{ slug: 'a', centroid: [1, 0] }, { slug: 'b', centroid: [0, 1] }];
-    // [1,1] → cos 0.707 to both → margin 0 < 0.06 default → abstain.
-    const tie = await classifyLane([1, 1], { _centroids: centroids });
-    assert.equal(tie.lane, null, 'pinned margin (0.06) omits a top1/top2 tie');
-    // [1,0.2] → cos≈0.98 to a, ≈0.20 to b → margin ≫ 0.06, top1 ≥ τ=0.30 → routes a.
-    const clear = await classifyLane([1, 0.2], { _centroids: centroids });
-    assert.equal(clear.lane, 'a', 'clear winner above τ with margin ≥ 0.06 routes');
+    _resetPrototypesForTest();
+    const protos = [{ slug: 'a', vectors: [[1, 0]] }, { slug: 'b', vectors: [[0, 1]] }];
+    // [1,1] → cos 0.707 to both → margin 0 < 0.08 default → abstain.
+    const tie = await classifyLane([1, 1], { _prototypes: protos });
+    assert.equal(tie.lane, null, 'pinned margin (0.08) omits a top1/top2 tie');
+    // [1,0.2] → cos≈0.98 to a, ≈0.20 to b → margin ≫ 0.08, top1 ≥ τ=0.30 → routes a.
+    const clear = await classifyLane([1, 0.2], { _prototypes: protos });
+    assert.equal(clear.lane, 'a', 'clear winner above τ with margin ≥ 0.08 routes');
   } finally {
     if (prevT === undefined) delete process.env.UM_LANE_CLASSIFIER_THRESHOLD; else process.env.UM_LANE_CLASSIFIER_THRESHOLD = prevT;
     if (prevM === undefined) delete process.env.UM_LANE_CLASSIFIER_MARGIN; else process.env.UM_LANE_CLASSIFIER_MARGIN = prevM;
-    _resetCentroidsForTest();
+    _resetPrototypesForTest();
   }
 });

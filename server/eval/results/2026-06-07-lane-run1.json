@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-08T02:54:28.311Z",
+  "timestamp": "2026-06-08T02:53:41.959Z",
   "provider": "openai",
   "model": "text-embedding-3-small (provider default)",
   "fixtureRev": "bf059ae42313191c98079c65c8cd7216",
@@ -2311,10 +2311,10 @@
       "count": 42,
       "min": 0.3044500865071967,
       "p25": 0.3621420585008779,
-      "median": 0.3846278566801386,
+      "median": 0.38463206456062843,
       "p75": 0.4480035385620797,
-      "max": 0.5890641756248506,
-      "mean": 0.40924889465705416
+      "max": 0.589070083038033,
+      "mean": 0.4092484996447644
     },
     "misroute": {
       "count": 1,
@@ -2327,12 +2327,12 @@
     },
     "missed": {
       "count": 6,
-      "min": 0.26337882299849974,
-      "p25": 0.270661231719581,
+      "min": 0.26340056634596193,
+      "p25": 0.27068927996928677,
       "median": 0.2723640204040096,
       "p75": 0.3067302426223227,
       "max": 0.36640265800137567,
-      "mean": 0.2950459569028446
+      "mean": 0.2950542555023725
     },
     "abstain_ok": {
       "count": 33,
@@ -2341,7 +2341,7 @@
       "median": 0.27018901902872783,
       "p75": 0.32209054079312144,
       "max": 0.41829664553639406,
-      "mean": 0.27790958253105724
+      "mean": 0.27790723794249733
     }
   },
   "scoredRows": [
@@ -2366,7 +2366,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.4802504727759651,
-      "top2": 0.24043626293276574,
+      "top2": 0.24042324509546265,
       "outcome": "correct"
     },
     {
@@ -2485,7 +2485,7 @@
       "text": "Booked flights for the family trip to Portugal in August.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.3846278566801386,
+      "top1": 0.38463206456062843,
       "top2": 0.24311892725951786,
       "outcome": "correct"
     },
@@ -2493,7 +2493,7 @@
       "text": "Set up an automatic transfer to the emergency savings fund.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.26337882299849974,
+      "top1": 0.26340056634596193,
       "top2": 0.2131123399052374,
       "outcome": "missed"
     },
@@ -2517,15 +2517,15 @@
       "text": "The dog's annual vaccination is due next month.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.270661231719581,
-      "top2": 0.15809766789013607,
+      "top1": 0.27068927996928677,
+      "top2": 0.15810486063442544,
       "outcome": "missed"
     },
     {
       "text": "Switched to the cheaper fixed-rate electricity tariff.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.3481324386546669,
+      "top1": 0.34815037821884803,
       "top2": 0.26599938298750164,
       "outcome": "correct"
     },
@@ -2557,8 +2557,8 @@
       "text": "Reading a survey on retrieval-augmented generation methods.",
       "expected": "research",
       "predicted": "research",
-      "top1": 0.3675302000117526,
-      "top2": 0.24959014050157,
+      "top1": 0.36744305648535774,
+      "top2": 0.24957090738453958,
       "outcome": "correct"
     },
     {
@@ -2597,8 +2597,8 @@
       "text": "Skimmed three papers on bi-temporal knowledge representation tonight.",
       "expected": "research",
       "predicted": "research",
-      "top1": 0.3759221312328393,
-      "top2": 0.2955256449239156,
+      "top1": 0.37595013115890596,
+      "top2": 0.2955265930739707,
       "outcome": "correct"
     },
     {
@@ -2621,7 +2621,7 @@
       "text": "Took notes on the related-work section for the literature review.",
       "expected": "research",
       "predicted": "research",
-      "top1": 0.5890641756248506,
+      "top1": 0.589070083038033,
       "top2": 0.42875311687963014,
       "outcome": "correct"
     },
@@ -2653,8 +2653,8 @@
       "text": "Outlined the three-act structure for the short story.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.42535913562813743,
-      "top2": 0.2405457087642081,
+      "top1": 0.42537363385444404,
+      "top2": 0.24056275668191104,
       "outcome": "correct"
     },
     {
@@ -2662,7 +2662,7 @@
       "expected": "writing",
       "predicted": "writing",
       "top1": 0.512944234010486,
-      "top2": 0.21975828777831263,
+      "top2": 0.21976637350242165,
       "outcome": "correct"
     },
     {
@@ -2702,7 +2702,7 @@
       "expected": "writing",
       "predicted": "writing",
       "top1": 0.4745708804608122,
-      "top2": 0.31488268386045626,
+      "top2": 0.31488913754668774,
       "outcome": "correct"
     },
     {
@@ -2710,7 +2710,7 @@
       "expected": "writing",
       "predicted": "writing",
       "top1": 0.5847400725472109,
-      "top2": 0.2725779947502265,
+      "top2": 0.2725711643003872,
       "outcome": "correct"
     },
     {
@@ -2718,7 +2718,7 @@
       "expected": "writing",
       "predicted": "writing",
       "top1": 0.4168741274092711,
-      "top2": 0.25670538998787984,
+      "top2": 0.25671134284467084,
       "outcome": "correct"
     },
     {
@@ -2733,8 +2733,8 @@
       "text": "The wifi password is on a sticky note on the fridge.",
       "expected": null,
       "predicted": null,
-      "top1": 0.21479569225884906,
-      "top2": 0.15379150078157253,
+      "top1": 0.21476464550012006,
+      "top2": 0.15381369561591876,
       "outcome": "abstain_ok"
     },
     {
@@ -2773,8 +2773,8 @@
       "text": "The elevator on the south side is out of service.",
       "expected": null,
       "predicted": null,
-      "top1": 0.21295370411498446,
-      "top2": 0.1662821463122436,
+      "top1": 0.2129024536011883,
+      "top2": 0.16625688207949238,
       "outcome": "abstain_ok"
     },
     {
@@ -2805,7 +2805,7 @@
       "text": "Reading a machine-learning paper to prep next sprint's planning deck.",
       "expected": null,
       "predicted": null,
-      "top1": 0.4129143382523788,
+      "top1": 0.41290179857497544,
       "top2": 0.3883343082010933,
       "outcome": "abstain_ok"
     },
@@ -2845,15 +2845,15 @@
       "text": "Editing my resume to highlight the database migration project.",
       "expected": null,
       "predicted": null,
-      "top1": 0.34868912965773263,
-      "top2": 0.33045453577462963,
+      "top1": 0.3486837448303772,
+      "top2": 0.3304425265340815,
       "outcome": "abstain_ok"
     },
     {
       "text": "Planning the family budget around the new job's relocation package.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3159644186178218,
+      "top1": 0.31598403725038854,
       "top2": 0.24587139851595138,
       "outcome": "abstain_ok"
     },
@@ -2901,8 +2901,8 @@
       "text": "My phone battery is down to nine percent.",
       "expected": null,
       "predicted": null,
-      "top1": 0.18873495822255978,
-      "top2": 0.18151531283735656,
+      "top1": 0.1887359344202578,
+      "top2": 0.1815047857108699,
       "outcome": "abstain_ok"
     },
     {
@@ -2989,8 +2989,8 @@
       "text": "Researching the best budgeting app for my freelance income.",
       "expected": null,
       "predicted": null,
-      "top1": 0.30070435650602584,
-      "top2": 0.2709181249307037,
+      "top1": 0.30070661203056775,
+      "top2": 0.27092006615136277,
       "outcome": "abstain_ok"
     },
     {
