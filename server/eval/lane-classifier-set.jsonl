@@ -80,3 +80,27 @@
 {"text": "Journaling about my career goals for the next year.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
 {"text": "Researching the best budgeting app for my freelance income.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
 {"text": "Drafting a toast for my sister's wedding.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Migrated the CI pipeline to the new runners and fixed the cache keys.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "The customer escalation needs a hotfix before the weekend code freeze.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Paired with a teammate to debug a race condition in the queue consumer.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Wrote the design doc for sharding the metadata store.", "expected_lane": "work", "category": "work", "source": "synthetic"}
+{"text": "Signed the kids up for swim lessons this summer.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Donated a box of old clothes to the charity shop.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Planted tomatoes in the backyard garden this weekend.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Scheduled the annual furnace inspection before winter.", "expected_lane": "personal", "category": "personal", "source": "synthetic"}
+{"text": "Plotted the loss curves and noticed the model overfits after epoch ten.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Set up a cross-validation split to estimate generalization error.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Replicated the attention-head pruning result on a smaller model.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Derived the gradient for the custom loss term by hand.", "expected_lane": "research", "category": "research", "source": "synthetic"}
+{"text": "Killed a subplot that wasn't pulling its weight in act two.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Tightened the query letter to agents down to a single page.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Found the right ending only after three discarded drafts.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Replaced the passive voice throughout the opening chapter.", "expected_lane": "writing", "category": "writing", "source": "synthetic"}
+{"text": "Writing a postmortem blog post about last quarter's outage.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Reading research papers to choose a database for next sprint.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Co-authoring a conference paper with a coworker after hours.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Budgeting my time between the novel and the day job.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Researching mortgage rates for the house we're buying.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Editing the team's onboarding guide over the weekend.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Journaling about what I learned from the failed experiment.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
+{"text": "Planning a study schedule for the certification exam.", "expected_lane": null, "category": "cross-lane", "source": "synthetic"}
