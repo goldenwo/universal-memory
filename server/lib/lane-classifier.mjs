@@ -138,7 +138,8 @@ function laneTopK(env = process.env) {
 }
 
 export function classifierEnabled(env = process.env) {
-  return env.UM_LANE_CLASSIFIER_ENABLED?.trim() === 'true'; // opt-in; flips to opt-out in P4
+  // P4: opt-out (active by default) — mirrors UM_DEDUP_ENABLED / UM_AUTOSUPERSEDE_ENABLED.
+  return env.UM_LANE_CLASSIFIER_ENABLED?.trim() !== 'false';
 }
 
 // Fail-safe entry used by umAdd. NEVER throws to the caller — any internal

@@ -218,21 +218,22 @@ export async function umAdd({
   const dedupEligible = computeDedupEligible({ metadata, _systemMigration });
   const dedupThreshold = dedupEligible ? dedupEmbeddingThreshold() : null;
 
-  // Gap-5 P1: lane-classifier seam (resolved once per call).
-  // classifierEngaged = the operator opted IN. Three-state model (spec §3.6,
-  // user decision 2026-06-04): env-flag UNSET → fully inert (no classify, no
-  // prototype build — the P1 safe default + keeps pre-Gap-5 call sites/tests
-  // untouched); flag set but not 'true' → SHADOW; flag 'true' → ACTIVE. A test
-  // seam (_classifyLane / _laneClassifierEnabled) also engages the pipeline.
-  // NB P4 flip: when the default flips to opt-out this gate must flip in
-  // lockstep with classifierEnabled (engaged unless flag === 'false') — see
-  // plan P4/T4.1.
+  // Gap-5 lane-classifier seam (resolved once per call). P4 flipped the default to
+  // OPT-OUT (mirrors UM_DEDUP_ENABLED / UM_AUTOSUPERSEDE_ENABLED): env UNSET or any
+  // value except 'false' → ACTIVE (classify + write the lane); env 'false'
+  // (whitespace-trimmed) → inert. The prior 3-state shadow ENV value is removed; the
+  // SHADOW path (classify but don't write) now survives only via the
+  // _laneClassifierEnabled:false test seam. classifierEngaged (run the classifier at
+  // all) and laneClassifierEnabled (write the result) share the SAME env predicate —
+  // classifierEnabled() — so the two gates are in LOCKSTEP by construction (the #1 P4
+  // footgun: they can never drift). A test seam (_classifyLane / _laneClassifierEnabled)
+  // engages the pipeline directly regardless of env.
   const classifyLaneFn = _classifyLane ?? defaultClassifyLane;
   const laneClassifierEnabled = _laneClassifierEnabled ?? defaultClassifierEnabled();
   const classifierEngaged =
     _classifyLane !== undefined ||
     _laneClassifierEnabled !== undefined ||
-    process.env.UM_LANE_CLASSIFIER_ENABLED !== undefined;
+    defaultClassifierEnabled();
   const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
 
   // Gap-5 P3: write-time in-band supersession seam (ADR-0007 Option C), resolved
@@ -269,12 +270,13 @@ export async function umAdd({
     for (const item of items) {
       const { vector } = await embedOrchestrator(item, { _providerOverride: _embedProviderOverride, metrics });
 
-      // Gap-5 P1: per-fact lane auto-classification. Reuses `vector` (no re-embed of
+      // Gap-5: per-fact lane auto-classification. Reuses `vector` (no re-embed of
       // the fact); caller-supplied `lane` wins; fail-safe (never fails the write).
-      // Engaged only when classifierEngaged (operator opted in): ACTIVE (flag 'true')
-      // writes the classified lane; SHADOW (flag set, not 'true') logs the would-be
-      // lane without writing. The prototype build threads the SAME embed seam as the
-      // fact (same vector space in prod; hermetic under the test embed override).
+      // Engaged when classifierEngaged (P4 default: env not 'false'): ACTIVE writes
+      // the classified lane; the SHADOW branch (classify but don't write, via the
+      // _laneClassifierEnabled:false test seam) logs the would-be lane only. The
+      // prototype build threads the SAME embed seam as the fact (same vector space
+      // in prod; hermetic under the test embed override).
       let itemLane = lane;
       if (classifierEngaged && itemLane === undefined && !classifySkip) {
         try {
