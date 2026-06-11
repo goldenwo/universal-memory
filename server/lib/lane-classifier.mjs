@@ -25,12 +25,14 @@ const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..'
 // health/family/finance/home; research: papers/experiments/stats) are matched by
 // the relevant exemplar instead of a washed-out average. K is clamped to the lane's
 // exemplar count (and to ≥1). Uses the FAIL-SAFE cosineSimilarity (never throws).
-// Eval (2026-06-07): top-3-mean over the ENRICHED ~12-exemplar taxonomy scores
-// 0.977/0.875 precision/recall on the representative fixture. The gain is JOINT —
-// mechanism × exemplar richness: top-3-mean on the old 6-exemplar set reaches only
-// 0.479 recall, and the enriched set under a centroid-like K only 0.333. Neither
-// lever alone suffices; top-K-mean over a richer exemplar set recovers the lanes a
-// single mean-pooled centroid washes out.
+// Eval (re-validated 2026-06-08): top-3-mean over the ENRICHED ~12-exemplar taxonomy
+// scores 0.962/0.797 precision/recall on the harder 106-row fixture (de-leaked +
+// held-out positives + 20 cross-lane negatives; eval/results/2026-06-08-lane-run{1,2}).
+// The gain is JOINT — mechanism × exemplar richness: in the original mechanism-selection
+// ablation, top-3-mean on the old 6-exemplar set reached only 0.479 recall, and the
+// enriched set under a centroid-like K only 0.333. Neither lever alone suffices;
+// top-K-mean over a richer exemplar set recovers the lanes a single mean-pooled
+// centroid washes out.
 function topKMeanCosine(vector, vectors, topK) {
   if (!vectors || vectors.length === 0) return 0;
   const sims = vectors.map((v) => cosineSimilarity(vector, v)).sort((a, b) => b - a);
@@ -103,16 +105,19 @@ async function getPrototypes(opts) {
   return _protosPromise;
 }
 
-// Eval-pinned defaults (Gap-5, re-pinned 2026-06-07 for the multi-prototype
-// mechanism). τ_lane=0.30 + margin=0.08 + topK=3 cleared the spec §5 ≥0.95
-// precision floor at 0.977 precision / 0.875 recall on the GROWN representative
-// fixture (82 rows, 34 negatives; eval/results/2026-06-07-lane-run{1,2}). This
-// supersedes the P2 single-centroid pin (0.30/0.06), which fell to 0.479 recall
-// once the negative set was grown to be production-representative. topK AND
-// exemplar richness are JOINTLY load-bearing (single-centroid reaches the floor
-// only at ~0.50 recall; the enriched set under a centroid-like K only ~0.33).
-// Drift-gated in test/lane-classifier.test.mjs — update lib + test +
-// server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK together.
+// Eval-pinned defaults (Gap-5, multi-prototype mechanism; pinned 2026-06-07,
+// re-validated 2026-06-08 on the de-leaked + grown fixture). τ_lane=0.30 + margin=0.08
+// + topK=3 clears the spec §5 ≥0.95 precision floor at 0.962 precision / 0.797 recall
+// on the harder 106-row fixture (64 positives, 42 negatives = 22 noise / 20 cross-lane;
+// eval/results/2026-06-08-lane-run{1,2}). The prior 82-row run scored 0.977/0.875;
+// de-leaking 2 near-paraphrase exemplars + adding held-out positives and cross-lane
+// negatives traded that headline for an honest generalization estimate — the pinned
+// cell is unchanged and still the max-recall floor-clearing cell. This supersedes the
+// P2 single-centroid pin (0.30/0.06), which fell to 0.479 recall once the negative set
+// was grown to be production-representative. topK AND exemplar richness are JOINTLY
+// load-bearing (single-centroid reaches the floor only at ~0.50 recall; the enriched
+// set under a centroid-like K only ~0.33). Drift-gated in test/lane-classifier.test.mjs
+// — update lib + test + server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK together.
 export const LANE_THRESHOLD_DEFAULT = 0.30;
 export const LANE_MARGIN_DEFAULT = 0.08;
 export const LANE_TOPK_DEFAULT = 3;

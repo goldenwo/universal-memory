@@ -42,13 +42,15 @@
  * embedding provider itself, so — like D1/D3 — we run TWICE and compare. The
  * embed model is recorded in the result JSON (`model`).
  *
- * NOTE (fixture, grown 2026-06-07): 34 negatives weighted 22 noise / 12 cross-lane —
- * still adversarially harder than production (where no-lane facts are overwhelmingly
- * noise), so measured precision UNDER-estimates the real value (errs safe for a
- * precision-first gate). Growing the negatives from n=16 exposed that the single
- * mean-pooled centroid cleared the floor only at ~0.5 recall (personal/research
- * collapse); switching to the multi-prototype top-K-mean scorer (lib/lane-classifier.mjs)
- * fixed it — 0.977 precision / 0.875 recall at τ=0.30 / margin=0.08 / K=3.
+ * NOTE (fixture, grown 2026-06-07 then 2026-06-08): 64 positives (16/lane) + 42 negatives
+ * weighted 22 noise / 20 cross-lane — still adversarially harder than production (where
+ * no-lane facts are overwhelmingly noise), so measured precision UNDER-estimates the real
+ * value (errs safe for a precision-first gate). Growing the negatives from n=16 (2026-06-07)
+ * exposed that the single mean-pooled centroid cleared the floor only at ~0.5 recall
+ * (personal/research collapse); switching to the multi-prototype top-K-mean scorer
+ * (lib/lane-classifier.mjs) fixed it. The 2026-06-08 pass then de-leaked 2 near-paraphrase
+ * exemplars + added held-out positives and cross-lane negatives to test generalization
+ * honestly — 0.962 precision / 0.797 recall at τ=0.30 / margin=0.08 / K=3.
  *
  * NOTE (run provenance): run1.json and run2.json are two SEPARATE invocations;
  * lane-latest.json is a copy of the last run. Re-run via:

@@ -179,14 +179,14 @@ test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () 
   finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-// Gap-5 drift gate — the eval-pinned multi-prototype defaults (re-pinned 2026-06-07).
+// Gap-5 drift gate — the eval-pinned multi-prototype defaults (pinned 2026-06-07, re-validated 2026-06-08).
 test('Gap-5 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.08 + topK=3', async () => {
   // LITERAL match to LANE_THRESHOLD_DEFAULT / LANE_MARGIN_DEFAULT / LANE_TOPK_DEFAULT in
   // lib/lane-classifier.mjs and server/.env.example UM_LANE_CLASSIFIER_THRESHOLD/_MARGIN/_TOPK
-  // — update all three together. Pinned by the 2026-06-07 grown-fixture eval: top-3-mean
-  // multi-prototype scored precision 0.977 / recall 0.875 ≥ the 0.95 floor on the
-  // representative fixture (eval/results/2026-06-07-lane-run{1,2}.json), beating the
-  // superseded P2 single-centroid pin (0.30/0.06, which fell to 0.479 recall on the grown set).
+  // — update all three together. Pinned by the 2026-06-07 eval, re-validated 2026-06-08 on the
+  // de-leaked + held-out fixture: top-3-mean multi-prototype scored precision 0.962 / recall
+  // 0.797 ≥ the 0.95 floor on the harder 106-row fixture (eval/results/2026-06-08-lane-run{1,2}.json);
+  // the pinned cell is unchanged. Supersedes the P2 single-centroid pin (0.30/0.06, which fell to 0.479 recall).
   assert.equal(LANE_THRESHOLD_DEFAULT, 0.30);
   assert.equal(LANE_MARGIN_DEFAULT, 0.08);
   assert.equal(LANE_TOPK_DEFAULT, 3);
