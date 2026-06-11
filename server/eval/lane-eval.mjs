@@ -34,10 +34,10 @@
  * FAITHFULNESS: the decision is made by the REAL classifyByPrototypes (injected as
  * `classify` into sweepGrid) — the eval never re-implements argmax/threshold/margin,
  * so it cannot drift from production. cosineStrict (lib/vector.mjs, FAIL-LOUD) is
- * used only for the separability diagnostic (top-centroid cosine distribution by
+ * used only for the separability diagnostic (top-K-mean cosine distribution by
  * outcome) — a malformed vector there is a bug that must surface, not score 0.
  *
- * DETERMINISM: centroids are a pure function of the taxonomy + embed model; the
+ * DETERMINISM: prototypes are a pure function of the taxonomy + embed model; the
  * classifier decision is pure given the vectors. The only nondeterminism is the
  * embedding provider itself, so — like D1/D3 — we run TWICE and compare. The
  * embed model is recorded in the result JSON (`model`).
@@ -225,7 +225,7 @@ function distStats(values) {
 }
 
 /**
- * Top-centroid cosine distribution split by routing outcome at the chosen cell.
+ * Top-K-mean cosine distribution split by routing outcome at the chosen cell.
  * `scoredRows` carry `{ top1:number, outcome:'correct'|'misroute'|'missed'|'abstain_ok' }`.
  * The separation between the `correct` group (true lane facts, high top1) and the
  * null-expected groups grounds where τ_lane should sit.
@@ -324,9 +324,9 @@ export function formatSummaryTable(result) {
     lines.push('');
   }
 
-  // Top-centroid cosine by outcome (at the chosen cell).
+  // Top-K-mean cosine by outcome (at the chosen cell).
   if (scores) {
-    lines.push('Top-centroid cosine by outcome (at the chosen cell):');
+    lines.push('Top-K-mean cosine by outcome (at the chosen cell):');
     const fmtS = (s) => s.count === 0
       ? 'count=0 (no data)'
       : `count=${s.count} min=${fmtPct(s.min)} p25=${fmtPct(s.p25)} median=${fmtPct(s.median)} p75=${fmtPct(s.p75)} max=${fmtPct(s.max)} mean=${fmtPct(s.mean)}`;
@@ -410,7 +410,7 @@ export function parseArgs(argv) {
 }
 
 /**
- * Embed the fixture + taxonomy ONCE, build centroids via the same embed model,
+ * Embed the fixture + taxonomy ONCE, build per-lane prototypes via the same embed model,
  * then sweep the τ×margin grid using the REAL classifyByPrototypes. Live deps are
  * lazy-imported here. Returns the canonical result JSON.
  *
@@ -436,7 +436,7 @@ async function runOnce({ rows, fixturePath, taxonomyPath }) {
     return r.vector;
   }
 
-  // Centroids via the SAME embed model the facts use (same vector space).
+  // Prototypes via the SAME embed model the facts use (same vector space).
   const laneProtos = await buildLanePrototypes(taxonomy, async (t) => ({ vector: await embedText(t) }));
 
   // Embed each fixture row ONCE (cache by text).
@@ -566,7 +566,7 @@ async function cliMain() {
     process.exit(2);
   }
 
-  console.log(`[lane-eval] Embedding ${rows.length} rows + taxonomy, building centroids, sweeping τ×margin...`);
+  console.log(`[lane-eval] Embedding ${rows.length} rows + taxonomy, building prototypes, sweeping τ×margin...`);
   const result = await runOnce({ rows, fixturePath: args.fixture, taxonomyPath: args.taxonomy });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
