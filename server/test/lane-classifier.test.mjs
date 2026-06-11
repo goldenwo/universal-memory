@@ -162,13 +162,13 @@ test('classifyLane: a transient build failure is NOT cached — a later call ret
   assert.equal(r2.lane, 'work'); // rejection not cached → rebuild succeeded
 });
 
-test('classifierEnabled: only strict "true" enables (opt-in, whitespace-trim)', () => {
+test('classifierEnabled: opt-out — enabled unless exactly "false" (P4 flip, whitespace-trim)', () => {
+  assert.equal(classifierEnabled({}), true);                                          // unset → ACTIVE (P4 default-on)
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'false' }), false);    // explicit opt-out
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: ' false ' }), false);  // trimmed opt-out (the flip footgun)
   assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'true' }), true);
-  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: ' true ' }), true);
-  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'false' }), false);
-  assert.equal(classifierEnabled({}), false);
-  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: '1' }), false);
-  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'TRUE' }), false);
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: '1' }), true);         // any non-'false' value → enabled
+  assert.equal(classifierEnabled({ UM_LANE_CLASSIFIER_ENABLED: 'TRUE' }), true);      // case-sensitive: not 'false' → enabled
 });
 
 test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () => {

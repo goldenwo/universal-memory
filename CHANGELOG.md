@@ -6,6 +6,18 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-10
+
+**v1.3 turns the Gap-5 lane classifier ON by default** — write-time lane auto-classification flips from inert opt-in to active opt-out, so facts are partitioned into topic lanes as they are written. This is the activation the whole Gap-5 arc was built for: it wakes the D3 auto-supersession detector (v1.2, shipped inert under the R1-B1 eligibility gate) and the P3 in-band supersession path on classifier-populated lanes. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 / Gap 5**. See `MIGRATION.md` `## v1.2 → v1.3`.
+
+### Changed — Gap-5 P4: lane auto-classification ON by default (the flip)
+
+- **`UM_LANE_CLASSIFIER_ENABLED` now defaults to ON** (opt-out polarity, identical to `UM_DEDUP_ENABLED` / `UM_AUTOSUPERSEDE_ENABLED`; only the literal lowercase `false`, whitespace-trimmed, disables — unset / empty / any other value keeps it ON). Through v1.2 this was a strict-`'true'` opt-in that shipped **inert** (the P1 mechanism, P2 eval, the #102 multi-prototype upgrade, the P3 in-band seam, and the #103 precondition all landed with the classifier off). The two runtime gates flip in lockstep: [`classifierEnabled`](server/lib/lane-classifier.mjs) `=== 'true'` → `!== 'false'`, and the `umAdd` engage-gate ([`server/lib/add.mjs`](server/lib/add.mjs)) now shares that same predicate so the two can never drift out of step. The prior 3-state inert-phase shadow ENV value is removed (shadow survives only as a test seam).
+- **What it does.** At write time each fact is auto-classified into a `lane` (topic partition) by a **multi-prototype embedding classifier** ([`server/lib/lane-classifier.mjs`](server/lib/lane-classifier.mjs)): each lane is scored by the mean of a fact's top-K (K=3) nearest exemplar cosines over an operator-curated taxonomy ([`server/config/lane-taxonomy.default.json`](server/config/lane-taxonomy.default.json), override via `UM_LANE_TAXONOMY_PATH`), reusing the embedding dedup already computes — **no extra LLM call**. A caller-supplied `lane` always wins; below-threshold / low-margin facts are left **unpartitioned** (there is no `general` catch-all — a bucket of low-confidence facts would re-introduce the false positives the D3 absence-gate prevents); `_systemMigration` and system-doc writes skip classification. Fail-safe: a classifier fault degrades to an unpartitioned write, never failing the user's write.
+- **Eval-validated to the precision floor.** τ=0.30 / margin=0.08 / K=3 (`UM_LANE_CLASSIFIER_THRESHOLD` / `_MARGIN` / `_TOPK`) cleared the spec §5 **≥0.95 precision floor** at precision 0.962 / recall 0.797 on a 106-row labelled, de-leaked, held-out fixture ([`server/eval/lane-classifier-set.jsonl`](server/eval/lane-classifier-set.jsonl) + [`lane-eval.mjs`](server/eval/lane-eval.mjs), two deterministic live runs). Precision-first by design: a misroute can wake D3 on a mismatched partition, so ambiguous facts abstain rather than guess.
+- **Server version → `1.3.0`** across `server/package.json`, the MCP `serverInfo` banner, and `GET /openapi.yaml` `info.version` — single source [`server/lib/version.mjs`](server/lib/version.mjs) (reads `package.json`).
+- **Tests** — the `classifierEnabled` gate test inverted to opt-out semantics; new `umAdd` env-default tests (env unset → active write; `false` → opt-out); `add.test.mjs` pins the classifier off for its seam-less legacy tests (isolation — the new default is verified directly by the dedicated P4 tests). Full suite 930 pass / 0 fail / 13 pre-existing skips.
+
 ### Added — Gap-5 P3: dedup defers to supersession in-band (ADR-0007 Option C)
 
 Reconciles the D1-dedup × D3-supersession polarity conflict documented in ADR-0007, **before** the Gap-5 P4 classifier flip wakes auto-supersession in production. Phrasing-similar *contradictions* land in the dedup embedding-similarity band just like true duplicates; until now they were silently `DEDUP_MERGED` keep-older at write time, pre-empting the keep-newer supersession path. Ships **inert in practice** — the new path is gated by `UM_AUTOSUPERSEDE_ENABLED` (default ON) AND partition-eligibility (`lane`/`persona`), and ~no production write is partitioned until P4 populates lanes. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 / Gap 5**.
@@ -810,6 +822,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
+[1.3.0]: https://github.com/goldenwo/universal-memory/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/goldenwo/universal-memory/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/goldenwo/universal-memory/compare/v0.8.0-alpha...v1.0.0

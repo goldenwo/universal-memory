@@ -1,5 +1,41 @@
 # Migration guide
 
+## v1.2 → v1.3
+
+v1.3 flips the **Gap-5 lane classifier ON by default** — the one operator-visible behavior change in v1.3, and the activation the whole lane-classifier arc was built toward. Write-time lane auto-classification was added inert across v1.1–v1.2 (mechanism, eval, in-band supersession seam, and the precondition all shipped off); v1.3 turns it on. The server version bumps to `1.3.0`.
+
+### Lane auto-classification is now ON by default (Gap-5 P4 flip)
+
+Through v1.2, `UM_LANE_CLASSIFIER_ENABLED` was a **strict-`'true'` opt-in** (default inert — no classification; lanes only ever set explicitly by the caller). v1.3 flips the polarity: **`UM_LANE_CLASSIFIER_ENABLED` now defaults to ON**, opt-out — the same polarity as `UM_DEDUP_ENABLED` / `UM_AUTOSUPERSEDE_ENABLED`. Only the literal lowercase string `false` (whitespace-trimmed) disables it; unset / empty / any other value keeps it ON.
+
+When ON, every fact written through `/api/add` (and the MCP add tools) is auto-classified into a topic **`lane`** at write time:
+
+- **How it classifies.** Each lane is represented by operator-curated exemplar phrasings (`server/config/lane-taxonomy.default.json`, or your own file via `UM_LANE_TAXONOMY_PATH`). A fact is routed to the lane whose top-K (K=3) nearest exemplars it is closest to, reusing the embedding dedup already computes — **no extra LLM call**, no added write latency beyond a cosine sweep. The starter taxonomy ships four lanes (`work`, `personal`, `research`, `writing`); **curate it to your own topics** for good routing.
+- **It abstains when unsure.** A fact below the similarity threshold, or too close between two lanes, is left **unpartitioned** (no lane) — there is deliberately no `general` catch-all. This is precision-first: a wrong lane is worse than no lane (see the cascade below), so ambiguous facts stay unpartitioned.
+- **A caller-supplied `lane` always wins** — an explicit `metadata.lane` is never overridden by the classifier. Trusted server reindex (`_systemMigration`) and system-docs are never classified.
+- **Fail-safe.** A classifier fault degrades to an unpartitioned write; it never fails your write.
+
+### The cascade: this activates v1.2 auto-supersession
+
+This is why the flip matters. v1.2 turned **auto-supersession** ON, but it was **effectively inert** — the R1-B1 eligibility gate means it acts only on facts carrying a `lane`/`persona`, and through v1.2 almost nothing was partitioned. Now that lanes auto-populate, the v1.2 session-end contradiction detector **and** the P3 in-band supersession path become **active on classifier-populated lanes**: a newer fact that contradicts an older one in the same lane will supersede it (reversibly). If you were relying on v1.2 being inert in practice, that assumption changes here.
+
+- **Opt out of the whole thing** by setting `UM_LANE_CLASSIFIER_ENABLED=false` (the literal string `false`) before upgrading — lanes then stay caller-only and auto-supersession stays inert, exactly as in v1.2.
+- **Opt out of auto-supersession only** (but keep lane classification) with `UM_AUTOSUPERSEDE_ENABLED=false` — see the v1.1 → v1.2 note below for how to list (`only_superseded`) and undo (`unsupersede`) any supersession.
+
+### Shadow mode removed
+
+The inert-phase 3-state env model (`unset` → inert / set-but-not-`'true'` → shadow / `'true'` → active) is gone. Post-flip the gate is 2-state opt-out: any value except `false` → active, `false` → off. No env value selects shadow (classify-but-don't-write) anymore. No operator action — shadow was a development/validation mode, never a documented production setting.
+
+### Server version string
+
+`server/package.json` → `1.3.0`. The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` report `1.3.0` — single source `server/lib/version.mjs` (reads `package.json`). No operator action; noted so a connected client seeing the version change knows it is expected.
+
+### Action for operators
+
+- **None required to adopt** the default. Facts will start getting lanes; default (unfiltered) recall still returns across all lanes — `lane` is an optional search filter, not a hard partition. The behavior change to be aware of is the auto-supersession cascade above, not the lane tag itself.
+- **Recommended:** curate `UM_LANE_TAXONOMY_PATH` to your own topic areas so routing matches how you organize your memory.
+- **If you do NOT want auto-supersession to start acting,** set `UM_LANE_CLASSIFIER_ENABLED=false` (or `UM_AUTOSUPERSEDE_ENABLED=false`) before upgrading.
+
 ## v1.1 → v1.2
 
 v1.2 flips **auto-supersession ON by default** — the one operator-visible behavior change in the entire D3 arc (D3.1 substrate + D3.2 detector both shipped inert and required no action). The server version bumps to `1.2.0`.
