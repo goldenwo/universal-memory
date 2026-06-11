@@ -43,6 +43,10 @@ export function cosineStrict(a, b) {
  * Elementwise mean of same-length vectors → one pooled vector. Returns [] for
  * an empty input (defensive; callers pass ≥1 same-dim vector). cosine callers
  * normalize, so the pooled vector is intentionally left un-normalized.
+ *
+ * Retained generic primitive: no production caller since the lane classifier moved
+ * from a single mean-pooled centroid to top-K-mean scoring (lib/lane-classifier.mjs);
+ * currently exercised only by test/vector.test.mjs.
  */
 export function meanPool(vectors) {
   if (!vectors.length) return [];
