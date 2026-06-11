@@ -1,5 +1,5 @@
 {
-  "_comment": "Starter lane taxonomy for the Gap-5 write-time classifier. Exemplars are CONCRETE, fact-like activity phrasings (not abstract category labels). The classifier scores each lane by the MEAN of a fact's top-K nearest exemplar cosines (multi-prototype, classifyByPrototypes, K=3 default) — NOT a single mean-pooled centroid. So MORE distinct concrete exemplars per lane, covering each lane's sub-topics (e.g. personal: health/family/finance/home/pets/travel; research: papers/experiments/stats/surveys), sharpen routing: a fact matches the relevant exemplar instead of a washed-out average. The 2026-06-07 eval showed this multi-prototype + ~12-exemplar set scores precision 0.977 / recall 0.875 on a representative fixture, beating the prior single-centroid + 6-exemplar set (0.960 / 0.500). Operators SHOULD curate these to their own contexts. 'general' is intentionally absent (spec §3.2): a catch-all of low-confidence facts would re-introduce the D3 false positives the absence-gate prevents.",
+  "_comment": "Starter lane taxonomy for the Gap-5 write-time classifier. Exemplars are CONCRETE, fact-like activity phrasings (not abstract category labels). The classifier scores each lane by the MEAN of a fact's top-K nearest exemplar cosines (multi-prototype, classifyByPrototypes, K=3 default) — NOT a single mean-pooled centroid. So MORE distinct concrete exemplars per lane, covering each lane's sub-topics (e.g. personal: health/family/finance/home/pets/travel; research: papers/experiments/stats/surveys), sharpen routing: a fact matches the relevant exemplar instead of a washed-out average. Re-validated 2026-06-08 on a de-leaked, held-out fixture (106 rows), this multi-prototype + ~12-exemplar set scores precision 0.962 / recall 0.797, beating the prior single-centroid + 6-exemplar set (0.960 / 0.500). Operators SHOULD curate these to their own contexts. 'general' is intentionally absent (spec §3.2): a catch-all of low-confidence facts would re-introduce the D3 false positives the absence-gate prevents.",
   "lanes": [
     { "slug": "work", "exemplars": [
       "Closed out a sprint ticket and updated the board.",
@@ -25,7 +25,7 @@
       "Booked a weekend getaway and reserved the hotel.",
       "Dropped the kids at daycare in the morning.",
       "Took the cat to the vet for a checkup.",
-      "Picked up a prescription refill at the pharmacy.",
+      "Ordered new glasses from the optometrist.",
       "Fixed the leaky faucet in the bathroom.",
       "Tried a new recipe for dinner."
     ] },
@@ -40,7 +40,7 @@
       "Computed confidence intervals for the results.",
       "Tuned hyperparameters and logged the metrics.",
       "Compared model accuracy across several datasets.",
-      "Took notes on prior work in the field.",
+      "Worked through a proof in the paper's appendix.",
       "Designed an experiment to test a hypothesis."
     ] },
     { "slug": "writing", "exemplars": [

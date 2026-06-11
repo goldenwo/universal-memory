@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-09T01:58:45.722Z",
+  "timestamp": "2026-06-09T01:57:49.995Z",
   "provider": "openai",
   "model": "text-embedding-3-small (provider default)",
   "fixtureRev": "d1c26fe1fa2d853b3e4ca498c0a58163",
@@ -2309,39 +2309,39 @@
   "scores": {
     "correct": {
       "count": 51,
-      "min": 0.304453539423635,
+      "min": 0.3044500865071967,
       "p25": 0.3648935566404798,
-      "median": 0.384649497559159,
+      "median": 0.38463284203030357,
       "p75": 0.4396382633531164,
-      "max": 0.5847400725472109,
-      "mean": 0.4037663626960297
+      "max": 0.584736998500079,
+      "mean": 0.4037651390530102
     },
     "misroute": {
       "count": 2,
-      "min": 0.34530559506222197,
-      "p25": 0.34530559506222197,
-      "median": 0.34530559506222197,
+      "min": 0.34530691155756177,
+      "p25": 0.34530691155756177,
+      "median": 0.34530691155756177,
       "p75": 0.44307037827183177,
       "max": 0.44307037827183177,
-      "mean": 0.39418798666702687
+      "mean": 0.39418864491469674
     },
     "missed": {
       "count": 13,
-      "min": 0.26333817753604655,
+      "min": 0.2633046487890328,
       "p25": 0.28011621594054076,
-      "median": 0.33534603101467114,
+      "median": 0.3353151222884101,
       "p75": 0.35473390614082634,
-      "max": 0.4899073228856841,
-      "mean": 0.3317732964073516
+      "max": 0.48989945858653244,
+      "mean": 0.3317686232666986
     },
     "abstain_ok": {
       "count": 40,
-      "min": 0.15577629907107915,
-      "p25": 0.22312520339212574,
+      "min": 0.15579275802916734,
+      "p25": 0.2231517513853971,
       "median": 0.290714743058156,
-      "p75": 0.33523491512664066,
+      "p75": 0.33525088803500824,
       "max": 0.4383060520454191,
-      "mean": 0.28899015664752153
+      "mean": 0.28898996066783195
     }
   },
   "scoredRows": [
@@ -2350,7 +2350,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.3766983761129692,
-      "top2": 0.2295478984675775,
+      "top2": 0.2295308738014837,
       "outcome": "correct"
     },
     {
@@ -2366,7 +2366,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.4802504727759651,
-      "top2": 0.24044695975812194,
+      "top2": 0.24043626293276574,
       "outcome": "correct"
     },
     {
@@ -2374,7 +2374,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.38046662433499784,
-      "top2": 0.18213311595895132,
+      "top2": 0.18213856123841,
       "outcome": "correct"
     },
     {
@@ -2398,7 +2398,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.37916772208031974,
-      "top2": 0.290827595717758,
+      "top2": 0.2908308535489425,
       "outcome": "correct"
     },
     {
@@ -2406,7 +2406,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.4552716074994183,
-      "top2": 0.3335861213443117,
+      "top2": 0.33359244594431997,
       "outcome": "correct"
     },
     {
@@ -2414,7 +2414,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.42185777267406094,
-      "top2": 0.2644391929084261,
+      "top2": 0.2644181968964224,
       "outcome": "correct"
     },
     {
@@ -2430,7 +2430,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.41060260316390856,
-      "top2": 0.2907858174280051,
+      "top2": 0.2907733027693899,
       "outcome": "correct"
     },
     {
@@ -2445,7 +2445,7 @@
       "text": "Dentist appointment booked for next Tuesday at 9.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.39577182781291026,
+      "top1": 0.39576181604617156,
       "top2": 0.24790079957125544,
       "outcome": "correct"
     },
@@ -2453,7 +2453,7 @@
       "text": "Renew the car registration before the end of the month.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.26333817753604655,
+      "top1": 0.2633046487890328,
       "top2": 0.18525291462210036,
       "outcome": "missed"
     },
@@ -2461,15 +2461,15 @@
       "text": "Mom's birthday dinner is at the Italian place on Saturday.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.304453539423635,
-      "top2": 0.11655065120011932,
+      "top1": 0.3044500865071967,
+      "top2": 0.11656671684000418,
       "outcome": "correct"
     },
     {
       "text": "Started a couch-to-5k running plan this week.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.36639792578073127,
+      "top1": 0.36640265800137567,
       "top2": 0.2867349149578033,
       "outcome": "missed"
     },
@@ -2485,7 +2485,7 @@
       "text": "Booked flights for the family trip to Portugal in August.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.384649497559159,
+      "top1": 0.3846278566801386,
       "top2": 0.24311892725951786,
       "outcome": "correct"
     },
@@ -2493,8 +2493,8 @@
       "text": "Set up an automatic transfer to the emergency savings fund.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.26339823654167693,
-      "top2": 0.2131123399052374,
+      "top1": 0.2634050552649696,
+      "top2": 0.21311357667457953,
       "outcome": "missed"
     },
     {
@@ -2525,7 +2525,7 @@
       "text": "Switched to the cheaper fixed-rate electricity tariff.",
       "expected": "personal",
       "predicted": null,
-      "top1": 0.33534603101467114,
+      "top1": 0.3353151222884101,
       "top2": 0.26599938298750164,
       "outcome": "missed"
     },
@@ -2550,14 +2550,14 @@
       "expected": "research",
       "predicted": "research",
       "top1": 0.3452813744391074,
-      "top2": 0.26320707624108985,
+      "top2": 0.26319267433461063,
       "outcome": "correct"
     },
     {
       "text": "Reading a survey on retrieval-augmented generation methods.",
       "expected": "research",
       "predicted": "research",
-      "top1": 0.36744305648535774,
+      "top1": 0.36744320725877905,
       "top2": 0.24957090738453958,
       "outcome": "correct"
     },
@@ -2582,15 +2582,15 @@
       "expected": "research",
       "predicted": "research",
       "top1": 0.3236844601500963,
-      "top2": 0.21449837304119532,
+      "top2": 0.21451057902142756,
       "outcome": "correct"
     },
     {
       "text": "Benchmarked approximate-nearest-neighbor recall at a fixed latency budget.",
       "expected": "research",
       "predicted": "research",
-      "top1": 0.4169309677425393,
-      "top2": 0.20532198724250803,
+      "top1": 0.41699599817560057,
+      "top2": 0.20537248788342954,
       "outcome": "correct"
     },
     {
@@ -2621,8 +2621,8 @@
       "text": "Took notes on the related-work section for the literature review.",
       "expected": "research",
       "predicted": null,
-      "top1": 0.4899073228856841,
-      "top2": 0.4286857016894053,
+      "top1": 0.48989945858653244,
+      "top2": 0.42875311687963014,
       "outcome": "missed"
     },
     {
@@ -2637,8 +2637,8 @@
       "text": "Rewrote the opening paragraph to start in the middle of the action.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.5650339611896501,
-      "top2": 0.2916000295979767,
+      "top1": 0.5650003909461475,
+      "top2": 0.2915893585363028,
       "outcome": "correct"
     },
     {
@@ -2654,7 +2654,7 @@
       "expected": "writing",
       "predicted": "writing",
       "top1": 0.42537363385444404,
-      "top2": 0.24769859952623688,
+      "top2": 0.24769838012155695,
       "outcome": "correct"
     },
     {
@@ -2669,15 +2669,15 @@
       "text": "The blog post draft needs a stronger hook in the first sentence.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.4680987222806237,
-      "top2": 0.27813669368466226,
+      "top1": 0.46808072717713234,
+      "top2": 0.27812154033741426,
       "outcome": "correct"
     },
     {
       "text": "Switching the chapter from past tense to present for immediacy.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.4480035385620797,
+      "top1": 0.4480126436368306,
       "top2": 0.21231846201986218,
       "outcome": "correct"
     },
@@ -2685,15 +2685,15 @@
       "text": "The dialogue in scene four sounds stilted and needs a read-aloud pass.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.42311159027997275,
-      "top2": 0.19180815438513418,
+      "top1": 0.42311218455745775,
+      "top2": 0.19180678811968355,
       "outcome": "correct"
     },
     {
       "text": "The second act sags and the stakes need to rise faster.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.378070508098848,
+      "top1": 0.3780828465241998,
       "top2": 0.18252930704213435,
       "outcome": "correct"
     },
@@ -2701,16 +2701,16 @@
       "text": "Drafted the author's note for the back matter.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.4745708804608122,
-      "top2": 0.3191976691003523,
+      "top1": 0.47458637716317237,
+      "top2": 0.319195960524857,
       "outcome": "correct"
     },
     {
       "text": "Reworking the essay's thesis so the conclusion lands harder.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.5847400725472109,
-      "top2": 0.29048918272690444,
+      "top1": 0.584736998500079,
+      "top2": 0.2904934584813554,
       "outcome": "correct"
     },
     {
@@ -2733,7 +2733,7 @@
       "text": "The wifi password is on a sticky note on the fridge.",
       "expected": null,
       "predicted": null,
-      "top1": 0.21479561696565844,
+      "top1": 0.21476464550012006,
       "top2": 0.15381369561591876,
       "outcome": "abstain_ok"
     },
@@ -2749,7 +2749,7 @@
       "text": "Remember to charge the headphones tonight.",
       "expected": null,
       "predicted": null,
-      "top1": 0.22066891983521386,
+      "top1": 0.22067943766113754,
       "top2": 0.21644178724412466,
       "outcome": "abstain_ok"
     },
@@ -2757,8 +2757,8 @@
       "text": "The package was left by the back door.",
       "expected": null,
       "predicted": null,
-      "top1": 0.2483273551368529,
-      "top2": 0.24297434163684972,
+      "top1": 0.2483276557184841,
+      "top2": 0.24298285002886869,
       "outcome": "abstain_ok"
     },
     {
@@ -2766,7 +2766,7 @@
       "expected": null,
       "predicted": null,
       "top1": 0.32209054079312144,
-      "top2": 0.3060266340209535,
+      "top2": 0.3060313792529387,
       "outcome": "abstain_ok"
     },
     {
@@ -2774,15 +2774,15 @@
       "expected": null,
       "predicted": null,
       "top1": 0.2129024536011883,
-      "top2": 0.16624732828918917,
+      "top2": 0.16625688207949238,
       "outcome": "abstain_ok"
     },
     {
       "text": "Need to back up the external hard drive soon.",
       "expected": null,
       "predicted": null,
-      "top1": 0.24580844262694537,
-      "top2": 0.2065797158653451,
+      "top1": 0.24579517387600194,
+      "top2": 0.20656690722056023,
       "outcome": "abstain_ok"
     },
     {
@@ -2814,15 +2814,15 @@
       "expected": null,
       "predicted": null,
       "top1": 0.3870188222400343,
-      "top2": 0.3241309912151715,
+      "top2": 0.32412601970038285,
       "outcome": "abstain_ok"
     },
     {
       "text": "Drafting a personal essay about my fitness journey.",
       "expected": null,
       "predicted": null,
-      "top1": 0.33523491512664066,
-      "top2": 0.2715847188848926,
+      "top1": 0.33525088803500824,
+      "top2": 0.27155728029098003,
       "outcome": "abstain_ok"
     },
     {
@@ -2845,15 +2845,15 @@
       "text": "Editing my resume to highlight the database migration project.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3486837448303772,
-      "top2": 0.3304425265340815,
+      "top1": 0.34868912965773263,
+      "top2": 0.330446021631923,
       "outcome": "abstain_ok"
     },
     {
       "text": "Planning the family budget around the new job's relocation package.",
       "expected": null,
       "predicted": null,
-      "top1": 0.31597534496785246,
+      "top1": 0.3159644186178218,
       "top2": 0.24587139851595138,
       "outcome": "abstain_ok"
     },
@@ -2869,7 +2869,7 @@
       "text": "Someone left a blue water bottle in the break room.",
       "expected": null,
       "predicted": null,
-      "top1": 0.2602849582539343,
+      "top1": 0.2602788997224586,
       "top2": 0.24673674951341196,
       "outcome": "abstain_ok"
     },
@@ -2877,7 +2877,7 @@
       "text": "It's supposed to snow over the weekend.",
       "expected": null,
       "predicted": null,
-      "top1": 0.29810831067194704,
+      "top1": 0.29813092500529287,
       "top2": 0.1841729258925033,
       "outcome": "abstain_ok"
     },
@@ -2885,7 +2885,7 @@
       "text": "Need to find where I put the spare batteries.",
       "expected": null,
       "predicted": null,
-      "top1": 0.24322091851418484,
+      "top1": 0.2432244710631062,
       "top2": 0.2102646727629451,
       "outcome": "abstain_ok"
     },
@@ -2910,7 +2910,7 @@
       "expected": null,
       "predicted": null,
       "top1": 0.22943047404125827,
-      "top2": 0.19868069638377706,
+      "top2": 0.1987012011710515,
       "outcome": "abstain_ok"
     },
     {
@@ -2918,14 +2918,14 @@
       "expected": null,
       "predicted": null,
       "top1": 0.1874233056414345,
-      "top2": 0.16814820043337472,
+      "top2": 0.16816177321074488,
       "outcome": "abstain_ok"
     },
     {
       "text": "Left my badge at home this morning.",
       "expected": null,
       "predicted": "personal",
-      "top1": 0.34530559506222197,
+      "top1": 0.34530691155756177,
       "top2": 0.2407650951839809,
       "outcome": "misroute"
     },
@@ -2933,7 +2933,7 @@
       "text": "The clock in the hallway is twenty minutes fast.",
       "expected": null,
       "predicted": null,
-      "top1": 0.22312520339212574,
+      "top1": 0.2231517513853971,
       "top2": 0.19591634478966236,
       "outcome": "abstain_ok"
     },
@@ -2950,14 +2950,14 @@
       "expected": null,
       "predicted": null,
       "top1": 0.21421265976337958,
-      "top2": 0.20115094612701845,
+      "top2": 0.20116305851798014,
       "outcome": "abstain_ok"
     },
     {
       "text": "The elevator music switched to something new.",
       "expected": null,
       "predicted": null,
-      "top1": 0.2961930913292064,
+      "top1": 0.29617030118110405,
       "top2": 0.23734568635799622,
       "outcome": "abstain_ok"
     },
@@ -2965,7 +2965,7 @@
       "text": "There's a faint smell of popcorn on this floor.",
       "expected": null,
       "predicted": null,
-      "top1": 0.15577629907107915,
+      "top1": 0.15579275802916734,
       "top2": 0.1523901252968168,
       "outcome": "abstain_ok"
     },
@@ -2974,7 +2974,7 @@
       "expected": null,
       "predicted": null,
       "top1": 0.3739410743024187,
-      "top2": 0.3458322246495013,
+      "top2": 0.34581487168932384,
       "outcome": "abstain_ok"
     },
     {
@@ -2989,7 +2989,7 @@
       "text": "Researching the best budgeting app for my freelance income.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3007319435966903,
+      "top1": 0.30070435650602584,
       "top2": 0.2709181249307037,
       "outcome": "abstain_ok"
     },
@@ -2997,7 +2997,7 @@
       "text": "Drafting a toast for my sister's wedding.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3184958210159192,
+      "top1": 0.31851138177527205,
       "top2": 0.24356304078190347,
       "outcome": "abstain_ok"
     },
@@ -3014,7 +3014,7 @@
       "expected": "work",
       "predicted": "work",
       "top1": 0.33030400793360465,
-      "top2": 0.2424407990604602,
+      "top2": 0.24243821958746317,
       "outcome": "correct"
     },
     {
@@ -3030,14 +3030,14 @@
       "expected": "work",
       "predicted": null,
       "top1": 0.40920335740128677,
-      "top2": 0.3476313719816477,
+      "top2": 0.3476440087706763,
       "outcome": "missed"
     },
     {
       "text": "Signed the kids up for swim lessons this summer.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.36774183340514927,
+      "top1": 0.3677274940943227,
       "top2": 0.2239933982094063,
       "outcome": "correct"
     },
@@ -3045,7 +3045,7 @@
       "text": "Donated a box of old clothes to the charity shop.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.3377336209912804,
+      "top1": 0.33773205080797974,
       "top2": 0.24627672446337337,
       "outcome": "correct"
     },
@@ -3061,8 +3061,8 @@
       "text": "Scheduled the annual furnace inspection before winter.",
       "expected": "personal",
       "predicted": "personal",
-      "top1": 0.38235199752043464,
-      "top2": 0.2658358017323745,
+      "top1": 0.3822349918183326,
+      "top2": 0.26578876149648706,
       "outcome": "correct"
     },
     {
@@ -3086,7 +3086,7 @@
       "expected": "research",
       "predicted": "research",
       "top1": 0.4085167544063131,
-      "top2": 0.2266185564869485,
+      "top2": 0.22661701739480447,
       "outcome": "correct"
     },
     {
@@ -3094,14 +3094,14 @@
       "expected": "research",
       "predicted": null,
       "top1": 0.28011621594054076,
-      "top2": 0.20660329828355448,
+      "top2": 0.2065903161915321,
       "outcome": "missed"
     },
     {
       "text": "Killed a subplot that wasn't pulling its weight in act two.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.39316263183634287,
+      "top1": 0.39318380389187163,
       "top2": 0.2633952672062158,
       "outcome": "correct"
     },
@@ -3117,7 +3117,7 @@
       "text": "Found the right ending only after three discarded drafts.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.4573901247942977,
+      "top1": 0.45742670067552754,
       "top2": 0.305552327890084,
       "outcome": "correct"
     },
@@ -3125,7 +3125,7 @@
       "text": "Replaced the passive voice throughout the opening chapter.",
       "expected": "writing",
       "predicted": "writing",
-      "top1": 0.519031459036778,
+      "top1": 0.5190312497721372,
       "top2": 0.2648518812785894,
       "outcome": "correct"
     },
@@ -3141,7 +3141,7 @@
       "text": "Reading research papers to choose a database for next sprint.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3983732378141944,
+      "top1": 0.3983599481513736,
       "top2": 0.39042895260141147,
       "outcome": "abstain_ok"
     },
@@ -3165,8 +3165,8 @@
       "text": "Researching mortgage rates for the house we're buying.",
       "expected": null,
       "predicted": null,
-      "top1": 0.3038023483406343,
-      "top2": 0.25287922360841186,
+      "top1": 0.30380249041637014,
+      "top2": 0.2528702699898751,
       "outcome": "abstain_ok"
     },
     {
@@ -3174,7 +3174,7 @@
       "expected": null,
       "predicted": null,
       "top1": 0.4383060520454191,
-      "top2": 0.37559967362456953,
+      "top2": 0.3755969072346978,
       "outcome": "abstain_ok"
     },
     {
@@ -3182,7 +3182,7 @@
       "expected": null,
       "predicted": null,
       "top1": 0.39835842845215047,
-      "top2": 0.34084788096836144,
+      "top2": 0.34085297200964076,
       "outcome": "abstain_ok"
     },
     {
