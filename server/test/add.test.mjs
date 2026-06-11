@@ -5,6 +5,14 @@ import { v5 as uuidv5 } from 'uuid';
 import { umAdd } from '../lib/add.mjs';
 import { RESERVED_METADATA_FIELDS, NAMESPACE_UM } from '../lib/dedup-constants.mjs';
 
+// P4 ISOLATION: the lane classifier is ACTIVE by default (opt-out) as of v1.3.0. The umAdd
+// tests in this file exercise OTHER behaviors (facts pipeline, dedup, point-IDs, in-band
+// supersession) and inject the classifier seam (_classifyLane / _laneClassifierEnabled) only
+// where they test it. Pin the env OFF here so the always-on classifier does not perturb the
+// seam-less tests. The new opt-out DEFAULT (env unset → active) is verified directly by the
+// 'Gap-5 P4 opt-out' tests below and by classifierEnabled's unit test in lane-classifier.test.mjs.
+process.env.UM_LANE_CLASSIFIER_ENABLED = 'false';
+
 function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
 // Test fixtures — mock qdrant client + memory shim
@@ -480,6 +488,42 @@ test('Gap-5 active: infer:true classifies each fact independently', async () => 
   });
   assert.equal(q.upserts[0].body.points[0].payload.lane, 'work');
   assert.equal(q.upserts[1].body.points[0].payload.lane, 'home');
+});
+
+// Gap-5 P4: env-driven default is OPT-OUT (the flip). With NO _laneClassifierEnabled
+// seam, active-vs-not resolves from the env via defaultClassifierEnabled(). These two
+// tests lock the env contract that the explicit-seam tests above do not exercise.
+test('Gap-5 P4 opt-out: env UNSET → classified lane written (active by default)', async () => {
+  const prev = process.env.UM_LANE_CLASSIFIER_ENABLED;
+  delete process.env.UM_LANE_CLASSIFIER_ENABLED;
+  try {
+    const q = makeMockQdrantD2();
+    await umAdd({
+      memory: makeMockMemory(), text: 'sprint planning notes', userId: 'u1', metadata: {}, infer: false,
+      _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+      _classifyLane: async () => ({ lane: 'work', score: 0.9 }),
+      // _laneClassifierEnabled intentionally OMITTED → resolves from env (opt-out default)
+    });
+    assert.equal(q.upserts[0].body.points[0].payload.lane, 'work', 'env-unset default is ACTIVE post-P4');
+  } finally {
+    if (prev === undefined) delete process.env.UM_LANE_CLASSIFIER_ENABLED; else process.env.UM_LANE_CLASSIFIER_ENABLED = prev;
+  }
+});
+
+test('Gap-5 P4 opt-out: env " false " → lane NOT written (explicit opt-out, whitespace-trimmed)', async () => {
+  const prev = process.env.UM_LANE_CLASSIFIER_ENABLED;
+  process.env.UM_LANE_CLASSIFIER_ENABLED = ' false ';   // padded → still opts out
+  try {
+    const q = makeMockQdrantD2();
+    await umAdd({
+      memory: makeMockMemory(), text: 'sprint planning notes', userId: 'u1', metadata: {}, infer: false,
+      _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+      _classifyLane: async () => ({ lane: 'work', score: 0.9 }),
+    });
+    assert.equal(q.upserts[0].body.points[0].payload.lane, undefined, 'env=false opts out → no lane written');
+  } finally {
+    if (prev === undefined) delete process.env.UM_LANE_CLASSIFIER_ENABLED; else process.env.UM_LANE_CLASSIFIER_ENABLED = prev;
+  }
 });
 
 // ---------------------------------------------------------------------------
