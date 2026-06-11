@@ -250,6 +250,16 @@ jobs:
           # controls. Requires UM_MCP_WRITE_ENABLED=true + UM_VAULT_DIR (set
           # above) + a real LLM key (OPENAI_API_KEY above).
           UM_SMOKE_AUTOSUPERSEDE_ON: "1"
+          # v1.3 Gap-5 P4 — UM_SMOKE_LANE_ON=1 fires the S6 lane-classifier
+          # auto-population probe: two /api/add writes with NO metadata.lane.
+          # Asserts the work-flavored fact is auto-routed to lane:work and the
+          # off-taxonomy noise fact abstains (stored unpartitioned, absent from
+          # every lane filter). NO .env reconfig — the classifier is ON BY DEFAULT
+          # post-flip (UM_LANE_CLASSIFIER_ENABLED opt-out), so the probe proves the
+          # v1.3 DEFAULT. Needs the bundled taxonomy (shipped via the Dockerfile
+          # `COPY config/`) + OPENAI_API_KEY on the server (above) for the exemplar
+          # + fact embeds. Unlike S3/S4/S5 it does not depend on UM_DEDUP_ENABLED.
+          UM_SMOKE_LANE_ON: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
