@@ -3,7 +3,7 @@
 // TDD: written FIRST (before eval/lane-eval.mjs exists).
 //
 // Imports ONLY the PURE exported functions. The CLI path lazy-imports its live
-// deps (embed / buildCentroids / classifyByCentroid) inside runOnce, so a plain
+// deps (embed / buildLanePrototypes / classifyByPrototypes) inside runOnce, so a plain
 // import here stays offline — mirrors test/d3-eval.test.mjs.
 //
 // Lane classification is MULTI-CLASS with an abstain (null) option. The routing
@@ -103,7 +103,7 @@ test('computeMetrics: recall null when nothing should be routed (all expected nu
 test('sweepGrid: one metric row per (τ, margin) cell via the injected classify', () => {
   // Stub: each row carries a fixed top score; classify routes to row.lane iff
   // score ≥ threshold (margin ignored by the stub). Mirrors how the CLI injects
-  // a closure over the real classifyByCentroid.
+  // a closure over the real classifyByPrototypes.
   const rows = [
     { expected_lane: 'work', _score: 0.55, _lane: 'work' },
     { expected_lane: null, _score: 0.55, _lane: 'work' }, // a null-expected fact that scores high → FP risk
