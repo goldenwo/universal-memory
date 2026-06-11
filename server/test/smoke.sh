@@ -2290,6 +2290,200 @@ print('OK (R1-B1): no-lane C/D not in only_superseded — eligibility gate held'
 	fi  # end UM_MCP_WRITE_ENABLED check
 fi
 
+# Gap-5 S6 — lane-classifier auto-population positive-path smoke (P4 flip; v1.3.0; spec §3.4).
+# Gated by UM_SMOKE_LANE_ON=1 (explicit opt-in), mirroring S2/S3/S4/S5.
+#
+# What the v1.3 P4 flip changed: the write-time lane classifier is now ON BY
+# DEFAULT (opt-out — disabled only when UM_LANE_CLASSIFIER_ENABLED is exactly
+# 'false'). So an /api/add with NO metadata.lane now has its lane AUTO-POPULATED
+# from the bundled taxonomy (config/lane-taxonomy.default.json, shipped in the
+# image via the Dockerfile `COPY config/`) scored against real embeddings (the
+# SAME vector already computed for the fact — no extra LLM call), then written to
+# the point's metadata.lane (add.mjs: itemLane → buildPayload). Pre-P4 this path
+# was inert (opt-in only), so the D2 S4 no-lane write above stayed unpartitioned;
+# post-P4 the classifier decides. Independent of UM_DEDUP_ENABLED: the classify
+# path is gated only on classifierEngaged + no caller lane + !classifySkip
+# (add.mjs), none of which involve dedup — unlike S3/S4/S5.
+#
+# This probe proves the DEFAULT end-to-end on the live stack with NO .env reconfig
+# (unlike S5), precisely because default-ON IS the v1.3 contract under test. It
+# asserts both directions of the classifier's contract:
+#   (1) ROUTE   — a clearly work-flavored fact written with NO metadata.lane lands
+#       lane:work-filterable. Its text is kept near a `work` taxonomy exemplar
+#       ("Closed out a sprint ticket and updated the board.") so routing is robust
+#       to mem0's facts-extractor rephrasing the stored text — the classifier
+#       embeds the EXTRACTED fact, not the raw input (same jitter S2/D2 handle).
+#   (2) ABSTAIN — an off-taxonomy "noise" fact (no exemplar resembles it) is stored
+#       UNPARTITIONED: present in unfiltered search, absent from EVERY lane filter.
+#       This is the no-D3-false-positive guarantee (spec §3.2: no `general`
+#       catch-all; itemLane = classified ?? undefined ⇒ no lane key), the property
+#       that keeps the D3 auto-supersession detector lane-scoped.
+#
+# Assert-by-record-ID ONLY (same rationale as D2 S4, CI run 25967861840):
+# /api/search returns the COMPACT shape (no metadata) unless ?full=1, and the
+# server applies filters.lane on the internal metadata.lane BEFORE serialising —
+# so which ids come back IS the authoritative signal that the lane post-filter
+# ran. A client-side metadata.lane re-check is invalid against the compact
+# response and redundant.
+#
+# Flake notes (sibling S5's real-embedding routing cost ~3 CI iterations — see the
+# S5 header ~L1994):
+#   - mem0 extraction jitter: the stored fact text may differ from the input, so
+#     the fixtures are kept near-exemplar (route) / clearly off-taxonomy (abstain)
+#     to stay robust across extractions.
+#   - D1 dedup: $MARKER scopes each fact against prior runs, and both texts are
+#     topically unique vs S2/S3/D2/D32 (names, vegan/meat, colours, cactus), so
+#     neither merges into a pre-existing point (CI also pins
+#     UM_DEDUP_EMBEDDING_THRESHOLD=0.95 for the whole run — see the reconfig step).
+#   - the noise fixture is the likeliest de-flake target: if it routes to a lane,
+#     the FAIL message names the lane so the fixture can be moved further
+#     off-taxonomy. NB `personal` carries home-maintenance/chore exemplars, so a
+#     noise fact must avoid household-activity phrasing.
+#
+# Requires a default-ON (v1.3+) server: UM_LANE_CLASSIFIER_ENABLED unset or ≠
+# 'false', the taxonomy file present in the image, and OPENAI_API_KEY on the
+# server (exemplar + fact embeds). All three hold in CI. Position: AFTER S5 and
+# BEFORE the boot-smoke gate (same placement rationale as S2-S5).
+if [ "${UM_SMOKE_LANE_ON:-}" = "1" ]; then
+	echo "[smoke] Gap-5 S6 — lane-classifier auto-population positive-path (UM_SMOKE_LANE_ON=1)"
+
+	# Two writes, both with NO metadata.lane — the classifier is the only thing
+	# that can populate it. $MARKER scopes against prior runs; mem0 may drop or
+	# keep the parenthetical, but the core sentence carries the routing signal.
+	# The work fact is SINGLE-CLAIM (no "and …"): a compound sentence splits into
+	# multiple mem0 facts (S5 header lesson ~L1994) and the assertions key on
+	# results[0], so a second clause landing first would break them. One claim →
+	# one fact → deterministic results[0]. Kept near the work exemplar "Closed out
+	# a sprint ticket …" so routing survives mem0 rephrasing the stored text. (CI
+	# run 27320317851 confirmed "Closed out the sprint ticket …" extracts to "The
+	# user closed out a sprint ticket." and auto-routes to lane:work.)
+	_lane_work_text="Closed out the sprint ticket after the standup (lane-${MARKER})."
+	_lane_noise_text="The spare umbrella is in the hall closet (lane-noise-${MARKER})."
+
+	# Helper: write a fact via /api/add with NO lane in metadata; mirrors _d2_add /
+	# _d32_add (proven curl shape + -w status line + auth wrapper + fail-soft).
+	_lane_add() {
+		# $1 = text
+		curl -sS -X POST "$ENDPOINT/api/add" \
+			-H 'Content-Type: application/json' \
+			-w '\nHTTP_STATUS=%{http_code}\n' \
+			-d "{\"text\": \"$1\", \"metadata\": {\"project\": \"lane-smoke\", \"type\": \"fact\"}, \"surface\": \"smoke\"}" 2>&1 || true
+	}
+
+	# Helper: extract the first result id from an /api/add response; mirrors
+	# _d2_id / _d32_id (same envelope, strips the -w status line first).
+	_lane_id() {
+		printf '%s' "$1" | python3 -c "
+import json, sys
+raw = sys.stdin.read().split('HTTP_STATUS=')[0].strip()
+try:
+    obj = json.loads(raw[raw.index('{'):raw.rindex('}') + 1])
+except Exception:
+    print(''); sys.exit(0)
+rs = obj.get('results', [])
+print(rs[0]['id'] if rs and rs[0].get('id') else '')
+"
+	}
+
+	# Helper: POST /api/search; mirrors _d2_search / _d32_search.
+	_lane_search() {
+		# $1 = JSON body object (query/limit/filters)
+		curl -sf -X POST "$ENDPOINT/api/search" \
+			-H 'Content-Type: application/json' \
+			-d "$1" 2>/dev/null || true
+	}
+
+	lane_resp_work=$(_lane_add "$_lane_work_text")
+	lane_resp_noise=$(_lane_add "$_lane_noise_text")
+	echo "[smoke]     write work-flavored (no lane): $lane_resp_work"
+	echo "[smoke]     write noise (no lane):         $lane_resp_noise"
+
+	LANE_ID_WORK=$(_lane_id "$lane_resp_work")
+	LANE_ID_NOISE=$(_lane_id "$lane_resp_noise")
+	echo "[smoke]     ids: work-fact=$LANE_ID_WORK noise-fact=$LANE_ID_NOISE"
+
+	# A missing id means mem0 extracted no fact — cannot verify routing/abstention,
+	# so FAIL loudly rather than green on "couldn't check" (same gate as D2/S5).
+	if [ -z "$LANE_ID_WORK" ] || [ -z "$LANE_ID_NOISE" ]; then
+		echo "[smoke] Gap-5 S6 FAIL: a /api/add write returned no record id — mem0 extracted no fact for the probe input (extraction regressed or mem0 unavailable); cannot verify lane auto-classification" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+
+	# Poll the UNFILTERED search until BOTH facts are visible (write→qdrant is
+	# eventually consistent — same idiom as D2/S5). Each fact carries its own text
+	# so it ranks top for its own query. Proving the noise fact is stored makes its
+	# abstention meaningful (absence from lane filters != "never written").
+	lane_both_visible=0
+	for _i in $(seq 1 15); do
+		if _lane_search "{\"query\": \"$_lane_work_text\", \"limit\": 20}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if '$LANE_ID_WORK' in ids else 1)
+" && _lane_search "{\"query\": \"$_lane_noise_text\", \"limit\": 20}" | python3 -c "
+import json, sys
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if '$LANE_ID_NOISE' in ids else 1)
+"; then
+			lane_both_visible=1
+			break
+		fi
+		sleep 2
+	done
+	if [ "$lane_both_visible" != "1" ]; then
+		echo "[smoke] Gap-5 S6 FAIL: the work and/or noise fact did not appear in unfiltered /api/search within 30s (work=$LANE_ID_WORK noise=$LANE_ID_NOISE) — write→qdrant visibility regression or mem0 stored a divergent fact text" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke]     both facts visible in unfiltered search"
+
+	# (1) ROUTE: the work-flavored fact must come back under the lane:work filter —
+	# i.e. the default-ON classifier auto-populated metadata.lane='work'. Presence
+	# under lane:work is sufficient (a record has exactly one lane); no need to
+	# also assert absence from the other lanes.
+	_lane_search "{\"query\": \"$_lane_work_text\", \"limit\": 20, \"filters\": {\"lane\": \"work\"}}" | LANE_ID_WORK="$LANE_ID_WORK" python3 -c "
+import json, os, sys
+want = os.environ['LANE_ID_WORK']
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print('FAIL: could not parse lane:work search response'); sys.exit(1)
+assert isinstance(data, dict) and 'results' in data, 'search response missing {results} wrapper: ' + json.dumps(data)[:200]
+ids = {r.get('id') for r in data['results']}
+if want not in ids:
+    print('FAIL: work-flavored fact ' + want + ' not returned under the lane:work filter (got ids=' + str(sorted(i for i in ids if i)) + ') — classifier did not auto-route it to work (it abstained, or routed to another lane)'); sys.exit(1)
+print('OK: work-flavored fact auto-classified to lane:work (' + want + ')')
+" || { echo "[smoke] Gap-5 S6 FAIL: work-flavored no-lane write was NOT auto-routed to lane:work — default-ON classifier route path regressed (or the fixture drifted off the work exemplars)" >&2; _um_smoke_auth_cleanup; exit 1; }
+	echo "[smoke]     assertion (1) PASS: work-flavored no-lane fact auto-routed to lane:work"
+
+	# (2) ABSTAIN: the noise fact must NOT appear under ANY of the four bundled
+	# lanes — it has no metadata.lane (itemLane = classified ?? undefined). It IS
+	# in unfiltered search (proven above), so this is a real abstention, not a
+	# missing record.
+	for _lane in work personal research writing; do
+		_lane_search "{\"query\": \"$_lane_noise_text\", \"limit\": 20, \"filters\": {\"lane\": \"$_lane\"}}" | LANE_ID_NOISE="$LANE_ID_NOISE" LANE="$_lane" python3 -c "
+import json, os, sys
+noise, lane = os.environ['LANE_ID_NOISE'], os.environ['LANE']
+try:
+    ids = {r.get('id') for r in json.load(sys.stdin).get('results', [])}
+except Exception:
+    print('FAIL: could not parse lane:' + lane + ' search response'); sys.exit(1)
+if noise in ids:
+    print('FAIL: noise fact ' + noise + ' leaked into lane:' + lane + ' — classifier over-routed an off-taxonomy fact (move the noise fixture further from the ' + lane + ' exemplars)'); sys.exit(1)
+print('OK: noise fact absent from lane:' + lane)
+" || { echo "[smoke] Gap-5 S6 FAIL: noise fact appeared under lane:$_lane — abstention regressed; the default-ON classifier routed an unroutable fact into a lane (would seed D3 false partitions)" >&2; _um_smoke_auth_cleanup; exit 1; }
+	done
+	echo "[smoke]     assertion (2) PASS: noise fact abstained (stored unpartitioned; absent from all four lane filters)"
+
+	echo "[smoke] Gap-5 S6 PASS: default-ON classifier auto-populates lane:work for a work-flavored no-lane write and abstains on an off-taxonomy fact — the v1.3 flip proven on the live stack (no .env reconfig)"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
