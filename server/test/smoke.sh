@@ -2350,7 +2350,14 @@ if [ "${UM_SMOKE_LANE_ON:-}" = "1" ]; then
 	# Two writes, both with NO metadata.lane — the classifier is the only thing
 	# that can populate it. $MARKER scopes against prior runs; mem0 may drop or
 	# keep the parenthetical, but the core sentence carries the routing signal.
-	_lane_work_text="Closed out the sprint ticket and updated the board after the standup (lane-${MARKER})."
+	# The work fact is SINGLE-CLAIM (no "and …"): a compound sentence splits into
+	# multiple mem0 facts (S5 header lesson ~L1994) and the assertions key on
+	# results[0], so a second clause landing first would break them. One claim →
+	# one fact → deterministic results[0]. Kept near the work exemplar "Closed out
+	# a sprint ticket …" so routing survives mem0 rephrasing the stored text. (CI
+	# run 27320317851 confirmed "Closed out the sprint ticket …" extracts to "The
+	# user closed out a sprint ticket." and auto-routes to lane:work.)
+	_lane_work_text="Closed out the sprint ticket after the standup (lane-${MARKER})."
 	_lane_noise_text="The spare umbrella is in the hall closet (lane-noise-${MARKER})."
 
 	# Helper: write a fact via /api/add with NO lane in metadata; mirrors _d2_add /
