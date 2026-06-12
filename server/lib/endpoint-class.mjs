@@ -38,6 +38,18 @@ const ROWS = [
   // /metrics: Prometheus scrape endpoint. Decision tree in metricsPolicy().
   { match: (p, s) => p === '/metrics',                               pol: (e, ip) => metricsPolicy(e, ip) },
 
+  // OAuth surface (Gap-3 spec 4.1): one ROW per route; ALL gated on
+  // UM_OAUTH_ENABLED — when off they hard-404 so no half-enabled state
+  // exists. bypassAuth=true because these are public by design (the
+  // consent gate inside the handler is the trust boundary, spec 6 item 7).
+  // bypassRateLimit=true means "skip the SHARED limiter" — the dedicated
+  // OAuth limiter (spec 6 item 1, independent of /mcp) is applied in the
+  // dispatch layer, not here.
+  { match: (p, s) => OAUTH_PUBLIC_PATHS.has(p),                      pol: (e) => oauthPolicy(e) },
+  // /oauth/revoke: loopback-only operator revocation (spec 4.3) — same
+  // posture as the /metrics loopback branch.
+  { match: (p, s) => p === '/oauth/revoke',                          pol: (e, ip) => oauthRevokePolicy(e, ip) },
+
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
 
@@ -89,6 +101,28 @@ function metricsPolicy(env, sourceIp) {
   return authRequired
     ? { bypassAuth: false, bypassRateLimit: false }
     : { bypassAuth: true,  bypassRateLimit: true  };
+}
+
+const OAUTH_PUBLIC_PATHS = new Set([
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/oauth-protected-resource/mcp',
+  '/.well-known/oauth-authorization-server',
+  '/oauth/register', '/oauth/authorize', '/oauth/consent', '/oauth/token',
+]);
+
+function oauthEnabled(env) { return (env.UM_OAUTH_ENABLED ?? 'false') === 'true'; }
+
+function oauthPolicy(env) {
+  if (!oauthEnabled(env)) return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: true };
+}
+
+function oauthRevokePolicy(env, sourceIp) {
+  if (!oauthEnabled(env)) return { returnStatus: 404 };
+  // Node reports loopback as 127.0.0.1, ::1, or the IPv4-mapped ::ffff: form.
+  const isLoopback = sourceIp === '127.0.0.1' || sourceIp === '::1' || sourceIp === '::ffff:127.0.0.1';
+  if (!isLoopback) return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: true };
 }
 
 /**
