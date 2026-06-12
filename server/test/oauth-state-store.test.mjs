@@ -251,6 +251,31 @@ test('rotateRefresh on an unknown hash → notFound', async () => {
   assert.deepEqual(store.rotateRefresh('umrt_does-not-exist'), { reuse: false, notFound: true });
 });
 
+test('rotateRefresh success echoes the bound clientId (RFC 6749 §6)', async () => {
+  const dir = await tmpDir();
+  const c = clock();
+  const store = createStateStore(dir, { now: c.now });
+  const first = store.issueTokens({ sub: 'owner', aud: 'a', scope: ['vault'], offlineAccess: true, clientId: 'cid-123' });
+  const rotated = store.rotateRefresh(first.refreshToken);
+  assert.equal(rotated.clientId, 'cid-123');
+});
+
+test('peekRefreshClientId: clientId for live, undefined for rotated-away/unknown', async () => {
+  const dir = await tmpDir();
+  const c = clock();
+  const store = createStateStore(dir, { now: c.now });
+  const first = store.issueTokens({ sub: 'owner', aud: 'a', scope: ['vault'], offlineAccess: true, clientId: 'cid-123' });
+  // live refresh → bound clientId, no mutation
+  assert.equal(store.peekRefreshClientId(first.refreshToken), 'cid-123');
+  assert.equal(store.peekRefreshClientId(first.refreshToken), 'cid-123'); // idempotent (read-only)
+  // rotate it away → the old refresh is no longer live
+  const rotated = store.rotateRefresh(first.refreshToken);
+  assert.equal(store.peekRefreshClientId(first.refreshToken), undefined); // rotated-away
+  assert.equal(store.peekRefreshClientId(rotated.refreshToken), 'cid-123'); // new pair live
+  // unknown hash
+  assert.equal(store.peekRefreshClientId('umrt_does-not-exist'), undefined);
+});
+
 // --------------------------------------------------------------- prune
 
 test('prune drops expired codes, expired access tokens, and idle refresh families', async () => {

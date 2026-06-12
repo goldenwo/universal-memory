@@ -179,6 +179,16 @@ export function createStateStore(dir, { now = Date.now } = {}) {
       return rec;
     },
 
+    // Read-only client-binding peek (RFC 6749 §6): returns the clientId bound to
+    // a LIVE refresh record, or undefined if the hash is not currently live
+    // (unknown OR already rotated-away). No mutation — the caller MUST still
+    // call rotateRefresh on an undefined result so the reuse tripwire fires for
+    // rotated-away hashes. Lets the token endpoint reject a client_id mismatch
+    // BEFORE rotation, so a typo'd client_id never burns the caller's token.
+    peekRefreshClientId(plaintextRefresh) {
+      return state.refreshTokens[sha256hex(plaintextRefresh)]?.clientId;
+    },
+
     // ---- refresh rotation with reuse tripwire
     rotateRefresh(plaintextRefresh) {
       const hash = sha256hex(plaintextRefresh);
@@ -193,10 +203,11 @@ export function createStateStore(dir, { now = Date.now } = {}) {
           sub, aud, scope, familyId, clientId, prevHashes: [...prevHashes, hash],
         });
         save();
-        // scope is echoed so the token endpoint can populate the refresh-grant
-        // response's `scope` field without a second lookup (the grant is opaque
-        // to the caller otherwise).
-        return { accessToken, refreshToken, expiresInSec: OAUTH_TTLS.accessMs / 1000, scope };
+        // scope + clientId are echoed so the token endpoint can populate the
+        // refresh-grant response's `scope` field and confirm the form's
+        // client_id matched without a second lookup (the grant is opaque to the
+        // caller otherwise). clientId mirrors the scope echo (RFC 6749 §6).
+        return { accessToken, refreshToken, expiresInSec: OAUTH_TTLS.accessMs / 1000, scope, clientId };
       }
       // Reuse detection: is this a refresh we already rotated away?
       for (const r of Object.values(state.refreshTokens)) {

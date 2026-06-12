@@ -610,11 +610,14 @@ test('token: body > 64KB rejected', async () => {
 // handleToken — refresh rotation + reuse tripwire (through HTTP)
 // =========================================================================
 
-async function refreshGrant(port, refresh_token) {
+async function refreshGrant(port, refresh_token, { client_id = CLIENT_ID } = {}) {
   return req(port, {
     method: 'POST', path: '/oauth/token',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: form({ grant_type: 'refresh_token', refresh_token }),
+    body: form({
+      grant_type: 'refresh_token', refresh_token,
+      ...(client_id === null ? {} : { client_id }),
+    }),
   });
 }
 
@@ -635,6 +638,7 @@ test('token: refresh rotation issues new pair; reused refresh → invalid_grant 
     assert.ok(rb.access_token.startsWith('umat_'));
     assert.ok(rb.refresh_token.startsWith('umrt_'));
     assert.notEqual(rb.refresh_token, first.refresh_token);
+    assert.equal(rb.scope, 'vault'); // scope echoed through rotation (no second lookup)
 
     // reuse the OLD refresh → tripwire → invalid_grant
     const reuse = await refreshGrant(port, first.refresh_token);
@@ -654,6 +658,50 @@ test('token: unknown refresh_token → invalid_grant', async () => {
     const res = await refreshGrant(port, 'umrt_nope');
     assert.equal(res.status, 400);
     assert.equal(JSON.parse(res.body).error, 'invalid_grant');
+  } finally { await close(rig.server); }
+});
+
+test('token: refresh with WRONG client_id → invalid_grant AND the token is NOT burned', async () => {
+  const rig = makeRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault offline_access' });
+    const { code } = await consentAllow(rig, port, authzId, csrf);
+    const first = JSON.parse((await exchangeCode(port, { code, verifier: pkce.verifier })).body);
+    assert.ok(first.refresh_token);
+
+    // wrong client_id → rejected BEFORE rotation (RFC 6749 §6)
+    const wrong = await refreshGrant(port, first.refresh_token, { client_id: 'someone-else' });
+    assert.equal(wrong.status, 400);
+    assert.equal(JSON.parse(wrong.body).error, 'invalid_grant');
+
+    // the token must NOT have been consumed by the typo: the right client_id works
+    const ok = await refreshGrant(port, first.refresh_token, { client_id: CLIENT_ID });
+    assert.equal(ok.status, 200, ok.body);
+    const ob = JSON.parse(ok.body);
+    assert.ok(ob.access_token.startsWith('umat_'));
+    assert.ok(ob.refresh_token.startsWith('umrt_'));
+  } finally { await close(rig.server); }
+});
+
+test('token: refresh with MISSING client_id → invalid_grant', async () => {
+  const rig = makeRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault offline_access' });
+    const { code } = await consentAllow(rig, port, authzId, csrf);
+    const first = JSON.parse((await exchangeCode(port, { code, verifier: pkce.verifier })).body);
+    assert.ok(first.refresh_token);
+
+    const missing = await refreshGrant(port, first.refresh_token, { client_id: null });
+    assert.equal(missing.status, 400);
+    assert.equal(JSON.parse(missing.body).error, 'invalid_grant');
+
+    // still not burned: correct client_id still works
+    const ok = await refreshGrant(port, first.refresh_token, { client_id: CLIENT_ID });
+    assert.equal(ok.status, 200, ok.body);
   } finally { await close(rig.server); }
 });
 

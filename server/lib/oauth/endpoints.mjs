@@ -331,6 +331,17 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
   function tokenRefresh(res, params) {
     const plaintext = params.get('refresh_token') ?? '';
+    const formClientId = params.get('client_id');
+    // RFC 6749 §6: a public client's refresh token MUST be bound to it. Check
+    // client_id BEFORE rotating — rotateRefresh consumes the token, so rotating
+    // and only then rejecting a typo'd client_id would burn the caller's good
+    // token. peekRefreshClientId is read-only; if it returns undefined (the
+    // hash is unknown OR already rotated-away) we fall through to rotateRefresh
+    // so the reuse tripwire still fires.
+    const boundClientId = store.peekRefreshClientId(plaintext);
+    if (boundClientId !== undefined && formClientId !== boundClientId) {
+      return sendJson(res, 400, { error: 'invalid_grant', error_description: 'client mismatch' });
+    }
     const out = store.rotateRefresh(plaintext); // PLAINTEXT in; store hashes
     if (out.reuse || out.notFound) {
       // Reuse → family already revoked by the store; both collapse to one
