@@ -202,39 +202,41 @@ test('custom GPT actions spec includes only the 7 trimmed routes with operationI
 test('full spec servers[0].url uses UM_PUBLIC_BASE_URL when set', () => {
   const saved = process.env.UM_PUBLIC_BASE_URL;
 
-  // With env set — trailing slash stripped
-  process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net/';
-  const yamlWithSlash = generateOpenAPISpec();
-  const parsedWithSlash = YAML.parse(yamlWithSlash);
-  assert.equal(
-    parsedWithSlash.servers[0].url,
-    'https://um.example.ts.net',
-    'trailing slash must be stripped from UM_PUBLIC_BASE_URL'
-  );
+  try {
+    // With env set — trailing slash stripped
+    process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net/';
+    const yamlWithSlash = generateOpenAPISpec();
+    const parsedWithSlash = YAML.parse(yamlWithSlash);
+    assert.equal(
+      parsedWithSlash.servers[0].url,
+      'https://um.example.ts.net',
+      'trailing slash must be stripped from UM_PUBLIC_BASE_URL'
+    );
 
-  // Without trailing slash
-  process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net';
-  const yamlNoSlash = generateOpenAPISpec();
-  const parsedNoSlash = YAML.parse(yamlNoSlash);
-  assert.equal(
-    parsedNoSlash.servers[0].url,
-    'https://um.example.ts.net',
-    'servers[0].url must equal UM_PUBLIC_BASE_URL'
-  );
+    // Without trailing slash
+    process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net';
+    const yamlNoSlash = generateOpenAPISpec();
+    const parsedNoSlash = YAML.parse(yamlNoSlash);
+    assert.equal(
+      parsedNoSlash.servers[0].url,
+      'https://um.example.ts.net',
+      'servers[0].url must equal UM_PUBLIC_BASE_URL'
+    );
 
-  // Without env set — must fall back to localhost
-  delete process.env.UM_PUBLIC_BASE_URL;
-  const yamlFallback = generateOpenAPISpec();
-  const parsedFallback = YAML.parse(yamlFallback);
-  assert.equal(
-    parsedFallback.servers[0].url,
-    'http://localhost:6335',
-    'servers[0].url must fall back to localhost when UM_PUBLIC_BASE_URL is unset'
-  );
-
-  // Restore
-  if (saved !== undefined) process.env.UM_PUBLIC_BASE_URL = saved;
-  else delete process.env.UM_PUBLIC_BASE_URL;
+    // Without env set — must fall back to localhost
+    delete process.env.UM_PUBLIC_BASE_URL;
+    const yamlFallback = generateOpenAPISpec();
+    const parsedFallback = YAML.parse(yamlFallback);
+    assert.equal(
+      parsedFallback.servers[0].url,
+      'http://localhost:6335',
+      'servers[0].url must fall back to localhost when UM_PUBLIC_BASE_URL is unset'
+    );
+  } finally {
+    // Always restore the original env — even if an assertion throws.
+    if (saved !== undefined) process.env.UM_PUBLIC_BASE_URL = saved;
+    else delete process.env.UM_PUBLIC_BASE_URL;
+  }
 });
 
 // 5b. GPT spec: NO description string exceeds 300 chars (ChatGPT hard limit)
@@ -307,6 +309,68 @@ test('capDescriptions() throws for un-curated descriptions exceeding 300 chars',
   assert.doesNotThrow(
     () => capDescriptions(safeDoc),
     'capDescriptions() must not throw for descriptions of exactly 300 chars'
+  );
+});
+
+// 5b-3. capDescriptions() throws "drifted" when an entry exists at a matching
+//       location but the `expect` field no longer matches the source text.
+test('capDescriptions() throws "drifted" when a curated entry expect mismatches', () => {
+  // Import the override list so we can construct a doc whose description
+  // matches the `at` location of a real entry but with different source text.
+  // We build a synthetic doc with a >300-char description at a path whose
+  // breadcrumb ends with one of the real entry's `at` value — simulating a
+  // situation where the source description was edited but the override was not.
+  //
+  // Strategy: create a doc shaped so `capDescriptions` reaches a node keyed
+  // "schemas" → "SearchRequest" → "only_superseded" whose description is long
+  // but different from the pinned expect value.
+  const drift = 'z'.repeat(301); // >300 but different from the pinned expect
+  const doc = {
+    schemas: {
+      SearchRequest: {
+        only_superseded: {
+          description: drift,
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('drifted'),
+        `error message must contain "drifted"; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw "drifted" when a curated entry expect mismatches'
+  );
+});
+
+// 5b-4. generateCustomGPTActionsSpec() followed by generateOpenAPISpec() must
+//       not corrupt the shared SCHEMAS (structuredClone regression).
+test('generateOpenAPISpec() returns uncorrupted DeleteRequest after generateCustomGPTActionsSpec()', () => {
+  // Call GPT spec generator first — this is where the in-place mutation bug
+  // would have corrupted SCHEMAS.DeleteRequest by deleting `.oneOf` and adding
+  // `.type`.
+  generateCustomGPTActionsSpec();
+
+  // Now call the full spec generator.
+  const yamlText = generateOpenAPISpec();
+  const parsed = YAML.parse(yamlText);
+
+  const dr = parsed.components?.schemas?.DeleteRequest;
+  assert.ok(dr, 'DeleteRequest schema must exist in full spec');
+  assert.ok(
+    Array.isArray(dr.oneOf),
+    'full spec DeleteRequest must still have oneOf after generateCustomGPTActionsSpec() was called first'
+  );
+  assert.equal(
+    dr.type,
+    undefined,
+    'full spec DeleteRequest must NOT have a top-level type (only the GPT-trim path flattens it)'
   );
 });
 

@@ -1184,27 +1184,24 @@ function collectRefs(node, acc) {
   }
 }
 
-/**
- * ChatGPT Custom GPT Actions imposes a hard 300-char limit on every
- * `description` string in an imported spec. Walk the trimmed document and
- * replace known >300-char strings with curated short equivalents; any other
- * string that still exceeds the limit is hard-truncated as a safety net.
- *
- * Only called inside `generateCustomGPTActionsSpec()` — the full spec is
- * intentionally left untouched (full descriptions are valid OpenAPI 3.1).
- */
-const GPT_DESCRIPTION_OVERRIDES = new Map([
-  // /api/search POST operation description — original 359 chars
-  [
-    'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
-    'POST body. Returns {results:[...]} compact by default; ?full=1 for full shape. Excludes superseded/deprecated/rejected and invalidated docs unless include_superseded=true. Optional filters.project/filters.type applied after recall.',
-  ],
-  // SearchRequest.properties.only_superseded description — original 358 chars
-  [
-    'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
-    'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
-  ],
-]);
+// Curated gpt-subset rewrites (ChatGPT hard limit: 300 chars/description).
+// `expect` pins the source text: if the source description is edited, the
+// generator throws "drifted" so the curation is consciously re-done — never
+// silently stale, never silently truncated.
+const GPT_DESCRIPTION_OVERRIDES = [
+  {
+    at: "paths['/api/search'].post.description",
+    expect:
+      'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+    text: 'POST body. Returns {results:[...]} compact by default; ?full=1 for full shape. Excludes superseded/deprecated/rejected and invalidated docs unless include_superseded=true. Optional filters.project/filters.type applied after recall.',
+  },
+  {
+    at: "schemas.SearchRequest.only_superseded",
+    expect:
+      'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
+    text: 'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
+  },
+];
 
 const GPT_DESCRIPTION_MAX = 300;
 
@@ -1214,6 +1211,12 @@ const GPT_DESCRIPTION_MAX = 300;
  * throws — it must be curated before it can ship.  This function never silently
  * truncates; the error names the offending path so the author knows exactly which
  * description to add to GPT_DESCRIPTION_OVERRIDES.
+ *
+ * Lookup logic for >300-char descriptions:
+ *   - Scan GPT_DESCRIPTION_OVERRIDES for an entry whose `expect` matches the
+ *     source string → apply `text` (curated rewrite).
+ *   - Entry found at a matching location but `expect` differs → throw "drifted".
+ *   - No entry at all → throw "un-curated".
  *
  * @param {unknown} node   - The OpenAPI node to walk (mutated in place for overrides).
  * @param {string}  [path] - Breadcrumb path for error messages (e.g. "gpt.paths['/api/search'].post.description").
@@ -1225,16 +1228,37 @@ export function capDescriptions(node, path = 'gpt') {
     return;
   }
   for (const [k, v] of Object.entries(node)) {
+    // Build the child breadcrumb: bracket-quote segments containing '/' for
+    // unambiguous paths (e.g. paths['/api/search'] vs paths./api/search).
+    const childPath = k.includes('/') ? `${path}["${k}"]` : `${path}.${k}`;
     if (k === 'description' && typeof v === 'string') {
-      if (GPT_DESCRIPTION_OVERRIDES.has(v)) {
-        node[k] = GPT_DESCRIPTION_OVERRIDES.get(v);
-      } else if (v.length > GPT_DESCRIPTION_MAX) {
-        throw new Error(
-          `[openapi] gpt-trim: un-curated description exceeds ChatGPT's 300-char limit (${v.length} chars) at ${path}.${k} — add a curated rewrite to GPT_DESCRIPTION_OVERRIDES instead of letting it ship truncated`
-        );
+      if (v.length <= GPT_DESCRIPTION_MAX) {
+        // Under the limit — untouched.
+      } else {
+        // Find entry whose expect matches.
+        const matchByExpect = GPT_DESCRIPTION_OVERRIDES.find((e) => e.expect === v);
+        if (matchByExpect) {
+          node[k] = matchByExpect.text;
+        } else {
+          // No exact-expect match. Check if there's a same-`at` entry with a
+          // different expect — that means the source was edited; throw "drifted".
+          // (The `at` field is for maintenance/error messages; matching by expect
+          // alone is the authoritative apply condition.)
+          const matchByAt = GPT_DESCRIPTION_OVERRIDES.find((e) =>
+            childPath.endsWith(e.at) || childPath.includes(e.at)
+          );
+          if (matchByAt) {
+            throw new Error(
+              `[openapi] gpt-trim: curated description at ${matchByAt.at} has drifted — source text no longer matches the pinned 'expect'. Update GPT_DESCRIPTION_OVERRIDES (at: "${matchByAt.at}") with the new source text and a new curated rewrite.`
+            );
+          }
+          throw new Error(
+            `[openapi] gpt-trim: un-curated description exceeds ChatGPT's 300-char limit (${v.length} chars) at ${childPath} — add a curated rewrite to GPT_DESCRIPTION_OVERRIDES instead of letting it ship truncated`
+          );
+        }
       }
     } else {
-      capDescriptions(v, `${path}.${k}`);
+      capDescriptions(v, childPath);
     }
   }
 }
@@ -1321,9 +1345,14 @@ export function generateCustomGPTActionsSpec() {
       if (kept.size !== before) changed = true;
     }
   }
+  // Deep-clone each schema before adding it to the trimmed map. Without this,
+  // `trimmedSchemas[name]` would be a live reference to the module-level
+  // SCHEMAS object; any mutation below (e.g. the DeleteRequest flatten) would
+  // corrupt the shared SCHEMAS for the process lifetime, breaking subsequent
+  // calls to generateOpenAPISpec().
   const trimmedSchemas = {};
   for (const name of kept) {
-    if (SCHEMAS[name]) trimmedSchemas[name] = SCHEMAS[name];
+    if (SCHEMAS[name]) trimmedSchemas[name] = structuredClone(SCHEMAS[name]);
   }
 
   // Re-use info/servers from the full spec but drop tags (the trimmed
@@ -1345,6 +1374,12 @@ export function generateCustomGPTActionsSpec() {
   // Fix 1 (GPT-only): flatten DeleteRequest oneOf → type:object so ChatGPT's
   // validator can parse the body schema. The full spec's oneOf is valid
   // OpenAPI 3.1 — only the GPT path needs flattening.
+  //
+  // Accepted limitation: the merged object schema does NOT enforce the variants'
+  // mutual exclusion (no additionalProperties:false on the merged shape; both
+  // `metadata` and `id` keys are accepted simultaneously by ChatGPT's validator).
+  // The SERVER still validates for real — it rejects requests that supply both
+  // or neither key, returning 400. The GPT spec only needs to be parseable.
   if (trimmed.components.schemas.DeleteRequest) {
     const dr = trimmed.components.schemas.DeleteRequest;
     if (dr.oneOf && !dr.type) {
