@@ -13,7 +13,7 @@
 const CLAUDE_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 const CHATGPT_LEGACY = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const CHATGPT_PREFIX = 'https://chatgpt.com/connector/oauth/';
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1']); // [::1] deliberately omitted — no vendor emits it; fails closed (rejection at registration), add if Claude Code ever does
 
 function parse(uri) {
   try { return new URL(uri); } catch { return null; }

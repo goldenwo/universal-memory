@@ -52,3 +52,17 @@ test('authorize-time: loopback still requires same path and query', () => {
   assert.equal(redirectMatches('http://localhost:1/callback', 'http://localhost:2/other'), false);
   assert.equal(redirectMatches('http://localhost:1/cb?x=1', 'http://localhost:2/cb?x=2'), false);
 });
+test('adversarial bypass pins: raw-string startsWith guard is load-bearing', () => {
+  // Each would slip the hostname check alone (new URL() normalizes), and is
+  // caught by the case/byte-sensitive startsWith on the raw string. A future
+  // refactor that matches against u.href or u.pathname instead would
+  // silently re-open these — this test is the tripwire.
+  for (const uri of [
+    'https://chatgpt.com@evil.com/connector/oauth/x', // userinfo trick → host=evil.com
+    'https://CHATGPT.COM/connector/oauth/x',          // URL() lowercases host; raw string differs
+    'https://chatgpt.com./connector/oauth/x',         // trailing-dot host
+    'https://chatgpt.com/connector%2Foauth/x',        // percent-encoded slash
+  ]) {
+    assert.equal(isAllowedRegistrationRedirect(uri), false, uri);
+  }
+});
