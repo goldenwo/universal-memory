@@ -1,11 +1,15 @@
 // server/lib/oauth/metadata.mjs
-// Pure builders for the two discovery documents (spec 4.1).
-// baseUrl is UM_PUBLIC_BASE_URL -- config-canonical, never Host-derived (spec 4.4).
+//
+// Pure builders for the two OAuth discovery documents: RFC 9728 protected-
+// resource metadata and RFC 8414 authorization-server metadata (Gap-3 OAuth
+// spec 4.1). baseUrl is UM_PUBLIC_BASE_URL — config-canonical, never derived
+// from the Host header (spec 4.4). stripTrailingSlash() normalises the
+// caller-supplied base so constructed URLs never double-slash.
 
-const strip = (u) => u.replace(/\/+$/, '');
+const stripTrailingSlash = (u) => u.replace(/\/+$/, '');
 
 export function protectedResourceMetadata(baseUrl) {
-  const b = strip(baseUrl);
+  const b = stripTrailingSlash(baseUrl);
   return {
     resource: `${b}/mcp`,
     authorization_servers: [b],
@@ -15,7 +19,7 @@ export function protectedResourceMetadata(baseUrl) {
 }
 
 export function authorizationServerMetadata(baseUrl) {
-  const b = strip(baseUrl);
+  const b = stripTrailingSlash(baseUrl);
   return {
     issuer: b,
     authorization_endpoint: `${b}/oauth/authorize`,

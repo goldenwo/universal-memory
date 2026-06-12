@@ -10,6 +10,7 @@ test('PRM doc has the RFC 9728 MUST fields', () => {
   assert.equal(prm.resource, `${BASE}/mcp`);
   assert.deepEqual(prm.authorization_servers, [BASE]);
   assert.deepEqual(prm.scopes_supported, ['vault']); // PRM = resource scopes only (spec §4.1)
+  assert.deepEqual(prm.bearer_methods_supported, ['header']);
 });
 
 test('AS metadata advertises everything both vendors gate on', () => {
