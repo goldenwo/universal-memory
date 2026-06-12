@@ -71,6 +71,7 @@ import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
 import { createOAuthVerifier } from './lib/oauth/verifier.mjs';
 import { createConsentThrottle } from './lib/oauth/throttle.mjs';
+import { createCimdResolver } from './lib/oauth/cimd.mjs';
 import { isAllowedRegistrationRedirect } from './lib/oauth/redirects.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
@@ -2173,6 +2174,11 @@ export function createRequestHandler(ctx = {}) {
 					try { umOauthRegistrationsTotal.inc({ outcome }); }
 					catch (e) { obsFallback(e, 'metric:oauth-registration'); }
 				},
+				// CIMD resolver (spec §3 Q5 / PR-4): ChatGPT's preferred path —
+				// a URL-shaped client_id is fetched + allowlist/SSRF-guarded per
+				// authorize. Production defaults (global fetch, process.env for the
+				// host allowlist). Resolution is cached in-process by the resolver.
+				cimdResolver: createCimdResolver(),
 			});
 			const verify = createOAuthVerifier(store, oauthBase);
 			// Manual-client seeding (spec §8 PR-2) — Claude's manual fallback
