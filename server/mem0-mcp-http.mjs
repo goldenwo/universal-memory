@@ -61,7 +61,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
@@ -2165,6 +2165,14 @@ export function createRequestHandler(ctx = {}) {
 				baseUrl: oauthBase,
 				operatorToken: process.env.UM_AUTH_TOKEN,
 				throttle: createConsentThrottle(),
+				// DCR outcome metric (spec §4.1 register row). endpoints.mjs stays
+				// metrics-free like its siblings; the inc lives here, wrapped in the
+				// obs-fallback idiom so a metric-emit failure never poisons the
+				// registration response (C.9). outcome is a bounded enum from the handler.
+				onRegistration: (outcome) => {
+					try { umOauthRegistrationsTotal.inc({ outcome }); }
+					catch (e) { obsFallback(e, 'metric:oauth-registration'); }
+				},
 			});
 			const verify = createOAuthVerifier(store, oauthBase);
 			// Manual-client seeding (spec §8 PR-2) — Claude's manual fallback
