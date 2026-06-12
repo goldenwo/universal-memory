@@ -1091,8 +1091,8 @@ export function buildSpec() {
     },
     servers: [
       {
-        url: 'http://localhost:6335',
-        description: 'Local dev — default MEM0_MCP_PORT',
+        url: (process.env.UM_PUBLIC_BASE_URL ?? 'http://localhost:6335').replace(/\/+$/, ''),
+        description: 'universal-memory server (UM_PUBLIC_BASE_URL or localhost:6335)',
       },
     ],
     tags: [
@@ -1184,6 +1184,93 @@ function collectRefs(node, acc) {
   }
 }
 
+// Curated gpt-subset rewrites (ChatGPT hard limit: 300 chars/description).
+// `expect` pins the source text: if the source description is edited, the
+// generator throws "drifted" so the curation is consciously re-done — never
+// silently stale, never silently truncated.
+//
+// `at` must equal the walker's breadcrumb minus the leading 'gpt.' prefix —
+// the drift test pins this.  Derive empirically: the walker builds childPath as
+//   k.includes('/') ? `${path}["${k}"]` : `${path}.${k}`
+// so slash-containing segments are double-quoted bracket form and normal keys
+// are dot-separated.  The match in capDescriptions() is exact: childPath === 'gpt.' + e.at.
+const GPT_DESCRIPTION_OVERRIDES = [
+  {
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'paths["/api/search"].post.description',
+    expect:
+      'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+    text: 'POST body. Returns {results:[...]} compact by default; ?full=1 for full shape. Excludes superseded/deprecated/rejected and invalidated docs unless include_superseded=true. Optional filters.project/filters.type applied after recall.',
+  },
+  {
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'components.schemas.SearchRequest.properties.only_superseded.description',
+    expect:
+      'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
+    text: 'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
+  },
+];
+
+const GPT_DESCRIPTION_MAX = 300;
+
+/**
+ * Walk a cloned OpenAPI doc and ENFORCE the ChatGPT 300-char description limit.
+ * Every description that exceeds the limit and is NOT in GPT_DESCRIPTION_OVERRIDES
+ * throws — it must be curated before it can ship.  This function never silently
+ * truncates; the error names the offending path so the author knows exactly which
+ * description to add to GPT_DESCRIPTION_OVERRIDES.
+ *
+ * Lookup logic for >300-char descriptions:
+ *   - Scan GPT_DESCRIPTION_OVERRIDES for an entry whose `expect` matches the
+ *     source string → apply `text` (curated rewrite).
+ *   - Entry found at a matching location but `expect` differs → throw "drifted".
+ *   - No entry at all → throw "un-curated".
+ *
+ * @param {unknown} node   - The OpenAPI node to walk (mutated in place for overrides).
+ * @param {string}  [path] - Breadcrumb path for error messages (e.g. "gpt.paths['/api/search'].post.description").
+ */
+export function capDescriptions(node, path = 'gpt') {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) capDescriptions(node[i], `${path}[${i}]`);
+    return;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    // Build the child breadcrumb: bracket-quote segments containing '/' for
+    // unambiguous paths (e.g. paths['/api/search'] vs paths./api/search).
+    const childPath = k.includes('/') ? `${path}["${k}"]` : `${path}.${k}`;
+    if (k === 'description' && typeof v === 'string') {
+      if (v.length <= GPT_DESCRIPTION_MAX) {
+        // Under the limit — untouched.
+      } else {
+        // Find entry whose expect matches.
+        const matchByExpect = GPT_DESCRIPTION_OVERRIDES.find((e) => e.expect === v);
+        if (matchByExpect) {
+          node[k] = matchByExpect.text;
+        } else {
+          // No exact-expect match. Check if there's a same-`at` entry with a
+          // different expect — that means the source was edited; throw "drifted".
+          // (The `at` field is for maintenance/error messages; matching by expect
+          // alone is the authoritative apply condition.)
+          const matchByAt = GPT_DESCRIPTION_OVERRIDES.find((e) =>
+            childPath === `gpt.${e.at}`
+          );
+          if (matchByAt) {
+            throw new Error(
+              `[openapi] gpt-trim: curated description at ${matchByAt.at} has drifted — source text no longer matches the pinned 'expect'. Update GPT_DESCRIPTION_OVERRIDES (at: "${matchByAt.at}") with the new source text and a new curated rewrite.`
+            );
+          }
+          throw new Error(
+            `[openapi] gpt-trim: un-curated description exceeds ChatGPT's 300-char limit (${v.length} chars) at ${childPath} — add a curated rewrite to GPT_DESCRIPTION_OVERRIDES instead of letting it ship truncated`
+          );
+        }
+      }
+    } else {
+      capDescriptions(v, childPath);
+    }
+  }
+}
+
 /**
  * Generate the trimmed OpenAPI 3.1 spec for ChatGPT Custom GPT Actions.
  * Only the 5 routes the GPT needs (search/state/add/delete/recent), operationIds
@@ -1266,9 +1353,14 @@ export function generateCustomGPTActionsSpec() {
       if (kept.size !== before) changed = true;
     }
   }
+  // Deep-clone each schema before adding it to the trimmed map. Without this,
+  // `trimmedSchemas[name]` would be a live reference to the module-level
+  // SCHEMAS object; any mutation below (e.g. the DeleteRequest flatten) would
+  // corrupt the shared SCHEMAS for the process lifetime, breaking subsequent
+  // calls to generateOpenAPISpec().
   const trimmedSchemas = {};
   for (const name of kept) {
-    if (SCHEMAS[name]) trimmedSchemas[name] = SCHEMAS[name];
+    if (SCHEMAS[name]) trimmedSchemas[name] = structuredClone(SCHEMAS[name]);
   }
 
   // Re-use info/servers from the full spec but drop tags (the trimmed
@@ -1286,6 +1378,40 @@ export function generateCustomGPTActionsSpec() {
     paths,
     components: { schemas: trimmedSchemas },
   };
+
+  // Fix 1 (GPT-only): flatten DeleteRequest oneOf → type:object so ChatGPT's
+  // validator can parse the body schema. The full spec's oneOf is valid
+  // OpenAPI 3.1 — only the GPT path needs flattening.
+  //
+  // Accepted limitation: the merged object schema does NOT enforce the variants'
+  // mutual exclusion (no additionalProperties:false on the merged shape; both
+  // `metadata` and `id` keys are accepted simultaneously by ChatGPT's validator).
+  // The SERVER still validates for real — it rejects requests that supply both
+  // or neither key, returning 400. The GPT spec only needs to be parseable.
+  if (trimmed.components.schemas.DeleteRequest) {
+    const dr = trimmed.components.schemas.DeleteRequest;
+    if (dr.oneOf && !dr.type) {
+      // Union the properties of every oneOf variant into a single object schema.
+      // Neither variant's properties overlap (metadata vs id), so a simple merge
+      // is safe. Shared required fields are intentionally omitted — both variants
+      // require exactly one of the two keys, not both at once.
+      const mergedProperties = {};
+      for (const variant of dr.oneOf) {
+        if (variant.properties) {
+          Object.assign(mergedProperties, variant.properties);
+        }
+      }
+      delete dr.oneOf;
+      dr.type = 'object';
+      dr.properties = mergedProperties;
+    }
+  }
+
+  // Fix 2 (GPT-only): cap every description to ≤300 chars (ChatGPT hard limit).
+  // Known offenders get curated rewrites via GPT_DESCRIPTION_OVERRIDES; any
+  // other over-limit string THROWS (fail-loud — never silently truncated, so
+  // the ≤300 walker test stays a real gate).
+  capDescriptions(trimmed);
 
   const yaml = YAML.stringify(trimmed);
   return yaml.endsWith('\n') ? yaml : yaml + '\n';

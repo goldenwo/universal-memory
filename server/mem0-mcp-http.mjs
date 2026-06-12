@@ -65,7 +65,8 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
+import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
@@ -245,6 +246,14 @@ if (IS_MAIN) {
   }
   // R8 mitigation: log info when summarizer fallback is cross-provider; warn on legacy UM_SUMMARIZER.
   validateSummarizerConfig(process.env, getLogger());
+  // Gap-3 OAuth boot validation: refuse startup when UM_OAUTH_ENABLED=true
+  // but UM_PUBLIC_BASE_URL is missing or not a valid http/https URL.
+  try {
+    validateOAuthConfig(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 let memory;
@@ -681,6 +690,20 @@ export function getVisibleTools(writeEnabled) {
 function tagRetryable(err) {
 	if (err && err.retryable === undefined) err.retryable = true;
 	return err;
+}
+
+// ---------------------------------------------------------------------------
+// DRY helper: emit a uniform 429 response.
+// Used at both rate-limit sites (shared admit block + OAuth admit block).
+// Behavior: 429 status, Content-Type application/json, Retry-After header,
+// LIMIT_RATE_EXCEEDED envelope.
+// ---------------------------------------------------------------------------
+function send429(res, retryAfterSec) {
+	res.writeHead(429, {
+		'Content-Type': 'application/json',
+		'Retry-After': String(retryAfterSec),
+	});
+	res.end(JSON.stringify(errorResponse('LIMIT_RATE_EXCEEDED', 'rate limit exceeded')));
 }
 
 // ---------------------------------------------------------------------------
@@ -2056,6 +2079,14 @@ export function createRequestHandler(ctx = {}) {
 	// UM_RATE_LIMIT_RPM / BURST / MAX_IPS from process.env at construction
 	// time, matching the env-snapshot behavior of every other server knob.
 	const admit = createRateLimiter();
+	// Gap-3 OAuth dedicated rate-limiter (spec §6 item 1) — independent from
+	// the shared `admit` so that well-known discovery floods do not starve
+	// /mcp or /api/* traffic and vice versa. Fixed at rpm:30/burst:10;
+	// future /oauth/* handlers (PR 2) use this same instance.
+	const oauthAdmit = createRateLimiter({ rpm: 30, burst: 10 });
+	// OAuth on/off is a construction-time decision; env validated at boot.
+	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
+	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
 	return async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2264,7 +2295,17 @@ export function createRequestHandler(ctx = {}) {
 			const hint = isUmClient
 				? 'invalid or missing bearer token'
 				: 'invalid or missing bearer token — upgrade plugin to v0.6+ via `git pull && bash installer/install.sh --plugin-cc` or set Authorization: Bearer <token from ~/.um/auth-token>';
-			res.writeHead(401, { 'Content-Type': 'application/json' });
+			// Gap-3 OAuth breadcrumb (spec §4.4 / RFC 9728 §5): when OAuth is
+			// enabled AND the failing request is for /mcp, add the
+			// WWW-Authenticate header so RFC 9728-aware clients can discover
+			// the protected-resource metadata document automatically.
+			// Non-/mcp paths and flag-off installs omit the header entirely.
+			const oauthHeaders = { 'Content-Type': 'application/json' };
+			if (oauthEnabled && url.pathname === '/mcp') {
+				oauthHeaders['WWW-Authenticate'] =
+					`Bearer resource_metadata="${oauthBase}/.well-known/oauth-protected-resource/mcp", scope="vault"`;
+			}
+			res.writeHead(401, oauthHeaders);
 			res.end(JSON.stringify(errorResponse('AUTH_INVALID', hint)));
 			return;
 		}
@@ -2288,14 +2329,7 @@ export function createRequestHandler(ctx = {}) {
 		const ipKey = extractRateLimitKey(req);
 		const decision = admit(ipKey);
 		if (!decision.admitted) {
-			res.writeHead(429, {
-				'Content-Type': 'application/json',
-				'Retry-After': String(decision.retryAfterSec),
-			});
-			res.end(JSON.stringify(errorResponse(
-				'LIMIT_RATE_EXCEEDED',
-				'rate limit exceeded',
-			)));
+			send429(res, decision.retryAfterSec);
 			return;
 		}
 	}
@@ -2318,6 +2352,57 @@ export function createRequestHandler(ctx = {}) {
 			const gptMode = url.searchParams.get('gpt') === '1';
 			res.writeHead(200, { 'Content-Type': 'application/yaml' });
 			res.end(gptMode ? generateCustomGPTActionsSpec() : generateOpenAPISpec());
+			return;
+		}
+		// Gap-3 OAuth discovery documents (spec §4.1 / RFC 9728 + RFC 8414).
+		// Endpoint-class already hard-404s these paths when UM_OAUTH_ENABLED=false
+		// so we are only here when the flag is on.
+		//
+		// Placed inside the try block deliberately — uniform error-envelope
+		// handling for any unexpected throw is intentional, matching all other
+		// route handlers.
+		//
+		// Apply the DEDICATED OAuth limiter first (independent from `admit` so
+		// discovery floods do not starve /mcp traffic). Then serve the matching
+		// builder fed UM_PUBLIC_BASE_URL — never the Host header (spec §4.4).
+		// Host-mismatch emits a warn but DOES NOT reject (warn-only breadcrumb).
+		if (
+			req.method === 'GET' && (
+				url.pathname === '/.well-known/oauth-protected-resource' ||
+				url.pathname === '/.well-known/oauth-protected-resource/mcp' ||
+				url.pathname === '/.well-known/oauth-authorization-server'
+			)
+		) {
+			// Step 1: dedicated OAuth rate-limiter (separate bucket from shared admit). spec §6 item 1
+			const ipKey = extractRateLimitKey(req);
+			const decision = oauthAdmit(ipKey);
+			if (!decision.admitted) {
+				send429(res, decision.retryAfterSec);
+				return;
+			}
+			// Step 2: host-mismatch warn (spec §4.4 — warn-only, never reject).
+			const reqHost = req.headers['x-forwarded-host'] ?? req.headers['host'] ?? '';
+			try {
+				const baseHost = new URL(oauthBase).host;
+				if (reqHost && baseHost && reqHost !== baseHost) {
+					safeLog(
+						() => getLogger().warn({
+							request_id: currentRequestId(),
+							endpoint: url.pathname,
+							req_host: reqHost,
+							base_host: baseHost,
+							error_class: 'oauth_host_mismatch',
+						}, 'oauth host mismatch'),
+						'log:oauth:hostmismatch',
+					);
+				}
+			} catch { /* malformed base URL — validateOAuthConfig catches this at boot */ }
+			// Step 3: serve config-derived JSON.
+			const doc = url.pathname === '/.well-known/oauth-authorization-server'
+				? authorizationServerMetadata(oauthBase)
+				: protectedResourceMetadata(oauthBase);
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(doc));
 			return;
 		}
 		// C.5 / spec 4.2: /metrics returns Prometheus text exposition.

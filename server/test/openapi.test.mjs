@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import YAML from 'yaml';
 import SwaggerParser from '@apidevtools/swagger-parser';
 
-import { generateOpenAPISpec, generateCustomGPTActionsSpec } from '../openapi.mjs';
+import { generateOpenAPISpec, generateCustomGPTActionsSpec, capDescriptions, buildSpec } from '../openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // 1. Structural + referential validity (OpenAPI 3.1)
@@ -192,4 +192,285 @@ test('custom GPT actions spec includes only the 7 trimmed routes with operationI
       `trimmed spec missing required schema: ${required}`
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// 5. Phase-0 defect fixes (Gap-3 OAuth PR-1)
+// ---------------------------------------------------------------------------
+
+// 5a. servers[0].url derives from UM_PUBLIC_BASE_URL (full spec)
+test('full spec servers[0].url uses UM_PUBLIC_BASE_URL when set', () => {
+  const saved = process.env.UM_PUBLIC_BASE_URL;
+
+  try {
+    // With env set — trailing slash stripped
+    process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net/';
+    const yamlWithSlash = generateOpenAPISpec();
+    const parsedWithSlash = YAML.parse(yamlWithSlash);
+    assert.equal(
+      parsedWithSlash.servers[0].url,
+      'https://um.example.ts.net',
+      'trailing slash must be stripped from UM_PUBLIC_BASE_URL'
+    );
+
+    // Without trailing slash
+    process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net';
+    const yamlNoSlash = generateOpenAPISpec();
+    const parsedNoSlash = YAML.parse(yamlNoSlash);
+    assert.equal(
+      parsedNoSlash.servers[0].url,
+      'https://um.example.ts.net',
+      'servers[0].url must equal UM_PUBLIC_BASE_URL'
+    );
+
+    // Without env set — must fall back to localhost
+    delete process.env.UM_PUBLIC_BASE_URL;
+    const yamlFallback = generateOpenAPISpec();
+    const parsedFallback = YAML.parse(yamlFallback);
+    assert.equal(
+      parsedFallback.servers[0].url,
+      'http://localhost:6335',
+      'servers[0].url must fall back to localhost when UM_PUBLIC_BASE_URL is unset'
+    );
+  } finally {
+    // Always restore the original env — even if an assertion throws.
+    if (saved !== undefined) process.env.UM_PUBLIC_BASE_URL = saved;
+    else delete process.env.UM_PUBLIC_BASE_URL;
+  }
+});
+
+// 5b. GPT spec: NO description string exceeds 300 chars (ChatGPT hard limit)
+test('custom GPT actions spec: all description strings are ≤300 chars', () => {
+  const yamlText = generateCustomGPTActionsSpec();
+  const parsed = YAML.parse(yamlText);
+
+  const violations = [];
+  function walkDescriptions(obj, path) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      obj.forEach((v, i) => walkDescriptions(v, `${path}[${i}]`));
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === 'description' && typeof v === 'string' && v.length > 300) {
+        violations.push({ path: `${path}.${k}`, length: v.length, excerpt: v.slice(0, 60) });
+      }
+      walkDescriptions(v, `${path}.${k}`);
+    }
+  }
+  walkDescriptions(parsed, 'gpt');
+
+  assert.deepEqual(
+    violations,
+    [],
+    `GPT spec has description(s) exceeding 300 chars:\n${violations.map(v => `  ${v.path} (${v.length}): "${v.excerpt}..."`).join('\n')}`
+  );
+});
+
+// 5b-2. capDescriptions() throws on un-curated descriptions >300 chars (fail-loud enforcement)
+test('capDescriptions() throws for un-curated descriptions exceeding 300 chars', () => {
+  // Construct a minimal doc with a description that is exactly 301 chars — must throw.
+  const longDesc = 'x'.repeat(301);
+  const doc = {
+    paths: {
+      '/api/test': {
+        post: {
+          description: longDesc,
+          responses: {},
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('300-char limit'),
+        `error message must mention "300-char limit"; got: ${err.message}`
+      );
+      assert.ok(
+        err.message.includes('301 chars'),
+        `error message must report the actual length (301 chars); got: ${err.message}`
+      );
+      assert.ok(
+        err.message.includes('GPT_DESCRIPTION_OVERRIDES'),
+        `error message must direct the author to GPT_DESCRIPTION_OVERRIDES; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw when an un-curated description exceeds 300 chars'
+  );
+
+  // A description of exactly 300 chars must NOT throw.
+  const borderDesc = 'y'.repeat(300);
+  const safeDoc = { description: borderDesc };
+  assert.doesNotThrow(
+    () => capDescriptions(safeDoc),
+    'capDescriptions() must not throw for descriptions of exactly 300 chars'
+  );
+});
+
+// 5b-3. capDescriptions() throws "drifted" when an entry exists at a matching
+//       location but the `expect` field no longer matches the source text.
+//       Uses the REAL gpt doc structure (faithful nesting) so the walker
+//       produces the exact breadcrumb the `at` field must pin.
+test('capDescriptions() throws "drifted" for only_superseded source edit', () => {
+  // Build a faithful slice of the gpt doc so the walker reaches
+  //   gpt.components.schemas.SearchRequest.properties.only_superseded.description
+  // with a >300-char value different from the pinned expect — simulating an
+  // edit to the source description without updating GPT_DESCRIPTION_OVERRIDES.
+  const drift = 'z'.repeat(301); // >300 but NOT the pinned expect text
+  const doc = {
+    components: {
+      schemas: {
+        SearchRequest: {
+          properties: {
+            only_superseded: {
+              description: drift,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('drifted'),
+        `error message must contain "drifted"; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw "drifted" when only_superseded source text changed'
+  );
+});
+
+test('capDescriptions() throws "drifted" for /api/search post description source edit', () => {
+  // Build a faithful slice of the gpt doc so the walker reaches
+  //   gpt.paths["/api/search"].post.description
+  // with a >300-char value different from the pinned expect.
+  const drift = 'y'.repeat(301); // >300 but NOT the pinned expect text
+  const doc = {
+    paths: {
+      '/api/search': {
+        post: {
+          description: drift,
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('drifted'),
+        `error message must contain "drifted"; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw "drifted" when /api/search post description source text changed'
+  );
+});
+
+test('capDescriptions() does NOT throw on real pre-cap gpt doc (positive breadcrumb pin)', () => {
+  // Build a pre-cap slice using the REAL source descriptions from buildSpec().
+  // Both exceed 300 chars.  capDescriptions must apply the curated rewrites
+  // without throwing — proves BOTH `at` values match their real walker breadcrumbs.
+  // If either `at` were wrong, capDescriptions would throw "un-curated" here.
+  const full = buildSpec();
+  const preCapDoc = {
+    paths: {
+      '/api/search': {
+        post: {
+          description: full.paths['/api/search'].post.description,
+        },
+      },
+    },
+    components: {
+      schemas: {
+        SearchRequest: {
+          properties: {
+            only_superseded: {
+              description: full.components.schemas.SearchRequest.properties.only_superseded.description,
+            },
+          },
+        },
+      },
+    },
+  };
+  assert.doesNotThrow(
+    () => capDescriptions(preCapDoc),
+    'capDescriptions() must NOT throw on the real pre-cap gpt doc — proves both `at` breadcrumbs match real walker paths'
+  );
+});
+
+// 5b-4. generateCustomGPTActionsSpec() followed by generateOpenAPISpec() must
+//       not corrupt the shared SCHEMAS (structuredClone regression).
+test('generateOpenAPISpec() returns uncorrupted DeleteRequest after generateCustomGPTActionsSpec()', () => {
+  // Call GPT spec generator first — this is where the in-place mutation bug
+  // would have corrupted SCHEMAS.DeleteRequest by deleting `.oneOf` and adding
+  // `.type`.
+  generateCustomGPTActionsSpec();
+
+  // Now call the full spec generator.
+  const yamlText = generateOpenAPISpec();
+  const parsed = YAML.parse(yamlText);
+
+  const dr = parsed.components?.schemas?.DeleteRequest;
+  assert.ok(dr, 'DeleteRequest schema must exist in full spec');
+  assert.ok(
+    Array.isArray(dr.oneOf),
+    'full spec DeleteRequest must still have oneOf after generateCustomGPTActionsSpec() was called first'
+  );
+  assert.equal(
+    dr.type,
+    undefined,
+    'full spec DeleteRequest must NOT have a top-level type (only the GPT-trim path flattens it)'
+  );
+});
+
+// 5c. GPT spec delete operation body schema has type:'object' (no bare oneOf)
+test('custom GPT actions spec: delete body schema has top-level type:object', () => {
+  const yamlText = generateCustomGPTActionsSpec();
+  const parsed = YAML.parse(yamlText);
+
+  // Resolve inline — the body may use $ref to DeleteRequest or be inlined
+  const deletePost = parsed.paths['/api/delete']?.post;
+  assert.ok(deletePost, '/api/delete POST must exist in trimmed spec');
+
+  let bodySchema = deletePost.requestBody?.content?.['application/json']?.schema;
+  assert.ok(bodySchema, 'delete POST must have a requestBody application/json schema');
+
+  // If it's a $ref, resolve it from components
+  if (bodySchema.$ref) {
+    const refName = bodySchema.$ref.replace('#/components/schemas/', '');
+    bodySchema = parsed.components?.schemas?.[refName];
+    assert.ok(bodySchema, `$ref schema '${refName}' must exist in trimmed components`);
+  }
+
+  assert.equal(
+    bodySchema.type,
+    'object',
+    'delete body schema must have top-level type:"object" (not a bare oneOf) for ChatGPT validator'
+  );
+  assert.ok(
+    bodySchema.properties && typeof bodySchema.properties === 'object',
+    'delete body schema must have a properties object'
+  );
+  // Union of both variants: metadata (from DeleteByMetadataId) + id (from DeleteByUuid)
+  assert.ok(
+    'metadata' in bodySchema.properties,
+    'delete body schema properties must include "metadata" (from DeleteByMetadataId variant)'
+  );
+  assert.ok(
+    'id' in bodySchema.properties,
+    'delete body schema properties must include "id" (from DeleteByUuid variant)'
+  );
 });

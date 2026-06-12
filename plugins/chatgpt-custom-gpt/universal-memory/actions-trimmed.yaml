@@ -11,18 +11,16 @@ info:
     url: https://github.com/goldenwo/universal-memory/blob/main/LICENSE
 servers:
   - url: http://localhost:6335
-    description: Local dev — default MEM0_MCP_PORT
+    description: universal-memory server (UM_PUBLIC_BASE_URL or localhost:6335)
 paths:
   /api/search:
     post:
       operationId: memory_search
       summary: Semantic search
-      description: "Body form. Returns `{results: [...]}` with compact items by
-        default; add `?full=1` to get the full MemoryResult shape in each result
-        instead. Applies default status filter (excludes
-        superseded/deprecated/rejected, and any doc with invalidated_at set)
-        unless `include_superseded=true`. Optional `filters.project` /
-        `filters.type` are applied after mem0 recall."
+      description: POST body. Returns {results:[...]} compact by default; ?full=1 for
+        full shape. Excludes superseded/deprecated/rejected and invalidated docs
+        unless include_superseded=true. Optional filters.project/filters.type
+        applied after recall.
       parameters:
         - name: full
           in: query
@@ -275,12 +273,10 @@ components:
         only_superseded:
           type: boolean
           default: false
-          description: "Opt-in superseded-only listing. Inverts the status filter —
-            returns ONLY status=superseded records. Mode (a): with
-            filters.lane/persona → restrict to that partition. Mode (b): no
-            filters → all superseded across partitions, each row exposing
-            lane/persona/supersededBy. Wins over include_superseded when both
-            set. Default limit 50 when no explicit limit given."
+          description: "Superseded-only listing: returns ONLY status=superseded records.
+            Mode (a): with filters.lane/persona → restrict partition. Mode (b):
+            no filters → all superseded across partitions. Wins over
+            include_superseded when both set. Default limit 50."
         offset:
           type: integer
           minimum: 0
@@ -409,31 +405,20 @@ components:
       description: "Two shapes: A) `{ metadata: { id } }` to delete every mem0 entry
         whose metadata.id matches; B) `{ id }` to delete a single entry by mem0
         UUID."
-      oneOf:
-        - type: object
-          title: DeleteByMetadataId
-          required:
-            - metadata
-          additionalProperties: false
-          properties:
-            metadata:
-              type: object
-              required:
-                - id
-              properties:
-                id:
-                  type: string
-                  minLength: 1
-        - type: object
-          title: DeleteByUuid
+      type: object
+      properties:
+        metadata:
+          type: object
           required:
             - id
-          additionalProperties: false
           properties:
             id:
               type: string
               minLength: 1
-              description: mem0 UUID
+        id:
+          type: string
+          minLength: 1
+          description: mem0 UUID
     DeleteResponse:
       type: object
       required:
