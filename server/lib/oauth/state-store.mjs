@@ -148,6 +148,9 @@ export function createStateStore(dir, { now = Date.now } = {}) {
     putClient(client) { state.clients[client.client_id] = client; save(); },
     getClient(clientId) { return state.clients[clientId]; },
     deleteClient(clientId) { delete state.clients[clientId]; save(); },
+    // Count of registered clients — read-only; the DCR handler uses it to enforce
+    // the registration cap (RFC 7591) without reaching into store internals.
+    countClients() { return Object.keys(state.clients).length; },
 
     // ---- authorization codes (single-use, atomic consume)
     putCode(codeId, rec) { state.codes[codeId] = rec; save(); },
