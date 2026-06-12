@@ -162,7 +162,7 @@ test('OAuth 401: /mcp with bad bearer + flag on → 401 WITH WWW-Authenticate', 
 });
 
 test('OAuth 401: /mcp with bad bearer + flag off → 401 WITHOUT WWW-Authenticate', async () => {
-  const { url, close } = await startServer({ oauthEnabled: false, token: 'test-token' });
+  const { url, close } = await startServer({ oauthEnabled: false });
   // We need UM_AUTH_TOKEN set so we get 401 (not 500). Base not set when flag off.
   try {
     const r = await fetch(url('/mcp'), {
@@ -235,12 +235,10 @@ test('OAuth discovery: host-mismatch on PRM → 200 with config-derived resource
 // ---------------------------------------------------------------------------
 
 test('Limiter independence: OAuth limiter exhausted does NOT 429 a /mcp request', async () => {
-  // Use a very low burst to make exhaustion quick (burst=1 → 2 requests exhaust it)
-  // We need to override the rate-limiter opts — we do this by setting env vars that
-  // createRateLimiter reads at construction time. The OAuth limiter uses its own
-  // fixed opts (rpm:30, burst:10) so we exhaust by sending > burst requests.
-  // Easier: send burst+1 GETs from same IP (via X-Forwarded-For) to a well-known
-  // path until we see a 429, then verify /mcp is NOT 429 from that IP.
+  // The OAuth limiter uses fixed opts (rpm:30, burst:10) so we exhaust by
+  // sending > burst requests. Send 12 GETs from the same IP (via
+  // X-Forwarded-For) to a well-known path until we see a 429, then verify
+  // /mcp is NOT 429 from that IP (shared admit bucket is independent).
   const { url, close } = await startServer({ oauthEnabled: true });
   try {
     const headers = { 'X-Forwarded-For': '5.6.7.8' };

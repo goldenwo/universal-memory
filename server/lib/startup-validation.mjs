@@ -96,25 +96,24 @@ export function validateProviderSupport(env) {
  */
 export function validateOAuthConfig(env) {
   if ((env.UM_OAUTH_ENABLED ?? 'false') !== 'true') return;
+  // Trailing-slash URLs are accepted here and normalized at use sites
+  // (createRequestHandler hoists oauthBase with .replace(/\/+$/, '')).
+  const OAUTH_URL_HINT = 'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)';
   const base = env.UM_PUBLIC_BASE_URL;
   if (!base || base.trim() === '') {
-    throw new Error(
-      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
-    );
+    throw new Error(OAUTH_URL_HINT);
   }
   let parsed;
   try {
     parsed = new URL(base);
   } catch {
     throw new Error(
-      `UM_PUBLIC_BASE_URL is not a valid URL: "${base}" — ` +
-      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
+      `UM_PUBLIC_BASE_URL is not a valid URL: "${base}" — ${OAUTH_URL_HINT}`,
     );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(
-      `UM_PUBLIC_BASE_URL scheme must be http or https, got "${parsed.protocol.replace(/:$/, '')}" — ` +
-      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
+      `UM_PUBLIC_BASE_URL scheme must be http or https, got "${parsed.protocol.replace(/:$/, '')}" — ${OAUTH_URL_HINT}`,
     );
   }
 }

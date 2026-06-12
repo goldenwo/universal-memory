@@ -693,6 +693,20 @@ function tagRetryable(err) {
 }
 
 // ---------------------------------------------------------------------------
+// DRY helper: emit a uniform 429 response.
+// Used at both rate-limit sites (shared admit block + OAuth admit block).
+// Behavior: 429 status, Content-Type application/json, Retry-After header,
+// LIMIT_RATE_EXCEEDED envelope.
+// ---------------------------------------------------------------------------
+function send429(res, retryAfterSec) {
+	res.writeHead(429, {
+		'Content-Type': 'application/json',
+		'Retry-After': String(retryAfterSec),
+	});
+	res.end(JSON.stringify(errorResponse('LIMIT_RATE_EXCEEDED', 'rate limit exceeded')));
+}
+
+// ---------------------------------------------------------------------------
 // Shared helper: delete all mem0 entries matching a metadata.id value
 // Returns the count of deleted entries.
 // ---------------------------------------------------------------------------
@@ -2065,11 +2079,14 @@ export function createRequestHandler(ctx = {}) {
 	// UM_RATE_LIMIT_RPM / BURST / MAX_IPS from process.env at construction
 	// time, matching the env-snapshot behavior of every other server knob.
 	const admit = createRateLimiter();
-	// Gap-3 OAuth dedicated rate-limiter (spec 6 item 1). Independent from
+	// Gap-3 OAuth dedicated rate-limiter (spec §6 item 1) — independent from
 	// the shared `admit` so that well-known discovery floods do not starve
 	// /mcp or /api/* traffic and vice versa. Fixed at rpm:30/burst:10;
 	// future /oauth/* handlers (PR 2) use this same instance.
 	const oauthAdmit = createRateLimiter({ rpm: 30, burst: 10 });
+	// OAuth on/off is a construction-time decision; env validated at boot.
+	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
+	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
 	return async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2283,13 +2300,12 @@ export function createRequestHandler(ctx = {}) {
 			// WWW-Authenticate header so RFC 9728-aware clients can discover
 			// the protected-resource metadata document automatically.
 			// Non-/mcp paths and flag-off installs omit the header entirely.
-			const _oauthHeaders = { 'Content-Type': 'application/json' };
-			if ((process.env.UM_OAUTH_ENABLED ?? 'false') === 'true' && url.pathname === '/mcp') {
-				const _oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
-				_oauthHeaders['WWW-Authenticate'] =
-					`Bearer resource_metadata="${_oauthBase}/.well-known/oauth-protected-resource/mcp", scope="vault"`;
+			const oauthHeaders = { 'Content-Type': 'application/json' };
+			if (oauthEnabled && url.pathname === '/mcp') {
+				oauthHeaders['WWW-Authenticate'] =
+					`Bearer resource_metadata="${oauthBase}/.well-known/oauth-protected-resource/mcp", scope="vault"`;
 			}
-			res.writeHead(401, _oauthHeaders);
+			res.writeHead(401, oauthHeaders);
 			res.end(JSON.stringify(errorResponse('AUTH_INVALID', hint)));
 			return;
 		}
@@ -2313,14 +2329,7 @@ export function createRequestHandler(ctx = {}) {
 		const ipKey = extractRateLimitKey(req);
 		const decision = admit(ipKey);
 		if (!decision.admitted) {
-			res.writeHead(429, {
-				'Content-Type': 'application/json',
-				'Retry-After': String(decision.retryAfterSec),
-			});
-			res.end(JSON.stringify(errorResponse(
-				'LIMIT_RATE_EXCEEDED',
-				'rate limit exceeded',
-			)));
+			send429(res, decision.retryAfterSec);
 			return;
 		}
 	}
@@ -2349,6 +2358,10 @@ export function createRequestHandler(ctx = {}) {
 		// Endpoint-class already hard-404s these paths when UM_OAUTH_ENABLED=false
 		// so we are only here when the flag is on.
 		//
+		// Placed inside the try block deliberately — uniform error-envelope
+		// handling for any unexpected throw is intentional, matching all other
+		// route handlers.
+		//
 		// Apply the DEDICATED OAuth limiter first (independent from `admit` so
 		// discovery floods do not starve /mcp traffic). Then serve the matching
 		// builder fed UM_PUBLIC_BASE_URL — never the Host header (spec §4.4).
@@ -2360,29 +2373,24 @@ export function createRequestHandler(ctx = {}) {
 				url.pathname === '/.well-known/oauth-authorization-server'
 			)
 		) {
-			// Step 1: dedicated OAuth rate-limiter (separate bucket from shared admit).
-			const _oauthIpKey = extractRateLimitKey(req);
-			const _oauthDecision = oauthAdmit(_oauthIpKey);
-			if (!_oauthDecision.admitted) {
-				res.writeHead(429, {
-					'Content-Type': 'application/json',
-					'Retry-After': String(_oauthDecision.retryAfterSec),
-				});
-				res.end(JSON.stringify(errorResponse('LIMIT_RATE_EXCEEDED', 'rate limit exceeded')));
+			// Step 1: dedicated OAuth rate-limiter (separate bucket from shared admit). spec §6 item 1
+			const ipKey = extractRateLimitKey(req);
+			const decision = oauthAdmit(ipKey);
+			if (!decision.admitted) {
+				send429(res, decision.retryAfterSec);
 				return;
 			}
 			// Step 2: host-mismatch warn (spec §4.4 — warn-only, never reject).
-			const _base = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
-			const _reqHost = req.headers['x-forwarded-host'] ?? req.headers['host'] ?? '';
+			const reqHost = req.headers['x-forwarded-host'] ?? req.headers['host'] ?? '';
 			try {
-				const _baseHost = new URL(_base).host;
-				if (_reqHost && _baseHost && _reqHost !== _baseHost) {
+				const baseHost = new URL(oauthBase).host;
+				if (reqHost && baseHost && reqHost !== baseHost) {
 					safeLog(
 						() => getLogger().warn({
 							request_id: currentRequestId(),
 							endpoint: url.pathname,
-							req_host: _reqHost,
-							base_host: _baseHost,
+							req_host: reqHost,
+							base_host: baseHost,
 							error_class: 'oauth_host_mismatch',
 						}, 'oauth host mismatch'),
 						'log:oauth:hostmismatch',
@@ -2390,11 +2398,11 @@ export function createRequestHandler(ctx = {}) {
 				}
 			} catch { /* malformed base URL — validateOAuthConfig catches this at boot */ }
 			// Step 3: serve config-derived JSON.
-			const _doc = url.pathname === '/.well-known/oauth-authorization-server'
-				? authorizationServerMetadata(_base)
-				: protectedResourceMetadata(_base);
+			const doc = url.pathname === '/.well-known/oauth-authorization-server'
+				? authorizationServerMetadata(oauthBase)
+				: protectedResourceMetadata(oauthBase);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(_doc));
+			res.end(JSON.stringify(doc));
 			return;
 		}
 		// C.5 / spec 4.2: /metrics returns Prometheus text exposition.
