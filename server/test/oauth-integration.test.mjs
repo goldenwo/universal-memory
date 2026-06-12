@@ -156,6 +156,7 @@ test('OAuth integration: full happy path → umat_ token authenticates /mcp tool
     assert.equal(authzRes.status, 200, 'authorize should render consent HTML');
     const { authzId, csrf } = parseConsentForm(authzRes.body);
     assert.ok(authzId && csrf, 'consent page must carry authz_id + csrf');
+    assert.match(authzRes.body, /Seeded client/, 'consent page must display the client_name');
 
     // (b) POST /oauth/consent with the operator token → 303 with ?code=.
     const consentRes = await fetch(url('/oauth/consent'), {

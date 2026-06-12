@@ -203,7 +203,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     const hasCookie = verifyConsentCookie(store.getHmacKey(), readCookie(req, 'um_consent'), now());
     const html = renderConsentPage({
-      clientName: client.name ?? clientId,
+      clientName: client.client_name ?? clientId,
       redirectHost: hostOf(redirectUri),
       authzId,
       csrf: mintCsrf(store.getHmacKey(), authzId),
@@ -258,7 +258,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       throttle.fail(now());
       const retryId = putPending({ ...rec });
       const rerendered = renderConsentPage({
-        clientName: store.getClient(rec.clientId)?.name ?? rec.clientId,
+        clientName: store.getClient(rec.clientId)?.client_name ?? rec.clientId,
         redirectHost: hostOf(rec.redirectUri),
         authzId: retryId,
         csrf: mintCsrf(store.getHmacKey(), retryId),

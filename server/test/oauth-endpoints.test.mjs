@@ -38,7 +38,7 @@ function makeRig({ now } = {}) {
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });
-  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], name: 'Claude' });
+  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const throttle = createConsentThrottle();
   const handlers = createOAuthHandlers({
     store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn,
@@ -765,7 +765,7 @@ test('register/revoke stubs → 501 temporarily_unavailable', async () => {
 test('pending-cap: oldest pending authz is evicted past the cap', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-cap-'));
   const store = createStateStore(dir);
-  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], name: 'Claude' });
+  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const handlers = createOAuthHandlers({
     store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle: createConsentThrottle(), pendingCap: 3,
   });
