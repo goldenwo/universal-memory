@@ -1091,8 +1091,8 @@ export function buildSpec() {
     },
     servers: [
       {
-        url: 'http://localhost:6335',
-        description: 'Local dev — default MEM0_MCP_PORT',
+        url: (process.env.UM_PUBLIC_BASE_URL ?? 'http://localhost:6335').replace(/\/+$/, ''),
+        description: 'universal-memory server (UM_PUBLIC_BASE_URL or localhost:6335)',
       },
     ],
     tags: [
@@ -1180,6 +1180,49 @@ function collectRefs(node, acc) {
       if (m) acc.add(m[1]);
     } else {
       collectRefs(v, acc);
+    }
+  }
+}
+
+/**
+ * ChatGPT Custom GPT Actions imposes a hard 300-char limit on every
+ * `description` string in an imported spec. Walk the trimmed document and
+ * replace known >300-char strings with curated short equivalents; any other
+ * string that still exceeds the limit is hard-truncated as a safety net.
+ *
+ * Only called inside `generateCustomGPTActionsSpec()` — the full spec is
+ * intentionally left untouched (full descriptions are valid OpenAPI 3.1).
+ */
+const GPT_DESCRIPTION_OVERRIDES = new Map([
+  // /api/search POST operation description — original 359 chars
+  [
+    'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
+    'POST body. Returns {results:[...]} compact by default; ?full=1 for full shape. Excludes superseded/deprecated/rejected and invalidated docs unless include_superseded=true. Optional filters.project/filters.type applied after recall.',
+  ],
+  // SearchRequest.properties.only_superseded description — original 358 chars
+  [
+    'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
+    'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
+  ],
+]);
+
+const GPT_DESCRIPTION_MAX = 300;
+
+function capDescriptions(node) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) capDescriptions(item);
+    return;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'description' && typeof v === 'string') {
+      if (GPT_DESCRIPTION_OVERRIDES.has(v)) {
+        node[k] = GPT_DESCRIPTION_OVERRIDES.get(v);
+      } else if (v.length > GPT_DESCRIPTION_MAX) {
+        node[k] = v.slice(0, GPT_DESCRIPTION_MAX - 1) + '…';
+      }
+    } else {
+      capDescriptions(v);
     }
   }
 }
@@ -1286,6 +1329,33 @@ export function generateCustomGPTActionsSpec() {
     paths,
     components: { schemas: trimmedSchemas },
   };
+
+  // Fix 1 (GPT-only): flatten DeleteRequest oneOf → type:object so ChatGPT's
+  // validator can parse the body schema. The full spec's oneOf is valid
+  // OpenAPI 3.1 — only the GPT path needs flattening.
+  if (trimmed.components.schemas.DeleteRequest) {
+    const dr = trimmed.components.schemas.DeleteRequest;
+    if (dr.oneOf && !dr.type) {
+      // Union the properties of every oneOf variant into a single object schema.
+      // Neither variant's properties overlap (metadata vs id), so a simple merge
+      // is safe. Shared required fields are intentionally omitted — both variants
+      // require exactly one of the two keys, not both at once.
+      const mergedProperties = {};
+      for (const variant of dr.oneOf) {
+        if (variant.properties) {
+          Object.assign(mergedProperties, variant.properties);
+        }
+      }
+      delete dr.oneOf;
+      dr.type = 'object';
+      dr.properties = mergedProperties;
+    }
+  }
+
+  // Fix 2 (GPT-only): cap every description to ≤300 chars (ChatGPT hard limit).
+  // Known offenders get curated rewrites via GPT_DESCRIPTION_OVERRIDES; any
+  // other over-limit string is hard-truncated as a safety net.
+  capDescriptions(trimmed);
 
   const yaml = YAML.stringify(trimmed);
   return yaml.endsWith('\n') ? yaml : yaml + '\n';

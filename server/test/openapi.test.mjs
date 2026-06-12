@@ -193,3 +193,113 @@ test('custom GPT actions spec includes only the 7 trimmed routes with operationI
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// 5. Phase-0 defect fixes (Gap-3 OAuth PR-1)
+// ---------------------------------------------------------------------------
+
+// 5a. servers[0].url derives from UM_PUBLIC_BASE_URL (full spec)
+test('full spec servers[0].url uses UM_PUBLIC_BASE_URL when set', () => {
+  const saved = process.env.UM_PUBLIC_BASE_URL;
+
+  // With env set — trailing slash stripped
+  process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net/';
+  const yamlWithSlash = generateOpenAPISpec();
+  const parsedWithSlash = YAML.parse(yamlWithSlash);
+  assert.equal(
+    parsedWithSlash.servers[0].url,
+    'https://um.example.ts.net',
+    'trailing slash must be stripped from UM_PUBLIC_BASE_URL'
+  );
+
+  // Without trailing slash
+  process.env.UM_PUBLIC_BASE_URL = 'https://um.example.ts.net';
+  const yamlNoSlash = generateOpenAPISpec();
+  const parsedNoSlash = YAML.parse(yamlNoSlash);
+  assert.equal(
+    parsedNoSlash.servers[0].url,
+    'https://um.example.ts.net',
+    'servers[0].url must equal UM_PUBLIC_BASE_URL'
+  );
+
+  // Without env set — must fall back to localhost
+  delete process.env.UM_PUBLIC_BASE_URL;
+  const yamlFallback = generateOpenAPISpec();
+  const parsedFallback = YAML.parse(yamlFallback);
+  assert.equal(
+    parsedFallback.servers[0].url,
+    'http://localhost:6335',
+    'servers[0].url must fall back to localhost when UM_PUBLIC_BASE_URL is unset'
+  );
+
+  // Restore
+  if (saved !== undefined) process.env.UM_PUBLIC_BASE_URL = saved;
+  else delete process.env.UM_PUBLIC_BASE_URL;
+});
+
+// 5b. GPT spec: NO description string exceeds 300 chars (ChatGPT hard limit)
+test('custom GPT actions spec: all description strings are ≤300 chars', () => {
+  const yamlText = generateCustomGPTActionsSpec();
+  const parsed = YAML.parse(yamlText);
+
+  const violations = [];
+  function walkDescriptions(obj, path) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      obj.forEach((v, i) => walkDescriptions(v, `${path}[${i}]`));
+      return;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === 'description' && typeof v === 'string' && v.length > 300) {
+        violations.push({ path: `${path}.${k}`, length: v.length, excerpt: v.slice(0, 60) });
+      }
+      walkDescriptions(v, `${path}.${k}`);
+    }
+  }
+  walkDescriptions(parsed, 'gpt');
+
+  assert.deepEqual(
+    violations,
+    [],
+    `GPT spec has description(s) exceeding 300 chars:\n${violations.map(v => `  ${v.path} (${v.length}): "${v.excerpt}..."`).join('\n')}`
+  );
+});
+
+// 5c. GPT spec delete operation body schema has type:'object' (no bare oneOf)
+test('custom GPT actions spec: delete body schema has top-level type:object', () => {
+  const yamlText = generateCustomGPTActionsSpec();
+  const parsed = YAML.parse(yamlText);
+
+  // Resolve inline — the body may use $ref to DeleteRequest or be inlined
+  const deletePost = parsed.paths['/api/delete']?.post;
+  assert.ok(deletePost, '/api/delete POST must exist in trimmed spec');
+
+  let bodySchema = deletePost.requestBody?.content?.['application/json']?.schema;
+  assert.ok(bodySchema, 'delete POST must have a requestBody application/json schema');
+
+  // If it's a $ref, resolve it from components
+  if (bodySchema.$ref) {
+    const refName = bodySchema.$ref.replace('#/components/schemas/', '');
+    bodySchema = parsed.components?.schemas?.[refName];
+    assert.ok(bodySchema, `$ref schema '${refName}' must exist in trimmed components`);
+  }
+
+  assert.equal(
+    bodySchema.type,
+    'object',
+    'delete body schema must have top-level type:"object" (not a bare oneOf) for ChatGPT validator'
+  );
+  assert.ok(
+    bodySchema.properties && typeof bodySchema.properties === 'object',
+    'delete body schema must have a properties object'
+  );
+  // Union of both variants: metadata (from DeleteByMetadataId) + id (from DeleteByUuid)
+  assert.ok(
+    'metadata' in bodySchema.properties,
+    'delete body schema properties must include "metadata" (from DeleteByMetadataId variant)'
+  );
+  assert.ok(
+    'id' in bodySchema.properties,
+    'delete body schema properties must include "id" (from DeleteByUuid variant)'
+  );
+});
