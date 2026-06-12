@@ -76,8 +76,14 @@ printf '%s\n' "INF +------------------------------------------------------------
 printf '%s\n' "INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):   |" >&2
 printf '%s\n' "INF |  ${url}                                                                                     |" >&2
 printf '%s\n' "INF +--------------------------------------------------------------------------------------------+" >&2
-# Block until killed
-exec cat >/dev/null
+# Stay alive long enough for um-tunnel's liveness check + URL extraction,
+# then exit so its trailing 'wait \$TUNNEL_PID' returns and the test ends.
+# NOT 'exec cat >/dev/null': under CI a step's stdin is /dev/null, so cat
+# EOFs and exits within milliseconds — losing the race against the
+# kill -0 liveness check in um-tunnel's extraction loop (the 2026-06-12
+# macos-latest CI failure; passes locally only because a TTY stdin keeps
+# cat blocked).
+exec sleep 5
 STUB
   chmod +x "$bindir/cloudflared"
 }
@@ -96,7 +102,8 @@ if [ -n "${calls_file}" ]; then
   printf 'tailscale %s\n' "\$*" >> "${calls_file}"
 fi
 printf 'Available on the internet:\n\n${url}\n' >&2
-exec cat >/dev/null
+# Deterministic lifetime, not stdin-dependent — see the cloudflared stub note.
+exec sleep 5
 STUB
   chmod +x "$bindir/tailscale"
 }
