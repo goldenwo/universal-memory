@@ -25,7 +25,7 @@ import {
   umInbandSupersedeTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 15 named metrics', () => {
+test('registry exposes exactly 16 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_dedup_check_duration_seconds',  // D1 §9
@@ -39,6 +39,7 @@ test('registry exposes exactly 15 named metrics', () => {
     'um_mcp_auth_branch_total',         // Gap-3 OAuth (legacy|oauth branch)
     'um_mcp_tool_calls_total',
     'um_mem0_ops_total',
+    'um_oauth_registrations_total',     // Gap-3 OAuth PR-3 (RFC 7591 DCR outcomes)
     'um_provider_cost_usd_total',
     'um_provider_errors_total',
     'um_provider_request_duration_seconds',

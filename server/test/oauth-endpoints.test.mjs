@@ -741,13 +741,12 @@ test('consent: valid consent cookie authorizes without operator_token', async ()
 // Stubs (PR 3 / PR 5)
 // =========================================================================
 
-test('register/revoke stubs → 501 temporarily_unavailable', async () => {
+// revoke is still a stub (PR 5 fills it). register is now implemented (PR 3) —
+// its full behaviour is covered in oauth-dcr.test.mjs.
+test('revoke stub → 501 temporarily_unavailable', async () => {
   const rig = makeRig();
   const port = await listen(rig.server);
   try {
-    const reg = await req(port, { method: 'POST', path: '/oauth/register', headers: { 'content-type': 'application/json' }, body: '{}' });
-    assert.equal(reg.status, 501);
-    assert.equal(JSON.parse(reg.body).error, 'temporarily_unavailable');
     const rev = await req(port, { method: 'POST', path: '/oauth/revoke', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
     assert.equal(rev.status, 501);
     assert.equal(JSON.parse(rev.body).error, 'temporarily_unavailable');

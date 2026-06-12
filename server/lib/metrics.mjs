@@ -108,6 +108,19 @@ export const umMcpAuthBranchTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Gap-3 OAuth: RFC 7591 Dynamic Client Registration outcomes (spec §4.1 register
+// row, §6 item 1). `outcome` ∈ {'accepted','rejected_redirect','rejected_metadata',
+// 'rejected_limit'} — fixed enum, never user input (bounded cardinality). Lets ops
+// confirm DCR is being exercised and watch the rejection mix (a spike in
+// rejected_redirect = a vendor probing off-allowlist callbacks; rejected_limit =
+// the registration cap is being hit and prune isn't keeping up).
+export const umOauthRegistrationsTotal = new promClient.Counter({
+  name: 'um_oauth_registrations_total',
+  help: 'RFC 7591 DCR outcomes (Gap-3): accepted|rejected_redirect|rejected_metadata|rejected_limit',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
 export const lockContentionsTotal = new promClient.Counter({
   name: 'um_lock_contentions_total',
   help: 'Lock contention events by lock-path',

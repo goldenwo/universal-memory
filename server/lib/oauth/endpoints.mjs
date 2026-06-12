@@ -30,9 +30,15 @@ import {
   mintCsrf, verifyCsrf, renderConsentPage,
   signConsentCookie, verifyConsentCookie, consentCookieHeader,
 } from './consent.mjs';
+import { isAllowedRegistrationRedirect } from './redirects.mjs';
 import { compareTokens } from '../auth.mjs';
 
 const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
+
+// RFC 7591 DCR limits.
+const MAX_CLIENT_NAME = 120;        // display-only; TRUNCATE rather than reject
+const MAX_REGISTERED_CLIENTS = 100; // store-wide cap (prune runs before rejecting)
+const ALLOWED_GRANT_TYPES = new Set(['authorization_code', 'refresh_token']);
 
 // ---- thin response/body helpers ------------------------------------------
 
@@ -83,6 +89,32 @@ function readForm(req) {
   });
 }
 
+// Collect a JSON body, capped at MAX_FORM_BYTES, and parse it. Mirrors readForm's
+// drain-don't-destroy discipline so an over-cap or malformed body still yields a
+// clean 400 rather than a connection reset. Resolves { value } on a parsed JSON
+// value, { tooLarge: true } if the cap tripped, or { invalid: true } if the body
+// is empty or not parseable JSON. The DCR handler narrows `value` to an object.
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0, tooLarge = false, settled = false;
+    req.on('data', (c) => {
+      if (tooLarge) return;
+      size += c.length;
+      if (size > MAX_FORM_BYTES) { tooLarge = true; chunks.length = 0; return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (settled) return; settled = true;
+      if (tooLarge) return resolve({ tooLarge: true });
+      const text = Buffer.concat(chunks).toString('utf8');
+      try { resolve({ value: JSON.parse(text) }); }
+      catch { resolve({ invalid: true }); }
+    });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
+  });
+}
+
 // Host of a redirect URI for the consent page's prominent display; falls back
 // to the raw string if it is somehow unparseable (it is allowlist-validated
 // upstream, so this is belt-and-suspenders).
@@ -119,7 +151,7 @@ function wantsJsonDelivery(req) {
   return false;
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500 }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {} }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -189,8 +221,13 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     }
 
     const { granted, offlineAccess } = negotiateScopes(scope);
+    // Refresh is issued when offline_access was negotiated OR the client registered
+    // the refresh_token grant (spec §4.2). DCR clients carry grant_types; seeded
+    // manual clients have none (→ unchanged, scope-only behaviour).
+    const grantRefresh = (client.grant_types ?? []).includes('refresh_token');
     const authzId = putPending({
-      clientId, redirectUri, codeChallenge, resource, scope: granted, offlineAccess, state,
+      clientId, redirectUri, codeChallenge, resource, scope: granted,
+      offlineAccess: offlineAccess || grantRefresh, state,
       exp: now() + OAUTH_TTLS.pendingAuthzMs,
     });
 
@@ -366,9 +403,79 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return tokenResponse(res, out, out.scope ?? []);
   }
 
-  // ---- stubs (filled in later PRs) ---------------------------------------
-  // PR 3 fills handleRegister (RFC 7591 DCR); PR 5 fills handleRevoke.
-  function handleRegister(req, res) { return sendJson(res, 501, { error: 'temporarily_unavailable' }); }
+  // ---- POST /oauth/register (RFC 7591 DCR) -------------------------------
+  // Public, own rate limit (applied by the dispatcher). Validates client
+  // metadata, enforces the registration-time redirect allowlist (NOTHING is
+  // stored on any rejection), caps the store at MAX_REGISTERED_CLIENTS (pruning
+  // stale never-used DCR clients first), and on success persists a public
+  // (token_endpoint_auth_method:'none') client with a umcl_ id. Metric outcomes
+  // flow out through the injected onRegistration callback so this module stays
+  // metrics-free like its siblings (the dispatcher owns the prom-client inc).
+  async function handleRegister(req, res) {
+    const reject = (outcome, error, error_description) => {
+      onRegistration(outcome);
+      return sendJson(res, 400, error_description ? { error, error_description } : { error });
+    };
+
+    const { value, tooLarge, invalid } = await readJson(req);
+    // Body must be a JSON object. Non-JSON / over-cap / array / null → metadata error.
+    if (tooLarge || invalid || typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return reject('rejected_metadata', 'invalid_client_metadata', 'body must be a JSON object');
+    }
+
+    // redirect_uris: required, non-empty array; EVERY entry allowlisted.
+    const redirectUris = value.redirect_uris;
+    if (!Array.isArray(redirectUris) || redirectUris.length === 0
+      || !redirectUris.every((u) => typeof u === 'string' && isAllowedRegistrationRedirect(u))) {
+      return reject('rejected_redirect', 'invalid_redirect_uri', 'one or more redirect_uris are not permitted');
+    }
+
+    // token_endpoint_auth_method: absent or 'none' only (public clients).
+    const authMethod = value.token_endpoint_auth_method;
+    if (authMethod !== undefined && authMethod !== 'none') {
+      return reject('rejected_metadata', 'invalid_client_metadata', 'only token_endpoint_auth_method "none" is supported');
+    }
+
+    // grant_types: optional; if present must subset ['authorization_code','refresh_token'].
+    let grantTypes = ['authorization_code'];
+    if (value.grant_types !== undefined) {
+      if (!Array.isArray(value.grant_types) || value.grant_types.length === 0
+        || !value.grant_types.every((g) => ALLOWED_GRANT_TYPES.has(g))) {
+        return reject('rejected_metadata', 'invalid_client_metadata', 'unsupported grant_types');
+      }
+      grantTypes = value.grant_types;
+    }
+
+    // client_name: optional; TRUNCATE (display-only, HTML-escaped at render).
+    const clientName = typeof value.client_name === 'string' && value.client_name.length > 0
+      ? value.client_name.slice(0, MAX_CLIENT_NAME)
+      : '(unnamed client)';
+
+    // Registration cap: prune stale never-used DCR clients, then re-check.
+    if (store.countClients() >= MAX_REGISTERED_CLIENTS) {
+      store.prune();
+      if (store.countClients() >= MAX_REGISTERED_CLIENTS) {
+        return reject('rejected_limit', 'invalid_client_metadata', 'registration limit reached');
+      }
+    }
+
+    const clientId = 'umcl_' + randomBytes(32).toString('base64url');
+    const t = now();
+    store.putClient({
+      client_id: clientId, client_name: clientName, redirect_uris: redirectUris,
+      grant_types: grantTypes, created: t, lastUsed: t, source: 'dcr',
+    });
+    onRegistration('accepted');
+    return sendJson(res, 201, {
+      client_id: clientId,
+      client_name: clientName,
+      redirect_uris: redirectUris,
+      grant_types: grantTypes,
+      token_endpoint_auth_method: 'none',
+    });
+  }
+
+  // ---- stub (filled in PR 5) ---------------------------------------------
   function handleRevoke(req, res) { return sendJson(res, 501, { error: 'temporarily_unavailable' }); }
 
   return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke };
