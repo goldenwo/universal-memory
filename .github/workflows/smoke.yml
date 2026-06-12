@@ -377,6 +377,11 @@ jobs:
       # shape, 401 warn-only/loud-fail asymmetry, sync semantics). Stub HTTP
       # server via python3 (already on both ubuntu and macos runners).
       - run: bash plugins/claude-code/universal-memory/skills/create-adr/create-adr.test.sh
+      # um-tunnel.test.sh covers the tunnel-onboarding CLI (URL extraction,
+      # trailing-slash join normalization, three-tier write-mode detection
+      # via stubbed curl/cloudflared/tailscale). Was shellchecked but never
+      # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
+      - run: bash plugins/claude-code/universal-memory/bin/um-tunnel.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |

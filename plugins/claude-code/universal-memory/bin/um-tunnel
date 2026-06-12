@@ -7,7 +7,9 @@
 #   - The MCP connector URL (${URL}/mcp)
 #   - The OpenAPI spec URL (${URL}/openapi.yaml)
 #   - The routing rubric body (paste into MCP client custom instructions)
-#   - A contextual security warning based on UM_MCP_WRITE_ENABLED
+#   - A contextual security warning based on the server's write-mode
+#     (live-detected via tools/list; falls back to server/.env, then this
+#     shell's UM_MCP_WRITE_ENABLED)
 #
 # The tunnel subprocess stays alive until Ctrl+C. On SIGINT/SIGTERM/EXIT,
 # the tunnel subprocess is killed cleanly.
@@ -21,7 +23,11 @@
 #   UM_PORT                  Local port to forward (default: 6335)
 #   UM_TUNNEL_CLI            Force CLI: cloudflared | tailscale | ngrok
 #   UM_TUNNEL_LOG            Log path (default: /tmp/um-tunnel-output.log)
-#   UM_MCP_WRITE_ENABLED     If "true", prints a security warning
+#   UM_MCP_WRITE_ENABLED     Last-resort write-mode signal when neither the
+#                            live server nor server/.env answers
+#   UM_SERVER_ENV_FILE       Override path to server/.env for write-mode
+#                            detection (default: repo-checkout layout)
+#   UM_AUTH_TOKEN            Bearer token passed to the live-server probe
 #   UM_TUNNEL_DRY_RUN        If "1", skip the blocking wait (for tests)
 #
 # See docs/um-tunnel.md for the full guide.
@@ -144,6 +150,11 @@ if [ -z "$URL" ]; then
   exit 1
 fi
 
+# Tailscale funnel prints its URL with a trailing slash (and the extraction
+# regex keeps it). Strip trailing slashes so the joins below never produce
+# a doubled '...//mcp'.
+while [ "${URL%/}" != "$URL" ]; do URL="${URL%/}"; done
+
 # ---------------------------------------------------------------------------
 # Resolve the rubric file. Two layouts:
 #   1. Repo checkout: bin/ → docs/ is 4 parents up.
@@ -197,9 +208,65 @@ $RUBRIC_BODY
 PANEL
 
 # ---------------------------------------------------------------------------
+# Write-mode detection — the banner must reflect the RUNNING server, not this
+# shell's environment (this shell can say =false while the container serves
+# all 11 tools). Precedence:
+#   1. Live server: tools/list against localhost:$PORT/mcp — a write tool
+#      (memory_capture) in the response means writes are ON. Loopback
+#      requests bypass bearer auth, but pass UM_AUTH_TOKEN anyway when set.
+#   2. server/.env (repo-checkout layout; override via UM_SERVER_ENV_FILE).
+#   3. This shell's UM_MCP_WRITE_ENABLED (legacy fallback).
+# ---------------------------------------------------------------------------
+SERVER_ENV_FILE="${UM_SERVER_ENV_FILE:-$SCRIPT_DIR/../../../../server/.env}"
+
+detect_write_mode() {
+  if command -v curl >/dev/null 2>&1; then
+    local resp
+    local auth_args=()
+    if [ -n "${UM_AUTH_TOKEN:-}" ]; then
+      auth_args=(-H "Authorization: Bearer $UM_AUTH_TOKEN")
+    fi
+    resp=$(curl -sf -m 3 -X POST "http://localhost:$PORT/mcp" \
+      -H 'Content-Type: application/json' \
+      ${auth_args[@]+"${auth_args[@]}"} \
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+      2>/dev/null) || resp=""
+    if printf '%s' "$resp" | grep -q '"tools"'; then
+      if printf '%s' "$resp" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"memory_capture"'; then
+        printf 'true live-server'
+      else
+        printf 'false live-server'
+      fi
+      return
+    fi
+  fi
+  if [ -f "$SERVER_ENV_FILE" ]; then
+    local v
+    v=$(sed -n 's/^[[:space:]]*UM_MCP_WRITE_ENABLED=//p' "$SERVER_ENV_FILE" \
+        | tail -1 | tr -d '"'\''[:space:]')
+    if [ -n "$v" ]; then
+      case "$v" in
+        true|1) printf 'true env-file' ;;
+        *)      printf 'false env-file' ;;
+      esac
+      return
+    fi
+  fi
+  case "${UM_MCP_WRITE_ENABLED:-false}" in
+    true|1) printf 'true shell-env' ;;
+    *)      printf 'false shell-env' ;;
+  esac
+}
+
+WRITE_MODE=$(detect_write_mode)
+WRITE_ENABLED="${WRITE_MODE%% *}"
+WRITE_SOURCE="${WRITE_MODE#* }"
+printf '[um-tunnel] Write-mode: %s (source: %s)\n' "$WRITE_ENABLED" "$WRITE_SOURCE" >&2
+
+# ---------------------------------------------------------------------------
 # Contextual security warning
 # ---------------------------------------------------------------------------
-if [ "${UM_MCP_WRITE_ENABLED:-false}" = "true" ]; then
+if [ "$WRITE_ENABLED" = "true" ]; then
   cat <<'WARN'
 --------------------------------------------------------------------------------
   ⚠️  SECURITY WARNING — UM_MCP_WRITE_ENABLED=true + public tunnel
