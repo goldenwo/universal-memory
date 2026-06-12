@@ -27,14 +27,14 @@
 
 2. **Tunnel start.** It launches the CLI forwarding to `http://localhost:${UM_PORT:-6335}` and merges the CLI's stdout + stderr into a log file (`${UM_TUNNEL_LOG:-/tmp/um-tunnel-output.log}`).
 
-3. **URL extraction.** It polls the log (every 0.5s, up to 10s) for a public HTTPS URL matching the expected pattern (`trycloudflare.com`, `ts.net`, or `ngrok-*.app`/`ngrok-*.io`). If it can't find one, it prints an error and the log path so you can debug.
+3. **URL extraction.** It polls the log (every 0.5s, up to 10s) for a public HTTPS URL matching the expected pattern (`trycloudflare.com`, `ts.net`, or `ngrok-*.app`/`ngrok-*.io`). If it can't find one, it prints an error and the log path so you can debug. Trailing slashes are stripped (Tailscale Funnel prints its URL with one) so the `/mcp` join below never doubles the slash.
 
 4. **Panel print-out.** It prints:
    - The base public URL
    - The MCP connector URL (`$URL/mcp`) — paste this into ChatGPT Desktop / Claude.ai "Add connector"
    - The OpenAPI spec URL (`$URL/openapi.yaml`) — for Custom GPT Actions
    - The routing rubric body (resolved from `docs/memory-routing-rubric.md`) — paste this into the MCP client's custom instructions
-   - A contextual security note based on whether `UM_MCP_WRITE_ENABLED=true`
+   - A contextual security note based on the **running server's** write-mode, detected in precedence order: (1) a live `tools/list` probe against `localhost:$UM_PORT/mcp` (a write tool in the response means writes are ON), (2) `server/.env` (path overridable via `UM_SERVER_ENV_FILE`), (3) this shell's `UM_MCP_WRITE_ENABLED` as a last resort. The probe means the banner reflects what the container actually serves, not a possibly-stale shell variable; the chosen source is logged to stderr as `[um-tunnel] Write-mode: <true|false> (source: <tier>)`.
 
 5. **Block until Ctrl+C.** The tunnel subprocess stays alive. When you Ctrl+C, `um-tunnel` cleanly kills the tunnel via its SIGINT/SIGTERM/EXIT trap.
 
@@ -91,7 +91,7 @@ Loopback requests with **no** forwarded-headers (e.g. direct `curl http://localh
   - Cloudflare Access (works natively with `cloudflared`)
   - Tailscale ACL (use `tailscale serve` instead of `funnel` when you only need tailnet-internal reach; ACLs restrict per-device)
   - ngrok basic-auth (`ngrok http 6335 --basic-auth=user:pass`) or ngrok OAuth
-- **`um-tunnel` prints a prominent warning whenever `UM_MCP_WRITE_ENABLED=true`.** Heed it.
+- **`um-tunnel` prints a prominent warning whenever the running server has writes enabled** (live-detected via `tools/list`, falling back to `server/.env`, then the shell env). Heed it.
 
 Cross-reference: [`docs/mcp-tools.md` §Security](mcp-tools.md#security--mcp-write-tools-expose-the-vault-over-http) has the full exposure model, including the recommended localhost-bind (`MEM0_MCP_PORT=127.0.0.1:6335`) for single-machine use.
 
