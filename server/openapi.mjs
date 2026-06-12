@@ -1409,7 +1409,8 @@ export function generateCustomGPTActionsSpec() {
 
   // Fix 2 (GPT-only): cap every description to ≤300 chars (ChatGPT hard limit).
   // Known offenders get curated rewrites via GPT_DESCRIPTION_OVERRIDES; any
-  // other over-limit string is hard-truncated as a safety net.
+  // other over-limit string THROWS (fail-loud — never silently truncated, so
+  // the ≤300 walker test stays a real gate).
   capDescriptions(trimmed);
 
   const yaml = YAML.stringify(trimmed);
