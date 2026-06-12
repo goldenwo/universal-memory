@@ -33,7 +33,7 @@ function pkcePair() {
 }
 
 // ---- one disposable store + handlers + server per test --------------------
-function makeRig({ now } = {}) {
+function makeRig({ now, cimdResolver } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
@@ -41,7 +41,7 @@ function makeRig({ now } = {}) {
   store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const throttle = createConsentThrottle();
   const handlers = createOAuthHandlers({
-    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn,
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver,
   });
   const verifier = createOAuthVerifier(store, BASE_URL, { now: nowFn });
 
@@ -734,6 +734,96 @@ test('consent: valid consent cookie authorizes without operator_token', async ()
     });
     assert.equal(consentRes.status, 303, consentRes.body);
     assert.ok(new URL(consentRes.headers.location).searchParams.get('code'));
+  } finally { await close(rig.server); }
+});
+
+// =========================================================================
+// CIMD authorize path (PR 4) — a URL-shaped client_id is resolved through the
+// injected cimdResolver instead of the store. Full authorize→consent→token
+// flow with a stub resolver; resolution failure → 400 invalid_client; a URL
+// client_id with NO resolver configured → 400 (not a crash).
+// =========================================================================
+
+const CIMD_CLIENT = 'https://chatgpt.com/oauth/abc/client.json';
+const CHATGPT_REDIRECT = 'https://chatgpt.com/connector/oauth/abc123';
+
+// A stub resolver returning a CIMD client record (the cimd.mjs shape).
+function stubCimdResolver(record) {
+  return async (clientId) => (clientId === CIMD_CLIENT ? record : null);
+}
+
+function cimdAuthorizeQuery(challenge, extra = {}) {
+  const q = new URLSearchParams({
+    response_type: 'code', client_id: CIMD_CLIENT, redirect_uri: CHATGPT_REDIRECT,
+    code_challenge_method: 'S256', code_challenge: challenge, ...extra,
+  });
+  return q.toString();
+}
+
+test('CIMD: full authorize→consent→token flow with a stub resolver', async () => {
+  const rig = makeRig({
+    cimdResolver: stubCimdResolver({
+      client_id: CIMD_CLIENT, client_name: 'ChatGPT',
+      redirect_uris: [CHATGPT_REDIRECT], grant_types: ['authorization_code'], source: 'cimd',
+    }),
+  });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const authzRes = await req(port, {
+      path: `/oauth/authorize?${cimdAuthorizeQuery(pkce.challenge)}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+    });
+    assert.equal(authzRes.status, 200, authzRes.body);
+    assert.match(authzRes.body, /ChatGPT/); // CIMD doc's client_name rendered
+    const { authzId, csrf } = parseConsentForm(authzRes.body);
+
+    const consentRes = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(consentRes.status, 303, consentRes.body);
+    const loc = new URL(consentRes.headers.location);
+    assert.ok(loc.toString().startsWith(CHATGPT_REDIRECT));
+    const code = loc.searchParams.get('code');
+    assert.ok(code);
+
+    // Token exchange with the SAME URL-shaped client_id string.
+    const tok = await exchangeCode(port, {
+      code, verifier: pkce.verifier, redirect_uri: CHATGPT_REDIRECT, client_id: CIMD_CLIENT,
+    });
+    assert.equal(tok.status, 200, tok.body);
+    const body = JSON.parse(tok.body);
+    assert.ok(body.access_token.startsWith('umat_'));
+  } finally { await close(rig.server); }
+});
+
+test('CIMD: resolver returns null → 400 invalid_client', async () => {
+  const rig = makeRig({ cimdResolver: async () => null });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const res = await req(port, {
+      path: `/oauth/authorize?${cimdAuthorizeQuery(pkce.challenge)}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+    });
+    assert.equal(res.status, 400);
+    assert.equal(JSON.parse(res.body).error, 'invalid_client');
+  } finally { await close(rig.server); }
+});
+
+test('CIMD: URL-shaped client_id with NO resolver configured → 400 invalid_client (no crash)', async () => {
+  const rig = makeRig(); // no cimdResolver
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const res = await req(port, {
+      path: `/oauth/authorize?${cimdAuthorizeQuery(pkce.challenge)}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+    });
+    assert.equal(res.status, 400);
+    assert.equal(JSON.parse(res.body).error, 'invalid_client');
   } finally { await close(rig.server); }
 });
 

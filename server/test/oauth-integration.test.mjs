@@ -231,6 +231,45 @@ test('OAuth integration: UM_OAUTH_SEED_CLIENT seeds a manual client at construct
   }
 });
 
+// --------------------------------------------------------------------------
+// CIMD (PR 4) — a URL-shaped client_id is resolved through a stub cimdResolver
+// wired into the handlers, driven over HTTP through the LIVE server. Asserts
+// the consent page renders the CIMD document's client_name.
+// --------------------------------------------------------------------------
+
+test('OAuth integration: CIMD URL client_id renders the document client_name', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-cimd-'));
+  const store = createStateStore(dir);
+  const cimdUrl = 'https://chatgpt.com/oauth/abc/client.json';
+  const cimdRedirect = 'https://chatgpt.com/connector/oauth/abc123';
+  const cimdResolver = async (clientId) => (clientId === cimdUrl ? {
+    client_id: cimdUrl, client_name: 'ChatGPT Connector',
+    redirect_uris: [cimdRedirect], grant_types: ['authorization_code'], source: 'cimd',
+  } : null);
+  const handlers = createOAuthHandlers({
+    store, baseUrl: BASE, operatorToken: OPERATOR, throttle: createConsentThrottle(), cimdResolver,
+  });
+  const verify = createOAuthVerifier(store, BASE);
+  const { url, close } = await startServer({ oauth: { store, handlers, verify } });
+  try {
+    const { challenge } = pkcePair();
+    const q = new URLSearchParams({
+      response_type: 'code', client_id: cimdUrl, redirect_uri: cimdRedirect,
+      code_challenge: challenge, code_challenge_method: 'S256', scope: 'vault',
+    }).toString();
+    const res = await rawGet(url(`/oauth/authorize?${q}`), {
+      ...FWD, 'Accept': 'text/html', 'Sec-Fetch-Mode': 'navigate',
+    });
+    assert.equal(res.status, 200, res.body);
+    assert.match(res.body, /ChatGPT Connector/, 'consent page must render the CIMD doc client_name');
+    const { authzId, csrf } = parseConsentForm(res.body);
+    assert.ok(authzId && csrf, 'consent page must carry authz_id + csrf');
+  } finally {
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('OAuth integration: wrong method on /oauth/token → 405', async () => {
   const { dir, oauth } = makeOAuthCtx();
   const { url, close } = await startServer({ oauth });

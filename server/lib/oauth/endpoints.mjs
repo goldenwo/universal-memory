@@ -151,7 +151,14 @@ function wantsJsonDelivery(req) {
   return false;
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {} }) {
+// A client_id is a CIMD candidate when it parses as an https URL (spec §3 Q5).
+// Non-URL ids (DCR umcl_, seeded manual) keep the store path; the resolver
+// itself re-validates the allowlist, so this is only a cheap routing predicate.
+function isHttpsUrl(s) {
+  try { return new URL(s).protocol === 'https:'; } catch { return false; }
+}
+
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, cimdResolver = null }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -187,7 +194,9 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   }
 
   // ---- GET /oauth/authorize ----------------------------------------------
-  function handleAuthorize(req, res) {
+  // async because the CIMD branch awaits an out-of-process metadata fetch
+  // (spec §3 Q5 / PR-4). The dispatcher already awaits handler calls.
+  async function handleAuthorize(req, res) {
     const url = new URL(req.url, base);
     const q = url.searchParams;
     const responseType = q.get('response_type');
@@ -200,7 +209,18 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     const resourceParam = q.get('resource');
 
     // Client + redirect validation FIRST — never 3xx to an unvalidated URI.
-    const client = clientId ? store.getClient(clientId) : undefined;
+    // A URL-shaped client_id is a CIMD client (spec §3 Q5 / PR-4): resolve it
+    // out-of-band (allowlist-first, SSRF-guarded) instead of the store. A null
+    // resolution — off-allowlist, fetch failure, bad doc — maps to the SAME
+    // invalid_client path (retriable by the vendor; never a silent fallback to
+    // the store). A URL client_id with NO resolver configured (CIMD off) also
+    // lands here as invalid_client, never a crash.
+    let client;
+    if (clientId && isHttpsUrl(clientId)) {
+      client = cimdResolver ? await cimdResolver(clientId) : null;
+    } else {
+      client = clientId ? store.getClient(clientId) : undefined;
+    }
     if (!client) return sendJson(res, 400, { error: 'invalid_client', error_description: 'unknown client_id' });
     const storedUris = client.redirect_uris ?? [];
     if (!redirectUri || !storedUris.some((u) => redirectMatches(u, redirectUri))) {
@@ -225,8 +245,12 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     // the refresh_token grant (spec §4.2). DCR clients carry grant_types; seeded
     // manual clients have none (→ unchanged, scope-only behaviour).
     const grantRefresh = (client.grant_types ?? []).includes('refresh_token');
+    // Carry the resolved display name in the pending record so the wrong-token
+    // re-render can show it even for CIMD clients (which are NOT in the store —
+    // a store.getClient(clientId) on retry would return undefined).
+    const clientName = client.client_name ?? clientId;
     const authzId = putPending({
-      clientId, redirectUri, codeChallenge, resource, scope: granted,
+      clientId, clientName, redirectUri, codeChallenge, resource, scope: granted,
       offlineAccess: offlineAccess || grantRefresh, state,
       exp: now() + OAUTH_TTLS.pendingAuthzMs,
     });
@@ -240,7 +264,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     const hasCookie = verifyConsentCookie(store.getHmacKey(), readCookie(req, 'um_consent'), now());
     const html = renderConsentPage({
-      clientName: client.client_name ?? clientId,
+      clientName,
       redirectHost: hostOf(redirectUri),
       authzId,
       csrf: mintCsrf(store.getHmacKey(), authzId),
@@ -295,7 +319,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       throttle.fail(now());
       const retryId = putPending({ ...rec });
       const rerendered = renderConsentPage({
-        clientName: store.getClient(rec.clientId)?.client_name ?? rec.clientId,
+        clientName: rec.clientName ?? rec.clientId,
         redirectHost: hostOf(rec.redirectUri),
         authzId: retryId,
         csrf: mintCsrf(store.getHmacKey(), retryId),
