@@ -44,6 +44,12 @@ assert_contains() {
   else fail "$name (expected to contain '$needle', got: '${haystack:0:400}')"; fi
 }
 
+assert_not_contains() {
+  local name="$1" haystack="$2" needle="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then pass "$name"
+  else fail "$name (expected NOT to contain '$needle')"; fi
+}
+
 # ---------------------------------------------------------------------------
 # Temp dir root + cleanup
 # ---------------------------------------------------------------------------
@@ -94,6 +100,31 @@ exec cat >/dev/null
 STUB
   chmod +x "$bindir/tailscale"
 }
+
+# ---------------------------------------------------------------------------
+# Helper: write a stub `curl` controlling the write-mode live probe.
+# With a body argument, prints that body (a fake tools/list response) and
+# exits 0; with an empty body, exits 7 (connection refused) so um-tunnel
+# falls through to the env-file / shell-env detection tiers.
+# ---------------------------------------------------------------------------
+write_stub_curl() {
+  local bindir="$1"
+  local body="${2:-}"
+  mkdir -p "$bindir"
+  if [ -n "$body" ]; then
+    cat > "$bindir/curl" <<STUB
+#!/usr/bin/env bash
+printf '%s' '${body}'
+STUB
+  else
+    printf '#!/usr/bin/env bash\nexit 7\n' > "$bindir/curl"
+  fi
+  chmod +x "$bindir/curl"
+}
+
+# Fake tools/list responses for the curl stub (server emits compact JSON).
+TOOLS_WRITE_ON='{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"memory_search"},{"name":"memory_capture"},{"name":"memory_add"}]}}'
+TOOLS_WRITE_OFF='{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"memory_search"},{"name":"memory_recent"}]}}'
 
 # ---------------------------------------------------------------------------
 # Helper: build a PATH string that only contains the stub bin and basic utils.
@@ -188,8 +219,11 @@ T4_DIR="$TMPDIR_ROOT/t4"
 T4_BIN="$T4_DIR/bin"
 T4_LOG="$T4_DIR/tunnel.log"
 write_stub_cloudflared "$T4_BIN"
+# Isolate the shell-env detection tier: live probe fails, no env file.
+write_stub_curl "$T4_BIN" ""
 
 T4_OUT=$(UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T4_LOG" UM_MCP_WRITE_ENABLED=true \
+  UM_SERVER_ENV_FILE="$T4_DIR/nonexistent.env" \
   PATH="$(stubbed_path "$T4_BIN")" bash "$BIN" 2>&1) || T4_EXIT=$?
 T4_EXIT=${T4_EXIT:-0}
 
@@ -207,9 +241,12 @@ T5_DIR="$TMPDIR_ROOT/t5"
 T5_BIN="$T5_DIR/bin"
 T5_LOG="$T5_DIR/tunnel.log"
 write_stub_cloudflared "$T5_BIN"
+# Isolate the shell-env detection tier: live probe fails, no env file.
+write_stub_curl "$T5_BIN" ""
 
 T5_OUT=$(env -u UM_MCP_WRITE_ENABLED \
   UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T5_LOG" \
+  UM_SERVER_ENV_FILE="$T5_DIR/nonexistent.env" \
   PATH="$(stubbed_path "$T5_BIN")" bash "$BIN" 2>&1) || T5_EXIT=$?
 T5_EXIT=${T5_EXIT:-0}
 
@@ -254,6 +291,99 @@ else
 fi
 # The tailscale stub prints a ts.net URL; confirm it made it into the panel.
 assert_contains "T6: output contains ts.net URL" "$T6_OUT" "ts.net"
+
+# ---------------------------------------------------------------------------
+# Test 7: trailing-slash URL (tailscale funnel idiom) → joins normalized,
+# no '//mcp' in the panel. Regression: https://host.ts.net//mcp (2026-06-11).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 7: trailing-slash URL is normalized before /mcp join ==="
+
+T7_DIR="$TMPDIR_ROOT/t7"
+T7_BIN="$T7_DIR/bin"
+T7_LOG="$T7_DIR/tunnel.log"
+write_stub_tailscale "$T7_BIN" "" "https://t7-device.stub-tailnet.ts.net/"
+write_stub_curl "$T7_BIN" ""
+
+T7_OUT=$(UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T7_LOG" UM_TUNNEL_CLI=tailscale \
+  UM_SERVER_ENV_FILE="$T7_DIR/nonexistent.env" \
+  PATH="$(stubbed_path "$T7_BIN")" bash "$BIN" 2>&1) || T7_EXIT=$?
+T7_EXIT=${T7_EXIT:-0}
+
+assert_eq           "T7: exit code 0"                       "$T7_EXIT" "0"
+assert_contains     "T7: connector URL joined with single slash" \
+  "$T7_OUT" "https://t7-device.stub-tailnet.ts.net/mcp"
+assert_not_contains "T7: no doubled slash before /mcp"      "$T7_OUT" "//mcp"
+assert_not_contains "T7: no doubled slash before /openapi"  "$T7_OUT" "//openapi.yaml"
+
+# ---------------------------------------------------------------------------
+# Test 8: live probe says writes ON → SECURITY WARNING even though this
+# shell's UM_MCP_WRITE_ENABLED is unset. Regression: banner reported the
+# shell env while the running container served all 11 tools (2026-06-11).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 8: live tools/list with write tool → WARNING (shell env unset) ==="
+
+T8_DIR="$TMPDIR_ROOT/t8"
+T8_BIN="$T8_DIR/bin"
+T8_LOG="$T8_DIR/tunnel.log"
+write_stub_cloudflared "$T8_BIN"
+write_stub_curl "$T8_BIN" "$TOOLS_WRITE_ON"
+
+T8_OUT=$(env -u UM_MCP_WRITE_ENABLED \
+  UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T8_LOG" \
+  PATH="$(stubbed_path "$T8_BIN")" bash "$BIN" 2>&1) || T8_EXIT=$?
+T8_EXIT=${T8_EXIT:-0}
+
+assert_eq       "T8: exit code 0"                          "$T8_EXIT" "0"
+assert_contains "T8: live write-mode wins → SECURITY WARNING" "$T8_OUT" "SECURITY WARNING"
+assert_contains "T8: detection source is live-server"      "$T8_OUT" "live-server"
+
+# ---------------------------------------------------------------------------
+# Test 9: live probe says writes OFF → writes-disabled note even though this
+# shell's UM_MCP_WRITE_ENABLED=true (the inverse staleness direction).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 9: live tools/list read-only → disabled note (shell env =true) ==="
+
+T9_DIR="$TMPDIR_ROOT/t9"
+T9_BIN="$T9_DIR/bin"
+T9_LOG="$T9_DIR/tunnel.log"
+write_stub_cloudflared "$T9_BIN"
+write_stub_curl "$T9_BIN" "$TOOLS_WRITE_OFF"
+
+T9_OUT=$(UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T9_LOG" UM_MCP_WRITE_ENABLED=true \
+  PATH="$(stubbed_path "$T9_BIN")" bash "$BIN" 2>&1) || T9_EXIT=$?
+T9_EXIT=${T9_EXIT:-0}
+
+assert_eq           "T9: exit code 0"                      "$T9_EXIT" "0"
+assert_not_contains "T9: no SECURITY WARNING"              "$T9_OUT" "SECURITY WARNING"
+assert_contains     "T9: writes-disabled note shown"       "$T9_OUT" "writes are disabled"
+
+# ---------------------------------------------------------------------------
+# Test 10: live probe fails → server/.env tier answers (UM_SERVER_ENV_FILE).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 10: probe fails → env-file fallback drives the banner ==="
+
+T10_DIR="$TMPDIR_ROOT/t10"
+T10_BIN="$T10_DIR/bin"
+T10_LOG="$T10_DIR/tunnel.log"
+write_stub_cloudflared "$T10_BIN"
+write_stub_curl "$T10_BIN" ""
+mkdir -p "$T10_DIR"
+printf 'UM_AUTH_TOKEN=stub\nUM_MCP_WRITE_ENABLED=true\nUM_MOUNT_MODE=rw\n' \
+  > "$T10_DIR/server.env"
+
+T10_OUT=$(env -u UM_MCP_WRITE_ENABLED \
+  UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T10_LOG" \
+  UM_SERVER_ENV_FILE="$T10_DIR/server.env" \
+  PATH="$(stubbed_path "$T10_BIN")" bash "$BIN" 2>&1) || T10_EXIT=$?
+T10_EXIT=${T10_EXIT:-0}
+
+assert_eq       "T10: exit code 0"                         "$T10_EXIT" "0"
+assert_contains "T10: env-file write=true → SECURITY WARNING" "$T10_OUT" "SECURITY WARNING"
+assert_contains "T10: detection source is env-file"        "$T10_OUT" "env-file"
 
 # ---------------------------------------------------------------------------
 # Summary
