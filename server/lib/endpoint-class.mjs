@@ -19,6 +19,12 @@
  *   { returnStatus: number }                            // hard short-circuit
  */
 
+// Loopback in all three shapes Node's remoteAddress reports: IPv4,
+// IPv6, and the IPv4-mapped-in-IPv6 form seen on dual-stack sockets.
+function isLoopbackIp(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 // First-match-wins table. Order is load-bearing — see the `?gpt=1`
 // row which MUST precede the catch-all `/openapi.yaml` row.
 const ROWS = [
@@ -37,6 +43,20 @@ const ROWS = [
 
   // /metrics: Prometheus scrape endpoint. Decision tree in metricsPolicy().
   { match: (p, s) => p === '/metrics',                               pol: (e, ip) => metricsPolicy(e, ip) },
+
+  // OAuth surface (Gap-3 spec 4.1): one ROW per route; ALL gated on
+  // UM_OAUTH_ENABLED — when off they hard-404 so no half-enabled state
+  // exists. bypassAuth=true because these are public by design (the
+  // consent gate inside the handler is the trust boundary, spec 6 item 7).
+  // bypassRateLimit=true means "skip the SHARED limiter" — the dedicated
+  // OAuth limiter (spec 6 item 1, independent of /mcp) is applied in the
+  // dispatch layer, not here.
+  // OAUTH_PUBLIC_PATHS defined below — safe: the lambda closes over it, not called at init.
+  { match: (p, s) => OAUTH_PUBLIC_PATHS.has(p),                      pol: (e) => oauthPolicy(e) },
+  // /oauth/revoke is deliberately separate from (and after) the public block:
+  // it is loopback-only operator revocation (spec 4.3) — same posture as the
+  // /metrics loopback branch, not a public OAuth path.
+  { match: (p, s) => p === '/oauth/revoke',                          pol: (e, ip) => oauthRevokePolicy(e, ip) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
@@ -82,13 +102,33 @@ function openapiPolicy(env) {
  */
 function metricsPolicy(env, sourceIp) {
   const loopbackOnly = (env.UM_METRICS_LOOPBACK_ONLY ?? 'true') === 'true';
-  const isLoopback = sourceIp === '127.0.0.1' || sourceIp === '::1';
+  const isLoopback = isLoopbackIp(sourceIp);
   if (loopbackOnly && !isLoopback) return { returnStatus: 404 };
   if (loopbackOnly && isLoopback) return { bypassAuth: true, bypassRateLimit: true };
   const authRequired = (env.UM_METRICS_AUTH_REQUIRED ?? 'true') === 'true';
   return authRequired
     ? { bypassAuth: false, bypassRateLimit: false }
     : { bypassAuth: true,  bypassRateLimit: true  };
+}
+
+const OAUTH_PUBLIC_PATHS = new Set([
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/oauth-protected-resource/mcp',
+  '/.well-known/oauth-authorization-server',
+  '/oauth/register', '/oauth/authorize', '/oauth/consent', '/oauth/token',
+]);
+
+function oauthEnabled(env) { return (env.UM_OAUTH_ENABLED ?? 'false') === 'true'; }
+
+function oauthPolicy(env) {
+  if (!oauthEnabled(env)) return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: true };
+}
+
+function oauthRevokePolicy(env, sourceIp) {
+  if (!oauthEnabled(env)) return { returnStatus: 404 };
+  if (!isLoopbackIp(sourceIp)) return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: true };
 }
 
 /**
@@ -100,8 +140,8 @@ function metricsPolicy(env, sourceIp) {
  *   Env-variable source. Defaulted to process.env for prod; tests
  *   inject a plain object so they can pin flag combinations.
  * @param {string|null} [sourceIp=null]
- *   Client IP string (typically `req.socket.remoteAddress`). Only
- *   used by the /metrics row; other rows ignore it.
+ *   Client IP string (typically `req.socket.remoteAddress`). Used by
+ *   the /metrics and /oauth/revoke rows; other rows ignore it.
  * @returns {{ bypassAuth: boolean, bypassRateLimit: boolean } | { returnStatus: number }}
  */
 export function endpointClassRoute(req, env = process.env, sourceIp = null) {
