@@ -193,7 +193,10 @@ export function createStateStore(dir, { now = Date.now } = {}) {
           sub, aud, scope, familyId, clientId, prevHashes: [...prevHashes, hash],
         });
         save();
-        return { accessToken, refreshToken, expiresInSec: OAUTH_TTLS.accessMs / 1000 };
+        // scope is echoed so the token endpoint can populate the refresh-grant
+        // response's `scope` field without a second lookup (the grant is opaque
+        // to the caller otherwise).
+        return { accessToken, refreshToken, expiresInSec: OAUTH_TTLS.accessMs / 1000, scope };
       }
       // Reuse detection: is this a refresh we already rotated away?
       for (const r of Object.values(state.refreshTokens)) {
