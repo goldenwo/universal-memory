@@ -86,6 +86,40 @@ export function validateProviderSupport(env) {
 }
 
 /**
+ * Gap-3 OAuth boot validation — refuse startup when UM_OAUTH_ENABLED=true
+ * but UM_PUBLIC_BASE_URL is unset, empty, or not a valid http/https URL.
+ *
+ * No-op when OAuth is off (UM_OAUTH_ENABLED unset or !== 'true').
+ *
+ * @param {Record<string, string>} env - Environment variables
+ * @throws {Error} when OAuth is enabled but base URL is missing or invalid
+ */
+export function validateOAuthConfig(env) {
+  if ((env.UM_OAUTH_ENABLED ?? 'false') !== 'true') return;
+  const base = env.UM_PUBLIC_BASE_URL;
+  if (!base || base.trim() === '') {
+    throw new Error(
+      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
+    );
+  }
+  let parsed;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new Error(
+      `UM_PUBLIC_BASE_URL is not a valid URL: "${base}" — ` +
+      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(
+      `UM_PUBLIC_BASE_URL scheme must be http or https, got "${parsed.protocol.replace(/:$/, '')}" — ` +
+      'UM_OAUTH_ENABLED=true requires UM_PUBLIC_BASE_URL (canonical public origin, e.g. https://host.example)',
+    );
+  }
+}
+
+/**
  * Adv-5 mitigation — refuse a model name not present in PRICING for the
  * configured provider, before any SDK call. Friendly error lists the known
  * model alternatives so operators can self-correct.
