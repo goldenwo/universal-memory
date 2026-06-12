@@ -1208,10 +1208,20 @@ const GPT_DESCRIPTION_OVERRIDES = new Map([
 
 const GPT_DESCRIPTION_MAX = 300;
 
-function capDescriptions(node) {
+/**
+ * Walk a cloned OpenAPI doc and ENFORCE the ChatGPT 300-char description limit.
+ * Every description that exceeds the limit and is NOT in GPT_DESCRIPTION_OVERRIDES
+ * throws — it must be curated before it can ship.  This function never silently
+ * truncates; the error names the offending path so the author knows exactly which
+ * description to add to GPT_DESCRIPTION_OVERRIDES.
+ *
+ * @param {unknown} node   - The OpenAPI node to walk (mutated in place for overrides).
+ * @param {string}  [path] - Breadcrumb path for error messages (e.g. "gpt.paths['/api/search'].post.description").
+ */
+export function capDescriptions(node, path = 'gpt') {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) {
-    for (const item of node) capDescriptions(item);
+    for (let i = 0; i < node.length; i++) capDescriptions(node[i], `${path}[${i}]`);
     return;
   }
   for (const [k, v] of Object.entries(node)) {
@@ -1219,10 +1229,12 @@ function capDescriptions(node) {
       if (GPT_DESCRIPTION_OVERRIDES.has(v)) {
         node[k] = GPT_DESCRIPTION_OVERRIDES.get(v);
       } else if (v.length > GPT_DESCRIPTION_MAX) {
-        node[k] = v.slice(0, GPT_DESCRIPTION_MAX - 1) + '…';
+        throw new Error(
+          `[openapi] gpt-trim: un-curated description exceeds ChatGPT's 300-char limit (${v.length} chars) at ${path}.${k} — add a curated rewrite to GPT_DESCRIPTION_OVERRIDES instead of letting it ship truncated`
+        );
       }
     } else {
-      capDescriptions(v);
+      capDescriptions(v, `${path}.${k}`);
     }
   }
 }

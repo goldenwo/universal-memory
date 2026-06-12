@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import YAML from 'yaml';
 import SwaggerParser from '@apidevtools/swagger-parser';
 
-import { generateOpenAPISpec, generateCustomGPTActionsSpec } from '../openapi.mjs';
+import { generateOpenAPISpec, generateCustomGPTActionsSpec, capDescriptions } from '../openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // 1. Structural + referential validity (OpenAPI 3.1)
@@ -262,6 +262,51 @@ test('custom GPT actions spec: all description strings are ≤300 chars', () => 
     violations,
     [],
     `GPT spec has description(s) exceeding 300 chars:\n${violations.map(v => `  ${v.path} (${v.length}): "${v.excerpt}..."`).join('\n')}`
+  );
+});
+
+// 5b-2. capDescriptions() throws on un-curated descriptions >300 chars (fail-loud enforcement)
+test('capDescriptions() throws for un-curated descriptions exceeding 300 chars', () => {
+  // Construct a minimal doc with a description that is exactly 301 chars — must throw.
+  const longDesc = 'x'.repeat(301);
+  const doc = {
+    paths: {
+      '/api/test': {
+        post: {
+          description: longDesc,
+          responses: {},
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('300-char limit'),
+        `error message must mention "300-char limit"; got: ${err.message}`
+      );
+      assert.ok(
+        err.message.includes('301 chars'),
+        `error message must report the actual length (301 chars); got: ${err.message}`
+      );
+      assert.ok(
+        err.message.includes('GPT_DESCRIPTION_OVERRIDES'),
+        `error message must direct the author to GPT_DESCRIPTION_OVERRIDES; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw when an un-curated description exceeds 300 chars'
+  );
+
+  // A description of exactly 300 chars must NOT throw.
+  const borderDesc = 'y'.repeat(300);
+  const safeDoc = { description: borderDesc };
+  assert.doesNotThrow(
+    () => capDescriptions(safeDoc),
+    'capDescriptions() must not throw for descriptions of exactly 300 chars'
   );
 });
 
