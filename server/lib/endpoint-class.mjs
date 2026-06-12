@@ -19,6 +19,12 @@
  *   { returnStatus: number }                            // hard short-circuit
  */
 
+// Loopback in all three shapes Node's remoteAddress reports: IPv4,
+// IPv6, and the IPv4-mapped-in-IPv6 form seen on dual-stack sockets.
+function isLoopbackIp(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 // First-match-wins table. Order is load-bearing — see the `?gpt=1`
 // row which MUST precede the catch-all `/openapi.yaml` row.
 const ROWS = [
@@ -45,9 +51,11 @@ const ROWS = [
   // bypassRateLimit=true means "skip the SHARED limiter" — the dedicated
   // OAuth limiter (spec 6 item 1, independent of /mcp) is applied in the
   // dispatch layer, not here.
+  // OAUTH_PUBLIC_PATHS defined below — safe: the lambda closes over it, not called at init.
   { match: (p, s) => OAUTH_PUBLIC_PATHS.has(p),                      pol: (e) => oauthPolicy(e) },
-  // /oauth/revoke: loopback-only operator revocation (spec 4.3) — same
-  // posture as the /metrics loopback branch.
+  // /oauth/revoke is deliberately separate from (and after) the public block:
+  // it is loopback-only operator revocation (spec 4.3) — same posture as the
+  // /metrics loopback branch, not a public OAuth path.
   { match: (p, s) => p === '/oauth/revoke',                          pol: (e, ip) => oauthRevokePolicy(e, ip) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
@@ -94,7 +102,7 @@ function openapiPolicy(env) {
  */
 function metricsPolicy(env, sourceIp) {
   const loopbackOnly = (env.UM_METRICS_LOOPBACK_ONLY ?? 'true') === 'true';
-  const isLoopback = sourceIp === '127.0.0.1' || sourceIp === '::1';
+  const isLoopback = isLoopbackIp(sourceIp);
   if (loopbackOnly && !isLoopback) return { returnStatus: 404 };
   if (loopbackOnly && isLoopback) return { bypassAuth: true, bypassRateLimit: true };
   const authRequired = (env.UM_METRICS_AUTH_REQUIRED ?? 'true') === 'true';
@@ -119,9 +127,7 @@ function oauthPolicy(env) {
 
 function oauthRevokePolicy(env, sourceIp) {
   if (!oauthEnabled(env)) return { returnStatus: 404 };
-  // Node reports loopback as 127.0.0.1, ::1, or the IPv4-mapped ::ffff: form.
-  const isLoopback = sourceIp === '127.0.0.1' || sourceIp === '::1' || sourceIp === '::ffff:127.0.0.1';
-  if (!isLoopback) return { returnStatus: 404 };
+  if (!isLoopbackIp(sourceIp)) return { returnStatus: 404 };
   return { bypassAuth: true, bypassRateLimit: true };
 }
 
@@ -134,8 +140,8 @@ function oauthRevokePolicy(env, sourceIp) {
  *   Env-variable source. Defaulted to process.env for prod; tests
  *   inject a plain object so they can pin flag combinations.
  * @param {string|null} [sourceIp=null]
- *   Client IP string (typically `req.socket.remoteAddress`). Only
- *   used by the /metrics row; other rows ignore it.
+ *   Client IP string (typically `req.socket.remoteAddress`). Used by
+ *   the /metrics and /oauth/revoke rows; other rows ignore it.
  * @returns {{ bypassAuth: boolean, bypassRateLimit: boolean } | { returnStatus: number }}
  */
 export function endpointClassRoute(req, env = process.env, sourceIp = null) {

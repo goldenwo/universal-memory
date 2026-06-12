@@ -162,8 +162,8 @@ const OAUTH_PATHS = [
 ];
 for (const p of OAUTH_PATHS) {
   test(`${p} hard-404s when OAuth disabled (no half-enabled state)`, () => {
-    assert.deepEqual(endpointClassRoute({ url: p }, { UM_OAUTH_ENABLED: 'false' }), { returnStatus: 404 });
-    assert.deepEqual(endpointClassRoute({ url: p }, {}), { returnStatus: 404 }); // unset = off
+    assert.deepEqual(endpointClassRoute(req(p), { UM_OAUTH_ENABLED: 'false' }), { returnStatus: 404 });
+    assert.deepEqual(endpointClassRoute(req(p), {}), { returnStatus: 404 }); // unset = off
   });
 }
 test('OAuth routes bypass the SHARED limiter when enabled — they get their own (spec 6 item 1: independent of /mcp)', () => {
@@ -171,16 +171,24 @@ test('OAuth routes bypass the SHARED limiter when enabled — they get their own
   // dedicated oauthAdmit limiter is applied inside the dispatch (Task 1.3)
   // so a vendor connect storm cannot consume the /mcp budget or vice versa.
   for (const p of OAUTH_PATHS) {
-    assert.deepEqual(endpointClassRoute({ url: p }, { UM_OAUTH_ENABLED: 'true' }),
+    assert.deepEqual(endpointClassRoute(req(p), { UM_OAUTH_ENABLED: 'true' }),
       { bypassAuth: true, bypassRateLimit: true });
   }
 });
 test('/oauth/revoke is loopback-only (404 off-loopback) even when enabled', () => {
-  assert.deepEqual(endpointClassRoute({ url: '/oauth/revoke' }, { UM_OAUTH_ENABLED: 'true' }, '10.0.0.5'), { returnStatus: 404 });
+  assert.deepEqual(endpointClassRoute(req('/oauth/revoke'), { UM_OAUTH_ENABLED: 'true' }, '10.0.0.5'), { returnStatus: 404 });
   for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
-    assert.deepEqual(endpointClassRoute({ url: '/oauth/revoke' }, { UM_OAUTH_ENABLED: 'true' }, ip), { bypassAuth: true, bypassRateLimit: true });
+    assert.deepEqual(endpointClassRoute(req('/oauth/revoke'), { UM_OAUTH_ENABLED: 'true' }, ip), { bypassAuth: true, bypassRateLimit: true });
   }
 });
 test('/oauth/revoke 404s when OAuth disabled even from loopback', () => {
-  assert.deepEqual(endpointClassRoute({ url: '/oauth/revoke' }, {}, '127.0.0.1'), { returnStatus: 404 });
+  assert.deepEqual(endpointClassRoute(req('/oauth/revoke'), {}, '127.0.0.1'), { returnStatus: 404 });
+});
+
+test('/metrics with IPv4-mapped loopback ::ffff:127.0.0.1 bypasses auth', () => {
+  // Dual-stack Node sockets can report the IPv4-mapped form; must be
+  // treated as loopback alongside 127.0.0.1 and ::1.
+  const r = endpointClassRoute(req('/metrics'), { UM_METRICS_LOOPBACK_ONLY: 'true' }, '::ffff:127.0.0.1');
+  assert.equal(r.bypassAuth, true);
+  assert.equal(r.bypassRateLimit, true);
 });
