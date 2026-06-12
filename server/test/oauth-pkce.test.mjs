@@ -1,3 +1,4 @@
+// server/test/oauth-pkce.test.mjs — RFC 7636 S256 verification pins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
@@ -17,9 +18,9 @@ test('RFC 7636 length bounds enforced (43-128)', () => {
     assert.equal(verifyS256(bad, 'x'), false);
   }
 });
-test('empty or non-string challenge rejected', () => {
+test('invalid challenge rejected (empty, non-string, wrong length)', () => {
   const verifier = 'a'.repeat(43);
-  for (const bad of ['', null, undefined, 42]) {
+  for (const bad of ['', null, undefined, 42, 'a'.repeat(42), 'a'.repeat(44)]) {
     assert.equal(verifyS256(verifier, bad), false);
   }
 });

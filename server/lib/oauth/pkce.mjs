@@ -8,9 +8,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 export function verifyS256(verifier, challenge) {
   if (typeof verifier !== 'string' || verifier.length < 43 || verifier.length > 128) return false;
-  if (typeof challenge !== 'string' || challenge.length === 0) return false;
-  const digest = createHash('sha256').update(verifier, 'ascii').digest('base64url');
-  const a = Buffer.from(digest, 'utf8');
-  const b = Buffer.from(challenge, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
+  // An S256 challenge is always 43 base64url chars (SHA-256 = 32 bytes).
+  if (typeof challenge !== 'string' || challenge.length !== 43) return false;
+  const digestBuf = Buffer.from(createHash('sha256').update(verifier, 'ascii').digest('base64url'), 'utf8');
+  const challengeBuf = Buffer.from(challenge, 'utf8');
+  // Length pre-check is REQUIRED — timingSafeEqual throws on unequal lengths.
+  // It is not a timing channel: both lengths are public constants (43), never
+  // secret-dependent. The byte comparison itself is constant-time.
+  return digestBuf.length === challengeBuf.length && timingSafeEqual(digestBuf, challengeBuf);
 }
