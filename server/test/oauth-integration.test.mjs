@@ -396,3 +396,60 @@ test('OAuth integration: um_mcp_auth_branch_total counts oauth + legacy branches
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --------------------------------------------------------------------------
+// Test 7 — DCR (PR-3): register over HTTP on the live server, then assert the
+// um_oauth_registrations_total{outcome="accepted"} metric appears in /metrics.
+// Proves the onRegistration callback is wired through the production seam.
+// --------------------------------------------------------------------------
+
+// The onRegistration→metric wiring lives in the PRODUCTION construction seam
+// (createRequestHandler), which an injected ctx.oauth would bypass (the `??=`
+// skips it). So this test drives the LIVE construction path: flag on + a real
+// UM_VAULT_DIR, no injected ctx.oauth. The server builds its own store +
+// handlers and wires onRegistration → umOauthRegistrationsTotal.inc.
+test('OAuth integration: POST /oauth/register increments um_oauth_registrations_total{accepted}', async () => {
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-dcr-int-'));
+  const saved = {};
+  const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
+  set('UM_VAULT_DIR', vaultDir);
+  set('UM_OAUTH_ENABLED', 'true');
+  set('UM_PUBLIC_BASE_URL', BASE);
+  set('UM_AUTH_TOKEN', 'legacy-secret');
+
+  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  try {
+    const regRes = await fetch(url('/oauth/register'), {
+      method: 'POST',
+      headers: { ...FWD, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: [REDIRECT], client_name: 'DCR client',
+        grant_types: ['authorization_code', 'refresh_token'], token_endpoint_auth_method: 'none',
+      }),
+    });
+    assert.equal(regRes.status, 201, 'DCR registration should succeed over the live server');
+    const reg = await regRes.json();
+    assert.ok(reg.client_id?.startsWith('umcl_'), 'should mint a umcl_ client_id');
+    // The registered client landed in the on-disk store the server built.
+    const persisted = createStateStore(vaultDir).getClient(reg.client_id);
+    assert.ok(persisted, 'registered client must be persisted');
+    assert.equal(persisted.source, 'dcr');
+
+    // /metrics is loopback-only by default — fetch from loopback (no X-Forwarded-For).
+    const m = await fetch(url('/metrics'));
+    const text = await m.text();
+    assert.match(text, /um_oauth_registrations_total\{outcome="accepted"\}\s+[1-9]/);
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(vaultDir, { recursive: true, force: true });
+  }
+});
