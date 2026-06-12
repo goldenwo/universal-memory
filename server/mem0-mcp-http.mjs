@@ -61,12 +61,17 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
 import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
+import { createStateStore } from './lib/oauth/state-store.mjs';
+import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
+import { createOAuthVerifier } from './lib/oauth/verifier.mjs';
+import { createConsentThrottle } from './lib/oauth/throttle.mjs';
+import { isAllowedRegistrationRedirect } from './lib/oauth/redirects.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
@@ -2050,6 +2055,54 @@ export async function doList(full = false, limit = null, ctx = {}) {
 }
 
 /**
+ * Manual-client seeding (Gap-3 OAuth spec §8 PR-2 — Claude's manual fallback
+ * before Dynamic Client Registration lands in PR 3). Reads UM_OAUTH_SEED_CLIENT
+ * in the format `<client_id>|<redirect_uri>`. When set, the format parses, the
+ * URI passes isAllowedRegistrationRedirect, and the client_id is absent from the
+ * store, the client is upserted with source:'manual'. Invalid format/URI or an
+ * unset var → structured warn (or silent no-op) and skip. Idempotent: an
+ * already-present client_id is left untouched so a restart never clobbers state.
+ *
+ * @param {object} store createStateStore instance.
+ */
+function seedManualClient(store) {
+	const raw = process.env.UM_OAUTH_SEED_CLIENT;
+	if (typeof raw !== 'string' || raw.length === 0) return; // unset → no-op
+	const sep = raw.indexOf('|');
+	const clientId = sep >= 0 ? raw.slice(0, sep) : '';
+	const uri = sep >= 0 ? raw.slice(sep + 1) : '';
+	if (!clientId || !uri) {
+		safeLog(() => getLogger().warn({
+			error_class: 'oauth_seed_invalid_format',
+		}, 'UM_OAUTH_SEED_CLIENT malformed — expected "<client_id>|<redirect_uri>"; skipping'),
+		'log:oauth:seed:format');
+		return;
+	}
+	if (!isAllowedRegistrationRedirect(uri)) {
+		safeLog(() => getLogger().warn({
+			error_class: 'oauth_seed_invalid_uri',
+		}, 'UM_OAUTH_SEED_CLIENT redirect_uri not allowlisted — skipping'),
+		'log:oauth:seed:uri');
+		return;
+	}
+	if (store.getClient(clientId)) return; // already present → idempotent no-op
+	const now = Date.now();
+	store.putClient({
+		client_id: clientId,
+		client_name: 'Seeded client',
+		redirect_uris: [uri],
+		created: now,
+		lastUsed: now,
+		source: 'manual',
+	});
+	safeLog(() => getLogger().info({
+		oauth_client_id: clientId,
+		oauth_client_source: 'manual',
+	}, 'seeded manual OAuth client from UM_OAUTH_SEED_CLIENT'),
+	'log:oauth:seed:ok');
+}
+
+/**
  * Factory: build the top-level HTTP request handler.
  *
  * Returning a factory (rather than exporting the handler directly) lets tests
@@ -2087,6 +2140,40 @@ export function createRequestHandler(ctx = {}) {
 	// OAuth on/off is a construction-time decision; env validated at boot.
 	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
 	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
+
+	// Gap-3 OAuth injection seam (spec §4.1/§4.2, plan Task 2.7). ctx.oauth is
+	// the single object the middleware + /oauth/* dispatch read; it bundles the
+	// JSON state store, the HTTP handlers, and the access-token verifier. It is
+	// built ONLY when the flag is on — gating here (never inside the verifier)
+	// guarantees a structurally-valid umat_ token can NEVER authenticate while
+	// OAuth is off, because ctx.oauth stays undefined. Tests inject their own
+	// tmpdir-rooted ctx.oauth (mirroring ctx.memory), so the production default
+	// is constructed only when the flag is on AND no ctx.oauth was supplied.
+	// Boot validation guarantees UM_PUBLIC_BASE_URL when the flag is on; the
+	// store is rooted at UM_VAULT_DIR (also required for the server to run, so it
+	// is always present in production). We additionally guard on UM_VAULT_DIR
+	// being set before building the production default: discovery-only unit tests
+	// flip the flag on WITHOUT a vault dir to exercise the well-known docs (which
+	// need no store), and createStateStore(undefined) would throw at handler
+	// construction. When a test injects its own ctx.oauth the `??=` already skips
+	// this branch, so an injected store still works with no UM_VAULT_DIR.
+	if (oauthEnabled && (ctx.oauth || process.env.UM_VAULT_DIR)) {
+		ctx.oauth ??= (() => {
+			const store = createStateStore(process.env.UM_VAULT_DIR);
+			const handlers = createOAuthHandlers({
+				store,
+				baseUrl: oauthBase,
+				operatorToken: process.env.UM_AUTH_TOKEN,
+				throttle: createConsentThrottle(),
+			});
+			const verify = createOAuthVerifier(store, oauthBase);
+			// Manual-client seeding (spec §8 PR-2) — Claude's manual fallback
+			// before DCR (PR 3) exists. UM_OAUTH_SEED_CLIENT = "<client_id>|<uri>".
+			// Valid + absent → seed; invalid format/URI → structured warn + skip.
+			seedManualClient(store);
+			return { store, handlers, verify };
+		})();
+	}
 	return async (req, res) => {
 	const url = new URL(req.url, `http://localhost:${PORT}`);
 	res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2271,7 +2358,21 @@ export function createRequestHandler(ctx = {}) {
 			return;
 		}
 		const received = extractBearer(req);
-		const tokenMatches = received != null && compareTokens(received, expected);
+		// Gap-3 OAuth (spec §4.2): /mcp auth becomes an OR behind one verifier
+		// interface — legacy bearer OR an OAuth access token. ctx.oauth is
+		// undefined whenever the flag is off (gated at construction), so the
+		// second arm short-circuits to never-match in that case. The legacy arm
+		// is evaluated first so the common machine-client path stays the fast
+		// timing-safe compare.
+		const legacyMatch = received != null && compareTokens(received, expected);
+		const oauthMatch = !legacyMatch && (ctx.oauth?.verify(received) != null);
+		const tokenMatches = legacyMatch || oauthMatch;
+		if (tokenMatches) {
+			// Count which branch admitted the request (spec §4.2). Observability
+			// MUST NOT poison the request path (C.9) — wrap the inc.
+			try { umMcpAuthBranchTotal.inc({ branch: legacyMatch ? 'legacy' : 'oauth' }); }
+			catch (e) { obsFallback(e, 'metric:auth-branch'); }
+		}
 		if (!tokenMatches) {
 			// C.3 / §5.3: distinguish auth_missing from auth_wrong in logs
 			// so ops can tell "client never sent a token" from "client sent
@@ -2301,12 +2402,34 @@ export function createRequestHandler(ctx = {}) {
 			// the protected-resource metadata document automatically.
 			// Non-/mcp paths and flag-off installs omit the header entirely.
 			const oauthHeaders = { 'Content-Type': 'application/json' };
-			if (oauthEnabled && url.pathname === '/mcp') {
+			const isMcpOauth = oauthEnabled && url.pathname === '/mcp';
+			if (isMcpOauth) {
 				oauthHeaders['WWW-Authenticate'] =
 					`Bearer resource_metadata="${oauthBase}/.well-known/oauth-protected-resource/mcp", scope="vault"`;
 			}
 			res.writeHead(401, oauthHeaders);
-			res.end(JSON.stringify(errorResponse('AUTH_INVALID', hint)));
+			// Gap-3 _meta re-auth trigger (spec section 6 item 6): a 401d /mcp request
+			// with OAuth on returns a JSON-RPC-shaped error envelope whose
+			// error.data._meta['mcp/www_authenticate'] carries the structured re-auth
+			// signal ChatGPTs in-conversation UI keys on (the header alone is
+			// invisible to it). The OUTER shape reuses the house JSON-RPC error
+			// (toJsonRpcError) so generic clients still parse it; _meta is additive
+			// on data. Non-/mcp 401s keep the legacy unified envelope.
+			if (isMcpOauth) {
+				const rpcErr = toJsonRpcError(errorResponse('AUTH_INVALID', hint));
+				rpcErr.data = {
+					...rpcErr.data,
+					_meta: {
+						'mcp/www_authenticate': {
+							error: 'invalid_token',
+							error_description: 'expired or invalid access token',
+						},
+					},
+				};
+				res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: rpcErr }));
+			} else {
+				res.end(JSON.stringify(errorResponse('AUTH_INVALID', hint)));
+			}
 			return;
 		}
 	}
@@ -2404,6 +2527,42 @@ export function createRequestHandler(ctx = {}) {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(doc));
 			return;
+		}
+		// Gap-3 OAuth /oauth/* dispatch (spec section 4.1/4.2/6 items 6+12, plan
+		// Task 2.7). The endpoint-class rows already hard-404 these paths when
+		// UM_OAUTH_ENABLED=false, so reaching here means the flag is on and
+		// ctx.oauth is constructed. Mirror the well-known block: apply the
+		// DEDICATED OAuth limiter FIRST (independent of the shared admit so an
+		// /oauth/* flood cannot starve /mcp), then dispatch to the handler.
+		// Wrong method on a known route -> 405 JSON. /oauth/register +
+		// /oauth/revoke are 501 stubs (filled by PR 3 / PR 5); /oauth/revoke is
+		// additionally loopback-gated by its endpoint-class row.
+		if (url.pathname.startsWith('/oauth/') && ctx.oauth) {
+			const ipKey = extractRateLimitKey(req);
+			const decision = oauthAdmit(ipKey);
+			if (!decision.admitted) {
+				send429(res, decision.retryAfterSec);
+				return;
+			}
+			const h = ctx.oauth.handlers;
+			const dispatch = {
+				'/oauth/consent':   { POST: h.handleConsent },
+				'/oauth/authorize': { GET:  h.handleAuthorize },
+				'/oauth/token':     { POST: h.handleToken },
+				'/oauth/register':  { POST: h.handleRegister },
+				'/oauth/revoke':    { POST: h.handleRevoke },
+			}[url.pathname];
+			if (dispatch) {
+				const fn = dispatch[req.method];
+				if (!fn) {
+					res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': Object.keys(dispatch).join(', ') });
+					res.end(JSON.stringify({ error: 'method_not_allowed' }));
+					return;
+				}
+				await fn(req, res);
+				return;
+			}
+			// Unknown /oauth/* path under the flag -> fall through to the 404 tail.
 		}
 		// C.5 / spec 4.2: /metrics returns Prometheus text exposition.
 		// Endpoint-class router (B.2) already decided routing policy:
