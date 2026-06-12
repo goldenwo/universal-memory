@@ -133,6 +133,40 @@ test('R11 / W6.4 — UM_AUTH_TOKEN absent or short (<16 chars) skips dynamic pat
   _resetKeyPatternsForTest();
 });
 
+// Gap-3 OAuth — credential redaction for OAuth tokens + secret form/query
+// fields. A code path that accidentally logs a raw umat_/umrt_ token, the
+// consent operator_token field, or an authorization code= value must not leak
+// it to the sink.
+test('Gap-3 — umat_/umrt_ OAuth tokens redacted in arbitrary log strings', () => {
+  const captured = [];
+  const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.error({ msg: 'minted access=umat_AbC123-_d refresh=umrt_XyZ987-_q for owner' });
+  assert.equal(captured.length, 1);
+  const blob = JSON.stringify(captured);
+  assert.ok(!blob.includes('umat_AbC123-_d'), 'umat_ access token must be redacted');
+  assert.ok(!blob.includes('umrt_XyZ987-_q'), 'umrt_ refresh token must be redacted');
+});
+
+test('Gap-3 — operator_token form value redacted, field name retained', () => {
+  const captured = [];
+  const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.warn({ msg: 'consent body: authz_id=ab12&operator_token=hunter2secret&decision=allow' });
+  assert.equal(captured.length, 1);
+  const blob = JSON.stringify(captured);
+  assert.ok(!blob.includes('hunter2secret'), 'operator_token value must be redacted');
+  assert.ok(blob.includes('operator_token=[REDACTED]'), 'field name kept, value censored');
+});
+
+test('Gap-3 — authorization code= value redacted in a logged URL/Location', () => {
+  const captured = [];
+  const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.info({ msg: 'redirect Location: https://claude.ai/api/mcp/auth_callback?code=SECRETCODE123&state=xyz' });
+  assert.equal(captured.length, 1);
+  const blob = JSON.stringify(captured);
+  assert.ok(!blob.includes('SECRETCODE123'), 'authorization code value must be redacted');
+  assert.ok(blob.includes('code=[REDACTED]'), 'code field name kept, value censored');
+});
+
 test('PRODUCTION getLogger() redacts AIza Google key in URL', () => {
   const captured = [];
   _setLogStreamForTest({ write: (l) => captured.push(JSON.parse(l)) });
