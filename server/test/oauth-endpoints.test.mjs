@@ -753,3 +753,69 @@ test('register/revoke stubs → 501 temporarily_unavailable', async () => {
     assert.equal(JSON.parse(rev.body).error, 'temporarily_unavailable');
   } finally { await close(rig.server); }
 });
+
+// =========================================================================
+// Pending-authz map cap (carry-over Nit from 2.6 review) — the map never grows
+// past pendingCap. Build a dedicated handlers instance with a small cap and
+// drive cap+1 authorize requests; the oldest pending entry must be evicted, so
+// a consent referencing the FIRST authz_id now 403s ("no pending"), while a
+// fresh authz still works.
+// =========================================================================
+
+test('pending-cap: oldest pending authz is evicted past the cap', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-cap-'));
+  const store = createStateStore(dir);
+  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], name: 'Claude' });
+  const handlers = createOAuthHandlers({
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle: createConsentThrottle(), pendingCap: 3,
+  });
+  const server = http.createServer((rq, rs) => {
+    const u = new URL(rq.url, BASE_URL);
+    if (u.pathname === '/oauth/authorize') return handlers.handleAuthorize(rq, rs);
+    if (u.pathname === '/oauth/consent') return handlers.handleConsent(rq, rs);
+    rs.statusCode = 404; rs.end();
+  });
+  const port = await listen(server);
+  try {
+    // First authorize — capture its authz_id + csrf (the eviction target).
+    const first = await req(port, {
+      path: `/oauth/authorize?${authorizeQuery({ code_challenge: pkcePair().challenge })}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+    });
+    const firstForm = parseConsentForm(first.body);
+    assert.ok(firstForm.authzId);
+
+    // Fill + overflow the cap (cap=3): 3 more authorize calls → size hits 4 →
+    // overflow evicts the oldest (the first).
+    for (let i = 0; i < 3; i++) {
+      await req(port, {
+        path: `/oauth/authorize?${authorizeQuery({ code_challenge: pkcePair().challenge })}`,
+        headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+      });
+    }
+
+    // Consent on the (now-evicted) first authz → 403 no-pending.
+    const evicted = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: firstForm.authzId, csrf: firstForm.csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(evicted.status, 403, 'oldest pending authz must be evicted past the cap');
+
+    // A freshly-issued authz still consents fine (cap evicts oldest, not newest).
+    const fresh = await req(port, {
+      path: `/oauth/authorize?${authorizeQuery({ code_challenge: pkcePair().challenge })}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+    });
+    const freshForm = parseConsentForm(fresh.body);
+    const ok = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: freshForm.authzId, csrf: freshForm.csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(ok.status, 303, 'a fresh pending authz must still consent');
+  } finally {
+    await close(server);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

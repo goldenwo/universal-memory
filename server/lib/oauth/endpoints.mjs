@@ -119,15 +119,30 @@ function wantsJsonDelivery(req) {
   return false;
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500 }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
 
-  // Per-handlers-instance pending-authorization map (authz ≠ code). Entries are
-  // dropped lazily on expiry so the map never grows unbounded at setup scale.
+  // Per-handlers-instance pending-authorization map (authz ≠ code). Entries
+  // expire (pendingAuthzMs) and are dropped on read via takePending; they are
+  // ALSO hard-capped at `pendingCap` so a flood of authorize requests that
+  // never reach consent cannot grow the map without bound. On insert at the
+  // cap we first sweep expired entries, then — if still full — evict the
+  // oldest (insertion-ordered Map → first key). Single operator, so the cap is
+  // generous; the eviction is a safety floor, not a steady-state path.
   const pending = new Map();
   function putPending(rec) {
+    if (pending.size >= pendingCap) {
+      const t = now();
+      for (const [id, r] of pending) {
+        if (r.exp <= t) pending.delete(id);
+      }
+      if (pending.size >= pendingCap) {
+        const oldest = pending.keys().next().value;
+        if (oldest !== undefined) pending.delete(oldest);
+      }
+    }
     const id = randomBytes(16).toString('hex');
     pending.set(id, rec);
     return id;
