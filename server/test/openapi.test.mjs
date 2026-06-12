@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import YAML from 'yaml';
 import SwaggerParser from '@apidevtools/swagger-parser';
 
-import { generateOpenAPISpec, generateCustomGPTActionsSpec, capDescriptions } from '../openapi.mjs';
+import { generateOpenAPISpec, generateCustomGPTActionsSpec, capDescriptions, buildSpec } from '../openapi.mjs';
 
 // ---------------------------------------------------------------------------
 // 1. Structural + referential validity (OpenAPI 3.1)
@@ -314,21 +314,51 @@ test('capDescriptions() throws for un-curated descriptions exceeding 300 chars',
 
 // 5b-3. capDescriptions() throws "drifted" when an entry exists at a matching
 //       location but the `expect` field no longer matches the source text.
-test('capDescriptions() throws "drifted" when a curated entry expect mismatches', () => {
-  // Import the override list so we can construct a doc whose description
-  // matches the `at` location of a real entry but with different source text.
-  // We build a synthetic doc with a >300-char description at a path whose
-  // breadcrumb ends with one of the real entry's `at` value — simulating a
-  // situation where the source description was edited but the override was not.
-  //
-  // Strategy: create a doc shaped so `capDescriptions` reaches a node keyed
-  // "schemas" → "SearchRequest" → "only_superseded" whose description is long
-  // but different from the pinned expect value.
-  const drift = 'z'.repeat(301); // >300 but different from the pinned expect
+//       Uses the REAL gpt doc structure (faithful nesting) so the walker
+//       produces the exact breadcrumb the `at` field must pin.
+test('capDescriptions() throws "drifted" for only_superseded source edit', () => {
+  // Build a faithful slice of the gpt doc so the walker reaches
+  //   gpt.components.schemas.SearchRequest.properties.only_superseded.description
+  // with a >300-char value different from the pinned expect — simulating an
+  // edit to the source description without updating GPT_DESCRIPTION_OVERRIDES.
+  const drift = 'z'.repeat(301); // >300 but NOT the pinned expect text
   const doc = {
-    schemas: {
-      SearchRequest: {
-        only_superseded: {
+    components: {
+      schemas: {
+        SearchRequest: {
+          properties: {
+            only_superseded: {
+              description: drift,
+            },
+          },
+        },
+      },
+    },
+  };
+
+  assert.throws(
+    () => capDescriptions(doc),
+    (err) => {
+      assert.ok(err instanceof Error, 'must throw an Error instance');
+      assert.ok(
+        err.message.includes('drifted'),
+        `error message must contain "drifted"; got: ${err.message}`
+      );
+      return true;
+    },
+    'capDescriptions() must throw "drifted" when only_superseded source text changed'
+  );
+});
+
+test('capDescriptions() throws "drifted" for /api/search post description source edit', () => {
+  // Build a faithful slice of the gpt doc so the walker reaches
+  //   gpt.paths["/api/search"].post.description
+  // with a >300-char value different from the pinned expect.
+  const drift = 'y'.repeat(301); // >300 but NOT the pinned expect text
+  const doc = {
+    paths: {
+      '/api/search': {
+        post: {
           description: drift,
         },
       },
@@ -345,7 +375,39 @@ test('capDescriptions() throws "drifted" when a curated entry expect mismatches'
       );
       return true;
     },
-    'capDescriptions() must throw "drifted" when a curated entry expect mismatches'
+    'capDescriptions() must throw "drifted" when /api/search post description source text changed'
+  );
+});
+
+test('capDescriptions() does NOT throw on real pre-cap gpt doc (positive breadcrumb pin)', () => {
+  // Build a pre-cap slice using the REAL source descriptions from buildSpec().
+  // Both exceed 300 chars.  capDescriptions must apply the curated rewrites
+  // without throwing — proves BOTH `at` values match their real walker breadcrumbs.
+  // If either `at` were wrong, capDescriptions would throw "un-curated" here.
+  const full = buildSpec();
+  const preCapDoc = {
+    paths: {
+      '/api/search': {
+        post: {
+          description: full.paths['/api/search'].post.description,
+        },
+      },
+    },
+    components: {
+      schemas: {
+        SearchRequest: {
+          properties: {
+            only_superseded: {
+              description: full.components.schemas.SearchRequest.properties.only_superseded.description,
+            },
+          },
+        },
+      },
+    },
+  };
+  assert.doesNotThrow(
+    () => capDescriptions(preCapDoc),
+    'capDescriptions() must NOT throw on the real pre-cap gpt doc — proves both `at` breadcrumbs match real walker paths'
   );
 });
 

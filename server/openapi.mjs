@@ -1188,15 +1188,23 @@ function collectRefs(node, acc) {
 // `expect` pins the source text: if the source description is edited, the
 // generator throws "drifted" so the curation is consciously re-done — never
 // silently stale, never silently truncated.
+//
+// `at` must equal the walker's breadcrumb minus the leading 'gpt.' prefix —
+// the drift test pins this.  Derive empirically: the walker builds childPath as
+//   k.includes('/') ? `${path}["${k}"]` : `${path}.${k}`
+// so slash-containing segments are double-quoted bracket form and normal keys
+// are dot-separated.  The match in capDescriptions() is exact: childPath === 'gpt.' + e.at.
 const GPT_DESCRIPTION_OVERRIDES = [
   {
-    at: "paths['/api/search'].post.description",
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'paths["/api/search"].post.description',
     expect:
       'Body form. Returns `{results: [...]}` with compact items by default; add `?full=1` to get the full MemoryResult shape in each result instead. Applies default status filter (excludes superseded/deprecated/rejected, and any doc with invalidated_at set) unless `include_superseded=true`. Optional `filters.project` / `filters.type` are applied after mem0 recall.',
     text: 'POST body. Returns {results:[...]} compact by default; ?full=1 for full shape. Excludes superseded/deprecated/rejected and invalidated docs unless include_superseded=true. Optional filters.project/filters.type applied after recall.',
   },
   {
-    at: "schemas.SearchRequest.only_superseded",
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'components.schemas.SearchRequest.properties.only_superseded.description',
     expect:
       'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
     text: 'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
@@ -1245,7 +1253,7 @@ export function capDescriptions(node, path = 'gpt') {
           // (The `at` field is for maintenance/error messages; matching by expect
           // alone is the authoritative apply condition.)
           const matchByAt = GPT_DESCRIPTION_OVERRIDES.find((e) =>
-            childPath.endsWith(e.at) || childPath.includes(e.at)
+            childPath === `gpt.${e.at}`
           );
           if (matchByAt) {
             throw new Error(
