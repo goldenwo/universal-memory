@@ -97,6 +97,17 @@ export const mcpToolCallsTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Gap-3 OAuth: which auth branch admitted a request (spec §4.2 — /mcp auth is an
+// OR of legacy-bearer and OAuth-token verification). `branch` ∈ {'legacy','oauth'}
+// — fixed enum, never user input (bounded cardinality). Lets ops confirm the
+// OAuth path is actually being exercised post-flip without log-grepping.
+export const umMcpAuthBranchTotal = new promClient.Counter({
+  name: 'um_mcp_auth_branch_total',
+  help: 'Auth-branch that admitted a request (Gap-3): legacy bearer vs OAuth token',
+  labelNames: ['branch'], // 'legacy' | 'oauth'
+  registers: [registry],
+});
+
 export const lockContentionsTotal = new promClient.Counter({
   name: 'um_lock_contentions_total',
   help: 'Lock contention events by lock-path',

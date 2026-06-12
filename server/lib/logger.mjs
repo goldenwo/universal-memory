@@ -50,6 +50,21 @@ const STATIC_KEY_PATTERNS = Object.freeze([
   /sk-[A-Za-z0-9_-]+/g,        // openai
   /AIza[A-Za-z0-9_-]+/g,       // google
   /Bearer [A-Za-z0-9_.+/=-]+/g, // generic Authorization header value
+  // Gap-3 OAuth credentials — never let an OAuth secret reach the log sink even
+  // if a code path accidentally logs a raw token, the operator_token form field,
+  // or an authorization-code query value:
+  //   * umat_/umrt_ — opaque access/refresh tokens (base64url body).
+  //   * operator_token=<value> — the consent form field (urlencoded body or a
+  //     re-rendered form blob); redact the VALUE only, keep the key for context.
+  //   * code=<value> — the authorization code in a redirect/Location or token
+  //     request; same value-only redaction.
+  /umat_[A-Za-z0-9_-]+/g,      // OAuth access token
+  /umrt_[A-Za-z0-9_-]+/g,      // OAuth refresh token
+  // Lookbehind keeps the field name visible and redacts ONLY the value, so a
+  // logged `operator_token=hunter2` or `code=abc123` becomes
+  // `operator_token=[REDACTED]` / `code=[REDACTED]` (key retained for context).
+  /(?<=operator_token=)[^&\s"']+/g, // consent form operator-token value
+  /(?<=\bcode=)[^&\s"']+/g,         // authorization-code query/form value
 ]);
 
 // W6.4 hardening — UM_AUTH_TOKEN value-redaction.
