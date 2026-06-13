@@ -2548,8 +2548,7 @@ export function createRequestHandler(ctx = {}) {
 		// ctx.oauth is constructed. Mirror the well-known block: apply the
 		// DEDICATED OAuth limiter FIRST (independent of the shared admit so an
 		// /oauth/* flood cannot starve /mcp), then dispatch to the handler.
-		// Wrong method on a known route -> 405 JSON. /oauth/register +
-		// /oauth/revoke are 501 stubs (filled by PR 3 / PR 5); /oauth/revoke is
+		// Wrong method on a known route -> 405 JSON. /oauth/revoke is
 		// additionally loopback-gated by its endpoint-class row.
 		if (url.pathname.startsWith('/oauth/') && ctx.oauth) {
 			const ipKey = extractRateLimitKey(req);
