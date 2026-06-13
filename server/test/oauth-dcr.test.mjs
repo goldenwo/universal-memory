@@ -191,6 +191,21 @@ test('register: empty redirect_uris array → 400', async () => {
   } finally { await close(rig.server); }
 });
 
+test('register: redirect_uris over the length cap → 400, NOT stored (PR-5 hardening)', async () => {
+  const rig = makeRig();
+  const port = await listen(rig.server);
+  try {
+    // 11 individually-valid (loopback) callbacks — all allowlisted, but the
+    // array exceeds MAX_REDIRECT_URIS (10), so the array-length bound rejects.
+    const tooMany = Array.from({ length: 11 }, (_, i) => `http://127.0.0.1:${3000 + i}/cb`);
+    const res = await register(port, { redirect_uris: tooMany });
+    assert.equal(res.status, 400);
+    assert.equal(JSON.parse(res.body).error, 'invalid_redirect_uri');
+    assert.equal(countClients(rig.dir), 0, 'over-cap registration is not stored');
+    assert.deepEqual(rig.outcomes, ['rejected_redirect']);
+  } finally { await close(rig.server); }
+});
+
 test('register: missing redirect_uris → 400', async () => {
   const rig = makeRig();
   const port = await listen(rig.server);

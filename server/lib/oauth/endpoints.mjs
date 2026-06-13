@@ -31,7 +31,7 @@ import {
   mintCsrf, verifyCsrf, renderConsentPage,
   signConsentCookie, verifyConsentCookie, consentCookieHeader,
 } from './consent.mjs';
-import { isAllowedRegistrationRedirect } from './redirects.mjs';
+import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mjs';
 import { compareTokens } from '../auth.mjs';
 
 const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
@@ -448,9 +448,9 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       return reject('rejected_metadata', 'invalid_client_metadata', 'body must be a JSON object');
     }
 
-    // redirect_uris: required, non-empty array; EVERY entry allowlisted.
+    // redirect_uris: required, non-empty, length-capped array; EVERY entry allowlisted.
     const redirectUris = value.redirect_uris;
-    if (!Array.isArray(redirectUris) || redirectUris.length === 0
+    if (!Array.isArray(redirectUris) || redirectUris.length === 0 || redirectUris.length > MAX_REDIRECT_URIS
       || !redirectUris.every((u) => typeof u === 'string' && isAllowedRegistrationRedirect(u))) {
       return reject('rejected_redirect', 'invalid_redirect_uri', 'one or more redirect_uris are not permitted');
     }
