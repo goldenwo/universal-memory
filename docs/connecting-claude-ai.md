@@ -6,7 +6,7 @@
 > `UM_OAUTH_ENABLED`). **Start with [docs/oauth.md](oauth.md)** to enable and
 > connect; the bearer-token paste steps below are retained for Claude Desktop's
 > local JSON config and as historical reference, and are pending a full refresh
-> after live vendor verification.**
+> after live vendor verification.
 
 > **Draft docs — Claude.ai (web + desktop) UI labels may shift across app
 > updates. Paths below are verified against Claude.ai and Claude Desktop as of
