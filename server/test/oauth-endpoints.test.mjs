@@ -831,15 +831,16 @@ test('CIMD: URL-shaped client_id with NO resolver configured → 400 invalid_cli
 // Stubs (PR 3 / PR 5)
 // =========================================================================
 
-// revoke is still a stub (PR 5 fills it). register is now implemented (PR 3) —
-// its full behaviour is covered in oauth-dcr.test.mjs.
-test('revoke stub → 501 temporarily_unavailable', async () => {
+// revoke is implemented (PR 5) — full behaviour (counts, client/all selectors,
+// 404/400 paths, live-store mutation) is covered in oauth-revoke.test.mjs. This
+// smoke check only asserts the route is wired and no longer the 501 stub.
+test('revoke: route is implemented (empty body → 400, not the old 501 stub)', async () => {
   const rig = makeRig();
   const port = await listen(rig.server);
   try {
-    const rev = await req(port, { method: 'POST', path: '/oauth/revoke', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
-    assert.equal(rev.status, 501);
-    assert.equal(JSON.parse(rev.body).error, 'temporarily_unavailable');
+    const rev = await req(port, { method: 'POST', path: '/oauth/revoke', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(rev.status, 400);
+    assert.equal(JSON.parse(rev.body).error, 'invalid_request');
   } finally { await close(rig.server); }
 });
 

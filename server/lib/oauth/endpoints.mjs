@@ -1,7 +1,8 @@
 // server/lib/oauth/endpoints.mjs
 //
-// The OAuth HTTP handlers — authorize (GET), consent (POST), token (POST) plus
-// register/revoke stubs (Gap-3 OAuth spec sections 4.1, 4.2, 5, 6). These are
+// The OAuth HTTP handlers — authorize (GET), consent (POST), token (POST),
+// register (POST DCR) and revoke (POST, loopback-only operator revocation)
+// (Gap-3 OAuth spec sections 4.1, 4.2, 4.3, 5, 6). These are
 // the door of the embedded single-operator authorization server: authorize
 // validates the request and renders the consent page; consent is the trust
 // boundary (operator-token or presence-cookie gated, CSRF + Origin enforced,
@@ -499,8 +500,46 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     });
   }
 
-  // ---- stub (filled in PR 5) ---------------------------------------------
-  function handleRevoke(req, res) { return sendJson(res, 501, { error: 'temporarily_unavailable' }); }
+  // ---- POST /oauth/revoke (operator revocation, spec §4.3) ---------------
+  // Loopback-only by routing (the endpoint-class oauthRevokePolicy row 404s this
+  // path off-loopback or when OAuth is off; the dispatcher only reaches here for
+  // a loopback caller), so there is NO per-request auth here — physical loopback
+  // access IS the authentication. JSON body:
+  //   {all: true}            → nuke the whole grant graph (tokens + codes).
+  //   {client_id: 'umcl_x'}  → drop ONE client's registration + its tokens/codes.
+  // Exactly one of the two must be present.
+  //
+  // This is an ENDPOINT, not a file-editing CLI, because the running process
+  // owns the in-process state: the mutation lands on the LIVE store instance the
+  // verifier reads (same object, by construction), so a revoked token stops
+  // authenticating immediately. A CLI editing oauth-state.json out-of-band would
+  // race the server's own atomic write-temp-rename and be clobbered (spec §4.3).
+  async function handleRevoke(req, res) {
+    const { value, tooLarge, invalid } = await readJson(req);
+    if (tooLarge || invalid || typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return sendJson(res, 400, { error: 'invalid_request', error_description: 'body must be a JSON object' });
+    }
+
+    const wantsAll = value.all === true;
+    const clientId = typeof value.client_id === 'string' ? value.client_id : undefined;
+    // Exactly one selector — neither, both, or a non-literal `all` is ambiguous.
+    if (wantsAll === (clientId !== undefined)) {
+      return sendJson(res, 400, { error: 'invalid_request', error_description: 'specify exactly one of {all:true} or {client_id}' });
+    }
+
+    if (wantsAll) {
+      const counts = store.revokeAll();
+      return sendJson(res, 200, { revoked: 'all', counts });
+    }
+
+    // client_id path: 404 if the registration is unknown (no silent no-op — the
+    // operator gets told the id did not match anything).
+    if (!store.getClient(clientId)) {
+      return sendJson(res, 404, { error: 'not_found' });
+    }
+    const counts = store.revokeClient(clientId);
+    return sendJson(res, 200, { revoked: 'client', client_id: clientId, counts });
+  }
 
   return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke };
 }

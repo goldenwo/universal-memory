@@ -200,6 +200,66 @@ test('OAuth integration: full happy path → umat_ token authenticates /mcp tool
 });
 
 // --------------------------------------------------------------------------
+// PR-5 operator revocation — loopback POST /oauth/revoke through the LIVE
+// server. The endpoint-class row (oauthRevokePolicy) makes /oauth/revoke
+// loopback-only: a loopback caller bypasses the legacy auth block, so the
+// operator CLI never needs the auth token. The off-loopback 404 posture is
+// asserted directly at the policy layer in endpoint-class.test.mjs (sourceIp =
+// socket.remoteAddress, which is ALWAYS 127.0.0.1 over a real test socket — an
+// X-Forwarded-For header does not change the revoke row's decision, so it
+// cannot be exercised through a real socket here).
+// --------------------------------------------------------------------------
+
+test('OAuth integration: loopback POST /oauth/revoke {all} kills live tokens WITHOUT auth header', async () => {
+  const { dir, oauth } = makeOAuthCtx();
+  const now = Date.now();
+  oauth.store.putClient({
+    client_id: CLIENT_ID, client_name: 'Seeded client', redirect_uris: [REDIRECT],
+    created: now, lastUsed: now, source: 'manual',
+  });
+  // Mint a live access token straight through the store (the issuance flow is
+  // covered above; here we only need a live umat_ to watch die).
+  const issued = oauth.store.issueTokens({
+    sub: 'owner', aud: `${BASE}/mcp`, scope: ['vault'], offlineAccess: true, clientId: CLIENT_ID,
+  });
+  const { url, close } = await startServer({ oauth });
+  try {
+    // Sanity: the token authenticates /mcp first (loopback, no XFF → still goes
+    // through the OAuth verifier branch which trusts the bearer regardless).
+    // /mcp carries X-Forwarded-For so it does NOT take the loopback auth bypass
+    // (shouldBypassLoopback) — the OAuth verifier branch must actually run.
+    const before = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(before.status, 200, 'token live before revoke');
+
+    // Loopback revoke — NO Authorization header (the loopback row bypasses auth).
+    const rev = await fetch(url('/oauth/revoke'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    });
+    assert.equal(rev.status, 200, 'loopback revoke bypasses auth');
+    const revBody = await rev.json();
+    assert.equal(revBody.revoked, 'all');
+    assert.ok(revBody.counts.accessTokens >= 1, 'counts report the killed token');
+
+    // The SAME revoke after the kill reports zeroes — confirms the live store mutated.
+    const after = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    });
+    assert.equal(after.status, 401, 'revoked token no longer authenticates /mcp');
+  } finally {
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --------------------------------------------------------------------------
 // Manual-client seeding (spec §8 PR-2) + 405 on wrong method.
 // --------------------------------------------------------------------------
 
