@@ -148,6 +148,9 @@ test('page: operator_token input present iff needsToken', () => {
   const withTok = renderConsentPage({ ...baseArgs, needsToken: true });
   assert.match(withTok, /name="operator_token"/);
   assert.match(withTok, /type="password"/);
+  // autocomplete=current-password lets the operator's browser password manager
+  // save + autofill the token, so re-consents aren't a re-hunt for the secret.
+  assert.match(withTok, /autocomplete="current-password"/);
 });
 
 test('page: csrf/authzId interpolations are escaped', () => {
