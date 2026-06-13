@@ -2391,7 +2391,14 @@ export function createRequestHandler(ctx = {}) {
 		// is evaluated first so the common machine-client path stays the fast
 		// timing-safe compare.
 		const legacyMatch = received != null && compareTokens(received, expected);
-		const oauthMatch = !legacyMatch && (ctx.oauth?.verify(received) != null);
+		// Least-privilege (holistic-review finding 2026-06-13): OAuth access
+		// tokens are scoped to /mcp ONLY. Vendor connectors (Claude.ai/ChatGPT)
+		// speak MCP and never need the REST surface, so a consented vendor token
+		// must not authenticate /api/* — otherwise it could mutate the mem0 store
+		// over REST regardless of UM_MCP_WRITE_ENABLED. The legacy bearer (machine
+		// clients: CLI/hooks/Pi) keeps full-surface access; on any non-/mcp path
+		// the OAuth arm is not consulted, so an OAuth token there falls to 401.
+		const oauthMatch = !legacyMatch && url.pathname === '/mcp' && (ctx.oauth?.verify(received) != null);
 		const tokenMatches = legacyMatch || oauthMatch;
 		if (tokenMatches) {
 			// Count which branch admitted the request (spec §4.2). Observability
