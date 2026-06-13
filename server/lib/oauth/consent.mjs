@@ -118,7 +118,7 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
     : '';
   const tokenField = needsToken
     ? `<label>Operator token
-        <input type="password" name="operator_token" autocomplete="off" required>
+        <input type="password" name="operator_token" autocomplete="current-password" required>
       </label>`
     : '';
   return `<!doctype html>
