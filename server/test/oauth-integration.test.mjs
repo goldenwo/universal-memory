@@ -13,7 +13,7 @@
  *   1. FULL happy path: seeded manual client → authorize → consent → code →
  *      token → Bearer umat_ on /mcp tools/list → 200 real MCP result.
  *   2. Legacy bearer still works on /mcp (regression).
- *   3. OAuth token works on /api/* too (shared middleware).
+ *   3. OAuth token is scoped to /mcp — accepted on /mcp, 401 on /api/* (least-privilege).
  *   4. Flag-off gating: a valid umat_ token, server built with the flag off
  *      (ctx.oauth absent) → 401.
  *   5. Expired/invalid token on /mcp with flag on → 401 with BOTH the
@@ -365,25 +365,35 @@ test('OAuth integration: legacy bearer still authenticates /mcp when OAuth is on
 });
 
 // --------------------------------------------------------------------------
-// Test 3 — OAuth token works on /api/* too (shared middleware).
+// Test 3 — OAuth tokens are SCOPED TO /mcp (least-privilege, holistic-review
+// finding 2026-06-13): the same umat_ token authenticates /mcp but is REJECTED
+// on the REST surface, so a consented vendor token cannot mutate the mem0 store
+// over /api/*. (The legacy bearer keeps full-surface access — test 2 / the
+// broader auth suite cover that.)
 // --------------------------------------------------------------------------
 
-test('OAuth integration: umat_ token authenticates /api/* (shared auth middleware)', async () => {
+test('OAuth integration: umat_ token is scoped to /mcp — accepted on /mcp, 401 on /api/*', async () => {
   const { dir, oauth } = makeOAuthCtx();
-  // Mint a token directly in the injected store (the issuance path is covered
-  // by test 1; here we only need a live token to prove /api/* shares the OR).
+  // Mint a token directly in the injected store (issuance path covered by test 1).
   const issued = oauth.store.issueTokens({
     sub: 'owner', aud: `${BASE}/mcp`, scope: ['vault'], offlineAccess: false, clientId: CLIENT_ID,
   });
   const memory = { getAll: async () => ({ results: [{ id: 'm1', memory: 'x', metadata: { id: 'd1' } }] }) };
   const { url, close } = await startServer({ oauth, memory });
   try {
-    const r = await fetch(url('/api/list'), {
+    // Accepted on /mcp.
+    const mcp = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(mcp.status, 200, 'OAuth token must authenticate /mcp');
+
+    // Rejected on the REST surface (scoped out) — same token, 401.
+    const rest = await fetch(url('/api/list'), {
       headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}` },
     });
-    assert.equal(r.status, 200, 'OAuth bearer must authenticate /api/* via the shared OR');
-    const body = await r.json();
-    assert.ok(Array.isArray(body.results));
+    assert.equal(rest.status, 401, 'OAuth token must NOT authenticate /api/* (scoped to /mcp)');
   } finally {
     await close();
     fs.rmSync(dir, { recursive: true, force: true });
