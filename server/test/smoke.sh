@@ -2484,6 +2484,64 @@ print('OK: noise fact absent from lane:' + lane)
 	echo "[smoke] Gap-5 S6 PASS: default-ON classifier auto-populates lane:work for a work-flavored no-lane write and abstains on an off-taxonomy fact — the v1.3 flip proven on the live stack (no .env reconfig)"
 fi
 
+# Gap-3 OAuth S7 — live OAuth flow probe (PR-5; plan Task 5.2; spec §4).
+# Gated by UM_SMOKE_OAUTH=1 (explicit opt-in), mirroring S2/S3/S4/S5/S6.
+#
+# Unlike the S2-S6 data-path probes, this drives the embedded OAuth
+# authorization server end-to-end over the wire: discovery (RFC 9728/8414) →
+# DCR register → authorize/consent → PKCE-bound token grant → an authenticated
+# /mcp tools/list with the umat_ access token → refresh rotation → reuse
+# tripwire. The heavy lifting is in the standalone node script
+# test/oauth-flow-probe.mjs (stdlib-only, NOT a node:test file so the unit
+# suite glob skips it); this block only decides whether to RUN it.
+#
+# The default smoke stack ships UM_OAUTH_ENABLED OFF (the documented v0.x
+# default — OAuth is opt-in per spec §0). When OAuth is off, the discovery
+# well-known is hard-404'd by the endpoint-class row, so there is nothing to
+# probe. Rather than fail (OAuth-off is a valid, default posture), this block
+# first probes the discovery endpoint: a 404 ⇒ SKIP with an actionable hint; a
+# 200 ⇒ the stack is OAuth-enabled, so run the probe and FAIL the smoke run on
+# any nonzero exit. This keeps the default CI green while letting an
+# OAuth-enabled stack (UM_OAUTH_ENABLED=true + UM_PUBLIC_BASE_URL set) actually
+# exercise the full flow.
+#
+# Position: AFTER S6 and BEFORE the boot-smoke gate (same placement rationale as
+# S2-S6 — $ENDPOINT / $UM_AUTH_TOKEN are in scope, and the deferred auth-config
+# cleanup below still runs). The node script is resolved relative to BASH_SOURCE
+# (the _SMOKE_DIR idiom the boot-smoke gate uses) so smoke.sh works from any cwd
+# (CI runs from server/, the pre-push hook from the worktree root).
+if [ "${UM_SMOKE_OAUTH:-}" = "1" ]; then
+	echo "[smoke] Gap-3 OAuth S7 — live OAuth flow probe (UM_SMOKE_OAUTH=1)"
+
+	# Probe discovery WITHOUT the auth wrapper (`command curl`, not the bearer-
+	# injecting curl()): the well-known is bypassAuth when OAuth is on and
+	# hard-404'd when it's off — the header is irrelevant either way, and using
+	# the bare builtin keeps this independent of the auth-config tempfile.
+	_oauth_disc_status=$(command curl -s -o /dev/null -w '%{http_code}' \
+		"$ENDPOINT/.well-known/oauth-authorization-server" 2>/dev/null || echo "000")
+
+	if [ "$_oauth_disc_status" = "404" ]; then
+		echo "[smoke] OAuth probe: server has OAuth disabled — set UM_OAUTH_ENABLED=true + UM_PUBLIC_BASE_URL to run; skipping"
+	elif [ "$_oauth_disc_status" = "200" ]; then
+		# OAuth-enabled stack: run the full flow. The probe reads UM_PROBE_BASE_URL
+		# (the endpoint) and UM_AUTH_TOKEN (the operator token for the consent step,
+		# already loaded above from .env). Nonzero exit ⇒ fail the smoke run.
+		_SMOKE_DIR_OAUTH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+		if UM_PROBE_BASE_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
+			node "$_SMOKE_DIR_OAUTH/oauth-flow-probe.mjs"; then
+			echo "[smoke] Gap-3 OAuth S7 PASS: full OAuth flow exercised end-to-end on the live stack (discovery → DCR → authorize/consent → PKCE token → authenticated /mcp → refresh rotation → reuse tripwire)"
+		else
+			echo "[smoke] Gap-3 OAuth S7 FAIL: live OAuth flow probe exited nonzero (see [oauth-probe] FAIL line above)" >&2
+			_um_smoke_auth_cleanup
+			exit 1
+		fi
+	else
+		echo "[smoke] Gap-3 OAuth S7 FAIL: discovery probe of /.well-known/oauth-authorization-server returned HTTP $_oauth_disc_status (expected 200 if OAuth on, 404 if off) — server unreachable or misbehaving" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
