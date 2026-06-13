@@ -159,7 +159,7 @@ function isHttpsUrl(s) {
   try { return new URL(s).protocol === 'https:'; } catch { return false; }
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, cimdResolver = null }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -275,27 +275,42 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   }
 
   // ---- POST /oauth/consent -----------------------------------------------
+  // Observability (spec §6 item 12): onConsent(outcome) fires at every terminal
+  // path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
+  // 'csrf_reject'}. The trust-boundary rejects (cross-origin/cross-site Origin,
+  // non-form body, missing/over-cap body, no pending authz, forged CSRF) all
+  // collapse to 'csrf_reject' — they are the anti-forgery family of "this is not
+  // a legitimate consent submission" and keep the enum bounded. The metric inc
+  // itself lives in the dispatcher (this module stays metrics-free, like its
+  // siblings); here we only call the injected callback.
   async function handleConsent(req, res) {
     // Origin / Sec-Fetch-Site enforcement FIRST (spec section 5): a live cookie
     // must not let a cross-origin page auto-submit a consent.
     const origin = req.headers.origin;
     if (typeof origin === 'string' && origin !== baseOrigin) {
+      onConsent('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-origin' });
     }
     const sfs = req.headers['sec-fetch-site'];
     if (typeof sfs === 'string' && sfs !== 'same-origin' && sfs !== 'none') {
+      onConsent('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-site' });
     }
     if (!isFormContentType(req)) {
+      onConsent('csrf_reject');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
     }
     // Global throttle (IP-independent, spec section 6 item 9).
     if (!throttle.admitted(now())) {
+      onConsent('throttled');
       return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(throttle.retryAfterSec(now())) });
     }
 
     const { params, tooLarge } = await readForm(req);
-    if (tooLarge) return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    if (tooLarge) {
+      onConsent('csrf_reject');
+      return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    }
 
     const authzId = params.get('authz_id');
     const csrf = params.get('csrf');
@@ -303,8 +318,12 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     const decision = params.get('decision');
 
     const rec = authzId ? takePending(authzId) : undefined;
-    if (!rec) return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
+    if (!rec) {
+      onConsent('csrf_reject');
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
+    }
     if (!verifyCsrf(store.getHmacKey(), authzId, csrf)) {
+      onConsent('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'bad csrf' });
     }
 
@@ -318,6 +337,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       // pending record was consumed by takePending, so re-issue a fresh authz
       // id for the retry and bind a new CSRF token to it.
       throttle.fail(now());
+      onConsent('bad_token');
       const retryId = putPending({ ...rec });
       const rerendered = renderConsentPage({
         clientName: rec.clientName ?? rec.clientId,
@@ -338,6 +358,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     // Deny → consume + redirect with access_denied.
     if (decision !== 'allow') {
+      onConsent('deny');
       const loc = new URL(rec.redirectUri);
       loc.searchParams.set('error', 'access_denied');
       if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
@@ -346,6 +367,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     }
 
     // Allow → mint single-use code bound to the authorization, then redirect.
+    onConsent('allow');
     const code = randomBytes(32).toString('base64url');
     store.putCode(sha256hex(code), {
       clientId: rec.clientId, redirectUri: rec.redirectUri, codeChallenge: rec.codeChallenge,
@@ -360,16 +382,29 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   }
 
   // ---- POST /oauth/token --------------------------------------------------
+  // Observability (spec §6 item 12): onTokenGrant(grantType, outcome) fires at
+  // every terminal path. grantType ∈ {'authorization_code','refresh_token',
+  // 'unknown'}; 'unknown' is used for the pre-parse guards (non-form body,
+  // over-cap body) and the unsupported_grant_type path (the parsed grant_type is
+  // attacker-controlled, so labelling it 'unknown' keeps cardinality bounded
+  // rather than echoing arbitrary strings). outcome ∈ {'issued','invalid_grant',
+  // 'reuse_blocked','invalid_client','invalid_request','unsupported'}. The inc
+  // lives in the dispatcher (this module stays metrics-free).
   async function handleToken(req, res) {
     if (!isFormContentType(req)) {
+      onTokenGrant('unknown', 'invalid_request');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
     }
     const { params, tooLarge } = await readForm(req);
-    if (tooLarge) return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    if (tooLarge) {
+      onTokenGrant('unknown', 'invalid_request');
+      return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    }
 
     const grantType = params.get('grant_type');
     if (grantType === 'authorization_code') return tokenAuthCode(res, params);
     if (grantType === 'refresh_token') return tokenRefresh(res, params);
+    onTokenGrant('unknown', 'unsupported');
     return sendJson(res, 400, { error: 'unsupported_grant_type' });
   }
 
@@ -386,23 +421,33 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   function tokenAuthCode(res, params) {
     const code = params.get('code') ?? '';
     const rec = store.consumeCode(sha256hex(code)); // atomic single-use consume
-    if (!rec) return sendJson(res, 400, { error: 'invalid_grant', error_description: 'code invalid or expired' });
+    if (!rec) {
+      onTokenGrant('authorization_code', 'invalid_grant');
+      return sendJson(res, 400, { error: 'invalid_grant', error_description: 'code invalid or expired' });
+    }
     if (params.get('client_id') !== rec.clientId) {
+      onTokenGrant('authorization_code', 'invalid_grant');
       return sendJson(res, 400, { error: 'invalid_grant', error_description: 'client mismatch' });
     }
     if (params.get('redirect_uri') !== rec.redirectUri) {
+      onTokenGrant('authorization_code', 'invalid_grant');
       return sendJson(res, 400, { error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
     }
     if (!verifyS256(params.get('code_verifier') ?? '', rec.codeChallenge)) {
+      onTokenGrant('authorization_code', 'invalid_grant');
       return sendJson(res, 400, { error: 'invalid_grant', error_description: 'PKCE verification failed' });
     }
     const resourceParam = params.get('resource');
     if (resourceParam !== null && resourceParam !== rec.resource) {
+      // invalid_target is a request-parameter problem; folded into the bounded
+      // 'invalid_request' outcome (invalid_target is not in the metric enum).
+      onTokenGrant('authorization_code', 'invalid_request');
       return sendJson(res, 400, { error: 'invalid_target', error_description: 'resource mismatch' });
     }
     const issued = store.issueTokens({
       sub: 'owner', aud: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess, clientId: rec.clientId,
     });
+    onTokenGrant('authorization_code', 'issued');
     return tokenResponse(res, issued, rec.scope);
   }
 
@@ -417,14 +462,21 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     // so the reuse tripwire still fires.
     const boundClientId = store.peekRefreshClientId(plaintext);
     if (boundClientId !== undefined && formClientId !== boundClientId) {
+      // Wire error stays the non-oracle invalid_grant, but the metric records the
+      // true cause (client-binding failure, RFC 6749 §6) as 'invalid_client'.
+      onTokenGrant('refresh_token', 'invalid_client');
       return sendJson(res, 400, { error: 'invalid_grant', error_description: 'client mismatch' });
     }
     const out = store.rotateRefresh(plaintext); // PLAINTEXT in; store hashes
     if (out.reuse || out.notFound) {
       // Reuse → family already revoked by the store; both collapse to one
-      // non-oracle error shape (spec section 6 item 6).
+      // non-oracle error shape on the wire (spec section 6 item 6). The metric
+      // still distinguishes them: a reuse-tripwire trip is the security-relevant
+      // signal ('reuse_blocked'); a plain unknown/expired token is 'invalid_grant'.
+      onTokenGrant('refresh_token', out.reuse ? 'reuse_blocked' : 'invalid_grant');
       return sendJson(res, 400, { error: 'invalid_grant', error_description: 'refresh token invalid' });
     }
+    onTokenGrant('refresh_token', 'issued');
     return tokenResponse(res, out, out.scope ?? []);
   }
 

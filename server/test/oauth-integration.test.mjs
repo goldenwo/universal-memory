@@ -552,3 +552,78 @@ test('OAuth integration: POST /oauth/register increments um_oauth_registrations_
     fs.rmSync(vaultDir, { recursive: true, force: true });
   }
 });
+
+// --------------------------------------------------------------------------
+// Test 8 — PR-5 consent + token-grant metrics (spec §6 item 12). Drive a full
+// live consent-allow + authorization_code exchange through the PRODUCTION
+// construction seam (no injected ctx.oauth — the `??=` would skip the wiring),
+// then assert BOTH new counters appear in /metrics. Proves the onConsent +
+// onTokenGrant callbacks are wired into the prom-client counters, mirroring the
+// registrations metric test above.
+// --------------------------------------------------------------------------
+test('OAuth integration: consent allow + token issue increment um_oauth_consent_total + um_oauth_token_grants_total', async () => {
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-grant-int-'));
+  const saved = {};
+  const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
+  set('UM_VAULT_DIR', vaultDir);
+  set('UM_OAUTH_ENABLED', 'true');
+  set('UM_PUBLIC_BASE_URL', BASE);
+  set('UM_AUTH_TOKEN', OPERATOR);                       // operator token = consent paste
+  set('UM_OAUTH_SEED_CLIENT', `${CLIENT_ID}|${REDIRECT}`); // seed a manual client at construction
+
+  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  try {
+    const { verifier, challenge } = pkcePair();
+
+    // (a) authorize — browser-navigation GET (raw http so Sec-Fetch-Mode survives).
+    const authzQuery = new URLSearchParams({
+      response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT,
+      code_challenge: challenge, code_challenge_method: 'S256', scope: 'vault', state: 'pr5',
+    }).toString();
+    const authzRes = await rawGet(url(`/oauth/authorize?${authzQuery}`), {
+      ...FWD, 'Accept': 'text/html', 'Sec-Fetch-Mode': 'navigate',
+    });
+    assert.equal(authzRes.status, 200, authzRes.body);
+    const { authzId, csrf } = parseConsentForm(authzRes.body);
+    assert.ok(authzId && csrf, 'consent page must carry authz_id + csrf');
+
+    // (b) consent allow → 303 with code (drives onConsent('allow')).
+    const consentRes = await fetch(url('/oauth/consent'), {
+      method: 'POST', redirect: 'manual',
+      headers: { ...FWD, 'Content-Type': 'application/x-www-form-urlencoded', 'Origin': BASE },
+      body: new URLSearchParams({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }).toString(),
+    });
+    assert.equal(consentRes.status, 303, 'consent allow should 303-redirect');
+    const code = new URL(consentRes.headers.get('location')).searchParams.get('code');
+    assert.ok(code, 'redirect Location must carry the authorization code');
+
+    // (c) token exchange → 200 (drives onTokenGrant('authorization_code','issued')).
+    const tokenRes = await fetch(url('/oauth/token'), {
+      method: 'POST',
+      headers: { ...FWD, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code', code, client_id: CLIENT_ID,
+        redirect_uri: REDIRECT, code_verifier: verifier,
+      }).toString(),
+    });
+    assert.equal(tokenRes.status, 200, 'token exchange should succeed');
+
+    // (d) /metrics (loopback) carries BOTH new counters.
+    const m = await fetch(url('/metrics'));
+    const text = await m.text();
+    assert.match(text, /um_oauth_consent_total\{outcome="allow"\}\s+[1-9]/);
+    assert.match(text, /um_oauth_token_grants_total\{grant_type="authorization_code",outcome="issued"\}\s+[1-9]/);
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(vaultDir, { recursive: true, force: true });
+  }
+});
