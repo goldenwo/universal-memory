@@ -200,6 +200,66 @@ test('OAuth integration: full happy path → umat_ token authenticates /mcp tool
 });
 
 // --------------------------------------------------------------------------
+// PR-5 operator revocation — loopback POST /oauth/revoke through the LIVE
+// server. The endpoint-class row (oauthRevokePolicy) makes /oauth/revoke
+// loopback-only: a loopback caller bypasses the legacy auth block, so the
+// operator CLI never needs the auth token. The off-loopback 404 posture is
+// asserted directly at the policy layer in endpoint-class.test.mjs (sourceIp =
+// socket.remoteAddress, which is ALWAYS 127.0.0.1 over a real test socket — an
+// X-Forwarded-For header does not change the revoke row's decision, so it
+// cannot be exercised through a real socket here).
+// --------------------------------------------------------------------------
+
+test('OAuth integration: loopback POST /oauth/revoke {all} kills live tokens WITHOUT auth header', async () => {
+  const { dir, oauth } = makeOAuthCtx();
+  const now = Date.now();
+  oauth.store.putClient({
+    client_id: CLIENT_ID, client_name: 'Seeded client', redirect_uris: [REDIRECT],
+    created: now, lastUsed: now, source: 'manual',
+  });
+  // Mint a live access token straight through the store (the issuance flow is
+  // covered above; here we only need a live umat_ to watch die).
+  const issued = oauth.store.issueTokens({
+    sub: 'owner', aud: `${BASE}/mcp`, scope: ['vault'], offlineAccess: true, clientId: CLIENT_ID,
+  });
+  const { url, close } = await startServer({ oauth });
+  try {
+    // Sanity: the token authenticates /mcp first (loopback, no XFF → still goes
+    // through the OAuth verifier branch which trusts the bearer regardless).
+    // /mcp carries X-Forwarded-For so it does NOT take the loopback auth bypass
+    // (shouldBypassLoopback) — the OAuth verifier branch must actually run.
+    const before = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(before.status, 200, 'token live before revoke');
+
+    // Loopback revoke — NO Authorization header (the loopback row bypasses auth).
+    const rev = await fetch(url('/oauth/revoke'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    });
+    assert.equal(rev.status, 200, 'loopback revoke bypasses auth');
+    const revBody = await rev.json();
+    assert.equal(revBody.revoked, 'all');
+    assert.ok(revBody.counts.accessTokens >= 1, 'counts report the killed token');
+
+    // The SAME revoke after the kill reports zeroes — confirms the live store mutated.
+    const after = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': `Bearer ${issued.accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    });
+    assert.equal(after.status, 401, 'revoked token no longer authenticates /mcp');
+  } finally {
+    await close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --------------------------------------------------------------------------
 // Manual-client seeding (spec §8 PR-2) + 405 on wrong method.
 // --------------------------------------------------------------------------
 
@@ -482,6 +542,81 @@ test('OAuth integration: POST /oauth/register increments um_oauth_registrations_
     const m = await fetch(url('/metrics'));
     const text = await m.text();
     assert.match(text, /um_oauth_registrations_total\{outcome="accepted"\}\s+[1-9]/);
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// --------------------------------------------------------------------------
+// Test 8 — PR-5 consent + token-grant metrics (spec §6 item 12). Drive a full
+// live consent-allow + authorization_code exchange through the PRODUCTION
+// construction seam (no injected ctx.oauth — the `??=` would skip the wiring),
+// then assert BOTH new counters appear in /metrics. Proves the onConsent +
+// onTokenGrant callbacks are wired into the prom-client counters, mirroring the
+// registrations metric test above.
+// --------------------------------------------------------------------------
+test('OAuth integration: consent allow + token issue increment um_oauth_consent_total + um_oauth_token_grants_total', async () => {
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-grant-int-'));
+  const saved = {};
+  const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
+  set('UM_VAULT_DIR', vaultDir);
+  set('UM_OAUTH_ENABLED', 'true');
+  set('UM_PUBLIC_BASE_URL', BASE);
+  set('UM_AUTH_TOKEN', OPERATOR);                       // operator token = consent paste
+  set('UM_OAUTH_SEED_CLIENT', `${CLIENT_ID}|${REDIRECT}`); // seed a manual client at construction
+
+  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  try {
+    const { verifier, challenge } = pkcePair();
+
+    // (a) authorize — browser-navigation GET (raw http so Sec-Fetch-Mode survives).
+    const authzQuery = new URLSearchParams({
+      response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT,
+      code_challenge: challenge, code_challenge_method: 'S256', scope: 'vault', state: 'pr5',
+    }).toString();
+    const authzRes = await rawGet(url(`/oauth/authorize?${authzQuery}`), {
+      ...FWD, 'Accept': 'text/html', 'Sec-Fetch-Mode': 'navigate',
+    });
+    assert.equal(authzRes.status, 200, authzRes.body);
+    const { authzId, csrf } = parseConsentForm(authzRes.body);
+    assert.ok(authzId && csrf, 'consent page must carry authz_id + csrf');
+
+    // (b) consent allow → 303 with code (drives onConsent('allow')).
+    const consentRes = await fetch(url('/oauth/consent'), {
+      method: 'POST', redirect: 'manual',
+      headers: { ...FWD, 'Content-Type': 'application/x-www-form-urlencoded', 'Origin': BASE },
+      body: new URLSearchParams({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }).toString(),
+    });
+    assert.equal(consentRes.status, 303, 'consent allow should 303-redirect');
+    const code = new URL(consentRes.headers.get('location')).searchParams.get('code');
+    assert.ok(code, 'redirect Location must carry the authorization code');
+
+    // (c) token exchange → 200 (drives onTokenGrant('authorization_code','issued')).
+    const tokenRes = await fetch(url('/oauth/token'), {
+      method: 'POST',
+      headers: { ...FWD, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code', code, client_id: CLIENT_ID,
+        redirect_uri: REDIRECT, code_verifier: verifier,
+      }).toString(),
+    });
+    assert.equal(tokenRes.status, 200, 'token exchange should succeed');
+
+    // (d) /metrics (loopback) carries BOTH new counters.
+    const m = await fetch(url('/metrics'));
+    const text = await m.text();
+    assert.match(text, /um_oauth_consent_total\{outcome="allow"\}\s+[1-9]/);
+    assert.match(text, /um_oauth_token_grants_total\{grant_type="authorization_code",outcome="issued"\}\s+[1-9]/);
   } finally {
     srv.close();
     await once(srv, 'close');

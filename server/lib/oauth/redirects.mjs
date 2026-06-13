@@ -15,6 +15,12 @@ const CHATGPT_LEGACY = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const CHATGPT_PREFIX = 'https://chatgpt.com/connector/oauth/';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1']); // [::1] deliberately omitted — no vendor emits it; fails closed (rejection at registration), add if Claude Code ever does
 
+// Per-client redirect_uris array-length cap (PR-5 hardening). Real connectors
+// register 1–2 callbacks; 10 is generous headroom. Bounds an otherwise
+// body-size-only-limited array on the public DCR + CIMD registration paths so
+// a client cannot bloat the state file with thousands of (valid) entries.
+export const MAX_REDIRECT_URIS = 10;
+
 function parse(uri) {
   try { return new URL(uri); } catch { return null; }
 }

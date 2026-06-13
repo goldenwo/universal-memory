@@ -260,6 +260,24 @@ jobs:
           # `COPY config/`) + OPENAI_API_KEY on the server (above) for the exemplar
           # + fact embeds. Unlike S3/S4/S5 it does not depend on UM_DEDUP_ENABLED.
           UM_SMOKE_LANE_ON: "1"
+          # Gap-3 OAuth PR-5 — UM_SMOKE_OAUTH=1 activates the S7 live OAuth flow
+          # probe gate in smoke.sh. This default stack ships UM_OAUTH_ENABLED OFF
+          # (OAuth is opt-in per spec §0), so the S7 block's discovery pre-check
+          # gets a 404 and SKIPS cleanly with an explicit "[smoke] OAuth probe:
+          # server has OAuth disabled … skipping" line — CI stays green while the
+          # gate wiring is exercised and visible in the logs. The moment this
+          # stack is brought up OAuth-enabled (UM_OAUTH_ENABLED=true +
+          # UM_PUBLIC_BASE_URL set), the probe auto-runs the full flow.
+          #
+          # FOLLOW-UP (deliberately NOT wired here): making CI actually EXERCISE
+          # (not skip) the full flow needs an OAuth-enabled boot — either flipping
+          # this shared container's flag (which would change /mcp's 401 envelope
+          # + endpoint-class routing for every later step, e.g. the continuity
+          # test) or standing up a second short-lived OAuth-enabled instance with
+          # its own teardown. Both are larger than a one-line env add, so per the
+          # "don't half-wire" discipline they're left as a follow-up; the probe is
+          # proven locally against an OAuth-enabled boot (PR-5 verification).
+          UM_SMOKE_OAUTH: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching

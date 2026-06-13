@@ -54,6 +54,14 @@ See [../docs/architecture.md](../docs/architecture.md) for the full protocol. Su
 - `POST /mcp` — JSON-RPC for MCP clients (Claude Code, Claude Desktop)
 - `GET /health` — liveness + memory count
 
+## Vendor connectors (Claude.ai / ChatGPT) — OAuth
+
+Claude.ai and ChatGPT MCP connectors require MCP-spec OAuth (they do not accept a
+static bearer token). UM embeds a single-operator OAuth 2.1 authorization server,
+shipped off by default behind `UM_OAUTH_ENABLED`. To connect those vendors over a
+public tunnel, see **[../docs/oauth.md](../docs/oauth.md)**. Local Claude Code and
+the CLI keep using the bearer token and are unaffected.
+
 ## Configuration
 
 See [.env.example](.env.example) for all knobs.

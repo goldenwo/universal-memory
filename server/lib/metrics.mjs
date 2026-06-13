@@ -121,6 +121,42 @@ export const umOauthRegistrationsTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Gap-3 OAuth PR-5: consent-page outcomes (spec §6 item 12, plan Task 2.7).
+// `outcome` ∈ {'allow','deny','bad_token','throttled','csrf_reject'} — fixed enum,
+// never user input (bounded cardinality: 5). Emitted by handleConsent's terminal
+// paths via the injected onConsent callback so endpoints.mjs stays metrics-free
+// (same callback-seam discipline as um_oauth_registrations_total). Lets ops watch
+// the consent mix post-flip: a spike in csrf_reject = cross-origin/forged-CSRF
+// probing the trust boundary; bad_token = wrong operator-token pastes; throttled =
+// the global consent throttle (spec §6 item 9) is shedding load.
+export const umOauthConsentTotal = new promClient.Counter({
+  name: 'um_oauth_consent_total',
+  help: 'OAuth consent-page outcomes (Gap-3 PR-5): allow|deny|bad_token|throttled|csrf_reject',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
+// Gap-3 OAuth PR-5: token-endpoint grant outcomes (spec §6 item 12, plan Task 2.7).
+// Two bounded label dimensions:
+//   grant_type ∈ {'authorization_code','refresh_token','unknown'} — 'unknown' is
+//     used when grant_type is absent/un-parseable (malformed body before parse) or
+//     not a supported value (unsupported_grant_type), so a hostile caller spraying
+//     arbitrary grant_type strings can NEVER explode label cardinality.
+//   outcome ∈ {'issued','invalid_grant','reuse_blocked','invalid_client',
+//     'invalid_request','unsupported'} — fixed enum.
+// Bounded cardinality: 3 × 6 = 18 combinations (most never co-occur).
+// This counter SUBSUMES two spec §6 item-12 observability asks without extra
+// counters: refresh-rotation success = {grant_type=refresh_token,outcome=issued};
+// reuse-tripwire trips = {grant_type=refresh_token,outcome=reuse_blocked}.
+// Emitted by handleToken's terminal paths via the injected onTokenGrant callback
+// (endpoints.mjs stays metrics-free — same callback seam as the counters above).
+export const umOauthTokenGrantsTotal = new promClient.Counter({
+  name: 'um_oauth_token_grants_total',
+  help: 'OAuth token-grant outcomes (Gap-3 PR-5), by grant_type (authorization_code|refresh_token|unknown) and outcome (issued|invalid_grant|reuse_blocked|invalid_client|invalid_request|unsupported)',
+  labelNames: ['grant_type', 'outcome'],
+  registers: [registry],
+});
+
 export const lockContentionsTotal = new promClient.Counter({
   name: 'um_lock_contentions_total',
   help: 'Lock contention events by lock-path',

@@ -226,24 +226,37 @@ export function createStateStore(dir, { now = Date.now } = {}) {
     prune,
 
     // ---- revocation (PR 5)
+    // Both return a {accessTokens, refreshTokens, codes} count of what was
+    // dropped, captured BEFORE the delete so the loopback /oauth/revoke endpoint
+    // can report it (spec §4.3). Counts are additive to the base contract; the
+    // persisted key layout is unchanged. revokeAll keeps clients (it nukes the
+    // grant graph, not registrations); revokeClient also drops the registration.
     revokeAll() {
+      const counts = {
+        accessTokens: Object.keys(state.accessTokens).length,
+        refreshTokens: Object.keys(state.refreshTokens).length,
+        codes: Object.keys(state.codes).length,
+      };
       state.codes = {};
       state.accessTokens = {};
       state.refreshTokens = {};
       save();
+      return counts;
     },
     revokeClient(clientId) {
+      const counts = { accessTokens: 0, refreshTokens: 0, codes: 0 };
       delete state.clients[clientId];
       for (const [id, c] of Object.entries(state.codes)) {
-        if (c.clientId === clientId) delete state.codes[id];
+        if (c.clientId === clientId) { delete state.codes[id]; counts.codes++; }
       }
       for (const [h, a] of Object.entries(state.accessTokens)) {
-        if (a.clientId === clientId) delete state.accessTokens[h];
+        if (a.clientId === clientId) { delete state.accessTokens[h]; counts.accessTokens++; }
       }
       for (const [h, r] of Object.entries(state.refreshTokens)) {
-        if (r.clientId === clientId) delete state.refreshTokens[h];
+        if (r.clientId === clientId) { delete state.refreshTokens[h]; counts.refreshTokens++; }
       }
       save();
+      return counts;
     },
   };
 }

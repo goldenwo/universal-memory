@@ -27,7 +27,7 @@
 // maps it to a spec-shaped invalid_client — retriable by the vendor, never a
 // silent fallback to another client-resolution path (spec §6 item 3).
 
-import { isAllowedRegistrationRedirect } from './redirects.mjs';
+import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mjs';
 
 // The default vendor allowlist (spec §3 Q5). Frozen — extension is via the
 // UM_OAUTH_CIMD_HOSTS env, not mutation.
@@ -84,9 +84,9 @@ function buildClientRecord(doc, clientIdUrl) {
   // Self-consistency: the doc must claim exactly the URL we fetched.
   if (doc.client_id !== clientIdUrl) return null;
 
-  // redirect_uris: required non-empty array; EVERY entry allowlisted.
+  // redirect_uris: required non-empty, length-capped array; EVERY entry allowlisted.
   const redirectUris = doc.redirect_uris;
-  if (!Array.isArray(redirectUris) || redirectUris.length === 0
+  if (!Array.isArray(redirectUris) || redirectUris.length === 0 || redirectUris.length > MAX_REDIRECT_URIS
     || !redirectUris.every((u) => typeof u === 'string' && isAllowedRegistrationRedirect(u))) {
     return null;
   }

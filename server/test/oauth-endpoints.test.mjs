@@ -828,18 +828,209 @@ test('CIMD: URL-shaped client_id with NO resolver configured → 400 invalid_cli
 });
 
 // =========================================================================
+// PR-5 observability callbacks (spec §6 item 12) — onConsent(outcome) and
+// onTokenGrant(grantType, outcome) fire at every terminal path. These are the
+// metrics seam: endpoints.mjs stays metrics-free, the dispatcher owns the inc.
+// Asserted UNIT-level by injecting spy callbacks (no prom-client dependency).
+// =========================================================================
+
+// Build a rig whose handlers capture every onConsent / onTokenGrant call.
+function makeSpyRig({ now } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-spy-'));
+  const clock = now ?? { t: Date.now() };
+  const nowFn = () => clock.t;
+  const store = createStateStore(dir, { now: nowFn });
+  store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
+  const throttle = createConsentThrottle();
+  const consentCalls = [];
+  const tokenCalls = [];
+  const handlers = createOAuthHandlers({
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn,
+    onConsent: (outcome) => consentCalls.push(outcome),
+    onTokenGrant: (grantType, outcome) => tokenCalls.push({ grantType, outcome }),
+  });
+  const server = http.createServer((rq, rs) => {
+    const u = new URL(rq.url, BASE_URL);
+    if (u.pathname === '/oauth/authorize' && rq.method === 'GET') return handlers.handleAuthorize(rq, rs);
+    if (u.pathname === '/oauth/consent' && rq.method === 'POST') return handlers.handleConsent(rq, rs);
+    if (u.pathname === '/oauth/token' && rq.method === 'POST') return handlers.handleToken(rq, rs);
+    rs.statusCode = 404; rs.end();
+  });
+  return { dir, clock, store, throttle, handlers, server, consentCalls, tokenCalls };
+}
+
+async function spyFreshConsentForm(port, pkce, extraQuery = {}) {
+  const res = await req(port, {
+    path: `/oauth/authorize?${authorizeQuery({ code_challenge: pkce.challenge, ...extraQuery })}`,
+    headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+  });
+  return parseConsentForm(res.body);
+}
+
+test('onConsent fires outcome="allow" on a successful consent', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(res.status, 303);
+    assert.deepEqual(rig.consentCalls, ['allow']);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onConsent fires outcome="deny" on a denied consent', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'deny' }),
+    });
+    assert.equal(res.status, 303);
+    assert.deepEqual(rig.consentCalls, ['deny']);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onConsent fires outcome="bad_token" on a wrong operator token re-render', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: 'wrong', decision: 'allow' }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(rig.consentCalls, ['bad_token']);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onConsent fires outcome="throttled" when the throttle blocks', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce);
+    rig.throttle.fail(rig.clock.t); // pre-block the throttle
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(res.status, 429);
+    assert.deepEqual(rig.consentCalls, ['throttled']);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onConsent fires outcome="csrf_reject" on a forged CSRF token', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId } = await spyFreshConsentForm(port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf: 'forged', operator_token: OPERATOR, decision: 'allow' }),
+    });
+    assert.equal(res.status, 403);
+    assert.deepEqual(rig.consentCalls, ['csrf_reject']);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onTokenGrant fires (authorization_code, "issued") on a successful exchange', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce, { scope: 'vault offline_access' });
+    const allow = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    const code = new URL(allow.headers.location).searchParams.get('code');
+    const tok = await exchangeCode(port, { code, verifier: pkce.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    assert.deepEqual(rig.tokenCalls, [{ grantType: 'authorization_code', outcome: 'issued' }]);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onTokenGrant fires (authorization_code, "invalid_grant") on an unknown code', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const res = await exchangeCode(port, { code: 'never-issued', verifier: pkcePair().verifier });
+    assert.equal(res.status, 400);
+    assert.deepEqual(rig.tokenCalls, [{ grantType: 'authorization_code', outcome: 'invalid_grant' }]);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onTokenGrant fires (refresh_token, "issued") then (refresh_token, "reuse_blocked")', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await spyFreshConsentForm(port, pkce, { scope: 'vault offline_access' });
+    const allow = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf, operator_token: OPERATOR, decision: 'allow' }),
+    });
+    const code = new URL(allow.headers.location).searchParams.get('code');
+    const first = JSON.parse((await exchangeCode(port, { code, verifier: pkce.verifier })).body);
+    rig.tokenCalls.length = 0; // drop the authorization_code issuance
+
+    // rotate (refresh issued), then reuse the OLD token (reuse_blocked)
+    const rotated = await refreshGrant(port, first.refresh_token);
+    assert.equal(rotated.status, 200, rotated.body);
+    const reuse = await refreshGrant(port, first.refresh_token);
+    assert.equal(reuse.status, 400);
+    assert.deepEqual(rig.tokenCalls, [
+      { grantType: 'refresh_token', outcome: 'issued' },
+      { grantType: 'refresh_token', outcome: 'reuse_blocked' },
+    ]);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+test('onTokenGrant fires (unknown, "unsupported") on an unsupported grant_type', async () => {
+  const rig = makeSpyRig();
+  const port = await listen(rig.server);
+  try {
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/token',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'password', username: 'x' }),
+    });
+    assert.equal(res.status, 400);
+    assert.deepEqual(rig.tokenCalls, [{ grantType: 'unknown', outcome: 'unsupported' }]);
+  } finally { await close(rig.server); fs.rmSync(rig.dir, { recursive: true, force: true }); }
+});
+
+// =========================================================================
 // Stubs (PR 3 / PR 5)
 // =========================================================================
 
-// revoke is still a stub (PR 5 fills it). register is now implemented (PR 3) —
-// its full behaviour is covered in oauth-dcr.test.mjs.
-test('revoke stub → 501 temporarily_unavailable', async () => {
+// revoke is implemented (PR 5) — full behaviour (counts, client/all selectors,
+// 404/400 paths, live-store mutation) is covered in oauth-revoke.test.mjs. This
+// smoke check only asserts the route is wired and no longer the 501 stub.
+test('revoke: route is implemented (empty body → 400, not the old 501 stub)', async () => {
   const rig = makeRig();
   const port = await listen(rig.server);
   try {
-    const rev = await req(port, { method: 'POST', path: '/oauth/revoke', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
-    assert.equal(rev.status, 501);
-    assert.equal(JSON.parse(rev.body).error, 'temporarily_unavailable');
+    const rev = await req(port, { method: 'POST', path: '/oauth/revoke', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(rev.status, 400);
+    assert.equal(JSON.parse(rev.body).error, 'invalid_request');
   } finally { await close(rig.server); }
 });
 
