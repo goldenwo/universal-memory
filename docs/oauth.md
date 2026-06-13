@@ -39,6 +39,43 @@ Three environment variables on the server (already documented in
 | `UM_PUBLIC_BASE_URL` | *(required when enabled)* | Your canonical public origin, e.g. your Tailscale Funnel URL `https://host.tailXXXX.ts.net`. **The server refuses to boot if OAuth is on and this is unset.** It is config-canonical: the issuer, protected-resource document, token audience, and the `/openapi.yaml` `servers:` URL all derive from it — never from a request `Host` header. |
 | `UM_OAUTH_CIMD_HOSTS` | `claude.ai,chatgpt.com,openai.com` | Allowlisted hosts whose CIMD client-id documents the server will fetch (see [§4](#4-connecting-chatgpt-cimd)). Comma-separated; subdomains included. Extend only for a vendor you trust. |
 
+### What `UM_PUBLIC_BASE_URL` is, and how to get it
+
+This is the one value you have to set, so it's worth being clear about.
+
+**Why it's needed at all.** When Claude.ai or ChatGPT connect, they first fetch your
+server's discovery documents and read absolute URLs out of them ("authorize here,
+get tokens there"). Those URLs must be the address the vendor — running in the
+cloud — can actually reach, so the server has to be told its own public address.
+Every OAuth server works this way; it can't be skipped.
+
+**Why you set it instead of the server guessing it.** The server *could* read the
+address off each incoming request's `Host` header (zero config), but that's a known
+attack — a forged header could make the server hand out tokens scoped to the wrong
+address — so the OAuth spec requires the value to come from your config, never from
+the request.
+
+**How to find the value (Tailscale Funnel — the recommended path).** Your Funnel URL
+is always `https://<your-device>.<your-tailnet>.ts.net`. Two easy ways to get it:
+- run `tailscale status` and read this device's name, **or**
+- just run `um-tunnel` once — it prints the exact public URL at the top; copy that.
+
+  (Using cloudflared or ngrok instead? Their quick-tunnel URLs are random per run, so
+  start the tunnel first, copy the URL it prints, then set it here. A custom domain is
+  whatever you've pointed at the server.)
+
+**Format — origin only, no path, no trailing slash:**
+- ✅ `https://my-laptop.tail1a2b.ts.net`
+- ❌ `https://my-laptop.tail1a2b.ts.net/mcp`  ❌ `https://my-laptop.tail1a2b.ts.net/`
+
+It must **exactly match** the URL the vendor reaches you on (your tunnel URL). On a
+mismatch the server logs an `oauth_host_mismatch` warning and vendors may fail to
+connect — that warning is the first thing to check if a connect fails.
+
+**Don't confuse it with the connector URL you paste into the vendor.** That one is
+`UM_PUBLIC_BASE_URL` **plus `/mcp`** (e.g. `https://my-laptop.tail1a2b.ts.net/mcp`).
+The base URL is the origin; the connector URL adds the `/mcp` path.
+
 Enable it:
 
 ```bash
