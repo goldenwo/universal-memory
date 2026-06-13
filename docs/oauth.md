@@ -199,6 +199,10 @@ means `UM_OAUTH_ENABLED` isn't `true` on the running container.
   tokens live 30 minutes; refresh tokens rotate on every use and a replayed old
   refresh token revokes the whole family. Every token is audience-bound to your
   `UM_PUBLIC_BASE_URL` + `/mcp`.
+- **Least privilege:** an OAuth token authenticates **only `/mcp`** — vendors speak
+  MCP and never need the REST API, so a connector token cannot reach `/api/*` even
+  if exfiltrated. Your machine clients (CLI, hooks, Pi) keep using the legacy bearer
+  token, which retains full-surface access.
 - **CIMD fetches** are allowlist-gated before any network call, HTTPS-only, with
   redirect-following disabled, a 5s timeout, and a 64 KB body cap.
 - **Rate limiting:** all `/oauth/*` routes share a dedicated limiter independent of
