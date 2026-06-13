@@ -61,7 +61,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
@@ -2174,6 +2174,18 @@ export function createRequestHandler(ctx = {}) {
 					try { umOauthRegistrationsTotal.inc({ outcome }); }
 					catch (e) { obsFallback(e, 'metric:oauth-registration'); }
 				},
+				// Consent-page + token-grant outcome metrics (spec §6 item 12, PR-5).
+				// Same metrics-free-handler / obs-fallback-inc idiom as onRegistration:
+				// the bounded outcome / grant_type enums come from the handler, so a
+				// metric-emit failure never poisons the consent or token response (C.9).
+				onConsent: (outcome) => {
+					try { umOauthConsentTotal.inc({ outcome }); }
+					catch (e) { obsFallback(e, 'metric:oauth-consent'); }
+				},
+				onTokenGrant: (grantType, outcome) => {
+					try { umOauthTokenGrantsTotal.inc({ grant_type: grantType, outcome }); }
+					catch (e) { obsFallback(e, 'metric:oauth-token-grant'); }
+				},
 				// CIMD resolver (spec §3 Q5 / PR-4): ChatGPT's preferred path —
 				// a URL-shaped client_id is fetched + allowlist/SSRF-guarded per
 				// authorize. Production defaults (global fetch, process.env for the
@@ -2548,8 +2560,7 @@ export function createRequestHandler(ctx = {}) {
 		// ctx.oauth is constructed. Mirror the well-known block: apply the
 		// DEDICATED OAuth limiter FIRST (independent of the shared admit so an
 		// /oauth/* flood cannot starve /mcp), then dispatch to the handler.
-		// Wrong method on a known route -> 405 JSON. /oauth/register +
-		// /oauth/revoke are 501 stubs (filled by PR 3 / PR 5); /oauth/revoke is
+		// Wrong method on a known route -> 405 JSON. /oauth/revoke is
 		// additionally loopback-gated by its endpoint-class row.
 		if (url.pathname.startsWith('/oauth/') && ctx.oauth) {
 			const ipKey = extractRateLimitKey(req);

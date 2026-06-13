@@ -1,10 +1,11 @@
 // server/test/metrics.test.mjs
-// C.4 — prom-client Registry + 15 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5 + Gap-3).
+// C.4 — prom-client Registry + 18 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5 + Gap-3).
 //
 // Tests pin three contracts:
-//   1. Exactly 15 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
+//   1. Exactly 18 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
 //      4 v0.8 G2 um_provider_* + 2 v1.1 D1 dedup metrics + 1 Gap-5 lane-classifier +
-//      1 Gap-5 P3 in-band supersede + 1 Gap-3 OAuth auth-branch). No defaults —
+//      1 Gap-5 P3 in-band supersede + 1 Gap-3 OAuth auth-branch + 1 Gap-3 OAuth
+//      DCR registrations + 2 Gap-3 OAuth PR-5 consent/token-grant). No defaults —
 //      registry body is bounded; also prevents recon-via-label-inventory.
 //   2. endpoint label uses route template, NOT raw expanded paths
 //      (cardinality cap N1 — same discipline as C.3 logging).
@@ -23,9 +24,11 @@ import {
   umFactsExtractedTotal,
   umLaneClassifiedTotal,
   umInbandSupersedeTotal,
+  umOauthConsentTotal,
+  umOauthTokenGrantsTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 16 named metrics', () => {
+test('registry exposes exactly 18 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_dedup_check_duration_seconds',  // D1 §9
@@ -39,7 +42,9 @@ test('registry exposes exactly 16 named metrics', () => {
     'um_mcp_auth_branch_total',         // Gap-3 OAuth (legacy|oauth branch)
     'um_mcp_tool_calls_total',
     'um_mem0_ops_total',
+    'um_oauth_consent_total',           // Gap-3 OAuth PR-5 (consent-page outcomes)
     'um_oauth_registrations_total',     // Gap-3 OAuth PR-3 (RFC 7591 DCR outcomes)
+    'um_oauth_token_grants_total',      // Gap-3 OAuth PR-5 (token-grant outcomes)
     'um_provider_cost_usd_total',
     'um_provider_errors_total',
     'um_provider_request_duration_seconds',
@@ -108,4 +113,29 @@ test('umInbandSupersedeTotal counter exists with outcome label (Gap-5 P3)', () =
   umInbandSupersedeTotal.inc({ outcome: 'superseded' });
   umInbandSupersedeTotal.inc({ outcome: 'declined' });
   umInbandSupersedeTotal.inc({ outcome: 'demote_error' });
+});
+
+test('umOauthConsentTotal counter exists with outcome label (Gap-3 PR-5)', () => {
+  assert.equal(typeof umOauthConsentTotal.inc, 'function');
+  // Bounded enum — throws synchronously if the label shape is wrong.
+  umOauthConsentTotal.inc({ outcome: 'allow' });
+  umOauthConsentTotal.inc({ outcome: 'deny' });
+  umOauthConsentTotal.inc({ outcome: 'bad_token' });
+  umOauthConsentTotal.inc({ outcome: 'throttled' });
+  umOauthConsentTotal.inc({ outcome: 'csrf_reject' });
+});
+
+test('umOauthTokenGrantsTotal counter exists with grant_type + outcome labels (Gap-3 PR-5)', () => {
+  assert.equal(typeof umOauthTokenGrantsTotal.inc, 'function');
+  // Bounded 2-D enum — throws synchronously if either label is missing/wrong.
+  umOauthTokenGrantsTotal.inc({ grant_type: 'authorization_code', outcome: 'issued' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'authorization_code', outcome: 'invalid_grant' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'refresh_token', outcome: 'issued' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'refresh_token', outcome: 'reuse_blocked' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'refresh_token', outcome: 'invalid_client' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'unknown', outcome: 'unsupported' });
+  umOauthTokenGrantsTotal.inc({ grant_type: 'unknown', outcome: 'invalid_request' });
+  // prom-client throws synchronously only on an UNKNOWN label (not a missing one);
+  // pins the label set so the C.9 obs-fallback wrapper around the inc is justified.
+  assert.throws(() => umOauthTokenGrantsTotal.inc({ wrong: 'label' }), /label/i);
 });
