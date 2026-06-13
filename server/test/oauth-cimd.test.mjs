@@ -204,6 +204,15 @@ test('cimd: a non-allowlisted redirect_uri → null', async () => {
   assert.equal(await resolve(CLIENT_URL), null);
 });
 
+test('cimd: redirect_uris over the length cap → null (PR-5 hardening)', async () => {
+  // 11 individually-valid (loopback) callbacks — each allowlisted, but the
+  // array exceeds MAX_REDIRECT_URIS (10), so the doc is rejected.
+  const tooMany = Array.from({ length: 11 }, (_, i) => `http://127.0.0.1:${3000 + i}/cb`);
+  const fetchImpl = makeFetchSpy({ response: makeResponse({ body: validDoc({ redirect_uris: tooMany }) }) });
+  const resolve = createCimdResolver({ fetchImpl });
+  assert.equal(await resolve(CLIENT_URL), null);
+});
+
 test('cimd: token_endpoint_auth_method other than none → null', async () => {
   const fetchImpl = makeFetchSpy({ response: makeResponse({ body: validDoc({ token_endpoint_auth_method: 'client_secret_basic' }) }) });
   const resolve = createCimdResolver({ fetchImpl });
