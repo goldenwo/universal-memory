@@ -33,6 +33,8 @@ import {
 } from './consent.mjs';
 import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mjs';
 import { compareTokens } from '../auth.mjs';
+import { makeOperatorPolicy } from './idp/policy.mjs';
+import { createConsentThrottle } from './throttle.mjs';
 
 const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
 
@@ -159,7 +161,7 @@ function isHttpsUrl(s) {
   try { return new URL(s).protocol === 'https:'; } catch { return false; }
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}), registry = { get: () => undefined, list: () => [] }, callbackThrottle = createConsentThrottle(), onIdpOutcome = () => {} }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -191,6 +193,14 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     const rec = pending.get(id);
     if (!rec) return undefined;
     if (rec.exp <= now()) { pending.delete(id); return undefined; }
+    return rec;
+  }
+  // Read-only liveness check: returns the live pending record WITHOUT consuming it
+  // (the IdP login→callback round-trip peeks the same authz twice). Pure read — it
+  // never mutates the map; expired entries are left for prune/cap.
+  function peekPending(id) {
+    const rec = pending.get(id);
+    if (!rec || rec.exp <= now()) return undefined;
     return rec;
   }
 
@@ -270,45 +280,78 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       authzId,
       csrf: mintCsrf(store.getHmacKey(), authzId),
       needsToken: !hasCookie,
+      providers: registry.list().map((a) => ({ id: a.id, label: a.label })),
     });
     return sendHtml(res, 200, html);
   }
 
+  // Mint a single-use code bound to the authorization, persist the resolved
+  // identity `sub`, write the consent cookie if one was minted, and 302 back to
+  // the connector with code + echoed connector state. Shared by the token-paste
+  // consent path (this task) and the IdP callback path (a later task); each
+  // caller supplies its own `sub` and `setCookie`.
+  function completeAllowedAuthorization({ rec, sub, res, setCookie }) {
+    const code = randomBytes(32).toString('base64url');
+    store.putCode(sha256hex(code), {
+      clientId: rec.clientId, redirectUri: rec.redirectUri, codeChallenge: rec.codeChallenge,
+      resource: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess,
+      sub, exp: now() + OAUTH_TTLS.codeMs,
+    });
+    const loc = new URL(rec.redirectUri);
+    loc.searchParams.set('code', code);
+    if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
+    if (setCookie) res.setHeader('Set-Cookie', setCookie);
+    return redirect(res, loc.toString());
+  }
+
+  // Same-origin / same-site trust boundary (spec section 5), shared by the consent
+  // POST and the IdP login POST: a live cookie must not let a cross-origin page
+  // auto-submit. Returns null when acceptable, else a short reason for the 403.
+  function verifyOrigin(req) {
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && origin !== baseOrigin) return 'cross-origin';
+    const sfs = req.headers['sec-fetch-site'];
+    if (typeof sfs === 'string' && sfs !== 'same-origin' && sfs !== 'none') return 'cross-site';
+    return null;
+  }
+
   // ---- POST /oauth/consent -----------------------------------------------
-  // Observability (spec §6 item 12): onConsent(outcome) fires at every terminal
-  // path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
-  // 'csrf_reject'}. The trust-boundary rejects (cross-origin/cross-site Origin,
-  // non-form body, missing/over-cap body, no pending authz, forged CSRF) all
-  // collapse to 'csrf_reject' — they are the anti-forgery family of "this is not
-  // a legitimate consent submission" and keep the enum bounded. The metric inc
-  // itself lives in the dispatcher (this module stays metrics-free, like its
-  // siblings); here we only call the injected callback.
+  // Observability (spec §6 item 12): onConsent(outcome, method) fires at every
+  // terminal path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
+  // 'csrf_reject'} and method='token' (all paths through this handler are the
+  // operator-token-paste / presence-cookie path). The trust-boundary rejects
+  // (cross-origin/cross-site Origin, non-form body, missing/over-cap body, no
+  // pending authz, forged CSRF) all collapse to 'csrf_reject' — they are the
+  // anti-forgery family of "this is not a legitimate consent submission" and keep
+  // the enum bounded. The metric inc itself lives in the dispatcher (this module
+  // stays metrics-free, like its siblings); here we only call the injected callback.
   async function handleConsent(req, res) {
+    // All emissions from this handler carry method='token' (operator-token-paste /
+    // presence-cookie path). The IdP callback success path calls onConsent directly
+    // with method='idp'. Having a local wrapper ensures every branch in this
+    // function gets the right method without risk of a missing-label throw.
+    const onConsentToken = (outcome) => onConsent(outcome, 'token');
+
     // Origin / Sec-Fetch-Site enforcement FIRST (spec section 5): a live cookie
     // must not let a cross-origin page auto-submit a consent.
-    const origin = req.headers.origin;
-    if (typeof origin === 'string' && origin !== baseOrigin) {
-      onConsent('csrf_reject');
-      return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-origin' });
-    }
-    const sfs = req.headers['sec-fetch-site'];
-    if (typeof sfs === 'string' && sfs !== 'same-origin' && sfs !== 'none') {
-      onConsent('csrf_reject');
-      return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-site' });
+    const originReject = verifyOrigin(req);
+    if (originReject) {
+      onConsentToken('csrf_reject');
+      return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
     }
     if (!isFormContentType(req)) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
     }
     // Global throttle (IP-independent, spec section 6 item 9).
     if (!throttle.admitted(now())) {
-      onConsent('throttled');
+      onConsentToken('throttled');
       return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(throttle.retryAfterSec(now())) });
     }
 
     const { params, tooLarge } = await readForm(req);
     if (tooLarge) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
     }
 
@@ -319,11 +362,11 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     const rec = authzId ? takePending(authzId) : undefined;
     if (!rec) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
     }
     if (!verifyCsrf(store.getHmacKey(), authzId, csrf)) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'bad csrf' });
     }
 
@@ -337,7 +380,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       // pending record was consumed by takePending, so re-issue a fresh authz
       // id for the retry and bind a new CSRF token to it.
       throttle.fail(now());
-      onConsent('bad_token');
+      onConsentToken('bad_token');
       const retryId = putPending({ ...rec });
       const rerendered = renderConsentPage({
         clientName: rec.clientName ?? rec.clientId,
@@ -346,6 +389,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
         csrf: mintCsrf(store.getHmacKey(), retryId),
         needsToken: true,
         error: 'Incorrect operator token.',
+        providers: registry.list().map((a) => ({ id: a.id, label: a.label })),
       });
       return sendHtml(res, 200, rerendered);
     }
@@ -358,7 +402,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     // Deny → consume + redirect with access_denied.
     if (decision !== 'allow') {
-      onConsent('deny');
+      onConsentToken('deny');
       const loc = new URL(rec.redirectUri);
       loc.searchParams.set('error', 'access_denied');
       if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
@@ -367,18 +411,94 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     }
 
     // Allow → mint single-use code bound to the authorization, then redirect.
-    onConsent('allow');
-    const code = randomBytes(32).toString('base64url');
-    store.putCode(sha256hex(code), {
-      clientId: rec.clientId, redirectUri: rec.redirectUri, codeChallenge: rec.codeChallenge,
-      resource: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess,
-      sub: 'owner', exp: now() + OAUTH_TTLS.codeMs,
-    });
-    const loc = new URL(rec.redirectUri);
-    loc.searchParams.set('code', code);
-    if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
-    if (setCookie) res.setHeader('Set-Cookie', setCookie);
-    return redirect(res, loc.toString());
+    onConsentToken('allow');
+    return completeAllowedAuthorization({ rec, sub: operatorPolicy.operatorSub(), res, setCookie });
+  }
+
+  // ---- POST /oauth/idp/<provider>/login ----------------------------------
+  // The consent page's "Continue with <provider>" button posts the consent form
+  // (authz_id + csrf) here. Re-check the consent trust boundary (Origin/Sec-Fetch
+  // + CSRF), confirm the pending authorization is still live (PEEK, not consume —
+  // the callback needs it), mint a single-use IdP-hop state bound to {authzId,
+  // provider}, and 302 to the provider's authorize URL.
+  async function handleIdpLogin(req, res, provider) {
+    const originReject = verifyOrigin(req);
+    if (originReject) return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
+    // No throttle here (unlike handleConsent): the login leg checks no
+    // brute-forceable secret — auth happens at the provider. A caller without the
+    // HMAC secret can't pass verifyCsrf below (cheap 403, no state minted), and
+    // putIdpState is capped. The wrong-operator brute-force surface is the CALLBACK
+    // leg, gated by a dedicated callbackThrottle (Task 2.9).
+    if (!isFormContentType(req)) return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
+    const { params, tooLarge } = await readForm(req);
+    if (tooLarge) return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    const authzId = params.get('authz_id');
+    const csrf = params.get('csrf');
+    if (!authzId || !verifyCsrf(store.getHmacKey(), authzId, csrf)) {
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'bad csrf' });
+    }
+    const rec = peekPending(authzId);
+    if (!rec) return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
+    const adapter = registry.get(provider); // registry is the provider allowlist: an unknown/injection-y provider → undefined → 404 here, BEFORE provider reaches putIdpState or the redirect URL
+    if (!adapter) return sendJson(res, 404, { error: 'invalid_request', error_description: 'unknown provider' });
+    const state = store.putIdpState({ authzId, provider });
+    const redirectUri = `${base}/oauth/idp/${provider}/callback`;
+    return redirect(res, adapter.buildAuthorizeUrl({ state, redirectUri }));
+  }
+
+  // ---- GET /oauth/idp/<provider>/callback --------------------------------
+  // The provider redirects the browser here with ?code&state. The `state` is the
+  // CSRF/replay defense (single-use, provider-bound, bound to the pending authz),
+  // so there is NO Origin/CSRF form check on this top-level GET. We consume the
+  // state, confirm the pending connector authz is still live, exchange the code
+  // for the identity at the provider, verify it is THE operator, then complete the
+  // original connector authorization with the canonical sub + a fresh presence
+  // cookie. A dedicated callbackThrottle (separate from the consent token-paste
+  // throttle) rate-limits wrong-operator floods without locking the paste path.
+  async function handleIdpCallback(req, res, provider) {
+    if (!callbackThrottle.admitted(now())) {
+      return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(callbackThrottle.retryAfterSec(now())) });
+    }
+    const q = new URL(req.url, base).searchParams;
+    const code = q.get('code') ?? '';
+    const stateParam = q.get('state') ?? '';
+    const idp = store.consumeIdpState(stateParam, provider); // single-use, provider-bound
+    if (!idp) return sendJson(res, 400, { error: 'invalid_request', error_description: 'invalid or expired state' });
+    const pending = peekPending(idp.authzId); // login PEEKED (didn't consume) — must still be live
+    if (!pending) return sendJson(res, 400, { error: 'invalid_request', error_description: 'authorization expired' });
+    const adapter = registry.get(provider); // registry = provider allowlist
+    if (!adapter) return sendJson(res, 404, { error: 'invalid_request', error_description: 'unknown provider' });
+
+    let identity;
+    try {
+      const redirectUri = `${base}/oauth/idp/${provider}/callback`;
+      const { credentials } = await adapter.exchangeCode({ code, redirectUri });
+      identity = await adapter.fetchIdentity({ credentials });
+    } catch {
+      // Never leak the provider error or any secret/token; the vendor login is retriable.
+      onIdpOutcome(provider, 'error');
+      return sendJson(res, 502, { error: 'temporarily_unavailable', error_description: 'identity provider error; please retry' });
+    }
+
+    if (!operatorPolicy.isOperator(provider, identity)) {
+      callbackThrottle.fail(now());
+      onIdpOutcome(provider, 'mismatch');
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'not the operator account' });
+    }
+
+    callbackThrottle.success();
+    onIdpOutcome(provider, 'success');
+    // Emit the unified consent counter for the idp method so ops can see the
+    // full allow-mix (token vs idp) in a single metric.
+    onConsent('allow', 'idp');
+    // `pending` is intentionally NOT consumed here (peekPending is a pure read):
+    // the token-paste consent path likewise leaves it live (takePending does not
+    // delete a live record), so both paths behave identically. Re-completing the
+    // same authz requires operator credentials (a fresh CSRF-bound login or a valid
+    // operator token), so it is not an escalation in the single-operator model.
+    const sub = operatorPolicy.subForIdentity(provider, identity);
+    const setCookie = consentCookieHeader(signConsentCookie(store.getHmacKey(), now()));
+    return completeAllowedAuthorization({ rec: pending, sub, res, setCookie });
   }
 
   // ---- POST /oauth/token --------------------------------------------------
@@ -445,7 +565,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       return sendJson(res, 400, { error: 'invalid_target', error_description: 'resource mismatch' });
     }
     const issued = store.issueTokens({
-      sub: 'owner', aud: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess, clientId: rec.clientId,
+      sub: rec.sub, aud: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess, clientId: rec.clientId,
     });
     onTokenGrant('authorization_code', 'issued');
     return tokenResponse(res, issued, rec.scope);
@@ -593,5 +713,5 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return sendJson(res, 200, { revoked: 'client', client_id: clientId, counts });
   }
 
-  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke };
+  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke, handleIdpLogin, handleIdpCallback };
 }

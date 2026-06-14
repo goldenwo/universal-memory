@@ -192,3 +192,30 @@ test('/metrics with IPv4-mapped loopback ::ffff:127.0.0.1 bypasses auth', () => 
   assert.equal(r.bypassAuth, true);
   assert.equal(r.bypassRateLimit, true);
 });
+
+// ---------------------------------------------------------------------------
+// /oauth/idp/* rows — social-login (Gap-4 bridge): default-closed until a
+// provider is fully configured (the social-login trio).
+// ---------------------------------------------------------------------------
+
+test('/oauth/idp/* is public when OAuth on AND a provider is configured', () => {
+  const on = { UM_OAUTH_ENABLED: 'true', UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'c', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 's', UM_OAUTH_OPERATOR_GITHUB: '1' };
+  const r = endpointClassRoute(req('/oauth/idp/github/login'), on);
+  assert.equal(r.bypassAuth, true);
+  assert.equal(r.bypassRateLimit, true); // dedicated OAuth limiter covers it in dispatch (like sibling /oauth/* rows)
+});
+
+test('/oauth/idp/* hard-404s when OAuth is off (default-closed)', () => {
+  const r = endpointClassRoute(req('/oauth/idp/github/login'), {});
+  assert.equal(r.returnStatus, 404);
+});
+
+test('/oauth/idp/* hard-404s when OAuth on but NO provider configured', () => {
+  const r = endpointClassRoute(req('/oauth/idp/github/callback'), { UM_OAUTH_ENABLED: 'true' });
+  assert.equal(r.returnStatus, 404);
+});
+
+test('/oauth/idp/* hard-404s on a partial provider trio (not fully configured)', () => {
+  const partial = { UM_OAUTH_ENABLED: 'true', UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'c' };
+  assert.equal(endpointClassRoute(req('/oauth/idp/github/login'), partial).returnStatus, 404);
+});
