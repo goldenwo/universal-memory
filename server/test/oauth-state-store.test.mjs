@@ -54,6 +54,7 @@ test('OAUTH_TTLS exposes the spec-canonical lifetimes and is frozen', () => {
   assert.equal(OAUTH_TTLS.refreshIdleMs, 90 * 24 * 3600_000);
   assert.equal(OAUTH_TTLS.cookieMs, 15 * 60_000);
   assert.equal(OAUTH_TTLS.pendingAuthzMs, 10 * 60_000);
+  assert.equal(OAUTH_TTLS.idpStateMs, 10 * 60_000);
   assert.ok(Object.isFrozen(OAUTH_TTLS));
 });
 
@@ -326,6 +327,54 @@ test('revokeAll clears codes + tokens but keeps clients', async () => {
   assert.deepEqual(p.refreshTokens, {});
   assert.ok(p.clients['cid-123'], 'clients survive revokeAll');
   assert.equal(store.findAccessToken(sha256hex(tok.accessToken)), undefined);
+});
+
+// ----------------------------------------------------------- idp-hop state
+
+test('idp-state: put → consume once; replay is null (single-use); key is umis_-prefixed', async () => {
+  const dir = await tmpDir();
+  const store = createStateStore(dir, { now: () => 1 });
+  const key = store.putIdpState({ authzId: 'a1', provider: 'github' });
+  assert.match(key, /^umis_[A-Za-z0-9_-]+$/);
+  const rec = store.consumeIdpState(key, 'github');
+  assert.equal(rec.authzId, 'a1');
+  assert.equal(rec.provider, 'github');
+  assert.equal(store.consumeIdpState(key, 'github'), null); // replay rejected
+});
+
+test('idp-state: provider mismatch on consume → null AND consumes (cross-provider replay closed)', async () => {
+  const dir = await tmpDir();
+  const store = createStateStore(dir, { now: () => 1 });
+  const key = store.putIdpState({ authzId: 'a1', provider: 'github' });
+  assert.equal(store.consumeIdpState(key, 'gitlab'), null);   // wrong provider
+  assert.equal(store.consumeIdpState(key, 'github'), null);   // and it was burned (single-use)
+});
+
+test('idp-state: expired record → null', async () => {
+  const dir = await tmpDir();
+  const { ref, now } = clock();
+  const store = createStateStore(dir, { now });
+  const key = store.putIdpState({ authzId: 'a1', provider: 'github' });
+  ref.t += OAUTH_TTLS.idpStateMs + 1;
+  assert.equal(store.consumeIdpState(key, 'github'), null);
+});
+
+test('idp-state: over-cap insert evicts the oldest (sweep-then-evict, mirrors pending)', async () => {
+  const dir = await tmpDir();
+  const store = createStateStore(dir, { now: () => 1, idpStateCap: 2 });
+  const first = store.putIdpState({ authzId: 'first', provider: 'github' });
+  const second = store.putIdpState({ authzId: 'second', provider: 'github' });
+  const third = store.putIdpState({ authzId: 'third', provider: 'github' }); // size hits cap → oldest (first) evicted
+  assert.equal(store.consumeIdpState(first, 'github'), null);                 // oldest evicted
+  assert.equal(store.consumeIdpState(second, 'github').authzId, 'second');    // non-oldest survived
+  assert.equal(store.consumeIdpState(third, 'github').authzId, 'third');      // new entry present
+});
+
+test('idp-state: nonce is preserved when provided (OIDC-ready slot)', async () => {
+  const dir = await tmpDir();
+  const store = createStateStore(dir, { now: () => 1 });
+  const key = store.putIdpState({ authzId: 'a1', provider: 'github', nonce: 'n1' });
+  assert.equal(store.consumeIdpState(key, 'github').nonce, 'n1');
 });
 
 test('revokeClient removes the client, its codes, and its tokens', async () => {

@@ -112,15 +112,31 @@ function esc(s) {
     .replace(/'/g, '&#39;');
 }
 
-export function renderConsentPage({ clientName, redirectHost, authzId, csrf, needsToken, error }) {
+export function renderConsentPage({ clientName, redirectHost, authzId, csrf, needsToken, error, providers = [] }) {
   const errorBlock = error
     ? `<div class="error">${esc(error)}</div>`
     : '';
-  const tokenField = needsToken
-    ? `<label>Operator token
-        <input type="password" name="operator_token" autocomplete="current-password" required>
-      </label>`
+
+  // Provider buttons (only when needsToken and at least one provider configured).
+  const hasProviders = needsToken && providers.length > 0;
+  const providerButtons = hasProviders
+    ? `<div class="providers">${providers.map((p) =>
+        `<button class="provider" type="submit" formaction="/oauth/idp/${esc(p.id)}/login">Continue with ${esc(p.label)}</button>`
+      ).join('\n        ')}</div>`
     : '';
+
+  // Token field: present when needsToken; `required` only when no providers (sole auth path).
+  // When providers are available, the token field is wrapped in a <details> disclosure.
+  let tokenField = '';
+  if (needsToken) {
+    const tokenInput = `<label>Operator token
+        <input type="password" name="operator_token" autocomplete="current-password"${hasProviders ? '' : ' required'}>
+      </label>`;
+    tokenField = hasProviders
+      ? `<details class="token-fallback"><summary>Use an operator token instead</summary>${tokenInput}</details>`
+      : tokenInput;
+  }
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -137,6 +153,8 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
     .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
     button { padding: 0.6rem 1.2rem; border-radius: 6px; border: 1px solid #888; cursor: pointer; }
     button.allow { background: #1c64f2; color: #fff; border-color: #1c64f2; }
+    .providers { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+    .provider { background: #fff; }
   </style>
 </head>
 <body>
@@ -148,6 +166,7 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
     <form action="/oauth/consent" method="post">
       <input type="hidden" name="authz_id" value="${esc(authzId)}">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
+      ${providerButtons}
       ${tokenField}
       <div class="actions">
         <button class="allow" type="submit" name="decision" value="allow">Allow</button>

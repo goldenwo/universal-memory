@@ -61,17 +61,19 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig, idpConfigWarning } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
 import { createOAuthVerifier } from './lib/oauth/verifier.mjs';
 import { createConsentThrottle } from './lib/oauth/throttle.mjs';
 import { createCimdResolver } from './lib/oauth/cimd.mjs';
+import { buildRegistry } from './lib/oauth/idp/registry.mjs';
+import { makeOperatorPolicy } from './lib/oauth/idp/policy.mjs';
 import { isAllowedRegistrationRedirect } from './lib/oauth/redirects.mjs';
 import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
@@ -2161,11 +2163,21 @@ export function createRequestHandler(ctx = {}) {
 	if (oauthEnabled && (ctx.oauth || process.env.UM_VAULT_DIR)) {
 		ctx.oauth ??= (() => {
 			const store = createStateStore(process.env.UM_VAULT_DIR);
+			const idpRegistry = buildRegistry(process.env);            // social-login provider registry (allowlist)
+			const operatorPolicy = makeOperatorPolicy(process.env); // operator allow-set + canonical sub
+			const callbackThrottle = createConsentThrottle();       // DEDICATED — separate from the consent token-paste throttle
 			const handlers = createOAuthHandlers({
 				store,
 				baseUrl: oauthBase,
 				operatorToken: process.env.UM_AUTH_TOKEN,
 				throttle: createConsentThrottle(),
+				// Social-login (spec §4.1/§4.3, plan Task 2.9): the IdP registry
+				// (provider allowlist), the operator authorization policy, and a
+				// DEDICATED callback throttle for the wrong-operator brute-force
+				// surface on the callback leg (separate from the consent paste throttle).
+				registry: idpRegistry,
+				operatorPolicy,
+				callbackThrottle,
 				// DCR outcome metric (spec §4.1 register row). endpoints.mjs stays
 				// metrics-free like its siblings; the inc lives here, wrapped in the
 				// obs-fallback idiom so a metric-emit failure never poisons the
@@ -2178,9 +2190,13 @@ export function createRequestHandler(ctx = {}) {
 				// Same metrics-free-handler / obs-fallback-inc idiom as onRegistration:
 				// the bounded outcome / grant_type enums come from the handler, so a
 				// metric-emit failure never poisons the consent or token response (C.9).
-				onConsent: (outcome) => {
-					try { umOauthConsentTotal.inc({ outcome }); }
+				onConsent: (outcome, method = 'token') => {
+					try { umOauthConsentTotal.inc({ outcome, method }); }
 					catch (e) { obsFallback(e, 'metric:oauth-consent'); }
+				},
+				onIdpOutcome: (provider, outcome) => {
+					try { umOauthIdpTotal.inc({ provider, outcome }); }
+					catch (e) { obsFallback(e, 'metric:oauth-idp'); }
 				},
 				onTokenGrant: (grantType, outcome) => {
 					try { umOauthTokenGrantsTotal.inc({ grant_type: grantType, outcome }); }
@@ -2197,7 +2213,12 @@ export function createRequestHandler(ctx = {}) {
 			// before DCR (PR 3) exists. UM_OAUTH_SEED_CLIENT = "<client_id>|<uri>".
 			// Valid + absent → seed; invalid format/URI → structured warn + skip.
 			seedManualClient(store);
-			return { store, handlers, verify };
+			// Advisory (one-shot, boot-time): a login-only operator id stamps
+			// sub=owner on the token/cookie fallback path (namespace-incoherent at
+			// Gap-4). idpConfigWarning returns null when the config is coherent.
+			const idpWarn = idpConfigWarning(process.env);
+			if (idpWarn) safeLog(() => getLogger().warn({ event: 'oauth.idp.config' }, idpWarn), 'log:oauth-idp-config');
+			return { store, handlers, verify, registry: idpRegistry }; // registry exposed for the /oauth/idp/* dispatch
 		})();
 	}
 	return async (req, res) => {
@@ -2593,6 +2614,27 @@ export function createRequestHandler(ctx = {}) {
 				}
 				await fn(req, res);
 				return;
+			}
+			// /oauth/idp/<provider>/{login,callback} (social login). The endpoint-class
+			// row already 404'd these when OAuth is off / no provider configured, and the
+			// dedicated OAuth limiter above already admitted. Parse the provider, 404 unknown
+			// providers (the registry is the allowlist), method-gate, then dispatch.
+			const idpMatch = url.pathname.match(/^\/oauth\/idp\/([^/]+)\/(login|callback)$/);
+			if (idpMatch) {
+				const [, provider, leg] = idpMatch;
+				if (!ctx.oauth.registry?.get(provider)) {
+					res.writeHead(404, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ error: 'not_found' }));
+					return;
+				}
+				const wantMethod = leg === 'login' ? 'POST' : 'GET';
+				if (req.method !== wantMethod) {
+					res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': wantMethod });
+					res.end(JSON.stringify({ error: 'method_not_allowed' }));
+					return;
+				}
+				if (leg === 'login') { await h.handleIdpLogin(req, res, provider); return; }
+				await h.handleIdpCallback(req, res, provider); return;
 			}
 			// Unknown /oauth/* path under the flag -> fall through to the 404 tail.
 		}

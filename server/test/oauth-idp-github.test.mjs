@@ -53,3 +53,5 @@ test('exchangeCode rejects a non-2xx from GitHub', async () => {
   const bad = async () => makeResponse({ status: 500, body: {} });
   await assert.rejects(() => gh.exchangeCode({ code: 'c', redirectUri: 'https://um/cb', fetchImpl: bad }));
 });
+
+test('adapter exposes a display label', () => { assert.equal(gh.label, 'GitHub'); });

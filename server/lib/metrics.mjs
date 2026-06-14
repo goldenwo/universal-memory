@@ -121,18 +121,36 @@ export const umOauthRegistrationsTotal = new promClient.Counter({
   registers: [registry],
 });
 
-// Gap-3 OAuth PR-5: consent-page outcomes (spec §6 item 12, plan Task 2.7).
-// `outcome` ∈ {'allow','deny','bad_token','throttled','csrf_reject'} — fixed enum,
-// never user input (bounded cardinality: 5). Emitted by handleConsent's terminal
-// paths via the injected onConsent callback so endpoints.mjs stays metrics-free
-// (same callback-seam discipline as um_oauth_registrations_total). Lets ops watch
-// the consent mix post-flip: a spike in csrf_reject = cross-origin/forged-CSRF
-// probing the trust boundary; bad_token = wrong operator-token pastes; throttled =
+// Gap-3 OAuth PR-5 / Gap-4 bridge: consent-page outcomes (spec §6 item 12, plan Task 2.7).
+// Two bounded label dimensions:
+//   outcome ∈ {'allow','deny','bad_token','throttled','csrf_reject'} — fixed enum,
+//     never user input (bounded cardinality: 5).
+//   method ∈ {'token','idp'} — which consent path minted the allow:
+//     'token' = operator-token paste / presence-cookie (handleConsent's terminal paths);
+//     'idp'   = social-login IdP callback completed successfully (handleIdpCallback success).
+// Emitted by handleConsent's terminal paths (method='token') and handleIdpCallback
+// success (method='idp') via the injected onConsent callback so endpoints.mjs stays
+// metrics-free (same callback-seam discipline as um_oauth_registrations_total). Lets
+// ops watch the consent mix post-flip: a spike in csrf_reject = cross-origin/forged-
+// CSRF probing the trust boundary; bad_token = wrong operator-token pastes; throttled =
 // the global consent throttle (spec §6 item 9) is shedding load.
+// CRITICAL: prom-client throws synchronously on a missing label — every emit MUST
+// provide both {outcome, method}. The dispatcher defaults method='token' as insurance.
 export const umOauthConsentTotal = new promClient.Counter({
   name: 'um_oauth_consent_total',
-  help: 'OAuth consent-page outcomes (Gap-3 PR-5): allow|deny|bad_token|throttled|csrf_reject',
-  labelNames: ['outcome'],
+  help: 'OAuth consent-page outcomes (Gap-3 PR-5 / Gap-4): allow|deny|bad_token|throttled|csrf_reject, by method=token|idp',
+  labelNames: ['outcome', 'method'],
+  registers: [registry],
+});
+
+// Gap-4 bridge: social-login IdP callback outcomes (spec §6). Bounded:
+//   provider ∈ configured IdP ids (today: 'github'); outcome ∈ {'success','mismatch','error'}.
+// 'mismatch' = authenticated at the provider but not THE operator; 'error' = provider
+// exchange/identity failure. Emitted by handleIdpCallback via the onIdpOutcome callback.
+export const umOauthIdpTotal = new promClient.Counter({
+  name: 'um_oauth_idp_total',
+  help: 'Social-login IdP callback outcomes (Gap-4): success|mismatch|error, by provider',
+  labelNames: ['provider', 'outcome'],
   registers: [registry],
 });
 

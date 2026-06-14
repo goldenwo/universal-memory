@@ -34,3 +34,9 @@ test('configuredProviders treats whitespace-only values as unset', () => {
     UM_OAUTH_OPERATOR_GITHUB: '5550123',
   }), []);
 });
+
+test('buildRegistry: every adapter id is a URL-safe path segment', () => {
+  for (const a of buildRegistry(full).list()) {
+    assert.match(a.id, /^[a-z0-9_-]+$/);
+  }
+});

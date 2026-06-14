@@ -625,8 +625,91 @@ test('OAuth integration: consent allow + token issue increment um_oauth_consent_
     // (d) /metrics (loopback) carries BOTH new counters.
     const m = await fetch(url('/metrics'));
     const text = await m.text();
-    assert.match(text, /um_oauth_consent_total\{outcome="allow"\}\s+[1-9]/);
+    assert.match(text, /um_oauth_consent_total\{outcome="allow",method="token"\}\s+[1-9]/);
     assert.match(text, /um_oauth_token_grants_total\{grant_type="authorization_code",outcome="issued"\}\s+[1-9]/);
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// --------------------------------------------------------------------------
+// Task 2.9 — social-login wiring through the PRODUCTION construction seam.
+// The registry/operatorPolicy/callbackThrottle are built inside the
+// `ctx.oauth ??=` IIFE from env (createRequestHandler), which an injected
+// ctx.oauth would bypass. So this drives the LIVE path: flag on + the GitHub
+// trio + a real UM_VAULT_DIR, NO injected ctx.oauth. Only this catches a
+// bootstrap-glue bug (registry not built, or not passed to the dispatch).
+//   - GET  /oauth/idp/github/login  → 405 (registry HAS github → not 404;
+//        login is POST-only so the method gate fires) — proves the IIFE built
+//        the real registry AND the dispatch found github in it.
+//   - POST /oauth/idp/unknown/login → 404 (registry is the allowlist).
+//   - full authorize → POST /oauth/idp/github/login (valid authz_id+csrf) →
+//        303 to github.com/login/oauth/authorize — proves the whole prod chain
+//        incl. the real adapter's pure buildAuthorizeUrl.
+// --------------------------------------------------------------------------
+test('production bootstrap: real IdP env builds the registry and /oauth/idp routes via it', async () => {
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-idp-int-'));
+  const saved = {};
+  const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
+  set('UM_VAULT_DIR', vaultDir);
+  set('UM_OAUTH_ENABLED', 'true');
+  set('UM_PUBLIC_BASE_URL', BASE);
+  set('UM_AUTH_TOKEN', OPERATOR);
+  set('UM_OAUTH_IDP_GITHUB_CLIENT_ID', 'Iv1.testclientid');
+  set('UM_OAUTH_IDP_GITHUB_CLIENT_SECRET', 'gh-secret');
+  set('UM_OAUTH_OPERATOR_GITHUB', '5550123');             // numeric id → coherent (no advisory)
+  set('UM_OAUTH_SEED_CLIENT', `${CLIENT_ID}|${REDIRECT}`); // seed a manual client so authorize works
+
+  // ctx = { memory } only — NO injected oauth → the IIFE builds the registry from env.
+  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const url = (p) => `http://127.0.0.1:${port}${p}`;
+  try {
+    // (1) GET on the POST-only login leg → 405 (provider is in the registry).
+    const wrongMethod = await fetch(url('/oauth/idp/github/login'), { method: 'GET', headers: FWD });
+    assert.equal(wrongMethod.status, 405, 'github is in the registry → method-gated, not 404');
+    assert.equal(wrongMethod.headers.get('allow'), 'POST', '405 must advertise the allowed method');
+
+    // (1b) callback leg is GET-only → POST is method-gated
+    const cbPost = await fetch(url('/oauth/idp/github/callback'), { method: 'POST', headers: { ...FWD } });
+    assert.equal(cbPost.status, 405, 'callback leg is GET-only → POST must be method-gated');
+
+    // (2) Unknown provider → 404 (registry is the allowlist).
+    const unknown = await fetch(url('/oauth/idp/unknown/login'), { method: 'POST', headers: FWD });
+    assert.equal(unknown.status, 404, 'unknown provider → 404 via the registry allowlist');
+
+    // (3) Full prod chain: authorize → consent-page parse → login → 302 to GitHub.
+    const { challenge } = pkcePair();
+    const authzQuery = new URLSearchParams({
+      response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT,
+      code_challenge: challenge, code_challenge_method: 'S256', scope: 'vault', state: 't29',
+    }).toString();
+    const authzRes = await rawGet(url(`/oauth/authorize?${authzQuery}`), {
+      ...FWD, 'Accept': 'text/html', 'Sec-Fetch-Mode': 'navigate',
+    });
+    assert.equal(authzRes.status, 200, authzRes.body);
+    const { authzId, csrf } = parseConsentForm(authzRes.body);
+    assert.ok(authzId && csrf, 'consent page must carry authz_id + csrf');
+
+    const loginRes = await fetch(url('/oauth/idp/github/login'), {
+      method: 'POST', redirect: 'manual',
+      headers: { ...FWD, 'Content-Type': 'application/x-www-form-urlencoded', 'Origin': BASE, 'Sec-Fetch-Site': 'same-origin' },
+      body: new URLSearchParams({ authz_id: authzId, csrf }).toString(),
+    });
+    // 303 (See Other) — the POST login leg redirects the browser to a GET at the
+    // provider via the shared redirect() helper (POST→GET semantics).
+    assert.equal(loginRes.status, 303, 'login leg should redirect to the provider');
+    const loc = loginRes.headers.get('location');
+    assert.ok(loc?.startsWith('https://github.com/login/oauth/authorize'),
+      `login must redirect to GitHub authorize (real adapter buildAuthorizeUrl); got ${loc}`);
   } finally {
     srv.close();
     await once(srv, 'close');

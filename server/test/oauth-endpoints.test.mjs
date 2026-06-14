@@ -19,6 +19,8 @@ import { createStateStore, OAUTH_TTLS, sha256hex } from '../lib/oauth/state-stor
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
+import { makeOperatorPolicy } from '../lib/oauth/idp/policy.mjs';
+import { umOauthConsentTotal, umOauthIdpTotal } from '../lib/metrics.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -33,15 +35,22 @@ function pkcePair() {
 }
 
 // ---- one disposable store + handlers + server per test --------------------
-function makeRig({ now, cimdResolver } = {}) {
+function makeRig({ now, cimdResolver, operatorPolicy, registry, callbackThrottle, onConsent, onIdpOutcome } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });
   store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const throttle = createConsentThrottle();
+  // A SEPARATE throttle for the IdP callback leg (wrong-operator floods), distinct
+  // from the consent token-paste `throttle` — the tests assert one cannot lock the
+  // other. Default to a fresh instance so callers that don't care still get one.
+  const cbThrottle = callbackThrottle ?? createConsentThrottle();
   const handlers = createOAuthHandlers({
-    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver,
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver, operatorPolicy, registry,
+    callbackThrottle: cbThrottle,
+    ...(onConsent ? { onConsent } : {}),
+    ...(onIdpOutcome ? { onIdpOutcome } : {}),
   });
   const verifier = createOAuthVerifier(store, BASE_URL, { now: nowFn });
 
@@ -52,9 +61,13 @@ function makeRig({ now, cimdResolver } = {}) {
     if (url.pathname === '/oauth/token' && req.method === 'POST') return handlers.handleToken(req, res);
     if (url.pathname === '/oauth/register' && req.method === 'POST') return handlers.handleRegister(req, res);
     if (url.pathname === '/oauth/revoke' && req.method === 'POST') return handlers.handleRevoke(req, res);
+    const idpLogin = url.pathname.match(/^\/oauth\/idp\/([^/]+)\/login$/);
+    if (idpLogin && req.method === 'POST') return handlers.handleIdpLogin(req, res, idpLogin[1]);
+    const idpCb = url.pathname.match(/^\/oauth\/idp\/([^/]+)\/callback$/);
+    if (idpCb && req.method === 'GET') return handlers.handleIdpCallback(req, res, idpCb[1]);
     res.statusCode = 404; res.end();
   });
-  return { dir, clock, store, throttle, handlers, verifier, server };
+  return { dir, clock, store, throttle, callbackThrottle: cbThrottle, handlers, verifier, server };
 }
 
 // ---- tiny fetch-like client over the test server --------------------------
@@ -446,6 +459,20 @@ test('happy flow: authorize→consent→code→token→verifier accepts', async 
     assert.equal(claims.branch, 'oauth');
     assert.equal(claims.sub, 'owner');
     assert.deepEqual(claims.scope, ['vault']);
+  } finally { await close(rig.server); }
+});
+
+test('happy flow: token sub is the canonical operator sub from policy (github:<id>)', async () => {
+  const rig = makeRig({ operatorPolicy: makeOperatorPolicy({ UM_OAUTH_OPERATOR_GITHUB: '5550123' }) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { code } = await consentAllow(rig, port, authzId, csrf);
+    const tok = await exchangeCode(port, { code, verifier: pkce.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    const claims = rig.verifier(JSON.parse(tok.body).access_token);
+    assert.equal(claims.sub, 'github:5550123'); // was hardcoded 'owner'; now threaded from operatorPolicy
   } finally { await close(rig.server); }
 });
 
@@ -1098,4 +1125,236 @@ test('pending-cap: oldest pending authz is evicted past the cap', async () => {
     await close(server);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// =========================================================================
+// IdP login flow (fake adapter injected via the registry; no network)
+// =========================================================================
+
+const fakeAdapter = {
+  id: 'github',
+  label: 'GitHub',
+  buildAuthorizeUrl: ({ state, redirectUri }) =>
+    `https://github.com/login/oauth/authorize?client_id=cid&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+  exchangeCode: async () => ({ credentials: { accessToken: 'gho_x' } }),
+  fetchIdentity: async () => ({ subject: '5550123', displayName: 'goldenwo' }),
+};
+const fakeRegistry = { get: (id) => (id === 'github' ? fakeAdapter : undefined), list: () => [fakeAdapter] };
+
+// Drive the login leg and return the minted idp-state (the callback's input).
+async function idpLogin(port, authzId, csrf) {
+  const res = await req(port, {
+    method: 'POST', path: '/oauth/idp/github/login',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: form({ authz_id: authzId, csrf }),
+  });
+  const state = new URL(res.headers.location).searchParams.get('state');
+  return { res, state };
+}
+const OPERATOR_POLICY = makeOperatorPolicy({ UM_OAUTH_OPERATOR_GITHUB: '5550123' });
+// registry whose identity is NOT the operator (id 9999999)
+const wrongAdapter = { ...fakeAdapter, fetchIdentity: async () => ({ subject: '9999999', displayName: 'someoneelse' }) };
+const wrongRegistry = { get: (id) => (id === 'github' ? wrongAdapter : undefined), list: () => [wrongAdapter] };
+
+test('idp login: valid CSRF + same-origin → 303 to provider authorize URL with a minted state', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 303, res.body);
+    const loc = new URL(res.headers.location);
+    assert.equal(loc.origin + loc.pathname, 'https://github.com/login/oauth/authorize');
+    assert.ok(loc.searchParams.get('state'), 'a minted idp-state must be present');
+    assert.match(loc.searchParams.get('redirect_uri'), /\/oauth\/idp\/github\/callback$/);
+  } finally { await close(rig.server); }
+});
+
+test('idp login: cross-origin Origin header → 403 (no redirect)', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
+});
+
+test('idp login: Sec-Fetch-Site cross-site → 403', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
+});
+
+test('idp login: forged CSRF → 403', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf: 'forged-token' }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
+});
+
+// =========================================================================
+// IdP callback flow (Task 2.5) — the provider redirects ?code&state here; we
+// consume the single-use state, confirm the pending authz, exchange the code for
+// the live identity, verify it is THE operator, then complete the connector authz
+// with sub=github:<id> + a fresh presence cookie. A dedicated callbackThrottle
+// gates wrong-operator floods WITHOUT touching the consent token-paste throttle.
+// =========================================================================
+
+test('idp callback: matching operator → completes connector authz with sub=github:<id> + sets consent cookie', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 303, cb.body);
+    const loc = new URL(cb.headers.location);
+    assert.equal(loc.origin + loc.pathname, new URL(REDIRECT).origin + new URL(REDIRECT).pathname); // back to the connector
+    const code = loc.searchParams.get('code');
+    assert.ok(code);
+    assert.match([].concat(cb.headers['set-cookie'] ?? []).join(';'), /um_consent=/); // presence cookie minted
+    const tok = await exchangeCode(port, { code, verifier: pkce.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    assert.equal(rig.verifier(JSON.parse(tok.body).access_token).sub, 'github:5550123');
+  } finally { await close(rig.server); }
+});
+
+test('idp callback: wrong operator → 403 deny, callbackThrottle engaged, consent throttle untouched (separate instances)', async () => {
+  const rig = makeRig({ registry: wrongRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 403);
+    // separation: the callback throttle registered the failure; the consent (token-paste) throttle is NOT affected
+    assert.equal(rig.throttle.admitted(rig.clock.t), true, 'consent throttle must be untouched by a callback failure');
+  } finally { await close(rig.server); }
+});
+
+test('idp callback: invalid/replayed state → 400 (single-use)', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const first = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(first.status, 303); // consumed
+    const replay = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(replay.status, 400); // state already consumed → rejected
+    const bogus = await req(port, { path: `/oauth/idp/github/callback?code=x&state=nope` });
+    assert.equal(bogus.status, 400);
+  } finally { await close(rig.server); }
+});
+
+test('authorize: consent page shows the GitHub login button when a provider is configured', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { res } = await freshConsentForm(rig, port, pkce);
+    assert.match(res.body, /formaction="\/oauth\/idp\/github\/login"/);
+    assert.match(res.body, /Continue with GitHub/);
+  } finally { await close(rig.server); }
+});
+
+// =========================================================================
+// Task 2.8: IdP outcome metrics + consent method label (token|idp)
+// =========================================================================
+
+// Label smoke test: prom-client must NOT throw when both label dimensions are provided.
+// This pins the label-set config and catches any future regression where a label is
+// dropped from the Counter definition (prom-client throws synchronously in that case).
+test('metrics: counters accept the new label sets without throwing', () => {
+  assert.doesNotThrow(() => umOauthConsentTotal.inc({ outcome: 'allow', method: 'idp' }));
+  assert.doesNotThrow(() => umOauthIdpTotal.inc({ provider: 'github', outcome: 'success' }));
+});
+
+test('metrics: token-paste consent emits onConsent with method=token', async () => {
+  const calls = [];
+  const rig = makeRig({ onConsent: (o, m) => calls.push([o, m]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    await consentAllow(rig, port, authzId, csrf);
+    assert.ok(calls.some(([o, m]) => o === 'allow' && m === 'token'));
+  } finally { await close(rig.server); }
+});
+
+test('metrics: idp callback success emits onIdpOutcome(provider,success) + onConsent(allow,idp)', async () => {
+  const consent = [], idp = [];
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY, onConsent: (o, m) => consent.push([o, m]), onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 303, cb.body);
+    assert.deepEqual(idp, [['github', 'success']]);
+    assert.ok(consent.some(([o, m]) => o === 'allow' && m === 'idp'));
+  } finally { await close(rig.server); }
+});
+
+test('metrics: idp callback wrong-operator emits onIdpOutcome(provider,mismatch)', async () => {
+  const idp = [];
+  const rig = makeRig({ registry: wrongRegistry, operatorPolicy: OPERATOR_POLICY, onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 403);
+    assert.deepEqual(idp, [['github', 'mismatch']]);
+  } finally { await close(rig.server); }
+});
+
+test('metrics: idp callback provider error emits onIdpOutcome(provider,error)', async () => {
+  // adapter whose exchangeCode throws → handleIdpCallback's try/catch → 502 + 'error' outcome
+  const errorAdapter = { ...fakeAdapter, exchangeCode: async () => { throw new Error('upstream'); } };
+  const errorRegistry = { get: (id) => (id === 'github' ? errorAdapter : undefined), list: () => [errorAdapter] };
+  const idp = [];
+  const rig = makeRig({ registry: errorRegistry, operatorPolicy: OPERATOR_POLICY, onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 502);
+    assert.deepEqual(idp, [['github', 'error']]);
+  } finally { await close(rig.server); }
 });
