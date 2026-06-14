@@ -34,6 +34,7 @@ import {
 import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mjs';
 import { compareTokens } from '../auth.mjs';
 import { makeOperatorPolicy } from './idp/policy.mjs';
+import { createConsentThrottle } from './throttle.mjs';
 
 const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
 
@@ -160,7 +161,7 @@ function isHttpsUrl(s) {
   try { return new URL(s).protocol === 'https:'; } catch { return false; }
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}), registry = { get: () => undefined, list: () => [] } }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}), registry = { get: () => undefined, list: () => [] }, callbackThrottle = createConsentThrottle(), onIdpOutcome = () => {} }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -436,6 +437,53 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return redirect(res, adapter.buildAuthorizeUrl({ state, redirectUri }));
   }
 
+  // ---- GET /oauth/idp/<provider>/callback --------------------------------
+  // The provider redirects the browser here with ?code&state. The `state` is the
+  // CSRF/replay defense (single-use, provider-bound, bound to the pending authz),
+  // so there is NO Origin/CSRF form check on this top-level GET. We consume the
+  // state, confirm the pending connector authz is still live, exchange the code
+  // for the identity at the provider, verify it is THE operator, then complete the
+  // original connector authorization with the canonical sub + a fresh presence
+  // cookie. A dedicated callbackThrottle (separate from the consent token-paste
+  // throttle) rate-limits wrong-operator floods without locking the paste path.
+  async function handleIdpCallback(req, res, provider) {
+    if (!callbackThrottle.admitted(now())) {
+      return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(callbackThrottle.retryAfterSec(now())) });
+    }
+    const q = new URL(req.url, base).searchParams;
+    const code = q.get('code') ?? '';
+    const stateParam = q.get('state') ?? '';
+    const idp = store.consumeIdpState(stateParam, provider); // single-use, provider-bound
+    if (!idp) return sendJson(res, 400, { error: 'invalid_request', error_description: 'invalid or expired state' });
+    const pending = peekPending(idp.authzId); // login PEEKED (didn't consume) — must still be live
+    if (!pending) return sendJson(res, 400, { error: 'invalid_request', error_description: 'authorization expired' });
+    const adapter = registry.get(provider); // registry = provider allowlist
+    if (!adapter) return sendJson(res, 404, { error: 'invalid_request', error_description: 'unknown provider' });
+
+    let identity;
+    try {
+      const redirectUri = `${base}/oauth/idp/${provider}/callback`;
+      const { credentials } = await adapter.exchangeCode({ code, redirectUri });
+      identity = await adapter.fetchIdentity({ credentials });
+    } catch {
+      // Never leak the provider error or any secret/token; the vendor login is retriable.
+      onIdpOutcome('error');
+      return sendJson(res, 502, { error: 'temporarily_unavailable', error_description: 'identity provider error; please retry' });
+    }
+
+    if (!operatorPolicy.isOperator(provider, identity)) {
+      callbackThrottle.fail(now());
+      onIdpOutcome('mismatch');
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'not the operator account' });
+    }
+
+    callbackThrottle.success();
+    onIdpOutcome('success');
+    const sub = operatorPolicy.subForIdentity(provider, identity);
+    const setCookie = consentCookieHeader(signConsentCookie(store.getHmacKey(), now()));
+    return completeAllowedAuthorization({ rec: pending, sub, res, setCookie });
+  }
+
   // ---- POST /oauth/token --------------------------------------------------
   // Observability (spec §6 item 12): onTokenGrant(grantType, outcome) fires at
   // every terminal path. grantType ∈ {'authorization_code','refresh_token',
@@ -648,5 +696,5 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return sendJson(res, 200, { revoked: 'client', client_id: clientId, counts });
   }
 
-  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke, handleIdpLogin };
+  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke, handleIdpLogin, handleIdpCallback };
 }
