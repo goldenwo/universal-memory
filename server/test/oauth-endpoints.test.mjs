@@ -1373,3 +1373,102 @@ test('idp callback: provider denial (?error) → 403 access_denied + onIdpOutcom
     assert.deepEqual(idp, [['github', 'denied']]);
   } finally { await close(rig.server); }
 });
+
+// =========================================================================
+// Task 3.1b (PR-3) — negative / security suite for the IdP login flow:
+//   * bidirectional throttle SEPARATION (callback vs consent token-paste are
+//     independent createConsentThrottle instances — one tripping never locks
+//     the other; the callback-direction case additionally proves the tripped
+//     instance now 429s the NEXT callback);
+//   * fallback-INTEGRITY (the operator-token break-glass still completes and
+//     stamps the canonical sub even when a GitHub provider is configured);
+//   * presence-COOKIE short-circuit stamps sub=github:<id> (deferred T2.3);
+//   * idp-state EXPIRY → 400 (time-based, complements the existing single-use
+//     replay test which only covers consumed/bogus state, not clock expiry).
+// =========================================================================
+
+test('security: a wrong-operator callback trips callbackThrottle (429 on next) but NOT the consent throttle', async () => {
+  const rig = makeRig({ registry: wrongRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const first = await req(port, { path: `/oauth/idp/github/callback?code=c&state=${state}` });
+    assert.equal(first.status, 403);                              // wrong operator → deny + callbackThrottle.fail
+    assert.equal(rig.throttle.admitted(rig.clock.t), true);       // consent (token-paste) throttle UNAFFECTED
+    // a second callback is now throttled (separate instance is tripped)
+    const second = await req(port, { path: `/oauth/idp/github/callback?code=c&state=anything` });
+    assert.equal(second.status, 429);
+  } finally { await close(rig.server); }
+});
+
+test('security: a flooded consent (bad token) trips the consent throttle but NOT callbackThrottle', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    await req(port, { method: 'POST', path: '/oauth/consent', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ authz_id: authzId, csrf, operator_token: 'wrong', decision: 'allow' }) });
+    assert.equal(rig.throttle.admitted(rig.clock.t), false);      // consent throttle tripped
+    assert.equal(rig.callbackThrottle.admitted(rig.clock.t), true); // callback throttle UNAFFECTED
+  } finally { await close(rig.server); }
+});
+
+test('security: with a provider configured, the operator-token break-glass still completes + stamps the canonical sub', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { code } = await consentAllow(rig, port, authzId, csrf); // token-paste path
+    const tok = await exchangeCode(port, { code, verifier: pkce.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    assert.equal(rig.verifier(JSON.parse(tok.body).access_token).sub, 'github:5550123');
+  } finally { await close(rig.server); }
+});
+
+test('security: presence-cookie short-circuit (no operator_token) still stamps sub=github:<id>', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    // First consent with the operator token → sets the um_consent presence cookie.
+    const pkce1 = pkcePair();
+    const f1 = await freshConsentForm(rig, port, pkce1, { scope: 'vault' });
+    const r1 = await consentAllow(rig, port, f1.authzId, f1.csrf);
+    const cookie = [].concat(r1.setCookie ?? []).map((c) => c.split(';')[0]).join('; ');
+    assert.match(cookie, /um_consent=/);
+
+    // Second authorization: present ONLY the cookie, NO operator_token.
+    const pkce2 = pkcePair();
+    const f2res = await req(port, {
+      path: `/oauth/authorize?${authorizeQuery({ code_challenge: pkce2.challenge, scope: 'vault' })}`,
+      headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html', cookie },
+    });
+    const { authzId, csrf } = parseConsentForm(f2res.body);
+    const consentRes = await req(port, {
+      method: 'POST', path: '/oauth/consent',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+      body: form({ authz_id: authzId, csrf, decision: 'allow' }), // no operator_token — cookie short-circuit
+    });
+    assert.equal(consentRes.status, 303, consentRes.body);
+    const code = new URL(consentRes.headers.location).searchParams.get('code');
+    assert.ok(code);
+    const tok = await exchangeCode(port, { code, verifier: pkce2.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    assert.equal(rig.verifier(JSON.parse(tok.body).access_token).sub, 'github:5550123');
+  } finally { await close(rig.server); }
+});
+
+test('security: an EXPIRED idp-state → 400 (consumeIdpState expiry, not just single-use)', async () => {
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    rig.clock.t += OAUTH_TTLS.idpStateMs + 1; // advance past the idp-state TTL
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=c&state=${state}` });
+    assert.equal(cb.status, 400); // consumeIdpState() returns null for an expired record
+  } finally { await close(rig.server); }
+});
