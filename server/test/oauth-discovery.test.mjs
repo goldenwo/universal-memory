@@ -365,3 +365,25 @@ test('idpConfigWarning: numeric operator → null (coherent seam)', () => {
 test('idpConfigWarning: unconfigured → null', () => {
   assert.equal(idpConfigWarning({}), null);
 });
+
+test('validateOAuthConfig: throws on a partial GitHub IdP trio (SECRET + OPERATOR, no CLIENT_ID)', () => {
+  assert.throws(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+      UM_OAUTH_OPERATOR_GITHUB: '5550123',
+    }),
+    /all of|CLIENT_ID|half-enabled/i,
+  );
+});
+
+test('validateOAuthConfig: whitespace-only IdP value treated as absent (partial trio throws)', () => {
+  assert.throws(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_ID: '   ', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+      UM_OAUTH_OPERATOR_GITHUB: '5550123',
+    }),
+    /all of|CLIENT_ID|half-enabled/i,
+  );
+});

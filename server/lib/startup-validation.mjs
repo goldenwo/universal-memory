@@ -123,7 +123,7 @@ export function validateOAuthConfig(env) {
     env.UM_OAUTH_IDP_GITHUB_CLIENT_ID,
     env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET,
     env.UM_OAUTH_OPERATOR_GITHUB,
-  ].filter(Boolean).length;
+  ].filter((v) => (v ?? '').trim() !== '').length;
   if (idpTrioSet > 0 && idpTrioSet < 3) {
     throw new Error(
       'UM_OAUTH_IDP_GITHUB_* requires all of CLIENT_ID, CLIENT_SECRET, and UM_OAUTH_OPERATOR_GITHUB (no half-enabled provider)',

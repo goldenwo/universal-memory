@@ -26,3 +26,11 @@ test('buildRegistry exposes get()/list() for configured providers only', () => {
 test('buildRegistry is empty when unconfigured', () => {
   assert.deepEqual(buildRegistry({}).list(), []);
 });
+
+test('configuredProviders treats whitespace-only values as unset', () => {
+  assert.deepEqual(configuredProviders({
+    UM_OAUTH_IDP_GITHUB_CLIENT_ID: '   ',
+    UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+    UM_OAUTH_OPERATOR_GITHUB: '5550123',
+  }), []);
+});
