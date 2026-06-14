@@ -414,6 +414,11 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   async function handleIdpLogin(req, res, provider) {
     const originReject = verifyOrigin(req);
     if (originReject) return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
+    // No throttle here (unlike handleConsent): the login leg checks no
+    // brute-forceable secret — auth happens at the provider. A caller without the
+    // HMAC secret can't pass verifyCsrf below (cheap 403, no state minted), and
+    // putIdpState is capped. The wrong-operator brute-force surface is the CALLBACK
+    // leg, gated by a dedicated callbackThrottle (Task 2.9).
     if (!isFormContentType(req)) return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
     const { params, tooLarge } = await readForm(req);
     if (tooLarge) return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
@@ -424,7 +429,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     }
     const rec = peekPending(authzId);
     if (!rec) return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
-    const adapter = registry.get(provider);
+    const adapter = registry.get(provider); // registry is the provider allowlist: an unknown/injection-y provider → undefined → 404 here, BEFORE provider reaches putIdpState or the redirect URL
     if (!adapter) return sendJson(res, 404, { error: 'invalid_request', error_description: 'unknown provider' });
     const state = store.putIdpState({ authzId, provider });
     const redirectUri = `${base}/oauth/idp/${provider}/callback`;

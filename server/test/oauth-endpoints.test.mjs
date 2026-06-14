@@ -1164,6 +1164,21 @@ test('idp login: cross-origin Origin header → 403 (no redirect)', async () => 
   } finally { await close(rig.server); }
 });
 
+test('idp login: Sec-Fetch-Site cross-site → 403', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
+});
+
 test('idp login: forged CSRF → 403', async () => {
   const rig = makeRig({ registry: fakeRegistry });
   const port = await listen(rig.server);
