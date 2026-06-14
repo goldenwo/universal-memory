@@ -2163,7 +2163,7 @@ export function createRequestHandler(ctx = {}) {
 	if (oauthEnabled && (ctx.oauth || process.env.UM_VAULT_DIR)) {
 		ctx.oauth ??= (() => {
 			const store = createStateStore(process.env.UM_VAULT_DIR);
-			const registry = buildRegistry(process.env);            // social-login provider registry (allowlist)
+			const idpRegistry = buildRegistry(process.env);            // social-login provider registry (allowlist)
 			const operatorPolicy = makeOperatorPolicy(process.env); // operator allow-set + canonical sub
 			const callbackThrottle = createConsentThrottle();       // DEDICATED — separate from the consent token-paste throttle
 			const handlers = createOAuthHandlers({
@@ -2175,7 +2175,7 @@ export function createRequestHandler(ctx = {}) {
 				// (provider allowlist), the operator authorization policy, and a
 				// DEDICATED callback throttle for the wrong-operator brute-force
 				// surface on the callback leg (separate from the consent paste throttle).
-				registry,
+				registry: idpRegistry,
 				operatorPolicy,
 				callbackThrottle,
 				// DCR outcome metric (spec §4.1 register row). endpoints.mjs stays
@@ -2218,7 +2218,7 @@ export function createRequestHandler(ctx = {}) {
 			// Gap-4). idpConfigWarning returns null when the config is coherent.
 			const idpWarn = idpConfigWarning(process.env);
 			if (idpWarn) safeLog(() => getLogger().warn({ event: 'oauth.idp.config' }, idpWarn), 'log:oauth-idp-config');
-			return { store, handlers, verify, registry }; // registry exposed for the /oauth/idp/* dispatch
+			return { store, handlers, verify, registry: idpRegistry }; // registry exposed for the /oauth/idp/* dispatch
 		})();
 	}
 	return async (req, res) => {

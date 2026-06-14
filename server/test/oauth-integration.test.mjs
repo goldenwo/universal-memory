@@ -678,6 +678,10 @@ test('production bootstrap: real IdP env builds the registry and /oauth/idp rout
     assert.equal(wrongMethod.status, 405, 'github is in the registry → method-gated, not 404');
     assert.equal(wrongMethod.headers.get('allow'), 'POST', '405 must advertise the allowed method');
 
+    // (1b) callback leg is GET-only → POST is method-gated
+    const cbPost = await fetch(url('/oauth/idp/github/callback'), { method: 'POST', headers: { ...FWD } });
+    assert.equal(cbPost.status, 405, 'callback leg is GET-only → POST must be method-gated');
+
     // (2) Unknown provider → 404 (registry is the allowlist).
     const unknown = await fetch(url('/oauth/idp/unknown/login'), { method: 'POST', headers: FWD });
     assert.equal(unknown.status, 404, 'unknown provider → 404 via the registry allowlist');
