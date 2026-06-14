@@ -6,7 +6,11 @@ const isNumeric = (s) => /^[0-9]+$/.test(s);
 
 export function makeOperatorPolicy(env) {
   const raw = (env.UM_OAUTH_OPERATOR_GITHUB ?? '').trim();
-  const allow = raw ? new Set([raw]) : new Set();           // one element today
+  // Canonical form so this widens to a per-user allowlist at Gap-4 with no
+  // shape change AND matches the sub that subForIdentity()/operatorSub() emit:
+  // numeric → 'github:<id>'; login-only is the degraded path (no stable id) so
+  // it keeps the raw login.
+  const allow = raw ? new Set([isNumeric(raw) ? `github:${raw}` : raw]) : new Set();
   const numericId = isNumeric(raw) ? raw : null;
 
   function isOperator(provider, identity) {
@@ -15,6 +19,8 @@ export function makeOperatorPolicy(env) {
     return String(identity.displayName).toLowerCase() === raw.toLowerCase();
   }
   // sub when we have a live verified identity (the GitHub path)
+  // `provider` is supplied by the IdP dispatch layer, which guarantees it matches
+  // the configured provider before this is called (see callback handler).
   function subForIdentity(provider, identity) {
     return `${provider}:${identity.subject}`;
   }

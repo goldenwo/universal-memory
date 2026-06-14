@@ -23,6 +23,7 @@ test('canonical sub: numeric config → github:<id> on EVERY path', () => {
   assert.equal(p.subForIdentity('github', { subject: '5550123' }), 'github:5550123');
   // token / cookie path (no live identity) → canonical operator sub
   assert.equal(p.operatorSub(), 'github:5550123');
+  assert.ok(p.allow.has('github:5550123')); // allow-set stores the canonical sub, not the raw id
 });
 
 test('canonical sub: unconfigured → owner (zero change for token-only installs)', () => {
