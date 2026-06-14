@@ -142,10 +142,14 @@ Set this to your GitHub account by **numeric id (preferred)** or login.
 
 **Why numeric id is preferred.** A numeric id gives a stable canonical identity
 (`sub=github:<id>`) that survives a GitHub username rename and is coherent at the
-future per-user (Gap-4) tier. A login-only value falls back to `sub=owner` on the
-token/cookie path (when the button is not used) — the server logs a boot advisory
-noting the namespace incoherence. A login also changes if you rename your GitHub
-account, which would break the allowlist match.
+future per-user (Gap-4) tier. A login-only value is **incoherent across sign-in
+paths**: the GitHub button still stamps the real `sub=github:<id>` (from the
+verified GitHub id), but the token-paste and presence-cookie fallback paths stamp
+`sub=owner` (no live id is known there) — so the same operator ends up with two
+different subjects depending on how they signed in. The server logs a boot
+advisory at startup. (A login also changes if you rename your GitHub account,
+which would then break the allowlist match.) Configure the numeric id so every
+path stamps the same canonical `sub=github:<id>`.
 
 Find your numeric id:
 
@@ -159,7 +163,7 @@ Read the `"id"` field (an integer). Use that integer as the value of
 ### 3.4 Boot behavior
 
 The three vars are **all-or-nothing.** Setting 1 or 2 of the 3 causes the server
-to refuse startup with an error naming the missing vars — a half-configured
+to refuse startup with an error listing all three required vars — a half-configured
 provider is rejected rather than silently disabled. Setting none of them leaves
 the consent page unchanged (token-paste only, no GitHub button).
 
