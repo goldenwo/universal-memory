@@ -172,18 +172,19 @@ export function createStateStore(dir, { now = Date.now, idpStateCap = 500 } = {}
 
     // ---- IdP-hop state (single-use, provider-bound, capped; in-memory)
     putIdpState({ authzId, provider, nonce }) {
+      const t = now();
       if (idpStates.size >= idpStateCap) {
-        const t = now();
         for (const [k, s] of idpStates) { if (s.exp <= t) idpStates.delete(k); } // sweep expired
         if (idpStates.size >= idpStateCap) {
-          const oldest = idpStates.keys().next().value;                           // then evict oldest
+          const oldest = idpStates.keys().next().value;                          // then evict oldest
           if (oldest !== undefined) idpStates.delete(oldest);
         }
       }
       const key = `umis_${randomBytes(32).toString('base64url')}`;
-      idpStates.set(key, { authzId, provider, nonce, exp: now() + OAUTH_TTLS.idpStateMs });
+      idpStates.set(key, { authzId, provider, nonce, exp: t + OAUTH_TTLS.idpStateMs });
       return key;
     },
+    // NB: returns null (not undefined like consumeCode) for absent/expired/mismatch — callers check falsy.
     consumeIdpState(key, provider) {
       const rec = idpStates.get(key);
       if (rec === undefined) return null;

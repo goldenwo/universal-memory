@@ -363,9 +363,11 @@ test('idp-state: over-cap insert evicts the oldest (sweep-then-evict, mirrors pe
   const dir = await tmpDir();
   const store = createStateStore(dir, { now: () => 1, idpStateCap: 2 });
   const first = store.putIdpState({ authzId: 'first', provider: 'github' });
-  store.putIdpState({ authzId: 'second', provider: 'github' });
-  store.putIdpState({ authzId: 'third', provider: 'github' }); // size hits cap → oldest (first) evicted
-  assert.equal(store.consumeIdpState(first, 'github'), null);  // evicted
+  const second = store.putIdpState({ authzId: 'second', provider: 'github' });
+  const third = store.putIdpState({ authzId: 'third', provider: 'github' }); // size hits cap → oldest (first) evicted
+  assert.equal(store.consumeIdpState(first, 'github'), null);                 // oldest evicted
+  assert.equal(store.consumeIdpState(second, 'github').authzId, 'second');    // non-oldest survived
+  assert.equal(store.consumeIdpState(third, 'github').authzId, 'third');      // new entry present
 });
 
 test('idp-state: nonce is preserved when provided (OIDC-ready slot)', async () => {
