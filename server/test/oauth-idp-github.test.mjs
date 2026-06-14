@@ -55,3 +55,18 @@ test('exchangeCode rejects a non-2xx from GitHub', async () => {
 });
 
 test('adapter exposes a display label', () => { assert.equal(gh.label, 'GitHub'); });
+
+test('fetchIdentity: non-2xx from /user → throws (deny)', async () => {
+  const bad = async () => makeResponse({ status: 500, body: {} });
+  await assert.rejects(() => gh.fetchIdentity({ credentials: { accessToken: 'gho_x' }, fetchImpl: bad }));
+});
+
+test('fetchIdentity: id <= 0 → throws (no non-positive subject)', async () => {
+  const zero = async () => makeResponse({ body: { id: 0, login: 'x' } });
+  await assert.rejects(() => gh.fetchIdentity({ credentials: { accessToken: 'gho_x' }, fetchImpl: zero }));
+});
+
+test('exchangeCode: 200 with an error body (no access_token) → throws', async () => {
+  const errBody = async () => makeResponse({ body: { error: 'bad_verification_code' } });
+  await assert.rejects(() => gh.exchangeCode({ code: 'c', redirectUri: 'https://um/cb', fetchImpl: errBody }));
+});

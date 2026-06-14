@@ -1358,3 +1358,18 @@ test('metrics: idp callback provider error emits onIdpOutcome(provider,error)', 
     assert.deepEqual(idp, [['github', 'error']]);
   } finally { await close(rig.server); }
 });
+
+test('idp callback: provider denial (?error) → 403 access_denied + onIdpOutcome(provider,denied)', async () => {
+  const idp = [];
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY, onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?error=access_denied&error_description=denied&state=${state}` });
+    assert.equal(cb.status, 403);
+    assert.equal(JSON.parse(cb.body).error, 'access_denied');
+    assert.deepEqual(idp, [['github', 'denied']]);
+  } finally { await close(rig.server); }
+});
