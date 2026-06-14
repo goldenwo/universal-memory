@@ -190,3 +190,9 @@ test('consent page: provider label is HTML-escaped', () => {
   assert.doesNotMatch(html, /<script>x<\/script>/);
   assert.match(html, /&lt;script&gt;/);
 });
+
+test('consent page: provider id is HTML-escaped in the formaction attribute', () => {
+  const html = renderConsentPage({ clientName: 'C', redirectHost: 'h', authzId: 'a', csrf: 'c', needsToken: true, providers: [{ id: 'g"x', label: 'L' }] });
+  assert.doesNotMatch(html, /formaction="\/oauth\/idp\/g"x\/login"/); // a raw quote would break out of the attribute
+  assert.match(html, /&quot;/);                                        // it is escaped instead
+});
