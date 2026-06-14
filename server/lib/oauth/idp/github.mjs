@@ -47,7 +47,7 @@ export function createGithubAdapter(env) {
     },
     async fetchIdentity({ credentials, fetchImpl = fetch }) {
       const json = await guardedJson(USER_URL, { headers: { Authorization: `Bearer ${credentials.accessToken}` } }, fetchImpl);
-      if (!Number.isInteger(json.id)) throw new Error('github: missing/non-integer id'); // deny, never undefined subject
+      if (!Number.isInteger(json.id) || json.id <= 0) throw new Error('github: missing/invalid id'); // deny: never an undefined or non-positive subject
       return { subject: String(json.id), displayName: String(json.login ?? json.id) };
     },
   };

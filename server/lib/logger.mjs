@@ -60,6 +60,12 @@ const STATIC_KEY_PATTERNS = Object.freeze([
   //     request; same value-only redaction.
   /umat_[A-Za-z0-9_-]+/g,      // OAuth access token
   /umrt_[A-Za-z0-9_-]+/g,      // OAuth refresh token
+  // Social-login (GitHub OAuth) credentials — a code path that logs a raw
+  // GitHub token (web-flow gho_, or ghp_/ghs_/ghu_/ghr_ personal/server/user/refresh)
+  // must not leak it to the sink. The configured client SECRET is captured
+  // dynamically in getKeyPatterns() (mirrors UM_AUTH_TOKEN), since its format
+  // is not statically known.
+  /gh[oprsu]_[A-Za-z0-9]+/g, // GitHub tokens (gho_ web-flow, ghp_/ghs_/ghu_/ghr_)
   // Lookbehind keeps the field name visible and redacts ONLY the value, so a
   // logged `operator_token=hunter2` or `code=abc123` becomes
   // `operator_token=[REDACTED]` / `code=[REDACTED]` (key retained for context).
@@ -87,6 +93,15 @@ function getKeyPatterns() {
     // Escape regex metachars (defensive — install.sh emits hex but custom
     // operator-set tokens may include `-`, `+`, `/`, `=`, etc.).
     const escaped = tok.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    patterns.push(new RegExp(escaped, 'g'));
+  }
+  // Social-login: the configured GitHub OAuth client secret has no statically
+  // known format (GitHub mints arbitrary opaque strings), so capture the active
+  // value as a literal-match pattern — same lazy-init + length≥16 guard as
+  // UM_AUTH_TOKEN — to redact it if any code path ever logs it raw.
+  const ghSecret = process.env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET;
+  if (typeof ghSecret === 'string' && ghSecret.length >= 16) {
+    const escaped = ghSecret.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
     patterns.push(new RegExp(escaped, 'g'));
   }
   _patterns = Object.freeze(patterns);

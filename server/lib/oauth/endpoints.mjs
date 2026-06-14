@@ -460,6 +460,14 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(callbackThrottle.retryAfterSec(now())) });
     }
     const q = new URL(req.url, base).searchParams;
+    // Provider denial (user declined at the IdP): the provider redirects with
+    // ?error and no code. Surface a clean access_denied instead of letting the
+    // empty-code exchange fail as a misleading 502. (No state consumed — the flow
+    // is already dead; the single-use state simply expires.)
+    if (q.get('error')) {
+      onIdpOutcome(provider, 'denied');
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'authorization was denied at the identity provider' });
+    }
     const code = q.get('code') ?? '';
     const stateParam = q.get('state') ?? '';
     const idp = store.consumeIdpState(stateParam, provider); // single-use, provider-bound
