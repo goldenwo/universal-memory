@@ -19,6 +19,7 @@ import { createStateStore, OAUTH_TTLS, sha256hex } from '../lib/oauth/state-stor
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
+import { makeOperatorPolicy } from '../lib/oauth/idp/policy.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -33,7 +34,7 @@ function pkcePair() {
 }
 
 // ---- one disposable store + handlers + server per test --------------------
-function makeRig({ now, cimdResolver } = {}) {
+function makeRig({ now, cimdResolver, operatorPolicy } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
@@ -41,7 +42,7 @@ function makeRig({ now, cimdResolver } = {}) {
   store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const throttle = createConsentThrottle();
   const handlers = createOAuthHandlers({
-    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver,
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver, operatorPolicy,
   });
   const verifier = createOAuthVerifier(store, BASE_URL, { now: nowFn });
 
@@ -446,6 +447,20 @@ test('happy flow: authorize→consent→code→token→verifier accepts', async 
     assert.equal(claims.branch, 'oauth');
     assert.equal(claims.sub, 'owner');
     assert.deepEqual(claims.scope, ['vault']);
+  } finally { await close(rig.server); }
+});
+
+test('happy flow: token sub is the canonical operator sub from policy (github:<id>)', async () => {
+  const rig = makeRig({ operatorPolicy: makeOperatorPolicy({ UM_OAUTH_OPERATOR_GITHUB: '5550123' }) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { code } = await consentAllow(rig, port, authzId, csrf);
+    const tok = await exchangeCode(port, { code, verifier: pkce.verifier });
+    assert.equal(tok.status, 200, tok.body);
+    const claims = rig.verifier(JSON.parse(tok.body).access_token);
+    assert.equal(claims.sub, 'github:5550123'); // was hardcoded 'owner'; now threaded from operatorPolicy
   } finally { await close(rig.server); }
 });
 

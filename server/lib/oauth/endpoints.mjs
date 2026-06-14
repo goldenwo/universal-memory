@@ -33,6 +33,7 @@ import {
 } from './consent.mjs';
 import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mjs';
 import { compareTokens } from '../auth.mjs';
+import { makeOperatorPolicy } from './idp/policy.mjs';
 
 const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
 
@@ -159,7 +160,7 @@ function isHttpsUrl(s) {
   try { return new URL(s).protocol === 'https:'; } catch { return false; }
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}) }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -274,6 +275,25 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return sendHtml(res, 200, html);
   }
 
+  // Mint a single-use code bound to the authorization, persist the resolved
+  // identity `sub`, write the consent cookie if one was minted, and 302 back to
+  // the connector with code + echoed connector state. Shared by the token-paste
+  // consent path (this task) and the IdP callback path (a later task); each
+  // caller supplies its own `sub` and `setCookie`.
+  function completeAllowedAuthorization({ rec, sub, res, setCookie }) {
+    const code = randomBytes(32).toString('base64url');
+    store.putCode(sha256hex(code), {
+      clientId: rec.clientId, redirectUri: rec.redirectUri, codeChallenge: rec.codeChallenge,
+      resource: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess,
+      sub, exp: now() + OAUTH_TTLS.codeMs,
+    });
+    const loc = new URL(rec.redirectUri);
+    loc.searchParams.set('code', code);
+    if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
+    if (setCookie) res.setHeader('Set-Cookie', setCookie);
+    return redirect(res, loc.toString());
+  }
+
   // ---- POST /oauth/consent -----------------------------------------------
   // Observability (spec §6 item 12): onConsent(outcome) fires at every terminal
   // path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
@@ -368,17 +388,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     // Allow → mint single-use code bound to the authorization, then redirect.
     onConsent('allow');
-    const code = randomBytes(32).toString('base64url');
-    store.putCode(sha256hex(code), {
-      clientId: rec.clientId, redirectUri: rec.redirectUri, codeChallenge: rec.codeChallenge,
-      resource: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess,
-      sub: 'owner', exp: now() + OAUTH_TTLS.codeMs,
-    });
-    const loc = new URL(rec.redirectUri);
-    loc.searchParams.set('code', code);
-    if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
-    if (setCookie) res.setHeader('Set-Cookie', setCookie);
-    return redirect(res, loc.toString());
+    return completeAllowedAuthorization({ rec, sub: operatorPolicy.operatorSub(), res, setCookie });
   }
 
   // ---- POST /oauth/token --------------------------------------------------
@@ -445,7 +455,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       return sendJson(res, 400, { error: 'invalid_target', error_description: 'resource mismatch' });
     }
     const issued = store.issueTokens({
-      sub: 'owner', aud: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess, clientId: rec.clientId,
+      sub: rec.sub, aud: rec.resource, scope: rec.scope, offlineAccess: rec.offlineAccess, clientId: rec.clientId,
     });
     onTokenGrant('authorization_code', 'issued');
     return tokenResponse(res, issued, rec.scope);
