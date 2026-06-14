@@ -118,11 +118,11 @@ Claude registers itself automatically via Dynamic Client Registration (DCR) — 
    - **URL**: your public origin **+ `/mcp`**, e.g. `https://<your-host>.ts.net/mcp` (the same value `um-tunnel` prints as the MCP connector URL).
 3. Expand **Advanced settings** and **leave OAuth Client ID and Client Secret BLANK.** UM self-registers via DCR as a **public client** (no secret). Click **Add**.
 4. Claude registers a client behind the scenes, then opens UM's **consent page** ("Authorize Claude") in a browser tab. The page shows the requesting client name and the redirect host so you can confirm what you're approving.
-5. Paste your **operator token** into the field and click **Allow**. This is the server's `UM_AUTH_TOKEN`, mirrored on the UM host at `~/.um/auth-token`:
+5. Paste your **operator token** into the field and click **Allow**. (If social login is configured, you can click **"Continue with GitHub"** instead — see [docs/oauth.md §3](oauth.md#3-sign-in-with-github-social-login).) This is the server's `UM_AUTH_TOKEN`, mirrored on the UM host at `~/.um/auth-token`:
    ```bash
    cat ~/.um/auth-token
    ```
-   The tab closes and Claude is connected. (A short-lived `/oauth`-scoped consent cookie keeps the browser trusted for ~15 minutes, so connecting a second vendor in the same sitting skips the paste — you still click **Allow** every time; it never auto-approves. See [docs/oauth.md §3](oauth.md#3-connecting-claudeai-one-click-dcr).)
+   The tab closes and Claude is connected. (A short-lived `/oauth`-scoped consent cookie keeps the browser trusted for ~15 minutes, so connecting a second vendor in the same sitting skips the paste — you still click **Allow** every time; it never auto-approves. See [docs/oauth.md §4](oauth.md#4-connecting-claudeai-one-click-dcr).)
 6. **Mobile is covered automatically.** The connector is account-level: one connect on the web shares it across Claude **web, Desktop, and mobile** — the single `https://claude.ai/api/mcp/auth_callback` redirect covers all surfaces, with **zero extra mobile setup** (verified live 2026-06-13). This is the Gap-3 "memory on mobile" story: connect once, recall/capture from your phone.
 
 Once connected, Claude invokes the UM tools when you ask memory-shaped questions ("what was I working on?", "remember that I prefer X"). For that recall/capture routing to fire reliably, paste the routing rubric into the connector's custom instructions — see §4.
@@ -137,9 +137,9 @@ Once connected, Claude invokes the UM tools when you ask memory-shaped questions
 > RFC 8414 `/.well-known/oauth-authorization-server` document, which is what UM serves.
 > The connect still completes. An `oauth_host_mismatch` warning, on the other hand,
 > means your tunnel host doesn't match `UM_PUBLIC_BASE_URL` and is worth fixing — see
-> [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+> [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 
-Claude Code (the CLI) is also a supported OAuth client (it uses a loopback redirect), but for purely local use it doesn't need OAuth at all — it reaches `localhost:6335` directly. See [docs/oauth.md §6](oauth.md#6-the-legacy-bearer-token-is-unaffected).
+Claude Code (the CLI) is also a supported OAuth client (it uses a loopback redirect), but for purely local use it doesn't need OAuth at all — it reaches `localhost:6335` directly. See [docs/oauth.md §7](oauth.md#7-the-legacy-bearer-token-is-unaffected).
 
 ### 3b. Claude Desktop (app) — local-only loopback path
 
@@ -272,9 +272,9 @@ If all four pass, Claude.ai / Claude Desktop is reading and writing the same vau
 - **"Couldn't register with universal-memory's sign-in service."** Stale discovery cache from a pre-OAuth probe of this URL — **remove the connector and add it again** to force fresh discovery (§1 / §3a).
 - **Discovery 404s / OAuth routes missing.** You're running the pre-OAuth GHCR `:latest` image. Rebuild from local source: `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` from `server/` (§1). Verify with the discovery curl in [docs/oauth.md §2](oauth.md#2-enabling-it).
 - **Consent page rejects the token (`bad_token`).** You pasted the wrong secret. The operator token is `UM_AUTH_TOKEN`, mirrored at `~/.um/auth-token` on the UM host — `cat ~/.um/auth-token`. Rotating it changes only *future* consent; existing grants keep working.
-- **`oauth_host_mismatch` in the logs / vendor can't complete discovery.** Your tunnel/proxy host doesn't match `UM_PUBLIC_BASE_URL`. Make them identical (origin only, no path, no trailing slash). See [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+- **`oauth_host_mismatch` in the logs / vendor can't complete discovery.** Your tunnel/proxy host doesn't match `UM_PUBLIC_BASE_URL`. Make them identical (origin only, no path, no trailing slash). See [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 - **`GET /.well-known/openid-configuration → 401` in the logs.** Harmless — the vendor probes OIDC, gets 401, and falls back to RFC 8414 discovery, which UM serves. Connect completes.
 - **Tools appear but writes fail.** Check `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`, then restart the server. Writes return `{ ok: false, error: "MCP writes disabled" }` when the gate is off.
 - **Claude refuses to call the tools.** Confirm the rubric is in the right place (per-connector for Claude.ai; Project / user-level for Claude Desktop) and no other instructions override it.
-- **OAuth-server diagnostics (metrics + logs).** For the `um_oauth_*` counters and the `error_class` log breadcrumbs that tell you exactly where a failed connect died, see [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+- **OAuth-server diagnostics (metrics + logs).** For the `um_oauth_*` counters and the `error_class` log breadcrumbs that tell you exactly where a failed connect died, see [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 - **More diagnostic surface.** See [`docs/workflow.md`](workflow.md) "Common diagnostic questions" for UM-side health checks.

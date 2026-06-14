@@ -182,3 +182,30 @@ test('PRODUCTION getLogger() redacts AIza Google key in URL', () => {
     _setLogStreamForTest(null);
   }
 });
+
+// Social-login (GitHub OAuth) — a GitHub access token (gho_ web-flow) or the
+// configured client secret must never reach the log sink, even if a code path
+// accidentally logs it raw. The static gh[oprsu]_ pattern catches minted
+// tokens; the client secret has no statically-known format and is captured
+// dynamically from UM_OAUTH_IDP_GITHUB_CLIENT_SECRET (mirrors UM_AUTH_TOKEN).
+test('redacts a GitHub access token (gho_) in a message', () => {
+  const captured = [];
+  const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+  log.error({ msg: 'github call failed with gho_ABC123leak' });
+  assert.ok(!JSON.stringify(captured).includes('gho_ABC123leak'));
+});
+
+test('redacts the configured UM_OAUTH_IDP_GITHUB_CLIENT_SECRET value', () => {
+  const saved = process.env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET;
+  process.env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET = 'gh-client-secret-abcdefghijklmnop';
+  _resetKeyPatternsForTest();
+  try {
+    const captured = [];
+    const log = makeLogger({ stream: { write: (l) => captured.push(JSON.parse(l)) } });
+    log.error({ msg: 'leaking gh-client-secret-abcdefghijklmnop oops' });
+    assert.ok(!JSON.stringify(captured).includes('gh-client-secret-abcdefghijklmnop'));
+  } finally {
+    if (saved === undefined) delete process.env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET; else process.env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET = saved;
+    _resetKeyPatternsForTest();
+  }
+});

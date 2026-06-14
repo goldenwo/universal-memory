@@ -144,12 +144,13 @@ export const umOauthConsentTotal = new promClient.Counter({
 });
 
 // Gap-4 bridge: social-login IdP callback outcomes (spec §6). Bounded:
-//   provider ∈ configured IdP ids (today: 'github'); outcome ∈ {'success','mismatch','error'}.
+//   provider ∈ configured IdP ids (today: 'github'); outcome ∈ {'success','mismatch','error','denied'}.
 // 'mismatch' = authenticated at the provider but not THE operator; 'error' = provider
-// exchange/identity failure. Emitted by handleIdpCallback via the onIdpOutcome callback.
+// exchange/identity failure; 'denied' = user cancelled/denied at the IdP (provider returned
+// ?error with no code). Emitted by handleIdpCallback via the onIdpOutcome callback.
 export const umOauthIdpTotal = new promClient.Counter({
   name: 'um_oauth_idp_total',
-  help: 'Social-login IdP callback outcomes (Gap-4): success|mismatch|error, by provider',
+  help: 'Social-login IdP callback outcomes (Gap-4): success|mismatch|error|denied, by provider',
   labelNames: ['provider', 'outcome'],
   registers: [registry],
 });
