@@ -167,3 +167,26 @@ test('page: error notice rendered + escaped when set, absent otherwise', () => {
   assert.ok(withErr.includes('Bad &lt;token&gt;'));
   assert.ok(!withErr.includes('Bad <token>'));
 });
+
+test('consent page: with providers, renders a formaction login button + token fallback in <details> (token NOT required)', () => {
+  const html = renderConsentPage({ clientName: 'Claude', redirectHost: 'claude.ai', authzId: 'a1', csrf: 'c1', needsToken: true, providers: [{ id: 'github', label: 'GitHub' }] });
+  assert.match(html, /formaction="\/oauth\/idp\/github\/login"/);
+  assert.match(html, /Continue with GitHub/);
+  assert.match(html, /<details/);                                  // token fallback disclosure
+  assert.match(html, /name="operator_token"/);                     // token still present (as fallback)
+  assert.doesNotMatch(html, /name="operator_token"[^>]*\brequired\b/); // NOT required when providers are offered
+  assert.match(html, /<form action="\/oauth\/consent" method="post">/); // form stays POST to /oauth/consent
+});
+
+test('consent page: no providers → unchanged (token primary + required, no provider button, no <details>)', () => {
+  const html = renderConsentPage({ clientName: 'Claude', redirectHost: 'claude.ai', authzId: 'a1', csrf: 'c1', needsToken: true, providers: [] });
+  assert.doesNotMatch(html, /formaction=/);
+  assert.doesNotMatch(html, /<details/);
+  assert.match(html, /name="operator_token"[^>]*\brequired\b/);    // required when it's the sole auth path
+});
+
+test('consent page: provider label is HTML-escaped', () => {
+  const html = renderConsentPage({ clientName: 'Claude', redirectHost: 'claude.ai', authzId: 'a1', csrf: 'c1', needsToken: true, providers: [{ id: 'github', label: '<script>x</script>' }] });
+  assert.doesNotMatch(html, /<script>x<\/script>/);
+  assert.match(html, /&lt;script&gt;/);
+});

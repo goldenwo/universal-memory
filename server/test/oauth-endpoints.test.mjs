@@ -1130,6 +1130,7 @@ test('pending-cap: oldest pending authz is evicted past the cap', async () => {
 
 const fakeAdapter = {
   id: 'github',
+  label: 'GitHub',
   buildAuthorizeUrl: ({ state, redirectUri }) =>
     `https://github.com/login/oauth/authorize?client_id=cid&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
   exchangeCode: async () => ({ credentials: { accessToken: 'gho_x' } }),
@@ -1271,5 +1272,16 @@ test('idp callback: invalid/replayed state → 400 (single-use)', async () => {
     assert.equal(replay.status, 400); // state already consumed → rejected
     const bogus = await req(port, { path: `/oauth/idp/github/callback?code=x&state=nope` });
     assert.equal(bogus.status, 400);
+  } finally { await close(rig.server); }
+});
+
+test('authorize: consent page shows the GitHub login button when a provider is configured', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { res } = await freshConsentForm(rig, port, pkce);
+    assert.match(res.body, /formaction="\/oauth\/idp\/github\/login"/);
+    assert.match(res.body, /Continue with GitHub/);
   } finally { await close(rig.server); }
 });

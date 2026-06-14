@@ -280,6 +280,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       authzId,
       csrf: mintCsrf(store.getHmacKey(), authzId),
       needsToken: !hasCookie,
+      providers: registry.list().map((a) => ({ id: a.id, label: a.label })),
     });
     return sendHtml(res, 200, html);
   }
@@ -381,6 +382,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
         csrf: mintCsrf(store.getHmacKey(), retryId),
         needsToken: true,
         error: 'Incorrect operator token.',
+        providers: registry.list().map((a) => ({ id: a.id, label: a.label })),
       });
       return sendHtml(res, 200, rerendered);
     }

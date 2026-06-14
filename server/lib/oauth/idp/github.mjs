@@ -29,6 +29,7 @@ export function createGithubAdapter(env) {
   const clientSecret = env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET;
   return {
     id: 'github',
+    label: 'GitHub',
     buildAuthorizeUrl({ state, redirectUri /* nonce unused by GitHub */ }) {
       const u = new URL(AUTH_URL);
       u.searchParams.set('client_id', clientId);
