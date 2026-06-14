@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
-import { validateOAuthConfig } from '../lib/startup-validation.mjs';
+import { validateOAuthConfig, idpConfigWarning } from '../lib/startup-validation.mjs';
 
 const BASE = 'https://um.example.com';
 
@@ -315,5 +315,75 @@ test('validateOAuthConfig: no-op when OAuth off (no UM_PUBLIC_BASE_URL needed)',
 test('validateOAuthConfig: no-op when UM_OAUTH_ENABLED absent', () => {
   assert.doesNotThrow(
     () => validateOAuthConfig({}),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Social-login IdP trio validation (PR-1).
+// ---------------------------------------------------------------------------
+test('validateOAuthConfig: throws on a partial GitHub IdP trio (CLIENT_ID only)', () => {
+  assert.throws(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', // secret + operator missing
+    }),
+    /all of|CLIENT_SECRET|half-enabled/i,
+  );
+});
+
+test('validateOAuthConfig: passes on a full GitHub IdP trio', () => {
+  assert.doesNotThrow(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+      UM_OAUTH_OPERATOR_GITHUB: '5550123',
+    }),
+  );
+});
+
+test('validateOAuthConfig: passes when no IdP configured (token-only install)', () => {
+  assert.doesNotThrow(
+    () => validateOAuthConfig({ UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com' }),
+  );
+});
+
+test('idpConfigWarning: login-only operator → namespace-incoherence warning', () => {
+  const msg = idpConfigWarning({
+    UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+    UM_OAUTH_OPERATOR_GITHUB: 'goldenwo',
+  });
+  assert.match(msg, /numeric id/i);
+});
+
+test('idpConfigWarning: numeric operator → null (coherent seam)', () => {
+  assert.equal(idpConfigWarning({
+    UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+    UM_OAUTH_OPERATOR_GITHUB: '5550123',
+  }), null);
+});
+
+test('idpConfigWarning: unconfigured → null', () => {
+  assert.equal(idpConfigWarning({}), null);
+});
+
+test('validateOAuthConfig: throws on a partial GitHub IdP trio (SECRET + OPERATOR, no CLIENT_ID)', () => {
+  assert.throws(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+      UM_OAUTH_OPERATOR_GITHUB: '5550123',
+    }),
+    /all of|CLIENT_ID|half-enabled/i,
+  );
+});
+
+test('validateOAuthConfig: whitespace-only IdP value treated as absent (partial trio throws)', () => {
+  assert.throws(
+    () => validateOAuthConfig({
+      UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://um.example.com',
+      UM_OAUTH_IDP_GITHUB_CLIENT_ID: '   ', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec',
+      UM_OAUTH_OPERATOR_GITHUB: '5550123',
+    }),
+    /all of|CLIENT_ID|half-enabled/i,
   );
 });
