@@ -20,6 +20,7 @@ import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
 import { makeOperatorPolicy } from '../lib/oauth/idp/policy.mjs';
+import { umOauthConsentTotal, umOauthIdpTotal } from '../lib/metrics.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -34,7 +35,7 @@ function pkcePair() {
 }
 
 // ---- one disposable store + handlers + server per test --------------------
-function makeRig({ now, cimdResolver, operatorPolicy, registry, callbackThrottle } = {}) {
+function makeRig({ now, cimdResolver, operatorPolicy, registry, callbackThrottle, onConsent, onIdpOutcome } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
@@ -48,6 +49,8 @@ function makeRig({ now, cimdResolver, operatorPolicy, registry, callbackThrottle
   const handlers = createOAuthHandlers({
     store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver, operatorPolicy, registry,
     callbackThrottle: cbThrottle,
+    ...(onConsent ? { onConsent } : {}),
+    ...(onIdpOutcome ? { onIdpOutcome } : {}),
   });
   const verifier = createOAuthVerifier(store, BASE_URL, { now: nowFn });
 
@@ -1283,5 +1286,58 @@ test('authorize: consent page shows the GitHub login button when a provider is c
     const { res } = await freshConsentForm(rig, port, pkce);
     assert.match(res.body, /formaction="\/oauth\/idp\/github\/login"/);
     assert.match(res.body, /Continue with GitHub/);
+  } finally { await close(rig.server); }
+});
+
+// =========================================================================
+// Task 2.8: IdP outcome metrics + consent method label (token|idp)
+// =========================================================================
+
+// Label smoke test: prom-client must NOT throw when both label dimensions are provided.
+// This pins the label-set config and catches any future regression where a label is
+// dropped from the Counter definition (prom-client throws synchronously in that case).
+test('metrics: counters accept the new label sets without throwing', () => {
+  assert.doesNotThrow(() => umOauthConsentTotal.inc({ outcome: 'allow', method: 'idp' }));
+  assert.doesNotThrow(() => umOauthIdpTotal.inc({ provider: 'github', outcome: 'success' }));
+});
+
+test('metrics: token-paste consent emits onConsent with method=token', async () => {
+  const calls = [];
+  const rig = makeRig({ onConsent: (o, m) => calls.push([o, m]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    await consentAllow(rig, port, authzId, csrf);
+    assert.ok(calls.some(([o, m]) => o === 'allow' && m === 'token'));
+  } finally { await close(rig.server); }
+});
+
+test('metrics: idp callback success emits onIdpOutcome(provider,success) + onConsent(allow,idp)', async () => {
+  const consent = [], idp = [];
+  const rig = makeRig({ registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY, onConsent: (o, m) => consent.push([o, m]), onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 303, cb.body);
+    assert.deepEqual(idp, [['github', 'success']]);
+    assert.ok(consent.some(([o, m]) => o === 'allow' && m === 'idp'));
+  } finally { await close(rig.server); }
+});
+
+test('metrics: idp callback wrong-operator emits onIdpOutcome(provider,mismatch)', async () => {
+  const idp = [];
+  const rig = makeRig({ registry: wrongRegistry, operatorPolicy: OPERATOR_POLICY, onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 403);
+    assert.deepEqual(idp, [['github', 'mismatch']]);
   } finally { await close(rig.server); }
 });

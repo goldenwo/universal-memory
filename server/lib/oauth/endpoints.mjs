@@ -316,35 +316,42 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   }
 
   // ---- POST /oauth/consent -----------------------------------------------
-  // Observability (spec §6 item 12): onConsent(outcome) fires at every terminal
-  // path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
-  // 'csrf_reject'}. The trust-boundary rejects (cross-origin/cross-site Origin,
-  // non-form body, missing/over-cap body, no pending authz, forged CSRF) all
-  // collapse to 'csrf_reject' — they are the anti-forgery family of "this is not
-  // a legitimate consent submission" and keep the enum bounded. The metric inc
-  // itself lives in the dispatcher (this module stays metrics-free, like its
-  // siblings); here we only call the injected callback.
+  // Observability (spec §6 item 12): onConsent(outcome, method) fires at every
+  // terminal path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
+  // 'csrf_reject'} and method='token' (all paths through this handler are the
+  // operator-token-paste / presence-cookie path). The trust-boundary rejects
+  // (cross-origin/cross-site Origin, non-form body, missing/over-cap body, no
+  // pending authz, forged CSRF) all collapse to 'csrf_reject' — they are the
+  // anti-forgery family of "this is not a legitimate consent submission" and keep
+  // the enum bounded. The metric inc itself lives in the dispatcher (this module
+  // stays metrics-free, like its siblings); here we only call the injected callback.
   async function handleConsent(req, res) {
+    // All emissions from this handler carry method='token' (operator-token-paste /
+    // presence-cookie path). The IdP callback success path calls onConsent directly
+    // with method='idp'. Having a local wrapper ensures every branch in this
+    // function gets the right method without risk of a missing-label throw.
+    const onConsentToken = (outcome) => onConsent(outcome, 'token');
+
     // Origin / Sec-Fetch-Site enforcement FIRST (spec section 5): a live cookie
     // must not let a cross-origin page auto-submit a consent.
     const originReject = verifyOrigin(req);
     if (originReject) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
     }
     if (!isFormContentType(req)) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
     }
     // Global throttle (IP-independent, spec section 6 item 9).
     if (!throttle.admitted(now())) {
-      onConsent('throttled');
+      onConsentToken('throttled');
       return sendJson(res, 429, { error: 'slow_down' }, { 'Retry-After': String(throttle.retryAfterSec(now())) });
     }
 
     const { params, tooLarge } = await readForm(req);
     if (tooLarge) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
     }
 
@@ -355,11 +362,11 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     const rec = authzId ? takePending(authzId) : undefined;
     if (!rec) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
     }
     if (!verifyCsrf(store.getHmacKey(), authzId, csrf)) {
-      onConsent('csrf_reject');
+      onConsentToken('csrf_reject');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'bad csrf' });
     }
 
@@ -373,7 +380,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       // pending record was consumed by takePending, so re-issue a fresh authz
       // id for the retry and bind a new CSRF token to it.
       throttle.fail(now());
-      onConsent('bad_token');
+      onConsentToken('bad_token');
       const retryId = putPending({ ...rec });
       const rerendered = renderConsentPage({
         clientName: rec.clientName ?? rec.clientId,
@@ -395,7 +402,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     // Deny → consume + redirect with access_denied.
     if (decision !== 'allow') {
-      onConsent('deny');
+      onConsentToken('deny');
       const loc = new URL(rec.redirectUri);
       loc.searchParams.set('error', 'access_denied');
       if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
@@ -404,7 +411,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     }
 
     // Allow → mint single-use code bound to the authorization, then redirect.
-    onConsent('allow');
+    onConsentToken('allow');
     return completeAllowedAuthorization({ rec, sub: operatorPolicy.operatorSub(), res, setCookie });
   }
 
@@ -469,18 +476,21 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       identity = await adapter.fetchIdentity({ credentials });
     } catch {
       // Never leak the provider error or any secret/token; the vendor login is retriable.
-      onIdpOutcome('error');
+      onIdpOutcome(provider, 'error');
       return sendJson(res, 502, { error: 'temporarily_unavailable', error_description: 'identity provider error; please retry' });
     }
 
     if (!operatorPolicy.isOperator(provider, identity)) {
       callbackThrottle.fail(now());
-      onIdpOutcome('mismatch');
+      onIdpOutcome(provider, 'mismatch');
       return sendJson(res, 403, { error: 'access_denied', error_description: 'not the operator account' });
     }
 
     callbackThrottle.success();
-    onIdpOutcome('success');
+    onIdpOutcome(provider, 'success');
+    // Emit the unified consent counter for the idp method so ops can see the
+    // full allow-mix (token vs idp) in a single metric.
+    onConsent('allow', 'idp');
     // `pending` is intentionally NOT consumed here (peekPending is a pure read):
     // the token-paste consent path likewise leaves it live (takePending does not
     // delete a live record), so both paths behave identically. Re-completing the

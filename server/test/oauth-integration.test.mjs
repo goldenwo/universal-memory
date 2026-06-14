@@ -625,7 +625,7 @@ test('OAuth integration: consent allow + token issue increment um_oauth_consent_
     // (d) /metrics (loopback) carries BOTH new counters.
     const m = await fetch(url('/metrics'));
     const text = await m.text();
-    assert.match(text, /um_oauth_consent_total\{outcome="allow"\}\s+[1-9]/);
+    assert.match(text, /um_oauth_consent_total\{outcome="allow",method="token"\}\s+[1-9]/);
     assert.match(text, /um_oauth_token_grants_total\{grant_type="authorization_code",outcome="issued"\}\s+[1-9]/);
   } finally {
     srv.close();

@@ -61,7 +61,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
@@ -2178,9 +2178,13 @@ export function createRequestHandler(ctx = {}) {
 				// Same metrics-free-handler / obs-fallback-inc idiom as onRegistration:
 				// the bounded outcome / grant_type enums come from the handler, so a
 				// metric-emit failure never poisons the consent or token response (C.9).
-				onConsent: (outcome) => {
-					try { umOauthConsentTotal.inc({ outcome }); }
+				onConsent: (outcome, method = 'token') => {
+					try { umOauthConsentTotal.inc({ outcome, method }); }
 					catch (e) { obsFallback(e, 'metric:oauth-consent'); }
+				},
+				onIdpOutcome: (provider, outcome) => {
+					try { umOauthIdpTotal.inc({ provider, outcome }); }
+					catch (e) { obsFallback(e, 'metric:oauth-idp'); }
 				},
 				onTokenGrant: (grantType, outcome) => {
 					try { umOauthTokenGrantsTotal.inc({ grant_type: grantType, outcome }); }
