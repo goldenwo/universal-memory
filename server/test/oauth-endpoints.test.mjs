@@ -1341,3 +1341,20 @@ test('metrics: idp callback wrong-operator emits onIdpOutcome(provider,mismatch)
     assert.deepEqual(idp, [['github', 'mismatch']]);
   } finally { await close(rig.server); }
 });
+
+test('metrics: idp callback provider error emits onIdpOutcome(provider,error)', async () => {
+  // adapter whose exchangeCode throws → handleIdpCallback's try/catch → 502 + 'error' outcome
+  const errorAdapter = { ...fakeAdapter, exchangeCode: async () => { throw new Error('upstream'); } };
+  const errorRegistry = { get: (id) => (id === 'github' ? errorAdapter : undefined), list: () => [errorAdapter] };
+  const idp = [];
+  const rig = makeRig({ registry: errorRegistry, operatorPolicy: OPERATOR_POLICY, onIdpOutcome: (p, o) => idp.push([p, o]) });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce, { scope: 'vault' });
+    const { state } = await idpLogin(port, authzId, csrf);
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 502);
+    assert.deepEqual(idp, [['github', 'error']]);
+  } finally { await close(rig.server); }
+});
