@@ -19,6 +19,8 @@
  *   { returnStatus: number }                            // hard short-circuit
  */
 
+import { configuredProviders } from './oauth/idp/config.mjs';
+
 // Loopback in all three shapes Node's remoteAddress reports: IPv4,
 // IPv6, and the IPv4-mapped-in-IPv6 form seen on dual-stack sockets.
 function isLoopbackIp(ip) {
@@ -57,6 +59,11 @@ const ROWS = [
   // it is loopback-only operator revocation (spec 4.3) — same posture as the
   // /metrics loopback branch, not a public OAuth path.
   { match: (p, s) => p === '/oauth/revoke',                          pol: (e, ip) => oauthRevokePolicy(e, ip) },
+
+  // Social login (Gap-4 bridge): /oauth/idp/<provider>/{login,callback}. A PREFIX
+  // row (not an exact path) — public only when OAuth is on AND a provider is fully
+  // configured; otherwise hard-404 (default-closed, like the other OAuth rows).
+  { match: (p, s) => p.startsWith('/oauth/idp/'),                    pol: (e) => oauthIdpPolicy(e) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
@@ -128,6 +135,16 @@ function oauthPolicy(env) {
 function oauthRevokePolicy(env, sourceIp) {
   if (!oauthEnabled(env)) return { returnStatus: 404 };
   if (!isLoopbackIp(sourceIp)) return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: true };
+}
+
+function oauthIdpPolicy(env) {
+  if (!oauthEnabled(env)) return { returnStatus: 404 };
+  // Default-closed until a provider is fully configured (the social-login trio).
+  if (configuredProviders(env).length === 0) return { returnStatus: 404 };
+  // Public like the other OAuth routes; the DEDICATED OAuth limiter (applied in
+  // the /oauth/* dispatch layer, which also matches /oauth/idp/*) handles rate
+  // limiting, so skip the SHARED limiter here to avoid double-limiting.
   return { bypassAuth: true, bypassRateLimit: true };
 }
 
