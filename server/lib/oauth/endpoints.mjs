@@ -479,6 +479,11 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
 
     callbackThrottle.success();
     onIdpOutcome('success');
+    // `pending` is intentionally NOT consumed here (peekPending is a pure read):
+    // the token-paste consent path likewise leaves it live (takePending does not
+    // delete a live record), so both paths behave identically. Re-completing the
+    // same authz requires operator credentials (a fresh CSRF-bound login or a valid
+    // operator token), so it is not an escalation in the single-operator model.
     const sub = operatorPolicy.subForIdentity(provider, identity);
     const setCookie = consentCookieHeader(signConsentCookie(store.getHmacKey(), now()));
     return completeAllowedAuthorization({ rec: pending, sub, res, setCookie });
