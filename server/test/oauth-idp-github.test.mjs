@@ -3,7 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGithubAdapter } from '../lib/oauth/idp/github.mjs';
 
-const env = { UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: 'sec' };
+// A distinctive, obviously-fake secret sentinel. NOT a 3-char generic string like
+// 'sec' — that could coincidentally substring-match a future error message and make
+// the leak-guard test below false-FAIL. ≥16 chars; mirrors the access-token sentinel.
+const CLIENT_SECRET = 'EXAMPLE-CLIENT-SECRET-' + 'NOT-A-REAL-VALUE';
+const env = { UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'cid', UM_OAUTH_IDP_GITHUB_CLIENT_SECRET: CLIENT_SECRET };
 const gh = createGithubAdapter(env);
 
 // Response-like mock mirroring server/test/oauth-cimd.test.mjs makeResponse:
@@ -72,13 +76,13 @@ test('exchangeCode: 200 with an error body (no access_token) → throws', async 
 });
 
 // Social-login PR-3 — adapter thrown errors must never embed the client secret
-// (env above is { ...CLIENT_SECRET: 'sec' }) or the access token: a throw here
-// is mapped by the callback handler to a retriable error page that leaks nothing.
+// (env above sets a distinctive CLIENT_SECRET sentinel) or the access token: a throw
+// here is mapped by the callback handler to a retriable error page that leaks nothing.
 test('exchangeCode failure error message does not contain the client secret', async () => {
   const bad = async () => makeResponse({ status: 500, body: {} });
   await gh.exchangeCode({ code: 'c', redirectUri: 'https://um/cb', fetchImpl: bad }).then(
     () => assert.fail('should reject'),
-    (e) => assert.ok(!String(e.message).includes('sec')),
+    (e) => assert.ok(!String(e.message).includes(CLIENT_SECRET)),
   );
 });
 

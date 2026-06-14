@@ -1278,6 +1278,27 @@ test('idp callback: invalid/replayed state → 400 (single-use)', async () => {
   } finally { await close(rig.server); }
 });
 
+test('idp callback: state still live but pending authz expired in the meantime → 400 (authorization expired)', async () => {
+  // pendingAuthzMs === idpStateMs (10 min), but the pending authz is minted at
+  // /authorize while the idp-state is minted later at /login. Advancing the clock
+  // BETWEEN the two opens the window where the single-use state is still live but
+  // the underlying connector authorization has already aged out — the callback's
+  // peekPending guard must reject it rather than complete a dead authz.
+  const clock = { t: 1_700_000_000_000 };
+  const rig = makeRig({ now: clock, registry: fakeRegistry, operatorPolicy: OPERATOR_POLICY });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce); // pending exp = T+10m
+    clock.t += 5 * 60_000;                                   // +5m: pending still live
+    const { state } = await idpLogin(port, authzId, csrf);   // idp-state exp = T+15m
+    clock.t += 6 * 60_000;                                   // +11m: pending expired, state live
+    const cb = await req(port, { path: `/oauth/idp/github/callback?code=fakecode&state=${state}` });
+    assert.equal(cb.status, 400, cb.body);
+    assert.match(cb.body, /authorization expired/);
+  } finally { await close(rig.server); }
+});
+
 test('authorize: consent page shows the GitHub login button when a provider is configured', async () => {
   const rig = makeRig({ registry: fakeRegistry });
   const port = await listen(rig.server);
