@@ -6,6 +6,45 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-14
+
+**v1.4 makes universal-memory connectable as an OAuth-authorized MCP server** — two opt-in capabilities that both ship **flag-off / default-inert**, so existing installs are byte-for-byte unaffected. **Gap-3** adds a spec-compliant embedded **OAuth 2.1 authorization server** so MCP vendor connectors (Claude.ai, ChatGPT) can authorize against a self-hosted server instead of a static bearer token. **Social login** (the Gap-4 identity bridge) adds a "Sign in with GitHub" button to the consent gate, stamping a canonical `sub=github:<id>` on every authorization. Both gated behind `UM_OAUTH_ENABLED` (default OFF); the legacy `UM_AUTH_TOKEN` bearer path is unchanged when off. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) (multi-vendor reach).
+
+### Added — Gap-3: OAuth 2.1 embedded authorization server (default-off)
+
+The MCP Authorization spec (OAuth 2.1) implemented as an embedded AS so a self-hosted server can be added as a vendor connector. Single-operator model; the legacy bearer path runs in parallel and remains the default. Behind `UM_OAUTH_ENABLED` (default OFF) — zero change to existing installs. Setup: [`docs/oauth.md`](docs/oauth.md).
+
+- **Discovery surface ([#108](https://github.com/goldenwo/universal-memory/pull/108)).** `/.well-known/oauth-authorization-server` + `/.well-known/oauth-protected-resource` (RFC 8414 / RFC 9728), config-derived from `UM_PUBLIC_BASE_URL`; plus Phase-0 OpenAPI fixes.
+- **Core flow ([#110](https://github.com/goldenwo/universal-memory/pull/110)).** `/oauth/authorize` → consent page → `/oauth/token`; PKCE-S256 required, single-use authorization codes, resource-bound (RFC 8707) to `${base}/mcp`. An OAuth verifier is accepted OR'd with the legacy bearer on `/mcp`.
+- **Dynamic client registration ([#111](https://github.com/goldenwo/universal-memory/pull/111)).** RFC 7591 `/oauth/register` so connectors self-register; redirect-URI allowlist enforced.
+- **CIMD client resolution ([#112](https://github.com/goldenwo/universal-memory/pull/112)).** Client-ID-metadata-document resolution (the ChatGPT preferred path): URL `client_id`s resolved out-of-band, allowlist-first, SSRF-guarded, bounded cache.
+- **Hardening + revocation ([#113](https://github.com/goldenwo/universal-memory/pull/113)).** `/oauth/revoke`, consent throttle, presence cookie, a live smoke probe, and operator docs.
+- **Least-privilege token scope ([#114](https://github.com/goldenwo/universal-memory/pull/114)).** OAuth access tokens scoped to `/mcp` (holistic-review finding).
+- **Consent-token UX ([#116](https://github.com/goldenwo/universal-memory/pull/116)).** The consent page lets password managers save the operator token.
+
+### Added — Social login: GitHub on the consent gate (default-off; the Gap-4 bridge)
+
+"Sign in with GitHub" alongside the operator-token paste (now a break-glass fallback). A provider-agnostic `IdpAdapter` seam (GitHub today, OIDC-ready for Google later); the canonical `sub=github:<id>` on every completion path is the identity bridge to the future per-user (Gap-4) tier. Inert unless `UM_OAUTH_ENABLED` **and** the GitHub trio (`UM_OAUTH_IDP_GITHUB_CLIENT_ID` / `_CLIENT_SECRET` / `UM_OAUTH_OPERATOR_GITHUB`) are set. Setup: [`docs/oauth.md`](docs/oauth.md) §3.
+
+- **Inert IdP seam ([#118](https://github.com/goldenwo/universal-memory/pull/118)).** `server/lib/oauth/idp/{config,registry,github,policy}.mjs`; boot-validation trio-or-nothing + a namespace-coherence advisory; `.env.example` documented.
+- **Login round-trip ([#119](https://github.com/goldenwo/universal-memory/pull/119)).** Single-use / provider-bound / capped IdP-hop state; `/oauth/idp/<provider>/{login,callback}`; operator-policy verification; a dedicated callback throttle; the consent-page GitHub button + token fallback in a `<details>` disclosure; `um_oauth_idp_total{provider,outcome}` + a `method` label on `um_oauth_consent_total`.
+- **Hardening + security suite + docs ([#120](https://github.com/goldenwo/universal-memory/pull/120)).** Provider-denial handling, `id>0` identity gate, GitHub-credential log redaction; replay/expiry/throttle-separation/secret-no-leak negative tests; [`docs/oauth.md`](docs/oauth.md) §3 GitHub OAuth-App setup.
+- **Test hardening ([#121](https://github.com/goldenwo/universal-memory/pull/121)).** Distinct secret-leak fixture + idp-callback authz-expiry-branch coverage (coding-pillars confirmation pass).
+
+### Fixed — um-tunnel plugin
+
+- **Live write-mode banner + single-slash URL join ([#107](https://github.com/goldenwo/universal-memory/pull/107)).** The um-tunnel plugin detects write-mode live and normalizes double-slash URL joins.
+- **Deterministic test-stub lifetime ([#109](https://github.com/goldenwo/universal-memory/pull/109)).** um-tunnel test stubs use a deterministic lifetime instead of a stdin-dependent block.
+
+### Docs — OAuth connector setup
+
+- **Connector guides ([#117](https://github.com/goldenwo/universal-memory/pull/117)).** Claude.ai + ChatGPT OAuth-connector setup guides (live-verified).
+- **`UM_PUBLIC_BASE_URL` made explicit ([#115](https://github.com/goldenwo/universal-memory/pull/115)).** Why it's needed + how to get it, in [`docs/oauth.md`](docs/oauth.md) + `.env.example`.
+
+### Changed — server version
+
+- **Server version → `1.4.0`** across `server/package.json` (single source, read by [`server/lib/version.mjs`](server/lib/version.mjs)), the claude-code plugin manifest (drift-gated), and the committed ChatGPT Custom-GPT actions spec. Full suite 1236 pass / 0 fail / 13 skipped.
+
 ## [1.3.0] — 2026-06-10
 
 **v1.3 turns the Gap-5 lane classifier ON by default** — write-time lane auto-classification flips from inert opt-in to active opt-out, so facts are partitioned into topic lanes as they are written. This is the activation the whole Gap-5 arc was built for: it wakes the D3 auto-supersession detector (v1.2, shipped inert under the R1-B1 eligibility gate) and the P3 in-band supersession path on classifier-populated lanes. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) **axis 5 / Gap 5**. See `MIGRATION.md` `## v1.2 → v1.3`.

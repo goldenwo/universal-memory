@@ -1,5 +1,22 @@
 # Migration guide
 
+## v1.3 → v1.4
+
+v1.4 adds two **opt-in, default-off** capabilities and changes **no existing behavior** — the upgrade is transparent unless you choose to enable them. The server version bumps to `1.4.0`.
+
+### New (both off by default): OAuth connector auth + GitHub social login
+
+- **OAuth 2.1 connector authorization (Gap-3).** A self-hosted server can now be added as an MCP vendor connector (Claude.ai, ChatGPT) via a spec-compliant embedded authorization server, instead of a static bearer token. **Off unless `UM_OAUTH_ENABLED=true`** — when off, the existing `UM_AUTH_TOKEN` bearer path is exactly as before. Setup: `docs/oauth.md`.
+- **GitHub social login.** With OAuth enabled, you can additionally offer "Sign in with GitHub" on the consent page by setting the GitHub trio (`UM_OAUTH_IDP_GITHUB_CLIENT_ID` / `UM_OAUTH_IDP_GITHUB_CLIENT_SECRET` / `UM_OAUTH_OPERATOR_GITHUB`). The operator-token paste remains as a break-glass fallback. Inert unless all three are set. Setup: `docs/oauth.md` §3.
+
+### Server version string
+
+`server/package.json` → `1.4.0`. The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` report `1.4.0` — single source `server/lib/version.mjs` (reads `package.json`). No operator action; noted so a connected client seeing the version change knows it is expected.
+
+### Action for operators
+
+- **None required.** Existing installs are unaffected; OAuth and GitHub social login are opt-in. To adopt connector authorization, see `docs/oauth.md`.
+
 ## v1.2 → v1.3
 
 v1.3 flips the **Gap-5 lane classifier ON by default** — the one operator-visible behavior change in v1.3, and the activation the whole lane-classifier arc was built toward. Write-time lane auto-classification was added inert across v1.1–v1.2 (mechanism, eval, in-band supersession seam, and the precondition all shipped off); v1.3 turns it on. The server version bumps to `1.3.0`.
