@@ -36,6 +36,7 @@ export const OAUTH_TTLS = Object.freeze({
   refreshIdleMs: 90 * 24 * 3600_000,
   cookieMs: 15 * 60_000,
   pendingAuthzMs: 10 * 60_000,
+  idpStateMs: 10 * 60_000,
 });
 
 const SCHEMA = 1;
@@ -83,10 +84,15 @@ function persist(file, state) {
   fs.renameSync(tmp, file);
 }
 
-export function createStateStore(dir, { now = Date.now } = {}) {
+export function createStateStore(dir, { now = Date.now, idpStateCap = 500 } = {}) {
   const file = path.join(dir, FILE_NAME);
   const state = loadOrInit(file);
   const save = () => persist(file, state);
+
+  // IdP-hop state (the OAuth `state` param for the GitHub redirect). Ephemeral:
+  // an in-memory Map, NOT persisted (a restart only fails a rare in-flight login,
+  // which the user retries) — so no schema change. Capped + single-use.
+  const idpStates = new Map(); // key -> { authzId, provider, nonce?, exp }
 
   // Drop everything that has aged out. Cheap to run on every mutation at
   // single-user scale; also runs once on load to bound startup memory.
@@ -96,6 +102,7 @@ export function createStateStore(dir, { now = Date.now } = {}) {
     for (const [id, c] of Object.entries(state.codes)) {
       if (c.exp <= t) { delete state.codes[id]; changed = true; }
     }
+    for (const [k, s] of idpStates) { if (s.exp <= t) idpStates.delete(k); }
     for (const [h, a] of Object.entries(state.accessTokens)) {
       if (a.exp <= t) { delete state.accessTokens[h]; changed = true; }
     }
@@ -160,6 +167,28 @@ export function createStateStore(dir, { now = Date.now } = {}) {
       delete state.codes[codeId]; // consume: gone whether live or expired
       save();
       if (rec.exp <= now()) return undefined;
+      return rec;
+    },
+
+    // ---- IdP-hop state (single-use, provider-bound, capped; in-memory)
+    putIdpState({ authzId, provider, nonce }) {
+      if (idpStates.size >= idpStateCap) {
+        const t = now();
+        for (const [k, s] of idpStates) { if (s.exp <= t) idpStates.delete(k); } // sweep expired
+        if (idpStates.size >= idpStateCap) {
+          const oldest = idpStates.keys().next().value;                           // then evict oldest
+          if (oldest !== undefined) idpStates.delete(oldest);
+        }
+      }
+      const key = `umis_${randomBytes(32).toString('base64url')}`;
+      idpStates.set(key, { authzId, provider, nonce, exp: now() + OAUTH_TTLS.idpStateMs });
+      return key;
+    },
+    consumeIdpState(key, provider) {
+      const rec = idpStates.get(key);
+      if (rec === undefined) return null;
+      idpStates.delete(key); // single-use: gone whether live, expired, or provider-mismatched
+      if (rec.exp <= now() || rec.provider !== provider) return null;
       return rec;
     },
 
