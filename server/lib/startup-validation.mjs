@@ -15,6 +15,7 @@
 
 import { getProvider, supportingProviders } from './provider/registry.mjs';
 import { PRICING } from './pricing.mjs';
+import { configuredProviders } from './oauth/idp/config.mjs';
 
 /**
  * Validates summarizer configuration and logs:
@@ -116,6 +117,36 @@ export function validateOAuthConfig(env) {
       `UM_PUBLIC_BASE_URL scheme must be http or https, got "${parsed.protocol.replace(/:$/, '')}" — ${OAUTH_URL_HINT}`,
     );
   }
+  // Social-login IdP trio: all-or-nothing. A half-configured provider (1 or 2 of
+  // 3 set) is a config mistake — refuse to boot rather than silently disable login.
+  const idpTrioSet = [
+    env.UM_OAUTH_IDP_GITHUB_CLIENT_ID,
+    env.UM_OAUTH_IDP_GITHUB_CLIENT_SECRET,
+    env.UM_OAUTH_OPERATOR_GITHUB,
+  ].filter(Boolean).length;
+  if (idpTrioSet > 0 && idpTrioSet < 3) {
+    throw new Error(
+      'UM_OAUTH_IDP_GITHUB_* requires all of CLIENT_ID, CLIENT_SECRET, and UM_OAUTH_OPERATOR_GITHUB (no half-enabled provider)',
+    );
+  }
+}
+
+/**
+ * Social-login namespace-coherence warning (advisory, not fatal). When the GitHub
+ * IdP trio is fully configured but UM_OAUTH_OPERATOR_GITHUB is a login rather than
+ * a numeric id, the token/cookie fallback path stamps sub=owner (no stable id),
+ * which is namespace-incoherent at the future per-user (Gap-4) tier. Returns the
+ * warning string, or null when coherent or not configured. Pure + string-returning
+ * so it is unit-testable; the OAuth bootstrap passes the result to log.warn.
+ *
+ * @param {Record<string,string>} env
+ * @returns {string|null}
+ */
+export function idpConfigWarning(env) {
+  if (!configuredProviders(env).includes('github')) return null; // not (fully) configured
+  const operator = (env.UM_OAUTH_OPERATOR_GITHUB ?? '').trim();
+  if (/^[0-9]+$/.test(operator)) return null;                    // numeric id → coherent
+  return 'UM_OAUTH_OPERATOR_GITHUB is a login, not a numeric id: the token/cookie fallback stamps sub=owner (namespace-incoherent at Gap-4). Configure the numeric GitHub id for a coherent identity seam.';
 }
 
 /**
