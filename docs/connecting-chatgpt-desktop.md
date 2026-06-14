@@ -108,11 +108,11 @@ ChatGPT connects with **no manual client setup**. It uses **CIMD** (Client ID Me
 1. Open ChatGPT's **connector / developer-mode dialog** (Settings → Connectors, or the developer-mode "Add MCP server" entry, depending on your version).
 2. Add your public origin **+ `/mcp`** as the server URL, e.g. `https://<your-host>.ts.net/mcp` (the same value `um-tunnel` prints as the MCP connector URL). The dialog reads `client_id_metadata_document_supported` from discovery and proceeds via CIMD — no client id / secret fields to fill.
 3. ChatGPT opens UM's **consent page** ("Authorize ChatGPT") in a browser tab. The page shows ChatGPT's actual redirect host (e.g. `chatgpt.com`) so you can confirm what you're approving.
-4. Paste your **operator token** into the field and click **Allow**. This is the server's `UM_AUTH_TOKEN`, mirrored on the UM host at `~/.um/auth-token`:
+4. Paste your **operator token** into the field and click **Allow**. (If social login is configured, you can click **"Continue with GitHub"** instead — see [docs/oauth.md §3](oauth.md#3-sign-in-with-github-social-login).) This is the server's `UM_AUTH_TOKEN`, mirrored on the UM host at `~/.um/auth-token`:
    ```bash
    cat ~/.um/auth-token
    ```
-   The tab closes and ChatGPT is connected. (For the full DCR-vs-CIMD detail, the consent cookie, and the security model, see [docs/oauth.md §4](oauth.md#4-connecting-chatgpt-cimd).)
+   The tab closes and ChatGPT is connected. (For the full DCR-vs-CIMD detail, the consent cookie, and the security model, see [docs/oauth.md §5](oauth.md#5-connecting-chatgpt-cimd).)
 
 > **Hit a "couldn't register with the sign-in service"-style error?** That's the
 > stale-discovery-cache gotcha from §1 — **remove the connector and add it again** to
@@ -124,7 +124,7 @@ ChatGPT connects with **no manual client setup**. It uses **CIMD** (Client ID Me
 > RFC 8414 `/.well-known/oauth-authorization-server` document, which is what UM serves.
 > The connect still completes. An `oauth_host_mismatch` warning, by contrast, means
 > your tunnel host doesn't match `UM_PUBLIC_BASE_URL` and is worth fixing — see
-> [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+> [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 
 ---
 
@@ -238,8 +238,8 @@ Existing chats will continue to use the previous action definitions until the GP
 - **"Couldn't register with the sign-in service"-style error.** Stale discovery cache from a pre-OAuth probe of this URL — **remove the connector and add it again** to force fresh discovery (§1 / §3).
 - **Discovery 404s / OAuth routes missing.** You're running the pre-OAuth GHCR `:latest` image. Rebuild from local source: `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` from `server/` (§1). Verify with the discovery curl in [docs/oauth.md §2](oauth.md#2-enabling-it).
 - **Consent page rejects the token (`bad_token`).** You pasted the wrong secret. The operator token is `UM_AUTH_TOKEN`, mirrored at `~/.um/auth-token` on the UM host — `cat ~/.um/auth-token`. Rotating it changes only *future* consent; existing grants keep working.
-- **`oauth_host_mismatch` in the logs / ChatGPT can't complete discovery.** Your tunnel/proxy host doesn't match `UM_PUBLIC_BASE_URL`. Make them identical (origin only, no path, no trailing slash). See [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+- **`oauth_host_mismatch` in the logs / ChatGPT can't complete discovery.** Your tunnel/proxy host doesn't match `UM_PUBLIC_BASE_URL`. Make them identical (origin only, no path, no trailing slash). See [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 - **`GET /.well-known/openid-configuration → 401` in the logs.** Harmless — ChatGPT probes OIDC, gets 401, and falls back to RFC 8414 discovery, which UM serves. Connect completes.
 - **Tools appear but writes fail.** Check `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`, then restart the server. Writes return `{ ok: false, error: "MCP writes disabled" }` when the gate is off.
-- **OAuth-server diagnostics (metrics + logs).** For the `um_oauth_*` counters and the `error_class` log breadcrumbs that pinpoint where a failed connect died, see [docs/oauth.md §7](oauth.md#7-verifying--troubleshooting).
+- **OAuth-server diagnostics (metrics + logs).** For the `um_oauth_*` counters and the `error_class` log breadcrumbs that pinpoint where a failed connect died, see [docs/oauth.md §8](oauth.md#8-verifying--troubleshooting).
 - **More diagnostic surface.** See [`docs/workflow.md`](workflow.md) "Common diagnostic questions" for UM-side health checks.
