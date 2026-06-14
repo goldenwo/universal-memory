@@ -34,7 +34,7 @@ function pkcePair() {
 }
 
 // ---- one disposable store + handlers + server per test --------------------
-function makeRig({ now, cimdResolver, operatorPolicy } = {}) {
+function makeRig({ now, cimdResolver, operatorPolicy, registry } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
@@ -42,7 +42,7 @@ function makeRig({ now, cimdResolver, operatorPolicy } = {}) {
   store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const throttle = createConsentThrottle();
   const handlers = createOAuthHandlers({
-    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver, operatorPolicy,
+    store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle, now: nowFn, cimdResolver, operatorPolicy, registry,
   });
   const verifier = createOAuthVerifier(store, BASE_URL, { now: nowFn });
 
@@ -53,6 +53,8 @@ function makeRig({ now, cimdResolver, operatorPolicy } = {}) {
     if (url.pathname === '/oauth/token' && req.method === 'POST') return handlers.handleToken(req, res);
     if (url.pathname === '/oauth/register' && req.method === 'POST') return handlers.handleRegister(req, res);
     if (url.pathname === '/oauth/revoke' && req.method === 'POST') return handlers.handleRevoke(req, res);
+    const idpLogin = url.pathname.match(/^\/oauth\/idp\/([^/]+)\/login$/);
+    if (idpLogin && req.method === 'POST') return handlers.handleIdpLogin(req, res, idpLogin[1]);
     res.statusCode = 404; res.end();
   });
   return { dir, clock, store, throttle, handlers, verifier, server };
@@ -1113,4 +1115,66 @@ test('pending-cap: oldest pending authz is evicted past the cap', async () => {
     await close(server);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// =========================================================================
+// IdP login flow (fake adapter injected via the registry; no network)
+// =========================================================================
+
+const fakeAdapter = {
+  id: 'github',
+  buildAuthorizeUrl: ({ state, redirectUri }) =>
+    `https://github.com/login/oauth/authorize?client_id=cid&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+  exchangeCode: async () => ({ credentials: { accessToken: 'gho_x' } }),
+  fetchIdentity: async () => ({ subject: '5550123', displayName: 'goldenwo' }),
+};
+const fakeRegistry = { get: (id) => (id === 'github' ? fakeAdapter : undefined), list: () => [fakeAdapter] };
+
+test('idp login: valid CSRF + same-origin → 303 to provider authorize URL with a minted state', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 303, res.body);
+    const loc = new URL(res.headers.location);
+    assert.equal(loc.origin + loc.pathname, 'https://github.com/login/oauth/authorize');
+    assert.ok(loc.searchParams.get('state'), 'a minted idp-state must be present');
+    assert.match(loc.searchParams.get('redirect_uri'), /\/oauth\/idp\/github\/callback$/);
+  } finally { await close(rig.server); }
+});
+
+test('idp login: cross-origin Origin header → 403 (no redirect)', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId, csrf } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' },
+      body: form({ authz_id: authzId, csrf }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
+});
+
+test('idp login: forged CSRF → 403', async () => {
+  const rig = makeRig({ registry: fakeRegistry });
+  const port = await listen(rig.server);
+  try {
+    const pkce = pkcePair();
+    const { authzId } = await freshConsentForm(rig, port, pkce);
+    const res = await req(port, {
+      method: 'POST', path: '/oauth/idp/github/login',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ authz_id: authzId, csrf: 'forged-token' }),
+    });
+    assert.equal(res.status, 403);
+  } finally { await close(rig.server); }
 });

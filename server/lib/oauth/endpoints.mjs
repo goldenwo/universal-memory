@@ -160,7 +160,7 @@ function isHttpsUrl(s) {
   try { return new URL(s).protocol === 'https:'; } catch { return false; }
 }
 
-export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}) }) {
+export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, now = Date.now, pendingCap = 500, onRegistration = () => {}, onConsent = () => {}, onTokenGrant = () => {}, cimdResolver = null, operatorPolicy = makeOperatorPolicy({}), registry = { get: () => undefined, list: () => [] } }) {
   const base = baseUrl.replace(/\/+$/, '');
   const canonicalResource = `${base}/mcp`;
   const baseOrigin = new URL(base).origin;
@@ -192,6 +192,14 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     const rec = pending.get(id);
     if (!rec) return undefined;
     if (rec.exp <= now()) { pending.delete(id); return undefined; }
+    return rec;
+  }
+  // Read-only liveness check: returns the live pending record WITHOUT consuming it
+  // (the IdP login→callback round-trip peeks the same authz twice). Pure read — it
+  // never mutates the map; expired entries are left for prune/cap.
+  function peekPending(id) {
+    const rec = pending.get(id);
+    if (!rec || rec.exp <= now()) return undefined;
     return rec;
   }
 
@@ -294,6 +302,17 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return redirect(res, loc.toString());
   }
 
+  // Same-origin / same-site trust boundary (spec section 5), shared by the consent
+  // POST and the IdP login POST: a live cookie must not let a cross-origin page
+  // auto-submit. Returns null when acceptable, else a short reason for the 403.
+  function verifyOrigin(req) {
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && origin !== baseOrigin) return 'cross-origin';
+    const sfs = req.headers['sec-fetch-site'];
+    if (typeof sfs === 'string' && sfs !== 'same-origin' && sfs !== 'none') return 'cross-site';
+    return null;
+  }
+
   // ---- POST /oauth/consent -----------------------------------------------
   // Observability (spec §6 item 12): onConsent(outcome) fires at every terminal
   // path with a bounded outcome ∈ {'allow','deny','bad_token','throttled',
@@ -306,15 +325,10 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
   async function handleConsent(req, res) {
     // Origin / Sec-Fetch-Site enforcement FIRST (spec section 5): a live cookie
     // must not let a cross-origin page auto-submit a consent.
-    const origin = req.headers.origin;
-    if (typeof origin === 'string' && origin !== baseOrigin) {
+    const originReject = verifyOrigin(req);
+    if (originReject) {
       onConsent('csrf_reject');
-      return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-origin' });
-    }
-    const sfs = req.headers['sec-fetch-site'];
-    if (typeof sfs === 'string' && sfs !== 'same-origin' && sfs !== 'none') {
-      onConsent('csrf_reject');
-      return sendJson(res, 403, { error: 'access_denied', error_description: 'cross-site' });
+      return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
     }
     if (!isFormContentType(req)) {
       onConsent('csrf_reject');
@@ -389,6 +403,32 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     // Allow → mint single-use code bound to the authorization, then redirect.
     onConsent('allow');
     return completeAllowedAuthorization({ rec, sub: operatorPolicy.operatorSub(), res, setCookie });
+  }
+
+  // ---- POST /oauth/idp/<provider>/login ----------------------------------
+  // The consent page's "Continue with <provider>" button posts the consent form
+  // (authz_id + csrf) here. Re-check the consent trust boundary (Origin/Sec-Fetch
+  // + CSRF), confirm the pending authorization is still live (PEEK, not consume —
+  // the callback needs it), mint a single-use IdP-hop state bound to {authzId,
+  // provider}, and 302 to the provider's authorize URL.
+  async function handleIdpLogin(req, res, provider) {
+    const originReject = verifyOrigin(req);
+    if (originReject) return sendJson(res, 403, { error: 'access_denied', error_description: originReject });
+    if (!isFormContentType(req)) return sendJson(res, 400, { error: 'invalid_request', error_description: 'form-urlencoded only' });
+    const { params, tooLarge } = await readForm(req);
+    if (tooLarge) return sendJson(res, 400, { error: 'invalid_request', error_description: 'body too large' });
+    const authzId = params.get('authz_id');
+    const csrf = params.get('csrf');
+    if (!authzId || !verifyCsrf(store.getHmacKey(), authzId, csrf)) {
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'bad csrf' });
+    }
+    const rec = peekPending(authzId);
+    if (!rec) return sendJson(res, 403, { error: 'access_denied', error_description: 'no pending authorization' });
+    const adapter = registry.get(provider);
+    if (!adapter) return sendJson(res, 404, { error: 'invalid_request', error_description: 'unknown provider' });
+    const state = store.putIdpState({ authzId, provider });
+    const redirectUri = `${base}/oauth/idp/${provider}/callback`;
+    return redirect(res, adapter.buildAuthorizeUrl({ state, redirectUri }));
   }
 
   // ---- POST /oauth/token --------------------------------------------------
@@ -603,5 +643,5 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     return sendJson(res, 200, { revoked: 'client', client_id: clientId, counts });
   }
 
-  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke };
+  return { handleAuthorize, handleConsent, handleToken, handleRegister, handleRevoke, handleIdpLogin };
 }
