@@ -19,6 +19,9 @@
  *   5. Expired/invalid token on /mcp with flag on → 401 with BOTH the
  *      WWW-Authenticate header AND the JSON-RPC body's _meta re-auth trigger.
  *   6. Metrics: branch="oauth" and branch="legacy" both ≥1 after the flows.
+ *   6b. Auth-branch metric population: a legacy bearer on /api/* must NOT
+ *       increment branch="legacy" (only /mcp authentications are counted, so the
+ *       legacy-vs-oauth auth-mix metric compares like with like).
  */
 
 import { test } from 'node:test';
@@ -35,6 +38,7 @@ import { createStateStore } from '../lib/oauth/state-store.mjs';
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
+import { umMcpAuthBranchTotal } from '../lib/metrics.mjs';
 
 const BASE = 'https://um.example.com';
 const OPERATOR = 'operator-secret-token';
@@ -503,6 +507,60 @@ test('OAuth integration: um_mcp_auth_branch_total counts oauth + legacy branches
   } finally {
     await close();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --------------------------------------------------------------------------
+// Test 6b — auth-branch metric POPULATION scoping (bugfix 2026-06-14).
+//
+// branch="oauth" only ever increments for /mcp — the OAuth arm is gated on
+// url.pathname === '/mcp' (PR #114 / the least-privilege scoping above). The
+// branch="legacy" counter MUST count the same population (/mcp authentications
+// only) so the legacy-vs-oauth auth-mix metric (docs/oauth.md §8) compares like
+// with like. A legacy bearer also authenticates the REST surface (/api/*), but
+// those admits must NOT pollute branch="legacy" — otherwise the mix is skewed by
+// REST traffic the oauth branch never sees. Asserted as a DELTA around a single
+// request so it is independent of any increments from other tests sharing this
+// counter singleton. No OAuth ctx needed — this is purely the legacy arm.
+// --------------------------------------------------------------------------
+
+// Current value of um_mcp_auth_branch_total{branch="legacy"} (0 if untouched).
+async function legacyBranchCount() {
+  const metric = await umMcpAuthBranchTotal.get();
+  return metric.values.find((v) => v.labels.branch === 'legacy')?.value ?? 0;
+}
+
+test('OAuth integration: a legacy-token /api/* request does NOT increment branch="legacy"', async () => {
+  const { url, close } = await startServer({ token: 'legacy-secret' });
+  try {
+    const before = await legacyBranchCount();
+    // Valid legacy bearer on the REST surface. X-Forwarded-For defeats the
+    // loopback auth bypass so the auth block (and its metric inc) actually runs.
+    const r = await fetch(url('/api/list'), {
+      headers: { ...FWD, 'Authorization': 'Bearer legacy-secret' },
+    });
+    assert.notEqual(r.status, 401, 'legacy bearer must still authenticate /api/* (auth behavior unchanged)');
+    const after = await legacyBranchCount();
+    assert.equal(after - before, 0, '/api/* admit must NOT increment branch="legacy" (not a /mcp auth)');
+  } finally {
+    await close();
+  }
+});
+
+test('OAuth integration: a legacy-token /mcp request DOES increment branch="legacy"', async () => {
+  const { url, close } = await startServer({ token: 'legacy-secret' });
+  try {
+    const before = await legacyBranchCount();
+    const r = await fetch(url('/mcp'), {
+      method: 'POST',
+      headers: { ...FWD, 'Authorization': 'Bearer legacy-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 200, 'legacy bearer must authenticate /mcp');
+    const after = await legacyBranchCount();
+    assert.equal(after - before, 1, '/mcp legacy admit must increment branch="legacy" exactly once');
+  } finally {
+    await close();
   }
 });
 
