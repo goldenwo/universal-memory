@@ -18,6 +18,21 @@ path, nothing here applies — see [§7](#7-the-legacy-bearer-token-is-unaffecte
 
 ---
 
+## 0. Which path do you need?
+
+Most of this page is **conditional** — find your row, do that, skip the rest:
+
+| You want to use… | What you actually need | You can skip |
+|---|---|---|
+| **Claude Code (local CLI)** | Nothing on this page — it uses the bearer token. See [§7](#7-the-legacy-bearer-token-is-unaffected). | *all of it* |
+| **Claude.ai / ChatGPT connector** | A public HTTPS URL ([§2](#2-enabling-it) — Tailscale Funnel is the zero-config default) **+** `UM_OAUTH_ENABLED=true` **+** paste your operator token once at consent. | §3, and the custom-domain route |
+| **…with a custom domain** *(optional)* | DNS + a reverse proxy (e.g. Caddy with Let's Encrypt) pointed at the server, instead of the Funnel. | — |
+| **…with "Sign in with GitHub"** *(optional)* | A GitHub OAuth App + the three env vars in [§3](#3-sign-in-with-github-social-login). The operator-token paste works fine without it. | — |
+
+The minimal connector path is four things: **run it, get one HTTPS URL, set one flag, paste one token.** A custom domain and social login are conveniences, not requirements. The same setup works **self-hosted** (your own machine) or on a **VPS** — only how you get the HTTPS URL differs (Tailscale Funnel works for both; a domain + reverse proxy is the opt-in alternative). The trade-off is uptime, not steps: a self-hosted machine is only reachable while it's awake; a VPS is always-on.
+
+---
+
 ## 1. What this adds, in one breath
 
 When you add UM as a connector, the vendor opens a browser tab at **your** server's
