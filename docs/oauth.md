@@ -307,6 +307,64 @@ where a failed connect died:
 | `um_oauth_token_grants_total` | `grant_type` (`authorization_code`, `refresh_token`, `unknown`), `outcome` (`issued`, `invalid_grant`, `reuse_blocked`, …) | Token exchanges. `refresh_token`+`reuse_blocked` = a rotated refresh token was replayed (possible theft). |
 | `um_mcp_auth_branch_total` | `branch` (`legacy`, `oauth`) | Which auth path authenticated each `/mcp` request. |
 
+**Reaching `/metrics` under Docker.** The endpoint is loopback-gated by default —
+served only when the request's source IP is loopback. Under the standard compose
+deployment (effective `ports: "127.0.0.1:6335:6335"`) a request from the host's
+`localhost` arrives at the container with the Docker **bridge-gateway** source IP
+(e.g. `172.18.0.1`), *not* loopback — so `curl localhost:6335/metrics` from the host
+returns **404**, as does a Prometheus sidecar on the compose network (it has its own
+bridge IP). That is the gate working as designed, not a bug. Three supported ways to
+scrape it, least-privilege first:
+
+1. **Ad-hoc check, no config change** — run the request *inside* the container's
+   network namespace, where loopback is real (best for eyeballing a counter after a
+   failed connect):
+
+   ```bash
+   docker compose exec memory-server wget -qO- http://127.0.0.1:6335/metrics
+   ```
+
+2. **Continuous scrape, no shared credential** (recommended for Prometheus) — run the
+   scraper as a sidecar that shares the server's network namespace, so it also sees
+   real loopback and the default gate admits it with no token:
+
+   ```yaml
+   # docker-compose.override.yml
+   services:
+     prometheus:
+       image: prom/prometheus
+       network_mode: "service:memory-server"   # share the server's netns → 127.0.0.1 is /metrics
+       volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml"]
+   ```
+   ```yaml
+   # prometheus.yml
+   scrape_configs:
+     - job_name: universal-memory
+       static_configs:
+         - targets: ["127.0.0.1:6335"]
+   ```
+
+3. **Continuous scrape over the network, token-gated** — when the scraper cannot share
+   the netns (e.g. a centralized Prometheus), set `UM_METRICS_LOOPBACK_ONLY=false`
+   (auth stays required by default) and send the bearer token:
+
+   ```yaml
+   # prometheus.yml
+   scrape_configs:
+     - job_name: universal-memory
+       authorization:
+         credentials: "<your UM_AUTH_TOKEN>"
+       static_configs:
+         - targets: ["memory-server:6335"]
+   ```
+
+   The host port stays published on `127.0.0.1` only, so `/metrics` is never reachable
+   from another machine — the token gates host-local and compose-network callers.
+   `UM_AUTH_TOKEN` is your full-surface operator token (it also opens `/mcp` and
+   `/api/*`), so prefer option 2 if you'd rather not place that credential in your
+   monitoring stack. Do **not** set `UM_METRICS_AUTH_REQUIRED=false` (fully
+   unauthenticated `/metrics`) unless the scrape network is already private and trusted.
+
 **Logs.** Structured warnings carry a stable `error_class`:
 
 - `oauth_host_mismatch` — a request's effective host (incl. `x-forwarded-host`)
