@@ -2421,9 +2421,14 @@ export function createRequestHandler(ctx = {}) {
 		// the OAuth arm is not consulted, so an OAuth token there falls to 401.
 		const oauthMatch = !legacyMatch && url.pathname === '/mcp' && (ctx.oauth?.verify(received) != null);
 		const tokenMatches = legacyMatch || oauthMatch;
-		if (tokenMatches) {
-			// Count which branch admitted the request (spec §4.2). Observability
-			// MUST NOT poison the request path (C.9) — wrap the inc.
+		// Count which auth branch admitted the request (spec §4.2) — but ONLY on
+		// /mcp. The oauth arm is already /mcp-only (gated above), so scoping the
+		// legacy branch to /mcp too keeps the legacy-vs-oauth auth-mix metric
+		// (docs/oauth.md §8) counting a single population. A legacy bearer also
+		// authenticates /api/*, but those REST admits would skew branch="legacy"
+		// with traffic the oauth branch never sees. Observability MUST NOT poison
+		// the request path (C.9) — wrap the inc.
+		if (tokenMatches && url.pathname === '/mcp') {
 			try { umMcpAuthBranchTotal.inc({ branch: legacyMatch ? 'legacy' : 'oauth' }); }
 			catch (e) { obsFallback(e, 'metric:auth-branch'); }
 		}
