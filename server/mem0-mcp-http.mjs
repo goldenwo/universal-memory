@@ -65,7 +65,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig, idpConfigWarning } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
@@ -2213,11 +2213,6 @@ export function createRequestHandler(ctx = {}) {
 			// before DCR (PR 3) exists. UM_OAUTH_SEED_CLIENT = "<client_id>|<uri>".
 			// Valid + absent → seed; invalid format/URI → structured warn + skip.
 			seedManualClient(store);
-			// Advisory (one-shot, boot-time): a login-only operator id stamps
-			// sub=owner on the token/cookie fallback path (namespace-incoherent at
-			// Gap-4). idpConfigWarning returns null when the config is coherent.
-			const idpWarn = idpConfigWarning(process.env);
-			if (idpWarn) safeLog(() => getLogger().warn({ event: 'oauth.idp.config' }, idpWarn), 'log:oauth-idp-config');
 			return { store, handlers, verify, registry: idpRegistry }; // registry exposed for the /oauth/idp/* dispatch
 		})();
 	}
