@@ -1,16 +1,11 @@
 // server/lib/oauth/idp/policy.mjs
-// Operator authorization policy. Single-operator today: the allow-set holds one
-// identity, stored as a one-element set so it widens to an allowlist / per-user
-// map later with no shape change.
+// Operator authorization policy. Single-operator: the configured GitHub identity
+// (numeric id preferred, login accepted) is the sole account allowed to consent.
 const isNumeric = (s) => /^[0-9]+$/.test(s);
 
 export function makeOperatorPolicy(env) {
   const raw = (env.UM_OAUTH_OPERATOR_GITHUB ?? '').trim();
-  // Canonical form so this widens to a per-user allowlist at Gap-4 with no
-  // shape change AND matches the sub that subForIdentity()/operatorSub() emit:
-  // numeric → 'github:<id>'; login-only is the degraded path (no stable id) so
-  // it keeps the raw login.
-  const allow = raw ? new Set([isNumeric(raw) ? `github:${raw}` : raw]) : new Set();
+  // numeric → canonical 'github:<id>'; login-only is the degraded path (no stable id).
   const numericId = isNumeric(raw) ? raw : null;
 
   function isOperator(provider, identity) {
@@ -28,5 +23,5 @@ export function makeOperatorPolicy(env) {
   function operatorSub() {
     return numericId ? `github:${numericId}` : 'owner';
   }
-  return { isOperator, subForIdentity, operatorSub, allow };
+  return { isOperator, subForIdentity, operatorSub };
 }
