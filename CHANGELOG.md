@@ -40,6 +40,7 @@ The MCP Authorization spec (OAuth 2.1) implemented as an embedded AS so a self-h
 
 - **Connector guides ([#117](https://github.com/goldenwo/universal-memory/pull/117)).** Claude.ai + ChatGPT OAuth-connector setup guides (live-verified).
 - **`UM_PUBLIC_BASE_URL` made explicit ([#115](https://github.com/goldenwo/universal-memory/pull/115)).** Why it's needed + how to get it, in [`docs/oauth.md`](docs/oauth.md) + `.env.example`.
+- **"Which path do you need?" intro ([`docs/oauth.md`](docs/oauth.md) §0).** A decision table separating the minimal vendor-connector path (one public HTTPS URL + `UM_OAUTH_ENABLED=true` + one operator-token paste) from the optional add-ons (custom domain, GitHub social login) and the no-OAuth Claude Code path — so the maximal setup isn't mistaken for the baseline, and self-hosted vs VPS reads as an uptime trade-off rather than extra steps.
 
 ### Changed — server version
 
