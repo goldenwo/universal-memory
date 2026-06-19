@@ -348,11 +348,14 @@ jobs:
 
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})
-    needs: [smoke]
-    # Mirror the skip-on-fork pattern from the smoke job above.
+    needs: [guard, smoke]
+    # Mirror the smoke job's gate explicitly (skip on fork PRs AND when the secret is
+    # absent) rather than relying solely on needs:[smoke] skip-propagation.
     if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.guard.outputs.has_secret == 'true' && (
+        github.event_name == 'push' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     strategy:
       fail-fast: false
       matrix:
