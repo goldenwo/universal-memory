@@ -25,12 +25,17 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { runOnce } from '../eval/memory-quality-eval.mjs';
 
 // Needs BOTH real qdrant AND a real OpenAI key (real embed + the contradiction judge). CI's
-// "Run server unit tests" step sets UM_QDRANT_INTEGRATION but NOT OPENAI_API_KEY (the sibling
-// add-stamp-roundtrip integration test mocks the SDK via UM_TEST_MOCK_SDK and so needs no key).
-// Gate on the key too — skip cleanly when it's absent rather than failing mem0's embedder/llm
-// config validation (ZodError: apiKey null).
+// "Run server unit tests" step sets UM_QDRANT_INTEGRATION but deliberately NOT OPENAI_API_KEY — the
+// sibling add-stamp-roundtrip integration test mocks the SDK (UM_TEST_MOCK_SDK), and putting a real
+// key in that step would un-skip every key-gated live test (e.g. summarize-external-marker), spending
+// the key per push. So in CI this live-WIRING smoke is INTENTIONALLY SKIPPED — it runs only LOCALLY
+// (`node --env-file=.env --test test/eval-memory-quality.smoke.test.mjs`). Its one-shot job
+// (de-risk the eval-harness wiring before the big fixtures) is done, and the eval SCORING core stays
+// CI-covered by the offline memory-quality-eval.test.mjs suite. Gating on the key here makes the CI
+// skip clean instead of a ZodError (embedder/llm apiKey null). Key precedence mirrors openai.mjs
+// resolveApiKey (UM_OPENAI_API_KEY first).
 const SKIP = !process.env.UM_QDRANT_INTEGRATION
-  || !(process.env.OPENAI_API_KEY || process.env.UM_OPENAI_API_KEY);
+  || !(process.env.UM_OPENAI_API_KEY || process.env.OPENAI_API_KEY);
 const QDRANT_HOST = process.env.QDRANT_HOST ?? 'localhost';
 const QDRANT_PORT = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
 
