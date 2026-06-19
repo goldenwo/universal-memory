@@ -1,0 +1,397 @@
+{
+  "timestamp": "2026-06-19T06:23:37.942Z",
+  "n": 18,
+  "mode": "staleness head-to-head: seed original → contradicting update → neutral query → stale-return (exact content-match, infer:false)",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "evalUser": "um-stale-cmp-eval",
+  "flags": {
+    "UM_DEDUP_ENABLED": "true",
+    "UM_AUTOSUPERSEDE_ENABLED": "true",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "false"
+  },
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32"
+  },
+  "arms": {
+    "um": {
+      "n": 18,
+      "staleReturn": 0.056,
+      "currentReturn": 0.944,
+      "onlyCurrent": 0.944,
+      "bothReturned": 0,
+      "neither": 0
+    },
+    "mem0": {
+      "n": 18,
+      "staleReturn": 1,
+      "currentReturn": 1,
+      "onlyCurrent": 0,
+      "bothReturned": 1,
+      "neither": 0
+    }
+  },
+  "umSupersession": {
+    "total": 18,
+    "fired": 17,
+    "fireRate": 0.944,
+    "staleReturnOverFired": 0,
+    "notFired": [
+      {
+        "id": "s009",
+        "event": "DEDUP_MERGED"
+      }
+    ]
+  },
+  "perRow": {
+    "um": [
+      {
+        "id": "s001",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s002",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s003",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s004",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s005",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s006",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s007",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s008",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s009",
+        "lane": "dev",
+        "updatedEvent": "DEDUP_MERGED",
+        "fired": false,
+        "firedPath": null,
+        "surfacedOriginal": true,
+        "surfacedUpdated": false,
+        "originalRank": 1,
+        "updatedRank": 0
+      },
+      {
+        "id": "s010",
+        "lane": "travel",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s011",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s012",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s013",
+        "lane": "pets",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s014",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s015",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s016",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s017",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      },
+      {
+        "id": "s018",
+        "lane": "contact",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
+      }
+    ],
+    "mem0": [
+      {
+        "id": "s001",
+        "lane": "work",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s002",
+        "lane": "home",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s003",
+        "lane": "work",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s004",
+        "lane": "dev",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s005",
+        "lane": "food",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s006",
+        "lane": "health",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s007",
+        "lane": "finance",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s008",
+        "lane": "work",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s009",
+        "lane": "dev",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s010",
+        "lane": "travel",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s011",
+        "lane": "home",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s012",
+        "lane": "work",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s013",
+        "lane": "pets",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s014",
+        "lane": "food",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s015",
+        "lane": "health",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s016",
+        "lane": "finance",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      },
+      {
+        "id": "s017",
+        "lane": "dev",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 1,
+        "updatedRank": 2
+      },
+      {
+        "id": "s018",
+        "lane": "contact",
+        "surfacedOriginal": true,
+        "surfacedUpdated": true,
+        "originalRank": 2,
+        "updatedRank": 1
+      }
+    ]
+  },
+  "memoriesUntouched": true
+}
