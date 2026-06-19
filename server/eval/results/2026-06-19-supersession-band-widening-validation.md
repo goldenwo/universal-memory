@@ -38,7 +38,15 @@ restatements.
 
 ## Result — JOINT operating point
 
-`band [0.84, 1.0] (no-skip)` · confusion matrix (in-band): **TP=27 FN=0 | TN=9 FP=1**
+`band [0.84, 1.0] (no-skip)` · 5 runs, temp 0, all rows stable · confusion matrix (in-band): **TP=27 FN=0 | TN=9 FP=2**
+
+> **R3 UPDATE (supersedes the initial "widening-clean" finding).** On the R3 reviewers' survivorship
+> critique (the in-band coexist sample was the easy, shared-anchor tail), 4 *harder* coexist rows
+> were added (non-accumulative predicates). Three fell sub-floor (USD/EUR 0.806, Python/Ruby 0.732,
+> Signal/WhatsApp 0.718 — F2 holds), but **`os022` "parking on the north side"→"…south side"
+> (cosine 0.9632, in the WIDENED slice) FIRED 5/5** — a real false-supersede the widening introduces.
+> **`wideningClean` is now FALSE.** The widening adds a data-loss path on high-cosine multi-value
+> coexist facts. See the corrected gate (b) + decision below.
 
 ### Gate (a) capture — held-out contradictions: **PASS (27/27, fire-rate 1.0)**
 | stratum | in-band | fired |
@@ -51,28 +59,35 @@ restatements.
 class (s009 "PostgreSQL→MySQL" @0.8725 lives here). The widening delivers its purpose with zero
 misses across all difficulty strata, including the harder multi-clause "B, not A" phrasings.
 
-### Gate (b) over-supersession — decline rows must HOLD: **STRICT-FAIL (1 FP) but WIDENING-CLEAN (0 new FP)**
-- **1 false-supersede total: `os003`** ("The app runs on iOS" → "…Android"), confidence 0.9,
-  stable across runs. Judge reasoning: *"they cannot both be true simultaneously"* — wrong; a
-  cross-platform app runs on both. **But os003's cosine is 0.8484 — inside today's [0.84, 0.87]
-  band, so it is already judged in production now.** It is a *pre-existing* judge limitation, not a
-  regression the widening introduces.
-- **Widening's own new slice (cosine > 0.87): 6 decline rows, all 6 declined correctly** — AWS
-  certs (0.909/0.887), weekdays/weekends (0.880), CI/Docker supersets (0.946/0.904), Redis
-  restatement (0.908). **The widening adds zero false-supersedes.**
-- The judge declined every clear coexist/additive/restatement with explicit coexistence reasoning
-  ("holding one certification does not invalidate holding another"; "the app can support both light
-  and dark mode"). It is **competent at single-vs-multi-valued from two strings** — `os003` is its
-  one lapse, on the most genuinely *ambiguous* row (a platform statement plausibly read as a switch).
+### Gate (b) over-supersession — decline rows must HOLD: **STRICT-FAIL (2 FP) and WIDENING-REGRESSION (1 new FP)**
+11 in-band decline rows, **2 false-supersedes**, both stable 5/5:
+- **`os003`** ("app runs on iOS"→"…Android", cos **0.8484**, *current* band) — pre-existing: 0.8484
+  < the current 0.87 ceiling, so it is already judged in production and the widening provably cannot
+  enlarge its firing population. Out of scope for this change (the judge's own limitation; §6).
+- **`os022`** ("parking on the north side"→"…south side", cos **0.9632**, *widened* slice) — **a NEW
+  false-supersede the widening introduces.** The judge: *"directly contradicts … assuming both refer
+  to the same time frame"* — wrong; a venue can have parking on both sides. This is a multi-value
+  coexist fact wrongly demoted, reachable only because the band was widened past 0.87.
+- The judge still declines the *clear* coexist/additive/restatement rows with explicit reasoning
+  (AWS certs, light/dark, weekdays/weekends, supersets, restatements). Its failures are on near-value
+  multi-value pairs that embed very high (one-word diff in a long sentence → cos >0.95): it reads
+  them as single-valued contradictions. **There is no cosine that separates these from real
+  contradictions** — coexist-FPs span 0.85 (os003) to 0.96 (os022); held-out contradictions span
+  0.85–0.94. Cosine cannot gate it; the judge is the only separator and it has a real error rate here.
+- **Mitigation (verified, R3 lens B):** supersede is a recoverable **status-flip, not a delete** —
+  the demoted point survives in qdrant as `status:superseded` with provenance and is restorable. So
+  the worst realized outcome is a *recoverable* demotion (the fact is invisible to reads until
+  restored), not destruction. Combined with the flag + env-knob rollback, the stakes of a false-
+  supersede are lower than "permanent loss" — but it is still a real recall regression.
 
 ### Boundary — version upgrades (scored separately, §5.2)
 Both **FIRED**: PG14→16 (0.842) and iOS16→17 (0.911), confidence 0.9. **Measurement note:** the
 §5.2 revert intended upgrades to *decline* on the hot path, but the judge fires on single-valued
 version upgrades — and §6 forbids changing the judge, so "decline on the hot path" is **not
-enforceable**; the realized behavior is upgrades-supersede. This is largely benign (for a genuine
-single-valued upgrade the new version *is* the current truth). Crucially, the additive-misread
-data-loss that §5.2/BL2 feared **did not materialize** — every additive/coexist decline row held.
-Whether to accept upgrade-supersession or add an explicit guard is a product call for the re-review.
+enforceable**; the realized behavior is upgrades-supersede. For a genuine single-valued upgrade the
+new version *is* the current truth, and the demote is recoverable. The additive/restatement decline
+rows all held; the **coexist class did not** (os003, os022) — see gate (b). Whether to accept
+upgrade-supersession or add an explicit guard is a product call for the decision below.
 
 ### Gate (c) no-false-merge — D1 duplicates must stay merged: **PASS (19/19, 0 false-supersede)**
 The merge-positive D1 dedup set (identical + paraphrase pairs) fed through the same live judge:
@@ -81,22 +96,32 @@ convert true duplicates into supersedes — closes review A-G1 (the original gat
 cosines).
 
 ### Determinism
-Temp-0, 2 runs: no decision flipped between runs (only minor reasoning-text variation). The lone FP
-is stable, not jitter.
+Temp-0, **5 runs** (R3 A-G3): **every row stable, unstableCount 0** — including both false-supersedes
+(os003 5/5, os022 5/5) and all 27 captures. The findings are not jitter; they are the judge's stable
+behavior at conf 0.9.
 
-## The open decision (for re-review + user)
+## The decision (the verdict flipped at R3 — re-surface to user)
 
-The spec's literal gate (b) — "false-supersede = 0 on in-band decline rows" — **fails (1 FP, rate
-0.10)**. But the exposure decomposition shows the failure is **pre-existing and out of scope for
-this change**, while the widening's own contribution is **clean (0 new FP) and high-value (18 new
-captures)**. Two defensible acceptance bars:
+Gate (a) PASS (27/27, 18 rescued), gate (c) PASS (19/19 dups merge). The blocker is gate (b): the
+widening is **NOT clean** — `os022` (cos 0.9632) is a new, stable false-supersede in the widened
+slice. The earlier "widening-clean" rested on the easy-tail coexist sample the R3 reviewers flagged;
+the harder test falsified it. Net trade, measured:
 
-- **(A) Widening-clean** (recommended): the change introduces no new over-supersession; the lone FP
-  (os003-class) is a pre-existing judge-precision limitation, documented and tracked separately
-  (§6 forbids judge changes here). → proceed to re-review, then implement.
-- **(B) Strict-zero-FP**: any in-band FP blocks; conclude the in-band hot path cannot meet the bar
-  without a judge change → keep the ceiling / defer to the session-end detector. (Note this leaves
-  the s009 bug class — 18 measured contradictions — unfixed.)
+- **Benefit:** rescues **18/18** contradictions today's 0.87 ceiling silently drops (the s009 class
+  → stale-then-lost). This is UM's core currency advantage.
+- **Cost:** introduces a false-supersede on **high-cosine multi-value coexist** facts (1 in 7
+  widened-slice decline rows here; the dangerous class is near-value pairs like north/south, that
+  embed >0.95). **Recoverable** (status-flip, not delete) + flag + env-knob, but a real recall
+  regression. No cosine cutoff avoids it (coexist-FPs span the whole band).
+
+Three options (user's call — risk appetite: staleness vs over-supersession):
+- **(A) Accept the residual & ship** — currency-first; the demote is recoverable, flag-gated, knob to
+  roll back; document os022-class as a known residual. Fixes 18 contradictions now.
+- **(B) Don't widen** — data-integrity-first; keep the 0.87 ceiling. Leaves the s009 stale-then-lost
+  bug unfixed (the original motivation).
+- **(C) Partial widen** (e.g. 0.87→~0.92) — catches most of the s009 class while excluding the very-
+  high-cosine zone where near-value coexist lives. Re-opens the τ-pin/cost question (BL4) and is not
+  clean (os003-class coexist-FPs sit low in the band too); a compromise, not a fix.
 
 ## Doc corrections folded in (BL4/BL5/I3)
 - **BL5 (arithmetic):** the prior "every one of the 44 measured contradictions reaches the judge" is

@@ -75,7 +75,7 @@ async function main() {
     console.error('[gate-eval] OPENAI_API_KEY not set — run: node --env-file=.env eval/supersession-gate-eval.mjs');
     process.exit(2);
   }
-  const RUNS = Math.max(1, Number.parseInt(arg('runs', '2'), 10) || 2);
+  const RUNS = Math.max(1, Number.parseInt(arg('runs', '5'), 10) || 5); // ≥5 for a real stability claim (R3 A-G3)
   const CEILING = Number.parseFloat(arg('ceiling', '1.0'));
 
   const { embed } = await import('../lib/embed.mjs');
@@ -122,7 +122,7 @@ async function main() {
   // We pass score=cosine, bandFloor=FLOOR, bandCeiling=CEILING, enabled=true, real
   // _judge (default). judged:true ⟺ in-band & eligible — exactly the prod gate.
   process.stderr.write(`[gate-eval] judging ${rows.length} rows × ${RUNS} run(s) at ceiling ${CEILING} (model ${JUDGE_MODEL})...\n`);
-  for (const r of rows) {
+  await mapLimit(rows, 6, async (r) => {
     r.cosine = cosine(r.older, r.newer);
     r.runs = [];
     for (let run = 0; run < RUNS; run++) {
@@ -137,16 +137,16 @@ async function main() {
     }
     // A row is "in-band" if it reached the judge (judged) in every run.
     r.inBand = r.runs.every((x) => x.judged);
-    // Stable supersede only if all runs agree; else flag unstable (boundary jitter).
-    const sups = new Set(r.runs.map((x) => x.supersede));
-    r.unstable = sups.size > 1;
-    r.supersede = r.runs[0].supersede; // representative (run 0); unstable flagged separately
+    // Per-row fire count across runs → stability (R3 A-G3: report flips near the floor).
+    r.fireCount = r.runs.filter((x) => x.supersede).length;
+    r.unstable = r.fireCount !== 0 && r.fireCount !== RUNS; // any flip across runs
+    r.supersede = r.fireCount > RUNS / 2; // majority vote (more robust than run-0 at 5 runs)
     r.confidence = r.runs[0].confidence;
     r.reasoning = r.runs[0].reasoning;
     // Exposure: 'current' = already judged under today's 0.87 ceiling; 'widened' = newly
     // reaches the judge only because of the widening (the slice whose safety the widening owns).
     r.exposure = r.cosine > CUR_CEILING ? 'widened' : 'current';
-  }
+  });
 
   // ---- Aggregate gate (a): capture / held-out ----
   const capture = rows.filter((r) => r.kind === 'capture');

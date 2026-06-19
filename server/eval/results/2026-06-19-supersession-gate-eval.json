@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-06-19T20:14:44.044Z",
+  "timestamp": "2026-06-19T20:24:19.224Z",
   "judgeModel": "gpt-4o-mini",
   "embeddingModel": "text-embedding-3-small",
   "floor": 0.84,
   "ceiling": 1,
-  "runs": 2,
+  "runs": 5,
   "note": "no-skip (ceiling 1.0); identical to τ=0.95 for these fixtures (max in-band cosine < 0.95)",
   "gateA_capture": {
     "total": 42,
@@ -34,17 +34,18 @@
     "newlyEnabledFired": 18
   },
   "gateB_overSupersession": {
-    "declineTotal": 16,
-    "declineInBand": 10,
+    "declineTotal": 20,
+    "declineInBand": 11,
     "declined": 9,
-    "falseSupersede": 1,
-    "falseSupersedeRate": 0.1,
+    "falseSupersede": 2,
+    "falseSupersedeRate": 0.1818,
     "byRelation": {
       "coexisting-multi-value": {
-        "inBand": 5,
+        "inBand": 6,
         "declined": 4,
         "falseSupersede": [
-          "os003"
+          "os003",
+          "os022"
         ]
       },
       "additive-superset": {
@@ -68,8 +69,8 @@
         "falseSupersede": []
       }
     },
-    "declineNewlyExposed": 6,
-    "falseSupersedeWidened": 0,
+    "declineNewlyExposed": 7,
+    "falseSupersedeWidened": 1,
     "falseSupersedePreexisting": 1,
     "falseSupersedeRows": [
       {
@@ -78,7 +79,15 @@
         "exposure": "current",
         "cosine": 0.8484,
         "confidence": 0.9,
-        "reasoning": "Both facts assert the same temporal frame regarding the operating system on which the app runs, and they cannot both be true simultaneously."
+        "reasoning": "Both facts assert the same temporal frame regarding the operating systems the app runs on, and they cannot both be true simultaneously."
+      },
+      {
+        "id": "os022",
+        "group": "coexisting-multi-value",
+        "exposure": "widened",
+        "cosine": 0.9632,
+        "confidence": 0.9,
+        "reasoning": "The newer fact states that the venue has parking on the south side, which directly contradicts the older fact that states it has parking on the north side, assuming both statements refer to the same time frame."
       }
     ],
     "boundary": [
@@ -88,7 +97,7 @@
         "exposure": "current",
         "fired": true,
         "confidence": 0.9,
-        "reasoning": "Both facts assert the same temporal frame regarding the version of PostgreSQL currently in production, and the newer fact directly states a different version."
+        "reasoning": "Both facts assert the same temporal frame regarding the version of PostgreSQL currently in production, and the newer fact directly states a different version, which contradicts the older fact."
       },
       {
         "id": "os018",
@@ -96,7 +105,7 @@
         "exposure": "widened",
         "fired": true,
         "confidence": 0.9,
-        "reasoning": "Both facts assert the same temporal frame regarding the target version of the mobile app, and targeting iOS 17 logically invalidates the claim of targeting iOS 16."
+        "reasoning": "Both facts assert the same temporal frame regarding the target version of the mobile app, and targeting iOS 17 logically invalidates targeting iOS 16."
       }
     ]
   },
@@ -110,27 +119,27 @@
   },
   "confusionMatrix": {
     "inBandCapture": 27,
-    "inBandDecline": 10,
+    "inBandDecline": 11,
     "TP": 27,
     "FN": 0,
     "TN": 9,
-    "FP": 1
+    "FP": 2
   },
   "determinism": {
-    "runs": 2,
+    "runs": 5,
     "unstableCount": 0,
     "unstable": []
   },
   "verdict": {
     "strictPass": false,
-    "wideningClean": true,
+    "wideningClean": false,
     "fireRate": 1,
-    "falseSupersedeRate": 0.1,
-    "falseSupersedeWidened": 0,
+    "falseSupersedeRate": 0.1818,
+    "falseSupersedeWidened": 1,
     "falseSupersedePreexisting": 1,
     "dupFalseSupersede": 0,
     "newlyCaptured": 18,
-    "summary": "STRICT-FAIL but WIDENING-CLEAN: fireRate=1 (misses 0); decline FP 1 = 0 widening + 1 pre-existing; dup FP 0. Widening newly captures 18 previously-skipped contradictions."
+    "summary": "STRICT-FAIL but WIDENING-REGRESSION: fireRate=1 (misses 0); decline FP 2 = 1 widening + 1 pre-existing; dup FP 0. Widening newly captures 18 previously-skipped contradictions."
   },
   "perRow": [
     {
@@ -138,7 +147,7 @@
       "kind": "capture",
       "group": "single-slot-swap",
       "lane": "dev",
-      "cosine": 0.8512,
+      "cosine": 0.8513,
       "inBand": true,
       "supersede": true,
       "unstable": false,
@@ -157,7 +166,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the cache layer technology, and they present mutually exclusive information about which caching system is in use.",
+      "reasoning": "Both facts assert the same temporal frame regarding the cache layer technology, and they present mutually exclusive information about which technology is currently in use.",
       "older": "The cache layer uses Redis",
       "newer": "The cache layer uses Memcached"
     },
@@ -194,7 +203,7 @@
       "kind": "capture",
       "group": "single-slot-swap",
       "lane": "dev",
-      "cosine": 0.7013,
+      "cosine": 0.7012,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -241,7 +250,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the time of the daily standup, and they provide conflicting times.",
+      "reasoning": "Both facts assert the same temporal frame regarding the timing of the daily standup, and they provide conflicting times.",
       "older": "Our daily standup is at 9am",
       "newer": "Our daily standup is at 11am"
     },
@@ -255,7 +264,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 1,
-      "reasoning": "Both facts assert the current location of the desk without any time-scoping, making them directly contradictory.",
+      "reasoning": "Both facts assert the current location of the desk in the same temporal frame, and they provide conflicting information about its floor.",
       "older": "My desk is on the third floor",
       "newer": "My desk is on the eighth floor"
     },
@@ -269,7 +278,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 1,
-      "reasoning": "Both facts assert the same temporal frame regarding the person's main credit card, and they state different brands, which cannot both be true at the same time.",
+      "reasoning": "Both facts assert the same temporal frame regarding the person's main credit card, and they state different brands, which directly contradicts each other.",
       "older": "My main credit card is a Visa",
       "newer": "My main credit card is a Mastercard"
     },
@@ -395,7 +404,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the person's current monthly rent, and the newer fact directly states a different amount.",
+      "reasoning": "Both facts assert the same temporal frame regarding the person's current monthly rent, and the amounts stated are different, indicating a contradiction.",
       "older": "My monthly rent is 1800 dollars",
       "newer": "My monthly rent is 2400 dollars"
     },
@@ -460,7 +469,7 @@
       "kind": "capture",
       "group": "single-slot-swap",
       "lane": "contact",
-      "cosine": 0.824,
+      "cosine": 0.8239,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -506,7 +515,7 @@
       "inBand": true,
       "supersede": true,
       "unstable": false,
-      "confidence": 0.9,
+      "confidence": 1,
       "reasoning": "Both facts assert the same temporal frame regarding the connection pool size, and the newer fact directly contradicts the older fact by stating a different size.",
       "older": "The connection pool size is 10",
       "newer": "The connection pool size is 50"
@@ -521,7 +530,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the version of Node.js in production, and the newer fact directly states a different version, which contradicts the older fact.",
+      "reasoning": "Both facts assert the same temporal frame regarding the version of Node.js currently in production, and they cannot both be true.",
       "older": "We run Node.js 18 in production",
       "newer": "We run Node.js 22 in production"
     },
@@ -535,7 +544,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the person's current 401k contribution, and the newer fact directly states a different percentage, which contradicts the older fact.",
+      "reasoning": "Both facts assert the same temporal frame regarding the person's current 401k contribution, and the newer fact directly states a different percentage than the older fact.",
       "older": "My 401k contribution is 6 percent",
       "newer": "My 401k contribution is 10 percent"
     },
@@ -591,7 +600,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the primary datastore, and they directly contradict each other by stating different databases as the primary datastore.",
+      "reasoning": "Both facts assert the same temporal frame regarding the primary datastore, and the newer fact directly states a different datastore (Postgres) than the older fact (DynamoDB), which logically invalidates the older statement.",
       "older": "Our primary datastore is DynamoDB for all services",
       "newer": "Our primary datastore is Postgres for all services, not DynamoDB"
     },
@@ -604,8 +613,8 @@
       "inBand": true,
       "supersede": true,
       "unstable": false,
-      "confidence": 0.9,
-      "reasoning": "Both facts assert the current state of the checkout service's programming language, and they directly contradict each other.",
+      "confidence": 1,
+      "reasoning": "Both facts assert the same temporal frame regarding the programming language of the checkout service, and the newer fact directly states it is written in Go, which contradicts the older fact that states it is written in Ruby.",
       "older": "The checkout service is written in Ruby",
       "newer": "The checkout service is written in Go, not Ruby"
     },
@@ -628,12 +637,12 @@
       "kind": "capture",
       "group": "multi-clause",
       "lane": "work",
-      "cosine": 0.8553,
+      "cosine": 0.8554,
       "inBand": true,
       "supersede": true,
       "unstable": false,
-      "confidence": 0.9,
-      "reasoning": "Both facts assert the current location of the main office without any time-scoping, directly contradicting each other.",
+      "confidence": 1,
+      "reasoning": "Both facts assert the current location of the main office in the same temporal frame, and they provide conflicting information about its location.",
       "older": "Our main office is located in the downtown tower",
       "newer": "Our main office is located in the riverside tower, not the downtown tower"
     },
@@ -656,12 +665,12 @@
       "kind": "capture",
       "group": "multi-clause",
       "lane": "finance",
-      "cosine": 0.9041,
+      "cosine": 0.905,
       "inBand": true,
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the payment schedule of the base salary, and they present conflicting information about the frequency of payment.",
+      "reasoning": "The newer fact directly states a different payment schedule for the base salary, which contradicts the older fact that asserts a monthly payment schedule.",
       "older": "My base salary is paid on a monthly schedule",
       "newer": "My base salary is paid on a biweekly schedule, not monthly"
     },
@@ -675,7 +684,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the communication method between the frontend and backend, and the newer fact directly states a different method (gRPC) that invalidates the older fact (REST).",
+      "reasoning": "Both facts assert the same temporal frame regarding the communication method between the frontend and backend, and the newer fact directly states a different method (gRPC) than the older fact (REST), which logically invalidates the older statement.",
       "older": "The frontend talks to the backend over REST",
       "newer": "The frontend talks to the backend over gRPC, not REST"
     },
@@ -689,7 +698,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding when the medication is taken, and the newer fact directly states a different time than the older fact.",
+      "reasoning": "Both facts assert the same temporal frame regarding when the medication is taken, and the newer fact directly states a different time for taking the medication.",
       "older": "I take my medication in the morning",
       "newer": "I take my medication at night, not in the morning"
     },
@@ -703,7 +712,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the API rate limit, and the newer fact directly contradicts the older fact by stating a different rate limit.",
+      "reasoning": "Both facts assert the current API rate limit without any time-scoping, making them directly contradictory.",
       "older": "The API rate limit is 100 requests per minute",
       "newer": "The API rate limit is 500 requests per minute"
     },
@@ -712,7 +721,7 @@
       "kind": "capture",
       "group": "numeric-swap",
       "lane": "dev",
-      "cosine": 0.9096,
+      "cosine": 0.9095,
       "inBand": true,
       "supersede": true,
       "unstable": false,
@@ -731,7 +740,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Holding one certification does not invalidate holding another; both can coexist.",
+      "reasoning": "The two certifications can coexist; holding one does not invalidate the other.",
       "older": "I hold the AWS Solutions Architect certification",
       "newer": "I hold the AWS Developer certification"
     },
@@ -759,7 +768,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the operating system on which the app runs, and they cannot both be true simultaneously.",
+      "reasoning": "Both facts assert the same temporal frame regarding the operating systems the app runs on, and they cannot both be true simultaneously.",
       "older": "The app runs on iOS",
       "newer": "The app runs on Android"
     },
@@ -768,7 +777,7 @@
       "kind": "decline",
       "group": "coexisting-multi-value",
       "lane": "dev",
-      "cosine": 0.8351,
+      "cosine": 0.8352,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -787,7 +796,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Holding one certification does not invalidate holding another; both certifications can coexist.",
+      "reasoning": "Both certifications can be held simultaneously, so the newer fact does not contradict the older one.",
       "older": "I hold the AWS Solutions Architect certification",
       "newer": "I hold the AWS SysOps Administrator certification"
     },
@@ -838,7 +847,7 @@
       "kind": "decline",
       "group": "additive-superset",
       "lane": "dev",
-      "cosine": 0.9038,
+      "cosine": 0.9039,
       "inBand": true,
       "supersede": false,
       "unstable": false,
@@ -856,7 +865,7 @@
       "inBand": true,
       "supersede": false,
       "unstable": false,
-      "confidence": 1,
+      "confidence": 0.9,
       "reasoning": "The newer fact expands on the older fact by adding the violin to the list of instruments being learned, which does not contradict the original statement about learning the piano.",
       "older": "I'm learning to play the piano",
       "newer": "I'm learning to play the piano and the violin"
@@ -871,7 +880,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 1,
-      "reasoning": "Both statements assert the same fact about the production database being PostgreSQL, and they are compatible.",
+      "reasoning": "Both statements assert the same fact about the production database being PostgreSQL, and there is no contradiction.",
       "older": "Our production database is PostgreSQL",
       "newer": "PostgreSQL is our production database"
     },
@@ -936,7 +945,7 @@
       "kind": "decline",
       "group": "different-subject-same-structure",
       "lane": "dev",
-      "cosine": 0.6332,
+      "cosine": 0.6331,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -955,7 +964,7 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the version of PostgreSQL currently in production, and the newer fact directly states a different version.",
+      "reasoning": "Both facts assert the same temporal frame regarding the version of PostgreSQL currently in production, and the newer fact directly states a different version, which contradicts the older fact.",
       "older": "We run PostgreSQL 14 in production",
       "newer": "We run PostgreSQL 16 in production"
     },
@@ -969,9 +978,65 @@
       "supersede": true,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both facts assert the same temporal frame regarding the target version of the mobile app, and targeting iOS 17 logically invalidates the claim of targeting iOS 16.",
+      "reasoning": "Both facts assert the same temporal frame regarding the target version of the mobile app, and targeting iOS 17 logically invalidates targeting iOS 16.",
       "older": "The mobile app targets iOS 16",
       "newer": "The mobile app targets iOS 17"
+    },
+    {
+      "id": "os019",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8059,
+      "inBand": false,
+      "supersede": false,
+      "unstable": false,
+      "confidence": 0,
+      "reasoning": "",
+      "older": "We support payments in USD",
+      "newer": "We support payments in EUR"
+    },
+    {
+      "id": "os020",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.7324,
+      "inBand": false,
+      "supersede": false,
+      "unstable": false,
+      "confidence": 0,
+      "reasoning": "",
+      "older": "Our SDK is available for Python",
+      "newer": "Our SDK is available for Ruby"
+    },
+    {
+      "id": "os021",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "contact",
+      "cosine": 0.7176,
+      "inBand": false,
+      "supersede": false,
+      "unstable": false,
+      "confidence": 0,
+      "reasoning": "",
+      "older": "I'm reachable on Signal",
+      "newer": "I'm reachable on WhatsApp"
+    },
+    {
+      "id": "os022",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9632,
+      "inBand": true,
+      "supersede": true,
+      "unstable": false,
+      "confidence": 0.9,
+      "reasoning": "The newer fact states that the venue has parking on the south side, which directly contradicts the older fact that states it has parking on the north side, assuming both statements refer to the same time frame.",
+      "older": "The venue has parking on the north side",
+      "newer": "The venue has parking on the south side"
     },
     {
       "id": "dup01",
@@ -1025,7 +1090,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 1,
-      "reasoning": "The newer fact specifies the preference for the Rust language, which is consistent with the older fact stating a preference for Rust. Both facts assert the same preference without contradiction.",
+      "reasoning": "Both statements express the same preference for Rust, with the newer fact providing clarification that it refers to the Rust programming language.",
       "older": "user prefers Rust",
       "newer": "user prefers the Rust language"
     },
@@ -1053,7 +1118,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both statements assert the same action of running unit tests with npm test in the present tense, and do not contradict each other.",
+      "reasoning": "Both statements assert the same action of running unit tests with npm test, and there is no contradiction in the temporal frame.",
       "older": "Run the unit tests with npm test",
       "newer": "Run unit tests with npm test"
     },
@@ -1062,7 +1127,7 @@
       "kind": "dup",
       "group": "identical",
       "lane": "dev",
-      "cosine": 0.9794,
+      "cosine": 0.9795,
       "inBand": true,
       "supersede": false,
       "unstable": false,
@@ -1081,7 +1146,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 1,
-      "reasoning": "Both facts assert the same temporal frame regarding the auth bug on login, and therefore do not contradict each other.",
+      "reasoning": "Both facts assert the same situation regarding the auth bug on login, and there is no contradiction between them.",
       "older": "auth bug on login\n",
       "newer": "auth bug on login"
     },
@@ -1132,7 +1197,7 @@
       "kind": "dup",
       "group": "paraphrase",
       "lane": "dev",
-      "cosine": 0.6927,
+      "cosine": 0.6926,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -1165,7 +1230,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both statements assert the same information about the auth service's location, just phrased differently. There is no contradiction.",
+      "reasoning": "Both statements assert the same information about the auth service's address, just phrased differently. There is no contradiction.",
       "older": "The auth service is reachable at http://auth.internal:8080",
       "newer": "Auth service runs on http://auth.internal:8080."
     },
@@ -1179,7 +1244,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both statements assert the same fact about the database being used for the application, and they are compatible in their temporal frame.",
+      "reasoning": "Both statements assert the same fact about the database being used for the application without any temporal conflict.",
       "older": "We use Postgres for the primary application database.",
       "newer": "Postgres is the primary database for our app."
     },
@@ -1202,7 +1267,7 @@
       "kind": "dup",
       "group": "paraphrase",
       "lane": "dev",
-      "cosine": 0.9007,
+      "cosine": 0.9011,
       "inBand": true,
       "supersede": false,
       "unstable": false,
@@ -1230,7 +1295,7 @@
       "kind": "dup",
       "group": "paraphrase",
       "lane": "dev",
-      "cosine": 0.7691,
+      "cosine": 0.7692,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -1258,7 +1323,7 @@
       "kind": "dup",
       "group": "paraphrase",
       "lane": "dev",
-      "cosine": 0.8212,
+      "cosine": 0.8213,
       "inBand": false,
       "supersede": false,
       "unstable": false,
@@ -1277,7 +1342,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both statements refer to the same time frame (2024) and are compatible; moving to a place can coincide with it becoming one's home.",
+      "reasoning": "Both statements refer to the same time frame (2024) but do not contradict each other; moving to Berlin and it becoming her home can coexist.",
       "older": "She moved to Berlin in 2024.",
       "newer": "Berlin became her home in 2024."
     },
@@ -1305,7 +1370,7 @@
       "supersede": false,
       "unstable": false,
       "confidence": 0.9,
-      "reasoning": "Both statements refer to the same event in the past (QCon SF in November), and the newer fact does not contradict the older fact but rather reaffirms it.",
+      "reasoning": "Both statements refer to the same event in the past (QCon SF in November), and thus do not contradict each other.",
       "older": "I attended QCon SF in November.",
       "newer": "Was at QCon SF this past November."
     },
@@ -1318,8 +1383,8 @@
       "inBand": true,
       "supersede": false,
       "unstable": false,
-      "confidence": 0.9,
-      "reasoning": "Both statements refer to the same event of a two-week trip to Japan in October, and they do not contradict each other.",
+      "confidence": 1,
+      "reasoning": "Both facts describe the same event of a two-week trip to Japan in October, and they are compatible as they refer to the same temporal frame.",
       "older": "Took a two-week trip to Japan in October.",
       "newer": "Spent two weeks in Japan during October."
     },
@@ -1328,7 +1393,7 @@
       "kind": "dup",
       "group": "paraphrase",
       "lane": "dev",
-      "cosine": 0.6966,
+      "cosine": 0.6967,
       "inBand": false,
       "supersede": false,
       "unstable": false,
