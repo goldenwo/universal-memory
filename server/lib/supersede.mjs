@@ -96,26 +96,31 @@ export function isAutoSupersedeEnabled(env = process.env) {
 }
 
 /**
- * Upper cosine edge of the contradiction-overlap band (ADR-0007 Option C).
+ * Confident-duplicate floor — the upper cosine edge above which the in-band
+ * contradiction judge is cost-skipped (ADR-0007 Option C; band-widening 2026-06-19).
  *
- * A dedup embedding hit ABOVE this cosine is too phrasing-similar to be a
- * contradiction — it is a genuine near-duplicate, so dedup keeps-older. The
- * band's LOWER edge is the dedup threshold (UM_DEDUP_EMBEDDING_THRESHOLD): a
- * hit only reaches this decision once its cosine already cleared that floor.
+ * The dedup band is [UM_DEDUP_EMBEDDING_THRESHOLD (0.84), this]. A write-time dedup
+ * hit IN the band is handed to the judge (supersede-vs-merge); a hit ABOVE this floor
+ * is a confident duplicate, so the judge is skipped and dedup keeps-older.
  *
- * Default 0.87 = the measured top of the true-contradiction cosine span
- * (0.50–0.87) from the D3.3 eval against the production embedder
- * (server/eval/results/2026-06-02-d3-openai-run*.json; see the band note at
- * contradiction-batch.mjs). It is a COST bound, not a correctness gate — the
- * inline judge is the precision gate, so an imperfect ceiling only changes how
- * OFTEN the judge fires, never whether a true near-duplicate is kept. Re-eval
- * the band edge if the embedding model changes. Keep the default in lockstep
- * with server/.env.example UM_CONTRADICTION_BAND_CEILING and the drift
- * assertion in server/test/supersede.test.mjs.
+ * Default 0.95. The band-widening validation (server/eval/supersession-gate-eval.mjs;
+ * results/2026-06-19-supersession-band-widening-validation.md) refuted any *separating*
+ * ceiling — contradictions and duplicates OVERLAP from ~0.84 to ~0.94, so the JUDGE,
+ * not cosine, is the precision gate. 0.95 is pinned just ABOVE the measured contradiction
+ * tail (held-out max 0.9396) and BELOW the near-value multi-value-coexist over-supersede
+ * zone (the lone widened-slice false-supersede, os022, embeds at 0.9632): widening from
+ * the old 0.87 to 0.95 rescues every measured contradiction the 0.87 ceiling dup-skipped
+ * (the s009 "PostgreSQL→MySQL" @0.8725 class — 18/18 fired) while adding ZERO new
+ * over-supersession. No-skip (1.0) was rejected — it re-exposes the >0.95 coexist zone for
+ * no capture gain (no contradiction embeds >0.95). It is a COST/safety bound, not a
+ * correctness gate — an imperfect floor only changes how OFTEN the judge fires. Re-eval if
+ * the embedding model changes (text-embedding-3-small). Keep the default in lockstep with
+ * server/.env.example UM_CONTRADICTION_BAND_CEILING and the drift assertion in
+ * server/test/supersede.test.mjs.
  */
 export function contradictionBandCeiling(env = process.env) {
   const n = Number.parseFloat(env.UM_CONTRADICTION_BAND_CEILING);
-  return Number.isFinite(n) ? n : 0.87;
+  return Number.isFinite(n) ? n : 0.95;
 }
 
 /**
