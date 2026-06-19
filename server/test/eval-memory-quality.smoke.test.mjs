@@ -24,7 +24,13 @@ import assert from 'node:assert/strict';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { runOnce } from '../eval/memory-quality-eval.mjs';
 
-const SKIP = !process.env.UM_QDRANT_INTEGRATION;
+// Needs BOTH real qdrant AND a real OpenAI key (real embed + the contradiction judge). CI's
+// "Run server unit tests" step sets UM_QDRANT_INTEGRATION but NOT OPENAI_API_KEY (the sibling
+// add-stamp-roundtrip integration test mocks the SDK via UM_TEST_MOCK_SDK and so needs no key).
+// Gate on the key too — skip cleanly when it's absent rather than failing mem0's embedder/llm
+// config validation (ZodError: apiKey null).
+const SKIP = !process.env.UM_QDRANT_INTEGRATION
+  || !(process.env.OPENAI_API_KEY || process.env.UM_OPENAI_API_KEY);
 const QDRANT_HOST = process.env.QDRANT_HOST ?? 'localhost';
 const QDRANT_PORT = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
 
