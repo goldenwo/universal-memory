@@ -96,12 +96,25 @@ The merge-positive D1 dedup set (identical + paraphrase pairs) fed through the s
 convert true duplicates into supersedes — closes review A-G1 (the original gate measured only
 cosines).
 
+### Gate (d) end-to-end staleness regression — **PASS (implemented at τ=0.95)**
+After shipping the default 0.87→0.95 (commit `868fd22`), the real write-path staleness eval
+(`compare-staleness-um-mem0.mjs`, scratch qdrant, `memories` untouched): **fire-rate 18/18,
+stale-return 0.000, only-current 1.000** (baseline was 17/18 / 0.056 / 0.944). **`s009` now fires via
+the IN-BAND path** (`inband_supersede.confirmed` score 0.8724, conf 0.9) — previously dup-skipped at
+0.87. The d3 detector still catches the sub-floor entity-swaps; the in-band judge now catches the
+0.87–0.95 class. Result: `results/2026-06-19-staleness-postfix.json`.
+
 ### Determinism
 Temp-0, **5 runs** (R3 A-G3): **every row stable, unstableCount 0** — including both false-supersedes
 (os003 5/5, os022 5/5) and all 27 captures. The findings are not jitter; they are the judge's stable
 behavior at conf 0.9.
 
-## The decision — pin the ceiling at τ=0.95, not no-skip (measured, both pins RAN)
+## The decision — RESOLVED: pin τ=0.95, IMPLEMENTED (commit `868fd22`)
+
+> All four gates pass at τ=0.95: (a) 27/27 capture, (b) widening-clean (only the pre-existing os003
+> FP; os022 excluded), (c) 19/19 dups merge, (d) staleness 18/18 / stale-return 0.000. Shipped via
+> TDD (drift + default-ceiling behavioral tests; full suite 1266 pass / 0 fail). The analysis below
+> records why 0.95 over no-skip / don't-widen.
 
 Gate (a) PASS (27/27, 18 rescued), gate (c) PASS (dups merge). The os022 false-supersede sits at
 cosine **0.9632 — above where any contradiction embeds** (held-out tops at 0.9396). So the *ceiling*
