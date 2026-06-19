@@ -252,7 +252,7 @@ async function main() {
     perRow: rows.map((r) => ({ id: r.id, kind: r.kind, group: r.group, lane: r.lane, cosine: r.cosine, inBand: r.inBand, supersede: r.supersede, unstable: r.unstable, confidence: r.confidence, reasoning: r.reasoning, older: r.older, newer: r.newer })),
   };
 
-  const outPath = here('./results/2026-06-19-supersession-gate-eval.json');
+  const outPath = here(`./results/2026-06-19-supersession-gate-eval-ceil${CEILING}.json`);
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, JSON.stringify(result, null, 2) + '\n', 'utf8');
 

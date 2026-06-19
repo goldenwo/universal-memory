@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-19 · **Embedder:** text-embedding-3-small · **Judge:** gpt-4o-mini, temp 0, 2 runs
 **Harnesses:** `server/eval/band-ceiling-study.mjs` (cosine coverage), `server/eval/supersession-gate-eval.mjs` (live judge)
-**Raw:** `results/2026-06-19-band-ceiling-study.json`, `results/2026-06-19-supersession-gate-eval.json`
+**Raw:** `results/2026-06-19-band-ceiling-study.json`; gate eval at two pins:
+`results/2026-06-19-supersession-gate-eval-ceil1.json` (no-skip) and `…-ceil0.95.json` (τ=0.95)
 **Spec/plan:** `docs/plans/2026-06-15-supersession-ceiling-repin-{spec,plan}.md`
 
 ## What this answers
@@ -100,28 +101,39 @@ Temp-0, **5 runs** (R3 A-G3): **every row stable, unstableCount 0** — includin
 (os003 5/5, os022 5/5) and all 27 captures. The findings are not jitter; they are the judge's stable
 behavior at conf 0.9.
 
-## The decision (the verdict flipped at R3 — re-surface to user)
+## The decision — pin the ceiling at τ=0.95, not no-skip (measured, both pins RAN)
 
-Gate (a) PASS (27/27, 18 rescued), gate (c) PASS (19/19 dups merge). The blocker is gate (b): the
-widening is **NOT clean** — `os022` (cos 0.9632) is a new, stable false-supersede in the widened
-slice. The earlier "widening-clean" rested on the easy-tail coexist sample the R3 reviewers flagged;
-the harder test falsified it. Net trade, measured:
+Gate (a) PASS (27/27, 18 rescued), gate (c) PASS (dups merge). The os022 false-supersede sits at
+cosine **0.9632 — above where any contradiction embeds** (held-out tops at 0.9396). So the *ceiling*
+is the lever. Both pins were run at 5 runs:
 
-- **Benefit:** rescues **18/18** contradictions today's 0.87 ceiling silently drops (the s009 class
-  → stale-then-lost). This is UM's core currency advantage.
-- **Cost:** introduces a false-supersede on **high-cosine multi-value coexist** facts (1 in 7
-  widened-slice decline rows here; the dangerous class is near-value pairs like north/south, that
-  embed >0.95). **Recoverable** (status-flip, not delete) + flag + env-knob, but a real recall
-  regression. No cosine cutoff avoids it (coexist-FPs span the whole band).
+| pin | gate (a) capture | newly captured | gate (b) FP | widening-clean? |
+|---|---|---|---|---|
+| **no-skip (1.0)** | 27/27 | 18/18 | **2** (os003 pre-existing + **os022 NEW**) | **NO** |
+| **τ=0.95** | **27/27** | **18/18** | **1** (os003 pre-existing only) | **YES** |
 
-Three options (user's call — risk appetite: staleness vs over-supersession):
-- **(A) Accept the residual & ship** — currency-first; the demote is recoverable, flag-gated, knob to
-  roll back; document os022-class as a known residual. Fixes 18 contradictions now.
-- **(B) Don't widen** — data-integrity-first; keep the 0.87 ceiling. Leaves the s009 stale-then-lost
-  bug unfixed (the original motivation).
-- **(C) Partial widen** (e.g. 0.87→~0.92) — catches most of the s009 class while excluding the very-
-  high-cosine zone where near-value coexist lives. Re-opens the τ-pin/cost question (BL4) and is not
-  clean (os003-class coexist-FPs sit low in the band too); a compromise, not a fix.
+**τ=0.95 dominates no-skip on the measured data: identical capture (zero contradictions lost — all
+≤0.94 < 0.95), and the os022 over-supersede disappears** (0.9632 > 0.95 → falls out of band → merges,
+the older point is never demoted). This re-justifies the band-study's original τ=0.95 recommendation
+— overridden to no-skip in step 2 on "it skips almost nothing," but the little it skips (>0.95) is
+exactly the near-value-coexist over-supersession zone. The pin is now justified on **safety** (exclude
+that zone), not the circular cost proxy (BL4).
+
+**Honest caveat:** this is not a proven separation. The >0.94 band has thin data (os022 is the only
+point there), so τ=0.95 "works" for the measured set but a hypothetical contradiction >0.95 (a
+single-token swap in a long sentence — none seen in 44+ samples; the F1 documented residual) would be
+cost-skipped → missed. And os003 (a coexist-FP at 0.8484) is in the *current* band → unavoidable at
+any ceiling. So τ=0.95 minimizes — does not eliminate — the over-supersession, with a small,
+well-characterized capture residual.
+
+**Options (user's call — risk appetite: staleness vs over-supersession):**
+- **(A — recommended) Widen to τ=0.95.** Full measured capture (18 rescued, s009 fixed) + zero NEW
+  over-supersession. Residual: a theoretical >0.95 contradiction (empirically empty). Best measured
+  trade.
+- **(B) No-skip (1.0).** Currency-absolutist: catch even a >0.95 contradiction, accepting the
+  recoverable os022-class over-supersede. Only better than (A) if >0.95 contradictions are real and
+  matter more than >0.95 coexist over-supersedes.
+- **(C) Don't widen.** Integrity-absolutist: keep 0.87; the s009 stale-then-lost bug stays unfixed.
 
 ## Doc corrections folded in (BL4/BL5/I3)
 - **BL5 (arithmetic):** the prior "every one of the 44 measured contradictions reaches the judge" is
