@@ -1,0 +1,42 @@
+{"id":"ho01","lane":"dev","original_fact":"Our message queue is Kafka","updated_fact":"Our message queue is RabbitMQ"}
+{"id":"ho02","lane":"dev","original_fact":"The cache layer uses Redis","updated_fact":"The cache layer uses Memcached"}
+{"id":"ho03","lane":"dev","original_fact":"Our CI runs on Jenkins","updated_fact":"Our CI runs on CircleCI"}
+{"id":"ho04","lane":"dev","original_fact":"The frontend bundler is Webpack","updated_fact":"The frontend bundler is Vite"}
+{"id":"ho05","lane":"dev","original_fact":"Our ORM is Prisma","updated_fact":"Our ORM is TypeORM"}
+{"id":"ho06","lane":"dev","original_fact":"The app is hosted on Vercel","updated_fact":"The app is hosted on Netlify"}
+{"id":"ho07","lane":"dev","original_fact":"Our primary backend language is Java","updated_fact":"Our primary backend language is Kotlin"}
+{"id":"ho08","lane":"work","original_fact":"Our daily standup is at 9am","updated_fact":"Our daily standup is at 11am"}
+{"id":"ho09","lane":"work","original_fact":"My desk is on the third floor","updated_fact":"My desk is on the eighth floor"}
+{"id":"ho10","lane":"finance","original_fact":"My main credit card is a Visa","updated_fact":"My main credit card is a Mastercard"}
+{"id":"ho11","lane":"health","original_fact":"My physician is Dr. Patel","updated_fact":"My physician is Dr. Nguyen"}
+{"id":"ho12","lane":"travel","original_fact":"My layover is in Dubai","updated_fact":"My layover is in Doha"}
+{"id":"ho13","lane":"food","original_fact":"My go-to cuisine is Thai","updated_fact":"My go-to cuisine is Mexican"}
+{"id":"ho14","lane":"pets","original_fact":"My cat is named Max","updated_fact":"My cat is named Cooper"}
+{"id":"ho15","lane":"contact","original_fact":"My area code is 415","updated_fact":"My area code is 312"}
+{"id":"ho16","lane":"dev","original_fact":"The public API uses GraphQL","updated_fact":"The public API uses REST"}
+{"id":"ho17","lane":"dev","original_fact":"The service listens on port 8080","updated_fact":"The service listens on port 9090"}
+{"id":"ho18","lane":"work","original_fact":"Our sprint is two weeks long","updated_fact":"Our sprint is three weeks long"}
+{"id":"ho19","lane":"finance","original_fact":"My monthly rent is 1800 dollars","updated_fact":"My monthly rent is 2400 dollars"}
+{"id":"ho20","lane":"dev","original_fact":"The server has 16 gigabytes of RAM","updated_fact":"The server has 64 gigabytes of RAM"}
+{"id":"ho21","lane":"work","original_fact":"The project deadline is March 15th","updated_fact":"The project deadline is April 20th"}
+{"id":"ho22","lane":"travel","original_fact":"My seat number is 14A","updated_fact":"My seat number is 22F"}
+{"id":"ho23","lane":"health","original_fact":"My appointment is at 2pm","updated_fact":"My appointment is at 4pm"}
+{"id":"ho24","lane":"contact","original_fact":"My phone extension is 4421","updated_fact":"My phone extension is 7789"}
+{"id":"ho25","lane":"home","original_fact":"I have two bedrooms","updated_fact":"I have three bedrooms"}
+{"id":"ho26","lane":"dev","original_fact":"The request timeout is 30 seconds","updated_fact":"The request timeout is 60 seconds"}
+{"id":"ho27","lane":"dev","original_fact":"The connection pool size is 10","updated_fact":"The connection pool size is 50","difficulty":"numeric-swap"}
+{"id":"ho28","lane":"dev","original_fact":"We run Node.js 18 in production","updated_fact":"We run Node.js 22 in production","difficulty":"numeric-swap"}
+{"id":"ho29","lane":"finance","original_fact":"My 401k contribution is 6 percent","updated_fact":"My 401k contribution is 10 percent","difficulty":"numeric-swap"}
+{"id":"ho30","lane":"work","original_fact":"Our engineering team has 8 full-time members","updated_fact":"Our engineering team has 20 full-time members","difficulty":"numeric-swap"}
+{"id":"ho31","lane":"home","original_fact":"My thermostat is set to 68 degrees","updated_fact":"My thermostat is set to 72 degrees","difficulty":"numeric-swap"}
+{"id":"ho32","lane":"dev","original_fact":"The API version is v2","updated_fact":"The API version is v3","difficulty":"numeric-swap"}
+{"id":"ho33","lane":"dev","original_fact":"Our primary datastore is DynamoDB for all services","updated_fact":"Our primary datastore is Postgres for all services, not DynamoDB","difficulty":"multi-clause"}
+{"id":"ho34","lane":"dev","original_fact":"The checkout service is written in Ruby","updated_fact":"The checkout service is written in Go, not Ruby","difficulty":"multi-clause"}
+{"id":"ho35","lane":"dev","original_fact":"The default branch is called master","updated_fact":"The default branch is called main, not master","difficulty":"multi-clause"}
+{"id":"ho36","lane":"work","original_fact":"Our main office is located in the downtown tower","updated_fact":"Our main office is located in the riverside tower, not the downtown tower","difficulty":"multi-clause"}
+{"id":"ho37","lane":"dev","original_fact":"Users sign in to the platform with passwords","updated_fact":"Users sign in to the platform with passkeys, not passwords","difficulty":"multi-clause"}
+{"id":"ho38","lane":"finance","original_fact":"My base salary is paid on a monthly schedule","updated_fact":"My base salary is paid on a biweekly schedule, not monthly","difficulty":"multi-clause"}
+{"id":"ho39","lane":"dev","original_fact":"The frontend talks to the backend over REST","updated_fact":"The frontend talks to the backend over gRPC, not REST","difficulty":"multi-clause"}
+{"id":"ho40","lane":"health","original_fact":"I take my medication in the morning","updated_fact":"I take my medication at night, not in the morning","difficulty":"multi-clause"}
+{"id":"ho41","lane":"dev","original_fact":"The API rate limit is 100 requests per minute","updated_fact":"The API rate limit is 500 requests per minute","difficulty":"numeric-swap"}
+{"id":"ho42","lane":"dev","original_fact":"Our primary cloud region is us-east-1","updated_fact":"Our primary cloud region is eu-west-1","difficulty":"numeric-swap"}
