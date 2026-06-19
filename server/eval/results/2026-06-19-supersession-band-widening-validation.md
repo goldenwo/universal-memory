@@ -74,6 +74,12 @@ single-valued upgrade the new version *is* the current truth). Crucially, the ad
 data-loss that §5.2/BL2 feared **did not materialize** — every additive/coexist decline row held.
 Whether to accept upgrade-supersession or add an explicit guard is a product call for the re-review.
 
+### Gate (c) no-false-merge — D1 duplicates must stay merged: **PASS (19/19, 0 false-supersede)**
+The merge-positive D1 dedup set (identical + paraphrase pairs) fed through the same live judge:
+**19/19 in-band duplicates declined** (stay `DEDUP_MERGED`), zero superseded. The widening does not
+convert true duplicates into supersedes — closes review A-G1 (the original gate measured only
+cosines).
+
 ### Determinism
 Temp-0, 2 runs: no decision flipped between runs (only minor reasoning-text variation). The lone FP
 is stable, not jitter.

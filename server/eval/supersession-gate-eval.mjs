@@ -37,9 +37,12 @@
  */
 
 import { fileURLToPath } from 'node:url';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
+
+// Labels in dedup-labels.json that are genuine re-ingests (must MERGE, never supersede) — gate (c).
+const MERGE_POSITIVE = new Set(['identical', 'duplicate', 'paraphrase', 'near-duplicate', 'near_dup']);
 
 const FLOOR = 0.84;            // dedup floor (UM_DEDUP_EMBEDDING_THRESHOLD) — band lower edge
 const CUR_CEILING = 0.87;     // TODAY's contradictionBandCeiling default — hits ≤ this are ALREADY
@@ -83,6 +86,10 @@ async function main() {
   const here = (p) => fileURLToPath(new URL(p, import.meta.url));
   const heldout = await loadFixtureJsonl(here('./held-out-contradiction-set.jsonl'));
   const oversup = await loadFixtureJsonl(here('./over-supersession-set.jsonl'));
+  // Gate (c): the D1 dedup set's merge-positive pairs — true duplicates that must NOT become
+  // supersedes under the widening (judge declines → DEDUP_MERGED). Synthetic lane for eligibility.
+  const dedup = JSON.parse(await readFile(here('../test/fixtures/dedup-labels.json'), 'utf8'));
+  const dupRows = dedup.filter((r) => MERGE_POSITIVE.has(r.label));
 
   // Normalise both fixtures into a common row shape: {id, lane, older, newer, kind, group}
   //   kind 'capture'  → expected FIRE (held-out)
@@ -96,6 +103,10 @@ async function main() {
     ...oversup.map((r) => ({
       id: r.id, lane: r.lane, older: r.fact_a, newer: r.fact_b,
       kind: r.expected === 'boundary' ? 'boundary' : 'decline', group: r.relation,
+    })),
+    ...dupRows.map((r, i) => ({
+      id: `dup${String(i + 1).padStart(2, '0')}`, lane: 'dev', older: r.a, newer: r.b,
+      kind: 'dup', group: r.label,  // expected: DECLINE (merge) — must NOT supersede
     })),
   ];
 
@@ -181,6 +192,12 @@ async function main() {
   const boundary = rows.filter((r) => r.kind === 'boundary');
   const boundaryInBand = boundary.filter((r) => r.inBand);
 
+  // ---- Gate (c): no-false-merge — D1 duplicates must DECLINE (stay DEDUP_MERGED) under widening ----
+  const dup = rows.filter((r) => r.kind === 'dup');
+  const dupInBand = dup.filter((r) => r.inBand);
+  const dupFalseSupersede = dupInBand.filter((r) => r.supersede); // a dup wrongly superseded = widening broke a merge
+  const dupNewlyExposed = dupInBand.filter((r) => r.exposure === 'widened');
+
   // ---- Confusion matrix (in-band capture × in-band decline) ----
   const TP = captureFired.length, FN = captureMisses.length;
   const FP = falseSupersede.length, TN = declineInBand.length - FP;
@@ -213,17 +230,24 @@ async function main() {
       falseSupersedeRows: falseSupersede.map((r) => ({ id: r.id, group: r.group, exposure: r.exposure, cosine: r.cosine, confidence: r.confidence, reasoning: r.reasoning })),
       boundary: boundaryInBand.map((r) => ({ id: r.id, cosine: r.cosine, exposure: r.exposure, fired: r.supersede, confidence: r.confidence, reasoning: r.reasoning })),
     },
+    gateC_noFalseMerge: {
+      dupTotal: dup.length, dupInBand: dupInBand.length,
+      declinedMerged: dupInBand.length - dupFalseSupersede.length,
+      falseSupersede: dupFalseSupersede.length, dupNewlyExposed: dupNewlyExposed.length,
+      falseSupersedeRows: dupFalseSupersede.map((r) => ({ id: r.id, group: r.group, exposure: r.exposure, cosine: r.cosine, confidence: r.confidence, reasoning: r.reasoning })),
+    },
     confusionMatrix: { inBandCapture: captureInBand.length, inBandDecline: declineInBand.length, TP, FN, TN, FP },
     determinism: { runs: RUNS, unstableCount: unstable.length, unstable },
     verdict: {
-      strictPass: pass,                       // spec literal: fireRate 1.0 AND zero FP anywhere in band
-      wideningClean: fpWidened.length === 0,  // the change's OWN bar: introduces no new FP in (0.87, ceiling]
+      strictPass: pass && dupFalseSupersede.length === 0,   // spec literal: full capture AND zero FP (decline+dup) anywhere in band
+      wideningClean: fpWidened.length === 0 && dupNewlyExposed.filter((r) => r.supersede).length === 0, // change's OWN bar: no new FP (decline+dup) in (0.87, ceiling]
       fireRate, falseSupersedeRate,
       falseSupersedeWidened: fpWidened.length, falseSupersedePreexisting: fpPreexisting.length,
+      dupFalseSupersede: dupFalseSupersede.length,
       newlyCaptured: captureNewlyEnabledFired.length,
-      summary: pass
-        ? 'JOINT PASS: all in-band held-out fired AND zero decline false-supersedes anywhere in band.'
-        : `STRICT-FAIL but WIDENING-${fpWidened.length === 0 ? 'CLEAN' : 'REGRESSION'}: fireRate=${fireRate} (misses ${FN}); ${FP} FP total = ${fpWidened.length} from widening + ${fpPreexisting.length} pre-existing (≤0.87, already judged today). Widening newly captures ${captureNewlyEnabledFired.length} previously-skipped contradictions.`,
+      summary: (pass && dupFalseSupersede.length === 0)
+        ? 'JOINT PASS: all in-band held-out fired; zero decline AND zero dup false-supersedes anywhere in band.'
+        : `STRICT-FAIL but WIDENING-${fpWidened.length === 0 && dupNewlyExposed.filter((r) => r.supersede).length === 0 ? 'CLEAN' : 'REGRESSION'}: fireRate=${fireRate} (misses ${FN}); decline FP ${FP} = ${fpWidened.length} widening + ${fpPreexisting.length} pre-existing; dup FP ${dupFalseSupersede.length}. Widening newly captures ${captureNewlyEnabledFired.length} previously-skipped contradictions.`,
     },
     perRow: rows.map((r) => ({ id: r.id, kind: r.kind, group: r.group, lane: r.lane, cosine: r.cosine, inBand: r.inBand, supersede: r.supersede, unstable: r.unstable, confidence: r.confidence, reasoning: r.reasoning, older: r.older, newer: r.newer })),
   };
@@ -258,6 +282,8 @@ async function main() {
   }
   console.log(`\nBOUNDARY (version-upgrade, scored separately — §5.2):`);
   for (const r of boundaryInBand) console.log(`  ${r.id} cos=${r.cosine} ${r.supersede ? 'FIRED (would supersede)' : 'declined'} conf=${r.confidence} :: ${r.reasoning}`);
+  console.log(`\nGATE (c) no-false-merge — D1 duplicates must stay merged:`);
+  console.log(`  in-band ${dupInBand.length}/${dup.length}  declined(merged) ${dupInBand.length - dupFalseSupersede.length}  FALSE-SUPERSEDE ${dupFalseSupersede.length}` + (dupFalseSupersede.length ? ` [${dupFalseSupersede.map((r) => r.id).join(',')}]` : ''));
   console.log(`\nCONFUSION MATRIX (in-band): TP=${TP} FN=${FN} | TN=${TN} FP=${FP}`);
   if (unstable.length) console.log(`UNSTABLE across runs: ${unstable.map((u) => u.id).join(', ')}`);
   console.log(`\nVERDICT: strictPass=${result.verdict.strictPass}  wideningClean=${result.verdict.wideningClean}`);
