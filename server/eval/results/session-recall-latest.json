@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-06-19T07:42:28.098Z",
+  "n": 30,
+  "mode": "session-recall, multi-fact summaries, infer:false, content-contains recall@k (distinctive verbatim answer span)",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "arms": {
+    "um": {
+      "1": 0.767,
+      "3": 0.967,
+      "5": 1,
+      "10": 1,
+      "mrr": 0.868,
+      "misses": []
+    },
+    "mem0": {
+      "1": 0.767,
+      "3": 0.967,
+      "5": 1,
+      "10": 1,
+      "mrr": 0.868,
+      "misses": []
+    }
+  },
+  "memoriesUntouched": true
+}
