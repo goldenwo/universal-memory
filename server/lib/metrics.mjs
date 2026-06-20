@@ -90,6 +90,19 @@ export const mem0OpsTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// No-answer precision (v1.6): doSearch relevance-floor outcome, once per search.
+// `outcome` ∈ {'trimmed','abstained','passthrough'} — fixed enum, never user
+// input (bounded cardinality). Only emitted when the floor is active (minScore>0)
+// and the search returned ≥1 row pre-floor; the inert path and zero-result
+// searches emit nothing. The soak signal for how often the floor fires in the
+// wild (spec §7 R1 — pin generalization).
+export const umRetrievalFloorTotal = new promClient.Counter({
+  name: 'um_retrieval_floor_total',
+  help: 'doSearch relevance-floor outcome (no-answer precision): trimmed|abstained|passthrough',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
 export const mcpToolCallsTotal = new promClient.Counter({
   name: 'um_mcp_tool_calls_total',
   help: 'MCP tool invocation count by tool-name and status',

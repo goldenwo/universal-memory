@@ -51,6 +51,7 @@ test('registry exposes exactly 19 named metrics', () => {
     'um_provider_errors_total',
     'um_provider_request_duration_seconds',
     'um_provider_tokens_total',
+    'um_retrieval_floor_total',          // no-answer precision v1.6 (floor outcome)
   ]);
 });
 

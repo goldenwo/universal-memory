@@ -48,6 +48,7 @@ import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
+import { retrievalMinScore, passesRelevanceFloor } from './lib/retrieval.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
 import { withRetry } from './lib/retry.mjs';
@@ -61,7 +62,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal, umRetrievalFloorTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
@@ -1764,6 +1765,25 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 				(md.invalidated_at != null);
 			return !excluded;
 		});
+		// Relevance floor (no-answer precision, v1.6): drop clear non-answers so an
+		// unanswerable query returns the empty envelope (abstention) instead of the
+		// least-irrelevant memory. Placed INSIDE !includeSuperseded (so only_superseded
+		// / full superseded reads are untouched) and BEFORE the decay re-rank below (so
+		// it gates the RAW search score, never an age-attenuated one). The `> 0` guard
+		// makes minScore<=0 a true no-op (byte-for-byte pre-floor). passesRelevanceFloor
+		// KEEPS missing/non-numeric scores (recall-safe). See lib/retrieval.mjs.
+		const minScore = ctx?.minScore ?? retrievalMinScore();
+		if (minScore > 0) {
+			const beforeFloor = items.length;
+			items = items.filter((r) => passesRelevanceFloor(r.score, minScore));
+			// Once-per-search outcome (only when there was something to floor).
+			if (beforeFloor > 0) {
+				const afterFloor = items.length;
+				umRetrievalFloorTotal.inc({
+					outcome: afterFloor === 0 ? 'abstained' : afterFloor < beforeFloor ? 'trimmed' : 'passthrough',
+				});
+			}
+		}
 	}
 	// Optional temporal decay re-ranking (off by default).
 	// Set UM_TEMPORAL_DECAY=true to enable; UM_DECAY_HALF_LIFE_DAYS controls
