@@ -30,6 +30,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { passesRelevanceFloor } from '../lib/retrieval.mjs'; // pure — the production floor predicate (reused so the sweep pins the real decision)
 
 // ---------------------------------------------------------------------------
 // PURE scoring functions (no I/O) — unit-tested directly.
@@ -143,6 +144,82 @@ export function noAnswerPrecision(distractorRows) {
  */
 export function fireRate(stalenessRows) {
   return rate((stalenessRows ?? []).map((r) => r.fired === true));
+}
+
+/**
+ * n-gram leakage guard (spec §3.1 / §7 R3). A distractor must "have no answer"
+ * for SEMANTIC reasons, not because it shares phrasing with a gold seed (which
+ * would inflate measured separability). Rejects a query that shares any ≥n-gram
+ * (default trigram) token shingle with any corpus seed text.
+ *
+ * @param {string} query
+ * @param {string[]} corpusTexts - the gold seed texts
+ * @param {number} [n=3]
+ * @returns {{clean: boolean, shared: string[]}} clean=true when safe to use
+ */
+export function deLeak(query, corpusTexts, n = 3) {
+  const grams = (s) => {
+    const toks = String(s ?? '').toLowerCase().match(/\w+/g) ?? [];
+    const out = [];
+    for (let i = 0; i + n <= toks.length; i++) out.push(toks.slice(i, i + n).join(' '));
+    return out;
+  };
+  const corpus = new Set((corpusTexts ?? []).flatMap(grams));
+  const shared = [...new Set(grams(query).filter((g) => corpus.has(g)))];
+  return { clean: shared.length === 0, shared };
+}
+
+/**
+ * Recall-retention primitive (spec §3): does a query's gold answer survive the
+ * relevance floor AND land in the returned top-`limit` window? `recallAtK` is
+ * rank-only and cannot express a floor. Reuses the PRODUCTION
+ * `passesRelevanceFloor` so the sweep pins against the real keep/drop decision,
+ * not a re-implementation. Aggregate recall-retention = mean of this over queries.
+ *
+ * @param {Array<{id:string, score?:number}>} rankedWithScores - doSearch results, in rank order
+ * @param {string[]} goldIds
+ * @param {number} floor
+ * @param {number} limit
+ * @returns {boolean} true = gold retained
+ */
+export function retainedAtFloor(rankedWithScores, goldIds, floor, limit) {
+  const gold = new Set(goldIds ?? []);
+  const kept = (rankedWithScores ?? [])
+    .filter((r) => passesRelevanceFloor(r?.score, floor))
+    .slice(0, limit);
+  return kept.some((r) => gold.has(r.id));
+}
+
+/**
+ * The quantified pin rule (spec §3.4): pin = F* - margin, where F* is the HIGHEST
+ * swept floor at which recall-retention is still 1.0 (no real answer dropped).
+ * Returns {fStar:null, pin:null} when no floor keeps full recall — the
+ * pre-registered STOP condition (escalate to design, never lower the recall gate).
+ *
+ * @param {Array<{floor:number, retention:number, precision:number}>} sweepRows
+ * @param {number} [margin=0.02]
+ */
+export function pickPin(sweepRows, margin = 0.02) {
+  const eligible = (sweepRows ?? []).filter((r) => r.retention >= 1.0);
+  if (eligible.length === 0) return { fStar: null, pin: null };
+  const fStar = Math.max(...eligible.map((r) => r.floor));
+  return { fStar, pin: Number((fStar - margin).toFixed(4)) };
+}
+
+/**
+ * Fixture hardness gate (spec §3.2): the sweep is only meaningful if ≥`min`
+ * answerable golds land in the overlap zone [pin-half, pin+half] — otherwise
+ * recall-retention=1.0 was trivially satisfied and proved nothing.
+ *
+ * @param {number[]} answerableScores - per-answerable gold search scores
+ * @param {number} pin
+ * @param {number} [min=5]
+ * @param {number} [half=0.05]
+ */
+export function hardnessZoneOk(answerableScores, pin, min = 5, half = 0.05) {
+  const lo = pin - half, hi = pin + half;
+  const inZone = (answerableScores ?? []).filter((s) => typeof s === 'number' && s >= lo && s <= hi).length;
+  return inZone >= min;
 }
 
 // ---------------------------------------------------------------------------
