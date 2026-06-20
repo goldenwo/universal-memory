@@ -18,17 +18,36 @@ permissions:
   contents: read
 
 jobs:
+  # The live smoke stack requires OPENAI_API_KEY. When it's absent — fork PRs, or
+  # a same-repo PR/push on a repo without the Actions secret configured — the E2E
+  # cannot boot. This guard lets `smoke` SKIP CLEANLY (shown as "skipped", not a
+  # red failure) rather than hard-failing at the first OpenAI call. Only a boolean
+  # is emitted here; the secret value is never exposed. (Completes the fork-skip
+  # intent above: previously only fork PRs skipped, so same-repo branches without
+  # the secret went red instead of skipping.)
+  guard:
+    name: secret presence
+    runs-on: ubuntu-latest
+    outputs:
+      has_secret: ${{ steps.check.outputs.has_secret }}
+    steps:
+      - id: check
+        run: echo "has_secret=${{ secrets.OPENAI_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
   smoke:
     name: build + smoke
+    needs: guard
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # Skip on fork PRs: secrets aren't available and the test would
-    # fail at the first OpenAI call. Fork contributors can run the
-    # same test locally before pushing.
+    # Skip on fork PRs (no secrets) AND when OPENAI_API_KEY is absent on a
+    # same-repo PR/push — the live stack can't boot without it, so skip cleanly
+    # instead of failing red. Fork/secret-less contributors run smoke locally.
     if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.guard.outputs.has_secret == 'true' && (
+        github.event_name == 'push' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
 
     # v1.0 W1.4 — UM_IMAGE pinned at the job level so every docker
     # compose call in this job (install.sh's _compose wrapper AND
@@ -329,11 +348,14 @@ jobs:
 
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})
-    needs: [smoke]
-    # Mirror the skip-on-fork pattern from the smoke job above.
+    needs: [guard, smoke]
+    # Mirror the smoke job's gate explicitly (skip on fork PRs AND when the secret is
+    # absent) rather than relying solely on needs:[smoke] skip-propagation.
     if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.guard.outputs.has_secret == 'true' && (
+        github.event_name == 'push' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     strategy:
       fail-fast: false
       matrix:
