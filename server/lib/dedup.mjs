@@ -285,8 +285,9 @@ export async function mergeSurface({ client, collection, existingPoint, newSurfa
 
   // Keep-older: the surviving record is the EXISTING point's text; the incoming
   // text is dropped (no provenance is retained). For phrasing-similar CONTRADICTIONS
-  // in the [0.84, 0.87] cosine overlap band this pre-empts D3 auto-supersession
-  // (which would instead keep the NEWER fact, by demoting the older point) — a
+  // in the [0.84, 0.95] cosine overlap band (the in-band judge window since the
+  // 2026-06-19 band-widening) this pre-empts D3 auto-supersession (which would
+  // instead keep the NEWER fact, by demoting the older point) — a
   // known, accepted interaction while D3 is inert. Do NOT
   // change this polarity in isolation; the reconciliation is a Gap-5 dependency.
   // See docs/decisions/0007-d1-dedup-vs-d3-supersession-interaction.md.
