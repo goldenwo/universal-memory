@@ -1,0 +1,470 @@
+{
+  "timestamp": "2026-06-19T07:02:07.315Z",
+  "n": 18,
+  "mode": "staleness 3-way: UM vs mem0 infer:false vs mem0 infer:true; value-token detection (stale_value/current_value), validated vs exact-match on the verbatim arms",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "evalUser": "um-stale3-eval",
+  "arms": {
+    "um": {
+      "n": 18,
+      "staleReturn": 0.056,
+      "currentReturn": 0.944,
+      "onlyCurrent": 0.944,
+      "bothReturned": 0,
+      "neither": 0
+    },
+    "mem0False": {
+      "n": 18,
+      "staleReturn": 1,
+      "currentReturn": 1,
+      "onlyCurrent": 0,
+      "bothReturned": 1,
+      "neither": 0
+    },
+    "mem0True": {
+      "n": 18,
+      "staleReturn": 0.111,
+      "currentReturn": 0.611,
+      "onlyCurrent": 0.556,
+      "bothReturned": 0.056,
+      "neither": 0.333
+    }
+  },
+  "umFireRate": 0.944,
+  "validation": {
+    "umTokenVsExactMismatches": [],
+    "mem0FalseTokenVsExactMismatches": [],
+    "validated": true
+  },
+  "perRow": {
+    "um": [
+      {
+        "id": "s001",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s002",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s003",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s004",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s005",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s006",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s007",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s008",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s009",
+        "fired": false,
+        "updatedEvent": "DEDUP_MERGED",
+        "surfacedStale": true,
+        "surfacedCurrent": false,
+        "exactStale": true,
+        "exactCurrent": false
+      },
+      {
+        "id": "s010",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s011",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s012",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s013",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s014",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s015",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s016",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s017",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      },
+      {
+        "id": "s018",
+        "fired": true,
+        "updatedEvent": "ADD",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "exactStale": false,
+        "exactCurrent": true
+      }
+    ],
+    "mem0False": [
+      {
+        "id": "s001",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s002",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s003",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s004",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s005",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s006",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s007",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s008",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s009",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s010",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s011",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s012",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s013",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s014",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s015",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s016",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s017",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      },
+      {
+        "id": "s018",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "exactStale": true,
+        "exactCurrent": true
+      }
+    ],
+    "mem0True": [
+      {
+        "id": "s001",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Works at Beta Industries"
+        ]
+      },
+      {
+        "id": "s002",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s003",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s004",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s005",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Eats meat several times a week"
+        ]
+      },
+      {
+        "id": "s006",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Has type A-positive blood"
+        ]
+      },
+      {
+        "id": "s007",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s008",
+        "surfacedStale": true,
+        "surfacedCurrent": true,
+        "memories": [
+          "Works fully remote",
+          "In the office all five weekdays"
+        ]
+      },
+      {
+        "id": "s009",
+        "surfacedStale": true,
+        "surfacedCurrent": false,
+        "memories": [
+          "User's production database is PostgreSQL"
+        ]
+      },
+      {
+        "id": "s010",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Travels on an Australian passport"
+        ]
+      },
+      {
+        "id": "s011",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s012",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Based in Tokyo office"
+        ]
+      },
+      {
+        "id": "s013",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Has a pet cat named Luna"
+        ]
+      },
+      {
+        "id": "s014",
+        "surfacedStale": false,
+        "surfacedCurrent": false,
+        "memories": []
+      },
+      {
+        "id": "s015",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "No medication allergies"
+        ]
+      },
+      {
+        "id": "s016",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Mortgage is with Bank of America"
+        ]
+      },
+      {
+        "id": "s017",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Deploys services on Google Cloud"
+        ]
+      },
+      {
+        "id": "s018",
+        "surfacedStale": false,
+        "surfacedCurrent": true,
+        "memories": [
+          "Phone number ends in 9920"
+        ]
+      }
+    ]
+  },
+  "memoriesUntouched": true
+}
