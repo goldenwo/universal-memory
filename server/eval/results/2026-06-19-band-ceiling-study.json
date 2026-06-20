@@ -1,0 +1,586 @@
+{
+  "timestamp": "2026-06-19T19:09:57.781Z",
+  "model": "text-embedding-3-small",
+  "floor": 0.84,
+  "currentCeiling": 0.87,
+  "distributions": {
+    "duplicates": {
+      "n": 35,
+      "min": 0.5157,
+      "p5": 0.6384,
+      "p25": 0.7389,
+      "median": 0.8542,
+      "p75": 0.9284,
+      "p95": 0.9804,
+      "max": 0.9842,
+      "mean": 0.8271
+    },
+    "d3Contradictions": {
+      "n": 18,
+      "min": 0.4997,
+      "p5": 0.5045,
+      "p25": 0.6136,
+      "median": 0.6918,
+      "p75": 0.7554,
+      "p95": 0.8091,
+      "max": 0.8725,
+      "mean": 0.6786
+    },
+    "heldOutContradictions": {
+      "n": 42,
+      "min": 0.6059,
+      "p5": 0.7013,
+      "p25": 0.8175,
+      "median": 0.8555,
+      "p75": 0.896,
+      "p95": 0.9217,
+      "max": 0.9396,
+      "mean": 0.841
+    },
+    "overSupersessionDecline": {
+      "n": 16,
+      "min": 0.6331,
+      "p5": 0.6956,
+      "p25": 0.8241,
+      "median": 0.8607,
+      "p75": 0.8914,
+      "p95": 0.9179,
+      "max": 0.9456,
+      "mean": 0.8423
+    }
+  },
+  "dupLabelsSeen": [
+    "identical",
+    "paraphrase",
+    "unrelated"
+  ],
+  "dupLabelsUsed": [
+    "identical",
+    "paraphrase"
+  ],
+  "contradictionTailMax": 0.9396,
+  "recommendedTauDupFloor": 0.95,
+  "costProxy": {
+    "note": "fraction of merge-positive D1 dup pairs landing in (0.87, τ_dupfloor] — a PROXY for newly-judged re-ingest writes, not the real write distribution",
+    "dupPairsInWidenedWindow": 8,
+    "ofTotalDupPairs": 35,
+    "fraction": 0.229,
+    "preRegisteredAbort": 0.3
+  },
+  "coverage": {
+    "heldOutReachBand": 27,
+    "heldOutTotal": 42,
+    "heldOutBelowFloor": [
+      "ho03",
+      "ho04",
+      "ho05",
+      "ho06",
+      "ho07",
+      "ho11",
+      "ho12",
+      "ho13",
+      "ho14",
+      "ho15",
+      "ho16",
+      "ho17",
+      "ho22",
+      "ho23",
+      "ho24"
+    ],
+    "heldOutAboveCurrentCeiling": [
+      "ho08",
+      "ho09",
+      "ho18",
+      "ho19",
+      "ho20",
+      "ho25",
+      "ho26",
+      "ho27",
+      "ho28",
+      "ho29",
+      "ho30",
+      "ho31",
+      "ho32",
+      "ho33",
+      "ho35",
+      "ho38",
+      "ho41",
+      "ho42"
+    ],
+    "overSupersessionDeclineReachBand": 10,
+    "overSupersessionDeclineBelowFloor": [
+      "os004",
+      "os007",
+      "os013",
+      "os014",
+      "os015",
+      "os016"
+    ]
+  },
+  "perPair": {
+    "heldOut": [
+      {
+        "id": "ho01",
+        "lane": "dev",
+        "cosine": 0.8513
+      },
+      {
+        "id": "ho02",
+        "lane": "dev",
+        "cosine": 0.8572
+      },
+      {
+        "id": "ho03",
+        "lane": "dev",
+        "cosine": 0.8013
+      },
+      {
+        "id": "ho04",
+        "lane": "dev",
+        "cosine": 0.7676
+      },
+      {
+        "id": "ho05",
+        "lane": "dev",
+        "cosine": 0.7012
+      },
+      {
+        "id": "ho06",
+        "lane": "dev",
+        "cosine": 0.7038
+      },
+      {
+        "id": "ho07",
+        "lane": "dev",
+        "cosine": 0.8172
+      },
+      {
+        "id": "ho08",
+        "lane": "work",
+        "cosine": 0.9221
+      },
+      {
+        "id": "ho09",
+        "lane": "work",
+        "cosine": 0.8836
+      },
+      {
+        "id": "ho10",
+        "lane": "finance",
+        "cosine": 0.8488
+      },
+      {
+        "id": "ho11",
+        "lane": "health",
+        "cosine": 0.7225
+      },
+      {
+        "id": "ho12",
+        "lane": "travel",
+        "cosine": 0.812
+      },
+      {
+        "id": "ho13",
+        "lane": "food",
+        "cosine": 0.828
+      },
+      {
+        "id": "ho14",
+        "lane": "pets",
+        "cosine": 0.6059
+      },
+      {
+        "id": "ho15",
+        "lane": "contact",
+        "cosine": 0.65
+      },
+      {
+        "id": "ho16",
+        "lane": "dev",
+        "cosine": 0.767
+      },
+      {
+        "id": "ho17",
+        "lane": "dev",
+        "cosine": 0.8228
+      },
+      {
+        "id": "ho18",
+        "lane": "work",
+        "cosine": 0.9372
+      },
+      {
+        "id": "ho19",
+        "lane": "finance",
+        "cosine": 0.9029
+      },
+      {
+        "id": "ho20",
+        "lane": "dev",
+        "cosine": 0.89
+      },
+      {
+        "id": "ho21",
+        "lane": "work",
+        "cosine": 0.8608
+      },
+      {
+        "id": "ho22",
+        "lane": "travel",
+        "cosine": 0.7797
+      },
+      {
+        "id": "ho23",
+        "lane": "health",
+        "cosine": 0.8184
+      },
+      {
+        "id": "ho24",
+        "lane": "contact",
+        "cosine": 0.8239
+      },
+      {
+        "id": "ho25",
+        "lane": "home",
+        "cosine": 0.8856
+      },
+      {
+        "id": "ho26",
+        "lane": "dev",
+        "cosine": 0.9138
+      },
+      {
+        "id": "ho27",
+        "lane": "dev",
+        "cosine": 0.896
+      },
+      {
+        "id": "ho28",
+        "lane": "dev",
+        "cosine": 0.8958
+      },
+      {
+        "id": "ho29",
+        "lane": "finance",
+        "cosine": 0.8996
+      },
+      {
+        "id": "ho30",
+        "lane": "work",
+        "cosine": 0.8709
+      },
+      {
+        "id": "ho31",
+        "lane": "home",
+        "cosine": 0.903
+      },
+      {
+        "id": "ho32",
+        "lane": "dev",
+        "cosine": 0.8968
+      },
+      {
+        "id": "ho33",
+        "lane": "dev",
+        "cosine": 0.8882
+      },
+      {
+        "id": "ho34",
+        "lane": "dev",
+        "cosine": 0.8487
+      },
+      {
+        "id": "ho35",
+        "lane": "dev",
+        "cosine": 0.8889
+      },
+      {
+        "id": "ho36",
+        "lane": "work",
+        "cosine": 0.8553
+      },
+      {
+        "id": "ho37",
+        "lane": "dev",
+        "cosine": 0.8523
+      },
+      {
+        "id": "ho38",
+        "lane": "finance",
+        "cosine": 0.9051
+      },
+      {
+        "id": "ho39",
+        "lane": "dev",
+        "cosine": 0.8407
+      },
+      {
+        "id": "ho40",
+        "lane": "health",
+        "cosine": 0.8556
+      },
+      {
+        "id": "ho41",
+        "lane": "dev",
+        "cosine": 0.9396
+      },
+      {
+        "id": "ho42",
+        "lane": "dev",
+        "cosine": 0.9096
+      }
+    ],
+    "overSupersession": [
+      {
+        "id": "os001",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.9087
+      },
+      {
+        "id": "os002",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8604
+      },
+      {
+        "id": "os003",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8484
+      },
+      {
+        "id": "os004",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8351
+      },
+      {
+        "id": "os005",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8873
+      },
+      {
+        "id": "os006",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8795
+      },
+      {
+        "id": "os007",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8301
+      },
+      {
+        "id": "os008",
+        "relation": "additive-superset",
+        "expected": "decline",
+        "cosine": 0.9456
+      },
+      {
+        "id": "os009",
+        "relation": "additive-superset",
+        "expected": "decline",
+        "cosine": 0.9038
+      },
+      {
+        "id": "os010",
+        "relation": "additive-superset",
+        "expected": "decline",
+        "cosine": 0.8609
+      },
+      {
+        "id": "os011",
+        "relation": "restatement-duplicate",
+        "expected": "decline",
+        "cosine": 0.8621
+      },
+      {
+        "id": "os012",
+        "relation": "restatement-duplicate",
+        "expected": "decline",
+        "cosine": 0.9084
+      },
+      {
+        "id": "os013",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.8061
+      },
+      {
+        "id": "os014",
+        "relation": "coexisting-multi-value",
+        "expected": "decline",
+        "cosine": 0.7907
+      },
+      {
+        "id": "os015",
+        "relation": "different-attribute-same-subject",
+        "expected": "decline",
+        "cosine": 0.7164
+      },
+      {
+        "id": "os016",
+        "relation": "different-subject-same-structure",
+        "expected": "decline",
+        "cosine": 0.6331
+      },
+      {
+        "id": "os017",
+        "relation": "version-upgrade",
+        "expected": "boundary",
+        "cosine": 0.8423
+      },
+      {
+        "id": "os018",
+        "relation": "version-upgrade",
+        "expected": "boundary",
+        "cosine": 0.9111
+      }
+    ],
+    "duplicates": [
+      {
+        "label": "identical",
+        "cosine": 0.7661
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9755
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9604
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9435
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9828
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9416
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9794
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9842
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9715
+      },
+      {
+        "label": "identical",
+        "cosine": 0.9494
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8809
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.6927
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8695
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8601
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8772
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.6886
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.9011
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8091
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7692
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7964
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8212
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8429
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8657
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.9151
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8794
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.6966
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.6572
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7331
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.5157
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.5947
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7307
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7892
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7092
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.8542
+      },
+      {
+        "label": "paraphrase",
+        "cosine": 0.7446
+      }
+    ]
+  }
+}

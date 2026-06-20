@@ -49,10 +49,10 @@ test('isAutoSupersedeEnabled: only literal "false" (whitespace-trimmed) disables
 // Config readers — eval-pinned defaults + env override (drift gates)
 // ---------------------------------------------------------------------------
 
-test('contradictionBandCeiling: default 0.87 (D3.3 eval span 0.50–0.87), env-overridable', () => {
-  assert.equal(contradictionBandCeiling({}), 0.87, 'pinned default — keep in lockstep with .env.example + the band note');
+test('contradictionBandCeiling: default 0.95 (band-widening validation; confident-duplicate floor), env-overridable', () => {
+  assert.equal(contradictionBandCeiling({}), 0.95, 'pinned default — lockstep with .env.example + the band-widening validation (results/2026-06-19-supersession-band-widening-validation.md; s009)');
   assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: '0.90' }), 0.90);
-  assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: 'not-a-number' }), 0.87, 'invalid → default');
+  assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: 'not-a-number' }), 0.95, 'invalid → default');
 });
 
 test('autoSupersedeJudgeThreshold: default 0.80 (mirrors detector judgeThreshold), env-overridable', () => {
@@ -68,7 +68,9 @@ test('autoSupersedeJudgeThreshold: default 0.80 (mirrors detector judgeThreshold
 // is consulted ONLY for the eligible-in-band slice (`judged:true`).
 // ---------------------------------------------------------------------------
 
-const ELIGIBLE = { lane: 'work', persona: undefined, bandFloor: 0.84, bandCeiling: 0.87, judgeThreshold: 0.80, enabled: true };
+// bandCeiling mirrors the production default (0.95 since the band-widening) so these
+// parameterized tests exercise the live band edge, not a stale one (R3 lens C).
+const ELIGIBLE = { lane: 'work', persona: undefined, bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80, enabled: true };
 
 test('evaluateInBandSupersession: flag off → no supersede, judge NOT consulted', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
@@ -93,11 +95,11 @@ test('evaluateInBandSupersession: unpartitioned (no lane/persona) → no superse
 test('evaluateInBandSupersession: above the ceiling (pure duplicate) → no supersede, judge NOT consulted', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({
-    ...ELIGIBLE, score: 0.95, olderText: 'a', newerText: 'b', _judge: judge,
+    ...ELIGIBLE, score: 0.97, olderText: 'a', newerText: 'b', _judge: judge,
   });
   assert.equal(r.supersede, false);
   assert.equal(r.judged, false);
-  assert.equal(judge.calls.length, 0, 'score > ceiling = too similar to be a contradiction → keep-older without judging');
+  assert.equal(judge.calls.length, 0, 'score > 0.95 ceiling = confident duplicate → keep-older without judging');
 });
 
 test('evaluateInBandSupersession: below the floor → no supersede, judge NOT consulted', async () => {
@@ -112,7 +114,7 @@ test('evaluateInBandSupersession: below the floor → no supersede, judge NOT co
 test('evaluateInBandSupersession: omitted bandFloor → fail-safe never-in-band (no supersede, no judge)', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({
-    lane: 'work', enabled: true, bandCeiling: 0.87, judgeThreshold: 0.80,
+    lane: 'work', enabled: true, bandCeiling: 0.95, judgeThreshold: 0.80,
     score: 0.85, olderText: 'a', newerText: 'b', _judge: judge,
   });
   assert.equal(r.supersede, false, 'no bandFloor → NaN comparison → never in-band → safe');
@@ -154,10 +156,37 @@ test('evaluateInBandSupersession: in-band contradiction but confidence below thr
 test('evaluateInBandSupersession: boundary — score exactly at ceiling is in-band', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({
-    ...ELIGIBLE, score: 0.87, olderText: 'a', newerText: 'b', _judge: judge,
+    ...ELIGIBLE, score: 0.95, olderText: 'a', newerText: 'b', _judge: judge,
   });
-  assert.equal(r.judged, true, 'inclusive upper edge — score === ceiling still judged');
+  assert.equal(r.judged, true, 'inclusive upper edge — score === ceiling (0.95) still judged');
   assert.equal(r.supersede, true);
+});
+
+// The production DEFAULT ceiling (NO bandCeiling override) — the band-widening change (0.87 → 0.95).
+// The write path (add.mjs) passes no bandCeiling, so only these tests prove the SHIPPED default
+// end-to-end (R3 lens C: every other test injects an explicit ceiling and so can't catch a default
+// regression). 0.95 = the confident-duplicate floor: judge the whole dedup band [0.84, 0.95], cost-
+// skip only confident duplicates above it (validation results/2026-06-19-supersession-band-widening-*).
+test('evaluateInBandSupersession: DEFAULT ceiling — a 0.92 in-band hit routes to the judge and supersedes', async () => {
+  const judge = judgeStub({ contradicts: true, confidence: 0.91, reasoning: 'newer invalidates older' });
+  const r = await evaluateInBandSupersession({
+    lane: 'work', enabled: true, bandFloor: 0.84, judgeThreshold: 0.80, // NO bandCeiling → default 0.95
+    score: 0.92, olderText: 'production db is postgres', newerText: 'production db is mysql now', _judge: judge,
+  });
+  assert.equal(r.judged, true, '0.92 ∈ [0.84, 0.95 default] → judged (dup-skipped at the old 0.87 ceiling = the s009 bug)');
+  assert.equal(r.supersede, true);
+  assert.equal(judge.calls.length, 1);
+});
+
+test('evaluateInBandSupersession: DEFAULT ceiling — a 0.97 hit is above the confident-dup floor → NOT judged', async () => {
+  const judge = judgeStub({ contradicts: true, confidence: 0.99 });
+  const r = await evaluateInBandSupersession({
+    lane: 'work', enabled: true, bandFloor: 0.84, judgeThreshold: 0.80, // NO bandCeiling → default 0.95
+    score: 0.97, olderText: 'a', newerText: 'b', _judge: judge,
+  });
+  assert.equal(r.judged, false, '0.97 > 0.95 default → confident duplicate, cost-skip the judge');
+  assert.equal(r.supersede, false);
+  assert.equal(judge.calls.length, 0);
 });
 
 test('evaluateInBandSupersession: non-string olderText → fail-safe no supersede, no judge', async () => {
@@ -172,7 +201,7 @@ test('evaluateInBandSupersession: non-string olderText → fail-safe no supersed
 test('evaluateInBandSupersession: persona-only partition is eligible', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({
-    enabled: true, lane: undefined, persona: 'engineer', bandFloor: 0.84, bandCeiling: 0.87, judgeThreshold: 0.80,
+    enabled: true, lane: undefined, persona: 'engineer', bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80,
     score: 0.85, olderText: 'a', newerText: 'b', _judge: judge,
   });
   assert.equal(r.judged, true, 'persona alone satisfies the partition-eligibility gate');

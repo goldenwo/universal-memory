@@ -624,10 +624,10 @@ test('Gap-5 P3: demotion failure is fail-soft — newer stays current, write suc
   assert.equal(result.results.length, 1, 'umAdd returned a result (did not throw)');
 });
 
-// (b) out-of-band (cosine above the ceiling) → unchanged keep-older; judge NOT consulted.
+// (b) out-of-band (cosine above the 0.95 confident-dup floor) → unchanged keep-older; judge NOT consulted.
 test('Gap-5 P3: out-of-band hit (pure duplicate) → keep-older merge, no supersede, no judge', async () => {
   let judged = false;
-  const older = { id: 'older-pt-4', score: 0.95, payload: { data: 'dup', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-4', score: 0.97, payload: { data: 'dup', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'dup', userId: 'u1', metadata: { lane: 'work' }, infer: false,
