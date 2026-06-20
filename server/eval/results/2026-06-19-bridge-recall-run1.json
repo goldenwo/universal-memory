@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-06-19T07:47:27.831Z",
+  "n": 30,
+  "mode": "arm4 bridge-recall: real translateRows + real reindex umAdd (infer:false), content-contains recall@k; vs direct UM session-recall",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "arms": {
+    "bridge": {
+      "1": 0.733,
+      "3": 0.933,
+      "5": 1,
+      "10": 1,
+      "mrr": 0.85,
+      "misses": []
+    },
+    "directUM": {
+      "1": 0.767,
+      "3": 0.967,
+      "5": 1,
+      "10": 1,
+      "mrr": 0.868
+    }
+  },
+  "memoriesUntouched": true
+}
