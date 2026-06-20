@@ -355,7 +355,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     perQuery.push(rk);
     if (!twin) perQueryNoTwin.push(rk);
     reciprocalRanks.push(rr);
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], rr, twin, topIds: rankedIds.slice(0, 5) });
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], rr, twin, topScore: sr.results?.[0]?.score ?? null, topIds: rankedIds.slice(0, 5) });
   }
 
   return {
@@ -432,7 +432,26 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
  * @param {{recallRows:Array, stalenessRows:Array, runid?:string,
  *          recallFixturePath?:string, stalenessFixturePath?:string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], runid, recallFixturePath, stalenessFixturePath }) {
+/**
+ * No-answer pass (#6 — was deferred): query DISTRACTOR questions (no relevant seed) against the
+ * SEEDED recall store and record the top-1 retrieval score. precision@T = fraction whose top score
+ * is BELOW the "show it" threshold T (correctly abstained), via the pure noAnswerPrecision(). The
+ * threshold is reported as a sweep so it can be pinned against the answerable-query score band.
+ */
+async function noAnswerPass({ doSearch, memory, rows }) {
+  const perRow = [];
+  for (const row of rows) {
+    const sr = await doSearch(row.query, 10, false, true, { memory });
+    const results = sr.results ?? [];
+    perRow.push({ id: row.id, lane: row.lane, numResults: results.length, topScore: results[0]?.score ?? null, query: row.query });
+  }
+  const dist = (xs) => { const s = xs.filter((x) => typeof x === 'number').sort((a, b) => a - b); return s.length ? { n: s.length, min: +s[0].toFixed(4), median: +s[Math.floor((s.length - 1) / 2)].toFixed(4), max: +s[s.length - 1].toFixed(4) } : null; };
+  const SWEEP = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6];
+  const sweep = SWEEP.map((t) => ({ threshold: t, precision: noAnswerPrecision(perRow.map((r) => ({ hadHitAboveThreshold: typeof r.topScore === 'number' && r.topScore >= t }))) }));
+  return { total: perRow.length, topScoreDist: dist(perRow.map((r) => r.topScore)), sweep, perRow };
+}
+
+export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
@@ -473,6 +492,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
 
   let recall = null;
   let staleness = null;
+  let noAnswer = null;
   let seedInfo = null;
   try {
     if (recallRows.length > 0) {
@@ -483,6 +503,11 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
+      // No-answer pass reuses the now-seeded recall store (distractor queries see the 50 facts
+      // but should find nothing relevant). Gated on a seeded store — querying an empty one is vacuous.
+      if (noAnswerRows.length > 0) {
+        noAnswer = await noAnswerPass({ doSearch, memory: recallMemory, rows: noAnswerRows });
+      }
     }
     if (stalenessRows.length > 0) {
       await ensureCollection(client, stalenessCol, VECTOR_DIM); // create BEFORE makeMemory (avoid auto-create race)
@@ -513,7 +538,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
     fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)' },
     recall,
     staleness,
-    noAnswer: null, // #6 deferred this pass (threshold choice — see spec §6.4)
+    noAnswer, // #6 — wired 2026-06-19 (was deferred): no-answer precision over distractor queries
     cost,
   };
 }
@@ -545,9 +570,11 @@ async function cliMain() {
 
   const recallRows = args.recall ? await loadFixtureJsonl(args.recall) : [];
   const stalenessRows = args.staleness ? await loadFixtureJsonl(args.staleness) : [];
-  console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} — running live (scratch collections, real vault untouched)...`);
+  const naIdx = process.argv.indexOf('--no-answer');
+  const noAnswerRows = naIdx >= 0 ? await loadFixtureJsonl(process.argv[naIdx + 1]) : [];
+  console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
-  const result = await runOnce({ recallRows, stalenessRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness });
+  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'mq-eval')}-run1.json`;
@@ -557,6 +584,13 @@ async function cliMain() {
   console.log(`[mq-eval] Result written to ${primaryPath} and ${latestPath}`);
   console.log('');
   console.log(formatSummaryTable(result));
+  if (result.noAnswer) {
+    const na = result.noAnswer;
+    console.log(`  no-answer top-1 score dist (lower=better): ${JSON.stringify(na.topScoreDist)}`);
+    console.log(`  precision@threshold sweep: ${na.sweep.map((s) => `${s.threshold}:${s.precision == null ? 'n/a' : s.precision.toFixed(2)}`).join('  ')}`);
+    const ans = (result.recall?.details ?? []).map((d) => d.topScore).filter((s) => typeof s === 'number').sort((a, b) => a - b);
+    if (ans.length) console.log(`  answerable-query top-1 scores: min ${ans[0].toFixed(3)} median ${ans[Math.floor((ans.length - 1) / 2)].toFixed(3)} max ${ans[ans.length - 1].toFixed(3)} (a separating threshold means no-answer is achievable)`);
+  }
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);

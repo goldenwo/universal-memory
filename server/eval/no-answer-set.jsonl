@@ -1,0 +1,12 @@
+{"id":"na01","query":"what's the deadline for the vendor renewal contract","lane":"work","note":"no vendor/renewal fact seeded"}
+{"id":"na02","query":"what is the wifi network password at the house","lane":"home","note":"no wifi fact"}
+{"id":"na03","query":"what is my blood type","lane":"health","note":"no blood-type fact (closest: resting heart rate)"}
+{"id":"na04","query":"which cloud provider hosts our production servers","lane":"dev","note":"DB is Postgres but no hosting-provider fact"}
+{"id":"na05","query":"what is my favorite kind of pizza","lane":"food","note":"no pizza fact (sourdough/carbonara/chickpeas seeded)"}
+{"id":"na06","query":"how much is my car insurance premium","lane":"finance","note":"no car-insurance fact"}
+{"id":"na07","query":"which airline lounge do i have access to","lane":"travel","note":"no lounge fact (window seat / miles seeded)"}
+{"id":"na08","query":"when is my mother's birthday","lane":"family","note":"no mom-birthday fact (dad's 70th seeded)"}
+{"id":"na09","query":"what is my favorite hiking trail","lane":"hobby","note":"no hiking fact"}
+{"id":"na10","query":"which online course platform do i subscribe to","lane":"learning","note":"Spanish course seeded but no platform fact"}
+{"id":"na11","query":"who is the new intern on my team","lane":"work","note":"no intern fact (manager Priya seeded)"}
+{"id":"na12","query":"what medication do i take for blood pressure","lane":"health","note":"no BP-med fact (vitamin D seeded — semantically near)"}
