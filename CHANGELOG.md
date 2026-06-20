@@ -6,6 +6,29 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-06-19
+
+**v1.5 widens the write-time supersession judge window so phrasing-similar contradictions are caught instead of silently kept as duplicates.** When a newer fact contradicts an older one but is phrased similarly enough to land in the dedup embedding band, the in-band judge decides supersede-vs-merge. Through v1.4 that judge was cost-skipped above cosine **0.87**, so a real class of updates — the entity-swap pattern ("primary DB is PostgreSQL" → "…MySQL", the `s009` class, cosine ~0.87–0.94) — was treated as a confident duplicate and the **stale** older fact was kept. v1.5 raises the skip ceiling to **0.95**, eval-pinned just above the measured contradiction tail and below the near-value coexist zone, so every measured contradiction in that band now reaches the judge. Default-on (auto-supersession has shipped on by default since v1.2; lanes since v1.3); reversible; escape hatch provided. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) — memory quality / currency. See `MIGRATION.md` `## v1.4 → v1.5`.
+
+### Changed — supersession band widened to 0.95 (the s009 fix)
+
+- **`contradictionBandCeiling()` default `0.87` → `0.95`** ([#127](https://github.com/goldenwo/universal-memory/pull/127)). The upper cosine edge of the in-band contradiction window ([`server/lib/supersede.mjs`](server/lib/supersede.mjs)): a write-time dedup hit at or below this is handed to the LLM judge (supersede-vs-merge); above it the hit is a confident duplicate and the judge is cost-skipped. At `0.87` the entity-swap update class (`s009`, e.g. PostgreSQL → MySQL at cosine ~0.8725) fell above the ceiling, so it was dup-skipped, the stale fact kept, and the update silently dropped from default (only-current) recall.
+- **Eval-pinned, not guessed.** The band-widening validation ([`server/eval/supersession-gate-eval.mjs`](server/eval/supersession-gate-eval.mjs); [`results/2026-06-19-supersession-band-widening-validation.md`](server/eval/results/2026-06-19-supersession-band-widening-validation.md)) refuted any *separating* ceiling — contradictions and true duplicates overlap from ~0.84 to ~0.94, so the **judge**, not cosine, is the precision gate. `0.95` sits just above the held-out contradiction max (0.9396) and below the lone near-value over-supersede case (`os022`, 0.9632). Across a live `gpt-4o-mini` judge (5 runs) all four acceptance gates pass: capture 27/27, over-supersession clean at 0.95, no-false-merge 19/19, end-to-end staleness 18/18 (stale-return `0.000`, was `0.056`). Re-measured in the memory-quality eval, currency rose **0.944 → 1.000** with recall unchanged (0.98 / 1.0 / 0.99). `1.0` (no-skip) was rejected — it re-exposes the >0.95 coexist zone for zero capture gain (no contradiction embeds above 0.95).
+- **Reversible + opt-out.** The change only affects how *often* the judge fires; it stays flag-gated (`UM_AUTOSUPERSEDE_ENABLED`, fail-soft) and every supersession is reversible (`memory_supersede {action:'unsupersede', id}`; list with `only_superseded`). Pin the old ceiling with `UM_CONTRADICTION_BAND_CEILING=0.87`, or disable detection entirely with `UM_AUTOSUPERSEDE_ENABLED=false`.
+
+### Added — memory-quality evaluation suite + UM-vs-mem0 comparison matrix
+
+- **End-to-end memory-quality harness** ([#126](https://github.com/goldenwo/universal-memory/pull/126)). `recall@k` + `stale-return` over a labelled fixture ([`server/eval/memory-quality-eval.mjs`](server/eval/memory-quality-eval.mjs), [`recall-set.jsonl`](server/eval/recall-set.jsonl)); Tier-1 baseline recall@1 0.98 / recall@3+ 1.0 / MRR 0.99.
+- **Comparison matrix vs. raw mem0** ([#126](https://github.com/goldenwo/universal-memory/pull/126); [`results/2026-06-19-comparison-matrix.md`](server/eval/results/2026-06-19-comparison-matrix.md)). Fact-recall and session-recall arms (UM ≡ mem0 — shared retrieval core, zero recall delta), a 3-way staleness arm (UM dominates both mem0 `infer:false` and `infer:true` on currency; `infer:true` pays with silent nondeterministic data loss), and a bridge arm (claude-mem → UM preserves recall, adds coverage). Developer-facing tooling; no runtime behavior change.
+
+### Fixed — CI smoke gating
+
+- **Smoke skips cleanly without `OPENAI_API_KEY`** ([#128](https://github.com/goldenwo/universal-memory/pull/128)). A guard so the smoke job and the `mq-eval` smoke test skip rather than fail red when the OpenAI key/secret is absent, instead of erroring on a null embedder/LLM config.
+
+### Changed — server version
+
+- **Server version → `1.5.0`** across `server/package.json` (single source, read by [`server/lib/version.mjs`](server/lib/version.mjs)), the claude-code plugin manifest (drift-gated), and the committed ChatGPT Custom-GPT actions spec. Full suite 1266 pass / 0 fail / 14 skipped.
+
 ## [1.4.0] — 2026-06-14
 
 **v1.4 makes universal-memory connectable as an OAuth-authorized MCP server** — two opt-in capabilities that both ship **flag-off / default-inert**, so existing installs are byte-for-byte unaffected. **Gap-3** adds a spec-compliant embedded **OAuth 2.1 authorization server** so MCP vendor connectors (Claude.ai, ChatGPT) can authorize against a self-hosted server instead of a static bearer token. **Social login** (the Gap-4 identity bridge) adds a "Sign in with GitHub" button to the consent gate, stamping a canonical `sub=github:<id>` on every authorization. Both gated behind `UM_OAUTH_ENABLED` (default OFF); the legacy `UM_AUTH_TOKEN` bearer path is unchanged when off. Advances [#72](https://github.com/goldenwo/universal-memory/issues/72) (multi-vendor reach).
