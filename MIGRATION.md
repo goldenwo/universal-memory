@@ -1,5 +1,33 @@
 # Migration guide
 
+## v1.4 → v1.5
+
+v1.5 has **one operator-visible behavior change**: the write-time supersession judge window is **wider**, so more phrasing-similar contradictions are caught and supersede the older fact instead of being kept as duplicates. The server version bumps to `1.5.0`. If you run with auto-supersession on (the default since v1.2) and lane classification on (the default since v1.3), this takes effect automatically — and that is the intended improvement: fewer stale facts survive an update.
+
+### Supersession band widened to 0.95
+
+Through v1.4, a write-time dedup hit above cosine **0.87** was treated as a confident duplicate: the in-band contradiction judge was cost-skipped and the **older** fact kept. That dropped a real class of updates — entity-swap rewrites like "primary DB is PostgreSQL" → "primary DB is MySQL" (the `s009` class), which embed around 0.87–0.94 — on the floor: the stale fact stayed `current` and the update never superseded it.
+
+v1.5 raises the skip ceiling to **0.95** (`contradictionBandCeiling()` default `0.87` → `0.95`). Hits up to 0.95 now reach the judge, which decides supersede-vs-merge; only above 0.95 (a confident duplicate — no contradiction was observed there in eval) is the judge skipped. The value is eval-pinned just above the measured contradiction tail (held-out max 0.9396) and below the near-value coexist zone (0.9632), so it rescues every measured contradiction in the band while adding zero new over-supersession.
+
+### What changes for you
+
+- **You probably want this.** When a newer fact contradicts an older, similarly-phrased one in the same lane/persona, the older one is now correctly demoted to `superseded` and default (only-current) recall returns the new value. Measured currency rose 0.944 → 1.000 with no recall regression.
+- **Every supersession is reversible.** List superseded points with `only_superseded`; undo with `memory_supersede {action:'unsupersede', id}`. The newer fact is upserted *before* the older is demoted (crash-safe order), so a fact is never lost.
+
+### If you do NOT want the wider band
+
+- **Keep the old ceiling:** set `UM_CONTRADICTION_BAND_CEILING=0.87` before upgrading — the v1.4 behavior exactly.
+- **Disable auto-supersession entirely:** set `UM_AUTOSUPERSEDE_ENABLED=false` (the literal string `false`). See the v1.1 → v1.2 note for listing/undoing supersessions.
+
+### Server version string
+
+`server/package.json` → `1.5.0`. The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` report `1.5.0` — single source `server/lib/version.mjs` (reads `package.json`). No operator action; noted so a connected client seeing the version change knows it is expected.
+
+### Action for operators
+
+- **None required.** The wider band is the recommended default and improves memory currency. Only act if you specifically want the old, narrower band — see above.
+
 ## v1.3 → v1.4
 
 v1.4 adds two **opt-in, default-off** capabilities and changes **no existing behavior** — the upgrade is transparent unless you choose to enable them. The server version bumps to `1.4.0`.

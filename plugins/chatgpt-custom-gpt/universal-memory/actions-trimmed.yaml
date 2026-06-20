@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: universal-memory
-  version: 1.4.0
+  version: 1.5.0
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
     subset of the full spec — only the 7 routes a Custom GPT needs (search,
     state, add, delete, recent, append-turn, checkpoint). Full spec at
