@@ -26,7 +26,7 @@
  * confirms the wiring against live qdrant.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -608,12 +608,32 @@ async function cliMain() {
   console.log(`[mq-eval] Result written to ${primaryPath} and ${latestPath}`);
   console.log('');
   console.log(formatSummaryTable(result));
+
+  // Drift gate (opt-in via --gate): compare against committed floors, surface a
+  // report (console + CI step summary), exit 1 on any breach. Never weaken floors
+  // to make this pass — see docs/plans/2026-06-21-mq-quality-gate-spec.md §6.
+  if (args.gate) {
+    const config = JSON.parse(await readFile(args.gate, 'utf8'));
+    const gate = evaluateGate(result, config);
+    const report = formatGateReport(gate);
+    console.log('');
+    console.log(report);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n\`\`\`\n${report}\n\`\`\`\n`);
+    }
+    if (!gate.pass) {
+      console.error('[mq-eval] DRIFT GATE FAILED — fix the regression, or re-pin floors with a committed 2-run re-measurement + rationale. Do NOT silently loosen.');
+      process.exit(1);
+    }
+  }
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
 if (IS_MAIN) {
   cliMain().catch((e) => {
-    console.error('[mq-eval] FATAL:', e);
+    // A full OpenAI/mem0 SDK error object can embed request config (the apiKey);
+    // public nightly logs are world-readable. Message-only in CI; full object local.
+    console.error('[mq-eval] FATAL:', process.env.GITHUB_ACTIONS ? (e?.message ?? e) : e);
     process.exit(1);
   });
 }
