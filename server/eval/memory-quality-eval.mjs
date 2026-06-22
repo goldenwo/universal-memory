@@ -26,7 +26,7 @@
  * confirms the wiring against live qdrant.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -146,6 +146,56 @@ export function fireRate(stalenessRows) {
 }
 
 // ---------------------------------------------------------------------------
+// Drift-gate (PURE) — compares a runOnce() result against committed floors.
+// ---------------------------------------------------------------------------
+
+/** Pure deep-get by key path; undefined if any segment is missing or non-object. */
+function getByPath(obj, path) {
+  let cur = obj;
+  for (const key of path) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+/**
+ * PURE drift-gate evaluation. For each threshold, deep-get its metric from `result`
+ * and compare to the floor per `direction` ('min' → observed >= floor; 'max' →
+ * observed <= floor). Floors are INCLUSIVE. A gated metric that is absent or
+ * non-finite is a BREACH ('unmeasured') — never a silent pass (a dead detector or a
+ * gutted corpus must not read as healthy; see spec §3.3).
+ *
+ * @param {object} result   a runOnce() result object
+ * @param {{thresholds: Array<{metric:string, path:string[], direction:'min'|'max', floor:number}>}} config
+ * @returns {{ pass:boolean, checked:number, breaches:Array<{metric,observed,floor,direction,reason}> }}
+ */
+export function evaluateGate(result, config) {
+  const thresholds = config?.thresholds ?? [];
+  const breaches = [];
+  for (const t of thresholds) {
+    const observed = getByPath(result, t.path);
+    if (typeof observed !== 'number' || !Number.isFinite(observed)) {
+      breaches.push({ metric: t.metric, observed: observed ?? null, floor: t.floor, direction: t.direction, reason: 'unmeasured' });
+      continue;
+    }
+    const ok = t.direction === 'max' ? observed <= t.floor : observed >= t.floor;
+    if (!ok) breaches.push({ metric: t.metric, observed, floor: t.floor, direction: t.direction, reason: 'below_floor' });
+  }
+  return { pass: breaches.length === 0, checked: thresholds.length, breaches };
+}
+
+/** PURE multi-line gate report (CI step-summary + console). */
+export function formatGateReport(gate) {
+  const lines = [`=== mq drift gate: ${gate.pass ? 'PASS' : 'FAIL'} (${gate.checked} floor(s) checked) ===`];
+  for (const b of gate.breaches) {
+    const cmp = b.direction === 'max' ? '<=' : '>=';
+    lines.push(`  BREACH ${b.metric}: observed ${b.observed} fails ${cmp} ${b.floor} [${b.reason}]`);
+  }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Pretty-print (pure) — mirrors the d1/d3/lane formatSummaryTable shape.
 // ---------------------------------------------------------------------------
 
@@ -229,6 +279,7 @@ export function parseArgs(argv) {
     else if (a === '--staleness') args.staleness = argv[++i];
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
+    else if (a === '--gate') args.gate = argv[++i];
   }
   return args;
 }
@@ -557,12 +608,32 @@ async function cliMain() {
   console.log(`[mq-eval] Result written to ${primaryPath} and ${latestPath}`);
   console.log('');
   console.log(formatSummaryTable(result));
+
+  // Drift gate (opt-in via --gate): compare against committed floors, surface a
+  // report (console + CI step summary), exit 1 on any breach. Never weaken floors
+  // to make this pass — see docs/plans/2026-06-21-mq-quality-gate-spec.md §6.
+  if (args.gate) {
+    const config = JSON.parse(await readFile(args.gate, 'utf8'));
+    const gate = evaluateGate(result, config);
+    const report = formatGateReport(gate);
+    console.log('');
+    console.log(report);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n\`\`\`\n${report}\n\`\`\`\n`);
+    }
+    if (!gate.pass) {
+      console.error('[mq-eval] DRIFT GATE FAILED — fix the regression, or re-pin floors with a committed 2-run re-measurement + rationale. Do NOT silently loosen.');
+      process.exit(1);
+    }
+  }
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
 if (IS_MAIN) {
   cliMain().catch((e) => {
-    console.error('[mq-eval] FATAL:', e);
+    // A full OpenAI/mem0 SDK error object can embed request config (the apiKey);
+    // public nightly logs are world-readable. Message-only in CI; full object local.
+    console.error('[mq-eval] FATAL:', process.env.GITHUB_ACTIONS ? (e?.message ?? e) : e);
     process.exit(1);
   });
 }
