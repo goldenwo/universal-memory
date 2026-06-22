@@ -58,3 +58,102 @@ jobs:
       # `test/*.test.mjs` so `node --test` discovers them when invoked
       # without an explicit filename. Use `{ skip: !runLive }` per the
       # `summarize-external-marker.test.mjs` pattern.
+
+  # Memory-quality drift gate. Re-measures recall + currency against committed
+  # floors (server/eval/mq-gate-thresholds.json) and FAILS RED on regression.
+  # Nightly (not per-PR): the eval makes real embed + LLM-judge calls, too costly
+  # /nondeterministic to block every PR. Runs against a throwaway qdrant service
+  # container on scratch eval_mq_* collections only — never the real `memories`.
+  mq-quality-gate:
+    name: memory-quality drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.repository == 'goldenwo/universal-memory'
+
+    # Serialize: an overlapping cron + workflow_dispatch must not run two evals at
+    # once, or one run's teardown could drop the other's date+pid-scoped scratch
+    # collection mid-pass (a false red). cancel-in-progress:false → a dispatch
+    # queues behind the cron rather than killing it mid-write.
+    concurrency:
+      group: mq-quality-gate
+      cancel-in-progress: false
+
+    # Pinned to match @qdrant/js-client-rest 1.13.0 + server/docker-compose.yml.
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.13.0
+        ports:
+          - 6333:6333
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install server deps
+        working-directory: server
+        run: npm ci
+
+      # W6.2 parity — the eval builds a mem0 Memory in-process; apply the same
+      # mem0ai patch the production image bakes in (mirrors smoke.yml).
+      - name: Apply mem0ai patch (W6.2 parity)
+        working-directory: server
+        run: npx patch-package
+
+      # qdrant images are distroless (no curl), so health-check from the runner
+      # rather than a service-level --health-cmd.
+      - name: Wait for qdrant readiness
+        run: |
+          timeout 60 bash -c 'until curl -sf http://localhost:6333/readyz >/dev/null 2>&1; do sleep 1; done' \
+            || { echo "::error::qdrant service did not become ready in 60s"; exit 1; }
+
+      # The eval needs a real key for embeddings + the contradiction judge. Both
+      # env names are set: cliMain's preflight reads OPENAI_API_KEY; the provider
+      # config resolves UM_OPENAI_API_KEY first (resolveApiKey precedence) — this
+      # is the wiring whose absence caused the ZodError (obs 27933).
+      - name: Run memory-quality drift gate
+        working-directory: server
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QDRANT_HOST: localhost
+          QDRANT_PORT: "6333"
+        run: |
+          # A scheduled gate with nobody watching must treat a missing/rotated key
+          # as a drift event, NOT skip green (the "dead detector reads as healthy"
+          # failure). Forks are already excluded by the job-level `if:` repo guard.
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY absent on the canonical repo — the drift gate cannot measure. This is a misconfiguration, not a pass."
+            exit 1
+          fi
+          # --out writes both ci-mq-gate.json (the artifact of record) and a
+          # discarded mq-latest.json; only the former is uploaded below.
+          node eval/memory-quality-eval.mjs \
+            --recall eval/recall-set.jsonl \
+            --staleness eval/staleness-set.jsonl \
+            --gate eval/mq-gate-thresholds.json \
+            --out eval/results/ci-mq-gate.json
+
+      # Make a red run actionable: a real metric breach exits 1 WITH a result file
+      # written (+ a "DRIFT GATE FAILED" line in the prior step); an infra crash
+      # (qdrant/OpenAI/fixture) exits 1 WITHOUT one. Classify so the operator's
+      # failure email says which.
+      - name: Classify failure (breach vs infra)
+        if: failure()
+        working-directory: server
+        run: |
+          if [ -f eval/results/ci-mq-gate.json ]; then
+            echo "::error::mq drift gate FAILED with a result written — treat as a real metric breach. Inspect the artifact + step summary."
+          else
+            echo "::warning::mq gate failed WITHOUT a result file — likely infra (qdrant/OpenAI/transient), not a quality regression. Re-run before treating as drift."
+          fi
+
+      - name: Upload result JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mq-gate-result
+          path: server/eval/results/ci-mq-gate.json
+          if-no-files-found: ignore
