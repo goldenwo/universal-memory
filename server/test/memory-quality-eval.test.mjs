@@ -34,6 +34,7 @@ import {
   mrr,
   staleReturnRate,
   noAnswerPrecision,
+  answerCorrectnessRate,
   fireRate,
   formatSummaryTable,
   loadFixtureJsonl,
@@ -148,23 +149,33 @@ test('staleReturnRate: no fired rows → null (unmeasurable)', () => {
   assert.equal(staleReturnRate([]), null);
 });
 
-// --- noAnswerPrecision (over distractor queries) ---------------------------
+// --- noAnswerPrecision (over unanswerable queries; topHitAnswered = grader verdict) ---
 
-test('noAnswerPrecision: fraction correctly returning empty', () => {
+test('noAnswerPrecision: fraction whose top hit did NOT answer', () => {
   const rows = [
-    { hadHitAboveThreshold: false },
-    { hadHitAboveThreshold: false },
-    { hadHitAboveThreshold: true },
+    { topHitAnswered: false },
+    { topHitAnswered: false },
+    { topHitAnswered: true },
   ];
   assert.equal(noAnswerPrecision(rows), 2 / 3);
 });
 
-test('noAnswerPrecision: all correctly empty → 1', () => {
-  assert.equal(noAnswerPrecision([{ hadHitAboveThreshold: false }]), 1);
+test('noAnswerPrecision: all correctly non-answers → 1', () => {
+  assert.equal(noAnswerPrecision([{ topHitAnswered: false }]), 1);
 });
 
 test('noAnswerPrecision: empty → null', () => {
   assert.equal(noAnswerPrecision([]), null);
+});
+
+// --- answerCorrectnessRate (over answerable queries) -----------------------
+
+test('answerCorrectnessRate: fraction whose top hit answered', () => {
+  assert.equal(answerCorrectnessRate([{ topHitAnswered: true }, { topHitAnswered: true }, { topHitAnswered: false }]), 2 / 3);
+});
+
+test('answerCorrectnessRate: empty → null', () => {
+  assert.equal(answerCorrectnessRate([]), null);
 });
 
 // --- fireRate (detector supersession-recall signal) ------------------------

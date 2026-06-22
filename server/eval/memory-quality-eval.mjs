@@ -125,13 +125,26 @@ export function staleReturnRate(firedRows) {
 }
 
 /**
- * No-answer precision over distractor queries (queries with NO relevant seed): the
- * fraction that correctly returned nothing above threshold. Empty → null.
+ * No-answer precision over UNANSWERABLE queries (no relevant seed in the corpus): the
+ * fraction whose top hit did NOT answer (a correct non-answer). `topHitAnswered` is the
+ * LLM answer-grader's verdict on doSearch top-1. Empty → null. Parse-fail rows are
+ * excluded by the caller (answerCorrectnessPass) before aggregation.
  *
- * @param {Array<{hadHitAboveThreshold:boolean}>} distractorRows
+ * @param {Array<{topHitAnswered:boolean}>} distractorRows
  */
 export function noAnswerPrecision(distractorRows) {
-  return rate((distractorRows ?? []).map((r) => r.hadHitAboveThreshold !== true));
+  return rate((distractorRows ?? []).map((r) => r.topHitAnswered !== true));
+}
+
+/**
+ * Answer-correctness over ANSWERABLE queries: the fraction whose top hit answered.
+ * `topHitAnswered` is the LLM answer-grader's verdict on doSearch top-1. Empty → null.
+ * Parse-fail rows are excluded by the caller before aggregation.
+ *
+ * @param {Array<{topHitAnswered:boolean}>} answerableRows
+ */
+export function answerCorrectnessRate(answerableRows) {
+  return rate((answerableRows ?? []).map((r) => r.topHitAnswered === true));
 }
 
 /**
