@@ -198,6 +198,18 @@ export const umDedupTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Answer-correctness eval grader (offline thermometer — spec 2026-06-22). NOT a
+// hot-path counter; incremented only by the offline eval. `outcome` ∈
+// {'answers','declines','parse_fail'} — fixed enum (bounded cardinality 3).
+// answers/declines = a parsed verdict (memory does / does not answer); parse_fail =
+// unparseable or invoke error (the grader's ok:false).
+export const umAnswerGradedTotal = new promClient.Counter({
+  name: 'um_answer_graded_total',
+  help: 'Answer-correctness grader verdicts (offline eval): answers|declines|parse_fail',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
 // Lane auto-classification outcomes at write time (Gap-5).
 // `outcome` ∈ {'routed','omitted','error'} — fixed enum, never user input (bounded cardinality).
 export const umLaneClassifiedTotal = new promClient.Counter({
