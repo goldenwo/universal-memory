@@ -1,0 +1,13 @@
+{
+  "_comment": "Memory-quality CI drift gate floors. PINNED from 2 live runs on main (floor = observed_min - safety_margin; the max-metric uses observed_max + margin). NEVER weaken to make CI green; re-pin only with a committed 2-run re-measurement + rationale. Spec: docs/plans/2026-06-21-mq-quality-gate-spec.md (esp. 3.2, 3.3, 6).",
+  "pinnedFrom": ["PROVISIONAL — replace with the 2026-06-21 live run filenames in Task 5"],
+  "thresholds": [
+    { "metric": "recall@1",        "path": ["recall", "aggregate", "1"],     "direction": "min", "floor": 0.90 },
+    { "metric": "recall@5",        "path": ["recall", "aggregate", "5"],     "direction": "min", "floor": 0.96 },
+    { "metric": "mrr",             "path": ["recall", "mrr"],                "direction": "min", "floor": 0.95 },
+    { "metric": "staleReturnRate", "path": ["staleness", "staleReturnRate"], "direction": "max", "floor": 0.00 },
+    { "metric": "fireRate",        "path": ["staleness", "fireRate"],        "direction": "min", "floor": 0.80 },
+    { "metric": "seedCount",       "path": ["recall", "seedCount"],          "direction": "min", "floor": 50 },
+    { "metric": "stalenessTotal",  "path": ["staleness", "total"],           "direction": "min", "floor": 18 }
+  ]
+}
