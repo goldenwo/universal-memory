@@ -1,0 +1,1061 @@
+{
+  "timestamp": "2026-06-22T04:12:41.304Z",
+  "provider": "openai",
+  "model": "text-embedding-3-small (provider default)",
+  "fixtureRev": "5adaacb76ef22ed87c604c94d53502ad",
+  "evalUser": "um-mq-eval",
+  "flags": {
+    "UM_DEDUP_ENABLED": "true",
+    "UM_AUTOSUPERSEDE_ENABLED": "true",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "false"
+  },
+  "env": {
+    "node": "v20.20.2",
+    "platform": "linux"
+  },
+  "fixtures": {
+    "recall": "eval/recall-set.jsonl",
+    "staleness": "eval/staleness-set.jsonl"
+  },
+  "recall": {
+    "ks": [
+      1,
+      3,
+      5,
+      10
+    ],
+    "queryCount": 50,
+    "aggregate": {
+      "1": 0.98,
+      "3": 1,
+      "5": 1,
+      "10": 1
+    },
+    "collisionExcludedAggregate": {
+      "1": 0.98,
+      "3": 1,
+      "5": 1,
+      "10": 1
+    },
+    "twinFlagged": 0,
+    "mrr": 0.99,
+    "details": [
+      {
+        "id": "r001",
+        "query": "what's the new time for the morning sync",
+        "target_ref": "r001:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "253f7871-d24c-5605-a500-9a1e8e3479b2",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "8a725d15-fa72-5915-85cf-2d6e5e77e4c4",
+          "51e5ddb2-35a8-5cf6-afec-cfdf7a16b591"
+        ]
+      },
+      {
+        "id": "r002",
+        "query": "how does my boss like to receive progress reports",
+        "target_ref": "r002:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "02d3c472-aa54-54ea-8899-e633ff317eba",
+          "42776023-dd19-57bf-a780-7b09b6a34de8",
+          "253f7871-d24c-5605-a500-9a1e8e3479b2",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5"
+        ]
+      },
+      {
+        "id": "r003",
+        "query": "when do we go over autumn spending plans",
+        "target_ref": "r003:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778",
+          "8454d01a-24d0-500b-8bdd-4c3278ece5a6",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "02d3c472-aa54-54ea-8899-e633ff317eba",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5"
+        ]
+      },
+      {
+        "id": "r004",
+        "query": "why is the client pitch on hold right now",
+        "target_ref": "r004:0",
+        "paraphrase_level": "oblique",
+        "rank1": 0,
+        "rr": 0.5,
+        "twin": false,
+        "topIds": [
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "42776023-dd19-57bf-a780-7b09b6a34de8",
+          "253f7871-d24c-5605-a500-9a1e8e3479b2",
+          "6f988317-8937-516b-a078-764841a5b37c",
+          "1764a94a-4115-5ef5-87ea-eb68de783739"
+        ]
+      },
+      {
+        "id": "r005",
+        "query": "how long before my entry card stops working",
+        "target_ref": "r005:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5",
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b",
+          "40834589-ca6c-5a36-b3a3-106a3b686845"
+        ]
+      },
+      {
+        "id": "r006",
+        "query": "where can a guest find the way in when i'm out",
+        "target_ref": "r006:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "6f988317-8937-516b-a078-764841a5b37c",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85"
+        ]
+      },
+      {
+        "id": "r007",
+        "query": "which evening do i wheel the bins to the curb",
+        "target_ref": "r007:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "a3e267f9-945c-541c-a96b-de5df81ecf04",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "ebcc52ae-d843-5fe5-8fd0-001c83d88aaf",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778"
+        ]
+      },
+      {
+        "id": "r008",
+        "query": "where do i stop the supply if a pipe bursts",
+        "target_ref": "r008:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "4a4d1d21-477d-540c-b436-34a0406fd913",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "1d5a31f7-c526-5b4d-b06c-40c02f23955a",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "c6a09a5c-53a6-5e86-9fd2-6d955f1fe98b"
+        ]
+      },
+      {
+        "id": "r009",
+        "query": "what color is the spare room now",
+        "target_ref": "r009:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85",
+          "ebcc52ae-d843-5fe5-8fd0-001c83d88aaf",
+          "1764a94a-4115-5ef5-87ea-eb68de783739"
+        ]
+      },
+      {
+        "id": "r010",
+        "query": "how cold does the house get while we sleep",
+        "target_ref": "r010:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "51e5ddb2-35a8-5cf6-afec-cfdf7a16b591",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d",
+          "4a4d1d21-477d-540c-b436-34a0406fd913",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb"
+        ]
+      },
+      {
+        "id": "r011",
+        "query": "what seafood should i steer clear of at dinner",
+        "target_ref": "r011:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "c294d4c2-332e-50c1-adde-78f097090b7f",
+          "6767d8fb-418b-54f6-a86b-d759c856acc4",
+          "c14c2808-e5ba-5e98-b58c-0edf4ffd0c4b",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "02a21f4d-2b95-5bdb-a05d-2ecfe659aad2"
+        ]
+      },
+      {
+        "id": "r012",
+        "query": "when is my upcoming teeth checkup",
+        "target_ref": "r012:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "1764a94a-4115-5ef5-87ea-eb68de783739",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5",
+          "ff85cf94-cacc-5c62-8769-ac866d777ee2"
+        ]
+      },
+      {
+        "id": "r013",
+        "query": "how much of the sunshine supplement do i take now",
+        "target_ref": "r013:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "adf1b892-af0d-5a54-8e47-37873e8708ed",
+          "8a725d15-fa72-5915-85cf-2d6e5e77e4c4",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "de2f8330-4c9b-542d-9969-58e7aac550ab",
+          "40834589-ca6c-5a36-b3a3-106a3b686845"
+        ]
+      },
+      {
+        "id": "r014",
+        "query": "what habit improves my rest at night",
+        "target_ref": "r014:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "51e5ddb2-35a8-5cf6-afec-cfdf7a16b591",
+          "1dce3503-1b54-5e62-aa55-19f2fd81b37f",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "8a725d15-fa72-5915-85cf-2d6e5e77e4c4"
+        ]
+      },
+      {
+        "id": "r015",
+        "query": "what's my baseline pulse these days",
+        "target_ref": "r015:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "1dce3503-1b54-5e62-aa55-19f2fd81b37f",
+          "adf1b892-af0d-5a54-8e47-37873e8708ed",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "b3bfce3f-0be7-5373-902a-08073405ee7e",
+          "8a725d15-fa72-5915-85cf-2d6e5e77e4c4"
+        ]
+      },
+      {
+        "id": "r016",
+        "query": "which database backs our login system now",
+        "target_ref": "r016:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "a5a788da-882a-50c5-a9e4-92a4200aea4f",
+          "78c49b0a-7b16-5ff6-a374-4278facfe2c7",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "b2fd37e5-5c33-5bc7-ac20-4790e2ee84ad"
+        ]
+      },
+      {
+        "id": "r017",
+        "query": "under what condition does that unreliable spec break",
+        "target_ref": "r017:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "78c49b0a-7b16-5ff6-a374-4278facfe2c7",
+          "fddcf751-971e-5324-becf-18795c3379ab",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778",
+          "0a09695e-a71a-5ab7-9b98-c16f8f61d3f1",
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b"
+        ]
+      },
+      {
+        "id": "r018",
+        "query": "why did we freeze the style checker release",
+        "target_ref": "r018:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "fddcf751-971e-5324-becf-18795c3379ab",
+          "78c49b0a-7b16-5ff6-a374-4278facfe2c7",
+          "a5a788da-882a-50c5-a9e4-92a4200aea4f",
+          "b2fd37e5-5c33-5bc7-ac20-4790e2ee84ad",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816"
+        ]
+      },
+      {
+        "id": "r019",
+        "query": "how long until a toggle change actually takes effect",
+        "target_ref": "r019:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "41844565-bdb1-52e2-997c-423ec82c1751",
+          "b2fd37e5-5c33-5bc7-ac20-4790e2ee84ad",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "253f7871-d24c-5605-a500-9a1e8e3479b2",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816"
+        ]
+      },
+      {
+        "id": "r020",
+        "query": "what triggers a push to the test environment",
+        "target_ref": "r020:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "b2fd37e5-5c33-5bc7-ac20-4790e2ee84ad",
+          "78c49b0a-7b16-5ff6-a374-4278facfe2c7",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b",
+          "a5a788da-882a-50c5-a9e4-92a4200aea4f"
+        ]
+      },
+      {
+        "id": "r021",
+        "query": "what do i mix into my bread culture daily",
+        "target_ref": "r021:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "adf1b892-af0d-5a54-8e47-37873e8708ed",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "23a946a8-e5a1-5a53-a53e-c2d43d121b78"
+        ]
+      },
+      {
+        "id": "r022",
+        "query": "where did i taste that incredible pasta dish",
+        "target_ref": "r022:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "c14c2808-e5ba-5e98-b58c-0edf4ffd0c4b",
+          "6767d8fb-418b-54f6-a86b-d759c856acc4",
+          "23a946a8-e5a1-5a53-a53e-c2d43d121b78",
+          "5dd7e823-5327-552b-bc18-ff2abf28f50a",
+          "1d5a31f7-c526-5b4d-b06c-40c02f23955a"
+        ]
+      },
+      {
+        "id": "r023",
+        "query": "how much caffeine do i allow myself early in the day",
+        "target_ref": "r023:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "8a725d15-fa72-5915-85cf-2d6e5e77e4c4",
+          "adf1b892-af0d-5a54-8e47-37873e8708ed",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "40834589-ca6c-5a36-b3a3-106a3b686845"
+        ]
+      },
+      {
+        "id": "r024",
+        "query": "what do i usually cook on a busy evening",
+        "target_ref": "r024:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "6767d8fb-418b-54f6-a86b-d759c856acc4",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "1d5a31f7-c526-5b4d-b06c-40c02f23955a",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "a3e267f9-945c-541c-a96b-de5df81ecf04"
+        ]
+      },
+      {
+        "id": "r025",
+        "query": "when does the herb stall run dry on saturdays",
+        "target_ref": "r025:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "1d5a31f7-c526-5b4d-b06c-40c02f23955a",
+          "253f7871-d24c-5605-a500-9a1e8e3479b2",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "a3e267f9-945c-541c-a96b-de5df81ecf04",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5"
+        ]
+      },
+      {
+        "id": "r026",
+        "query": "where is my rainy-day savings parked now",
+        "target_ref": "r026:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "42776023-dd19-57bf-a780-7b09b6a34de8",
+          "02d3c472-aa54-54ea-8899-e633ff317eba",
+          "a3e267f9-945c-541c-a96b-de5df81ecf04"
+        ]
+      },
+      {
+        "id": "r027",
+        "query": "when does the billing cycle end on my card",
+        "target_ref": "r027:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "1764a94a-4115-5ef5-87ea-eb68de783739"
+        ]
+      },
+      {
+        "id": "r028",
+        "query": "how do i prioritize my retirement contributions",
+        "target_ref": "r028:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "de2f8330-4c9b-542d-9969-58e7aac550ab",
+          "02d3c472-aa54-54ea-8899-e633ff317eba",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816"
+        ]
+      },
+      {
+        "id": "r029",
+        "query": "what's the interest on my home loan after redoing it",
+        "target_ref": "r029:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "b3bfce3f-0be7-5373-902a-08073405ee7e",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "de2f8330-4c9b-542d-9969-58e7aac550ab",
+          "1dce3503-1b54-5e62-aa55-19f2fd81b37f",
+          "42776023-dd19-57bf-a780-7b09b6a34de8"
+        ]
+      },
+      {
+        "id": "r030",
+        "query": "how much of my contract pay do i reserve for the irs",
+        "target_ref": "r030:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "02d3c472-aa54-54ea-8899-e633ff317eba",
+          "de2f8330-4c9b-542d-9969-58e7aac550ab",
+          "42776023-dd19-57bf-a780-7b09b6a34de8",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778"
+        ]
+      },
+      {
+        "id": "r031",
+        "query": "when does my travel document run out",
+        "target_ref": "r031:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "e32a96f1-7e16-5eaa-b8b5-93c8d2ab59b5",
+          "c6a09a5c-53a6-5e86-9fd2-6d955f1fe98b",
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b"
+        ]
+      },
+      {
+        "id": "r032",
+        "query": "what's my usual airplane seating preference",
+        "target_ref": "r032:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "6f988317-8937-516b-a078-764841a5b37c",
+          "28434cae-0183-530b-8533-12bdf6b41b0d",
+          "c6a09a5c-53a6-5e86-9fd2-6d955f1fe98b",
+          "1dce3503-1b54-5e62-aa55-19f2fd81b37f",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816"
+        ]
+      },
+      {
+        "id": "r033",
+        "query": "when are we headed to portugal",
+        "target_ref": "r033:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "8454d01a-24d0-500b-8bdd-4c3278ece5a6",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778",
+          "e77aca08-9a9f-5313-8d74-7fec52d82834",
+          "1764a94a-4115-5ef5-87ea-eb68de783739"
+        ]
+      },
+      {
+        "id": "r034",
+        "query": "which destination can i now fly to on points",
+        "target_ref": "r034:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "28434cae-0183-530b-8533-12bdf6b41b0d",
+          "6f988317-8937-516b-a078-764841a5b37c",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "8454d01a-24d0-500b-8bdd-4c3278ece5a6",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498"
+        ]
+      },
+      {
+        "id": "r035",
+        "query": "what do i keep prepped to avoid leaving it behind",
+        "target_ref": "r035:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "c6a09a5c-53a6-5e86-9fd2-6d955f1fe98b",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52"
+        ]
+      },
+      {
+        "id": "r036",
+        "query": "when is the new grandchild arriving",
+        "target_ref": "r036:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "ff85cf94-cacc-5c62-8769-ac866d777ee2",
+          "9b8b3416-660b-5898-a537-1eb66b24fd3a",
+          "1764a94a-4115-5ef5-87ea-eb68de783739",
+          "ad7b91ad-fca0-5bc8-a220-998dcca04778",
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d"
+        ]
+      },
+      {
+        "id": "r037",
+        "query": "where are we celebrating my father's milestone",
+        "target_ref": "r037:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "02a21f4d-2b95-5bdb-a05d-2ecfe659aad2",
+          "ebcc52ae-d843-5fe5-8fd0-001c83d88aaf",
+          "0a09695e-a71a-5ab7-9b98-c16f8f61d3f1",
+          "2f215a51-3a90-50cd-867b-b829077b1530",
+          "9b8b3416-660b-5898-a537-1eb66b24fd3a"
+        ]
+      },
+      {
+        "id": "r038",
+        "query": "when does custody hand off to their other parent",
+        "target_ref": "r038:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "ebcc52ae-d843-5fe5-8fd0-001c83d88aaf",
+          "42776023-dd19-57bf-a780-7b09b6a34de8",
+          "b2fd37e5-5c33-5bc7-ac20-4790e2ee84ad",
+          "ff85cf94-cacc-5c62-8769-ac866d777ee2",
+          "a3e267f9-945c-541c-a96b-de5df81ecf04"
+        ]
+      },
+      {
+        "id": "r039",
+        "query": "what makes the family dumplings taste special",
+        "target_ref": "r039:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "23a946a8-e5a1-5a53-a53e-c2d43d121b78",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "c14c2808-e5ba-5e98-b58c-0edf4ffd0c4b",
+          "6767d8fb-418b-54f6-a86b-d759c856acc4",
+          "5dd7e823-5327-552b-bc18-ff2abf28f50a"
+        ]
+      },
+      {
+        "id": "r040",
+        "query": "where did my brother's son begin school",
+        "target_ref": "r040:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "9b8b3416-660b-5898-a537-1eb66b24fd3a",
+          "ff85cf94-cacc-5c62-8769-ac866d777ee2",
+          "ebcc52ae-d843-5fe5-8fd0-001c83d88aaf",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85",
+          "e77aca08-9a9f-5313-8d74-7fec52d82834"
+        ]
+      },
+      {
+        "id": "r041",
+        "query": "what vintage motorcycle am i fixing up",
+        "target_ref": "r041:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "0a09695e-a71a-5ab7-9b98-c16f8f61d3f1",
+          "1764a94a-4115-5ef5-87ea-eb68de783739",
+          "5dd7e823-5327-552b-bc18-ff2abf28f50a",
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d",
+          "66c35611-cb86-57de-a057-f0113015a6f4"
+        ]
+      },
+      {
+        "id": "r042",
+        "query": "where does my board game ranking sit now",
+        "target_ref": "r042:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "066866ab-d5d9-5039-a304-e6d160e57ad3",
+          "a4ccec96-7bfc-5987-aefd-b9bb9c2f52b4",
+          "1dce3503-1b54-5e62-aa55-19f2fd81b37f",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "8454d01a-24d0-500b-8bdd-4c3278ece5a6"
+        ]
+      },
+      {
+        "id": "r043",
+        "query": "what books am i working through right now",
+        "target_ref": "r043:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "a4ccec96-7bfc-5987-aefd-b9bb9c2f52b4",
+          "e77aca08-9a9f-5313-8d74-7fec52d82834",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "1764a94a-4115-5ef5-87ea-eb68de783739"
+        ]
+      },
+      {
+        "id": "r044",
+        "query": "what kind of stock does my analog shooter use",
+        "target_ref": "r044:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "66c35611-cb86-57de-a057-f0113015a6f4",
+          "ad96bc0f-6241-5370-95a3-dbe1f47b2498",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816",
+          "de2f8330-4c9b-542d-9969-58e7aac550ab",
+          "0a09695e-a71a-5ab7-9b98-c16f8f61d3f1"
+        ]
+      },
+      {
+        "id": "r045",
+        "query": "what do i cultivate in my outdoor container plot",
+        "target_ref": "r045:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "5dd7e823-5327-552b-bc18-ff2abf28f50a",
+          "28e2daf0-2df4-5f2e-851b-432f351827cb",
+          "45fe6990-b4d9-5314-a061-f5a444c2ea14",
+          "1d5a31f7-c526-5b4d-b06c-40c02f23955a",
+          "9d00e0b7-efc8-5fc1-a2ea-cc279bfc611d"
+        ]
+      },
+      {
+        "id": "r046",
+        "query": "how far along am i in studying the language",
+        "target_ref": "r046:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "e77aca08-9a9f-5313-8d74-7fec52d82834",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85",
+          "a4ccec96-7bfc-5987-aefd-b9bb9c2f52b4",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "fddcf751-971e-5324-becf-18795c3379ab"
+        ]
+      },
+      {
+        "id": "r047",
+        "query": "how many second chances do i get on the credential test",
+        "target_ref": "r047:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "e90a9356-624a-5094-b880-6b326b96ce3e",
+          "41844565-bdb1-52e2-997c-423ec82c1751",
+          "78c49b0a-7b16-5ff6-a374-4278facfe2c7"
+        ]
+      },
+      {
+        "id": "r048",
+        "query": "what study method works best for me",
+        "target_ref": "r048:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "b910dc94-db48-5c4c-93a8-4ba3998c6b9f",
+          "e77aca08-9a9f-5313-8d74-7fec52d82834",
+          "d5e6c512-5e5f-5f20-8060-d89e34fe4816"
+        ]
+      },
+      {
+        "id": "r049",
+        "query": "which piece am i preparing for the performance",
+        "target_ref": "r049:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "2f215a51-3a90-50cd-867b-b829077b1530",
+          "e77aca08-9a9f-5313-8d74-7fec52d82834",
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "0a09695e-a71a-5ab7-9b98-c16f8f61d3f1",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85"
+        ]
+      },
+      {
+        "id": "r050",
+        "query": "when do i go over my memorization decks",
+        "target_ref": "r050:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "rr": 1,
+        "twin": false,
+        "topIds": [
+          "40834589-ca6c-5a36-b3a3-106a3b686845",
+          "f8b22838-e2bd-5c9f-b216-8b0752e92c85",
+          "1ab96799-6dbe-5c38-8300-00dd3d5dcd52",
+          "90f25fb9-7d1a-5d0b-9682-96a6e9e3137b",
+          "e90a9356-624a-5094-b880-6b326b96ce3e"
+        ]
+      }
+    ],
+    "seedCount": 50,
+    "mergedCount": 0,
+    "distinctIdCount": 50
+  },
+  "staleness": {
+    "total": 18,
+    "fired": 18,
+    "fireRate": 1,
+    "staleReturnRate": 0,
+    "perRow": [
+      {
+        "id": "s001",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "339b819d-394e-5450-8df3-d44d096b3ba0",
+        "updatedId": "46878876-4bd1-52e3-8100-c596d9ff6e90",
+        "supersededTarget": "339b819d-394e-5450-8df3-d44d096b3ba0",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s002",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "e646b833-1791-5b90-a0e3-3210a55022e6",
+        "updatedId": "bce8658b-56f2-5d2d-bb7b-e2b8c4ef2a0d",
+        "supersededTarget": "e646b833-1791-5b90-a0e3-3210a55022e6",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s003",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "59f4c96a-8c36-5456-a050-b1df0f8bd8a3",
+        "updatedId": "cc51133f-3b0f-5c51-8ec5-b1f51ac92b48",
+        "supersededTarget": "59f4c96a-8c36-5456-a050-b1df0f8bd8a3",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s004",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "2a84bd9a-734a-53c0-a521-396918b183d1",
+        "updatedId": "8c253d60-2c8a-5276-9ec9-9f2758b7a55b",
+        "supersededTarget": "2a84bd9a-734a-53c0-a521-396918b183d1",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s005",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "4452c453-5ac4-5e81-83fc-5a20d3e8adae",
+        "updatedId": "04b7eeb2-eef8-5400-8843-96fc9fad454f",
+        "supersededTarget": "4452c453-5ac4-5e81-83fc-5a20d3e8adae",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s006",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "7a953d75-7d86-5e1d-9b09-f9ea98613011",
+        "updatedId": "6172acc8-3179-5f1a-a0f4-511aa26e9312",
+        "supersededTarget": "7a953d75-7d86-5e1d-9b09-f9ea98613011",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s007",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "782ce806-c6ee-5a92-8dad-fbb77cd4e7b1",
+        "updatedId": "5307b5ba-6fea-5a53-92e7-c836d35116e7",
+        "supersededTarget": "782ce806-c6ee-5a92-8dad-fbb77cd4e7b1",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s008",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "421c8e21-668c-50df-ab28-1fccdc427ce0",
+        "updatedId": "a342fa26-033a-59ac-87a6-5b2e757acc7a",
+        "supersededTarget": "421c8e21-668c-50df-ab28-1fccdc427ce0",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s009",
+        "lane": "dev",
+        "updatedEvent": "SUPERSEDED_INBAND",
+        "fired": true,
+        "firedPath": "inband",
+        "originalId": "1e629cf5-8d7d-5764-9149-11cca50cda1f",
+        "updatedId": "17326a44-bf47-5662-9eb1-006f0f313e54",
+        "supersededTarget": "1e629cf5-8d7d-5764-9149-11cca50cda1f",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s010",
+        "lane": "travel",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "4e33a97d-92dc-5b69-a631-f8ce0a038a3d",
+        "updatedId": "de717869-7eb9-57b8-98a6-cd3fdbb3a723",
+        "supersededTarget": "4e33a97d-92dc-5b69-a631-f8ce0a038a3d",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s011",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "a41ecd11-cb47-5929-8901-a492e01e0d61",
+        "updatedId": "e630b226-9593-56df-84d9-5c20a64103a9",
+        "supersededTarget": "a41ecd11-cb47-5929-8901-a492e01e0d61",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s012",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "cda93be9-2d19-5fea-a592-9ec428492f54",
+        "updatedId": "4a54d4eb-66ef-5149-87b3-cbf77c62f216",
+        "supersededTarget": "cda93be9-2d19-5fea-a592-9ec428492f54",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s013",
+        "lane": "pets",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "cce1880e-ee66-59a5-a8e8-6c5bfa1cd58e",
+        "updatedId": "66b78e76-9524-5c69-bbc3-fbebcda4d06b",
+        "supersededTarget": "cce1880e-ee66-59a5-a8e8-6c5bfa1cd58e",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s014",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "af927c72-c76a-5048-94cd-6fb29c24357a",
+        "updatedId": "bee3451f-9254-5c85-b276-491479c38aec",
+        "supersededTarget": "af927c72-c76a-5048-94cd-6fb29c24357a",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s015",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "964d8385-4b5e-5c92-874d-f6f2700da808",
+        "updatedId": "d61881bd-f5f3-5301-9e98-d9af93dfc2af",
+        "supersededTarget": "964d8385-4b5e-5c92-874d-f6f2700da808",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s016",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "24e51916-c36f-5022-b831-50ebec80be3a",
+        "updatedId": "196cfc29-c3f9-58c5-935c-207cae9c2481",
+        "supersededTarget": "24e51916-c36f-5022-b831-50ebec80be3a",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s017",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "53dc685e-1d82-5133-9cc4-fb0161490abf",
+        "updatedId": "4d96581f-288e-589c-9d65-9248aa69e36a",
+        "supersededTarget": "53dc685e-1d82-5133-9cc4-fb0161490abf",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s018",
+        "lane": "contact",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "c3cc1014-92b2-559b-8032-fceed5fac37a",
+        "updatedId": "c58b51f7-9a47-581c-9f6b-6474f72ca364",
+        "supersededTarget": "c3cc1014-92b2-559b-8032-fceed5fac37a",
+        "surfacedOriginal": false
+      }
+    ]
+  },
+  "noAnswer": null,
+  "cost": {
+    "embedTokensIn": 663,
+    "embedTokensOut": 0,
+    "note": "umAdd/doSearch/judge tokens not separately tracked this pass"
+  }
+}
