@@ -595,6 +595,96 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
   };
 }
 
+/**
+ * Live no-answer sweep (spec §3 / plan Phase 5). Seeds the recall corpus, runs both
+ * the answerable queries and the distractors through the REAL doSearch at
+ * minScore=0 (raw scores), then sweeps candidate floors applying the PRODUCTION
+ * passesRelevanceFloor (via retainedAtFloor). Recall-retention is the DELTA vs the
+ * floor-off baseline (kept(floor)/kept(0)) so a gold that ranks beyond `limit` at
+ * baseline — e.g. the deliberately oblique weak rows — does not false-fail the gate;
+ * retention==1.0 means the floor dropped ZERO recalled golds (gate a == gate b
+ * floor-on==floor-off). Pins F* = highest floor at retention 1.0, pin = F*-0.02.
+ * Isolated scratch collection; try/finally teardown + `memories` integrity assert.
+ */
+export async function runNoAnswerSweep({ recallRows = [], noAnswerRows = [], floors, limit = 5, runid }) {
+  process.env.MEM0_USER_ID = EVAL_USER;
+  process.env.UM_TEMPORAL_DECAY = 'false';
+  process.env.UM_DEDUP_ENABLED = 'true';
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
+  process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
+
+  const { Memory } = await import('mem0ai/oss');
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const { umAdd } = await import('../lib/add.mjs');
+  const { doSearch } = await import('../mem0-mcp-http.mjs');
+  const { getEmbedderConfig } = await import('../lib/embed.mjs');
+  const { getFactsLlmConfig } = await import('../lib/facts.mjs');
+
+  const host = process.env.QDRANT_HOST ?? 'localhost';
+  const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+  const client = new QdrantClient({ host, port });
+  const rid = runid ?? `${process.pid}`;
+  const col = `${SCRATCH_PREFIX}noans_${isoDate()}_${rid}`;
+  assertScratchSafe(col);
+
+  const sweepFloors = floors ?? [0.20, 0.225, 0.25, 0.275, 0.30, 0.325, 0.35, 0.375, 0.40, 0.425, 0.45];
+  const memoriesBefore = await countPoints(client, 'memories');
+  let out = null;
+  try {
+    await ensureCollection(client, col, VECTOR_DIM);
+    const mem = new Memory({ embedder: getEmbedderConfig(process.env), llm: getFactsLlmConfig(process.env), vectorStore: { provider: 'qdrant', config: { host, port, collectionName: col } } });
+    const { seeds } = await seedCorpus({ umAdd, memory: mem, client, rows: recallRows });
+    const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
+
+    const answerable = [];
+    for (const row of recallRows) {
+      const gold = byRef.get(row.target_ref)?.writeId;
+      const sr = await doSearch(row.query, limit, false, true, { memory: mem, minScore: 0 });
+      const ranked = (sr.results ?? []).map((r) => ({ id: r.id, score: r.score }));
+      answerable.push({ id: row.id, gold, ranked, goldScore: ranked.find((r) => r.id === gold)?.score ?? null });
+    }
+    const distractors = [];
+    for (const row of noAnswerRows) {
+      const sr = await doSearch(row.query, limit, false, true, { memory: mem, minScore: 0 });
+      distractors.push({ id: row.id, ranked: (sr.results ?? []).map((r) => ({ id: r.id, score: r.score })) });
+    }
+
+    const baseKept = answerable.filter((a) => retainedAtFloor(a.ranked, [a.gold], 0, limit)).length;
+    const at = (floor) => {
+      const kept = answerable.filter((a) => retainedAtFloor(a.ranked, [a.gold], floor, limit)).length;
+      const abstained = distractors.filter((d) => d.ranked.filter((r) => passesRelevanceFloor(r.score, floor)).length === 0).length;
+      return {
+        floor: Number(floor.toFixed(4)),
+        retention: baseKept > 0 ? Number((kept / baseKept).toFixed(4)) : 1,
+        precision: distractors.length ? Number((abstained / distractors.length).toFixed(4)) : null,
+        kept, abstained,
+      };
+    };
+    const perFloor = sweepFloors.map(at);
+    const { fStar, pin } = pickPin(perFloor);
+    const goldScores = answerable.map((a) => a.goldScore).filter((s) => typeof s === 'number').map((s) => Number(s.toFixed(4))).sort((a, b) => a - b);
+    const pinStats = pin == null ? null : at(pin);
+
+    out = {
+      timestamp: new Date().toISOString(),
+      limit,
+      answerableCount: answerable.length, distractorCount: distractors.length,
+      baselineRecallAtLimit: recallRows.length ? Number((baseKept / recallRows.length).toFixed(4)) : null,
+      perFloor, fStar, pin,
+      pinRetention: pinStats?.retention ?? null, pinPrecision: pinStats?.precision ?? null,
+      hardnessOk: pin == null ? false : hardnessZoneOk(goldScores, pin),
+      hardnessGoldCount: goldScores.length, goldScores,
+    };
+  } finally {
+    await dropCollectionQuiet(client, col).catch((e) => console.error('[mq-noans] teardown:', e?.message));
+  }
+  const memoriesAfter = await countPoints(client, 'memories');
+  if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+    throw new Error(`mq-noans ISOLATION VIOLATION: 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+  }
+  return out;
+}
+
 async function writeJson(path, obj) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf8');
