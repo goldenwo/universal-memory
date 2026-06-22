@@ -1,7 +1,7 @@
 // server/test/answer-grader-eval.test.mjs — pins the Layer-1 reliability eval pure-fns.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeMetrics, sweepThresholds, PRECISION_FLOOR } from '../eval/answer-grader-eval.mjs';
+import { computeMetrics, sweepThresholds, PRECISION_FLOOR, TAU_ANSWER } from '../eval/answer-grader-eval.mjs';
 
 const judged = [
   { gold: true,  answers: true,  confidence: 0.9,  ok: true },  // tp at τ≤0.9
@@ -28,4 +28,8 @@ test('sweepThresholds: one row per threshold', () => {
 
 test('PRECISION_FLOOR is the single pinned constant 0.90', () => {
   assert.equal(PRECISION_FLOOR, 0.90);
+});
+
+test('TAU_ANSWER drift gate: pinned at 0.05 (2 live gpt-4o-mini runs; re-run the eval to change)', () => {
+  assert.equal(TAU_ANSWER, 0.05);
 });
