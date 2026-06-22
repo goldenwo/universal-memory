@@ -146,6 +146,56 @@ export function fireRate(stalenessRows) {
 }
 
 // ---------------------------------------------------------------------------
+// Drift-gate (PURE) — compares a runOnce() result against committed floors.
+// ---------------------------------------------------------------------------
+
+/** Pure deep-get by key path; undefined if any segment is missing or non-object. */
+function getByPath(obj, path) {
+  let cur = obj;
+  for (const key of path) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+/**
+ * PURE drift-gate evaluation. For each threshold, deep-get its metric from `result`
+ * and compare to the floor per `direction` ('min' → observed >= floor; 'max' →
+ * observed <= floor). Floors are INCLUSIVE. A gated metric that is absent or
+ * non-finite is a BREACH ('unmeasured') — never a silent pass (a dead detector or a
+ * gutted corpus must not read as healthy; see spec §3.3).
+ *
+ * @param {object} result   a runOnce() result object
+ * @param {{thresholds: Array<{metric:string, path:string[], direction:'min'|'max', floor:number}>}} config
+ * @returns {{ pass:boolean, checked:number, breaches:Array<{metric,observed,floor,direction,reason}> }}
+ */
+export function evaluateGate(result, config) {
+  const thresholds = config?.thresholds ?? [];
+  const breaches = [];
+  for (const t of thresholds) {
+    const observed = getByPath(result, t.path);
+    if (typeof observed !== 'number' || !Number.isFinite(observed)) {
+      breaches.push({ metric: t.metric, observed: observed ?? null, floor: t.floor, direction: t.direction, reason: 'unmeasured' });
+      continue;
+    }
+    const ok = t.direction === 'max' ? observed <= t.floor : observed >= t.floor;
+    if (!ok) breaches.push({ metric: t.metric, observed, floor: t.floor, direction: t.direction, reason: 'below_floor' });
+  }
+  return { pass: breaches.length === 0, checked: thresholds.length, breaches };
+}
+
+/** PURE multi-line gate report (CI step-summary + console). */
+export function formatGateReport(gate) {
+  const lines = [`=== mq drift gate: ${gate.pass ? 'PASS' : 'FAIL'} (${gate.checked} floor(s) checked) ===`];
+  for (const b of gate.breaches) {
+    const cmp = b.direction === 'max' ? '<=' : '>=';
+    lines.push(`  BREACH ${b.metric}: observed ${b.observed} fails ${cmp} ${b.floor} [${b.reason}]`);
+  }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Pretty-print (pure) — mirrors the d1/d3/lane formatSummaryTable shape.
 // ---------------------------------------------------------------------------
 
@@ -229,6 +279,7 @@ export function parseArgs(argv) {
     else if (a === '--staleness') args.staleness = argv[++i];
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
+    else if (a === '--gate') args.gate = argv[++i];
   }
   return args;
 }

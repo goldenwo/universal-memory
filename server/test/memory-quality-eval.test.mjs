@@ -38,6 +38,8 @@ import {
   formatSummaryTable,
   loadFixtureJsonl,
   parseArgs,
+  evaluateGate,
+  formatGateReport,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -237,4 +239,104 @@ test('parseArgs: recall + staleness + out-prefix', () => {
 test('parseArgs: explicit --out overrides prefix scheme', () => {
   const a = parseArgs(['node', 'script', '--recall', 'a.jsonl', '--out', 'x.json']);
   assert.equal(a.out, 'x.json');
+});
+
+// --- drift gate (evaluateGate + formatGateReport + --gate) ------------------
+
+// Committed-floor config mirror — keep in sync with eval/mq-gate-thresholds.json.
+const GATE_CFG = {
+  thresholds: [
+    { metric: 'recall@1',        path: ['recall', 'aggregate', '1'],       direction: 'min', floor: 0.90 },
+    { metric: 'recall@5',        path: ['recall', 'aggregate', '5'],       direction: 'min', floor: 0.96 },
+    { metric: 'mrr',             path: ['recall', 'mrr'],                   direction: 'min', floor: 0.95 },
+    { metric: 'staleReturnRate', path: ['staleness', 'staleReturnRate'],   direction: 'max', floor: 0.00 },
+    { metric: 'fireRate',        path: ['staleness', 'fireRate'],          direction: 'min', floor: 0.80 },
+    { metric: 'seedCount',       path: ['recall', 'seedCount'],            direction: 'min', floor: 50 },
+    { metric: 'stalenessTotal',  path: ['staleness', 'total'],             direction: 'min', floor: 18 },
+  ],
+};
+// A healthy v1.5.0-baseline-shaped result (clears every floor). Factory so each
+// test mutates its OWN copy without cross-test bleed.
+const passResult = () => ({
+  recall: { aggregate: { '1': 0.98, '5': 1.0 }, mrr: 0.99, seedCount: 50 },
+  staleness: { staleReturnRate: 0.0, fireRate: 1.0, total: 18 },
+});
+
+test('evaluateGate: passes when every metric clears its floor', () => {
+  const g = evaluateGate(passResult(), GATE_CFG);
+  assert.equal(g.pass, true);
+  assert.equal(g.checked, 7);
+  assert.deepEqual(g.breaches, []);
+});
+
+test('evaluateGate: min-direction breach (recall regressed)', () => {
+  const r = passResult(); r.recall.aggregate['1'] = 0.80;
+  const g = evaluateGate(r, GATE_CFG);
+  assert.equal(g.pass, false);
+  assert.equal(g.breaches.length, 1);
+  assert.equal(g.breaches[0].metric, 'recall@1');
+  assert.equal(g.breaches[0].reason, 'below_floor');
+  assert.equal(g.breaches[0].observed, 0.80);
+});
+
+test('evaluateGate: max-direction breach (one stale fact resurfaced — zero tolerance)', () => {
+  const r = passResult(); r.staleness.staleReturnRate = 0.0556; // 1 of 18 fired rows leaked
+  const g = evaluateGate(r, GATE_CFG);
+  assert.equal(g.pass, false);
+  assert.equal(g.breaches[0].metric, 'staleReturnRate');
+  assert.equal(g.breaches[0].direction, 'max');
+});
+
+test('evaluateGate: corpus-intactness breach (partial seeding cannot pass vacuously)', () => {
+  const r = passResult(); r.recall.seedCount = 12; // a dedup cascade silently dropped seeds
+  const g = evaluateGate(r, GATE_CFG);
+  assert.equal(g.pass, false);
+  assert.equal(g.breaches[0].metric, 'seedCount');
+});
+
+test('evaluateGate: floors are INCLUSIVE (observed == floor passes)', () => {
+  const r = {
+    recall: { aggregate: { '1': 0.90, '5': 0.96 }, mrr: 0.95, seedCount: 50 },
+    staleness: { staleReturnRate: 0.0, fireRate: 0.80, total: 18 },
+  };
+  assert.equal(evaluateGate(r, GATE_CFG).pass, true);
+});
+
+test('evaluateGate: a gated metric that is null is a BREACH (unmeasured, not a silent pass)', () => {
+  const r = passResult(); r.staleness.staleReturnRate = null; r.staleness.fireRate = null;
+  const g = evaluateGate(r, GATE_CFG);
+  assert.equal(g.pass, false);
+  const reasons = g.breaches.map((b) => `${b.metric}:${b.reason}`);
+  assert.ok(reasons.includes('staleReturnRate:unmeasured'));
+  assert.ok(reasons.includes('fireRate:unmeasured'));
+});
+
+test('evaluateGate: a missing path segment is unmeasured (not a crash)', () => {
+  const g = evaluateGate({ recall: {} }, GATE_CFG);
+  assert.equal(g.pass, false);
+  assert.ok(g.breaches.every((b) => b.reason === 'unmeasured' || b.reason === 'below_floor'));
+});
+
+test('evaluateGate: empty thresholds → vacuous pass, checked 0', () => {
+  const g = evaluateGate(passResult(), { thresholds: [] });
+  assert.deepEqual(g, { pass: true, checked: 0, breaches: [] });
+});
+
+test('formatGateReport: PASS header has no BREACH lines', () => {
+  const out = formatGateReport(evaluateGate(passResult(), GATE_CFG));
+  assert.match(out, /mq drift gate: PASS/);
+  assert.doesNotMatch(out, /BREACH/);
+});
+
+test('formatGateReport: FAIL lists each breach with the comparator', () => {
+  const r = passResult(); r.recall.aggregate['1'] = 0.50;
+  const out = formatGateReport(evaluateGate(r, GATE_CFG));
+  assert.match(out, /mq drift gate: FAIL/);
+  assert.match(out, /BREACH recall@1: observed 0.5 fails >= 0.9/);
+});
+
+test('parseArgs: --gate captures the thresholds path', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--gate', 'eval/mq-gate-thresholds.json']);
+  assert.equal(a.gate, 'eval/mq-gate-thresholds.json');
+  assert.equal(a.recall, 'r.jsonl');
 });
