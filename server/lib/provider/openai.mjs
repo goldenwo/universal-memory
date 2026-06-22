@@ -184,6 +184,63 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   };
 }
 
+export const ANSWER_GRADER_MAX_TOKENS = 256; // one-line JSON + brief reasoning; avoids truncation→parse-fail (spec §2.1)
+
+// Answer-correctness grader transport (offline eval — spec 2026-06-22). Mirrors
+// contradictionJudgeInvoke exactly + an explicit max_tokens. The dispatcher
+// (answer-grader.mjs) passes systemPrompt (ANSWER_SYSTEM_PROMPT) with the memory body
+// already wrapped as untrusted data. One home for max_tokens, referenced once here.
+export async function answerGradeInvoke(prompt, opts = {}) {
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  if (env.UM_TEST_MOCK_SDK === '1') {
+    return {
+      content: JSON.stringify({ answers: false, confidence: 0.1, reasoning: '[MOCK] openai answer grader' }),
+      usage: { tokensIn: 10, tokensOut: 5 },
+    };
+  }
+  let client = providedClient;
+  if (!client) {
+    const apiKey = resolveApiKey(env);
+    if (!apiKey) {
+      throw new ProviderError({
+        class: 'PROVIDER_CONFIG',
+        provider: 'openai',
+        status: 401,
+        message: `answer grader backend=openai requires one of: ${requires.join(', ')}`,
+        retryable: false,
+      });
+    }
+    const { default: OpenAI } = await import('openai');
+    client = new OpenAI({ apiKey });
+  }
+  let raw;
+  try {
+    raw = await client.chat.completions.create({
+      model,
+      temperature: 0, // deterministic grading
+      max_tokens: ANSWER_GRADER_MAX_TOKENS,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        { role: 'user', content: prompt },
+      ],
+    });
+  } catch (cause) {
+    const norm = normalizeError(cause);
+    throw new ProviderError({
+      class: norm.status === 429 ? 'PROVIDER_RATELIMIT' : (norm.status >= 500 ? 'PROVIDER_UPSTREAM' : 'PROVIDER_CONFIG'),
+      provider: 'openai',
+      status: norm.status,
+      message: norm.message,
+      retryable: norm.status === 429 || norm.status >= 500,
+      cause: norm,
+    });
+  }
+  return {
+    content: raw.choices[0].message.content,
+    usage: extractUsage(raw),
+  };
+}
+
 export async function embed(text, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.embeddingModel } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {

@@ -133,6 +133,7 @@ jobs:
           node eval/memory-quality-eval.mjs \
             --recall eval/recall-set.jsonl \
             --staleness eval/staleness-set.jsonl \
+            --no-answer eval/no-answer-set.jsonl \
             --gate eval/mq-gate-thresholds.json \
             --out eval/results/ci-mq-gate.json
 

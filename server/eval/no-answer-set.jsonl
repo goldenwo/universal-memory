@@ -1,0 +1,30 @@
+{"id":"na01","query":"what is the deadline for the vendor renewal contract","lane":"work","note":"no vendor/renewal fact seeded"}
+{"id":"na02","query":"which conference room is the all-hands booked in","lane":"work","note":"no room-booking fact"}
+{"id":"na03","query":"who just joined the design team this month","lane":"work","note":"no new-hire fact"}
+{"id":"na04","query":"what is the wifi network password at the house","lane":"home","note":"no wifi fact"}
+{"id":"na05","query":"when was the dishwasher last serviced","lane":"home","note":"no appliance-service fact"}
+{"id":"na06","query":"what color did we paint the living room","lane":"home","note":"guest bedroom is sage; living room not seeded"}
+{"id":"na07","query":"what is my blood type","lane":"health","note":"no blood-type fact"}
+{"id":"na08","query":"which pharmacy fills my prescriptions","lane":"health","note":"no pharmacy fact"}
+{"id":"na09","query":"how many steps did I average last week","lane":"health","note":"no step-count fact"}
+{"id":"na10","query":"what is the rate limit on the public api","lane":"dev","note":"no rate-limit fact"}
+{"id":"na11","query":"which cloud region hosts production","lane":"dev","note":"no region fact"}
+{"id":"na12","query":"what is the code coverage on the billing module","lane":"dev","note":"no coverage fact"}
+{"id":"na13","query":"what temperature do I proof the dough at","lane":"food","note":"sourdough seeded; proof temp not"}
+{"id":"na14","query":"which brand of olive oil do I buy","lane":"food","note":"no oil-brand fact"}
+{"id":"na15","query":"how much does the basil cost at the market","lane":"food","note":"basil sells out; price not seeded"}
+{"id":"na16","query":"what is the interest rate on my car loan","lane":"finance","note":"mortgage seeded; no car loan"}
+{"id":"na17","query":"how much is my monthly grocery budget","lane":"finance","note":"no grocery-budget fact"}
+{"id":"na18","query":"which brokerage holds my index funds","lane":"finance","note":"401k/Roth seeded; no brokerage name"}
+{"id":"na19","query":"what hotel am I staying at in Lisbon","lane":"travel","note":"Lisbon trip seeded; hotel not"}
+{"id":"na20","query":"do I need a visa for the Japan trip","lane":"travel","note":"Tokyo miles seeded; no visa fact"}
+{"id":"na21","query":"what is my TSA precheck number","lane":"travel","note":"no precheck fact"}
+{"id":"na22","query":"how many guests are coming to the party","lane":"family","note":"party seeded; guest count not"}
+{"id":"na23","query":"when is my parents wedding anniversary","lane":"family","note":"no anniversary fact"}
+{"id":"na24","query":"what is grandma current phone number","lane":"family","note":"pierogi recipe seeded; no phone"}
+{"id":"na25","query":"how much did the film camera cost","lane":"hobby","note":"camera seeded; cost not"}
+{"id":"na26","query":"what is my favorite chess opening","lane":"hobby","note":"chess rating seeded; no opening fact"}
+{"id":"na27","query":"what torque spec do the head bolts need","lane":"hobby","note":"CB550 seeded; no torque spec"}
+{"id":"na28","query":"what is my Spanish teacher name","lane":"learning","note":"Spanish course seeded; no teacher name"}
+{"id":"na29","query":"what time is the piano recital","lane":"learning","note":"recital piece seeded; no time"}
+{"id":"na30","query":"how many flashcards do I have total","lane":"learning","note":"flashcard review seeded; no count"}

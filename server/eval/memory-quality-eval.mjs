@@ -125,13 +125,26 @@ export function staleReturnRate(firedRows) {
 }
 
 /**
- * No-answer precision over distractor queries (queries with NO relevant seed): the
- * fraction that correctly returned nothing above threshold. Empty → null.
+ * No-answer precision over UNANSWERABLE queries (no relevant seed in the corpus): the
+ * fraction whose top hit did NOT answer (a correct non-answer). `topHitAnswered` is the
+ * LLM answer-grader's verdict on doSearch top-1. Empty → null. Parse-fail rows are
+ * excluded by the caller (answerCorrectnessPass) before aggregation.
  *
- * @param {Array<{hadHitAboveThreshold:boolean}>} distractorRows
+ * @param {Array<{topHitAnswered:boolean}>} distractorRows
  */
 export function noAnswerPrecision(distractorRows) {
-  return rate((distractorRows ?? []).map((r) => r.hadHitAboveThreshold !== true));
+  return rate((distractorRows ?? []).map((r) => r.topHitAnswered !== true));
+}
+
+/**
+ * Answer-correctness over ANSWERABLE queries: the fraction whose top hit answered.
+ * `topHitAnswered` is the LLM answer-grader's verdict on doSearch top-1. Empty → null.
+ * Parse-fail rows are excluded by the caller before aggregation.
+ *
+ * @param {Array<{topHitAnswered:boolean}>} answerableRows
+ */
+export function answerCorrectnessRate(answerableRows) {
+  return rate((answerableRows ?? []).map((r) => r.topHitAnswered === true));
 }
 
 /**
@@ -239,6 +252,8 @@ export function formatSummaryTable(result) {
   }
 
   lines.push('');
+  const ac = result.answerCorrectness;
+  lines.push(`Answer-correctness@1 (answerable): ${ac ? fmtPct(ac.rate) : 'n/a (deferred)'}`);
   const na = result.noAnswer;
   lines.push(`No-answer precision: ${na ? fmtPct(na.precision) : 'n/a (deferred)'}`);
 
@@ -277,6 +292,7 @@ export function parseArgs(argv) {
     const a = argv[i];
     if (a === '--recall') args.recall = argv[++i];
     else if (a === '--staleness') args.staleness = argv[++i];
+    else if (a === '--no-answer') args.noAnswer = argv[++i];
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
@@ -476,14 +492,53 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
 }
 
 /**
+ * Answer-correctness pass (opt-in via --no-answer). Grades doSearch top-1 (body-level,
+ * full=true) over the answerable recall queries AND the unanswerable no-answer queries
+ * against the already-seeded recall corpus, applying the pinned τ_answer. A zero-results
+ * search on an unanswerable query is a correct non-answer (topHitAnswered:false). Parse-fails
+ * (grader ok:false) are EXCLUDED from the rate denominators (never silently bias a rate).
+ * Deps are injected (gradeAnswer/doSearch) so this is unit-testable without live calls.
+ */
+export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau }) {
+  const gradeTop1 = async (query) => {
+    const sr = await doSearch(query, 10, false, true, { memory });
+    const top = (sr.results ?? [])[0];
+    if (!top) return { topHitAnswered: false, ok: true };
+    const v = await gradeAnswer(query, top.body ?? '', { model });
+    return { topHitAnswered: v.ok ? (v.answers && v.confidence >= tau) : false, ok: v.ok };
+  };
+  const answerable = [];
+  for (const row of recallRows) answerable.push({ id: row.id, ...(await gradeTop1(row.query)) });
+  const noAnswer = [];
+  for (const row of noAnswerRows) noAnswer.push({ id: row.id, ...(await gradeTop1(row.query)) });
+
+  const okAnswerable = answerable.filter((r) => r.ok === true);
+  const okNoAnswer = noAnswer.filter((r) => r.ok === true);
+  return {
+    answerCorrectness: {
+      total: okAnswerable.length,
+      correct: okAnswerable.filter((r) => r.topHitAnswered === true).length,
+      rate: answerCorrectnessRate(okAnswerable),
+    },
+    noAnswer: {
+      total: okNoAnswer.length,
+      leaks: okNoAnswer.filter((r) => r.topHitAnswered === true).length,
+      leakRate: rate(okNoAnswer.map((r) => r.topHitAnswered === true)),
+      precision: noAnswerPrecision(okNoAnswer),
+    },
+    answerGrader: { model, tau, parseFails: (answerable.length - okAnswerable.length) + (noAnswer.length - okNoAnswer.length) },
+  };
+}
+
+/**
  * One full eval run against LIVE qdrant. Pins MEM0_USER_ID + flags BEFORE the lazy
  * import (USER_ID is captured at mem0-mcp-http import time — review B1). Isolated to
  * uniquely-named scratch collections; try/finally teardown + `memories` integrity assert.
  *
- * @param {{recallRows:Array, stalenessRows:Array, runid?:string,
- *          recallFixturePath?:string, stalenessFixturePath?:string}} args
+ * @param {{recallRows:Array, stalenessRows:Array, noAnswerRows:Array, runid?:string,
+ *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], runid, recallFixturePath, stalenessFixturePath }) {
+export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
@@ -500,7 +555,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
   const { supersedePoint } = await import('../lib/supersede.mjs');
   const { embed, getEmbedderConfig } = await import('../lib/embed.mjs');
   const { getFactsLlmConfig } = await import('../lib/facts.mjs');
-  const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+  const { NOOP_METRICS, umAnswerGradedTotal } = await import('../lib/metrics.mjs');
   const { cosineStrict } = await import('../lib/vector.mjs');
 
   const host = process.env.QDRANT_HOST ?? 'localhost';
@@ -525,6 +580,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
   let recall = null;
   let staleness = null;
   let seedInfo = null;
+  let answerGrading = null;
   try {
     if (recallRows.length > 0) {
       await ensureCollection(client, recallCol, VECTOR_DIM);
@@ -534,6 +590,20 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
+
+      // Answer-correctness pass (opt-in via --no-answer): grade doSearch top-1 over the
+      // answerable recall queries + the unanswerable no-answer queries against the seeded
+      // corpus, using the pinned τ_answer. Needs the LLM grader; runs only with a corpus.
+      if (noAnswerRows.length > 0) {
+        const { gradeAnswer } = await import('../lib/answer-grader.mjs');
+        const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
+        const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
+        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
+        const ag = answerGrading;
+        umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
+        umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
+        umAnswerGradedTotal.inc({ outcome: 'parse_fail' }, ag.answerGrader.parseFails);
+      }
     }
     if (stalenessRows.length > 0) {
       await ensureCollection(client, stalenessCol, VECTOR_DIM); // create BEFORE makeMemory (avoid auto-create race)
@@ -561,10 +631,12 @@ export async function runOnce({ recallRows = [], stalenessRows = [], runid, reca
     evalUser: EVAL_USER,
     flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
     env: { node: process.version, platform: process.platform },
-    fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)' },
+    fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)', noAnswer: noAnswerFixturePath ?? '(none)' },
     recall,
     staleness,
-    noAnswer: null, // #6 deferred this pass (threshold choice — see spec §6.4)
+    answerCorrectness: answerGrading?.answerCorrectness ?? null,
+    noAnswer: answerGrading?.noAnswer ?? null,
+    answerGrader: answerGrading?.answerGrader ?? null,
     cost,
   };
 }
@@ -596,9 +668,10 @@ async function cliMain() {
 
   const recallRows = args.recall ? await loadFixtureJsonl(args.recall) : [];
   const stalenessRows = args.staleness ? await loadFixtureJsonl(args.staleness) : [];
-  console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} — running live (scratch collections, real vault untouched)...`);
+  const noAnswerRows = args.noAnswer ? await loadFixtureJsonl(args.noAnswer) : [];
+  console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
-  const result = await runOnce({ recallRows, stalenessRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness });
+  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'mq-eval')}-run1.json`;

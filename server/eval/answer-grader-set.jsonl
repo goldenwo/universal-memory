@@ -1,0 +1,80 @@
+{"id":"pos-r001","query":"what's the new time for the morning sync","memory":"Standup moved to 10am starting next sprint per the team vote","gold":true,"category":"answerable"}
+{"id":"pos-r002","query":"how does my boss like to receive progress reports","memory":"My manager Priya prefers async written updates over impromptu calls","gold":true,"category":"answerable"}
+{"id":"pos-r003","query":"when do we go over autumn spending plans","memory":"The Q3 budget review is scheduled for the second Friday of September","gold":true,"category":"answerable"}
+{"id":"pos-r004","query":"why is the client pitch on hold right now","memory":"I parked the Henderson account proposal until legal clears the new terms","gold":true,"category":"answerable"}
+{"id":"pos-r005","query":"how long before my entry card stops working","memory":"Office badge access expires if unused for thirty consecutive days","gold":true,"category":"answerable"}
+{"id":"pos-r006","query":"where can a guest find the way in when i'm out","memory":"The spare house key lives under the third flowerpot on the back porch","gold":true,"category":"answerable"}
+{"id":"pos-r007","query":"which evening do i wheel the bins to the curb","memory":"Trash and recycling go out Tuesday nights for Wednesday morning pickup","gold":true,"category":"answerable"}
+{"id":"pos-r008","query":"where do i stop the supply if a pipe bursts","memory":"The water shutoff valve is in the basement behind the furnace","gold":true,"category":"answerable"}
+{"id":"pos-r009","query":"what color is the spare room now","memory":"I repainted the guest bedroom a soft sage green last spring","gold":true,"category":"answerable"}
+{"id":"pos-r010","query":"how cold does the house get while we sleep","memory":"The thermostat is set to drop to 62 degrees overnight automatically","gold":true,"category":"answerable"}
+{"id":"pos-r011","query":"what seafood should i steer clear of at dinner","memory":"I'm allergic to shellfish and break out in hives within minutes","gold":true,"category":"answerable"}
+{"id":"pos-r012","query":"when is my upcoming teeth checkup","memory":"My next dental cleaning is booked for October 14th at 9am","gold":true,"category":"answerable"}
+{"id":"pos-r013","query":"how much of the sunshine supplement do i take now","memory":"Dr. Okafor raised my vitamin D dose to 2000 IU daily","gold":true,"category":"answerable"}
+{"id":"pos-r014","query":"what habit improves my rest at night","memory":"I sleep best after a 20-minute walk following dinner each evening","gold":true,"category":"answerable"}
+{"id":"pos-r015","query":"what's my baseline pulse these days","memory":"My resting heart rate has settled around 58 since I started rowing","gold":true,"category":"answerable"}
+{"id":"pos-r016","query":"which database backs our login system now","memory":"We migrated the auth service to Postgres 16 during the last maintenance window","gold":true,"category":"answerable"}
+{"id":"pos-r017","query":"under what condition does that unreliable spec break","memory":"The flaky checkout test fails only when run in parallel with payments","gold":true,"category":"answerable"}
+{"id":"pos-r018","query":"why did we freeze the style checker release","memory":"I pinned the linter to version 8.42 to avoid the new formatting rules","gold":true,"category":"answerable"}
+{"id":"pos-r019","query":"how long until a toggle change actually takes effect","memory":"Feature flags are stored in Redis with a five-minute cache TTL","gold":true,"category":"answerable"}
+{"id":"pos-r020","query":"what triggers a push to the test environment","memory":"The staging deploy runs automatically when a PR merges to main","gold":true,"category":"answerable"}
+{"id":"pos-r021","query":"what do i mix into my bread culture daily","memory":"I keep the sourdough starter fed with rye flour every morning","gold":true,"category":"answerable"}
+{"id":"pos-r022","query":"where did i taste that incredible pasta dish","memory":"The best carbonara I've had was at a tiny place in Trastevere","gold":true,"category":"answerable"}
+{"id":"pos-r023","query":"how much caffeine do i allow myself early in the day","memory":"I cut my morning coffee down to one cup before noon","gold":true,"category":"answerable"}
+{"id":"pos-r024","query":"what do i usually cook on a busy evening","memory":"My go-to weeknight dinner is roasted chickpeas over couscous","gold":true,"category":"answerable"}
+{"id":"pos-r025","query":"when does the herb stall run dry on saturdays","memory":"The farmers market on Elm sells out of fresh basil by nine","gold":true,"category":"answerable"}
+{"id":"pos-r026","query":"where is my rainy-day savings parked now","memory":"I moved my emergency fund into a high-yield account at Ally","gold":true,"category":"answerable"}
+{"id":"pos-r027","query":"when does the billing cycle end on my card","memory":"My credit card statement closes on the 18th of each month","gold":true,"category":"answerable"}
+{"id":"pos-r028","query":"how do i prioritize my retirement contributions","memory":"I max out the 401k match but no more, then fund the Roth","gold":true,"category":"answerable"}
+{"id":"pos-r029","query":"what's the interest on my home loan after redoing it","memory":"The mortgage refinance dropped my rate to 5.1 percent in March","gold":true,"category":"answerable"}
+{"id":"pos-r030","query":"how much of my contract pay do i reserve for the irs","memory":"I set aside 30 percent of freelance income for quarterly taxes","gold":true,"category":"answerable"}
+{"id":"pos-r031","query":"when does my travel document run out","memory":"My passport expires in November 2027 so renew before summer trips","gold":true,"category":"answerable"}
+{"id":"pos-r032","query":"what's my usual airplane seating preference","memory":"I always request a window seat near the front on long hauls","gold":true,"category":"answerable"}
+{"id":"pos-r033","query":"when are we headed to portugal","memory":"The Lisbon trip is locked in for the first week of May","gold":true,"category":"answerable"}
+{"id":"pos-r034","query":"which destination can i now fly to on points","memory":"I earned enough miles for a free flight on the Tokyo route","gold":true,"category":"answerable"}
+{"id":"pos-r035","query":"what do i keep prepped to avoid leaving it behind","memory":"My carry-on toiletry bag stays packed so I never forget it","gold":true,"category":"answerable"}
+{"id":"pos-r036","query":"when is the new grandchild arriving","memory":"My sister Maya is due with her first baby in late August","gold":true,"category":"answerable"}
+{"id":"pos-r037","query":"where are we celebrating my father's milestone","memory":"Dad's seventieth birthday party is being held at the lake house","gold":true,"category":"answerable"}
+{"id":"pos-r038","query":"when does custody hand off to their other parent","memory":"The kids switch to my ex's place every other weekend on Fridays","gold":true,"category":"answerable"}
+{"id":"pos-r039","query":"what makes the family dumplings taste special","memory":"Grandma's secret pierogi recipe uses farmer's cheese and a pinch of nutmeg","gold":true,"category":"answerable"}
+{"id":"pos-r040","query":"where did my brother's son begin school","memory":"My nephew Leo started kindergarten this fall at Riverside Elementary","gold":true,"category":"answerable"}
+{"id":"pos-r041","query":"what vintage motorcycle am i fixing up","memory":"I'm restoring a 1978 Honda CB550 in the garage on weekends","gold":true,"category":"answerable"}
+{"id":"pos-r042","query":"where does my board game ranking sit now","memory":"My chess rating climbed past 1500 after the winter tournament","gold":true,"category":"answerable"}
+{"id":"pos-r043","query":"what books am i working through right now","memory":"I'm reading through the entire Discworld series in publication order","gold":true,"category":"answerable"}
+{"id":"pos-r044","query":"what kind of stock does my analog shooter use","memory":"My film camera takes 120 medium-format rolls, not standard 35mm","gold":true,"category":"answerable"}
+{"id":"pos-r045","query":"what do i cultivate in my outdoor container plot","memory":"I grow heirloom tomatoes and Thai basil on the apartment balcony","gold":true,"category":"answerable"}
+{"id":"pos-r046","query":"how far along am i in studying the language","memory":"I'm at lesson twelve of the Spanish course, focusing on past tense","gold":true,"category":"answerable"}
+{"id":"pos-r047","query":"how many second chances do i get on the credential test","memory":"The certification exam allows two retakes within a calendar year","gold":true,"category":"answerable"}
+{"id":"pos-r048","query":"what study method works best for me","memory":"I learn new concepts faster by teaching them aloud to an empty room","gold":true,"category":"answerable"}
+{"id":"pos-r049","query":"which piece am i preparing for the performance","memory":"My piano teacher assigned the Chopin nocturne for the recital","gold":true,"category":"answerable"}
+{"id":"pos-r050","query":"when do i go over my memorization decks","memory":"I block out an hour every Sunday to review the week's flashcards","gold":true,"category":"answerable"}
+{"id":"neg-na01","query":"what is the deadline for the vendor renewal contract","memory":"Standup moved to 10am starting next sprint per the team vote","gold":false,"category":"hard-topical"}
+{"id":"neg-na02","query":"which conference room is the all-hands booked in","memory":"Standup moved to 10am starting next sprint per the team vote","gold":false,"category":"hard-topical"}
+{"id":"neg-na03","query":"who just joined the design team this month","memory":"Standup moved to 10am starting next sprint per the team vote","gold":false,"category":"hard-topical"}
+{"id":"neg-na04","query":"what is the wifi network password at the house","memory":"The spare house key lives under the third flowerpot on the back porch","gold":false,"category":"hard-topical"}
+{"id":"neg-na05","query":"when was the dishwasher last serviced","memory":"I repainted the guest bedroom a soft sage green last spring","gold":false,"category":"hard-topical"}
+{"id":"neg-na06","query":"what color did we paint the living room","memory":"The spare house key lives under the third flowerpot on the back porch","gold":false,"category":"hard-topical"}
+{"id":"neg-na07","query":"what is my blood type","memory":"I'm allergic to shellfish and break out in hives within minutes","gold":false,"category":"hard-topical"}
+{"id":"neg-na08","query":"which pharmacy fills my prescriptions","memory":"I'm allergic to shellfish and break out in hives within minutes","gold":false,"category":"hard-topical"}
+{"id":"neg-na09","query":"how many steps did I average last week","memory":"I'm allergic to shellfish and break out in hives within minutes","gold":false,"category":"hard-topical"}
+{"id":"neg-na10","query":"what is the rate limit on the public api","memory":"We migrated the auth service to Postgres 16 during the last maintenance window","gold":false,"category":"hard-topical"}
+{"id":"neg-na11","query":"which cloud region hosts production","memory":"We migrated the auth service to Postgres 16 during the last maintenance window","gold":false,"category":"hard-topical"}
+{"id":"neg-na12","query":"what is the code coverage on the billing module","memory":"We migrated the auth service to Postgres 16 during the last maintenance window","gold":false,"category":"hard-topical"}
+{"id":"neg-na13","query":"what temperature do I proof the dough at","memory":"I keep the sourdough starter fed with rye flour every morning","gold":false,"category":"hard-topical"}
+{"id":"neg-na14","query":"which brand of olive oil do I buy","memory":"I keep the sourdough starter fed with rye flour every morning","gold":false,"category":"hard-topical"}
+{"id":"neg-na15","query":"how much does the basil cost at the market","memory":"The farmers market on Elm sells out of fresh basil by nine","gold":false,"category":"hard-topical"}
+{"id":"neg-na16","query":"what is the interest rate on my car loan","memory":"The mortgage refinance dropped my rate to 5.1 percent in March","gold":false,"category":"hard-topical"}
+{"id":"neg-na17","query":"how much is my monthly grocery budget","memory":"I moved my emergency fund into a high-yield account at Ally","gold":false,"category":"hard-topical"}
+{"id":"neg-na18","query":"which brokerage holds my index funds","memory":"I moved my emergency fund into a high-yield account at Ally","gold":false,"category":"hard-topical"}
+{"id":"neg-na19","query":"what hotel am I staying at in Lisbon","memory":"The Lisbon trip is locked in for the first week of May","gold":false,"category":"hard-topical"}
+{"id":"neg-na20","query":"do I need a visa for the Japan trip","memory":"The Lisbon trip is locked in for the first week of May","gold":false,"category":"hard-topical"}
+{"id":"neg-na21","query":"what is my TSA precheck number","memory":"My passport expires in November 2027 so renew before summer trips","gold":false,"category":"hard-topical"}
+{"id":"neg-na22","query":"how many guests are coming to the party","memory":"Dad's seventieth birthday party is being held at the lake house","gold":false,"category":"hard-topical"}
+{"id":"neg-na23","query":"when is my parents wedding anniversary","memory":"My sister Maya is due with her first baby in late August","gold":false,"category":"hard-topical"}
+{"id":"neg-na24","query":"what is grandma current phone number","memory":"Grandma's secret pierogi recipe uses farmer's cheese and a pinch of nutmeg","gold":false,"category":"hard-topical"}
+{"id":"neg-na25","query":"how much did the film camera cost","memory":"My film camera takes 120 medium-format rolls, not standard 35mm","gold":false,"category":"hard-topical"}
+{"id":"neg-na26","query":"what is my favorite chess opening","memory":"My chess rating climbed past 1500 after the winter tournament","gold":false,"category":"hard-topical"}
+{"id":"neg-na27","query":"what torque spec do the head bolts need","memory":"I'm restoring a 1978 Honda CB550 in the garage on weekends","gold":false,"category":"hard-topical"}
+{"id":"neg-na28","query":"what is my Spanish teacher name","memory":"I'm at lesson twelve of the Spanish course, focusing on past tense","gold":false,"category":"hard-topical"}
+{"id":"neg-na29","query":"what time is the piano recital","memory":"My piano teacher assigned the Chopin nocturne for the recital","gold":false,"category":"hard-topical"}
+{"id":"neg-na30","query":"how many flashcards do I have total","memory":"I block out an hour every Sunday to review the week's flashcards","gold":false,"category":"hard-topical"}

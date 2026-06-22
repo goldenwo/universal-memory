@@ -34,12 +34,14 @@ import {
   mrr,
   staleReturnRate,
   noAnswerPrecision,
+  answerCorrectnessRate,
   fireRate,
   formatSummaryTable,
   loadFixtureJsonl,
   parseArgs,
   evaluateGate,
   formatGateReport,
+  answerCorrectnessPass,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -148,23 +150,74 @@ test('staleReturnRate: no fired rows → null (unmeasurable)', () => {
   assert.equal(staleReturnRate([]), null);
 });
 
-// --- noAnswerPrecision (over distractor queries) ---------------------------
+// --- noAnswerPrecision (over unanswerable queries; topHitAnswered = grader verdict) ---
 
-test('noAnswerPrecision: fraction correctly returning empty', () => {
+test('noAnswerPrecision: fraction whose top hit did NOT answer', () => {
   const rows = [
-    { hadHitAboveThreshold: false },
-    { hadHitAboveThreshold: false },
-    { hadHitAboveThreshold: true },
+    { topHitAnswered: false },
+    { topHitAnswered: false },
+    { topHitAnswered: true },
   ];
   assert.equal(noAnswerPrecision(rows), 2 / 3);
 });
 
-test('noAnswerPrecision: all correctly empty → 1', () => {
-  assert.equal(noAnswerPrecision([{ hadHitAboveThreshold: false }]), 1);
+test('noAnswerPrecision: all correctly non-answers → 1', () => {
+  assert.equal(noAnswerPrecision([{ topHitAnswered: false }]), 1);
 });
 
 test('noAnswerPrecision: empty → null', () => {
   assert.equal(noAnswerPrecision([]), null);
+});
+
+// --- answerCorrectnessRate (over answerable queries) -----------------------
+
+test('answerCorrectnessRate: fraction whose top hit answered', () => {
+  assert.equal(answerCorrectnessRate([{ topHitAnswered: true }, { topHitAnswered: true }, { topHitAnswered: false }]), 2 / 3);
+});
+
+test('answerCorrectnessRate: empty → null', () => {
+  assert.equal(answerCorrectnessRate([]), null);
+});
+
+// --- answerCorrectnessPass (Layer-2 orchestration; injected stubs, no live calls) ---
+
+test('answerCorrectnessPass: applies tau, excludes parse-fails, splits answerable/no-answer', async () => {
+  const doSearch = async (q) => ({ results: q.startsWith('ANS') ? [{ id: '1', body: 'the answer' }] : [{ id: '2', body: 'topical neighbour' }] });
+  const gradeAnswer = async (_q, body) => body === 'the answer'
+    ? { answers: true, confidence: 0.95, ok: true }
+    : { answers: true, confidence: 0.4, ok: true }; // neighbour: answers but LOW confidence
+  const out = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: {},
+    recallRows: [{ id: 'a', query: 'ANS q1' }],
+    noAnswerRows: [{ id: 'n', query: 'NO q1' }],
+    model: 'm', tau: 0.8,
+  });
+  assert.equal(out.answerCorrectness.rate, 1);   // 0.95 >= 0.8 → answered
+  assert.equal(out.noAnswer.precision, 1);        // neighbour 0.4 < 0.8 → not answered → correct non-answer
+  assert.equal(out.answerGrader.parseFails, 0);
+});
+
+test('answerCorrectnessPass: zero doSearch results on unanswerable = correct non-answer', async () => {
+  const doSearch = async () => ({ results: [] });
+  const gradeAnswer = async () => { throw new Error('should not be called when no results'); };
+  const out = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: {}, recallRows: [], noAnswerRows: [{ id: 'n', query: 'q' }], model: 'm', tau: 0.05,
+  });
+  assert.equal(out.noAnswer.precision, 1); // no hit → not answered → correct
+});
+
+test('answerCorrectnessPass: parse-fails excluded from denominators (→ null rates)', async () => {
+  const doSearch = async () => ({ results: [{ id: '1', body: 'x' }] });
+  const gradeAnswer = async () => ({ answers: false, confidence: 0, ok: false }); // parse-fail
+  const out = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: {},
+    recallRows: [{ id: 'a', query: 'q' }],
+    noAnswerRows: [{ id: 'n', query: 'q2' }],
+    model: 'm', tau: 0.05,
+  });
+  assert.equal(out.answerCorrectness.rate, null);
+  assert.equal(out.noAnswer.precision, null);
+  assert.equal(out.answerGrader.parseFails, 2);
 });
 
 // --- fireRate (detector supersession-recall signal) ------------------------
