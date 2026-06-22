@@ -15,7 +15,7 @@
  */
 import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { fHalfFrom, f1From } from './fbeta.mjs';
 import { pickThreshold } from './d3-eval.mjs';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
