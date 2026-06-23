@@ -249,6 +249,18 @@ export const umInbandSupersedeTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Write-time in-band supersession JUDGE latency (v1.5.0 band-widening 0.87→0.95 closeout).
+// The wider band sends more writes to the inline contradiction judge (an LLM call) — this
+// measures the p99 it adds to the write path. Observed ONLY when the judge actually ran
+// (decision.judged); pair with um_inband_supersede_total (frequency) for the full impact.
+// Buckets target an LLM call (~0.5–3s typical, long tail to ~10s), NOT the sub-100ms qdrant range.
+export const umInbandSupersedeDurationSeconds = new promClient.Histogram({
+  name: 'um_inband_supersede_duration_seconds',
+  help: 'Write-time in-band supersession judge latency in seconds (only when the inline judge ran)',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10],
+  registers: [registry],
+});
+
 // Per-stage dedup overhead. Buckets target 1ms..2.5s — qdrant calls in the
 // dedup hot path are typically <100ms; histogram resolves the long tail.
 export const umDedupCheckDurationSeconds = new promClient.Histogram({

@@ -57,7 +57,7 @@ import { v5 as uuidv5 } from 'uuid';
 import { facts as factsOrchestrator } from './facts.mjs';
 import { embed as embedOrchestrator } from './embed.mjs';
 import { withRequestContext, currentRequestId } from './request-context.mjs';
-import { umFactsExtractedTotal, umInbandSupersedeTotal } from './metrics.mjs';
+import { umFactsExtractedTotal, umInbandSupersedeTotal, umInbandSupersedeDurationSeconds } from './metrics.mjs';
 import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
@@ -330,6 +330,7 @@ export async function umAdd({
             // ADR-0007 Option C: a phrasing-similar contradiction can land in the
             // embedding-dedup band. Decide inline whether to DEFER to supersession.
             // The judge fires only for the supersede-eligible in-band slice.
+            const inbandStartNs = process.hrtime.bigint();
             const decision = embeddingHit
               ? await evaluateInBandSupersession({
                   score: embeddingHit.score,
@@ -342,6 +343,12 @@ export async function umAdd({
                   _judge: _judgeContradiction,
                 })
               : { supersede: false, judged: false };
+            // p99 telemetry (v1.5.0 band-widening closeout): record the in-band JUDGE latency
+            // ONLY when the inline judge actually ran. Pair with um_inband_supersede_total
+            // (frequency) to see the write-path latency the wider band added.
+            if (decision.judged) {
+              try { umInbandSupersedeDurationSeconds.observe(Number(process.hrtime.bigint() - inbandStartNs) / 1e9); } catch { /* obs fail-safe */ }
+            }
             if (decision.supersede) {
               // Defer the keep-older merge: fall through to upsert the newer fact
               // as its own status:current point; demote the older one post-upsert.
