@@ -210,6 +210,18 @@ export const umAnswerGradedTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// Read-path answer bouncer outcomes at memory_search time (spec 2026-06-22). Incremented by
+// the handler (caller owns the metric). `outcome` ∈ {'flagged','answered','skipped_high','failopen'}
+// — fixed enum (bounded cardinality 4). A future hard-drop mode adds 'dropped' (value add, not
+// registry-breaking). flagged = graded, doesn't answer (advisory answered:false emitted);
+// answered = graded, answers; skipped_high = score>gate, LLM skipped; failopen = grader error/timeout.
+export const umBouncerTotal = new promClient.Counter({
+  name: 'um_bouncer_total',
+  help: 'Read-path bouncer outcomes (memory_search): flagged|answered|skipped_high|failopen',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
 // Lane auto-classification outcomes at write time (Gap-5).
 // `outcome` ∈ {'routed','omitted','error'} — fixed enum, never user input (bounded cardinality).
 export const umLaneClassifiedTotal = new promClient.Counter({
