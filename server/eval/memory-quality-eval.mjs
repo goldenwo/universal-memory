@@ -106,6 +106,53 @@ export function mrr(reciprocalRanks) {
   return mean(reciprocalRanks);
 }
 
+/**
+ * Stratify recall by paraphrase_level. Groups the recall pass's per-query details by
+ * details[].paraphrase_level, aggregates recall@k per level (reusing aggregateRecall over
+ * each group's recallByK maps), and reports the gap of each level vs the lexical anchor per
+ * k, defined as (lexical − level) so a positive gap = that level recalls WORSE than lexical.
+ * An absent level simply does not appear in byLevel/counts; gaps against an absent lexical
+ * anchor are null per k (the lane/d3 null-on-empty convention).
+ *
+ * @param {Array<{paraphrase_level?: string, recallByK?: Object<number,0|1>}>} details
+ * @param {number[]} ks
+ * @returns {{ byLevel: Object<string,Object<number,number|null>>,
+ *            counts: Object<string,number>,
+ *            gaps: { paraphraseVsLexical: Object<number,number|null>,
+ *                    obliqueVsLexical: Object<number,number|null> } }}
+ */
+export function recallByParaphraseLevel(details, ks) {
+  const groups = {};
+  for (const d of details ?? []) {
+    const level = d.paraphrase_level ?? 'unknown';
+    (groups[level] ??= []).push(d.recallByK ?? {});
+  }
+  const byLevel = {};
+  const counts = {};
+  for (const [level, maps] of Object.entries(groups)) {
+    byLevel[level] = aggregateRecall(maps, ks);
+    counts[level] = maps.length;
+  }
+  const gap = (anchor, level) => {
+    const out = {};
+    for (const k of ks) {
+      const a = anchor?.[k];
+      const b = level?.[k];
+      out[k] = (typeof a === 'number' && typeof b === 'number') ? +(a - b).toFixed(3) : null;
+    }
+    return out;
+  };
+  const lex = byLevel.lexical ?? null;
+  return {
+    byLevel,
+    counts,
+    gaps: {
+      paraphraseVsLexical: gap(lex, byLevel.paraphrase),
+      obliqueVsLexical: gap(lex, byLevel.oblique),
+    },
+  };
+}
+
 /** Fraction of true flags in a boolean array; null when empty. */
 function rate(flags) {
   if (!flags || flags.length === 0) return null;
