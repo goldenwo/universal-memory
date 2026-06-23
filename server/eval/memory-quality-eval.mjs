@@ -297,6 +297,7 @@ export function parseArgs(argv) {
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
+    else if (a === '--sweep') args.sweep = true;
   }
   return args;
 }
@@ -579,6 +580,30 @@ export async function sweepBounceGate({ rows, grid, tau, floors }) {
   return { sweep, chosen };
 }
 
+// Candidate score-gate grid for the live pin (spec §3/§4e). Covers the band where non-answers
+// cluster (0.30–0.45, the parked no-answer-floor data) up through clearly-strong hits.
+export const BOUNCER_SWEEP_GRID = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80];
+
+/**
+ * Collect RAW per-query grades for the gate sweep: grade every top-1 ONCE (doSearch top-1 +
+ * gradeAnswer), returning {id, answerable, score, answers, confidence, ok} so sweepBounceGate
+ * can re-apply the gate purely across the grid. A zero-result search → score:null (sweepBounceGate
+ * treats it as a non-answer). Deps injected (gradeAnswer/doSearch) for offline unit testing.
+ */
+export async function collectBounceRows({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model }) {
+  const grade1 = async (query, answerable) => {
+    const sr = await doSearch(query, 10, false, true, { memory });
+    const top = (sr.results ?? [])[0];
+    if (!top) return { answerable, score: null, answers: false, confidence: 0, ok: true };
+    const v = await gradeAnswer(query, top.body ?? '', { model });
+    return { answerable, score: top.score, answers: v.answers, confidence: v.confidence, ok: v.ok };
+  };
+  const rows = [];
+  for (const r of recallRows) rows.push({ id: r.id, ...(await grade1(r.query, true)) });
+  for (const r of noAnswerRows) rows.push({ id: r.id, ...(await grade1(r.query, false)) });
+  return rows;
+}
+
 /**
  * One full eval run against LIVE qdrant. Pins MEM0_USER_ID + flags BEFORE the lazy
  * import (USER_ID is captured at mem0-mcp-http import time — review B1). Isolated to
@@ -587,7 +612,7 @@ export async function sweepBounceGate({ rows, grid, tau, floors }) {
  * @param {{recallRows:Array, stalenessRows:Array, noAnswerRows:Array, runid?:string,
  *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath }) {
+export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
@@ -630,6 +655,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
   let staleness = null;
   let seedInfo = null;
   let answerGrading = null;
+  let bouncerSweep = null;
   try {
     if (recallRows.length > 0) {
       await ensureCollection(client, recallCol, VECTOR_DIM);
@@ -647,13 +673,21 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
         const { gradeAnswer } = await import('../lib/answer-grader.mjs');
         const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
         const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
-        // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
-        // #132 baseline); the bouncer's cost gate is pinned separately (sweep) + applied at the flip.
-        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
-        const ag = answerGrading;
-        umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
-        umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
-        umAnswerGradedTotal.inc({ outcome: 'parse_fail' }, ag.answerGrader.parseFails);
+        if (sweep) {
+          // Manual gate-pin run (--sweep): grade every top-1 ONCE, then sweep the cost gate
+          // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
+          // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
+          const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel });
+          bouncerSweep = { ...sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } }), rows };
+        } else {
+          // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
+          // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.
+          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
+          const ag = answerGrading;
+          umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
+          umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
+          umAnswerGradedTotal.inc({ outcome: 'parse_fail' }, ag.answerGrader.parseFails);
+        }
       }
     }
     if (stalenessRows.length > 0) {
@@ -688,6 +722,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     answerCorrectness: answerGrading?.answerCorrectness ?? null,
     noAnswer: answerGrading?.noAnswer ?? null,
     answerGrader: answerGrading?.answerGrader ?? null,
+    bouncerSweep,
     cost,
   };
 }
@@ -722,7 +757,7 @@ async function cliMain() {
   const noAnswerRows = args.noAnswer ? await loadFixtureJsonl(args.noAnswer) : [];
   console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
-  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer });
+  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer, sweep: args.sweep });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'mq-eval')}-run1.json`;
@@ -732,6 +767,15 @@ async function cliMain() {
   console.log(`[mq-eval] Result written to ${primaryPath} and ${latestPath}`);
   console.log('');
   console.log(formatSummaryTable(result));
+
+  if (args.sweep && result.bouncerSweep) {
+    console.log('');
+    console.log('[mq-eval] BOUNCER GATE SWEEP:');
+    for (const s of result.bouncerSweep.sweep) {
+      console.log(`  high=${s.high}  skipRate=${s.skipRate?.toFixed(3)}  answerCorrectness=${s.answerCorrectness?.toFixed(3)}  noAnswerPrecision=${s.noAnswerPrecision?.toFixed(3)}`);
+    }
+    console.log(`[mq-eval] CHOSEN BOUNCER_SCORE_GATE = ${result.bouncerSweep.chosen.high} (skipRate=${result.bouncerSweep.chosen.skipRate?.toFixed(3)})`);
+  }
 
   // Drift gate (opt-in via --gate): compare against committed floors, surface a
   // report (console + CI step summary), exit 1 on any breach. Never weaken floors

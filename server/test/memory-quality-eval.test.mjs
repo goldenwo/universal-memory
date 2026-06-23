@@ -44,6 +44,7 @@ import {
   formatGateReport,
   answerCorrectnessPass,
   sweepBounceGate,
+  collectBounceRows,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -441,4 +442,15 @@ test('§4b: the eval routes the verdict through bounceTopHit (no inline copy)', 
   // The live helper owns the verdict; the sweep delegates to it. (Prose like "confidence>=tau"
   // has no leading dot and is intentionally not matched.)
   assert.doesNotMatch(src, /\.confidence\s*>=/, 'eval must not re-implement the grader verdict — route through bounceTopHit');
+});
+
+test('collectBounceRows collects raw per-query grades (score + answers + confidence + ok; empty→null)', async () => {
+  const memory = { search: async (q) => ({ results: q === 'empty' ? [] : [{ body: `b:${q}`, score: 0.5 }] }) };
+  const doSearch = async (q, _l, _s, _f, ctx) => ctx.memory.search(q);
+  const gradeAnswer = async (_q, body) => ({ answers: body.includes('yes'), confidence: 0.9, ok: true });
+  const rows = await collectBounceRows({ gradeAnswer, doSearch, memory, recallRows: [{ id: 'r1', query: 'yes' }], noAnswerRows: [{ id: 'n1', query: 'no' }, { id: 'n2', query: 'empty' }], model: 'stub' });
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows[0], { id: 'r1', answerable: true, score: 0.5, answers: true, confidence: 0.9, ok: true });
+  assert.equal(rows[1].answerable, false);
+  assert.equal(rows[2].score, null);            // empty result → null score
 });
