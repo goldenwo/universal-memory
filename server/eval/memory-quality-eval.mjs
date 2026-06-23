@@ -106,6 +106,53 @@ export function mrr(reciprocalRanks) {
   return mean(reciprocalRanks);
 }
 
+/**
+ * Stratify recall by paraphrase_level. Groups the recall pass's per-query details by
+ * details[].paraphrase_level, aggregates recall@k per level (reusing aggregateRecall over
+ * each group's recallByK maps), and reports the gap of each level vs the lexical anchor per
+ * k, defined as (lexical − level) so a positive gap = that level recalls WORSE than lexical.
+ * An absent level simply does not appear in byLevel/counts; gaps against an absent lexical
+ * anchor are null per k (the lane/d3 null-on-empty convention).
+ *
+ * @param {Array<{paraphrase_level?: string, recallByK?: Object<number,0|1>}>} details
+ * @param {number[]} ks
+ * @returns {{ byLevel: Object<string,Object<number,number|null>>,
+ *            counts: Object<string,number>,
+ *            gaps: { paraphraseVsLexical: Object<number,number|null>,
+ *                    obliqueVsLexical: Object<number,number|null> } }}
+ */
+export function recallByParaphraseLevel(details, ks) {
+  const groups = {};
+  for (const d of details ?? []) {
+    const level = d.paraphrase_level ?? 'unknown';
+    (groups[level] ??= []).push(d.recallByK ?? {});
+  }
+  const byLevel = {};
+  const counts = {};
+  for (const [level, maps] of Object.entries(groups)) {
+    byLevel[level] = aggregateRecall(maps, ks);
+    counts[level] = maps.length;
+  }
+  const gap = (anchor, level) => {
+    const out = {};
+    for (const k of ks) {
+      const a = anchor?.[k];
+      const b = level?.[k];
+      out[k] = (typeof a === 'number' && typeof b === 'number') ? +(a - b).toFixed(3) : null;
+    }
+    return out;
+  };
+  const lex = byLevel.lexical ?? null;
+  return {
+    byLevel,
+    counts,
+    gaps: {
+      paraphraseVsLexical: gap(lex, byLevel.paraphrase),
+      obliqueVsLexical: gap(lex, byLevel.oblique),
+    },
+  };
+}
+
 /** Fraction of true flags in a boolean array; null when empty. */
 function rate(flags) {
   if (!flags || flags.length === 0) return null;
@@ -241,6 +288,21 @@ export function formatSummaryTable(result) {
       );
     }
     lines.push(`  MRR: ${fmtPct(rec.mrr)}`);
+
+    const bpl = rec.byParaphraseLevel;
+    if (bpl) {
+      lines.push('  By paraphrase level (recall@1 / @5):');
+      for (const level of ['lexical', 'paraphrase', 'oblique']) {
+        const m = bpl.byLevel?.[level];
+        if (!m) continue;
+        const n = bpl.counts?.[level] ?? 0;
+        lines.push(`    ${level.padEnd(10)} n=${String(n).padStart(2)}  @1 ${fmtPct(m[1])}  @5 ${fmtPct(m[5])}`);
+      }
+      lines.push(
+        `    gap@5 vs lexical:  paraphrase ${fmtPct(bpl.gaps?.paraphraseVsLexical?.[5])}` +
+        `  oblique ${fmtPct(bpl.gaps?.obliqueVsLexical?.[5])}`,
+      );
+    }
   }
 
   const st = result.staleness;
@@ -424,7 +486,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     perQuery.push(rk);
     if (!twin) perQueryNoTwin.push(rk);
     reciprocalRanks.push(rr);
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], rr, twin, topIds: rankedIds.slice(0, 5) });
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, twin, topIds: rankedIds.slice(0, 5) });
   }
 
   return {
@@ -665,6 +727,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
+      recall.byParaphraseLevel = recallByParaphraseLevel(recall.details, [1, 3, 5, 10]);
 
       // Answer-correctness pass (opt-in via --no-answer): grade doSearch top-1 over the
       // answerable recall queries + the unanswerable no-answer queries against the seeded
