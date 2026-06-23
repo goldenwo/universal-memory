@@ -1,13 +1,13 @@
 // server/test/metrics.test.mjs
-// C.4 — prom-client Registry + 21 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5 + Gap-3 + Gap-4 + answer-grader eval + read-path bouncer).
+// C.4 — prom-client Registry + 22 bound metrics (spec §4.2 + §8.3 + D1 §9 + Gap-5 + Gap-3 + Gap-4 + answer-grader eval + read-path bouncer + 1 in-band supersede duration).
 //
 // Tests pin three contracts:
-//   1. Exactly 21 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
+//   1. Exactly 22 metrics registered (5 v0.6 ops + 1 v0.7 facts-extracted +
 //      4 v0.8 G2 um_provider_* + 2 v1.1 D1 dedup metrics + 1 Gap-5 lane-classifier +
 //      1 Gap-5 P3 in-band supersede + 1 Gap-3 OAuth auth-branch + 1 Gap-3 OAuth
 //      DCR registrations + 2 Gap-3 OAuth PR-5 consent/token-grant +
 //      1 Gap-4 social-login IdP outcomes + 1 answer-correctness eval grader +
-//      1 read-path bouncer). No defaults —
+//      1 read-path bouncer + 1 in-band supersede duration). No defaults —
 //      registry body is bounded; also prevents recon-via-label-inventory.
 //   2. endpoint label uses route template, NOT raw expanded paths
 //      (cardinality cap N1 — same discipline as C.3 logging).
@@ -26,13 +26,14 @@ import {
   umFactsExtractedTotal,
   umLaneClassifiedTotal,
   umInbandSupersedeTotal,
+  umInbandSupersedeDurationSeconds,
   umOauthConsentTotal,
   umOauthTokenGrantsTotal,
   umAnswerGradedTotal,
   umBouncerTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 21 named metrics', () => {
+test('registry exposes exactly 22 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_answer_graded_total',           // answer-correctness eval grader (2026-06-22)
@@ -42,6 +43,7 @@ test('registry exposes exactly 21 named metrics', () => {
     'um_facts_extracted_total',
     'um_http_request_duration_seconds',
     'um_http_requests_total',
+    'um_inband_supersede_duration_seconds', // v1.5.0 band-widening p99 closeout
     'um_inband_supersede_total',        // Gap-5 P3 (ADR-0007 Option C)
     'um_lane_classified_total',         // Gap-5
     'um_lock_contentions_total',
@@ -159,4 +161,10 @@ test('umBouncerTotal increments by outcome', async () => {
   umBouncerTotal.inc({ outcome: 'flagged' });
   const text = await registry.metrics();
   assert.match(text, /um_bouncer_total\{outcome="flagged"\} 1/);
+});
+
+test('umInbandSupersedeDurationSeconds observes a duration', async () => {
+  umInbandSupersedeDurationSeconds.observe(0.4);
+  const text = await registry.metrics();
+  assert.match(text, /um_inband_supersede_duration_seconds_count \d/);
 });

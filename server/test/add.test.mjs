@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { v5 as uuidv5 } from 'uuid';
 import { umAdd } from '../lib/add.mjs';
 import { RESERVED_METADATA_FIELDS, NAMESPACE_UM } from '../lib/dedup-constants.mjs';
+import { registry } from '../lib/metrics.mjs';
 
 // P4 ISOLATION: the lane classifier is ACTIVE by default (opt-out) as of v1.3.0. The umAdd
 // tests in this file exercise OTHER behaviors (facts pipeline, dedup, point-IDs, in-band
@@ -701,6 +702,24 @@ test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
   assert.equal(q.upserts.length, 0, 'judge declined → keep-older, newer not upserted');
   assert.equal(result.results[0].event, 'DEDUP_MERGED');
   assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
+});
+
+// Wiring proof: the in-band judge duration histogram is observed when the inline judge ran.
+// Uses the same judgeContradicts harness as the load-bearing invariant test above.
+test('Gap-5 P3: in-band judge duration histogram observed when judge ran (v1.5.0 p99 telemetry)', async () => {
+  const older = { id: 'older-duration-1', score: 0.85, payload: { data: 'I use vim', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  // Snapshot the count before this test so we assert increment (registry is shared across the file).
+  const textBefore = await registry.metrics();
+  const countBefore = Number((textBefore.match(/um_inband_supersede_duration_seconds_count (\d+)/) ?? [, '0'])[1]);
+  await umAdd({
+    memory: makeMockMemory(), text: 'I use emacs now', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judgeContradicts,
+  });
+  const textAfter = await registry.metrics();
+  const countAfter = Number((textAfter.match(/um_inband_supersede_duration_seconds_count (\d+)/) ?? [, '0'])[1]);
+  assert.ok(countAfter > countBefore, 'um_inband_supersede_duration_seconds must be observed when the inline judge ran');
 });
 
 // Per-item loop-locality: in infer:true, fact 1 contradicts in-band while fact 2 is
