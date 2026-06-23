@@ -61,7 +61,7 @@ import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
-import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal } from './lib/metrics.mjs';
+import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal, umBouncerTotal } from './lib/metrics.mjs';
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
@@ -81,6 +81,7 @@ import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 import { umAdd } from './lib/add.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
+import { bounceTopHit } from './lib/bouncer.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -970,6 +971,20 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				}
 			}
 
+			// Read-path bouncer (spec 2026-06-22): grade the SURFACED top-1 (post-filter,
+			// still body-bearing here — the compact projection below drops the body). Adds
+			// ONLY an advisory `answered:false` sibling; never mutates items. Inert unless
+			// UM_BOUNCER_ENABLED=true. `_bounceTopHit` is a test seam (default = real helper).
+			let bounce = { answered: true, ok: true, graded: false };
+			if (items.length > 0) {
+				bounce = await (ctx._bounceTopHit ?? bounceTopHit)(args.query, items[0]);
+				if (bounce.graded) {
+					try { umBouncerTotal.inc({ outcome: bounce.ok === false ? 'failopen' : (bounce.answered === false ? 'flagged' : 'answered') }); } catch { /* observability never 500s */ }
+				} else if (bounce.skippedHigh) {
+					try { umBouncerTotal.inc({ outcome: 'skipped_high' }); } catch { /* ditto */ }
+				}
+			}
+
 			// Project to compact shape unless client requested full bodies.
 			if (!clientFull) {
 				items = items.map((r) => ({
@@ -987,6 +1002,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// is forwarded. Without this, the MCP memory_search tool surface
 			// silently drops siblings and breaks parity with REST.
 			const { results: _prev, ...responseExtras } = response;
+			if (bounce.answered === false) responseExtras.answered = false;
 			return JSON.stringify(listEnvelope(items, responseExtras));
 		}
 		case 'memory_add': {
