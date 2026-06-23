@@ -500,13 +500,15 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
  * (grader ok:false) are EXCLUDED from the rate denominators (never silently bias a rate).
  * Deps are injected (gradeAnswer/doSearch) so this is unit-testable without live calls.
  */
-export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high }) {
+export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high = Number.POSITIVE_INFINITY }) {
   const gradeTop1 = async (query) => {
     const sr = await doSearch(query, 10, false, true, { memory });
     const top = (sr.results ?? [])[0];
     if (!top) return { topHitAnswered: false, ok: true, skippedHigh: false }; // empty = correct non-answer (eval accounting)
-    // Same helper the live memory_search handler calls — gate + verdict + fail-open all here,
-    // so the pinned `high` is measured on the live decision path (spec §4b). gradeAnswer is
+    // Same helper the live memory_search handler calls (spec §4b — one decision function,
+    // no second copy). The nightly passes NO `high` → ungated (grade every top-1 = prod
+    // reality with the bouncer OFF = the #132 baseline; §4d/§4f no-perturbation). The sweep
+    // (sweepBounceGate) passes explicit gates to pin BOUNCER_SCORE_GATE. gradeAnswer is
     // injected (with model) so the grade is a single LLM call per non-skipped query.
     const bounce = await bounceTopHit(query, top, {
       enabled: true, high, tau,
@@ -644,9 +646,10 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
       if (noAnswerRows.length > 0) {
         const { gradeAnswer } = await import('../lib/answer-grader.mjs');
         const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
-        const { BOUNCER_SCORE_GATE } = await import('../lib/bouncer.mjs');
         const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
-        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER, high: BOUNCER_SCORE_GATE });
+        // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
+        // #132 baseline); the bouncer's cost gate is pinned separately (sweep) + applied at the flip.
+        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
         const ag = answerGrading;
         umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
         umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
