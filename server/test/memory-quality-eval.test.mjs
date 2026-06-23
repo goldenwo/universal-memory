@@ -393,3 +393,24 @@ test('parseArgs: --gate captures the thresholds path', () => {
   assert.equal(a.gate, 'eval/mq-gate-thresholds.json');
   assert.equal(a.recall, 'r.jsonl');
 });
+
+test('answerCorrectnessPass routes through bounceTopHit (gate applied, empty=correct non-answer)', async () => {
+  const corpus = { // doSearch stub: returns a top hit per query, score keyed by query
+    search: async (q) => ({ results: q === 'empty' ? [] : [{ body: `body:${q}`, score: q === 'high' ? 0.9 : 0.4 }] }),
+  };
+  const doSearch = async (q, _l, _s, _f, ctx) => ctx.memory.search(q);
+  const gradeAnswer = async (_q, body) => ({ ok: true, answers: body.includes('yes'), confidence: 0.9 });
+  const res = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: corpus,
+    recallRows: [{ id: 'r1', query: 'yes' }, { id: 'r2', query: 'high' }],     // answerable
+    noAnswerRows: [{ id: 'n1', query: 'no' }, { id: 'n2', query: 'empty' }],    // unanswerable
+    model: 'stub', tau: 0.05, high: 0.55,
+  });
+  // r1 in-band, grader 'yes' → answered; r2 high-score → skipped (trusted answered): correctness 2/2
+  assert.equal(res.answerCorrectness.rate, 1);
+  // n1 in-band, grader 'no' → flagged (not answered = correct abstain); n2 empty → correct non-answer
+  assert.equal(res.noAnswer.precision, 1);
+  assert.equal(res.noAnswer.leaks, 0);
+  // skipRate: 1 of 4 graded queries skipped (r2)
+  assert.ok(res.bouncer.skipRate > 0 && res.bouncer.skipRate < 1);
+});

@@ -30,6 +30,7 @@ import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { bounceTopHit } from '../lib/bouncer.mjs';
 
 // ---------------------------------------------------------------------------
 // PURE scoring functions (no I/O) — unit-tested directly.
@@ -499,13 +500,19 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
  * (grader ok:false) are EXCLUDED from the rate denominators (never silently bias a rate).
  * Deps are injected (gradeAnswer/doSearch) so this is unit-testable without live calls.
  */
-export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau }) {
+export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high }) {
   const gradeTop1 = async (query) => {
     const sr = await doSearch(query, 10, false, true, { memory });
     const top = (sr.results ?? [])[0];
-    if (!top) return { topHitAnswered: false, ok: true };
-    const v = await gradeAnswer(query, top.body ?? '', { model });
-    return { topHitAnswered: v.ok ? (v.answers && v.confidence >= tau) : false, ok: v.ok };
+    if (!top) return { topHitAnswered: false, ok: true, skippedHigh: false }; // empty = correct non-answer (eval accounting)
+    // Same helper the live memory_search handler calls — gate + verdict + fail-open all here,
+    // so the pinned `high` is measured on the live decision path (spec §4b). gradeAnswer is
+    // injected (with model) so the grade is a single LLM call per non-skipped query.
+    const bounce = await bounceTopHit(query, top, {
+      enabled: true, high, tau,
+      gradeAnswer: (q, body) => gradeAnswer(q, body, { model }),
+    });
+    return { topHitAnswered: bounce.answered, ok: bounce.ok, skippedHigh: bounce.skippedHigh === true };
   };
   const answerable = [];
   for (const row of recallRows) answerable.push({ id: row.id, ...(await gradeTop1(row.query)) });
@@ -514,6 +521,8 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
 
   const okAnswerable = answerable.filter((r) => r.ok === true);
   const okNoAnswer = noAnswer.filter((r) => r.ok === true);
+  const all = [...answerable, ...noAnswer];
+  const skipped = all.filter((r) => r.skippedHigh === true).length;
   return {
     answerCorrectness: {
       total: okAnswerable.length,
@@ -526,6 +535,7 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
       leakRate: rate(okNoAnswer.map((r) => r.topHitAnswered === true)),
       precision: noAnswerPrecision(okNoAnswer),
     },
+    bouncer: { high, skipped, skipRate: all.length ? skipped / all.length : 0 },
     answerGrader: { model, tau, parseFails: (answerable.length - okAnswerable.length) + (noAnswer.length - okNoAnswer.length) },
   };
 }
@@ -597,8 +607,9 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
       if (noAnswerRows.length > 0) {
         const { gradeAnswer } = await import('../lib/answer-grader.mjs');
         const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
+        const { BOUNCER_SCORE_GATE } = await import('../lib/bouncer.mjs');
         const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
-        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
+        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER, high: BOUNCER_SCORE_GATE });
         const ag = answerGrading;
         umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
         umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
