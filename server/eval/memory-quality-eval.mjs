@@ -471,7 +471,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     perQuery.push(rk);
     if (!twin) perQueryNoTwin.push(rk);
     reciprocalRanks.push(rr);
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], rr, twin, topIds: rankedIds.slice(0, 5) });
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, twin, topIds: rankedIds.slice(0, 5) });
   }
 
   return {
@@ -712,6 +712,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
+      recall.byParaphraseLevel = recallByParaphraseLevel(recall.details, [1, 3, 5, 10]);
 
       // Answer-correctness pass (opt-in via --no-answer): grade doSearch top-1 over the
       // answerable recall queries + the unanswerable no-answer queries against the seeded
