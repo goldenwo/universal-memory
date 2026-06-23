@@ -19,15 +19,11 @@ import { dirname } from 'node:path';
 import { fHalfFrom, f1From } from './fbeta.mjs';
 import { pickThreshold } from './d3-eval.mjs';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
+// TAU_ANSWER relocated to lib/answer-grader.mjs (read-path bouncer needs it without a prod→eval
+// import). Re-exported here so existing importers (memory-quality-eval.mjs) keep working.
+export { TAU_ANSWER } from '../lib/answer-grader.mjs';
 
 export const PRECISION_FLOOR = 0.90;   // §4a reliability gate (single home; drift-tested)
-// PINNED 2026-06-22 from 2 IDENTICAL live gpt-4o-mini runs (temp 0): precision 1.000 /
-// recall 0.86 / fp=0 on 50 positives + 30 same-lane hard negatives. Precision is 1.0 across
-// the whole τ≥0.05 plateau, so the recall-maximizing floor-clearing τ is the bottom (0.05) —
-// the answers-boolean carries the precision; the confidence gate is near-inert at this model.
-// RE-EVAL TRIGGER: a change to the grader model OR text-embedding-3-small invalidates this
-// pin (and the mq §4e gate floors) — re-run eval/answer-grader-eval.mjs to re-pin.
-export const TAU_ANSWER = 0.05;
 
 /**
  * Confusion-matrix metrics at a single confidence threshold τ. Parse-fails (ok!==true)

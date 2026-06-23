@@ -85,3 +85,11 @@ export async function gradeAnswer(query, memory, opts = {}) {
     return failsafe(usage);
   }
 }
+
+// Pinned confidence threshold for the answer verdict (answers===true && confidence>=TAU_ANSWER).
+// Lives in lib (NOT eval) so the live read-path bouncer (lib/bouncer.mjs) and the eval both
+// consume it without a prod→eval import. PINNED 2026-06-22 from 2 IDENTICAL live gpt-4o-mini
+// runs (temp 0): precision 1.000 / recall 0.86 across the whole τ≥0.05 plateau.
+// RE-EVAL TRIGGER: a change to the grader model OR text-embedding-3-small invalidates this pin
+// (and the mq §4e gate floors) — re-run eval/answer-grader-eval.mjs to re-pin.
+export const TAU_ANSWER = 0.05;

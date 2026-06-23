@@ -30,6 +30,7 @@ import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { bounceTopHit } from '../lib/bouncer.mjs';
 
 // ---------------------------------------------------------------------------
 // PURE scoring functions (no I/O) — unit-tested directly.
@@ -296,6 +297,7 @@ export function parseArgs(argv) {
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
+    else if (a === '--sweep') args.sweep = true;
   }
   return args;
 }
@@ -499,13 +501,21 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
  * (grader ok:false) are EXCLUDED from the rate denominators (never silently bias a rate).
  * Deps are injected (gradeAnswer/doSearch) so this is unit-testable without live calls.
  */
-export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau }) {
+export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high = Number.POSITIVE_INFINITY }) {
   const gradeTop1 = async (query) => {
     const sr = await doSearch(query, 10, false, true, { memory });
     const top = (sr.results ?? [])[0];
-    if (!top) return { topHitAnswered: false, ok: true };
-    const v = await gradeAnswer(query, top.body ?? '', { model });
-    return { topHitAnswered: v.ok ? (v.answers && v.confidence >= tau) : false, ok: v.ok };
+    if (!top) return { topHitAnswered: false, ok: true, skippedHigh: false }; // empty = correct non-answer (eval accounting)
+    // Same helper the live memory_search handler calls (spec §4b — one decision function,
+    // no second copy). The nightly passes NO `high` → ungated (grade every top-1 = prod
+    // reality with the bouncer OFF = the #132 baseline; §4d/§4f no-perturbation). The sweep
+    // (sweepBounceGate) passes explicit gates to pin BOUNCER_SCORE_GATE. gradeAnswer is
+    // injected (with model) so the grade is a single LLM call per non-skipped query.
+    const bounce = await bounceTopHit(query, top, {
+      enabled: true, high, tau,
+      gradeAnswer: (q, body) => gradeAnswer(q, body, { model }),
+    });
+    return { topHitAnswered: bounce.answered, ok: bounce.ok, skippedHigh: bounce.skippedHigh === true };
   };
   const answerable = [];
   for (const row of recallRows) answerable.push({ id: row.id, ...(await gradeTop1(row.query)) });
@@ -514,6 +524,8 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
 
   const okAnswerable = answerable.filter((r) => r.ok === true);
   const okNoAnswer = noAnswer.filter((r) => r.ok === true);
+  const all = [...answerable, ...noAnswer];
+  const skipped = all.filter((r) => r.skippedHigh === true).length;
   return {
     answerCorrectness: {
       total: okAnswerable.length,
@@ -526,8 +538,70 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
       leakRate: rate(okNoAnswer.map((r) => r.topHitAnswered === true)),
       precision: noAnswerPrecision(okNoAnswer),
     },
+    bouncer: { high, skipped, skipRate: all.length ? skipped / all.length : 0 },
     answerGrader: { model, tau, parseFails: (answerable.length - okAnswerable.length) + (noAnswer.length - okNoAnswer.length) },
   };
+}
+
+/**
+ * Gate sweep (exploratory pin). `rows` are pre-collected per-query grades
+ * ({answerable, score, answers, confidence, ok}) so the live grader runs ONCE upstream; this
+ * re-applies the SAME live decision (bounceTopHit) across the gate grid by injecting each row's
+ * pre-collected grade as the grader — never re-implementing the verdict (spec §4b). Pins the
+ * LOWEST gate (max skipRate) that holds both floors. Mirrors d3-eval/answer-grader-eval's
+ * grade-once-sweep-pure shape.
+ */
+export async function sweepBounceGate({ rows, grid, tau, floors }) {
+  const at = async (high) => {
+    let acOk = 0, acCorrect = 0, naOk = 0, naLeak = 0, skipped = 0;
+    for (const r of rows) {
+      const bounce = await bounceTopHit('', { score: r.score, body: '' }, {
+        enabled: true, high, tau,
+        gradeAnswer: () => ({ ok: r.ok !== false, answers: r.answers, confidence: r.confidence }),
+      });
+      if (bounce.ok === false) continue;          // parse-fail excluded (matches the eval)
+      if (bounce.skippedHigh) skipped++;
+      if (r.answerable) { acOk++; if (bounce.answered) acCorrect++; }
+      else { naOk++; if (bounce.answered) naLeak++; }
+    }
+    return {
+      high,
+      skipRate: rows.length ? skipped / rows.length : 0,
+      answerCorrectness: acOk ? acCorrect / acOk : null,
+      noAnswerPrecision: naOk ? (naOk - naLeak) / naOk : null,
+    };
+  };
+  const sweep = [];
+  for (const high of grid) sweep.push(await at(high));
+  const holds = (s) => s.answerCorrectness !== null && s.noAnswerPrecision !== null
+    && s.answerCorrectness >= floors.answerCorrectness && s.noAnswerPrecision >= floors.noAnswerPrecision;
+  const passing = sweep.filter(holds).sort((a, b) => a.high - b.high);
+  const chosen = passing[0] ?? sweep[sweep.length - 1];
+  return { sweep, chosen };
+}
+
+// Candidate score-gate grid for the live pin (spec §3/§4e). Covers the band where non-answers
+// cluster (0.30–0.45, the parked no-answer-floor data) up through clearly-strong hits.
+export const BOUNCER_SWEEP_GRID = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80];
+
+/**
+ * Collect RAW per-query grades for the gate sweep: grade every top-1 ONCE (doSearch top-1 +
+ * gradeAnswer), returning {id, answerable, score, answers, confidence, ok} so sweepBounceGate
+ * can re-apply the gate purely across the grid. A zero-result search → score:null (sweepBounceGate
+ * treats it as a non-answer). Deps injected (gradeAnswer/doSearch) for offline unit testing.
+ */
+export async function collectBounceRows({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model }) {
+  const grade1 = async (query, answerable) => {
+    const sr = await doSearch(query, 10, false, true, { memory });
+    const top = (sr.results ?? [])[0];
+    if (!top) return { answerable, score: null, answers: false, confidence: 0, ok: true };
+    const v = await gradeAnswer(query, top.body ?? '', { model });
+    return { answerable, score: top.score, answers: v.answers, confidence: v.confidence, ok: v.ok };
+  };
+  const rows = [];
+  for (const r of recallRows) rows.push({ id: r.id, ...(await grade1(r.query, true)) });
+  for (const r of noAnswerRows) rows.push({ id: r.id, ...(await grade1(r.query, false)) });
+  return rows;
 }
 
 /**
@@ -538,7 +612,7 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
  * @param {{recallRows:Array, stalenessRows:Array, noAnswerRows:Array, runid?:string,
  *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath }) {
+export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
@@ -581,6 +655,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
   let staleness = null;
   let seedInfo = null;
   let answerGrading = null;
+  let bouncerSweep = null;
   try {
     if (recallRows.length > 0) {
       await ensureCollection(client, recallCol, VECTOR_DIM);
@@ -598,11 +673,21 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
         const { gradeAnswer } = await import('../lib/answer-grader.mjs');
         const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
         const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
-        answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
-        const ag = answerGrading;
-        umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
-        umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
-        umAnswerGradedTotal.inc({ outcome: 'parse_fail' }, ag.answerGrader.parseFails);
+        if (sweep) {
+          // Manual gate-pin run (--sweep): grade every top-1 ONCE, then sweep the cost gate
+          // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
+          // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
+          const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel });
+          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
+        } else {
+          // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
+          // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.
+          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
+          const ag = answerGrading;
+          umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
+          umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
+          umAnswerGradedTotal.inc({ outcome: 'parse_fail' }, ag.answerGrader.parseFails);
+        }
       }
     }
     if (stalenessRows.length > 0) {
@@ -637,6 +722,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     answerCorrectness: answerGrading?.answerCorrectness ?? null,
     noAnswer: answerGrading?.noAnswer ?? null,
     answerGrader: answerGrading?.answerGrader ?? null,
+    bouncerSweep,
     cost,
   };
 }
@@ -671,7 +757,7 @@ async function cliMain() {
   const noAnswerRows = args.noAnswer ? await loadFixtureJsonl(args.noAnswer) : [];
   console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
-  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer });
+  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer, sweep: args.sweep });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'mq-eval')}-run1.json`;
@@ -681,6 +767,15 @@ async function cliMain() {
   console.log(`[mq-eval] Result written to ${primaryPath} and ${latestPath}`);
   console.log('');
   console.log(formatSummaryTable(result));
+
+  if (args.sweep && result.bouncerSweep) {
+    console.log('');
+    console.log('[mq-eval] BOUNCER GATE SWEEP:');
+    for (const s of result.bouncerSweep.sweep) {
+      console.log(`  high=${s.high}  skipRate=${s.skipRate?.toFixed(3)}  answerCorrectness=${s.answerCorrectness?.toFixed(3)}  noAnswerPrecision=${s.noAnswerPrecision?.toFixed(3)}`);
+    }
+    console.log(`[mq-eval] CHOSEN BOUNCER_SCORE_GATE = ${result.bouncerSweep.chosen.high} (skipRate=${result.bouncerSweep.chosen.skipRate?.toFixed(3)})`);
+  }
 
   // Drift gate (opt-in via --gate): compare against committed floors, surface a
   // report (console + CI step summary), exit 1 on any breach. Never weaken floors
