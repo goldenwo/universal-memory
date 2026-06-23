@@ -678,7 +678,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
           // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
           // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
           const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel });
-          bouncerSweep = { ...sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } }), rows };
+          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
         } else {
           // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
           // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.

@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bounceTopHit, bouncerEnabled, bouncerTimeoutMs } from '../lib/bouncer.mjs';
+import { bounceTopHit, bouncerEnabled, bouncerTimeoutMs, BOUNCER_SCORE_GATE } from '../lib/bouncer.mjs';
+
+test('BOUNCER_SCORE_GATE drift gate — pinned 0.60 from the 2026-06-23 live sweep; re-sweep if this changes', () => {
+  // Pinned: lowest gate holding both mq floors (AC>=0.78, NAP>=0.95) over 2 identical live runs.
+  // If this assertion fails, the gate was changed WITHOUT re-running --sweep — re-pin from a
+  // committed 2-run sweep (eval/results/2026-06-23-bouncer-sweep-STATUS.md), do not just edit.
+  assert.equal(BOUNCER_SCORE_GATE, 0.60);
+});
 
 const item = (over = {}) => ({ id: 'm1', score: 0.4, body: 'a memory body', ...over });
 const grader = (out) => async () => out;                         // stub gradeAnswer

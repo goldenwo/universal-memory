@@ -11,11 +11,15 @@
 // ok:false→"didn't answer" — deliberate (spec §2.3).
 import { gradeAnswer as defaultGradeAnswer, TAU_ANSWER } from './answer-grader.mjs';
 
-// Score gate: top hits scoring ABOVE this skip the LLM (trusted as answering). PROVISIONAL —
-// pinned from the live sweep in P1 Task 4. Non-answers cluster in 0.30–0.45 (the parked
-// no-answer-floor data); a gate above that band leaves them graded while clearly-strong hits
-// skip. RE-EVAL TRIGGER: grader model OR text-embedding-3-small change → re-run the sweep.
-export const BOUNCER_SCORE_GATE = 0.55;
+// Score gate: top hits scoring ABOVE this skip the LLM (trusted as answering). PINNED 0.60
+// from 2 IDENTICAL live sweeps (2026-06-23, eval/results/2026-06-23-bouncer-sweep-run{1,2}.json):
+// the LOWEST gate holding both mq floors (answerCorrectness 0.84–0.86 >= 0.78; noAnswerPrecision
+// 0.967 >= 0.95). IMPORTANT COST CAVEAT — at this precision-safe gate the skip-rate is only
+// ~0.063, i.e. ~94% of searches still grade: answer vs non-answer cosine bands overlap heavily
+// (the parked no-answer-floor lesson), so the gate saves little hot-path cost. Weigh that before
+// the default-on flip. RE-EVAL TRIGGER: a grader-model OR text-embedding-3-small change → re-run
+// `node --env-file=.env eval/memory-quality-eval.mjs --recall … --no-answer … --sweep` to re-pin.
+export const BOUNCER_SCORE_GATE = 0.60;
 
 // Opt-IN, default OFF (inverts the D1/D3 opt-OUT `!== 'false'` house convention — correct
 // while the bouncer ships inert; flips to opt-out at the default-on decision). Trim-aware.
