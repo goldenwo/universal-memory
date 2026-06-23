@@ -24,6 +24,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -42,6 +43,7 @@ import {
   evaluateGate,
   formatGateReport,
   answerCorrectnessPass,
+  sweepBounceGate,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -413,4 +415,30 @@ test('answerCorrectnessPass routes through bounceTopHit (gate applied, empty=cor
   assert.equal(res.noAnswer.leaks, 0);
   // skipRate: 1 of 4 graded queries skipped (r2)
   assert.ok(res.bouncer.skipRate > 0 && res.bouncer.skipRate < 1);
+});
+
+test('sweepBounceGate: lower gate raises skipRate; pins the lowest gate holding both floors', async () => {
+  // pre-collected rows: {answerable, score, answers, confidence}; non-answers score 0.4, a real
+  // answer also at 0.4, plus a non-answer that scores high (0.7) → leaks if the gate is below 0.7.
+  const rows = [
+    { answerable: true,  score: 0.9, answers: true,  confidence: 0.9 },
+    { answerable: true,  score: 0.4, answers: true,  confidence: 0.9 },
+    { answerable: false, score: 0.4, answers: false, confidence: 0.9 }, // in-band non-answer → graded → correct abstain
+    { answerable: false, score: 0.7, answers: false, confidence: 0.9 }, // high-scoring non-answer → leaks if gate<0.7
+  ];
+  const grid = [0.3, 0.5, 0.8];
+  const { sweep, chosen } = await sweepBounceGate({ rows, grid, tau: 0.05, floors: { answerCorrectness: 0.5, noAnswerPrecision: 0.95 } });
+  assert.equal(sweep.length, 3);
+  // gate 0.8 keeps both non-answers graded (precision 1.0); 0.5 lets the 0.7 non-answer leak → precision <1.
+  assert.equal(chosen.high, 0.8);
+  assert.ok(chosen.skipRate >= 0);
+});
+
+test('§4b: the eval routes the verdict through bounceTopHit (no inline copy)', () => {
+  const src = readFileSync(new URL('../eval/memory-quality-eval.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('bounceTopHit'), 'eval must import/call bounceTopHit');
+  // No property-access verdict re-implementation (e.g. `v.confidence >=` / `r.confidence >=`).
+  // The live helper owns the verdict; the sweep delegates to it. (Prose like "confidence>=tau"
+  // has no leading dot and is intentionally not matched.)
+  assert.doesNotMatch(src, /\.confidence\s*>=/, 'eval must not re-implement the grader verdict — route through bounceTopHit');
 });

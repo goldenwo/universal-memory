@@ -541,6 +541,43 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
 }
 
 /**
+ * Gate sweep (exploratory pin). `rows` are pre-collected per-query grades
+ * ({answerable, score, answers, confidence, ok}) so the live grader runs ONCE upstream; this
+ * re-applies the SAME live decision (bounceTopHit) across the gate grid by injecting each row's
+ * pre-collected grade as the grader — never re-implementing the verdict (spec §4b). Pins the
+ * LOWEST gate (max skipRate) that holds both floors. Mirrors d3-eval/answer-grader-eval's
+ * grade-once-sweep-pure shape.
+ */
+export async function sweepBounceGate({ rows, grid, tau, floors }) {
+  const at = async (high) => {
+    let acOk = 0, acCorrect = 0, naOk = 0, naLeak = 0, skipped = 0;
+    for (const r of rows) {
+      const bounce = await bounceTopHit('', { score: r.score, body: '' }, {
+        enabled: true, high, tau,
+        gradeAnswer: () => ({ ok: r.ok !== false, answers: r.answers, confidence: r.confidence }),
+      });
+      if (bounce.ok === false) continue;          // parse-fail excluded (matches the eval)
+      if (bounce.skippedHigh) skipped++;
+      if (r.answerable) { acOk++; if (bounce.answered) acCorrect++; }
+      else { naOk++; if (bounce.answered) naLeak++; }
+    }
+    return {
+      high,
+      skipRate: rows.length ? skipped / rows.length : 0,
+      answerCorrectness: acOk ? acCorrect / acOk : null,
+      noAnswerPrecision: naOk ? (naOk - naLeak) / naOk : null,
+    };
+  };
+  const sweep = [];
+  for (const high of grid) sweep.push(await at(high));
+  const holds = (s) => s.answerCorrectness !== null && s.noAnswerPrecision !== null
+    && s.answerCorrectness >= floors.answerCorrectness && s.noAnswerPrecision >= floors.noAnswerPrecision;
+  const passing = sweep.filter(holds).sort((a, b) => a.high - b.high);
+  const chosen = passing[0] ?? sweep[sweep.length - 1];
+  return { sweep, chosen };
+}
+
+/**
  * One full eval run against LIVE qdrant. Pins MEM0_USER_ID + flags BEFORE the lazy
  * import (USER_ID is captured at mem0-mcp-http import time — review B1). Isolated to
  * uniquely-named scratch collections; try/finally teardown + `memories` integrity assert.
