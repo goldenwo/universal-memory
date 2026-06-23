@@ -33,6 +33,7 @@ import {
   aggregateRecall,
   reciprocalRank,
   mrr,
+  recallByParaphraseLevel,
   staleReturnRate,
   noAnswerPrecision,
   answerCorrectnessRate,
@@ -453,4 +454,71 @@ test('collectBounceRows collects raw per-query grades (score + answers + confide
   assert.deepEqual(rows[0], { id: 'r1', answerable: true, score: 0.5, answers: true, confidence: 0.9, ok: true });
   assert.equal(rows[1].answerable, false);
   assert.equal(rows[2].score, null);            // empty result → null score
+});
+
+// --- recallByParaphraseLevel ----------------------------------------------
+
+test('recallByParaphraseLevel: groups by level and aggregates recall@k per level', () => {
+  const details = [
+    { paraphrase_level: 'lexical',    recallByK: { 1: 1, 3: 1, 5: 1, 10: 1 } },
+    { paraphrase_level: 'lexical',    recallByK: { 1: 1, 3: 1, 5: 1, 10: 1 } },
+    { paraphrase_level: 'paraphrase', recallByK: { 1: 0, 3: 1, 5: 1, 10: 1 } },
+    { paraphrase_level: 'paraphrase', recallByK: { 1: 1, 3: 1, 5: 1, 10: 1 } },
+    { paraphrase_level: 'oblique',    recallByK: { 1: 0, 3: 0, 5: 1, 10: 1 } },
+  ];
+  const r = recallByParaphraseLevel(details, KS);
+  assert.deepEqual(r.counts, { lexical: 2, paraphrase: 2, oblique: 1 });
+  assert.deepEqual(r.byLevel.lexical, { 1: 1, 3: 1, 5: 1, 10: 1 });
+  assert.deepEqual(r.byLevel.paraphrase, { 1: 0.5, 3: 1, 5: 1, 10: 1 });
+  assert.deepEqual(r.byLevel.oblique, { 1: 0, 3: 0, 5: 1, 10: 1 });
+});
+
+test('recallByParaphraseLevel: gap is lexical minus level (positive = worse than lexical)', () => {
+  const details = [
+    { paraphrase_level: 'lexical',    recallByK: { 1: 1, 5: 1 } },
+    { paraphrase_level: 'paraphrase', recallByK: { 1: 0, 5: 1 } },
+  ];
+  const r = recallByParaphraseLevel(details, [1, 5]);
+  assert.deepEqual(r.gaps.paraphraseVsLexical, { 1: 1, 5: 0 });
+});
+
+test('recallByParaphraseLevel: absent lexical anchor → gaps null', () => {
+  const details = [{ paraphrase_level: 'paraphrase', recallByK: { 1: 1, 5: 1 } }];
+  const r = recallByParaphraseLevel(details, [1, 5]);
+  assert.deepEqual(r.gaps.paraphraseVsLexical, { 1: null, 5: null });
+  assert.equal(r.byLevel.lexical, undefined);
+});
+
+test('recallByParaphraseLevel: empty details → empty byLevel, null gaps', () => {
+  const r = recallByParaphraseLevel([], [1, 5]);
+  assert.deepEqual(r.byLevel, {});
+  assert.deepEqual(r.counts, {});
+  assert.deepEqual(r.gaps.paraphraseVsLexical, { 1: null, 5: null });
+  assert.deepEqual(r.gaps.obliqueVsLexical, { 1: null, 5: null });
+});
+
+// --- formatSummaryTable: paraphrase-level block ---------------------------
+
+test('formatSummaryTable: renders paraphrase-level block when present', () => {
+  const result = {
+    provider: 'openai', model: 'm',
+    recall: {
+      ks: [1, 3, 5, 10], queryCount: 5, aggregate: { 1: 0.8, 3: 0.9, 5: 1, 10: 1 }, mrr: 0.85,
+      byParaphraseLevel: {
+        byLevel: { lexical: { 1: 1, 5: 1 }, paraphrase: { 1: 0.5, 5: 0.9 }, oblique: { 1: 0.2, 5: 0.7 } },
+        counts: { lexical: 2, paraphrase: 2, oblique: 1 },
+        gaps: { paraphraseVsLexical: { 5: 0.1 }, obliqueVsLexical: { 5: 0.3 } },
+      },
+    },
+  };
+  const s = formatSummaryTable(result);
+  assert.match(s, /By paraphrase level/);
+  assert.match(s, /lexical/);
+  assert.match(s, /gap@5 vs lexical/);
+});
+
+test('formatSummaryTable: omits paraphrase-level block when absent (null-tolerant)', () => {
+  const result = { provider: 'openai', model: 'm', recall: { ks: [1], queryCount: 1, aggregate: { 1: 1 }, mrr: 1 } };
+  const s = formatSummaryTable(result);
+  assert.doesNotMatch(s, /By paraphrase level/);
 });
