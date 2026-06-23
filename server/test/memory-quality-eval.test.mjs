@@ -496,3 +496,29 @@ test('recallByParaphraseLevel: empty details → empty byLevel, null gaps', () =
   assert.deepEqual(r.gaps.paraphraseVsLexical, { 1: null, 5: null });
   assert.deepEqual(r.gaps.obliqueVsLexical, { 1: null, 5: null });
 });
+
+// --- formatSummaryTable: paraphrase-level block ---------------------------
+
+test('formatSummaryTable: renders paraphrase-level block when present', () => {
+  const result = {
+    provider: 'openai', model: 'm',
+    recall: {
+      ks: [1, 3, 5, 10], queryCount: 5, aggregate: { 1: 0.8, 3: 0.9, 5: 1, 10: 1 }, mrr: 0.85,
+      byParaphraseLevel: {
+        byLevel: { lexical: { 1: 1, 5: 1 }, paraphrase: { 1: 0.5, 5: 0.9 }, oblique: { 1: 0.2, 5: 0.7 } },
+        counts: { lexical: 2, paraphrase: 2, oblique: 1 },
+        gaps: { paraphraseVsLexical: { 5: 0.1 }, obliqueVsLexical: { 5: 0.3 } },
+      },
+    },
+  };
+  const s = formatSummaryTable(result);
+  assert.match(s, /By paraphrase level/);
+  assert.match(s, /lexical/);
+  assert.match(s, /gap@5 vs lexical/);
+});
+
+test('formatSummaryTable: omits paraphrase-level block when absent (null-tolerant)', () => {
+  const result = { provider: 'openai', model: 'm', recall: { ks: [1], queryCount: 1, aggregate: { 1: 1 }, mrr: 1 } };
+  const s = formatSummaryTable(result);
+  assert.doesNotMatch(s, /By paraphrase level/);
+});

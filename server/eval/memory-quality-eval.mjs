@@ -288,6 +288,21 @@ export function formatSummaryTable(result) {
       );
     }
     lines.push(`  MRR: ${fmtPct(rec.mrr)}`);
+
+    const bpl = rec.byParaphraseLevel;
+    if (bpl) {
+      lines.push('  By paraphrase level (recall@1 / @5):');
+      for (const level of ['lexical', 'paraphrase', 'oblique']) {
+        const m = bpl.byLevel?.[level];
+        if (!m) continue;
+        const n = bpl.counts?.[level] ?? 0;
+        lines.push(`    ${level.padEnd(10)} n=${String(n).padStart(2)}  @1 ${fmtPct(m[1])}  @5 ${fmtPct(m[5])}`);
+      }
+      lines.push(
+        `    gap@5 vs lexical:  paraphrase ${fmtPct(bpl.gaps?.paraphraseVsLexical?.[5])}` +
+        `  oblique ${fmtPct(bpl.gaps?.obliqueVsLexical?.[5])}`,
+      );
+    }
   }
 
   const st = result.staleness;
