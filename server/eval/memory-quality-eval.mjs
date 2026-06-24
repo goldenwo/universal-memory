@@ -153,6 +153,44 @@ export function recallByParaphraseLevel(details, ks) {
   };
 }
 
+/**
+ * Content-contains recall@k for cross-session eval: for each query, rank = the 1-based
+ * index of the first retrieved body that CONTAINS the (normalized) distinctive answer span;
+ * 0 if none. Deterministic, no LLM judge — relies on session-recall-set.jsonl's verbatim
+ * answer spans. Returns mean recall@k + MRR + the ids that missed. Empty → null per k / null
+ * mrr (the lane/d3 null-on-empty convention).
+ *
+ * @param {Array<{id:string, answerNorm:string, bodies:string[]}>} perQuery
+ * @param {number[]} ks
+ * @returns {{ aggregate: Object<number, number|null>, mrr: number|null, misses: string[] }}
+ */
+export function crossSessionRecall(perQuery, ks) {
+  const rows = perQuery ?? [];
+  const hits = {};
+  for (const k of ks) hits[k] = 0;
+  const rrs = [];
+  const misses = [];
+  for (const q of rows) {
+    let rank = 0;
+    const bodies = q.bodies ?? [];
+    for (let i = 0; i < bodies.length; i++) {
+      if (q.answerNorm && bodies[i].includes(q.answerNorm)) { rank = i + 1; break; }
+    }
+    for (const k of ks) if (rank > 0 && rank <= k) hits[k]++;
+    rrs.push(rank > 0 ? 1 / rank : 0);
+    if (rank === 0) misses.push(q.id);
+  }
+  if (rows.length === 0) {
+    const nullAgg = {};
+    for (const k of ks) nullAgg[k] = null;
+    return { aggregate: nullAgg, mrr: null, misses: [] };
+  }
+  const aggregate = {};
+  for (const k of ks) aggregate[k] = +(hits[k] / rows.length).toFixed(3);
+  const mrr = +(rrs.reduce((a, b) => a + b, 0) / rows.length).toFixed(3);
+  return { aggregate, mrr, misses };
+}
+
 /** Fraction of true flags in a boolean array; null when empty. */
 function rate(flags) {
   if (!flags || flags.length === 0) return null;
