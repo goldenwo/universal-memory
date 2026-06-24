@@ -304,7 +304,7 @@ function parseFactsJson(content) {
 }
 
 export async function factsInvoke(text, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature } = opts;
+  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0 } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] openai fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -327,8 +327,10 @@ export async function factsInvoke(text, opts = {}) {
   try {
     raw = await client.chat.completions.create({
       model,
-      // Inert by default: prod omits temperature (→ provider default). The extraction-fidelity
-      // eval passes 0 so the system-under-test is deterministic for run-stable pinning.
+      // Deterministic by default (temperature 0), matching the two structured-output judges
+      // (contradictionJudgeInvoke / answerGradeInvoke). Extraction is a single-shot structured
+      // task — diversity buys no coverage, only run-to-run drift in dedup/supersession. The knob
+      // stays overridable (opts.temperature) for the fidelity eval + diversity experiments.
       ...(temperature !== undefined ? { temperature } : {}),
       messages: [
         { role: 'system', content: FACTS_SYSTEM_PROMPT },
