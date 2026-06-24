@@ -153,6 +153,30 @@ test('factsInvoke calls injected client and returns { facts: string[], usage }',
   assert.deepEqual(result.usage, { tokensIn: 50, tokensOut: 12 });
 });
 
+test('factsInvoke pins temperature 0 by default (deterministic extraction, matches the judges)', async () => {
+  let seen = null;
+  const fakeClient = {
+    chat: { completions: { create: async (args) => {
+      seen = args;
+      return { choices: [{ message: { content: '{"facts": []}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } },
+  };
+  await openai.factsInvoke('any text', { client: fakeClient, model: 'gpt-4.1-nano-2025-04-14' });
+  assert.equal(seen.temperature, 0); // prod passes no temperature → deterministic default
+});
+
+test('factsInvoke honors an explicit temperature override (knob preserved for diversity experiments)', async () => {
+  let seen = null;
+  const fakeClient = {
+    chat: { completions: { create: async (args) => {
+      seen = args;
+      return { choices: [{ message: { content: '{"facts": []}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } },
+  };
+  await openai.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
+  assert.equal(seen.temperature, 0.7);
+});
+
 test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits to canned facts', async () => {
   const result = await openai.factsInvoke('any text', { env: { UM_TEST_MOCK_SDK: '1' } });
   assert.ok(Array.isArray(result.facts));
