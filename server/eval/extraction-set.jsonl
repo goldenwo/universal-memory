@@ -10,3 +10,31 @@
 {"id":"e10","input_text":"We picked Stripe for payments over Adyen because the integration was faster.","expected_facts":["The team chose Stripe for payments","The team chose Stripe over Adyen"],"note":"multi-fact, decision (rationale is not an atomic durable fact)"}
 {"id":"e11","input_text":"Honestly not sure yet - maybe we'll revisit the pricing next quarter.","expected_facts":[],"note":"noise - tentative, no committed fact"}
 {"id":"e12","input_text":"My manager is Dana now; Raj moved to the platform team.","expected_facts":["The user's manager is Dana","Raj moved to the platform team"],"note":"multi-fact, org change"}
+{"id":"e13","input_text":"Since the recall last year, I only buy the newer-model car seats.","expected_facts":["The user buys newer-model car seats"],"note":"near-hallucination trap - do NOT infer the user has children"}
+{"id":"e14","input_text":"We don't deploy on Fridays anymore.","expected_facts":["The team does not deploy on Fridays"],"note":"negation"}
+{"id":"e15","input_text":"I'm no longer the on-call lead for the billing service.","expected_facts":["The user is no longer the on-call lead for the billing service"],"note":"negation / role change"}
+{"id":"e16","input_text":"Our SLA is 99.95% uptime and the error budget is 21 minutes a month.","expected_facts":["The SLA is 99.95% uptime","The error budget is 21 minutes per month"],"note":"exact numbers/units"}
+{"id":"e17","input_text":"The lease renews on March 3rd and rent goes up to $2,150.","expected_facts":["The lease renews on March 3rd","The rent will be $2,150"],"note":"exact date + amount"}
+{"id":"e18","input_text":"My son Theo turns 8 next week.","expected_facts":["The user's son is named Theo","Theo turns 8 next week"],"note":"relational facts, stated"}
+{"id":"e19","input_text":"Long week! We finally cut over from Jenkins to GitHub Actions, and the new build takes about 6 minutes. Anyway, talk soon.","expected_facts":["The team's CI is GitHub Actions","The build takes about 6 minutes"],"note":"multi-sentence mixed: supersession (Jenkins dropped) + chitchat excluded"}
+{"id":"e20","input_text":"We were a Python shop but migrated everything to Go last quarter.","expected_facts":["The team uses Go"],"note":"in-message supersession - Python excluded"}
+{"id":"e21","input_text":"I moved from product to engineering in January.","expected_facts":["The user works in engineering"],"note":"role supersession - product excluded"}
+{"id":"e22","input_text":"I think the DB is Postgres, but honestly it might be MySQL - not sure.","expected_facts":[],"note":"hedge / uncertain - no committed fact"}
+{"id":"e23","input_text":"Maybe we'll switch to Linear next sprint, still debating.","expected_facts":[],"note":"tentative - no committed fact"}
+{"id":"e24","input_text":"My email is sam@acme.io. You can reach me at sam@acme.io.","expected_facts":["The user's email is sam@acme.io"],"note":"duplicate - one fact, not two"}
+{"id":"e25","input_text":"Dana mentioned the launch slipped to Q3.","expected_facts":["The launch slipped to Q3"],"note":"reported speech - the durable fact is the launch date"}
+{"id":"e26","input_text":"My doctor said my cholesterol is back to normal.","expected_facts":["The user's cholesterol is back to normal"],"note":"reported but durable health fact"}
+{"id":"e27","input_text":"I'm vegetarian.","expected_facts":["The user is vegetarian"],"note":"single-fact, diet"}
+{"id":"e28","input_text":"Our team uses Notion for docs and Slack for chat.","expected_facts":["The team uses Notion for docs","The team uses Slack for chat"],"note":"multi-fact, tools"}
+{"id":"e29","input_text":"I switched banks to Ally for the better savings rate.","expected_facts":["The user banks with Ally"],"note":"rationale excluded (non-durable)"}
+{"id":"e30","input_text":"The conference is in Berlin this year, not Paris.","expected_facts":["The conference is in Berlin this year"],"note":"contrast - Berlin is the stated fact"}
+{"id":"e31","input_text":"Hmm, interesting. Let me mull it over.","expected_facts":[],"note":"noise"}
+{"id":"e32","input_text":"Good morning! Ready when you are.","expected_facts":[],"note":"noise / greeting"}
+{"id":"e33","input_text":"I run about 25 miles a week.","expected_facts":["The user runs about 25 miles per week"],"note":"quantity"}
+{"id":"e34","input_text":"Standup is every weekday at 10:15.","expected_facts":["Standup is every weekday at 10:15"],"note":"schedule, exact time"}
+{"id":"e35","input_text":"My new landlord is Mr. Okafor and the unit is 4B.","expected_facts":["The user's landlord is Mr. Okafor","The user's unit is 4B"],"note":"multi-entity"}
+{"id":"e36","input_text":"We hired two engineers, Priya and Wen, onto the data team.","expected_facts":["Priya was hired onto the data team","Wen was hired onto the data team"],"note":"multi-entity hires"}
+{"id":"e37","input_text":"I biked to the gym this morning and signed up for the 6am spin class.","expected_facts":["The user signed up for the 6am spin class"],"note":"near-hallucination trap - do NOT infer the user owns a bike"}
+{"id":"e38","input_text":"We're not on AWS - everything runs on GCP now.","expected_facts":["The team runs on GCP"],"note":"negation + supersession (AWS excluded)"}
+{"id":"e39","input_text":"The meeting is at 3pm. Wait, no - it got moved to 4pm.","expected_facts":["The meeting is at 4pm"],"note":"in-message self-correction - 3pm superseded"}
+{"id":"e40","input_text":"Quick update: closed the Series A at $12M, Marcus joins as CFO Monday, and we're opening a Denver office. Coffee's on me.","expected_facts":["The company closed a Series A of $12M","Marcus joins as CFO on Monday","The company is opening a Denver office"],"note":"dense multi-fact + chitchat tail"}
