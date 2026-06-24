@@ -297,6 +297,15 @@ jobs:
           # "don't half-wire" discipline they're left as a follow-up; the probe is
           # proven locally against an OAuth-enabled boot (PR-5 verification).
           UM_SMOKE_OAUTH: "1"
+          # Tier-2 #9 — UM_SMOKE_XSURFACE=1 fires the S8 cross-surface recall
+          # probe: write a uniquely-marked fact via REST POST /api/add, then
+          # assert it is recallable via MCP memory_search (POST /mcp JSON-RPC) —
+          # proving the "any vendor/surface" round-trip end-to-end over two
+          # distinct transports. No write-mode required (REST /api/add is not
+          # UM_MCP_WRITE_ENABLED-gated; memory_search is a read tool), and this
+          # stack already runs writes-enabled above anyway. Self-cleaning (DELETE)
+          # so the 5/5 baseline-preservation check stays green.
+          UM_SMOKE_XSURFACE: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
