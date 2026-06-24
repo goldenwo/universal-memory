@@ -191,7 +191,7 @@ export const ANSWER_GRADER_MAX_TOKENS = 256; // one-line JSON + brief reasoning;
 // (answer-grader.mjs) passes systemPrompt (ANSWER_SYSTEM_PROMPT) with the memory body
 // already wrapped as untrusted data. One home for max_tokens, referenced once here.
 export async function answerGradeInvoke(prompt, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '', maxTokens } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: JSON.stringify({ answers: false, confidence: 0.1, reasoning: '[MOCK] openai answer grader' }),
@@ -218,7 +218,7 @@ export async function answerGradeInvoke(prompt, opts = {}) {
     raw = await client.chat.completions.create({
       model,
       temperature: 0, // deterministic grading
-      max_tokens: ANSWER_GRADER_MAX_TOKENS,
+      max_tokens: maxTokens ?? ANSWER_GRADER_MAX_TOKENS, // default unchanged; extraction judge overrides (two arrays + reasoning)
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -304,7 +304,7 @@ function parseFactsJson(content) {
 }
 
 export async function factsInvoke(text, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.factsModel } = opts;
+  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] openai fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -327,6 +327,9 @@ export async function factsInvoke(text, opts = {}) {
   try {
     raw = await client.chat.completions.create({
       model,
+      // Inert by default: prod omits temperature (→ provider default). The extraction-fidelity
+      // eval passes 0 so the system-under-test is deterministic for run-stable pinning.
+      ...(temperature !== undefined ? { temperature } : {}),
       messages: [
         { role: 'system', content: FACTS_SYSTEM_PROMPT },
         { role: 'user', content: text },
