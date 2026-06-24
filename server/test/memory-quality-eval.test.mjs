@@ -35,6 +35,7 @@ import {
   mrr,
   recallByParaphraseLevel,
   crossSessionRecall,
+  extractionFidelity,
   staleReturnRate,
   noAnswerPrecision,
   answerCorrectnessRate,
@@ -566,4 +567,51 @@ test('crossSessionRecall: empty input → null aggregate + null mrr', () => {
   assert.deepEqual(r.aggregate, { 1: null, 5: null });
   assert.equal(r.mrr, null);
   assert.deepEqual(r.misses, []);
+});
+
+// --- extractionFidelity ----------------------------------------------------
+
+test('extractionFidelity: micro-averaged precision/recall over graded rows', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 2, goldMatched: 2, extractedTotal: 2, extractedSupported: 2 },
+    { id: 'b', ok: true, goldTotal: 2, goldMatched: 1, extractedTotal: 3, extractedSupported: 2 },
+  ];
+  const r = extractionFidelity(judged);
+  assert.equal(r.recall, 0.75);
+  assert.equal(r.precision, 0.8);
+  assert.equal(r.graded, 2);
+  assert.equal(r.parseFails, 0);
+});
+
+test('extractionFidelity: parse-fail rows excluded from denominators', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 1, goldMatched: 1, extractedTotal: 1, extractedSupported: 1 },
+    { id: 'b', ok: false },
+  ];
+  const r = extractionFidelity(judged);
+  assert.equal(r.precision, 1);
+  assert.equal(r.recall, 1);
+  assert.equal(r.graded, 1);
+  assert.equal(r.parseFails, 1);
+});
+
+test('extractionFidelity: noise rows (gold empty) tracked as abstentions, neutral in micro-averages', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 1, goldMatched: 1, extractedTotal: 1, extractedSupported: 1 },
+    { id: 'noise-ok', ok: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
+    { id: 'noise-bad', ok: true, goldTotal: 0, goldMatched: 0, extractedTotal: 2, extractedSupported: 0 },
+  ];
+  const r = extractionFidelity(judged);
+  assert.equal(r.noiseTotal, 2);
+  assert.equal(r.noiseAbstained, 1);
+  assert.equal(r.recall, 1);
+  assert.equal(r.precision, 0.333);
+});
+
+test('extractionFidelity: empty input → null precision/recall', () => {
+  const r = extractionFidelity([]);
+  assert.equal(r.precision, null);
+  assert.equal(r.recall, null);
+  assert.equal(r.f1, null);
+  assert.equal(r.graded, 0);
 });
