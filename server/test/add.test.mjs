@@ -800,3 +800,72 @@ test('umAdd surfaces qdrant errors raw — outer call sites wrap retry policy', 
   );
   assert.equal(calls, 1, 'no inner retry — single attempt before throw');
 });
+
+// ---------------------------------------------------------------------------
+// #17 FAIL-SAFE DEGRADATION (memory-quality-eval-spec §2, Tier-3).
+//
+// Two failure classes, two correct behaviors:
+//   • ENRICHMENT faults (lane classifier, contradiction judge) degrade
+//     GRACEFULLY — the fact still lands, just unpartitioned / un-superseded.
+//   • The LOAD-BEARING fault (embedder) fails LOUD — umAdd rejects so the
+//     caller's withRetry({op:'add'}) can retry and surface UPSTREAM_FAILURE.
+//
+// The guarded invariant is "never a SILENT drop", NOT "the write always lands":
+// a qdrant point needs a vector and umAdd has no vault fallback sink, so an
+// un-embeddable fact MUST reject rather than vanish. Sibling of the
+// "surfaces qdrant errors raw" test above (a load-bearing STORE fault).
+// ---------------------------------------------------------------------------
+
+// Enrichment fault #1 — classifier throws → fact lands UNPARTITIONED. umAdd
+// wraps classifyLaneFn in try/catch and leaves itemLane = lane (here undefined)
+// on any throw: "a classifier fault must NEVER fail the user's write" (§3.4).
+// makeMockQdrantInband with no hits isolates the classifier as the only fault.
+test('umAdd #17: classifier fault → write lands unpartitioned (fail-safe degradation)', async () => {
+  const q = makeMockQdrantInband();
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'I like blue', userId: 'u1', infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _classifyLane: async () => { throw new Error('classifier down'); },
+    _laneClassifierEnabled: true,
+  });
+  assert.equal(q.upserts.length, 1, 'fact still upserted despite the classifier fault');
+  const payload = q.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'lane'), false, 'degrades to unpartitioned — no lane key');
+  assert.equal(result.results[0].event, 'ADD');
+});
+
+// Enrichment fault #2 — in-band judge throws → fact lands, supersession skipped.
+// The injected _judge replaces the intrinsically fail-safe judgeContradiction,
+// so its throw propagates out of evaluateInBandSupersession; umAdd's outer dedup
+// try/catch (§4.6 fail-soft) swallows it and falls through to a plain upsert.
+// Mirrors the in-band supersession harness above with a throwing judge.
+test('umAdd #17: judge fault → write lands, no supersession (fail-safe degradation)', async () => {
+  const older = { id: 'older-failsafe-judge', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'I live in Denver now', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true,
+    _judgeContradiction: async () => { throw new Error('judge down'); },
+  });
+  assert.equal(q.upserts.length, 1, 'newer fact still upserted despite the judge fault');
+  assert.equal(q.setPayloads.some((s) => s.body.payload.status === 'superseded'), false, 'no demotion on a judge fault');
+  assert.equal(result.results[0].event, 'ADD', 'degrades to a plain add (not SUPERSEDED_INBAND / DEDUP_MERGED)');
+});
+
+// Load-bearing fault — embedder throws → umAdd REJECTS, zero writes. There is no
+// degraded write to fall back to (a qdrant point needs a vector; umAdd has no
+// vault sink), so failing loud — caught by the caller's withRetry({op:'add'}) —
+// is the correct "never a SILENT drop" behavior.
+test('umAdd #17: embedder fault → rejects loudly, no silent drop (fail-loud)', async () => {
+  const q = makeMockQdrantInband();
+  await assert.rejects(
+    () => umAdd({
+      memory: makeMockMemory(), text: 'I like blue', userId: 'u1', infer: false,
+      _embedProviderOverride: { embed: async () => { throw new Error('embedder down'); } },
+      _qdrantClient: q.client,
+    }),
+    /embedder down/,
+  );
+  assert.equal(q.upserts.length, 0, 'no partial/silent write when the fact cannot be embedded');
+});
