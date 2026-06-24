@@ -284,10 +284,35 @@ export async function embed(text, opts = {}) {
   };
 }
 
+// Extraction policy (v1.5.2): abstain on non-durable noise (greetings/chitchat,
+// non-committed intentions, questions, hedges/tentative) and extract only durable,
+// explicitly-stated facts. Lifts Tier-2 #10 noiseAbstained (4/8 → ≥7/8) with recall
+// held at 1.000. The examples are SYNTHETIC by design (no fixture phrasings) so the
+// policy generalizes rather than memorizing the eval. See
+// docs/plans/2026-06-23-extraction-noise-abstention-{spec,plan}.md + the temp-0 pin.
 const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
-Extract atomic, declarative facts useful for personalization or recall.
+Extract only durable, explicitly-stated facts useful for long-term personalization or recall — things the writer states as settled and true.
+
+EXTRACT (settled claims): preferences, decisions, attributes, relationships, roles, schedules, exact numbers/dates/amounts, and named entities. This includes:
+- Negations stated as the current fact (e.g. "we do not deploy on weekends").
+- Facts reported through someone else but presented as true — the reporting verb (said / mentioned / told me / confirmed) does NOT make it a hedge (e.g. "the inspector said the roof passed").
+- Committed or announced future events, even if not yet done (e.g. "the venue is booked for August 12th", "Lena moves to the Tokyo team next month"). Cut on commitment, NOT on futurity.
+- Every distinct durable fact in the message, extracted separately — never merge two facts into one, and never omit one because another is present. When a person is named together with who they are and what they did, extract their identity or relationship as its own fact too (e.g. from "my cousin Dev started med school", extract both "the writer has a cousin named Dev" and "Dev started med school").
+- A settled fact stays a fact even when wrapped in chatty or emotional text — extract it and ignore the wrapper.
+
+DO NOT EXTRACT (return no fact for these):
+- Greetings, chitchat, gratitude, pleasantries, or venting with no fact.
+- Non-committed intentions or deliberations — the writer has not committed yet (e.g. "I'll circle back after lunch", "I need to sleep on it"). Contrast: a committed future event above IS a fact.
+- Questions.
+- Hedged, uncertain, or speculative statements — markers such as "maybe", "might", "not sure", "possibly" (e.g. "it could be Redis, I can't recall").
+- Tentative or still-being-decided statements (e.g. "we're torn between two vendors").
+
+When the writer changes, corrects, or supersedes a value mid-message, keep only the current value of THAT claim and drop the superseded one — but never drop other, unrelated facts in the same message.
+
+Each fact must be atomic (one claim), declarative, third-person, and grounded in the text — never inferred beyond what is stated.
+
 Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
-If no facts can be extracted, output {"facts": []}.`;
+If no durable facts are present, output {"facts": []}.`;
 
 function parseFactsJson(content) {
   // Tolerate accidental markdown fences (```json ... ```) — common LLM drift.
