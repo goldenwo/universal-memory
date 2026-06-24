@@ -45,7 +45,7 @@ async function cliMain() {
   const judgedRows = [];
   for (const row of rows) {
     const gold = row.expected_facts ?? [];
-    const extracted = normalizeExtracted(await facts(row.input_text));
+    const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
     const v = await judgeExtraction(row.input_text, gold, extracted, { model });
     judgedRows.push({
       id: row.id, ok: v.ok,
@@ -56,10 +56,12 @@ async function cliMain() {
     });
   }
 
+  const extraction = extractionFidelity(judgedRows);
   const result = {
     timestamp: new Date().toISOString(), fixture: args.fixture, judgeModel: model,
     factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
-    extraction: extractionFidelity(judgedRows),
+    pinnable: extraction.parseFails === 0,
+    extraction,
   };
   const out = args.out ?? fileURLToPath(new URL(`./results/${result.timestamp.slice(0, 10)}-extraction-run1.json`, import.meta.url));
   await mkdir(dirname(out), { recursive: true });
@@ -67,6 +69,7 @@ async function cliMain() {
   const e = result.extraction;
   console.log(`[extraction-eval] judge=${model} graded=${e.graded} parseFails=${e.parseFails} precision=${e.precision} recall=${e.recall} f1=${e.f1} noiseAbstained=${e.noiseAbstained}/${e.noiseTotal}`);
   console.log(`[extraction-eval] written to ${out}`);
+  if (!result.pinnable) console.error(`[extraction-eval] WARNING: parseFails=${e.parseFails} > 0 — result NOT pinnable (treat as unmeasured); fix judge truncation/format before pinning targets.`);
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
