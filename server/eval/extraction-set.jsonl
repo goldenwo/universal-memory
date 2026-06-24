@@ -1,0 +1,12 @@
+{"id":"e01","input_text":"I switched my primary editor from VS Code to Neovim last week.","expected_facts":["The user's primary editor is Neovim"],"note":"single-fact, preference change"}
+{"id":"e02","input_text":"We moved the team standup to 9:30am and capped it at 15 minutes.","expected_facts":["The team standup is at 9:30am","The team standup is capped at 15 minutes"],"note":"multi-fact"}
+{"id":"e03","input_text":"Ugh, what a day. Anyway, thanks for the help earlier!","expected_facts":[],"note":"noise - chitchat, no facts"}
+{"id":"e04","input_text":"My daughter Mia started kindergarten this fall and her teacher is Ms. Patel.","expected_facts":["The user's daughter is named Mia","Mia started kindergarten this fall","Mia's teacher is Ms. Patel"],"note":"multi-fact, entities"}
+{"id":"e05","input_text":"I used to bike to work but now I take the train since moving to Oakland.","expected_facts":["The user commutes to work by train","The user lives in Oakland"],"note":"update + location"}
+{"id":"e06","input_text":"Let me think about that and get back to you tomorrow.","expected_facts":[],"note":"noise - intention, no durable fact"}
+{"id":"e07","input_text":"The prod database is Postgres 16, hosted on RDS in us-east-1.","expected_facts":["The production database is Postgres 16","The production database is hosted on AWS RDS","The production database is in the us-east-1 region"],"note":"multi-fact, technical"}
+{"id":"e08","input_text":"Can you remind me how the auth flow works again?","expected_facts":[],"note":"noise - a question, no fact"}
+{"id":"e09","input_text":"I'm allergic to penicillin.","expected_facts":["The user is allergic to penicillin"],"note":"single-fact, health"}
+{"id":"e10","input_text":"We picked Stripe for payments over Adyen because the integration was faster.","expected_facts":["The team chose Stripe for payments","The team chose Stripe over Adyen"],"note":"multi-fact, decision (rationale is not an atomic durable fact)"}
+{"id":"e11","input_text":"Honestly not sure yet - maybe we'll revisit the pricing next quarter.","expected_facts":[],"note":"noise - tentative, no committed fact"}
+{"id":"e12","input_text":"My manager is Dana now; Raj moved to the platform team.","expected_facts":["The user's manager is Dana","Raj moved to the platform team"],"note":"multi-fact, org change"}
