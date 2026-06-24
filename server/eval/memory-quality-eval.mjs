@@ -191,6 +191,51 @@ export function crossSessionRecall(perQuery, ks) {
   return { aggregate, mrr, misses };
 }
 
+/**
+ * Extraction fidelity: micro-averaged precision/recall of facts-extraction vs a gold set.
+ * Each judged row carries COUNTS from the judge: goldTotal/goldMatched (recall — gold facts
+ * present in the extracted set) and extractedTotal/extractedSupported (precision — extracted
+ * facts supported by the input, i.e. not hallucinated). Parse-fail rows (ok!==true) are
+ * EXCLUDED from denominators (never silently bias a rate). Noise rows (goldTotal===0) are
+ * neutral in both micro-averages and tracked separately: noiseAbstained = noise rows that
+ * also extracted nothing (correctly produced no fact). Empty/zero-denominator → null.
+ *
+ * @param {Array<{id:string, ok:boolean, goldTotal:number, goldMatched:number,
+ *                extractedTotal:number, extractedSupported:number}>} judgedRows
+ * @returns {{ rows:number, graded:number, parseFails:number, precision:number|null,
+ *            recall:number|null, f1:number|null, noiseAbstained:number, noiseTotal:number,
+ *            perRow:Array }}
+ */
+export function extractionFidelity(judgedRows) {
+  const rows = judgedRows ?? [];
+  let sumSupported = 0, sumExtracted = 0, sumMatched = 0, sumGold = 0;
+  let graded = 0, parseFails = 0, noiseTotal = 0, noiseAbstained = 0;
+  const perRow = [];
+  for (const r of rows) {
+    if (r.ok !== true) { parseFails++; perRow.push({ id: r.id, ok: false }); continue; }
+    graded++;
+    const goldTotal = r.goldTotal ?? 0;
+    const extractedTotal = r.extractedTotal ?? 0;
+    const goldMatched = r.goldMatched ?? 0;
+    const extractedSupported = r.extractedSupported ?? 0;
+    sumGold += goldTotal;
+    sumMatched += goldMatched;
+    sumExtracted += extractedTotal;
+    sumSupported += extractedSupported;
+    if (goldTotal === 0) {
+      noiseTotal++;
+      if (extractedTotal === 0) noiseAbstained++;
+    }
+    perRow.push({ id: r.id, ok: true, goldTotal, goldMatched, extractedTotal, extractedSupported });
+  }
+  const precision = sumExtracted === 0 ? null : +(sumSupported / sumExtracted).toFixed(3);
+  const recall = sumGold === 0 ? null : +(sumMatched / sumGold).toFixed(3);
+  const f1 = (precision == null || recall == null || precision + recall === 0)
+    ? null
+    : +((2 * precision * recall) / (precision + recall)).toFixed(3);
+  return { rows: rows.length, graded, parseFails, precision, recall, f1, noiseAbstained, noiseTotal, perRow };
+}
+
 /** Fraction of true flags in a boolean array; null when empty. */
 function rate(flags) {
   if (!flags || flags.length === 0) return null;
