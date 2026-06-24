@@ -6,6 +6,14 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-06-24
+
+### Changed — fact-extraction abstains on non-durable noise
+
+- **`FACTS_SYSTEM_PROMPT` rewritten to extract only durable, explicitly-stated facts** ([`server/lib/provider/openai.mjs`](server/lib/provider/openai.mjs)). The production write-path extractor (`umAdd` → `facts()` → `factsInvoke`, the path behind MCP `memory_add` and REST `/api/add`) previously had no abstention guidance, so non-durable text — greetings/chitchat/gratitude, non-committed intentions, questions, and hedged/tentative statements ("might be", "not sure", "still deciding") — produced grounded-but-throwaway "facts" that accumulated in the store. The prompt now names those exclusion categories and keeps the durable categories explicit (negations, reported-but-true facts, committed future events, and the current value after an in-message supersession), and decomposes a named person's identity from their action. Examples are synthetic (no eval-fixture phrasings) so the policy generalizes rather than memorizing the test.
+- **Measured on the Tier-2 #10 extraction-fidelity eval** ([`server/eval/extraction-fidelity-eval.mjs`](server/eval/extraction-fidelity-eval.mjs) over the 40-row `extraction-set.jsonl`; 8 noise rows): **noiseAbstained `4/8` → `7/8`** (stable across 5 runs; every noise category retains an abstaining row) with **recall unchanged at `1.000`** — audit-verified that the extractor drops no real fact (an occasional `0.98` in a run is a `gpt-4o-mini` judge false-negative on a paraphrase, not a dropped fact), **precision `1.000`**, parseFails `0`. Off-fixture held-out probes confirm the policy generalizes (durable-but-soft inputs kept; novel noise shapes abstained). The one remaining noise miss (a hedged future plan) sits within the `≥7/8` floor; escalating to a stronger facts model is the documented fallback, not taken here.
+- **OpenAI only** (the prod/default facts provider). Instruction-only change — same `gpt-4.1-nano` model, same JSON contract and parser; reversible by reverting the string. No retrieval/threshold re-tuning needed (dedup/supersession evals run over hand-authored fact fixtures, invariant to the extraction prompt).
+
 ## [1.5.1] — 2026-06-23
 
 ### Changed — production fact-extraction pinned to temperature 0 (deterministic)
@@ -891,6 +899,7 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
+[1.5.2]: https://github.com/goldenwo/universal-memory/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/goldenwo/universal-memory/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/goldenwo/universal-memory/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/goldenwo/universal-memory/compare/v1.3.0...v1.4.0
