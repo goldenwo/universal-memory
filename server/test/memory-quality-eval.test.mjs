@@ -34,6 +34,7 @@ import {
   reciprocalRank,
   mrr,
   recallByParaphraseLevel,
+  crossSessionRecall,
   staleReturnRate,
   noAnswerPrecision,
   answerCorrectnessRate,
@@ -521,4 +522,48 @@ test('formatSummaryTable: omits paraphrase-level block when absent (null-toleran
   const result = { provider: 'openai', model: 'm', recall: { ks: [1], queryCount: 1, aggregate: { 1: 1 }, mrr: 1 } };
   const s = formatSummaryTable(result);
   assert.doesNotMatch(s, /By paraphrase level/);
+});
+
+// --- crossSessionRecall ----------------------------------------------------
+
+test('crossSessionRecall: answer span in the rank-1 body → hit at every k, RR=1', () => {
+  const per = [{ id: 'a', answerNorm: '36 hours', bodies: ['... 36 hours ...', 'other'] }];
+  const r = crossSessionRecall(per, KS);
+  assert.deepEqual(r.aggregate, { 1: 1, 3: 1, 5: 1, 10: 1 });
+  assert.equal(r.mrr, 1);
+  assert.deepEqual(r.misses, []);
+});
+
+test('crossSessionRecall: answer span in the rank-3 body → miss@1, hit@3+, RR=1/3', () => {
+  const per = [{ id: 'a', answerNorm: 'ed25519', bodies: ['no', 'nope', 'we chose ed25519 keys'] }];
+  const r = crossSessionRecall(per, KS);
+  assert.deepEqual(r.aggregate, { 1: 0, 3: 1, 5: 1, 10: 1 });
+  assert.equal(r.mrr, 0.333);
+  assert.deepEqual(r.misses, []);
+});
+
+test('crossSessionRecall: answer span absent → miss, RR=0, id recorded', () => {
+  const per = [{ id: 'a', answerNorm: 'never appears', bodies: ['x', 'y'] }];
+  const r = crossSessionRecall(per, KS);
+  assert.deepEqual(r.aggregate, { 1: 0, 3: 0, 5: 0, 10: 0 });
+  assert.equal(r.mrr, 0);
+  assert.deepEqual(r.misses, ['a']);
+});
+
+test('crossSessionRecall: mean over a hit and a miss', () => {
+  const per = [
+    { id: 'a', answerNorm: 'foo', bodies: ['foo here'] },
+    { id: 'b', answerNorm: 'bar', bodies: ['no match'] },
+  ];
+  const r = crossSessionRecall(per, [1, 5]);
+  assert.deepEqual(r.aggregate, { 1: 0.5, 5: 0.5 });
+  assert.equal(r.mrr, 0.5);
+  assert.deepEqual(r.misses, ['b']);
+});
+
+test('crossSessionRecall: empty input → null aggregate + null mrr', () => {
+  const r = crossSessionRecall([], [1, 5]);
+  assert.deepEqual(r.aggregate, { 1: null, 5: null });
+  assert.equal(r.mrr, null);
+  assert.deepEqual(r.misses, []);
 });
