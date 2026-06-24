@@ -2542,6 +2542,76 @@ if [ "${UM_SMOKE_OAUTH:-}" = "1" ]; then
 	fi
 fi
 
+# Tier-2 #9 S8 — cross-surface recall probe (spec
+# docs/plans/2026-06-24-cross-surface-smoke-spec.md). Gated by UM_SMOKE_XSURFACE=1
+# (explicit opt-in), mirroring S2–S7. Proves the core "any vendor / any surface"
+# contract end-to-end: a fact WRITTEN on the REST surface (POST /api/add) is
+# RECALLABLE on the MCP surface (POST /mcp JSON-RPC memory_search) — two distinct
+# HTTP transports. Reuses the in-scope helpers: the auth-wrapped curl() (its
+# --config tmpfile is torn down only AFTER the boot-smoke gate below, so it is
+# still live here), mcp_call() (defined in Task 10), the unique-marker +
+# DELETE-cleanup idioms, and the 3/5 retry budget.
+#
+# No write-mode needed: POST /api/add is NOT UM_MCP_WRITE_ENABLED-gated (it writes
+# over REST regardless — mem0-mcp-http.mjs:2430), and memory_search is a read tool.
+# The search passes NO filters, so no lane/persona/project partition can hide the
+# REST-written fact from the MCP read (handler mem0-mcp-http.mjs:959-972).
+#
+# Position: AFTER S7 and BEFORE the boot-smoke gate (same rationale as S2–S7).
+# Self-cleaning (DELETE) so the 5/5 baseline-preservation check stays green.
+if [ -n "${UM_SMOKE_XSURFACE:-}" ]; then
+	echo "[smoke] Tier-2 #9 S8 — cross-surface REST->MCP recall (UM_SMOKE_XSURFACE=1)"
+	XS_MARKER="xsurface-$(date +%s)-$$"
+	XS_IDS=""
+
+	# Failure-safe cleanup: delete every fact this probe wrote, even on an
+	# assertion failure, so the 5/5 baseline-preservation check stays green.
+	xs_cleanup() {
+		for id in $XS_IDS; do
+			[ -n "$id" ] || continue
+			curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null 2>&1 || true
+		done
+	}
+	xs_fail() { echo "[smoke] S8 FAIL: $1" >&2; xs_cleanup; _um_smoke_auth_cleanup; exit 1; }
+
+	# 1) WRITE via REST surface — a fact-shaped, marker-salient sentence.
+	XS_ADD_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-d "{\"text\": \"The cross-surface verification code is $XS_MARKER.\"}") || xs_fail "/api/add request failed"
+	XS_IDS=$(echo "$XS_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    if r.get('id'): print(r['id'])
+") || xs_fail "/api/add returned malformed JSON: $XS_ADD_RESP"
+	[ -n "$XS_IDS" ] || xs_fail "/api/add extracted 0 facts (input must reliably extract): $XS_ADD_RESP"
+	echo "[smoke]     wrote $(echo "$XS_IDS" | wc -w | tr -d ' ') fact(s) via REST /api/add, marker=$XS_MARKER"
+
+	# 2) READ via MCP surface — poll memory_search until the marker surfaces
+	#    (mem0 writes settle async; same 15x2s budget as the 3/5 round-trip).
+	XS_FOUND=0
+	XS_SEARCH_RESP=""
+	for i in $(seq 1 15); do
+		XS_SEARCH_RESP=$(mcp_call 200 memory_search "{\"query\":\"$XS_MARKER\",\"limit\":10,\"full\":true}") || true
+		XS_HIT=$(echo "$XS_SEARCH_RESP" | python3 -c "
+import json, sys
+m = '$XS_MARKER'
+data = json.load(sys.stdin)
+txt = (data.get('result', {}).get('content') or [{}])[0].get('text', '{}')
+results = json.loads(txt).get('results', []) if txt else []
+print('1' if any(m in str(r.get('title','')) + str(r.get('body','')) + str(r.get('snippet','')) for r in results) else '0')
+" 2>/dev/null || echo 0)
+		if [ "$XS_HIT" = "1" ]; then XS_FOUND=1; break; fi
+		sleep 2
+	done
+	[ "$XS_FOUND" = "1" ] || xs_fail "marker '$XS_MARKER' written via REST never surfaced in MCP memory_search after 30s. Last response: $XS_SEARCH_RESP"
+	echo "[smoke]     OK: REST-written marker recalled via MCP memory_search (cross-surface round-trip proven)"
+
+	# 3) Cleanup — restore baseline.
+	xs_cleanup
+	echo "[smoke]     Tier-2 #9 S8 cross-surface records cleaned up"
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup
