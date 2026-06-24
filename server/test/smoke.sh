@@ -2558,14 +2558,17 @@ fi
 # REST-written fact from the MCP read (handler mem0-mcp-http.mjs:959-972).
 #
 # Position: AFTER S7 and BEFORE the boot-smoke gate (same rationale as S2–S7).
-# Self-cleaning (DELETE) so the 5/5 baseline-preservation check stays green.
+# Self-cleaning (DELETE) — leaves the store at baseline like S2–S7 so repeated
+# runs don't accumulate probe records. (S8 runs after the 5/5 check, so this is
+# store hygiene, not the 5/5 assertion itself.)
 if [ -n "${UM_SMOKE_XSURFACE:-}" ]; then
 	echo "[smoke] Tier-2 #9 S8 — cross-surface REST->MCP recall (UM_SMOKE_XSURFACE=1)"
 	XS_MARKER="xsurface-$(date +%s)-$$"
 	XS_IDS=""
 
 	# Failure-safe cleanup: delete every fact this probe wrote, even on an
-	# assertion failure, so the 5/5 baseline-preservation check stays green.
+	# assertion failure, so the probe leaves the store at baseline — hygiene
+	# matching S2–S7 (S8 runs after the 5/5 check, so this isn't about 5/5).
 	xs_cleanup() {
 		for id in $XS_IDS; do
 			[ -n "$id" ] || continue
@@ -2593,15 +2596,14 @@ for r in data.get('results', []):
 	XS_SEARCH_RESP=""
 	for i in $(seq 1 15); do
 		XS_SEARCH_RESP=$(mcp_call 200 memory_search "{\"query\":\"$XS_MARKER\",\"limit\":10,\"full\":true}") || true
-		XS_HIT=$(echo "$XS_SEARCH_RESP" | python3 -c "
+		if echo "$XS_SEARCH_RESP" | python3 -c "
 import json, sys
 m = '$XS_MARKER'
 data = json.load(sys.stdin)
 txt = (data.get('result', {}).get('content') or [{}])[0].get('text', '{}')
 results = json.loads(txt).get('results', []) if txt else []
-print('1' if any(m in str(r.get('title','')) + str(r.get('body','')) + str(r.get('snippet','')) for r in results) else '0')
-" 2>/dev/null || echo 0)
-		if [ "$XS_HIT" = "1" ]; then XS_FOUND=1; break; fi
+sys.exit(0 if any(m in str(r.get('title','')) + str(r.get('body','')) + str(r.get('snippet','')) for r in results) else 1)
+" 2>/dev/null; then XS_FOUND=1; break; fi
 		sleep 2
 	done
 	[ "$XS_FOUND" = "1" ] || xs_fail "marker '$XS_MARKER' written via REST never surfaced in MCP memory_search after 30s. Last response: $XS_SEARCH_RESP"
