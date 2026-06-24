@@ -1976,6 +1976,92 @@ print(f'OK: lane={lane} filter returns exactly its own partition record {present
 	_d2_assert_partition work "$D2_ID_WORK" "$D2_ID_PERSONAL" "$D2_ID_NOLANE"
 	_d2_assert_partition personal "$D2_ID_PERSONAL" "$D2_ID_WORK" "$D2_ID_NOLANE"
 	echo "[smoke] D2 S4 PASS: lane=work / lane=personal land as 2 distinct, lane-filterable records; the no-lane write stays in a separate legacy partition (distinct id, excluded from both lane filters)"
+
+	# --- #18 partition isolation: extend the lane check (above) to PERSONA + PROJECT
+	# (catalog #18: "project/lane/persona filters return only the right scope; no
+	# cross-project leak"). Each write carries an EXPLICIT lane so the default-ON lane
+	# classifier (see S6) cannot perturb the partition under test (caller-lane-wins).
+	# Reuses _d2_id; adds a text+metadata writer, a search->ids reader, and a
+	# field-generalized isolation assert.
+	_iso_add() {  # $1=text $2=metadata-json — like _d2_add, but text is a parameter
+		curl -sS -X POST "$ENDPOINT/api/add" \
+			-H 'Content-Type: application/json' \
+			-w '\nHTTP_STATUS=%{http_code}\n' \
+			-d "{\"text\": \"$1\", \"metadata\": $2, \"surface\": \"smoke\"}" 2>&1 || true
+	}
+	_iso_ids() {  # $1=query $2=filters-json — prints matching record ids, one per line
+		curl -sf -X POST "$ENDPOINT/api/search" \
+			-H 'Content-Type: application/json' \
+			-d "{\"query\": \"$1\", \"limit\": 20, \"filters\": $2}" 2>/dev/null \
+		| python3 -c "import json,sys
+[print(r.get('id')) for r in json.load(sys.stdin).get('results',[]) if r.get('id')]" 2>/dev/null || true
+	}
+	# Poll the unfiltered query until BOTH ids are visible (mem0 write->qdrant is
+	# eventually consistent — same 30s budget as the lane poll above), then require
+	# filters:{field:valA} to contain idA, filters:{field:valB} to contain idB, and the
+	# two filtered id-sets to be DISJOINT (the no-cross-partition-leak invariant).
+	# Membership-only on ids (compact /api/search omits metadata — the returned ids ARE
+	# the post-filter signal, same rationale as the lane assertion above). Disjoint
+	# (not "exactly one") so a write mem0 splits into multiple same-partition facts still passes.
+	_iso_pair() {  # $1=field $2=valA $3=valB $4=query $5=idA $6=idB
+		local field="$1" va="$2" vb="$3" q="$4" ida="$5" idb="$6" _i _vis=0 sa sb
+		for _i in $(seq 1 15); do
+			if _iso_ids "$q" '{}' | REQ="$ida $idb" python3 -c "import os,sys; sys.exit(0 if set(os.environ['REQ'].split()) <= set(sys.stdin.read().split()) else 1)"; then _vis=1; break; fi
+			sleep 2
+		done
+		if [ "$_vis" != 1 ]; then
+			echo "[smoke] D2 S4 FAIL: $field isolation — records $ida / $idb did not both surface in unfiltered /api/search within 30s (write->qdrant settle lag, or the query no longer matches the stored facts — extraction/retrieval drift)" >&2
+			_um_smoke_auth_cleanup; exit 1
+		fi
+		sa=$(_iso_ids "$q" "{\"$field\": \"$va\"}")
+		sb=$(_iso_ids "$q" "{\"$field\": \"$vb\"}")
+		IDA="$ida" IDB="$idb" SA="$sa" SB="$sb" FIELD="$field" VA="$va" VB="$vb" python3 -c "
+import os, sys
+ida, idb = os.environ['IDA'], os.environ['IDB']
+sa, sb = set(os.environ['SA'].split()), set(os.environ['SB'].split())
+field, va, vb = os.environ['FIELD'], os.environ['VA'], os.environ['VB']
+if ida not in sa:
+    print(f'FAIL: {field}={va} filter did not return its own record {ida} (got {sorted(sa)})'); sys.exit(1)
+if idb not in sb:
+    print(f'FAIL: {field}={vb} filter did not return its own record {idb} (got {sorted(sb)})'); sys.exit(1)
+leak = sa & sb
+if leak:
+    print(f'FAIL: cross-{field} leak — {field}={va} and {field}={vb} both returned {sorted(leak)}'); sys.exit(1)
+print(f'OK: {field} {va}|{vb} partitions isolated (disjoint; |{va}|={len(sa)} |{vb}|={len(sb)})')
+" || { echo "[smoke] D2 S4 FAIL: $field partition isolation failed" >&2; _um_smoke_auth_cleanup; exit 1; }
+	}
+
+	# (1) PERSONA — same text, persona alpha vs beta. persona enters the uuidv5 seed
+	# (computeFactId), so the two writes mint distinct records. Name-shaped so mem0
+	# extracts exactly one fact per write.
+	_iso_persona_text="The smoke test user's name is persona-iso-${MARKER}."
+	D2_PA=$(_d2_id "$(_iso_add "$_iso_persona_text" '{"project": "d2-iso", "type": "fact", "lane": "isolation", "persona": "iso-alpha"}')")
+	D2_PB=$(_d2_id "$(_iso_add "$_iso_persona_text" '{"project": "d2-iso", "type": "fact", "lane": "isolation", "persona": "iso-beta"}')")
+	# (2) PROJECT — project is NOT in the dedup seed, so two SAME-text writes would
+	# merge; use distinct codenamed facts (the marker rides as a salient codename so it
+	# survives extraction and a bare-marker query retrieves both) with topically
+	# distinct predicates (cosine < the 0.95 embedding-dedup threshold -> no merge).
+	_iso_proj_a="The initiative codenamed proj-iso-${MARKER} adopted PostgreSQL for storage."
+	_iso_proj_b="The initiative codenamed proj-iso-${MARKER} scheduled an off-site hiking retreat."
+	_iso_proj_q="proj-iso-${MARKER}"
+	D2_JA=$(_d2_id "$(_iso_add "$_iso_proj_a" '{"project": "d2-iso-a", "type": "fact", "lane": "isolation"}')")
+	D2_JB=$(_d2_id "$(_iso_add "$_iso_proj_b" '{"project": "d2-iso-b", "type": "fact", "lane": "isolation"}')")
+	echo "[smoke]     iso ids: persona alpha=$D2_PA beta=$D2_PB; project a=$D2_JA b=$D2_JB"
+	if [ -z "$D2_PA" ] || [ -z "$D2_PB" ] || [ -z "$D2_JA" ] || [ -z "$D2_JB" ]; then
+		echo "[smoke] D2 S4 FAIL: a persona/project isolation write returned no record id — mem0 extracted no fact (name/codename extraction regressed); cannot verify isolation" >&2
+		_um_smoke_auth_cleanup; exit 1
+	fi
+	if [ "$D2_PA" = "$D2_PB" ]; then
+		echo "[smoke] D2 S4 FAIL: persona=iso-alpha and persona=iso-beta minted the SAME id ($D2_PA) — persona is not entering the uuidv5 seed (spec §4.7 regressed)" >&2
+		_um_smoke_auth_cleanup; exit 1
+	fi
+	if [ "$D2_JA" = "$D2_JB" ]; then
+		echo "[smoke] D2 S4 FAIL: the two project writes minted the SAME id ($D2_JA) — the codenamed facts dedup-merged (make them more lexically distinct)" >&2
+		_um_smoke_auth_cleanup; exit 1
+	fi
+	_iso_pair persona iso-alpha iso-beta "$_iso_persona_text" "$D2_PA" "$D2_PB"
+	_iso_pair project d2-iso-a d2-iso-b "$_iso_proj_q" "$D2_JA" "$D2_JB"
+	echo "[smoke] D2 S4 PASS: persona + project filters each isolate to their own partition (no cross-partition leak — #18)"
 fi
 
 # D3.2 S5 — auto-supersession positive-path smoke (T2.5 deliverable; spec §3.7).
