@@ -316,7 +316,7 @@ else
   # Splitting these avoids quoting headaches when shell-grepping the body.
   STUB_SCRIPT="$tmp/stub-server.py"
   cat > "$STUB_SCRIPT" <<'PYEOF'
-import http.server, os, sys
+import http.server, os, socketserver
 BODY_FILE = os.environ['STUB_BODY']
 AUTH_FILE = os.environ['STUB_AUTH']
 PATH_FILE = os.environ['STUB_PATH']
@@ -339,7 +339,19 @@ class H(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b'{}')
     def log_message(self, *a, **k): pass
 
-s = http.server.HTTPServer(('127.0.0.1', 0), H)
+# The stdlib http.server.HTTPServer.server_bind() calls socket.getfqdn() on
+# the bind host and sets server_port only AFTER that lookup. A reverse-DNS
+# lookup of 127.0.0.1 can block for seconds on macOS CI (mDNSResponder),
+# delaying the port-file write past start_stub's startup poll and surfacing
+# as "stub start — could not start". This stub never reads server_name, so
+# bind without the lookup and record the OS-assigned port directly.
+class Stub(http.server.HTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
+
+s = Stub(('127.0.0.1', 0), H)
 with open(PORT_FILE, 'w') as f:
     f.write(str(s.server_port))
 s.serve_forever()
@@ -349,27 +361,39 @@ PYEOF
   # globals. Runs in main shell (NOT a subshell capture) so the background
   # python process inherits the main shell's lifecycle, not a subshell that
   # exits immediately after capture.
-  STUB_URL=""; STUB_BODYF=""; STUB_AUTHF=""; STUB_PATHF=""; STUB_PID=""
+  STUB_URL=""; STUB_BODYF=""; STUB_AUTHF=""; STUB_PATHF=""; STUB_PID=""; STUB_ERRF=""
   start_stub() {
     local status="${1:-200}"
     STUB_BODYF=$(mktemp)
     STUB_AUTHF=$(mktemp)
     STUB_PATHF=$(mktemp)
-    : > "$STUB_BODYF"; : > "$STUB_AUTHF"; : > "$STUB_PATHF"
+    STUB_ERRF=$(mktemp)
+    : > "$STUB_BODYF"; : > "$STUB_AUTHF"; : > "$STUB_PATHF"; : > "$STUB_ERRF"
     local portf
     portf=$(mktemp)
     rm -f "$portf"
     STUB_BODY="$STUB_BODYF" STUB_AUTH="$STUB_AUTHF" STUB_PATH="$STUB_PATHF" \
       STUB_PORT_FILE="$portf" STUB_STATUS="$status" \
-      "$PYTHON" "$STUB_SCRIPT" &
+      "$PYTHON" "$STUB_SCRIPT" 2>"$STUB_ERRF" &
     STUB_PID=$!
+    # Condition-based wait for the OS-assigned port (bounded ~10s). Break out
+    # early if the python process exits before writing the port, so a crash is
+    # reported immediately with its stderr instead of after the full timeout.
     local i=0
-    while [ ! -s "$portf" ] && [ "$i" -lt 50 ]; do
+    while [ ! -s "$portf" ] && [ "$i" -lt 100 ]; do
+      kill -0 "$STUB_PID" 2>/dev/null || break
       sleep 0.1
       i=$((i + 1))
     done
     if [ ! -s "$portf" ]; then
       kill "$STUB_PID" 2>/dev/null
+      wait "$STUB_PID" 2>/dev/null || true
+      # Surface why the stub never came up so a future flake is diagnosable in
+      # the CI log rather than a bare "could not start".
+      printf '  stub start failed (status=%s): %s\n' \
+        "$status" "$(tr '\n' ' ' < "$STUB_ERRF" 2>/dev/null)" >&2
+      rm -f "$portf" "$STUB_ERRF"
+      STUB_ERRF=""
       STUB_URL=""
       return 1
     fi
@@ -384,8 +408,8 @@ PYEOF
       wait "$STUB_PID" 2>/dev/null || true
       STUB_PID=""
     fi
-    rm -f "$STUB_BODYF" "$STUB_AUTHF" "$STUB_PATHF"
-    STUB_BODYF=""; STUB_AUTHF=""; STUB_PATHF=""
+    rm -f "$STUB_BODYF" "$STUB_AUTHF" "$STUB_PATHF" "$STUB_ERRF"
+    STUB_BODYF=""; STUB_AUTHF=""; STUB_PATHF=""; STUB_ERRF=""
     STUB_URL=""
   }
 
