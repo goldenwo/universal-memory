@@ -1644,7 +1644,77 @@ if [ "${UM_SMOKE_DEDUP_ON:-}" = "1" ]; then
 		_um_smoke_auth_cleanup
 		exit 1
 	fi
-	echo "[smoke] D1 S2 PASS: second identical write merged"
+
+	# --- #16 idempotency invariant (Tier-3 quality catalog) --------------------
+	# The DEDUP_MERGED *event* above proves the response envelope reported a merge;
+	# it does NOT prove the STORE actually holds a single record. Assert the two
+	# stronger invariants #16 calls for ("same write twice -> exactly 1 record"):
+	#   (a) id-stability: write2 resolves to the SAME point id(s) as write1
+	#       (mergeSurface returns the existing point's id — server/lib/dedup.mjs:295),
+	#       i.e. the spec's "the point-ID is identical".
+	#   (b) store-count: the store holds exactly as many marker-matching records as
+	#       write1 created (write2 added zero net) — compared to write1's own fact
+	#       count, not a hardcoded 1, so it is robust to however many facts the
+	#       extractor produces AND to WHICH dedup layer catches (L1 hash vs L2
+	#       embedding; the fact extractor's leading-article casing can vary, so a
+	#       run may merge via either layer — the store invariant holds regardless).
+	# d1_resp{1,2} carry curl's `-w` "HTTP_STATUS=NNN" trailer; strip it before
+	# JSON-parsing. $MARKER scopes the probe to this run so the count never sees a
+	# foreign record (matches the S2 write text above).
+	_d1_ids() { sed '/^HTTP_STATUS=/d' | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+for r in d.get('results',[]):
+    if r.get('id'): print(r['id'])
+"; }
+	# `sort -u`: count DISTINCT points, so if write1 ever extracts two facts that
+	# intra-write dedup-merge onto one id (both results entries carry it), n1 still
+	# reflects the single stored record. `wc -w` always exits 0, unlike `grep -c .`
+	# which exits 1 on an empty list and would trip `set -o pipefail`.
+	d1_ids1=$(echo "$d1_resp1" | _d1_ids | sort -u | tr '\n' ' ' | sed 's/ *$//')
+	d1_ids2=$(echo "$d1_resp2" | _d1_ids | sort -u | tr '\n' ' ' | sed 's/ *$//')
+	d1_n1=$(echo "$d1_ids1" | wc -w | tr -d ' ')
+	echo "[smoke]     write1 ids=[$d1_ids1] write2 ids=[$d1_ids2] (n=$d1_n1)"
+	if [ "$d1_n1" -lt 1 ]; then
+		echo "[smoke] D1 S2 FAIL: write1 extracted 0 facts — the name-shaped probe must reliably extract a fact" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	# (a) id-stability
+	if [ "$d1_ids1" != "$d1_ids2" ]; then
+		echo "[smoke] D1 S2 FAIL: idempotency — write2 resolved to different point id(s) than write1 (ids1=[$d1_ids1] ids2=[$d1_ids2]); the second write did not merge onto the same point" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	# (b) store-count — /api/list is authoritative (default unlimited; mem0-mcp-http.mjs:2948),
+	# matched on the unique marker so a larger shared collection cannot inflate it. Poll
+	# rather than read once: a transient list error or a few hundred ms of qdrant settle
+	# lag then retries instead of aborting the whole smoke on a timing blip (same posture
+	# as the S8 recall poll). A genuine non-merge never converges and still fails after the
+	# budget. `if … then break; fi` (not `&& break`) keeps the loop safe under `set -e`.
+	d1_count=-1
+	for i in $(seq 1 10); do
+		d1_count=$(curl -sf "$ENDPOINT/api/list?full=1" | python3 -c "
+import json,sys
+items=json.load(sys.stdin)
+if isinstance(items,dict): items=items.get('results',[])
+m='dedup-probe-${MARKER}'
+print(sum(1 for r in items if m in json.dumps(r)))
+" 2>/dev/null || echo -1)
+		if [ "$d1_count" -eq "$d1_n1" ]; then break; fi
+		sleep 1
+	done
+	if [ "$d1_count" -ne "$d1_n1" ]; then
+		echo "[smoke] D1 S2 FAIL: idempotency — store holds $d1_count record(s) matching the probe marker, expected $d1_n1 (the two identical writes were not collapsed to a single stored record)" >&2
+		_um_smoke_auth_cleanup
+		exit 1
+	fi
+	echo "[smoke] D1 S2 PASS: second identical write merged -> exactly $d1_n1 stored record at a stable id (idempotent — #16)"
+	# No DELETE cleanup here (matches the pre-existing S2/S3-S6 blocks): the per-run
+	# $MARKER keeps the count above immune to residual records, CI's qdrant is fresh
+	# per run, and an immediate delete-after-write would race the merge (qdrant may not
+	# yet hold the point in a deletable segment) — so it would silently no-op anyway.
 fi
 
 # B2 S3 — /remember casual-save skill round-trip (gated by UM_SMOKE_REMEMBER_ON=1).
