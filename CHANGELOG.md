@@ -6,6 +6,8 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-06-23
+
 ### Changed — production fact-extraction pinned to temperature 0 (deterministic)
 
 - **OpenAI `factsInvoke` default `temperature` `1.0` → `0`** ([`server/lib/provider/openai.mjs`](server/lib/provider/openai.mjs)). Production fact extraction (the `umAdd` → `facts()` write path, [`server/lib/add.mjs`](server/lib/add.mjs)) previously omitted `temperature`, running at the OpenAI default `1.0` → non-deterministic fact sets: the same input could yield slightly different stored facts across writes, adding avoidable run-to-run drift to dedup matching and supersession embeddings. It now defaults to `0`, matching the two sibling structured-output judges (`contradictionJudgeInvoke`, `answerGradeInvoke`), which were already pinned deterministic with the same rationale. Extraction is a single-shot structured task — UM extracts once per write and never samples-and-unions — so `temperature > 0` bought no recall/coverage, only entropy. Quality is unchanged: the Tier-2 #10 extraction-fidelity eval already measures the temp-0 path at precision 0.98–1.0 / recall 1.0 / parseFails 0. The knob stays overridable via `opts.temperature` for the fidelity eval and diversity experiments. **No retrieval-threshold re-tuning needed** — the dedup (`dedup-threshold-sweep`) and d3 supersession evals run over hand-authored fact fixtures, not the extraction path, so they are invariant to this change; reduced extraction entropy can only *tighten* production dedup/supersession consistency. OpenAI only (the prod/default facts provider).
@@ -889,6 +891,9 @@ summarizer (`UM_SUMMARIZER`), `/um-preview` slash command, `install.sh
 --yes`. See [ROADMAP.md](ROADMAP.md) for the shipped row link to the
 release.
 
+[1.5.1]: https://github.com/goldenwo/universal-memory/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/goldenwo/universal-memory/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/goldenwo/universal-memory/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/goldenwo/universal-memory/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/goldenwo/universal-memory/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/goldenwo/universal-memory/compare/v1.0.0...v1.1.0
