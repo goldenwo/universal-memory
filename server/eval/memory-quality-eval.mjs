@@ -354,16 +354,18 @@ export function isInert(meanTargetCos, meanBestDistractorCos, ratioFloor = 0.85)
 /**
  * Aggregate the per-row pressure signals recallPass records (only when measurePressure:
  * true — i.e. the sweep's top rung) into mean target-cosine vs mean best-distractor-cosine,
- * the input to isInert(). Rows that didn't measure both cosines are ignored; an empty set
- * → inert with null means (fail-safe: never claim pressure we didn't verify). PURE.
+ * and apply isInert() for the authoritative verdict. Rows that didn't measure both cosines
+ * are ignored; an empty set → inert with null means (fail-safe: never claim pressure we
+ * didn't verify). PURE (reuses the module mean + isInert; the returned `inert` is final).
  *
  * @param {{details?: Array<{targetCos?: number, bestNonTargetCos?: number}>}} recall
  */
 export function computePressure(recall) {
   const ds = (recall?.details ?? []).filter((d) => typeof d.targetCos === 'number' && typeof d.bestNonTargetCos === 'number');
   if (ds.length === 0) return { inert: true, meanTargetCos: null, meanBestDistractorCos: null };
-  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  return { inert: false, meanTargetCos: mean(ds.map((d) => d.targetCos)), meanBestDistractorCos: mean(ds.map((d) => d.bestNonTargetCos)) };
+  const meanTargetCos = mean(ds.map((d) => d.targetCos));
+  const meanBestDistractorCos = mean(ds.map((d) => d.bestNonTargetCos));
+  return { inert: isInert(meanTargetCos, meanBestDistractorCos), meanTargetCos, meanBestDistractorCos };
 }
 
 // ---------------------------------------------------------------------------
@@ -661,6 +663,7 @@ export function parseArgs(argv) {
       const parsed = (argv[++i] ?? '').split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
       args.sweepSizes = parsed.length ? parsed : undefined;
     }
+    else if (a === '--seed') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v)) args.seed = v; }
   }
   return args;
 }
@@ -1163,6 +1166,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';            // prod-faithful: effectiveN tells the truth
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';    // match runOnce → the smallest rung ≈ the #1 baseline
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
 
   const { Memory } = await import('mem0ai/oss');
@@ -1242,14 +1246,13 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
     throw new Error(`mq-eval ISOLATION VIOLATION (corpus sweep): 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
   }
-  pressure.inert = isInert(pressure.meanTargetCos, pressure.meanBestDistractorCos);
 
   const provider = process.env.UM_EMBEDDING_PROVIDER ?? 'openai';
   const model = process.env.UM_EMBEDDING_MODEL ?? 'text-embedding-3-small (provider default)';
   return {
     timestamp: new Date().toISOString(),
     provider, model, evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
     env: { node: process.version, platform: process.platform },
     corpusSweep: { seed, targetCount, sizes, exactSearchThreshold: EXACT_THRESHOLD, pressure, rows },
   };
@@ -1291,8 +1294,8 @@ async function cliMain() {
       console.error('[mq-eval] --corpus-sweep requires --recall <path> (the fixture supplies the targets + lanes)');
       process.exit(2);
     }
-    console.log(`[mq-eval] corpus-size sweep: recall rows=${recallRows.length}, sizes=${args.sweepSizes ? args.sweepSizes.join(',') : '66,200,1000 (default)'} — running live (scratch collections, real vault untouched)...`);
-    const sweep = await runCorpusSweep({ recallRows, sweepSizes: args.sweepSizes });
+    console.log(`[mq-eval] corpus-size sweep: recall rows=${recallRows.length}, sizes=${args.sweepSizes ? args.sweepSizes.join(',') : '66,200,1000 (default)'}, seed=${args.seed ?? 0} — running live (scratch collections, real vault untouched)...`);
+    const sweep = await runCorpusSweep({ recallRows, sweepSizes: args.sweepSizes, seed: args.seed });
     const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
     const out = args.out ?? join(resultsDir, `mq-corpus-sweep-${isoDate()}.json`);
     await writeJson(out, sweep);

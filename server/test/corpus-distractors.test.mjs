@@ -1,7 +1,8 @@
 // server/test/corpus-distractors.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lanesFromRows } from '../eval/lib/corpus-distractors.mjs';
+import { readFileSync } from 'node:fs';
+import { lanesFromRows, generateDistractors } from '../eval/lib/corpus-distractors.mjs';
 
 test('lanesFromRows: distinct lanes from seed_facts, in first-seen order', () => {
   const rows = [
@@ -21,9 +22,6 @@ test('lanesFromRows: handles multi-fact rows + missing lane (skipped), empty →
   assert.deepEqual(lanesFromRows([]), []);
   assert.deepEqual(lanesFromRows(null), []);
 });
-
-// append to server/test/corpus-distractors.test.mjs
-import { generateDistractors } from '../eval/lib/corpus-distractors.mjs';
 
 const LANES = ['home', 'dev', 'finance']; // lanes with templates in this task's worked set
 
@@ -76,14 +74,10 @@ test('generateDistractors: each lane spans >= 3 structurally-distinct templates'
   }
 });
 
-// append to server/test/corpus-distractors.test.mjs
-import { readFileSync } from 'node:fs';
-import { lanesFromRows as _lfr } from '../eval/lib/corpus-distractors.mjs';
-
 test('generateDistractors: every fixture lane is templated (>=3 shapes) + corpus reaches >=1000 distinct', () => {
   const raw = readFileSync(new URL('../eval/recall-set.jsonl', import.meta.url), 'utf8');
   const rows = raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
-  const lanes = _lfr(rows); // all 10 fixture lanes
+  const lanes = lanesFromRows(rows); // all 10 fixture lanes
   const big = generateDistractors(3000, { seed: 0, lanes });
   for (const lane of lanes) {
     const inLane = big.filter((d) => d.lane === lane);
@@ -98,7 +92,7 @@ test('generateDistractors: every fixture lane is templated (>=3 shapes) + corpus
 test('generateDistractors: no generated text contains a recall-set target answer span', () => {
   const raw = readFileSync(new URL('../eval/recall-set.jsonl', import.meta.url), 'utf8');
   const rows = raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
-  const lanes = _lfr(rows);
+  const lanes = lanesFromRows(rows);
   // distinctive answer spans = the target seed_facts' salient tokens (numbers, capitalized words, quoted spans)
   const spans = [];
   for (const r of rows) for (const f of r.seed_facts ?? []) {

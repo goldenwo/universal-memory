@@ -880,21 +880,31 @@ test('parseArgs: --sweep-sizes passed last (no value) → undefined, no crash', 
   assert.equal(a.sweepSizes, undefined);
 });
 
+test('parseArgs: --seed parses an integer; ignores a non-integer', () => {
+  assert.equal(parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--seed', '7']).seed, 7);
+  assert.equal(parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--seed', 'x']).seed, undefined);
+});
+
 test('computePressure: empty/absent details → inert + null means (fail-safe)', () => {
   assert.deepEqual(computePressure({ details: [] }), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
   assert.deepEqual(computePressure({}), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
   assert.deepEqual(computePressure(null), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
 });
 
-test('computePressure: means over rows that measured BOTH cosines; ignores unmeasured', () => {
-  const recall = { details: [
-    { targetCos: 0.6, bestNonTargetCos: 0.5 },
-    { targetCos: 0.8, bestNonTargetCos: 0.3 },
+test('computePressure: means over measured rows + applies isInert (ignores unmeasured)', () => {
+  // strong distractors (best ≈ target band) → NOT inert; unmeasured rows ignored
+  const strong = computePressure({ details: [
+    { targetCos: 0.6, bestNonTargetCos: 0.58 },
+    { targetCos: 0.8, bestNonTargetCos: 0.68 },
     { targetCos: null, bestNonTargetCos: null }, // unmeasured (not top rung) → ignored
     { query: 'x' },                              // no cos fields → ignored
-  ] };
-  const p = computePressure(recall);
-  assert.equal(p.inert, false);
-  assert.ok(Math.abs(p.meanTargetCos - 0.7) < 1e-9, `meanTargetCos ${p.meanTargetCos}`);
-  assert.ok(Math.abs(p.meanBestDistractorCos - 0.4) < 1e-9, `meanBestDistractorCos ${p.meanBestDistractorCos}`);
+  ] });
+  assert.equal(strong.inert, false);
+  assert.ok(Math.abs(strong.meanTargetCos - 0.7) < 1e-9, `meanTargetCos ${strong.meanTargetCos}`);
+  assert.ok(Math.abs(strong.meanBestDistractorCos - 0.63) < 1e-9, `meanBestDistractorCos ${strong.meanBestDistractorCos}`);
+  // weak distractors (best << target) → inert even though measured
+  assert.equal(computePressure({ details: [
+    { targetCos: 0.6, bestNonTargetCos: 0.3 },
+    { targetCos: 0.8, bestNonTargetCos: 0.4 },
+  ] }).inert, true);
 });

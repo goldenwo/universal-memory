@@ -85,11 +85,15 @@ const SLOTS = {
   giftOccasion: ['a birthday', 'a graduation', 'a new arrival', 'a milestone anniversary', 'a housewarming'],
 };
 
-// Per-lane templates: >=3 structurally-distinct shapes each. WORKED SET = home/dev/finance.
-// EXTEND to the remaining recall-set lanes (travel, hobby, health, work, learning, food,
-// family) following this exact shape — >=3 sub-topic templates/lane, slot vocab disjoint
-// from the recall-set answers (Task 3 enforces non-collision). A lane with no entry here is
-// simply skipped by generateDistractors (its targets are still seeded by the sweep).
+// Per-lane templates — one entry per recall-set lane (all 10 fixture lanes covered).
+// Each lane has >=3 structurally-distinct templates (different sentence shapes → low
+// pairwise cosine → survives the 0.84 embedding-dedup threshold). Slot vocab is disjoint
+// from the recall-set target answers (enforced by the non-target gate test). A lane with
+// no entry here is simply skipped by generateDistractors (its targets are still seeded).
+
+/** Capitalize the first letter (sentence-start slot fills). */
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+
 const LANE_TEMPLATES = {
   home: [
     { slots: ['fixture', 'room'], render: (s) => `New ${s.fixture} went up in the ${s.room} over the weekend` },
@@ -99,25 +103,25 @@ const LANE_TEMPLATES = {
   dev: [
     { slots: ['lib', 'svc'], render: (s) => `The ${s.svc} service swapped in a new ${s.lib} module last sprint` },
     { slots: ['svc', 'cadence'], render: (s) => `Deploys for the ${s.svc} repo moved to a ${s.cadence} cadence` },
-    { slots: ['dep'], render: (s) => `${s.dep[0].toUpperCase()}${s.dep.slice(1)} was upgraded a major version` },
+    { slots: ['dep'], render: (s) => `${cap(s.dep)} was upgraded a major version` },
   ],
   finance: [
-    { slots: ['acct'], render: (s) => `${s.acct[0].toUpperCase()}${s.acct.slice(1)} fund got a standing top-up set up` },
-    { slots: ['sub', 'day'], render: (s) => `${s.sub[0].toUpperCase()}${s.sub.slice(1)} subscription now renews on ${s.day}` },
+    { slots: ['acct'], render: (s) => `${cap(s.acct)} fund got a standing top-up set up` },
+    { slots: ['sub', 'day'], render: (s) => `${cap(s.sub)} subscription now renews on ${s.day}` },
     { slots: ['reward'], render: (s) => `The rewards card started earning extra points on ${s.reward}` },
   ],
 
   travel: [
     { slots: ['dest', 'tripType'], render: (s) => `The ${s.tripType} trip to ${s.dest} got pencilled in for the autumn` },
-    { slots: ['travelItem'], render: (s) => `${s.travelItem[0].toUpperCase()}${s.travelItem.slice(1)} went straight onto the packing list this time` },
-    { slots: ['airline', 'dest'], render: (s) => `${s.airline[0].toUpperCase()}${s.airline.slice(1)} to ${s.dest} has a checked-bag allowance included` },
-    { slots: ['loyaltyProg', 'dest'], render: (s) => `${s.loyaltyProg[0].toUpperCase()}${s.loyaltyProg.slice(1)} should cover the accommodation in ${s.dest}` },
+    { slots: ['travelItem'], render: (s) => `${cap(s.travelItem)} went straight onto the packing list this time` },
+    { slots: ['airline', 'dest'], render: (s) => `${cap(s.airline)} to ${s.dest} has a checked-bag allowance included` },
+    { slots: ['loyaltyProg', 'dest'], render: (s) => `${cap(s.loyaltyProg)} should cover the accommodation in ${s.dest}` },
   ],
 
   hobby: [
     { slots: ['craft', 'craftProject'], render: (s) => `The ${s.craft} project this month is ${s.craftProject}` },
-    { slots: ['hobbyGear', 'hobbyVenue'], render: (s) => `${s.hobbyGear[0].toUpperCase()}${s.hobbyGear.slice(1)} is being borrowed from ${s.hobbyVenue} for the week` },
-    { slots: ['boardGame', 'hobbyVenue'], render: (s) => `${s.boardGame[0].toUpperCase()}${s.boardGame.slice(1)} tournament is happening at ${s.hobbyVenue} next weekend` },
+    { slots: ['hobbyGear', 'hobbyVenue'], render: (s) => `${cap(s.hobbyGear)} is being borrowed from ${s.hobbyVenue} for the week` },
+    { slots: ['boardGame', 'hobbyVenue'], render: (s) => `${cap(s.boardGame)} tournament is happening at ${s.hobbyVenue} next weekend` },
     { slots: ['craft', 'hobbyVenue'], render: (s) => `Signed up for the ${s.craft} beginner session at ${s.hobbyVenue}` },
   ],
 
@@ -129,30 +133,30 @@ const LANE_TEMPLATES = {
   ],
 
   work: [
-    { slots: ['meetingType', 'colleague'], render: (s) => `${s.meetingType[0].toUpperCase()}${s.meetingType.slice(1)} is now facilitated by ${s.colleague}` },
-    { slots: ['workTool'], render: (s) => `${s.workTool[0].toUpperCase()}${s.workTool.slice(1)} got a permissions update this cycle` },
-    { slots: ['deliverable', 'workProcess'], render: (s) => `${s.deliverable[0].toUpperCase()}${s.deliverable.slice(1)} needs sign-off before ${s.workProcess} begins` },
-    { slots: ['colleague', 'workProcess'], render: (s) => `${s.colleague[0].toUpperCase()}${s.colleague.slice(1)} will own the ${s.workProcess} notes going forward` },
+    { slots: ['meetingType', 'colleague'], render: (s) => `${cap(s.meetingType)} is now facilitated by ${s.colleague}` },
+    { slots: ['workTool'], render: (s) => `${cap(s.workTool)} got a permissions update this cycle` },
+    { slots: ['deliverable', 'workProcess'], render: (s) => `${cap(s.deliverable)} needs sign-off before ${s.workProcess} begins` },
+    { slots: ['colleague', 'workProcess'], render: (s) => `${cap(s.colleague)} will own the ${s.workProcess} notes going forward` },
   ],
 
   learning: [
     { slots: ['subject', 'studyMethod'], render: (s) => `Switched to ${s.studyMethod} for the ${s.subject} lessons` },
-    { slots: ['learningVenue', 'subject'], render: (s) => `${s.learningVenue[0].toUpperCase()}${s.learningVenue.slice(1)} has a new ${s.subject} track starting next month` },
-    { slots: ['studySchedule', 'courseUnit'], render: (s) => `${s.studySchedule[0].toUpperCase()}${s.studySchedule.slice(1)} are reserved for getting through ${s.courseUnit}` },
+    { slots: ['learningVenue', 'subject'], render: (s) => `${cap(s.learningVenue)} has a new ${s.subject} track starting next month` },
+    { slots: ['studySchedule', 'courseUnit'], render: (s) => `${cap(s.studySchedule)} are reserved for getting through ${s.courseUnit}` },
     { slots: ['subject', 'courseUnit'], render: (s) => `${s.subject} ${s.courseUnit} turned out to be the trickiest part of the course` },
   ],
 
   food: [
     { slots: ['ingredient', 'mealType'], render: (s) => `Added ${s.ingredient} to ${s.mealType} and it made a big difference` },
-    { slots: ['kitchenTool', 'cuisine'], render: (s) => `${s.kitchenTool[0].toUpperCase()}${s.kitchenTool.slice(1)} is getting a lot of use for the ${s.cuisine} recipes` },
-    { slots: ['foodShop', 'ingredient'], render: (s) => `${s.foodShop[0].toUpperCase()}${s.foodShop.slice(1)} is the only place that stocks decent ${s.ingredient}` },
-    { slots: ['mealType'], render: (s) => `${s.mealType[0].toUpperCase()}${s.mealType.slice(1)} has become the default option on busy days` },
+    { slots: ['kitchenTool', 'cuisine'], render: (s) => `${cap(s.kitchenTool)} is getting a lot of use for the ${s.cuisine} recipes` },
+    { slots: ['foodShop', 'ingredient'], render: (s) => `${cap(s.foodShop)} is the only place that stocks decent ${s.ingredient}` },
+    { slots: ['mealType'], render: (s) => `${cap(s.mealType)} has become the default option on busy days` },
   ],
 
   family: [
-    { slots: ['relative', 'familyEvent'], render: (s) => `${s.relative[0].toUpperCase()}${s.relative.slice(1)} is hosting ${s.familyEvent} this year` },
-    { slots: ['familyTradition'], render: (s) => `${s.familyTradition[0].toUpperCase()}${s.familyTradition.slice(1)} is back on the calendar for this year` },
-    { slots: ['familyTask', 'relative'], render: (s) => `${s.familyTask[0].toUpperCase()}${s.familyTask.slice(1)} got assigned to ${s.relative} this time around` },
+    { slots: ['relative', 'familyEvent'], render: (s) => `${cap(s.relative)} is hosting ${s.familyEvent} this year` },
+    { slots: ['familyTradition'], render: (s) => `${cap(s.familyTradition)} is back on the calendar for this year` },
+    { slots: ['familyTask', 'relative'], render: (s) => `${cap(s.familyTask)} got assigned to ${s.relative} this time around` },
     { slots: ['relative', 'giftOccasion'], render: (s) => `Need to sort something out for ${s.relative}'s upcoming ${s.giftOccasion}` },
   ],
 };
@@ -178,6 +182,7 @@ function fillTemplate(template, combo) {
  * @returns {{text: string, lane: string}[]}
  */
 export function generateDistractors(count, { seed = 0, lanes } = {}) {
+  if (count <= 0) return [];
   if (!Array.isArray(lanes) || lanes.length === 0) throw new Error('generateDistractors: lanes required (derive from the fixture)');
   const usable = lanes.filter((l) => LANE_TEMPLATES[l]?.length);
   if (usable.length === 0) throw new Error(`generateDistractors: no templates for lanes [${lanes.join(', ')}]`);
