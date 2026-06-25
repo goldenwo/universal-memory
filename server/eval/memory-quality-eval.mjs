@@ -107,6 +107,43 @@ export function mrr(reciprocalRanks) {
 }
 
 /**
+ * Binary-relevance nDCG@k. Gain is 1 for an acceptable target id, else 0; the rank
+ * discount is 1/log2(rank+1) (1-based rank). IDCG@k places min(|targets|, k) relevant
+ * items first, so a target at rank 1 scores 1.0 and an absent/empty/no-target query → 0.
+ * Unlike recallAtK (0/1 presence), nDCG is rank-sensitive; with one acceptable target per
+ * row it is a monotonic function of that target's rank — close to MRR, which is why the
+ * eval-catalog spec (§7) deferred it. Kept anyway for scorecard completeness and to be
+ * ready for a future graded / multi-target relevance fixture.
+ *
+ * @param {string[]} rankedIds   result ids in rank order (top-1 first)
+ * @param {string[]} targetIds   acceptable target id(s) for this query
+ * @param {number[]} ks          retrieval depths, e.g. [1,3,5,10]
+ * @returns {Object<number, number>}  nDCG@k in [0,1] (0 when no target is reachable)
+ */
+export function ndcgAtK(rankedIds, targetIds, ks) {
+  const targets = new Set(targetIds ?? []);
+  const ids = rankedIds ?? [];
+  const out = {};
+  for (const k of ks) {
+    let dcg = 0;
+    const credited = new Set();  // a result list shouldn't repeat an id; if it does, credit each target once so nDCG stays ≤ 1 (mirrors recallAtK's first-match semantics)
+    const top = ids.slice(0, k);
+    for (let i = 0; i < top.length; i++) {
+      if (targets.has(top[i]) && !credited.has(top[i])) {
+        credited.add(top[i]);
+        dcg += 1 / Math.log2(i + 2);  // 0-based i → 1-based rank i+1
+      }
+    }
+    // IDCG@k: all relevant ranked first; binary gains → min(|targets|, k) leading 1s.
+    let idcg = 0;
+    const ideal = Math.min(targets.size, k);
+    for (let i = 0; i < ideal; i++) idcg += 1 / Math.log2(i + 2);
+    out[k] = idcg === 0 ? 0 : dcg / idcg;
+  }
+  return out;
+}
+
+/**
  * Stratify recall by paraphrase_level. Groups the recall pass's per-query details by
  * details[].paraphrase_level, aggregates recall@k per level (reusing aggregateRecall over
  * each group's recallByK maps), and reports the gap of each level vs the lexical anchor per
@@ -371,6 +408,9 @@ export function formatSummaryTable(result) {
       );
     }
     lines.push(`  MRR: ${fmtPct(rec.mrr)}`);
+    if (rec.ndcg) {
+      lines.push('  nDCG@k: ' + (rec.ks ?? []).map((k) => `@${k} ${fmtPct(rec.ndcg?.[k])}`).join('  '));
+    }
 
     const bpl = rec.byParaphraseLevel;
     if (bpl) {
@@ -557,6 +597,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
   const perQuery = [];
   const perQueryNoTwin = [];
   const reciprocalRanks = [];
+  const perQueryNdcg = [];
   const details = [];
   for (const row of rows) {
     const target = byRef.get(row.target_ref);
@@ -565,11 +606,13 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     const rankedIds = (sr.results ?? []).map((r) => r.id);
     const rk = recallAtK(rankedIds, targetIds, ks);
     const rr = reciprocalRank(rankedIds, targetIds);
+    const nd = ndcgAtK(rankedIds, targetIds, ks);
     const twin = hasTwin(row.target_ref);
     perQuery.push(rk);
     if (!twin) perQueryNoTwin.push(rk);
     reciprocalRanks.push(rr);
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, twin, topIds: rankedIds.slice(0, 5) });
+    perQueryNdcg.push(nd);
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5) });
   }
 
   return {
@@ -579,6 +622,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     collisionExcludedAggregate: aggregateRecall(perQueryNoTwin, ks),
     twinFlagged: rows.length - perQueryNoTwin.length,
     mrr: mrr(reciprocalRanks),
+    ndcg: aggregateRecall(perQueryNdcg, ks),  // generic per-k mean — same helper as recall
     details,
   };
 }

@@ -14,6 +14,7 @@
 //       empty results; k > result count; multi-target (any match); empty targets
 //   - aggregateRecall: mean per k over queries; empty → null
 //   - reciprocalRank + mrr: 1/rank, first-target-wins, absent→0; mean; empty→null
+//   - ndcgAtK: binary-relevance nDCG@k; rank-sensitive; absent/empty/no-target → 0; multi-target IDCG
 //   - staleReturnRate: rate of surfacedOriginal over FIRED rows; empty→null; all-false→0
 //   - noAnswerPrecision: rate of correct-empty over distractors; empty→null; all-correct→1
 //   - fireRate: rate of detector-fired rows; empty→null
@@ -33,6 +34,7 @@ import {
   aggregateRecall,
   reciprocalRank,
   mrr,
+  ndcgAtK,
   recallByParaphraseLevel,
   crossSessionRecall,
   extractionFidelity,
@@ -135,6 +137,63 @@ test('mrr: mean of reciprocal ranks', () => {
 
 test('mrr: empty → null', () => {
   assert.equal(mrr([]), null);
+});
+
+// --- ndcgAtK ---------------------------------------------------------------
+// Binary-relevance nDCG@k = DCG@k / IDCG@k, gain ∈ {0,1}, discount 1/log2(rank+1)
+// (1-based rank). Rank-sensitive (unlike recallAtK's 0/1) and multi-target-ready.
+
+test('ndcgAtK: target at rank 1 → 1 at every k (ideal)', () => {
+  assert.deepEqual(ndcgAtK(['t', 'a', 'b', 'c'], ['t'], KS), { 1: 1, 3: 1, 5: 1, 10: 1 });
+});
+
+test('ndcgAtK: target at rank 3 → miss@1, 1/log2(4)=0.5 at @3+', () => {
+  const r = ndcgAtK(['a', 'b', 't', 'c'], ['t'], KS);
+  assert.equal(r[1], 0);
+  assert.equal(r[3], 0.5);
+  assert.equal(r[5], 0.5);
+  assert.equal(r[10], 0.5);
+});
+
+test('ndcgAtK: rank-sensitive — rank 2 = 1/log2(3), distinct from recall(1)/RR(0.5)', () => {
+  const r = ndcgAtK(['a', 't', 'b'], ['t'], KS);
+  assert.equal(r[1], 0);
+  assert.ok(Math.abs(r[3] - 1 / Math.log2(3)) < 1e-12); // ≈0.6309
+});
+
+test('ndcgAtK: target at rank 7 → only @10 nonzero = 1/log2(8)', () => {
+  const ranked = ['a', 'b', 'c', 'd', 'e', 'f', 't', 'g'];
+  const r = ndcgAtK(ranked, ['t'], KS);
+  assert.equal(r[1], 0);
+  assert.equal(r[3], 0);
+  assert.equal(r[5], 0);
+  assert.ok(Math.abs(r[10] - 1 / Math.log2(8)) < 1e-12); // 1/3
+});
+
+test('ndcgAtK: target absent → 0 at every k', () => {
+  assert.deepEqual(ndcgAtK(['a', 'b', 'c'], ['t'], KS), { 1: 0, 3: 0, 5: 0, 10: 0 });
+});
+
+test('ndcgAtK: empty results → 0 at every k', () => {
+  assert.deepEqual(ndcgAtK([], ['t'], KS), { 1: 0, 3: 0, 5: 0, 10: 0 });
+});
+
+test('ndcgAtK: empty target set → 0 at every k (IDCG=0, defensive)', () => {
+  assert.deepEqual(ndcgAtK(['a', 'b'], [], KS), { 1: 0, 3: 0, 5: 0, 10: 0 });
+});
+
+test('ndcgAtK: multiple targets at ranks 1+2 → 1 at k≥1 (IDCG matches DCG)', () => {
+  const r = ndcgAtK(['x', 'y', 'b'], ['x', 'y'], KS);
+  assert.equal(r[1], 1);  // top-1 fills the one available ideal slot
+  assert.equal(r[3], 1);
+  assert.equal(r[10], 1);
+});
+
+test('ndcgAtK: duplicate target id in ranked list credited once → nDCG ≤ 1', () => {
+  // A malformed ranked list repeating the single target must not push DCG past IDCG.
+  const r = ndcgAtK(['t', 't', 'a'], ['t'], KS);
+  assert.equal(r[1], 1);
+  assert.equal(r[3], 1);  // NOT 1 + 1/log2(3) — the second 't' is not double-counted
 });
 
 // --- staleReturnRate (over detector-FIRED rows only) -----------------------
