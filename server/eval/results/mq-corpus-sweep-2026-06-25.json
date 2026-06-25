@@ -1,0 +1,302 @@
+{
+  "timestamp": "2026-06-25T21:49:57.762Z",
+  "provider": "openai",
+  "model": "text-embedding-3-small (provider default)",
+  "evalUser": "um-mq-eval",
+  "flags": {
+    "UM_DEDUP_ENABLED": "true",
+    "UM_AUTOSUPERSEDE_ENABLED": "false",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "false"
+  },
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32"
+  },
+  "corpusSweep": {
+    "seed": 0,
+    "targetCount": 66,
+    "sizes": [
+      66,
+      200,
+      500,
+      1000
+    ],
+    "exactSearchThreshold": 20000,
+    "pressure": {
+      "inert": false,
+      "meanTargetCos": 0.5560667311139365,
+      "meanBestDistractorCos": 0.43456732176114005
+    },
+    "rows": [
+      {
+        "requestedN": 66,
+        "effectiveN": 66,
+        "dedupCollapsed": 0,
+        "dedupSaturated": false,
+        "exactSearch": true,
+        "recall": {
+          "aggregate": {
+            "1": 0.9545454545454546,
+            "3": 1,
+            "5": 1,
+            "10": 1
+          },
+          "collisionExcludedAggregate": {
+            "1": 0.9545454545454546,
+            "3": 1,
+            "5": 1,
+            "10": 1
+          },
+          "twinFlagged": 0,
+          "guardSaturated": false,
+          "mrr": 0.9772727272727273,
+          "ndcg": {
+            "1": 0.9545454545454546,
+            "3": 0.9832240797077937,
+            "5": 0.9832240797077937,
+            "10": 0.9832240797077937
+          }
+        },
+        "latency": {
+          "umAdd": {
+            "count": 66,
+            "p50": 185.41909999999916,
+            "p95": 356.4925000000003,
+            "min": 108.16759999999886,
+            "max": 1019.103799999999,
+            "mean": 218.66087878787886
+          },
+          "doSearch": {
+            "count": 66,
+            "p50": 211.59130000000005,
+            "p95": 322.6707000000024,
+            "min": 152.7033999999985,
+            "max": 2223.5080000000016,
+            "mean": 250.65631363636336
+          }
+        },
+        "cost": {
+          "write": {
+            "tokensIn": 841,
+            "tokensOut": 0,
+            "costUsd": 0.00001682,
+            "bySurface": {
+              "embed": {
+                "tokensIn": 841,
+                "tokensOut": 0,
+                "costUsd": 0.00001682
+              }
+            }
+          },
+          "evalEmbed": {
+            "tokensIn": 841,
+            "tokensOut": 0,
+            "costUsd": 0.00001682
+          }
+        }
+      },
+      {
+        "requestedN": 200,
+        "effectiveN": 182,
+        "dedupCollapsed": 18,
+        "dedupSaturated": true,
+        "exactSearch": true,
+        "recall": {
+          "aggregate": {
+            "1": 0.9090909090909091,
+            "3": 0.9696969696969697,
+            "5": 0.9848484848484849,
+            "10": 1
+          },
+          "collisionExcludedAggregate": {
+            "1": 0.9090909090909091,
+            "3": 0.9696969696969697,
+            "5": 0.9848484848484849,
+            "10": 1
+          },
+          "twinFlagged": 0,
+          "guardSaturated": false,
+          "mrr": 0.9428210678210679,
+          "ndcg": {
+            "1": 0.9090909090909091,
+            "3": 0.9453452918290056,
+            "5": 0.9518706942240571,
+            "10": 0.9569211992745622
+          }
+        },
+        "latency": {
+          "umAdd": {
+            "count": 200,
+            "p50": 190.99719999999797,
+            "p95": 376.5046999999977,
+            "min": 111.42289999999048,
+            "max": 2273.7589000000007,
+            "mean": 232.5531585000001
+          },
+          "doSearch": {
+            "count": 66,
+            "p50": 207.21809999999823,
+            "p95": 730.140699999989,
+            "min": 141.21210000000428,
+            "max": 1567.5585999999894,
+            "mean": 278.5118651515147
+          }
+        },
+        "cost": {
+          "write": {
+            "tokensIn": 2338,
+            "tokensOut": 0,
+            "costUsd": 0.00004676000000000003,
+            "bySurface": {
+              "embed": {
+                "tokensIn": 2338,
+                "tokensOut": 0,
+                "costUsd": 0.00004676000000000003
+              }
+            }
+          },
+          "evalEmbed": {
+            "tokensIn": 2338,
+            "tokensOut": 0,
+            "costUsd": 0.00004676000000000003
+          }
+        }
+      },
+      {
+        "requestedN": 500,
+        "effectiveN": 358,
+        "dedupCollapsed": 142,
+        "dedupSaturated": true,
+        "exactSearch": true,
+        "recall": {
+          "aggregate": {
+            "1": 0.8636363636363636,
+            "3": 0.9696969696969697,
+            "5": 0.9696969696969697,
+            "10": 0.9848484848484849
+          },
+          "collisionExcludedAggregate": {
+            "1": 0.8636363636363636,
+            "3": 0.9696969696969697,
+            "5": 0.9696969696969697,
+            "10": 0.9848484848484849
+          },
+          "twinFlagged": 0,
+          "guardSaturated": false,
+          "mrr": 0.9135101010101011,
+          "ndcg": {
+            "1": 0.8636363636363636,
+            "3": 0.9265855873917771,
+            "5": 0.9265855873917771,
+            "10": 0.9313653582521669
+          }
+        },
+        "latency": {
+          "umAdd": {
+            "count": 500,
+            "p50": 183.04740000001038,
+            "p95": 408.02939999999944,
+            "min": 109.47810000000754,
+            "max": 3074.9470000000147,
+            "mean": 235.53793579999933
+          },
+          "doSearch": {
+            "count": 66,
+            "p50": 226.27009999996517,
+            "p95": 725.6846999999834,
+            "min": 160.3852000000188,
+            "max": 1936.8183999999892,
+            "mean": 287.0244090909096
+          }
+        },
+        "cost": {
+          "write": {
+            "tokensIn": 5743,
+            "tokensOut": 0,
+            "costUsd": 0.0001148599999999999,
+            "bySurface": {
+              "embed": {
+                "tokensIn": 5743,
+                "tokensOut": 0,
+                "costUsd": 0.0001148599999999999
+              }
+            }
+          },
+          "evalEmbed": {
+            "tokensIn": 5743,
+            "tokensOut": 0,
+            "costUsd": 0.0001148599999999999
+          }
+        }
+      },
+      {
+        "requestedN": 1000,
+        "effectiveN": 522,
+        "dedupCollapsed": 478,
+        "dedupSaturated": true,
+        "exactSearch": true,
+        "recall": {
+          "aggregate": {
+            "1": 0.8333333333333334,
+            "3": 0.9545454545454546,
+            "5": 0.9696969696969697,
+            "10": 0.9848484848484849
+          },
+          "collisionExcludedAggregate": {
+            "1": 0.8333333333333334,
+            "3": 0.9545454545454546,
+            "5": 0.9696969696969697,
+            "10": 0.9848484848484849
+          },
+          "twinFlagged": 0,
+          "guardSaturated": false,
+          "mrr": 0.8945707070707072,
+          "ndcg": {
+            "1": 0.8333333333333334,
+            "3": 0.9058420988095265,
+            "5": 0.9123675012045779,
+            "10": 0.9171472720649677
+          }
+        },
+        "latency": {
+          "umAdd": {
+            "count": 1000,
+            "p50": 186.00889999995707,
+            "p95": 473.43250000005355,
+            "min": 103.12979999999516,
+            "max": 12850.103200000012,
+            "mean": 253.73851039999974
+          },
+          "doSearch": {
+            "count": 66,
+            "p50": 217.65540000004694,
+            "p95": 680.5043999999762,
+            "min": 142.66479999991134,
+            "max": 1144.8754999999655,
+            "mean": 267.9954651515158
+          }
+        },
+        "cost": {
+          "write": {
+            "tokensIn": 11387,
+            "tokensOut": 0,
+            "costUsd": 0.00022773999999999993,
+            "bySurface": {
+              "embed": {
+                "tokensIn": 11387,
+                "tokensOut": 0,
+                "costUsd": 0.00022773999999999993
+              }
+            }
+          },
+          "evalEmbed": {
+            "tokensIn": 11946,
+            "tokensOut": 0,
+            "costUsd": 0.0002389199999999999
+          }
+        }
+      }
+    ]
+  }
+}
