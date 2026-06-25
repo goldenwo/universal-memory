@@ -53,6 +53,9 @@ import {
   percentile,
   summarizeLatency,
   makeProviderCostSink,
+  dedupSaturated,
+  guardSaturated,
+  isInert,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -804,4 +807,22 @@ test('formatSummaryTable: omits latency + cost blocks when absent (null-tolerant
   const s = formatSummaryTable(result);
   assert.doesNotMatch(s, /Latency \(ms/);
   assert.doesNotMatch(s, /Cost \(provider/);
+});
+
+test('dedupSaturated: true when effectiveN falls > bound below requestedN', () => {
+  assert.equal(dedupSaturated(1000, 990, 0.05), false); // 1% collapse
+  assert.equal(dedupSaturated(1000, 900, 0.05), true);  // 10% collapse
+  assert.equal(dedupSaturated(0, 0, 0.05), false);      // degenerate → not saturated
+});
+
+test('guardSaturated: true when twin-flagged fraction exceeds bound', () => {
+  assert.equal(guardSaturated(5, 66, 0.25), false);   // ~7.6%
+  assert.equal(guardSaturated(20, 66, 0.25), true);   // ~30%
+  assert.equal(guardSaturated(0, 0, 0.25), false);    // no queries → not saturated
+});
+
+test('isInert: true when best distractor is not materially close to the target band', () => {
+  assert.equal(isInert(0.62, 0.30, 0.85), true);  // distractor 0.30 << target 0.62 → no pressure
+  assert.equal(isInert(0.62, 0.58, 0.85), false); // distractor 0.58 ~ target band → real pressure
+  assert.equal(isInert(null, null, 0.85), true);  // unmeasured → treat as inert (fail-safe)
 });

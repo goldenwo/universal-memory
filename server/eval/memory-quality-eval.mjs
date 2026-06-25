@@ -327,6 +327,30 @@ export function fireRate(stalenessRows) {
   return rate((stalenessRows ?? []).map((r) => r.fired === true));
 }
 
+/** Effective corpus collapsed > `bound` below requested (dedup ate distinct points). */
+export function dedupSaturated(requestedN, effectiveN, bound = 0.05) {
+  if (!requestedN || requestedN <= 0) return false;
+  return (requestedN - effectiveN) / requestedN > bound;
+}
+
+/** Twin-collision guard flagged too many rows → collision-excluded read is unreliable. */
+export function guardSaturated(twinFlagged, queryCount, bound = 0.25) {
+  if (!queryCount || queryCount <= 0) return false;
+  return twinFlagged / queryCount > bound;
+}
+
+/**
+ * The distractors applied no real retrieval pressure (their best query-neighbour cosine
+ * never approaches the target band), so a flat recall curve is NOT evidence of robustness.
+ * Unmeasured (null) → inert (fail-safe: never silently claim pressure we didn't verify).
+ * `ratioFloor` = fraction of the target cosine the best distractor must reach to count as pressure.
+ */
+export function isInert(meanTargetCos, meanBestDistractorCos, ratioFloor = 0.85) {
+  if (typeof meanTargetCos !== 'number' || typeof meanBestDistractorCos !== 'number') return true;
+  if (meanTargetCos <= 0) return true;
+  return (meanBestDistractorCos / meanTargetCos) < ratioFloor;
+}
+
 // ---------------------------------------------------------------------------
 // Operational baseline (PURE) — latency percentiles + provider-cost capture.
 // Latency is wall-clock (environment-dependent: local ≠ Pi ≠ cloud) → RECORD,
