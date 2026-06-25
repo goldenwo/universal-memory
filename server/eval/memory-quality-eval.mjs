@@ -345,7 +345,11 @@ export function guardSaturated(twinFlagged, queryCount, bound = 0.25) {
  * Unmeasured (null) → inert (fail-safe: never silently claim pressure we didn't verify).
  * `ratioFloor` = fraction of the target cosine the best distractor must reach to count as pressure.
  */
-export function isInert(meanTargetCos, meanBestDistractorCos, ratioFloor = 0.85) {
+// ratioFloor 0.75 pinned from the 2026-06-25 keyed dry run: in-domain distractors drove a real
+// recall@1 decline (0.955→0.833 over effectiveN 66→522) at a mean best/target cosine ratio of 0.78,
+// which the prior 0.85 default false-flagged as inert. Foreign/out-of-domain filler sits well below
+// 0.75, so the anti-inert guard still catches the failure mode it exists for.
+export function isInert(meanTargetCos, meanBestDistractorCos, ratioFloor = 0.75) {
   if (typeof meanTargetCos !== 'number' || typeof meanBestDistractorCos !== 'number') return true;
   if (meanTargetCos <= 0) return true;
   return (meanBestDistractorCos / meanTargetCos) < ratioFloor;
@@ -1166,7 +1170,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   process.env.MEM0_USER_ID = EVAL_USER;
   process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';            // prod-faithful: effectiveN tells the truth
-  process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';    // match runOnce → the smallest rung ≈ the #1 baseline
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';   // OFF for the sweep: synthetic distractors self-contradict in the dedup band, and targets seed FIRST (oldest) → autosupersede would DEMOTE real targets, confounding recall. The sweep grows the corpus via dedup only (spec pins dedup, not supersession). Confirmed by the 2026-06-25 dry run.
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
 
   const { Memory } = await import('mem0ai/oss');
@@ -1192,7 +1196,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   const lanes = lanesFromRows(recallRows);
   const EXACT_THRESHOLD = 20000;                     // qdrant indexing_threshold default → exact search below it
   // requestedN is TOTAL corpus size, floored at targetCount; de-duped + sorted ascending.
-  const sizes = [...new Set((sweepSizes ?? [66, 200, 1000]).map((n) => Math.max(n, targetCount)))].sort((a, b) => a - b);
+  const sizes = [...new Set((sweepSizes ?? [66, 200, 500, 1000]).map((n) => Math.max(n, targetCount)))].sort((a, b) => a - b);
   const topRung = sizes[sizes.length - 1];
   const rid = runid ?? `${process.pid}`;
   const memoriesBefore = await countPoints(client, 'memories');
@@ -1252,7 +1256,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   return {
     timestamp: new Date().toISOString(),
     provider, model, evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'false', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
     env: { node: process.version, platform: process.platform },
     corpusSweep: { seed, targetCount, sizes, exactSearchThreshold: EXACT_THRESHOLD, pressure, rows },
   };
@@ -1294,7 +1298,7 @@ async function cliMain() {
       console.error('[mq-eval] --corpus-sweep requires --recall <path> (the fixture supplies the targets + lanes)');
       process.exit(2);
     }
-    console.log(`[mq-eval] corpus-size sweep: recall rows=${recallRows.length}, sizes=${args.sweepSizes ? args.sweepSizes.join(',') : '66,200,1000 (default)'}, seed=${args.seed ?? 0} — running live (scratch collections, real vault untouched)...`);
+    console.log(`[mq-eval] corpus-size sweep: recall rows=${recallRows.length}, sizes=${args.sweepSizes ? args.sweepSizes.join(',') : '66,200,500,1000 (default)'}, seed=${args.seed ?? 0} — running live (scratch collections, real vault untouched)...`);
     const sweep = await runCorpusSweep({ recallRows, sweepSizes: args.sweepSizes, seed: args.seed });
     const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
     const out = args.out ?? join(resultsDir, `mq-corpus-sweep-${isoDate()}.json`);

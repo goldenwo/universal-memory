@@ -827,6 +827,9 @@ test('isInert: true when best distractor is not materially close to the target b
   assert.equal(isInert(0.62, 0.30, 0.85), true);  // distractor 0.30 << target 0.62 → no pressure
   assert.equal(isInert(0.62, 0.58, 0.85), false); // distractor 0.58 ~ target band → real pressure
   assert.equal(isInert(null, null, 0.85), true);  // unmeasured → treat as inert (fail-safe)
+  // calibrated DEFAULT floor (0.75, pinned from the 2026-06-25 dry run)
+  assert.equal(isInert(0.556, 0.435), false);     // ratio 0.78 ≥ 0.75 → real pressure (dry-run means)
+  assert.equal(isInert(0.62, 0.40), true);        // ratio 0.65 < 0.75 → inert (weak/foreign filler)
 });
 
 test('formatCorpusSweep: renders an effectiveN-keyed table with flags; back-compat when absent', () => {
