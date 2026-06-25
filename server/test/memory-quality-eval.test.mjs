@@ -50,6 +50,9 @@ import {
   answerCorrectnessPass,
   sweepBounceGate,
   collectBounceRows,
+  percentile,
+  summarizeLatency,
+  makeProviderCostSink,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -673,4 +676,132 @@ test('extractionFidelity: empty input → null precision/recall', () => {
   assert.equal(r.recall, null);
   assert.equal(r.f1, null);
   assert.equal(r.graded, 0);
+});
+
+// ===========================================================================
+// Candidate B — operational baseline (latency p50/p95 + provider cost).
+// PURE primitives only (percentile / summarizeLatency / makeProviderCostSink)
+// + the formatSummaryTable render. The live wiring (recordTimed + threading the
+// latency/cost accumulators through the seed/recall/staleness passes) is the
+// live layer the eval doesn't unit-test (same boundary as seedCorpus/recallPass),
+// verified by read + the synthetic-result render check below.
+// ===========================================================================
+
+// --- percentile (nearest-rank) ---------------------------------------------
+// q ∈ [0,1]; sort asc; nearest-rank idx = clamp(ceil(q*n)-1, 0, n-1); empty → null.
+
+test('percentile: empty sample → null', () => {
+  assert.equal(percentile([], 0.5), null);
+});
+
+test('percentile: single sample → that value for any q', () => {
+  assert.equal(percentile([7], 0.5), 7);
+  assert.equal(percentile([7], 0.95), 7);
+});
+
+test('percentile: nearest-rank, sorts unsorted input', () => {
+  // sorted [10,20,30,40]; q=0.5 → ceil(2)=2 → idx1 → 20; q=0.95 → ceil(3.8)=4 → idx3 → 40.
+  assert.equal(percentile([40, 10, 30, 20], 0.5), 20);
+  assert.equal(percentile([40, 10, 30, 20], 0.95), 40);
+});
+
+test('percentile: q=0 → min, q=1 → max', () => {
+  assert.equal(percentile([5, 1, 9, 3], 0), 1);
+  assert.equal(percentile([5, 1, 9, 3], 1), 9);
+});
+
+test('percentile: p95 over 20 samples picks the 19th-smallest (nearest-rank)', () => {
+  const s = Array.from({ length: 20 }, (_, i) => i + 1); // 1..20
+  assert.equal(percentile(s, 0.95), 19); // ceil(0.95*20)=19 → idx18 → value 19
+});
+
+// --- summarizeLatency ------------------------------------------------------
+
+test('summarizeLatency: empty → count 0, all stats null', () => {
+  assert.deepEqual(summarizeLatency([]), { count: 0, p50: null, p95: null, min: null, max: null, mean: null });
+});
+
+test('summarizeLatency: known sample → count/min/max/mean/p50/p95', () => {
+  const s = summarizeLatency([10, 20, 30, 40]);
+  assert.equal(s.count, 4);
+  assert.equal(s.min, 10);
+  assert.equal(s.max, 40);
+  assert.equal(s.mean, 25);
+  assert.equal(s.p50, 20); // nearest-rank
+  assert.equal(s.p95, 40);
+});
+
+test('summarizeLatency: single sample → every stat is that value', () => {
+  assert.deepEqual(summarizeLatency([7]), { count: 1, p50: 7, p95: 7, min: 7, max: 7, mean: 7 });
+});
+
+// --- makeProviderCostSink --------------------------------------------------
+// Duck-types the { counter, histogram } adapter embed()/facts() emit to
+// (metrics.mjs PROVIDER_METRICS_ADAPTER). A write-class sink passed as umAdd's
+// `metrics` captures its extract+embed spend though umAdd returns no usage.
+const M_TOKENS = 'um_provider_tokens_total';   // mirror metrics.mjs PROVIDER_METRICS.TOKENS_TOTAL (stable scrape name)
+const M_COST = 'um_provider_cost_usd_total';   // mirror PROVIDER_METRICS.COST_USD_TOTAL
+
+test('makeProviderCostSink: fresh sink → zero totals, empty bySurface, { counter, histogram } shape', () => {
+  const sink = makeProviderCostSink();
+  assert.deepEqual(sink.totals, { tokensIn: 0, tokensOut: 0, costUsd: 0, bySurface: {} });
+  assert.equal(typeof sink.counter, 'function');
+  assert.equal(typeof sink.histogram, 'function');
+});
+
+test('makeProviderCostSink: accumulates tokens by direction + cost, per surface', () => {
+  const sink = makeProviderCostSink();
+  sink.counter(M_TOKENS, { surface: 'facts', direction: 'in' }, 100);
+  sink.counter(M_TOKENS, { surface: 'facts', direction: 'out' }, 20);
+  sink.counter(M_COST, { surface: 'facts' }, 0.05);
+  sink.counter(M_TOKENS, { surface: 'embed', direction: 'in' }, 8);
+  sink.counter(M_COST, { surface: 'embed' }, 0.0001);
+  assert.equal(sink.totals.tokensIn, 108);
+  assert.equal(sink.totals.tokensOut, 20);
+  assert.ok(Math.abs(sink.totals.costUsd - 0.0501) < 1e-9);
+  assert.deepEqual(sink.totals.bySurface.facts, { tokensIn: 100, tokensOut: 20, costUsd: 0.05 });
+  assert.deepEqual(sink.totals.bySurface.embed, { tokensIn: 8, tokensOut: 0, costUsd: 0.0001 });
+});
+
+test('makeProviderCostSink: ignores unknown counters + histogram + dirless tokens (no throw, no effect)', () => {
+  const sink = makeProviderCostSink();
+  sink.counter(M_TOKENS, { surface: 'embed', direction: 'in' }, 5);
+  sink.counter(M_TOKENS, { surface: 'embed' }, 999);                      // no direction → ignored
+  sink.counter('um_provider_errors_total', { surface: 'embed', error_class: 'X' }, 1);
+  sink.histogram('um_provider_request_duration_seconds', { surface: 'embed' }, 0.42);
+  assert.equal(sink.totals.tokensIn, 5);
+  assert.equal(sink.totals.costUsd, 0);
+  assert.deepEqual(Object.keys(sink.totals.bySurface), ['embed']);
+});
+
+// --- formatSummaryTable: latency + cost blocks -----------------------------
+
+test('formatSummaryTable: renders latency + cost blocks when present', () => {
+  const result = {
+    provider: 'openai', model: 'm',
+    recall: { ks: [1], queryCount: 1, aggregate: { 1: 1 }, mrr: 1 },
+    latency: {
+      umAdd: { count: 50, p50: 12.5, p95: 30.1, min: 8, max: 44, mean: 14.2 },
+      doSearch: { count: 60, p50: 9.0, p95: 21.7, min: 6, max: 33, mean: 11.1 },
+    },
+    cost: {
+      write: { tokensIn: 1200, tokensOut: 0, costUsd: 0.000024, bySurface: { embed: { tokensIn: 1200, tokensOut: 0, costUsd: 0.000024 } } },
+      note: 'read query-embed internal to mem0.search; judge/grader via return-usage — not in this baseline cut',
+    },
+  };
+  const s = formatSummaryTable(result);
+  assert.match(s, /Latency \(ms/);
+  assert.match(s, /umAdd/);
+  assert.match(s, /doSearch/);
+  assert.match(s, /p50/);
+  assert.match(s, /p95/);
+  assert.match(s, /Cost \(provider/);
+  assert.match(s, /tokens/i);
+});
+
+test('formatSummaryTable: omits latency + cost blocks when absent (null-tolerant, back-compat)', () => {
+  const result = { provider: 'openai', model: 'm', recall: { ks: [1], queryCount: 1, aggregate: { 1: 1 }, mrr: 1 } };
+  const s = formatSummaryTable(result);
+  assert.doesNotMatch(s, /Latency \(ms/);
+  assert.doesNotMatch(s, /Cost \(provider/);
 });
