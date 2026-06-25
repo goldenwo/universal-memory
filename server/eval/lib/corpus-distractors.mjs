@@ -15,21 +15,22 @@ export function lanesFromRows(rows) {
 }
 
 // Shared slot vocab. Values are chosen DISJOINT from the recall-set target answers
-// (Task 3's non-target test is the gate that finalizes this). Keep each list short
-// but varied; variety across templates (not within one slot) drives distinctness.
+// (Task 3's non-target test is the gate that finalizes this). Each single-slot
+// template needs enough values to stay distinct across at least 8 combos per
+// template (covers generateDistractors(60, {lanes:3}) without wrap-around).
 const SLOTS = {
   room: ['hallway', 'study', 'porch', 'landing', 'pantry', 'garage'],
   fixture: ['curtains', 'blinds', 'doormat', 'shelving', 'lighting'],
   material: ['oak', 'linen', 'bamboo', 'wicker', 'felt'],
-  chore: ['gutters', 'filters', 'hedges', 'grout', 'driveway'],
+  chore: ['gutters', 'filters', 'hedges', 'grout', 'driveway', 'insulation', 'weatherstripping', 'chimney'],
   svc: ['billing', 'search', 'auth', 'ingest', 'notify', 'gateway'],
   lib: ['logging', 'retry', 'caching', 'metrics', 'config'],
   cadence: ['nightly', 'weekly', 'on-merge', 'hourly'],
-  dep: ['the http client', 'the test runner', 'the linter', 'the bundler'],
-  acct: ['the rainy-day', 'the holiday', 'the gadget', 'the books'],
+  dep: ['the http client', 'the test runner', 'the linter', 'the bundler', 'the formatter', 'the schema validator', 'the mock server', 'the cli adapter'],
+  acct: ['the rainy-day', 'the holiday', 'the gadget', 'the books', 'the moving', 'the vehicle', 'the tutoring', 'the travel'],
   sub: ['the music', 'the news', 'the storage', 'the gym'],
   day: ['the 1st', 'the 15th', 'the last weekday', 'payday'],
-  reward: ['groceries', 'transit', 'fuel', 'streaming'],
+  reward: ['groceries', 'transit', 'fuel', 'streaming', 'dining', 'parking', 'utilities', 'internet'],
 };
 
 // Per-lane templates: >=3 structurally-distinct shapes each. WORKED SET = home/dev/finance.
