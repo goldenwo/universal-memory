@@ -327,6 +327,89 @@ export function fireRate(stalenessRows) {
 }
 
 // ---------------------------------------------------------------------------
+// Operational baseline (PURE) — latency percentiles + provider-cost capture.
+// Latency is wall-clock (environment-dependent: local ≠ Pi ≠ cloud) → RECORD,
+// never gate. Cost is summed from the um_provider_* metrics embed()/facts()
+// already emit (DRY: costUsd is computeCost()'d upstream — we only accumulate).
+// ---------------------------------------------------------------------------
+
+/**
+ * Nearest-rank percentile of a numeric sample. `q` ∈ [0,1]: sorts a copy
+ * ascending and returns the value at idx = clamp(ceil(q*n)-1, 0, n-1), so q=0 →
+ * min and q=1 → max. Non-finite entries are dropped; an empty sample → null (the
+ * lane/d3 null-on-empty convention). Nearest-rank (not interpolated) — the
+ * standard latency-baseline choice and exact-testable.
+ *
+ * @param {number[]} samples
+ * @param {number} q  percentile as a fraction in [0,1]
+ * @returns {number|null}
+ */
+export function percentile(samples, q) {
+  const s = (samples ?? []).filter((x) => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
+  const n = s.length;
+  if (n === 0) return null;
+  const idx = Math.min(n - 1, Math.max(0, Math.ceil(q * n) - 1));
+  return s[idx];
+}
+
+/**
+ * Summarize a latency sample (milliseconds): { count, p50, p95, min, max, mean }.
+ * Empty → count 0 with null stats (unmeasurable). p50/p95 are nearest-rank
+ * (percentile()). No rounding here — kept exact for unit tests; the renderer
+ * rounds for display.
+ *
+ * @param {number[]} samples  per-call durations in ms
+ */
+export function summarizeLatency(samples) {
+  const s = (samples ?? []).filter((x) => typeof x === 'number' && Number.isFinite(x));
+  const n = s.length;
+  if (n === 0) return { count: 0, p50: null, p95: null, min: null, max: null, mean: null };
+  let sum = 0, min = Infinity, max = -Infinity;
+  for (const v of s) { sum += v; if (v < min) min = v; if (v > max) max = v; }
+  return { count: n, p50: percentile(s, 0.5), p95: percentile(s, 0.95), min, max, mean: sum / n };
+}
+
+// Stable Prometheus scrape names embed()/facts() emit to (mirror of metrics.mjs
+// PROVIDER_METRICS — duplicated as literals so importing this eval module never
+// pulls prom-client into the offline unit-test scope).
+const PROVIDER_TOKENS_TOTAL = 'um_provider_tokens_total';
+const PROVIDER_COST_USD_TOTAL = 'um_provider_cost_usd_total';
+
+/**
+ * Capturing provider-cost sink. Duck-types the { counter, histogram } metrics
+ * adapter that embed()/facts() emit to (metrics.mjs PROVIDER_METRICS_ADAPTER),
+ * accumulating tokens by direction + USD cost with a per-surface breakdown.
+ * Passed as umAdd's `metrics`, it captures the write's extract+embed spend even
+ * though umAdd itself returns no usage. PURE (no I/O, no clock) — unit-tested
+ * directly; the costUsd is already computeCost()'d upstream so we only sum it.
+ *
+ * @returns {{ totals: {tokensIn:number, tokensOut:number, costUsd:number,
+ *             bySurface: Object<string,{tokensIn:number,tokensOut:number,costUsd:number}>},
+ *            counter: Function, histogram: Function }}
+ */
+export function makeProviderCostSink() {
+  const totals = { tokensIn: 0, tokensOut: 0, costUsd: 0, bySurface: {} };
+  const surf = (s) => (totals.bySurface[s] ??= { tokensIn: 0, tokensOut: 0, costUsd: 0 });
+  return {
+    totals,
+    counter(name, labels = {}, value = 0) {
+      const v = Number(value) || 0;
+      if (name === PROVIDER_TOKENS_TOTAL) {
+        const dir = labels.direction === 'in' ? 'tokensIn' : labels.direction === 'out' ? 'tokensOut' : null;
+        if (!dir) return; // only directional token counters accumulate
+        totals[dir] += v;
+        if (labels.surface) surf(labels.surface)[dir] += v;
+      } else if (name === PROVIDER_COST_USD_TOTAL) {
+        totals.costUsd += v;
+        if (labels.surface) surf(labels.surface).costUsd += v;
+      }
+      // unknown counter names (e.g. errors_total) are ignored — never a throw.
+    },
+    histogram() { /* provider-side duration ignored — wall-clock latency measured separately */ },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Drift-gate (PURE) — compares a runOnce() result against committed floors.
 // ---------------------------------------------------------------------------
 
@@ -383,6 +466,9 @@ export function formatGateReport(gate) {
 function fmtPct(x) {
   return typeof x === 'number' && !Number.isNaN(x) ? x.toFixed(3) : 'n/a';
 }
+
+function fmtMs(x) { return typeof x === 'number' && Number.isFinite(x) ? x.toFixed(1) : 'n/a'; }
+function fmtUsd(x) { return typeof x === 'number' && Number.isFinite(x) ? x.toFixed(6) : 'n/a'; }
 
 /**
  * Multi-line human summary of a result object. Null-tolerant (a deferred/absent metric
@@ -443,6 +529,41 @@ export function formatSummaryTable(result) {
   const na = result.noAnswer;
   lines.push(`No-answer precision: ${na ? fmtPct(na.precision) : 'n/a (deferred)'}`);
 
+  // Operational baseline (Candidate B) — back-compat-guarded so pre-B result
+  // JSON (and the recall-only render path) is unaffected when absent.
+  const lat = result.latency;
+  if (lat) {
+    lines.push('');
+    lines.push('Latency (ms, p50/p95 over N calls):');
+    for (const op of ['umAdd', 'doSearch']) {
+      const m = lat[op];
+      if (!m) continue;
+      lines.push(
+        `  ${op.padEnd(9)} n=${String(m.count ?? 0).padStart(3)}  ` +
+        `p50 ${fmtMs(m.p50)}  p95 ${fmtMs(m.p95)}  ` +
+        `(min ${fmtMs(m.min)} max ${fmtMs(m.max)} mean ${fmtMs(m.mean)})`,
+      );
+    }
+  }
+
+  const cost = result.cost;
+  if (cost) {
+    lines.push('');
+    lines.push('Cost (provider spend):');
+    const w = cost.write;
+    if (w) {
+      lines.push(
+        `  write (umAdd extract+embed): ${(w.tokensIn ?? 0) + (w.tokensOut ?? 0)} tokens ` +
+        `(in ${w.tokensIn ?? 0} / out ${w.tokensOut ?? 0})  $${fmtUsd(w.costUsd)}`,
+      );
+    }
+    const ee = cost.evalEmbed;
+    if (ee) {
+      lines.push(`  eval twin-embed overhead: ${(ee.tokensIn ?? 0) + (ee.tokensOut ?? 0)} tokens  $${fmtUsd(ee.costUsd)}`);
+    }
+    if (cost.note) lines.push(`  note: ${cost.note}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -502,6 +623,14 @@ const TWIN_COSINE = 0.90;              // a non-target seed this close can bury 
 function md5Hex(s) { return createHash('md5').update(s).digest('hex'); }
 function isoDate() { return new Date().toISOString().slice(0, 10); }
 
+/** Time an async call (wall-clock ms via performance.now) and push the duration into
+ *  `samples`; returns fn's result. finally-push so a throwing call still records its time. */
+async function recordTimed(samples, fn) {
+  const t0 = performance.now();
+  try { return await fn(); }
+  finally { samples.push(performance.now() - t0); }
+}
+
 /**
  * Fail-loud isolation guard (review B2/B3): refuse to create/drop/operate on any
  * collection that is not an `eval_mq_` scratch collection — and NEVER `memories`.
@@ -548,16 +677,16 @@ async function countPoints(client, name) {
  * eval-only metadata.eval_ref + a pinned lane (review G1). Records the write-returned id
  * per seed. Guards (review G2): surface DEDUP_MERGED and any id-collision.
  */
-async function seedCorpus({ umAdd, memory, client, rows }) {
+async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
   const seeds = []; // { eval_ref, text, lane, writeId, event }
   for (const row of rows) {
     for (let i = 0; i < row.seed_facts.length; i++) {
       const f = row.seed_facts[i];
       const eval_ref = `${row.id}:${i}`;
-      const res = await umAdd({
+      const res = await recordTimed(latency.umAdd, () => umAdd({
         memory, text: f.text, userId: EVAL_USER, infer: false, surface: 'eval',
-        metadata: { eval_ref, lane: f.lane }, _qdrantClient: client,
-      });
+        metadata: { eval_ref, lane: f.lane }, _qdrantClient: client, metrics,
+      }));
       const r0 = res.results?.[0] ?? {};
       seeds.push({ eval_ref, text: f.text, lane: f.lane, writeId: r0.id, event: r0.event });
     }
@@ -573,7 +702,7 @@ async function seedCorpus({ umAdd, memory, client, rows }) {
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
  */
-async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost }) {
+async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency }) {
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
@@ -583,6 +712,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     vecByRef.set(s.eval_ref, r.vector);
     cost.embedTokensIn += r.tokensIn ?? 0;
     cost.embedTokensOut += r.tokensOut ?? 0;
+    cost.embedCostUsd += r.costUsd ?? 0;
   }
   const hasTwin = (targetRef) => {
     const tv = vecByRef.get(targetRef);
@@ -602,7 +732,7 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
   for (const row of rows) {
     const target = byRef.get(row.target_ref);
     const targetIds = target?.writeId ? [target.writeId] : [];
-    const sr = await doSearch(row.query, 10, false, true, { memory });
+    const sr = await recordTimed(latency.doSearch, () => doSearch(row.query, 10, false, true, { memory }));
     const rankedIds = (sr.results ?? []).map((r) => r.id);
     const rk = recallAtK(rankedIds, targetIds, ks);
     const rr = reciprocalRank(rankedIds, targetIds);
@@ -632,13 +762,13 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
  * (the collection is cleared before each row so same-lane rows can't cross-contaminate).
  * seed original+updated → real detector → real supersedePoint (if fired) → real doSearch.
  */
-async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory, client, collection, rows }) {
+async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory, client, collection, rows, latency, metrics }) {
   const perRow = [];
   for (const row of rows) {
     await clearPoints(client, collection); // clear between rows → isolation (no recreate race)
 
-    const o = await umAdd({ memory, text: row.original_fact, userId: EVAL_USER, infer: false, surface: 'eval', metadata: { lane: row.lane }, _qdrantClient: client });
-    const u = await umAdd({ memory, text: row.updated_fact, userId: EVAL_USER, infer: false, surface: 'eval', metadata: { lane: row.lane }, _qdrantClient: client });
+    const o = await recordTimed(latency.umAdd, () => umAdd({ memory, text: row.original_fact, userId: EVAL_USER, infer: false, surface: 'eval', metadata: { lane: row.lane }, _qdrantClient: client, metrics }));
+    const u = await recordTimed(latency.umAdd, () => umAdd({ memory, text: row.updated_fact, userId: EVAL_USER, infer: false, surface: 'eval', metadata: { lane: row.lane }, _qdrantClient: client, metrics }));
     const originalId = o.results?.[0]?.id;
     const updatedId = u.results?.[0]?.id;
     const updatedEvent = u.results?.[0]?.event; // ADD | SUPERSEDED_INBAND | DEDUP_MERGED
@@ -666,7 +796,7 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
       }
     }
 
-    const sr = await doSearch(row.query, 10, false, true, { memory });
+    const sr = await recordTimed(latency.doSearch, () => doSearch(row.query, 10, false, true, { memory }));
     const returnedIds = (sr.results ?? []).map((r) => r.id);
     const surfacedOriginal = returnedIds.includes(originalId);
 
@@ -837,7 +967,9 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     vectorStore: { provider: 'qdrant', config: { host, port, collectionName } },
   });
 
-  const cost = { embedTokensIn: 0, embedTokensOut: 0, note: 'umAdd/doSearch/judge tokens not separately tracked this pass' };
+  const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
+  const latency = { umAdd: [], doSearch: [] };
+  const writeCostSink = makeProviderCostSink();
   const memoriesBefore = await countPoints(client, 'memories');
 
   let recall = null;
@@ -849,8 +981,8 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     if (recallRows.length > 0) {
       await ensureCollection(client, recallCol, VECTOR_DIM);
       const recallMemory = makeMemory(recallCol);
-      seedInfo = await seedCorpus({ umAdd, memory: recallMemory, client, rows: recallRows });
-      recall = await recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory: recallMemory, rows: recallRows, seeds: seedInfo.seeds, ks: [1, 3, 5, 10], cost });
+      seedInfo = await seedCorpus({ umAdd, memory: recallMemory, client, rows: recallRows, latency, metrics: writeCostSink });
+      recall = await recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory: recallMemory, rows: recallRows, seeds: seedInfo.seeds, ks: [1, 3, 5, 10], cost, latency });
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
@@ -883,7 +1015,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     if (stalenessRows.length > 0) {
       await ensureCollection(client, stalenessCol, VECTOR_DIM); // create BEFORE makeMemory (avoid auto-create race)
       const stalenessMemory = makeMemory(stalenessCol);
-      staleness = await stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory: stalenessMemory, client, collection: stalenessCol, rows: stalenessRows });
+      staleness = await stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory: stalenessMemory, client, collection: stalenessCol, rows: stalenessRows, latency, metrics: writeCostSink });
     }
   } finally {
     await dropCollectionQuiet(client, recallCol).catch((e) => console.error('[mq-eval] recall teardown:', e?.message));
@@ -913,7 +1045,15 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     noAnswer: answerGrading?.noAnswer ?? null,
     answerGrader: answerGrading?.answerGrader ?? null,
     bouncerSweep,
-    cost,
+    latency: {
+      umAdd: summarizeLatency(latency.umAdd),
+      doSearch: summarizeLatency(latency.doSearch),
+    },
+    cost: {
+      write: writeCostSink.totals,
+      evalEmbed: { tokensIn: cost.embedTokensIn, tokensOut: cost.embedTokensOut, costUsd: cost.embedCostUsd },
+      note: 'write = umAdd extract+embed (sink-captured; infer:false here → embed only). read query-embed is internal to mem0.search (not separately metered); judge/grader cost is available via return-usage in the opt-in answer pass — both out of this baseline cut.',
+    },
   };
 }
 
