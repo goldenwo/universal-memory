@@ -351,6 +351,21 @@ export function isInert(meanTargetCos, meanBestDistractorCos, ratioFloor = 0.85)
   return (meanBestDistractorCos / meanTargetCos) < ratioFloor;
 }
 
+/**
+ * Aggregate the per-row pressure signals recallPass records (only when measurePressure:
+ * true — i.e. the sweep's top rung) into mean target-cosine vs mean best-distractor-cosine,
+ * the input to isInert(). Rows that didn't measure both cosines are ignored; an empty set
+ * → inert with null means (fail-safe: never claim pressure we didn't verify). PURE.
+ *
+ * @param {{details?: Array<{targetCos?: number, bestNonTargetCos?: number}>}} recall
+ */
+export function computePressure(recall) {
+  const ds = (recall?.details ?? []).filter((d) => typeof d.targetCos === 'number' && typeof d.bestNonTargetCos === 'number');
+  if (ds.length === 0) return { inert: true, meanTargetCos: null, meanBestDistractorCos: null };
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  return { inert: false, meanTargetCos: mean(ds.map((d) => d.targetCos)), meanBestDistractorCos: mean(ds.map((d) => d.bestNonTargetCos)) };
+}
+
 // ---------------------------------------------------------------------------
 // Operational baseline (PURE) — latency percentiles + provider-cost capture.
 // Latency is wall-clock (environment-dependent: local ≠ Pi ≠ cloud) → RECORD,
@@ -640,6 +655,8 @@ export function parseArgs(argv) {
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--sweep') args.sweep = true;
+    else if (a === '--corpus-sweep') args.corpusSweep = true;
+    else if (a === '--sweep-sizes') args.sweepSizes = argv[++i].split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
   }
   return args;
 }
@@ -738,7 +755,7 @@ async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
  */
-async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency }) {
+async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false }) {
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
@@ -750,6 +767,11 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     cost.embedTokensOut += r.tokensOut ?? 0;
     cost.embedCostUsd += r.costUsd ?? 0;
   }
+  // writeId → seed vector (a doSearch result `id` is a writeId, not an eval_ref). Only the
+  // pressure read (§4.2a) needs it, so build it just for the measured rung.
+  const vecByWriteId = measurePressure
+    ? new Map(seeds.filter((s) => s.writeId != null).map((s) => [s.writeId, vecByRef.get(s.eval_ref)]))
+    : null;
   const hasTwin = (targetRef) => {
     const tv = vecByRef.get(targetRef);
     if (!tv) return false;
@@ -778,7 +800,29 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     if (!twin) perQueryNoTwin.push(rk);
     reciprocalRanks.push(rr);
     perQueryNdcg.push(nd);
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5) });
+
+    // Pressure read (§4.2a, measured rung only): how close did the best NON-target result
+    // sit to the query vs the target itself? Requires a query embed (mem0.search's internal
+    // query-embed is opaque). bestNonTargetCos walks the retrieved ids (cosine-ranked, so the
+    // top non-target is the max) against the seed vectors keyed by writeId.
+    let targetCos = null;
+    let bestNonTargetCos = null;
+    if (measurePressure && target?.writeId != null) {
+      const qr = await embed(row.query, { metrics: NOOP_METRICS });
+      cost.embedTokensIn += qr.tokensIn ?? 0;
+      cost.embedTokensOut += qr.tokensOut ?? 0;
+      cost.embedCostUsd += qr.costUsd ?? 0;
+      const tv = vecByWriteId.get(target.writeId);
+      if (tv) targetCos = cosineStrict(qr.vector, tv);
+      for (const id of rankedIds) {
+        if (id === target.writeId) continue;
+        const v = vecByWriteId.get(id);
+        if (!v) continue;
+        const c = cosineStrict(qr.vector, v);
+        if (bestNonTargetCos === null || c > bestNonTargetCos) bestNonTargetCos = c;
+      }
+    }
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5), targetCos, bestNonTargetCos });
   }
 
   return {
@@ -1093,6 +1137,114 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
   };
 }
 
+/**
+ * Corpus-size sweep (#14): re-run the recall pass over a GROWING synthetic-distractor
+ * corpus and record recall (raw + collision-excluded) + MRR + nDCG + latency + cost vs
+ * EFFECTIVE N (seedInfo.distinctIdCount — the true post-dedup size). Distractors are
+ * fixture-lane-driven so they compete by semantic proximity (doSearch is global); dedup
+ * stays ON (prod-faithful) so effectiveN — not requestedN — tells the truth. ALL seeds
+ * (targets + distractors) feed recallPass so the twin guard (§5.3) and the top-rung
+ * pressure read (§4.2a) see the distractor vectors. LIVE layer — no unit test; verified
+ * by self-read + the formatCorpusSweep render test + the operator's keyed run (the
+ * harness's no-live-calls contract). Scratch-isolated; 'memories' asserted untouched.
+ */
+export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, runid }) {
+  // --- pin env BEFORE the lazy imports capture it (mirror runOnce) ---
+  process.env.MEM0_USER_ID = EVAL_USER;
+  process.env.UM_TEMPORAL_DECAY = 'false';
+  process.env.UM_DEDUP_ENABLED = 'true';            // prod-faithful: effectiveN tells the truth
+  process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
+
+  const { Memory } = await import('mem0ai/oss');
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const { umAdd } = await import('../lib/add.mjs');
+  const { doSearch } = await import('../mem0-mcp-http.mjs');
+  const { embed, getEmbedderConfig } = await import('../lib/embed.mjs');
+  const { getFactsLlmConfig } = await import('../lib/facts.mjs');
+  const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+  const { cosineStrict } = await import('../lib/vector.mjs');
+  const { lanesFromRows, generateDistractors } = await import('./lib/corpus-distractors.mjs');
+
+  const host = process.env.QDRANT_HOST ?? 'localhost';
+  const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+  const client = new QdrantClient({ host, port });
+  const makeMemory = (collectionName) => new Memory({
+    embedder: getEmbedderConfig(process.env),
+    llm: getFactsLlmConfig(process.env),
+    vectorStore: { provider: 'qdrant', config: { host, port, collectionName } },
+  });
+
+  const targetCount = recallRows.reduce((n, r) => n + (r.seed_facts?.length ?? 0), 0);
+  const lanes = lanesFromRows(recallRows);
+  const EXACT_THRESHOLD = 20000;                     // qdrant indexing_threshold default → exact search below it
+  // requestedN is TOTAL corpus size, floored at targetCount; de-duped + sorted ascending.
+  const sizes = [...new Set((sweepSizes ?? [66, 200, 1000]).map((n) => Math.max(n, targetCount)))].sort((a, b) => a - b);
+  const topRung = sizes[sizes.length - 1];
+  const rid = runid ?? `${process.pid}`;
+  const memoriesBefore = await countPoints(client, 'memories');
+
+  const rows = [];
+  let pressure = { inert: true, meanTargetCos: null, meanBestDistractorCos: null };
+  for (const requestedN of sizes) {
+    const col = `${SCRATCH_PREFIX}corpus_${isoDate()}_${rid}_${requestedN}`;
+    assertScratchSafe(col);
+    const latency = { umAdd: [], doSearch: [] };
+    const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
+    const writeCostSink = makeProviderCostSink();
+    try {
+      await ensureCollection(client, col, VECTOR_DIM);
+      const memory = makeMemory(col);
+      const distractors = generateDistractors(requestedN - targetCount, { seed, lanes });
+      const seedRows = [
+        ...recallRows,
+        ...distractors.map((d, i) => ({ id: `distractor:${i}`, seed_facts: [{ text: d.text, lane: d.lane }] })),
+      ];
+      const seedInfo = await seedCorpus({ umAdd, memory, client, rows: seedRows, latency, metrics: writeCostSink });
+      const recall = await recallPass({
+        doSearch, embed, cosineStrict, NOOP_METRICS, memory,
+        rows: recallRows, seeds: seedInfo.seeds, ks: [1, 3, 5, 10], cost, latency,
+        measurePressure: requestedN === topRung,
+      });
+      rows.push({
+        requestedN,
+        effectiveN: seedInfo.distinctIdCount,
+        dedupCollapsed: requestedN - seedInfo.distinctIdCount,
+        dedupSaturated: dedupSaturated(requestedN, seedInfo.distinctIdCount),
+        exactSearch: requestedN < EXACT_THRESHOLD,
+        recall: {
+          aggregate: recall.aggregate,
+          collisionExcludedAggregate: recall.collisionExcludedAggregate,
+          twinFlagged: recall.twinFlagged,
+          guardSaturated: guardSaturated(recall.twinFlagged, recall.queryCount),
+          mrr: recall.mrr,
+          ndcg: recall.ndcg,
+        },
+        latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
+        cost: { write: writeCostSink.totals, evalEmbed: { tokensIn: cost.embedTokensIn, tokensOut: cost.embedTokensOut, costUsd: cost.embedCostUsd } },
+      });
+      if (requestedN === topRung) pressure = computePressure(recall);
+    } finally {
+      await dropCollectionQuiet(client, col).catch((e) => console.error('[mq-eval] corpus teardown:', e?.message));
+    }
+  }
+
+  const memoriesAfter = await countPoints(client, 'memories');
+  if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+    throw new Error(`mq-eval ISOLATION VIOLATION (corpus sweep): 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+  }
+  pressure.inert = isInert(pressure.meanTargetCos, pressure.meanBestDistractorCos);
+
+  const provider = process.env.UM_EMBEDDING_PROVIDER ?? 'openai';
+  const model = process.env.UM_EMBEDDING_MODEL ?? 'text-embedding-3-small (provider default)';
+  return {
+    timestamp: new Date().toISOString(),
+    provider, model, evalUser: EVAL_USER,
+    flags: { UM_DEDUP_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    env: { node: process.version, platform: process.platform },
+    corpusSweep: { seed, targetCount, sizes, exactSearchThreshold: EXACT_THRESHOLD, pressure, rows },
+  };
+}
+
 async function writeJson(path, obj) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf8');
@@ -1121,6 +1273,25 @@ async function cliMain() {
   const recallRows = args.recall ? await loadFixtureJsonl(args.recall) : [];
   const stalenessRows = args.staleness ? await loadFixtureJsonl(args.staleness) : [];
   const noAnswerRows = args.noAnswer ? await loadFixtureJsonl(args.noAnswer) : [];
+
+  // Corpus-size sweep (#14): recall/latency/cost vs effective N over a growing distractor
+  // corpus. Eval-only, never a gate. Returns early (its own result shape + renderer).
+  if (args.corpusSweep) {
+    if (recallRows.length === 0) {
+      console.error('[mq-eval] --corpus-sweep requires --recall <path> (the fixture supplies the targets + lanes)');
+      process.exit(2);
+    }
+    console.log(`[mq-eval] corpus-size sweep: recall rows=${recallRows.length}, sizes=${args.sweepSizes ? args.sweepSizes.join(',') : '66,200,1000 (default)'} — running live (scratch collections, real vault untouched)...`);
+    const sweep = await runCorpusSweep({ recallRows, sweepSizes: args.sweepSizes });
+    const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
+    const out = args.out ?? join(resultsDir, `mq-corpus-sweep-${isoDate()}.json`);
+    await writeJson(out, sweep);
+    console.log(`[mq-eval] Corpus sweep written to ${out}`);
+    console.log('');
+    console.log(formatCorpusSweep(sweep));
+    return;
+  }
+
   console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
   const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer, sweep: args.sweep });

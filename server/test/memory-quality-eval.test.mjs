@@ -56,6 +56,7 @@ import {
   dedupSaturated,
   guardSaturated,
   isInert,
+  computePressure,
   formatCorpusSweep,
 } from '../eval/memory-quality-eval.mjs';
 
@@ -852,4 +853,42 @@ test('formatCorpusSweep: renders an effectiveN-keyed table with flags; back-comp
   assert.match(s, /guard-saturated/i);
   assert.match(s, /recall@1/);
   assert.equal(formatCorpusSweep({}), '');   // absent → empty (back-compat, caller guards)
+});
+
+// --- corpus sweep: parseArgs flags + computePressure (pure) ----------------
+
+test('parseArgs: --corpus-sweep flag and --sweep-sizes list', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes', '66,200,1000']);
+  assert.equal(a.corpusSweep, true);
+  assert.deepEqual(a.sweepSizes, [66, 200, 1000]);
+});
+
+test('parseArgs: no --sweep-sizes → sweepSizes undefined (runner uses its default)', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep']);
+  assert.equal(a.corpusSweep, true);
+  assert.equal(a.sweepSizes, undefined);
+});
+
+test('parseArgs: --sweep-sizes drops non-positive / non-integer tokens', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes', '66, 0, -5, x, 1000']);
+  assert.deepEqual(a.sweepSizes, [66, 1000]);
+});
+
+test('computePressure: empty/absent details → inert + null means (fail-safe)', () => {
+  assert.deepEqual(computePressure({ details: [] }), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+  assert.deepEqual(computePressure({}), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+  assert.deepEqual(computePressure(null), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+});
+
+test('computePressure: means over rows that measured BOTH cosines; ignores unmeasured', () => {
+  const recall = { details: [
+    { targetCos: 0.6, bestNonTargetCos: 0.5 },
+    { targetCos: 0.8, bestNonTargetCos: 0.3 },
+    { targetCos: null, bestNonTargetCos: null }, // unmeasured (not top rung) → ignored
+    { query: 'x' },                              // no cos fields → ignored
+  ] };
+  const p = computePressure(recall);
+  assert.equal(p.inert, false);
+  assert.ok(Math.abs(p.meanTargetCos - 0.7) < 1e-9, `meanTargetCos ${p.meanTargetCos}`);
+  assert.ok(Math.abs(p.meanBestDistractorCos - 0.4) < 1e-9, `meanBestDistractorCos ${p.meanBestDistractorCos}`);
 });
