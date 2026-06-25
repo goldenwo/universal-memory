@@ -56,6 +56,7 @@ import {
   dedupSaturated,
   guardSaturated,
   isInert,
+  formatCorpusSweep,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -825,4 +826,30 @@ test('isInert: true when best distractor is not materially close to the target b
   assert.equal(isInert(0.62, 0.30, 0.85), true);  // distractor 0.30 << target 0.62 → no pressure
   assert.equal(isInert(0.62, 0.58, 0.85), false); // distractor 0.58 ~ target band → real pressure
   assert.equal(isInert(null, null, 0.85), true);  // unmeasured → treat as inert (fail-safe)
+});
+
+test('formatCorpusSweep: renders an effectiveN-keyed table with flags; back-compat when absent', () => {
+  const result = {
+    corpusSweep: {
+      seed: 0, targetCount: 66, sizes: [66, 1000],
+      pressure: { inert: false, meanTargetCos: 0.62, meanBestDistractorCos: 0.55 },
+      rows: [
+        { requestedN: 66, effectiveN: 66, dedupCollapsed: 0, dedupSaturated: false, exactSearch: true,
+          recall: { aggregate: { 1: 0.97, 5: 1 }, collisionExcludedAggregate: { 1: 0.98, 5: 1 }, twinFlagged: 2, guardSaturated: false, mrr: 0.98, ndcg: { 5: 0.98 } },
+          latency: { umAdd: { p50: 14, p95: 30 }, doSearch: { p50: 9, p95: 19 } },
+          cost: { write: { tokensIn: 1200, tokensOut: 0, costUsd: 0.000024 } } },
+        { requestedN: 1000, effectiveN: 940, dedupCollapsed: 60, dedupSaturated: true, exactSearch: true,
+          recall: { aggregate: { 1: 0.92, 5: 0.99 }, collisionExcludedAggregate: { 1: 0.95, 5: 1 }, twinFlagged: 21, guardSaturated: true, mrr: 0.94, ndcg: { 5: 0.96 } },
+          latency: { umAdd: { p50: 16, p95: 41 }, doSearch: { p50: 11, p95: 28 } },
+          cost: { write: { tokensIn: 18000, tokensOut: 0, costUsd: 0.00036 } } },
+      ],
+    },
+  };
+  const s = formatCorpusSweep(result);
+  assert.match(s, /Corpus-size sweep/);
+  assert.match(s, /effN/);          // effectiveN-keyed
+  assert.match(s, /dedup-saturated/i);
+  assert.match(s, /guard-saturated/i);
+  assert.match(s, /recall@1/);
+  assert.equal(formatCorpusSweep({}), '');   // absent → empty (back-compat, caller guards)
 });

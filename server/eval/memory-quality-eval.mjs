@@ -576,6 +576,33 @@ export function formatSummaryTable(result) {
   return lines.join('\n');
 }
 
+/** Pure render of result.corpusSweep — an effectiveN-keyed table with inert/saturation flags.
+ *  Returns '' when no sweep is present (caller decides whether to print). */
+export function formatCorpusSweep(result) {
+  const cs = result?.corpusSweep;
+  if (!cs || !Array.isArray(cs.rows) || cs.rows.length === 0) return '';
+  const lines = [];
+  lines.push('=== Corpus-size sweep (recall / latency / cost vs effective N) ===');
+  if (cs.pressure?.inert) {
+    lines.push('  !! INERT: distractors applied no retrieval pressure — a flat curve is NOT scale-robustness.');
+  }
+  lines.push('  effN (reqN)  recall@1  recall@5  ce@5  twinFlg  MRR  nDCG@5  seedP50/P95  searchP50/P95  $write  flags');
+  for (const r of cs.rows) {
+    const flags = [r.dedupSaturated ? 'dedup-saturated' : '', r.recall?.guardSaturated ? 'guard-saturated' : '', r.exactSearch ? '' : 'ANN']
+      .filter(Boolean).join(',') || '-';
+    lines.push(
+      `  ${String(r.effectiveN).padStart(6)} (${r.requestedN})  ` +
+      `${fmtPct(r.recall?.aggregate?.[1])}     ${fmtPct(r.recall?.aggregate?.[5])}    ` +
+      `${fmtPct(r.recall?.collisionExcludedAggregate?.[5])}  ${String(r.recall?.twinFlagged ?? 0).padStart(3)}    ` +
+      `${fmtPct(r.recall?.mrr)}  ${fmtPct(r.recall?.ndcg?.[5])}   ` +
+      `${fmtMs(r.latency?.umAdd?.p50)}/${fmtMs(r.latency?.umAdd?.p95)}    ` +
+      `${fmtMs(r.latency?.doSearch?.p50)}/${fmtMs(r.latency?.doSearch?.p95)}   ` +
+      `$${fmtUsd(r.cost?.write?.costUsd)}  ${flags}`,
+    );
+  }
+  return lines.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Fixture loader (I/O, no live calls) — JSON-Lines, one object per line.
 // Identical contract to d3/lane: utf8, split on /\r?\n/, drop blank lines, throw
