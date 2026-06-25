@@ -68,6 +68,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fHalfFrom, f1From } from './fbeta.mjs';
+import { summarize } from './lib/stats.mjs';
 
 const PRECISION_FLOOR = 0.95;               // chosen-cell rule (spec §5)
 const NULL_KEY = 'null';                    // confusion-matrix key for the abstain axis
@@ -201,30 +202,12 @@ export function buildConfusion(predictions, lanes) {
 
 // --- distribution helpers (shared by analyzeScores) -------------------------
 
-/** Nearest-rank percentile over a SORTED ascending array. */
-function nearestRank(sortedAsc, p) {
-  const n = sortedAsc.length;
-  if (n === 0) return null;
-  const rank = Math.min(n, Math.max(1, Math.ceil(p * n)));
-  return sortedAsc[rank - 1];
-}
+// Nearest-rank percentile + summary live in the shared eval stats helper; this
+// harness binds it to its p25/median/p75 set (same output shape as before).
+const LANE_PERCENTILES = [['p25', 0.25], ['median', 0.5], ['p75', 0.75]];
 
-/** Distribution stats for a numeric sample. Nulls when empty. */
-function distStats(values) {
-  const n = values.length;
-  if (n === 0) return { count: 0, min: null, p25: null, median: null, p75: null, max: null, mean: null };
-  const sorted = [...values].sort((a, b) => a - b);
-  const sum = sorted.reduce((s, v) => s + v, 0);
-  return {
-    count: n,
-    min: sorted[0],
-    p25: nearestRank(sorted, 0.25),
-    median: nearestRank(sorted, 0.50),
-    p75: nearestRank(sorted, 0.75),
-    max: sorted[n - 1],
-    mean: sum / n,
-  };
-}
+/** Distribution stats for a numeric sample: count/min/p25/median/p75/max/mean. Nulls when empty. */
+const distStats = (values) => summarize(values, LANE_PERCENTILES);
 
 /**
  * Top-K-mean cosine distribution split by routing outcome at the chosen cell.
