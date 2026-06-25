@@ -29,7 +29,7 @@ const SLOTS = {
   dep: ['the http client', 'the test runner', 'the linter', 'the bundler', 'the formatter', 'the schema validator', 'the mock server', 'the cli adapter'],
   acct: ['the rainy-day', 'the holiday', 'the gadget', 'the books', 'the moving', 'the vehicle', 'the tutoring', 'the travel'],
   sub: ['the music', 'the news', 'the storage', 'the gym'],
-  day: ['the 1st', 'the 15th', 'the last weekday', 'payday'],
+  day: ['the first of the month', 'mid-month', 'the last weekday', 'payday'],
   reward: ['groceries', 'transit', 'fuel', 'streaming', 'dining', 'parking', 'utilities', 'internet'],
 };
 

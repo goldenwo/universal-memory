@@ -75,3 +75,25 @@ test('generateDistractors: each lane spans >= 3 structurally-distinct templates'
     assert.ok(shapes.size >= 3, `lane ${lane} must use >=3 distinct templates, saw ${shapes.size}`);
   }
 });
+
+// append to server/test/corpus-distractors.test.mjs
+import { readFileSync } from 'node:fs';
+import { lanesFromRows as _lfr } from '../eval/lib/corpus-distractors.mjs';
+
+test('generateDistractors: no generated text contains a recall-set target answer span', () => {
+  const raw = readFileSync(new URL('../eval/recall-set.jsonl', import.meta.url), 'utf8');
+  const rows = raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const lanes = _lfr(rows);
+  // distinctive answer spans = the target seed_facts' salient tokens (numbers, capitalized words, quoted spans)
+  const spans = [];
+  for (const r of rows) for (const f of r.seed_facts ?? []) {
+    for (const m of (f.text.match(/\b\d{1,4}(?:am|pm)?\b|\b[A-Z][a-zA-Z]{3,}\b/g) ?? [])) spans.push(m.toLowerCase());
+  }
+  const distractors = generateDistractors(2000, { seed: 0, lanes });
+  for (const d of distractors) {
+    const t = d.text.toLowerCase();
+    for (const span of spans) {
+      assert.ok(!t.includes(span), `distractor "${d.text}" contains target span "${span}"`);
+    }
+  }
+});
