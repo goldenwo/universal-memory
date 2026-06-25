@@ -874,6 +874,12 @@ test('parseArgs: --sweep-sizes drops non-positive / non-integer tokens', () => {
   assert.deepEqual(a.sweepSizes, [66, 1000]);
 });
 
+test('parseArgs: --sweep-sizes passed last (no value) → undefined, no crash', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes']);
+  assert.equal(a.corpusSweep, true);
+  assert.equal(a.sweepSizes, undefined);
+});
+
 test('computePressure: empty/absent details → inert + null means (fail-safe)', () => {
   assert.deepEqual(computePressure({ details: [] }), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
   assert.deepEqual(computePressure({}), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });

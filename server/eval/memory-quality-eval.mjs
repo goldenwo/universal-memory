@@ -656,7 +656,11 @@ export function parseArgs(argv) {
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--sweep') args.sweep = true;
     else if (a === '--corpus-sweep') args.corpusSweep = true;
-    else if (a === '--sweep-sizes') args.sweepSizes = argv[++i].split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+    else if (a === '--sweep-sizes') {
+      // tolerate a missing/empty value (flag passed last) → undefined so the runner uses its default
+      const parsed = (argv[++i] ?? '').split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+      args.sweepSizes = parsed.length ? parsed : undefined;
+    }
   }
   return args;
 }
@@ -768,10 +772,16 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     cost.embedCostUsd += r.costUsd ?? 0;
   }
   // writeId → seed vector (a doSearch result `id` is a writeId, not an eval_ref). Only the
-  // pressure read (§4.2a) needs it, so build it just for the measured rung.
-  const vecByWriteId = measurePressure
-    ? new Map(seeds.filter((s) => s.writeId != null).map((s) => [s.writeId, vecByRef.get(s.eval_ref)]))
-    : null;
+  // pressure read (§4.2a) needs it, so build it just for the measured rung. FIRST-write-wins:
+  // under dedup, several seeds can share one writeId, but the stored qdrant point is the FIRST
+  // writer (targets seed before distractors) — keep that vector, not a later merged-away one.
+  let vecByWriteId = null;
+  if (measurePressure) {
+    vecByWriteId = new Map();
+    for (const s of seeds) {
+      if (s.writeId != null && !vecByWriteId.has(s.writeId)) vecByWriteId.set(s.writeId, vecByRef.get(s.eval_ref));
+    }
+  }
   const hasTwin = (targetRef) => {
     const tv = vecByRef.get(targetRef);
     if (!tv) return false;
