@@ -53,6 +53,11 @@ import {
   percentile,
   summarizeLatency,
   makeProviderCostSink,
+  dedupSaturated,
+  guardSaturated,
+  isInert,
+  computePressure,
+  formatCorpusSweep,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -804,4 +809,105 @@ test('formatSummaryTable: omits latency + cost blocks when absent (null-tolerant
   const s = formatSummaryTable(result);
   assert.doesNotMatch(s, /Latency \(ms/);
   assert.doesNotMatch(s, /Cost \(provider/);
+});
+
+test('dedupSaturated: true when effectiveN falls > bound below requestedN', () => {
+  assert.equal(dedupSaturated(1000, 990, 0.05), false); // 1% collapse
+  assert.equal(dedupSaturated(1000, 900, 0.05), true);  // 10% collapse
+  assert.equal(dedupSaturated(0, 0, 0.05), false);      // degenerate → not saturated
+});
+
+test('guardSaturated: true when twin-flagged fraction exceeds bound', () => {
+  assert.equal(guardSaturated(5, 66, 0.25), false);   // ~7.6%
+  assert.equal(guardSaturated(20, 66, 0.25), true);   // ~30%
+  assert.equal(guardSaturated(0, 0, 0.25), false);    // no queries → not saturated
+});
+
+test('isInert: true when best distractor is not materially close to the target band', () => {
+  assert.equal(isInert(0.62, 0.30, 0.85), true);  // distractor 0.30 << target 0.62 → no pressure
+  assert.equal(isInert(0.62, 0.58, 0.85), false); // distractor 0.58 ~ target band → real pressure
+  assert.equal(isInert(null, null, 0.85), true);  // unmeasured → treat as inert (fail-safe)
+  // calibrated DEFAULT floor (0.75, pinned from the 2026-06-25 dry run)
+  assert.equal(isInert(0.556, 0.435), false);     // ratio 0.78 ≥ 0.75 → real pressure (dry-run means)
+  assert.equal(isInert(0.62, 0.40), true);        // ratio 0.65 < 0.75 → inert (weak/foreign filler)
+});
+
+test('formatCorpusSweep: renders an effectiveN-keyed table with flags; back-compat when absent', () => {
+  const result = {
+    corpusSweep: {
+      seed: 0, targetCount: 66, sizes: [66, 1000],
+      pressure: { inert: false, meanTargetCos: 0.62, meanBestDistractorCos: 0.55 },
+      rows: [
+        { requestedN: 66, effectiveN: 66, dedupCollapsed: 0, dedupSaturated: false, exactSearch: true,
+          recall: { aggregate: { 1: 0.97, 5: 1 }, collisionExcludedAggregate: { 1: 0.98, 5: 1 }, twinFlagged: 2, guardSaturated: false, mrr: 0.98, ndcg: { 5: 0.98 } },
+          latency: { umAdd: { p50: 14, p95: 30 }, doSearch: { p50: 9, p95: 19 } },
+          cost: { write: { tokensIn: 1200, tokensOut: 0, costUsd: 0.000024 } } },
+        { requestedN: 1000, effectiveN: 940, dedupCollapsed: 60, dedupSaturated: true, exactSearch: true,
+          recall: { aggregate: { 1: 0.92, 5: 0.99 }, collisionExcludedAggregate: { 1: 0.95, 5: 1 }, twinFlagged: 21, guardSaturated: true, mrr: 0.94, ndcg: { 5: 0.96 } },
+          latency: { umAdd: { p50: 16, p95: 41 }, doSearch: { p50: 11, p95: 28 } },
+          cost: { write: { tokensIn: 18000, tokensOut: 0, costUsd: 0.00036 } } },
+      ],
+    },
+  };
+  const s = formatCorpusSweep(result);
+  assert.match(s, /Corpus-size sweep/);
+  assert.match(s, /effN/);          // effectiveN-keyed
+  assert.match(s, /dedup-saturated/i);
+  assert.match(s, /guard-saturated/i);
+  assert.match(s, /recall@1/);
+  assert.equal(formatCorpusSweep({}), '');   // absent → empty (back-compat, caller guards)
+});
+
+// --- corpus sweep: parseArgs flags + computePressure (pure) ----------------
+
+test('parseArgs: --corpus-sweep flag and --sweep-sizes list', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes', '66,200,1000']);
+  assert.equal(a.corpusSweep, true);
+  assert.deepEqual(a.sweepSizes, [66, 200, 1000]);
+});
+
+test('parseArgs: no --sweep-sizes → sweepSizes undefined (runner uses its default)', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep']);
+  assert.equal(a.corpusSweep, true);
+  assert.equal(a.sweepSizes, undefined);
+});
+
+test('parseArgs: --sweep-sizes drops non-positive / non-integer tokens', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes', '66, 0, -5, x, 1000']);
+  assert.deepEqual(a.sweepSizes, [66, 1000]);
+});
+
+test('parseArgs: --sweep-sizes passed last (no value) → undefined, no crash', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--sweep-sizes']);
+  assert.equal(a.corpusSweep, true);
+  assert.equal(a.sweepSizes, undefined);
+});
+
+test('parseArgs: --seed parses an integer; ignores a non-integer', () => {
+  assert.equal(parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--seed', '7']).seed, 7);
+  assert.equal(parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--corpus-sweep', '--seed', 'x']).seed, undefined);
+});
+
+test('computePressure: empty/absent details → inert + null means (fail-safe)', () => {
+  assert.deepEqual(computePressure({ details: [] }), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+  assert.deepEqual(computePressure({}), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+  assert.deepEqual(computePressure(null), { inert: true, meanTargetCos: null, meanBestDistractorCos: null });
+});
+
+test('computePressure: means over measured rows + applies isInert (ignores unmeasured)', () => {
+  // strong distractors (best ≈ target band) → NOT inert; unmeasured rows ignored
+  const strong = computePressure({ details: [
+    { targetCos: 0.6, bestNonTargetCos: 0.58 },
+    { targetCos: 0.8, bestNonTargetCos: 0.68 },
+    { targetCos: null, bestNonTargetCos: null }, // unmeasured (not top rung) → ignored
+    { query: 'x' },                              // no cos fields → ignored
+  ] });
+  assert.equal(strong.inert, false);
+  assert.ok(Math.abs(strong.meanTargetCos - 0.7) < 1e-9, `meanTargetCos ${strong.meanTargetCos}`);
+  assert.ok(Math.abs(strong.meanBestDistractorCos - 0.63) < 1e-9, `meanBestDistractorCos ${strong.meanBestDistractorCos}`);
+  // weak distractors (best << target) → inert even though measured
+  assert.equal(computePressure({ details: [
+    { targetCos: 0.6, bestNonTargetCos: 0.3 },
+    { targetCos: 0.8, bestNonTargetCos: 0.4 },
+  ] }).inert, true);
 });
