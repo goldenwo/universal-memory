@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
+import { percentile, summarize } from './lib/stats.mjs';
 
 // ---------------------------------------------------------------------------
 // PURE scoring functions (no I/O) — unit-tested directly.
@@ -334,39 +335,23 @@ export function fireRate(stalenessRows) {
 // ---------------------------------------------------------------------------
 
 /**
- * Nearest-rank percentile of a numeric sample. `q` ∈ [0,1]: sorts a copy
- * ascending and returns the value at idx = clamp(ceil(q*n)-1, 0, n-1), so q=0 →
- * min and q=1 → max. Non-finite entries are dropped; an empty sample → null (the
- * lane/d3 null-on-empty convention). Nearest-rank (not interpolated) — the
- * standard latency-baseline choice and exact-testable.
- *
- * @param {number[]} samples
- * @param {number} q  percentile as a fraction in [0,1]
- * @returns {number|null}
+ * Nearest-rank percentile + the distribution summary now live in the shared eval
+ * stats helper (single home for the rank formula, reused by lane/d3). `percentile`
+ * is re-exported to keep the harness's unit-test surface stable.
+ * @see ./lib/stats.mjs
  */
-export function percentile(samples, q) {
-  const s = (samples ?? []).filter((x) => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
-  const n = s.length;
-  if (n === 0) return null;
-  const idx = Math.min(n - 1, Math.max(0, Math.ceil(q * n) - 1));
-  return s[idx];
-}
+export { percentile };
 
 /**
  * Summarize a latency sample (milliseconds): { count, p50, p95, min, max, mean }.
- * Empty → count 0 with null stats (unmeasurable). p50/p95 are nearest-rank
- * (percentile()). No rounding here — kept exact for unit tests; the renderer
- * rounds for display.
+ * Thin wrapper over the shared summarize() with the operational p50/p95 set.
+ * Empty → count 0 with null stats (unmeasurable); p50/p95 are nearest-rank. No
+ * rounding here — kept exact for unit tests; the renderer rounds for display.
  *
  * @param {number[]} samples  per-call durations in ms
  */
 export function summarizeLatency(samples) {
-  const s = (samples ?? []).filter((x) => typeof x === 'number' && Number.isFinite(x));
-  const n = s.length;
-  if (n === 0) return { count: 0, p50: null, p95: null, min: null, max: null, mean: null };
-  let sum = 0, min = Infinity, max = -Infinity;
-  for (const v of s) { sum += v; if (v < min) min = v; if (v > max) max = v; }
-  return { count: n, p50: percentile(s, 0.5), p95: percentile(s, 0.95), min, max, mean: sum / n };
+  return summarize(samples, [['p50', 0.5], ['p95', 0.95]]);
 }
 
 // Stable Prometheus scrape names embed()/facts() emit to (mirror of metrics.mjs

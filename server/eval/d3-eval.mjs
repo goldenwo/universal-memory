@@ -54,6 +54,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fHalfFrom, f1From } from './fbeta.mjs';
+import { summarize } from './lib/stats.mjs';
 
 const PRECISION_FLOOR = 0.98;               // chosen-τ rule (DP: false-merge is destructive)
 
@@ -163,35 +164,12 @@ export function pickThreshold(perThreshold, { precisionFloor }) {
   return { meetsFloor: false, precisionFloor, bestPrecision, bestPrecisionTau };
 }
 
-/**
- * Simple nearest-rank percentile over a SORTED ascending array.
- * rank = ceil(p · n), clamped to [1, n]; returns the (rank-1)th element.
- */
-function nearestRank(sortedAsc, p) {
-  const n = sortedAsc.length;
-  if (n === 0) return null;
-  const rank = Math.min(n, Math.max(1, Math.ceil(p * n)));
-  return sortedAsc[rank - 1];
-}
+// Nearest-rank percentile + summary live in the shared eval stats helper; this
+// harness binds it to its p25/median/p75 set (same output shape as before).
+const D3_PERCENTILES = [['p25', 0.25], ['median', 0.5], ['p75', 0.75]];
 
-/** Distribution stats for a numeric sample. Returns nulls when empty. */
-function distStats(values) {
-  const n = values.length;
-  if (n === 0) {
-    return { count: 0, min: null, p25: null, median: null, p75: null, max: null, mean: null };
-  }
-  const sorted = [...values].sort((a, b) => a - b);
-  const sum = sorted.reduce((s, v) => s + v, 0);
-  return {
-    count: n,
-    min: sorted[0],
-    p25: nearestRank(sorted, 0.25),
-    median: nearestRank(sorted, 0.50),
-    p75: nearestRank(sorted, 0.75),
-    max: sorted[n - 1],
-    mean: sum / n,
-  };
-}
+/** Distribution stats for a numeric sample: count/min/p25/median/p75/max/mean. Returns nulls when empty. */
+const distStats = (values) => summarize(values, D3_PERCENTILES);
 
 /**
  * Over comparable rows that carry a numeric `cosine`, split by label and report
