@@ -80,6 +80,21 @@ test('generateDistractors: each lane spans >= 3 structurally-distinct templates'
 import { readFileSync } from 'node:fs';
 import { lanesFromRows as _lfr } from '../eval/lib/corpus-distractors.mjs';
 
+test('generateDistractors: every fixture lane is templated (>=3 shapes) + corpus reaches >=1000 distinct', () => {
+  const raw = readFileSync(new URL('../eval/recall-set.jsonl', import.meta.url), 'utf8');
+  const rows = raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const lanes = _lfr(rows); // all 10 fixture lanes
+  const big = generateDistractors(3000, { seed: 0, lanes });
+  for (const lane of lanes) {
+    const inLane = big.filter((d) => d.lane === lane);
+    assert.ok(inLane.length > 0, `lane ${lane} produced no distractors (missing templates)`);
+    const shapes = new Set(inLane.map((d) => d.text.replace(/[0-9$]+/g, '#')));
+    assert.ok(shapes.size >= 3, `lane ${lane} must use >=3 templates, saw ${shapes.size}`);
+  }
+  const distinct = new Set(big.map((d) => d.text));
+  assert.ok(distinct.size >= 1000, `expected >=1000 distinct distractors across 10 lanes, saw ${distinct.size}`);
+});
+
 test('generateDistractors: no generated text contains a recall-set target answer span', () => {
   const raw = readFileSync(new URL('../eval/recall-set.jsonl', import.meta.url), 'utf8');
   const rows = raw.split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
