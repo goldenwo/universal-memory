@@ -31,3 +31,13 @@ export function retrievalPurity(resultBodies, chainFacts, depth) {
   const latestTop1 = resultBodies[0] === latest;
   return { staleSurfaced, latestSurfaced, latestTop1, onlyCurrent: latestSurfaced && staleSurfaced === 0 };
 }
+
+/** Store-growth depth: cycles that actually added a distinct point. */
+export function effectiveDepth(perCycleEvents) {
+  return perCycleEvents.length - perCycleEvents.filter((c) => c.event === 'DEDUP_MERGED').length;
+}
+
+/** Engagement depth: cycles that actually exercised supersession (a per-chain scalar). */
+export function engagedDepth(perCycleEvents) {
+  return perCycleEvents.filter((c) => c.fired === true).length;
+}
