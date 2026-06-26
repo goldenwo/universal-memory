@@ -52,3 +52,36 @@ export function buildSyntheticPayload({ text, userId, index = 0, lane, persona, 
 export function payloadBytes(payload) {
   return Buffer.byteLength(JSON.stringify(payload), 'utf8');
 }
+
+/** mulberry32 — small deterministic PRNG (no Math.random; the eval forbids it). */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Deterministic ~unit-norm vector of length dim. Vector CONTENT is irrelevant to storage size
+ * (qdrant stores dim·4 bytes regardless), so any finite vector is faithful; we normalize for
+ * realism under the Cosine metric. Seeded for reproducibility.
+ */
+export function makeRandomUnitVector(dim, seed) {
+  const rand = mulberry32(seed);
+  const v = new Array(dim);
+  let sumSq = 0;
+  for (let i = 0; i < dim; i++) {
+    // Box–Muller → approx-normal components (a realistic embedding-like distribution).
+    const u1 = Math.max(rand(), 1e-12);
+    const u2 = rand();
+    const g = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    v[i] = g;
+    sumSq += g * g;
+  }
+  const norm = Math.sqrt(sumSq) || 1;
+  for (let i = 0; i < dim; i++) v[i] /= norm;
+  return v;
+}

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { vectorBytes, indexed, DEFAULT_INDEXING_THRESHOLD } from '../eval/lib/storage-model.mjs';
 import { buildSyntheticPayload, payloadBytes } from '../eval/lib/storage-model.mjs';
+import { makeRandomUnitVector } from '../eval/lib/storage-model.mjs';
 
 test('vectorBytes: n * dim * 4 (float32), zero at n=0', () => {
   assert.equal(vectorBytes(1, 1536), 6144);
@@ -47,4 +48,17 @@ test('payloadBytes: utf8 byte length, monotonic in text length', () => {
   const long = buildSyntheticPayload({ text: 'a'.repeat(500), userId: 'u', index: 0 });
   assert.ok(payloadBytes(long) > payloadBytes(short));
   assert.equal(payloadBytes(short), Buffer.byteLength(JSON.stringify(short), 'utf8'));
+});
+
+test('makeRandomUnitVector: correct length, finite components, ~unit norm', () => {
+  const v = makeRandomUnitVector(1536, 0);
+  assert.equal(v.length, 1536);
+  assert.ok(v.every((x) => Number.isFinite(x)));
+  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+  assert.ok(Math.abs(norm - 1) < 1e-6, `norm ${norm} not ~1`);
+});
+
+test('makeRandomUnitVector: deterministic (same seed → identical), seed-sensitive', () => {
+  assert.deepEqual(makeRandomUnitVector(64, 42), makeRandomUnitVector(64, 42));
+  assert.notDeepEqual(makeRandomUnitVector(64, 42), makeRandomUnitVector(64, 43));
 });
