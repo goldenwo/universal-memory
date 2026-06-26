@@ -1,6 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
 import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
@@ -195,4 +196,77 @@ test('formatRotSweep: renders depth↔cycle aligned fired@d (off-by-one guard) +
 test('formatRotSweep: back-compat + null tolerant', () => {
   assert.equal(formatRotSweep({}), '');              // no rotSweep branch → empty
   assert.equal(typeof formatRotSweep(synthResult()), 'string');
+});
+
+// --- Task 10: fixture-invariant tests ---
+
+const loadRot = () => readFileSync(new URL('../eval/rot-set.jsonl', import.meta.url), 'utf8')
+  .split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+const loadStale = () => readFileSync(new URL('../eval/staleness-set.jsonl', import.meta.url), 'utf8')
+  .split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+
+test('rot-set: ≥12 chains, each 8 distinct values + 8 facts, lane present', () => {
+  const rows = loadRot();
+  assert.ok(rows.length >= 12, `expected ≥12 chains, got ${rows.length}`);
+  for (const r of rows) {
+    assert.equal(r.facts.length, 8, `${r.id}: 8 facts`);
+    assert.equal(r.values.length, 8, `${r.id}: 8 values`);
+    assert.equal(new Set(r.values).size, 8, `${r.id}: values must be distinct`);
+    assert.ok(typeof r.lane === 'string' && r.lane.length, `${r.id}: lane`);
+    assert.ok(typeof r.query === 'string' && r.query.length, `${r.id}: query`);
+  }
+});
+
+test('rot-set: query de-leak — (a) no ≥3-gram shared, (b) no value word leaks', () => {
+  const STOP = new Set(['the', 'and', 'for', 'with', 'inc']);
+  const trigrams = (s) => {
+    const w = s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+    const g = new Set(); for (let i = 0; i + 2 < w.length + 1 && i + 3 <= w.length; i++) g.add(w.slice(i, i + 3).join(' '));
+    return g;
+  };
+  for (const r of loadRot()) {
+    const q = r.query.toLowerCase();
+    const qWords = new Set(q.replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean));
+    const qTris = trigrams(r.query);
+    for (const fact of r.facts) for (const tri of trigrams(fact)) {
+      assert.ok(!qTris.has(tri), `${r.id}: query shares 3-gram "${tri}" with a fact`);
+    }
+    for (const val of r.values) for (const tok of val.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/)) {
+      if (tok.length >= 3 && !STOP.has(tok)) {
+        assert.ok(!qWords.has(tok), `${r.id}: query leaks value token "${tok}" (from "${val}")`);
+      }
+    }
+  }
+});
+
+test('rot-set: ≥6 anchor chains byte-identical to their staleness-set row', () => {
+  const stale = new Map(loadStale().map((s) => [s.id, s]));
+  const anchored = loadRot().filter((r) => r.anchor);
+  assert.ok(anchored.length >= 6, `expected ≥6 anchor chains, got ${anchored.length}`);
+  for (const r of anchored) {
+    const s = stale.get(r.anchor);
+    assert.ok(s, `${r.id}: anchor ${r.anchor} not found in staleness-set`);
+    // The depth-2 reproduction contract is the SEEDED FACTS being byte-identical (facts drive
+    // supersession). `values` is the chain's own de-leak token list (full phrases) and need NOT
+    // equal staleness-set's short stale_value/current_value tokens.
+    assert.equal(r.facts[0], s.original_fact, `${r.id}: facts[0] must equal staleness original_fact`);
+    assert.equal(r.facts[1], s.updated_fact, `${r.id}: facts[1] must equal staleness updated_fact`);
+  }
+});
+
+// --- Task 11: offline depth-2 anchor contract test ---
+
+test('depth-2 anchor: recorded staleness-compare values exist for each anchor chain', (t) => {
+  const refPath = new URL('../eval/results/staleness-compare-latest.json', import.meta.url);
+  if (!existsSync(refPath)) { t.skip('no recorded staleness-compare-latest.json (produced by a keyed run)'); return; }
+  const ref = JSON.parse(readFileSync(refPath, 'utf8'));
+  const byId = new Map((ref.perRow?.um ?? []).map((r) => [r.id, r]));
+  const anchored = loadRot().filter((r) => r.anchor);
+  for (const r of anchored) {
+    const row = byId.get(r.anchor);
+    assert.ok(row, `anchor ${r.anchor} present in staleness-compare reference`);
+    // contract shape the harness will assert at depth 2 (fired / firedPath / surfacedOriginal)
+    assert.ok('fired' in row && 'firedPath' in row && 'surfacedOriginal' in row,
+      `reference row ${r.anchor} must carry {fired, firedPath, surfacedOriginal}`);
+  }
 });
