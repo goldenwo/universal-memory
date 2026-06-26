@@ -1,0 +1,272 @@
+// server/test/rot.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep } from '../eval/lib/rot.mjs';
+
+test('chainPurity: clean chain — only the latest is current', () => {
+  // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
+  const statuses = { 0: 'superseded', 1: 'superseded', 2: 'superseded', 3: 'current' };
+  assert.deepEqual(chainPurity(statuses, 3), { staleSurvivors: 0, latestCurrent: true, latestOnly: true });
+});
+
+test('chainPurity: accumulation — two stale survivors still current', () => {
+  // facts[1] and facts[2] never got demoted → staleSurvivors=2, not latestOnly
+  const statuses = { 0: 'superseded', 1: 'current', 2: 'current', 3: 'current' };
+  assert.deepEqual(chainPurity(statuses, 3), { staleSurvivors: 2, latestCurrent: true, latestOnly: false });
+});
+
+test('chainPurity: latest itself wrongly superseded → latestCurrent false', () => {
+  const statuses = { 0: 'superseded', 1: 'superseded', 2: 'current', 3: 'superseded' };
+  assert.deepEqual(chainPurity(statuses, 3), { staleSurvivors: 1, latestCurrent: false, latestOnly: false });
+});
+
+test('retrievalPurity: only latest surfaced, top-1 → onlyCurrent', () => {
+  const facts = ['fact a', 'fact b', 'fact c']; // normalized
+  const results = ['fact c', 'unrelated x', 'unrelated y']; // top-K bodies, rank order
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 0, latestSurfaced: true, latestTop1: true, onlyCurrent: true });
+});
+
+test('retrievalPurity: a stale version leaks into results → not onlyCurrent', () => {
+  const facts = ['fact a', 'fact b', 'fact c'];
+  const results = ['fact c', 'fact a']; // stale fact a still surfaced
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 1, latestSurfaced: true, latestTop1: true, onlyCurrent: false });
+});
+
+test('retrievalPurity: latest present but out-ranked → latestTop1 false', () => {
+  const facts = ['fact a', 'fact b', 'fact c'];
+  const results = ['fact b', 'fact c']; // stale b ranks above latest c
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 1, latestSurfaced: true, latestTop1: false, onlyCurrent: false });
+});
+
+test('effectiveDepth vs engagedDepth diverge: out-of-band ADD deepens store but does not engage', () => {
+  // cycle1 ADD(no fire), cycle2 fired inband, cycle3 ADD-no-detector-hit (fired:false), cycle4 fired detector
+  const ev = [
+    { event: 'ADD', fired: false },              // cycle 1 (no predecessor)
+    { event: 'SUPERSEDED_INBAND', fired: true }, // cycle 2
+    { event: 'ADD', fired: false },              // cycle 3 — out-of-band, store grew, NOT engaged
+    { event: 'ADD', fired: true },               // cycle 4 — detector fired
+  ];
+  assert.equal(effectiveDepth(ev), 4); // no DEDUP_MERGED → full store growth
+  assert.equal(engagedDepth(ev), 2);   // only 2 cycles fired
+});
+
+test('effectiveDepth: DEDUP_MERGED collapses store growth', () => {
+  const ev = [
+    { event: 'ADD', fired: false },
+    { event: 'DEDUP_MERGED', fired: false }, // value too near predecessor → did not deepen
+    { event: 'SUPERSEDED_INBAND', fired: true },
+  ];
+  assert.equal(effectiveDepth(ev), 2); // 3 cycles − 1 dedup
+  assert.equal(engagedDepth(ev), 1);
+});
+
+test('expectedStaleSurvivors: counts non-firing cycles in 2..depth (cycle 1 never fires)', () => {
+  // fired by cycle: c1 n/a(false), c2 true, c3 false, c4 true, c5 false
+  const fired = [false, true, false, true, false];
+  assert.equal(expectedStaleSurvivors(fired, 1), 0); // depth 1: no predecessor
+  assert.equal(expectedStaleSurvivors(fired, 3), 1); // cycle 3 didn't fire (k=1)
+  assert.equal(expectedStaleSurvivors(fired, 5), 2); // cycles 3 and 5 didn't fire (k=2, non-contiguous)
+});
+
+test('survivorIdentityViolations: clean run (identity holds) → []', () => {
+  const fired = [false, true, false, true, false];
+  const snapshots = [
+    { depth: 1, staleSurvivors: 0 },
+    { depth: 3, staleSurvivors: 1 },
+    { depth: 5, staleSurvivors: 2 },
+  ];
+  assert.deepEqual(survivorIdentityViolations(fired, snapshots), []);
+});
+
+test('survivorIdentityViolations: wrong-target supersede (survivors EXCEED non-firing) flagged', () => {
+  const fired = [false, true, true, true]; // every cycle fired → expected 0 survivors at every depth
+  const snapshots = [{ depth: 4, staleSurvivors: 1 }]; // but one stale point lingered → a real bug
+  assert.deepEqual(survivorIdentityViolations(fired, snapshots), [{ depth: 4, expected: 0, actual: 1 }]);
+});
+
+test('resurrectionScan: sticky tombstone holds → 0', () => {
+  const vectors = [
+    { depth: 1, pointStatuses: { 0: 'current' } },
+    { depth: 2, pointStatuses: { 0: 'superseded', 1: 'current' } },
+    { depth: 3, pointStatuses: { 0: 'superseded', 1: 'superseded', 2: 'current' } },
+  ];
+  assert.equal(resurrectionScan(vectors), 0);
+});
+
+test('resurrectionScan: a point goes superseded→current again → counted', () => {
+  const vectors = [
+    { depth: 2, pointStatuses: { 0: 'superseded', 1: 'current' } },
+    { depth: 3, pointStatuses: { 0: 'current', 1: 'superseded', 2: 'current' } }, // fact 0 resurrected
+  ];
+  assert.equal(resurrectionScan(vectors), 1);
+});
+
+const chainSnap = (rows) => ({ snapshots: rows });
+// rows: {depth, staleSurvivors, latestCurrent, retrieval:{staleSurfaced,latestSurfaced,latestTop1,onlyCurrent}}
+
+test('aggregateRotByDepth: UM arm includes status-level fields', () => {
+  const chains = [
+    chainSnap([{ depth: 2, staleSurvivors: 0, latestCurrent: true,
+      retrieval: { staleSurfaced: 0, latestSurfaced: true, latestTop1: true, onlyCurrent: true } }]),
+    chainSnap([{ depth: 2, staleSurvivors: 1, latestCurrent: true,
+      retrieval: { staleSurfaced: 1, latestSurfaced: true, latestTop1: true, onlyCurrent: false } }]),
+  ];
+  const agg = aggregateRotByDepth(chains, 'um');
+  assert.equal(agg.length, 1);
+  assert.deepEqual(agg[0], {
+    depth: 2, onlyCurrentRate: 0.5, meanStaleSurfaced: 0.5, latestTop1Rate: 1,
+    statusLatestOnlyRate: 0.5, meanStaleSurvivors: 0.5,
+  });
+});
+
+test('aggregateRotByDepth: mem0 arm is retrieval-only (no status fields)', () => {
+  const chains = [
+    chainSnap([{ depth: 2, retrieval: { staleSurfaced: 2, latestSurfaced: true, latestTop1: false, onlyCurrent: false } }]),
+  ];
+  const agg = aggregateRotByDepth(chains, 'mem0');
+  assert.deepEqual(agg[0], { depth: 2, onlyCurrentRate: 0, meanStaleSurfaced: 2, latestTop1Rate: 0 });
+});
+
+test('gapByDepth: UM minus mem0 on retrieval onlyCurrent (+ staleSurfaced delta)', () => {
+  const um = [{ depth: 4, onlyCurrentRate: 1.0, meanStaleSurfaced: 0 }];
+  const mem0 = [{ depth: 4, onlyCurrentRate: 0.25, meanStaleSurfaced: 3 }];
+  assert.deepEqual(gapByDepth(um, mem0), [{ depth: 4, onlyCurrentGap: 0.75, staleSurfacedGap: 3 }]);
+});
+
+test('rungValidity: per-depth fired rate gate — under-engaged deep rung is INVALID', () => {
+  // cycle index → fired rate across chains. depth 1 never fires (valid by definition).
+  const fireRateByCycle = [0, 1.0, 0.9, 0.5]; // cycle 4 fired on only 50% of chains
+  assert.deepEqual(rungValidity(fireRateByCycle, 0.8), [
+    { depth: 1, fireRate: null, valid: true },   // no supersession expected at depth 1
+    { depth: 2, fireRate: 1.0, valid: true },
+    { depth: 3, fireRate: 0.9, valid: true },
+    { depth: 4, fireRate: 0.5, valid: false },   // < 0.8 → excluded from the gap series
+  ]);
+});
+
+test('judgeConfidenceByCycle: per-cycle p50/p95 over detector-path confidences', () => {
+  // perCycleJudge[cycleIdx] = detector-path confidences across chains (in-band cycles contribute nothing)
+  const perCycleJudge = [[], [0.9, 0.8, 1.0], [0.85]];
+  const out = judgeConfidenceByCycle(perCycleJudge);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].cycle, 1); assert.equal(out[0].count, 0); assert.equal(out[0].p50, null);
+  assert.equal(out[1].cycle, 2); assert.equal(out[1].count, 3); assert.equal(out[1].p50, 0.9);
+  assert.equal(out[2].cycle, 3); assert.equal(out[2].count, 1); assert.equal(out[2].p50, 0.85);
+});
+
+const synthResult = () => ({
+  rotSweep: {
+    depths: [1, 2, 3],
+    chainCount: 2,
+    arms: {
+      um:   { byDepth: [
+        { depth: 1, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 },
+        { depth: 2, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 },
+        { depth: 3, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 } ] },
+      mem0: { byDepth: [
+        { depth: 1, onlyCurrentRate: 1.0, meanStaleSurfaced: 0, latestTop1Rate: 1 },
+        { depth: 2, onlyCurrentRate: 0.5, meanStaleSurfaced: 1, latestTop1Rate: 1 },
+        { depth: 3, onlyCurrentRate: 0.3, meanStaleSurfaced: 2, latestTop1Rate: 1 } ] },
+    },
+    gapByDepth: [ { depth: 1, onlyCurrentGap: 0, staleSurfacedGap: 0 },
+                  { depth: 2, onlyCurrentGap: 0.5, staleSurfacedGap: 1 },
+                  { depth: 3, onlyCurrentGap: 0.7, staleSurfacedGap: 2 } ],
+    diagnostics: {
+      resurrectionCount: 0,
+      fireRateByCycle: [0, 0.95, 0.40], // cycle 3 under-engaged → INVALID rung
+      judgeConfByCycle: [ { cycle: 1, count: 0, p50: null }, { cycle: 2, count: 2, p50: 0.9 }, { cycle: 3, count: 1, p50: 0.8 } ],
+      validity: [ { depth: 1, valid: true }, { depth: 2, valid: true }, { depth: 3, valid: false } ],
+    },
+  },
+});
+
+test('formatRotSweep: renders depth↔cycle aligned fired@d (off-by-one guard) + INVALID annotation', () => {
+  const out = formatRotSweep(synthResult());
+  // depth-3 row must show the cycle-3 fired rate (0.40) — NOT cycle-2's 0.95
+  const d3 = out.split('\n').find((l) => l.trim().startsWith('3'));
+  assert.ok(d3.includes('0.40'), `depth-3 fired@d must be fireRateByCycle[2]=0.40, got: ${d3}`);
+  assert.ok(/INVALID/.test(d3), 'under-engaged depth-3 rung must be annotated INVALID');
+  assert.ok(out.includes('gap'), 'table has a gap column');
+});
+
+test('formatRotSweep: back-compat + null tolerant', () => {
+  assert.equal(formatRotSweep({}), '');              // no rotSweep branch → empty
+  assert.equal(typeof formatRotSweep(synthResult()), 'string');
+});
+
+// --- Task 10: fixture-invariant tests ---
+
+const loadRot = () => readFileSync(new URL('../eval/rot-set.jsonl', import.meta.url), 'utf8')
+  .split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+const loadStale = () => readFileSync(new URL('../eval/staleness-set.jsonl', import.meta.url), 'utf8')
+  .split(/\r?\n/).filter((l) => l.trim()).map((l) => JSON.parse(l));
+
+test('rot-set: ≥12 chains, each 8 distinct values + 8 facts, lane present', () => {
+  const rows = loadRot();
+  assert.ok(rows.length >= 12, `expected ≥12 chains, got ${rows.length}`);
+  for (const r of rows) {
+    assert.equal(r.facts.length, 8, `${r.id}: 8 facts`);
+    assert.equal(r.values.length, 8, `${r.id}: 8 values`);
+    assert.equal(new Set(r.values).size, 8, `${r.id}: values must be distinct`);
+    assert.ok(typeof r.lane === 'string' && r.lane.length, `${r.id}: lane`);
+    assert.ok(typeof r.query === 'string' && r.query.length, `${r.id}: query`);
+  }
+});
+
+test('rot-set: query de-leak — (a) no ≥3-gram shared, (b) no value word leaks', () => {
+  const STOP = new Set(['the', 'and', 'for', 'with', 'inc']);
+  const trigrams = (s) => {
+    const w = s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+    const g = new Set(); for (let i = 0; i + 2 < w.length + 1 && i + 3 <= w.length; i++) g.add(w.slice(i, i + 3).join(' '));
+    return g;
+  };
+  for (const r of loadRot()) {
+    const q = r.query.toLowerCase();
+    const qWords = new Set(q.replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean));
+    const qTris = trigrams(r.query);
+    for (const fact of r.facts) for (const tri of trigrams(fact)) {
+      assert.ok(!qTris.has(tri), `${r.id}: query shares 3-gram "${tri}" with a fact`);
+    }
+    for (const val of r.values) for (const tok of val.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/)) {
+      if (tok.length >= 3 && !STOP.has(tok)) {
+        assert.ok(!qWords.has(tok), `${r.id}: query leaks value token "${tok}" (from "${val}")`);
+      }
+    }
+  }
+});
+
+test('rot-set: ≥6 anchor chains byte-identical to their staleness-set row', () => {
+  const stale = new Map(loadStale().map((s) => [s.id, s]));
+  const anchored = loadRot().filter((r) => r.anchor);
+  assert.ok(anchored.length >= 6, `expected ≥6 anchor chains, got ${anchored.length}`);
+  for (const r of anchored) {
+    const s = stale.get(r.anchor);
+    assert.ok(s, `${r.id}: anchor ${r.anchor} not found in staleness-set`);
+    // The depth-2 reproduction contract is the SEEDED FACTS being byte-identical (facts drive
+    // supersession). `values` is the chain's own de-leak token list (full phrases) and need NOT
+    // equal staleness-set's short stale_value/current_value tokens.
+    assert.equal(r.facts[0], s.original_fact, `${r.id}: facts[0] must equal staleness original_fact`);
+    assert.equal(r.facts[1], s.updated_fact, `${r.id}: facts[1] must equal staleness updated_fact`);
+  }
+});
+
+// --- Task 11: offline depth-2 anchor contract test ---
+
+test('depth-2 anchor: recorded staleness-compare values exist for each anchor chain', (t) => {
+  const refPath = new URL('../eval/results/staleness-compare-latest.json', import.meta.url);
+  if (!existsSync(refPath)) { t.skip('no recorded staleness-compare-latest.json (produced by a keyed run)'); return; }
+  const ref = JSON.parse(readFileSync(refPath, 'utf8'));
+  const byId = new Map((ref.perRow?.um ?? []).map((r) => [r.id, r]));
+  const anchored = loadRot().filter((r) => r.anchor);
+  for (const r of anchored) {
+    const row = byId.get(r.anchor);
+    assert.ok(row, `anchor ${r.anchor} present in staleness-compare reference`);
+    // contract shape the harness will assert at depth 2 (fired / firedPath / surfacedOriginal)
+    assert.ok('fired' in row && 'firedPath' in row && 'surfacedOriginal' in row,
+      `reference row ${r.anchor} must carry {fired, firedPath, surfacedOriginal}`);
+  }
+});
