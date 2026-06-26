@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-19T06:21:22.217Z",
+  "timestamp": "2026-06-26T01:55:27.230Z",
   "n": 18,
   "mode": "staleness head-to-head: seed original → contradicting update → neutral query → stale-return (exact content-match, infer:false)",
   "provider": "openai",
@@ -18,9 +18,9 @@
   "arms": {
     "um": {
       "n": 18,
-      "staleReturn": 0.056,
-      "currentReturn": 0.944,
-      "onlyCurrent": 0.944,
+      "staleReturn": 0,
+      "currentReturn": 1,
+      "onlyCurrent": 1,
       "bothReturned": 0,
       "neither": 0
     },
@@ -35,15 +35,10 @@
   },
   "umSupersession": {
     "total": 18,
-    "fired": 17,
-    "fireRate": 0.944,
+    "fired": 18,
+    "fireRate": 1,
     "staleReturnOverFired": 0,
-    "notFired": [
-      {
-        "id": "s009",
-        "event": "DEDUP_MERGED"
-      }
-    ]
+    "notFired": []
   },
   "perRow": {
     "um": [
@@ -138,13 +133,13 @@
       {
         "id": "s009",
         "lane": "dev",
-        "updatedEvent": "DEDUP_MERGED",
-        "fired": false,
-        "firedPath": null,
-        "surfacedOriginal": true,
-        "surfacedUpdated": false,
-        "originalRank": 1,
-        "updatedRank": 0
+        "updatedEvent": "SUPERSEDED_INBAND",
+        "fired": true,
+        "firedPath": "inband",
+        "surfacedOriginal": false,
+        "surfacedUpdated": true,
+        "originalRank": 0,
+        "updatedRank": 1
       },
       {
         "id": "s010",
