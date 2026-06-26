@@ -955,3 +955,20 @@ test('formatStorageSweep: seedIncomplete rung is annotated', () => {
     rows: [{ ...STORAGE_RESULT.storageSweep.rows[0], pointsCount: 9999, seedIncomplete: true }] } };
   assert.match(formatStorageSweep(r), /seed-incomplete|incomplete/i);
 });
+
+// ===========================================================================
+// Task 6: parseArgs storage-sweep flags
+// ===========================================================================
+
+test('parseArgs: --storage-sweep / --storage-sizes / --storage-dim', () => {
+  const a = parseArgs(['node', 'x', '--storage-sweep', '--recall', 'r.jsonl',
+    '--storage-sizes', '1000, 20000 ,50000', '--storage-dim', '768']);
+  assert.equal(a.storageSweep, true);
+  assert.deepEqual(a.storageSizes, [1000, 20000, 50000]);
+  assert.equal(a.storageDim, 768);
+});
+
+test('parseArgs: --storage-sizes empty/garbage → undefined (runner default)', () => {
+  const a = parseArgs(['node', 'x', '--storage-sweep', '--storage-sizes', 'abc,,']);
+  assert.equal(a.storageSizes, undefined);
+});

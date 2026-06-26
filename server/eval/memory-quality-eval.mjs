@@ -700,6 +700,12 @@ export function parseArgs(argv) {
       args.sweepSizes = parsed.length ? parsed : undefined;
     }
     else if (a === '--seed') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v)) args.seed = v; }
+    else if (a === '--storage-sweep') args.storageSweep = true;
+    else if (a === '--storage-sizes') {
+      const parsed = (argv[++i] ?? '').split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+      args.storageSizes = parsed.length ? parsed : undefined;
+    }
+    else if (a === '--storage-dim') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v) && v > 0) args.storageDim = v; }
   }
   return args;
 }
