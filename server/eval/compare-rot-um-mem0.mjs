@@ -167,7 +167,8 @@ async function main() {
       // --- snapshot at depth d = i+1 ---
       const depth = i + 1;
       const live = await client.retrieve(col, { ids: ids.slice(0, depth), with_payload: true, with_vector: false });
-      const statusById = new Map(live.map((p) => [p.id, p.payload?.status ?? 'current'])); // TOP-LEVEL payload.status
+      const recs = Array.isArray(live) ? live : (live?.points ?? []); // retrieve→bare array; tolerate a {points} wrapper
+      const statusById = new Map(recs.map((p) => [p.id, p.payload?.status ?? 'current'])); // TOP-LEVEL payload.status
       const pointStatuses = {}; for (let k = 0; k < depth; k++) pointStatuses[k] = statusById.get(ids[k]) ?? 'current';
       const cp = chainPurity(pointStatuses, depth - 1);
       const sr = await doSearch(row.query, 10, false, true, { memory: mem }); // 5-arg form — scratch-routed, full bodies
