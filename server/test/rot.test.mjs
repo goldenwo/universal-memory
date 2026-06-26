@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -155,4 +155,44 @@ test('judgeConfidenceByCycle: per-cycle p50/p95 over detector-path confidences',
   assert.equal(out[0].cycle, 1); assert.equal(out[0].count, 0); assert.equal(out[0].p50, null);
   assert.equal(out[1].cycle, 2); assert.equal(out[1].count, 3); assert.equal(out[1].p50, 0.9);
   assert.equal(out[2].cycle, 3); assert.equal(out[2].count, 1); assert.equal(out[2].p50, 0.85);
+});
+
+const synthResult = () => ({
+  rotSweep: {
+    depths: [1, 2, 3],
+    chainCount: 2,
+    arms: {
+      um:   { byDepth: [
+        { depth: 1, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 },
+        { depth: 2, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 },
+        { depth: 3, onlyCurrentRate: 1, meanStaleSurfaced: 0, latestTop1Rate: 1, statusLatestOnlyRate: 1, meanStaleSurvivors: 0 } ] },
+      mem0: { byDepth: [
+        { depth: 1, onlyCurrentRate: 1.0, meanStaleSurfaced: 0, latestTop1Rate: 1 },
+        { depth: 2, onlyCurrentRate: 0.5, meanStaleSurfaced: 1, latestTop1Rate: 1 },
+        { depth: 3, onlyCurrentRate: 0.3, meanStaleSurfaced: 2, latestTop1Rate: 1 } ] },
+    },
+    gapByDepth: [ { depth: 1, onlyCurrentGap: 0, staleSurfacedGap: 0 },
+                  { depth: 2, onlyCurrentGap: 0.5, staleSurfacedGap: 1 },
+                  { depth: 3, onlyCurrentGap: 0.7, staleSurfacedGap: 2 } ],
+    diagnostics: {
+      resurrectionCount: 0,
+      fireRateByCycle: [0, 0.95, 0.40], // cycle 3 under-engaged → INVALID rung
+      judgeConfByCycle: [ { cycle: 1, count: 0, p50: null }, { cycle: 2, count: 2, p50: 0.9 }, { cycle: 3, count: 1, p50: 0.8 } ],
+      validity: [ { depth: 1, valid: true }, { depth: 2, valid: true }, { depth: 3, valid: false } ],
+    },
+  },
+});
+
+test('formatRotSweep: renders depth↔cycle aligned fired@d (off-by-one guard) + INVALID annotation', () => {
+  const out = formatRotSweep(synthResult());
+  // depth-3 row must show the cycle-3 fired rate (0.40) — NOT cycle-2's 0.95
+  const d3 = out.split('\n').find((l) => l.trim().startsWith('3'));
+  assert.ok(d3.includes('0.40'), `depth-3 fired@d must be fireRateByCycle[2]=0.40, got: ${d3}`);
+  assert.ok(/INVALID/.test(d3), 'under-engaged depth-3 rung must be annotated INVALID');
+  assert.ok(out.includes('gap'), 'table has a gap column');
+});
+
+test('formatRotSweep: back-compat + null tolerant', () => {
+  assert.equal(formatRotSweep({}), '');              // no rotSweep branch → empty
+  assert.equal(typeof formatRotSweep(synthResult()), 'string');
 });

@@ -154,3 +154,38 @@ export function judgeConfidenceByCycle(perCycleJudge) {
     ...summarize(samples, [['p50', 0.5], ['p95', 0.95]]),
   }));
 }
+
+const f2 = (x) => (x == null ? ' n/a' : Number(x).toFixed(2));
+
+/**
+ * Pure render of result.rotSweep: one row per depth. fired@d / judgeConf read cycle d = depth d
+ * (fireRateByCycle[d-1] / judgeConfByCycle[d-1]). Back-compat-guarded + null-tolerant.
+ */
+export function formatRotSweep(result) {
+  const rs = result?.rotSweep;
+  if (!rs) return '';
+  const um = new Map((rs.arms?.um?.byDepth ?? []).map((r) => [r.depth, r]));
+  const mem0 = new Map((rs.arms?.mem0?.byDepth ?? []).map((r) => [r.depth, r]));
+  const gap = new Map((rs.gapByDepth ?? []).map((r) => [r.depth, r]));
+  const valid = new Map((rs.diagnostics?.validity ?? []).map((r) => [r.depth, r.valid]));
+  const fire = rs.diagnostics?.fireRateByCycle ?? [];
+  const conf = rs.diagnostics?.judgeConfByCycle ?? [];
+  const lines = [];
+  lines.push('=== memory rot — purity vs depth (UM vs raw mem0) ===');
+  lines.push('depth | UM onlyCur UM staleSurf UM rec@1 UM statusOnly | mem0 onlyCur mem0 staleSurf mem0 rec@1(noise) | gap | fired@d judgeConf-p50 | rung');
+  for (const depth of rs.depths) {
+    const u = um.get(depth) ?? {}; const m = mem0.get(depth) ?? {}; const g = gap.get(depth) ?? {};
+    const firedD = depth >= 2 ? fire[depth - 1] : null;
+    const confD = conf[depth - 1]?.p50 ?? null;
+    const rung = depth === 1 ? '-' : (valid.get(depth) === false ? 'INVALID' : 'ok');
+    lines.push([
+      String(depth),
+      f2(u.onlyCurrentRate), f2(u.meanStaleSurfaced), f2(u.latestTop1Rate), f2(u.statusLatestOnlyRate),
+      '|', f2(m.onlyCurrentRate), f2(m.meanStaleSurfaced), f2(m.latestTop1Rate),
+      '|', f2(g.onlyCurrentGap),
+      '|', f2(firedD), f2(confD), '|', rung,
+    ].join(' '));
+  }
+  lines.push(`resurrections=${rs.diagnostics?.resurrectionCount ?? 'n/a'} | chains=${rs.chainCount}`);
+  return lines.join('\n');
+}
