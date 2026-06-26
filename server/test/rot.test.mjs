@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -145,4 +145,14 @@ test('rungValidity: per-depth fired rate gate — under-engaged deep rung is INV
     { depth: 3, fireRate: 0.9, valid: true },
     { depth: 4, fireRate: 0.5, valid: false },   // < 0.8 → excluded from the gap series
   ]);
+});
+
+test('judgeConfidenceByCycle: per-cycle p50/p95 over detector-path confidences', () => {
+  // perCycleJudge[cycleIdx] = detector-path confidences across chains (in-band cycles contribute nothing)
+  const perCycleJudge = [[], [0.9, 0.8, 1.0], [0.85]];
+  const out = judgeConfidenceByCycle(perCycleJudge);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].cycle, 1); assert.equal(out[0].count, 0); assert.equal(out[0].p50, null);
+  assert.equal(out[1].cycle, 2); assert.equal(out[1].count, 3); assert.equal(out[1].p50, 0.9);
+  assert.equal(out[2].cycle, 3); assert.equal(out[2].count, 1); assert.equal(out[2].p50, 0.85);
 });

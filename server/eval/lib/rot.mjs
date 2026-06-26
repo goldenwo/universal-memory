@@ -3,6 +3,8 @@
 // this stays fully offline. Status-level reads come from qdrant payload.status; the
 // scorers here are pure functions over already-collected snapshots.
 
+import { summarize } from './stats.mjs';
+
 /**
  * Status-level chain purity at one depth.
  * @param {Record<number,'current'|'superseded'>} chainStatuses status per seeded factIdx (0..latestIdx)
@@ -139,4 +141,16 @@ export function rungValidity(fireRateByCycle, threshold = 0.8) {
     if (depth === 1) return { depth, fireRate: null, valid: true };
     return { depth, fireRate: fr, valid: fr >= threshold };
   });
+}
+
+/**
+ * Per-cycle judge-confidence distribution (DETECTOR-PATH cycles only — the in-band path
+ * does not return its confidence). Cycle index → summarize(p50, p95).
+ * @param {number[][]} perCycleJudge perCycleJudge[i] = confidences observed at cycle i+1
+ */
+export function judgeConfidenceByCycle(perCycleJudge) {
+  return perCycleJudge.map((samples, i) => ({
+    cycle: i + 1,
+    ...summarize(samples, [['p50', 0.5], ['p95', 0.95]]),
+  }));
 }
