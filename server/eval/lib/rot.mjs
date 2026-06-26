@@ -80,3 +80,37 @@ export function resurrectionScan(perDepthStatusVectors) {
   }
   return resurrections;
 }
+
+const mean = (xs) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
+const rate = (xs) => mean(xs.map((b) => (b ? 1 : 0)));
+
+/**
+ * Per-depth aggregate across chains. Retrieval-level for both arms; UM adds status-level.
+ * @param {Array<{snapshots:Array<object>}>} perChainSnapshots
+ * @param {'um'|'mem0'} arm
+ */
+export function aggregateRotByDepth(perChainSnapshots, arm) {
+  const byDepth = new Map();
+  for (const chain of perChainSnapshots) {
+    for (const s of chain.snapshots) {
+      if (!byDepth.has(s.depth)) byDepth.set(s.depth, []);
+      byDepth.get(s.depth).push(s);
+    }
+  }
+  const out = [];
+  for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const ss = byDepth.get(depth);
+    const row = {
+      depth,
+      onlyCurrentRate: rate(ss.map((s) => s.retrieval.onlyCurrent)),
+      meanStaleSurfaced: mean(ss.map((s) => s.retrieval.staleSurfaced)),
+      latestTop1Rate: rate(ss.map((s) => s.retrieval.latestTop1)), // mem0: noise-floor (caller excludes from gap)
+    };
+    if (arm === 'um') {
+      row.statusLatestOnlyRate = rate(ss.map((s) => s.staleSurvivors === 0 && s.latestCurrent));
+      row.meanStaleSurvivors = mean(ss.map((s) => s.staleSurvivors));
+    }
+    out.push(row);
+  }
+  return out;
+}

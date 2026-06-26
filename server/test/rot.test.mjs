@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -102,4 +102,30 @@ test('resurrectionScan: a point goes superseded→current again → counted', ()
     { depth: 3, pointStatuses: { 0: 'current', 1: 'superseded', 2: 'current' } }, // fact 0 resurrected
   ];
   assert.equal(resurrectionScan(vectors), 1);
+});
+
+const chainSnap = (rows) => ({ snapshots: rows });
+// rows: {depth, staleSurvivors, latestCurrent, retrieval:{staleSurfaced,latestSurfaced,latestTop1,onlyCurrent}}
+
+test('aggregateRotByDepth: UM arm includes status-level fields', () => {
+  const chains = [
+    chainSnap([{ depth: 2, staleSurvivors: 0, latestCurrent: true,
+      retrieval: { staleSurfaced: 0, latestSurfaced: true, latestTop1: true, onlyCurrent: true } }]),
+    chainSnap([{ depth: 2, staleSurvivors: 1, latestCurrent: true,
+      retrieval: { staleSurfaced: 1, latestSurfaced: true, latestTop1: true, onlyCurrent: false } }]),
+  ];
+  const agg = aggregateRotByDepth(chains, 'um');
+  assert.equal(agg.length, 1);
+  assert.deepEqual(agg[0], {
+    depth: 2, onlyCurrentRate: 0.5, meanStaleSurfaced: 0.5, latestTop1Rate: 1,
+    statusLatestOnlyRate: 0.5, meanStaleSurvivors: 0.5,
+  });
+});
+
+test('aggregateRotByDepth: mem0 arm is retrieval-only (no status fields)', () => {
+  const chains = [
+    chainSnap([{ depth: 2, retrieval: { staleSurfaced: 2, latestSurfaced: true, latestTop1: false, onlyCurrent: false } }]),
+  ];
+  const agg = aggregateRotByDepth(chains, 'mem0');
+  assert.deepEqual(agg[0], { depth: 2, onlyCurrentRate: 0, meanStaleSurfaced: 2, latestTop1Rate: 0 });
 });
