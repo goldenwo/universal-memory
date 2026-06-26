@@ -5,6 +5,34 @@
 
 import { summarize } from './stats.mjs';
 
+// --- Fixture-acceptance calibration band (§5.3) ------------------------------
+// A contradiction pair supersedes the older fact via one of two production paths:
+//   • write-time in-band: a dedup embedding hit in [0.84, 0.95] → judge → supersede.
+//   • session-end detector: retrieves candidates at cosine >= 0.45 → judge → supersede.
+// So the healthy firing range is [0.45, 0.95]. Above 0.95 a confident duplicate is
+// kept-older (DEDUP_MERGED, no supersede); below 0.45 it is never retrieved. The
+// keyed baseline (2026-06-26) confirmed these chains fire predominantly via the
+// DETECTOR path (sub-0.84), so the lower bound is the detector retrieval floor, NOT
+// the in-band dedup floor — calibrating against [0.84, 0.95] flagged every valid
+// chain as out-of-band (a false alarm). Mirrors #14's keyed isInert recalibration.
+export const CALIB_DETECTOR_FLOOR = 0.45;  // UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD (D3.3)
+export const CALIB_INBAND_FLOOR = 0.84;    // dedup embedding threshold (in-band path floor)
+export const CALIB_DEDUP_CEILING = 0.95;   // contradictionBandCeiling (above → keep-older, no supersede)
+
+/**
+ * Classify a chain pair's adjacent cosine for the fixture-acceptance gate.
+ * `fires` is true when the pair will supersede via EITHER path (in-band or detector);
+ * only `dedup-risk` (> ceiling) and `no-fire` (< detector floor) are problematic.
+ * @param {number} cos adjacent-pair cosine
+ * @returns {{band:'dedup-risk'|'inband'|'detector'|'no-fire', fires:boolean}}
+ */
+export function calibrationBand(cos) {
+  if (cos > CALIB_DEDUP_CEILING) return { band: 'dedup-risk', fires: false };
+  if (cos >= CALIB_INBAND_FLOOR) return { band: 'inband', fires: true };
+  if (cos >= CALIB_DETECTOR_FLOOR) return { band: 'detector', fires: true };
+  return { band: 'no-fire', fires: false };
+}
+
 /**
  * Status-level chain purity at one depth.
  * @param {Record<number,'current'|'superseded'>} chainStatuses status per seeded factIdx (0..latestIdx)
