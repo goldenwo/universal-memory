@@ -624,6 +624,38 @@ export function formatCorpusSweep(result) {
   return lines.join('\n');
 }
 
+const fmtMB = (b) => (b == null ? '   -  ' : (b / 1_048_576).toFixed(1).padStart(6));
+
+/** Pure render of result.storageSweep — a footprint-vs-N table + the Pi RAM headline.
+ *  Returns '' when no sweep is present (caller decides whether to print). */
+export function formatStorageSweep(result) {
+  const ss = result?.storageSweep;
+  if (!ss || !Array.isArray(ss.rows) || ss.rows.length === 0) return '';
+  const lines = [];
+  lines.push('=== Storage & index growth (footprint vs N) ===');
+  lines.push(`  dim=${ss.dim} distance=${ss.distance} hnswM=${ss.hnswM} indexingThreshold=${ss.indexingThreshold} payloadB/pt=${ss.payloadBytesPerPoint}`);
+  lines.push('       N  pts  regime  vec MB  payld MB  proj RAM MB  measured MB  B/fact(vec+pay+idx)  flags');
+  for (const r of ss.rows) {
+    const flags = [r.seedIncomplete ? 'seed-incomplete' : '',
+                   (r.indexedRegime === 'hnsw') !== indexedAtOrAbove(r.requestedN, ss.indexingThreshold) ? 'regime-divergence' : '']
+      .filter(Boolean).join(',') || '-';
+    const bf = r.bytesPerFact ?? {};
+    lines.push(
+      `  ${String(r.requestedN).padStart(6)}  ${String(r.pointsCount).padStart(5)}  ${(r.indexedRegime ?? '?').padEnd(5)}  ` +
+      `${fmtMB(r.vectorBytes)}  ${fmtMB((r.payloadBytesPerPoint ?? 0) * r.requestedN)}  ${fmtMB(r.projected?.ramBytes)}     ` +
+      `${fmtMB(r.measuredDiskBytes)}     ${bf.vector ?? 0}+${bf.payload ?? 0}+${bf.indexOverhead ?? 0}=${bf.total ?? 0}   ${flags}`,
+    );
+  }
+  if (ss.piProjection) {
+    lines.push('');
+    lines.push(`  >> Pi headline: projected qdrant RAM at ${ss.piProjection.atN} facts ≈ ${fmtMB(ss.piProjection.ramBytesProjected).trim()} MB`);
+  }
+  return lines.join('\n');
+}
+
+/** Local helper: model-predicted HNSW regime (mirrors storage-model.indexed without importing it here). */
+function indexedAtOrAbove(n, threshold) { return n >= threshold; }
+
 // ---------------------------------------------------------------------------
 // Fixture loader (I/O, no live calls) — JSON-Lines, one object per line.
 // Identical contract to d3/lane: utf8, split on /\r?\n/, drop blank lines, throw

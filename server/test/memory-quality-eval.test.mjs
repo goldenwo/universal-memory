@@ -58,6 +58,7 @@ import {
   isInert,
   computePressure,
   formatCorpusSweep,
+  formatStorageSweep,
 } from '../eval/memory-quality-eval.mjs';
 
 const KS = [1, 3, 5, 10];
@@ -910,4 +911,47 @@ test('computePressure: means over measured rows + applies isInert (ignores unmea
     { targetCos: 0.6, bestNonTargetCos: 0.3 },
     { targetCos: 0.8, bestNonTargetCos: 0.4 },
   ] }).inert, true);
+});
+
+// ===========================================================================
+// Task 5: formatStorageSweep (pure render)
+// ===========================================================================
+
+const STORAGE_RESULT = {
+  storageSweep: {
+    dim: 1536, hnswM: 16, indexingThreshold: 20000, distance: 'Cosine', payloadBytesPerPoint: 300, seed: 0,
+    rows: [
+      { requestedN: 10000, pointsCount: 10000, seedIncomplete: false, segments: 1, indexedVectors: 0,
+        indexedRegime: 'flat', vectorBytes: 61_440_000, payloadBytesPerPoint: 300, measuredDiskBytes: null,
+        projected: { ramBytes: 61_440_000, diskBytes: 64_440_000, breakdown: { vectors: 61_440_000, hnsw: 0, payload: 3_000_000, base: 0 } },
+        bytesPerFact: { vector: 6144, payload: 300, indexOverhead: 0, total: 6444 } },
+      { requestedN: 30000, pointsCount: 30000, seedIncomplete: false, segments: 1, indexedVectors: 30000,
+        indexedRegime: 'hnsw', vectorBytes: 184_320_000, payloadBytesPerPoint: 300, measuredDiskBytes: null,
+        projected: { ramBytes: 188_160_000, diskBytes: 193_320_000, breakdown: { vectors: 184_320_000, hnsw: 3_840_000, payload: 9_000_000, base: 0 } },
+        bytesPerFact: { vector: 6144, payload: 300, indexOverhead: 128, total: 6572 } },
+    ],
+    piProjection: { atN: 50000, ramBytesProjected: 313_600_000, note: 'projected qdrant RAM at 50k facts' },
+  },
+};
+
+test('formatStorageSweep: renders rows, regime transition, and the Pi headline', () => {
+  const out = formatStorageSweep(STORAGE_RESULT);
+  assert.match(out, /flat/);
+  assert.match(out, /hnsw/);
+  assert.match(out, /10000/);
+  assert.match(out, /30000/);
+  assert.match(out, /50k|50000/);            // Pi headline mentions the projection N
+  assert.match(out, /299|300|313|314/);      // a MB-scale projected number appears
+});
+
+test('formatStorageSweep: absent sweep → empty string (back-compat guard)', () => {
+  assert.equal(formatStorageSweep({}), '');
+  assert.equal(formatStorageSweep({ storageSweep: { rows: [] } }), '');
+  assert.equal(formatStorageSweep(null), '');
+});
+
+test('formatStorageSweep: seedIncomplete rung is annotated', () => {
+  const r = { storageSweep: { ...STORAGE_RESULT.storageSweep,
+    rows: [{ ...STORAGE_RESULT.storageSweep.rows[0], pointsCount: 9999, seedIncomplete: true }] } };
+  assert.match(formatStorageSweep(r), /seed-incomplete|incomplete/i);
 });
