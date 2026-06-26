@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep, calibrationBand } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -269,4 +269,18 @@ test('depth-2 anchor: recorded staleness-compare values exist for each anchor ch
     assert.ok('fired' in row && 'firedPath' in row && 'surfacedOriginal' in row,
       `reference row ${r.anchor} must carry {fired, firedPath, surfacedOriginal}`);
   }
+});
+
+// --- calibration band (§5.3): detector-floor lower bound (keyed-run finding 2026-06-26) ---
+
+test('calibrationBand: detector range + in-band fire; dedup-risk + no-fire do not', () => {
+  assert.deepEqual(calibrationBand(0.97), { band: 'dedup-risk', fires: false }); // > 0.95 → confident dup → keep-older, no supersede
+  assert.deepEqual(calibrationBand(0.88), { band: 'inband', fires: true });       // [0.84, 0.95] write-time in-band path
+  assert.deepEqual(calibrationBand(0.60), { band: 'detector', fires: true });     // [0.45, 0.84) session-end detector path
+  assert.deepEqual(calibrationBand(0.30), { band: 'no-fire', fires: false });     // < 0.45 → not retrieved, no supersede
+  // boundaries: ceiling is inclusive in-band (not > 0.95); each floor opens its band
+  assert.deepEqual(calibrationBand(0.95), { band: 'inband', fires: true });
+  assert.deepEqual(calibrationBand(0.84), { band: 'inband', fires: true });
+  assert.deepEqual(calibrationBand(0.45), { band: 'detector', fires: true });
+  assert.equal(calibrationBand(0.449).fires, false); // just below the detector floor
 });
