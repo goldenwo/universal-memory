@@ -41,3 +41,24 @@ export function effectiveDepth(perCycleEvents) {
 export function engagedDepth(perCycleEvents) {
   return perCycleEvents.filter((c) => c.fired === true).length;
 }
+
+/**
+ * §5.7 identity: expected stale survivors at depth d = #non-firing cycles in [2..d].
+ * @param {boolean[]} perCycleFired 0-based by cycle (cycle i → perCycleFired[i-1]); cycle 1 never fires
+ * @param {number} depth
+ */
+export function expectedStaleSurvivors(perCycleFired, depth) {
+  let n = 0;
+  for (let cycle = 2; cycle <= depth; cycle++) if (perCycleFired[cycle - 1] !== true) n++;
+  return n;
+}
+
+/** Identity violations: where measured staleSurvivors ≠ the §5.7 expectation. */
+export function survivorIdentityViolations(perCycleFired, snapshots) {
+  const out = [];
+  for (const s of snapshots) {
+    const expected = expectedStaleSurvivors(perCycleFired, s.depth);
+    if (s.staleSurvivors !== expected) out.push({ depth: s.depth, expected, actual: s.staleSurvivors });
+  }
+  return out;
+}

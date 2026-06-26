@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -61,4 +61,28 @@ test('effectiveDepth: DEDUP_MERGED collapses store growth', () => {
   ];
   assert.equal(effectiveDepth(ev), 2); // 3 cycles − 1 dedup
   assert.equal(engagedDepth(ev), 1);
+});
+
+test('expectedStaleSurvivors: counts non-firing cycles in 2..depth (cycle 1 never fires)', () => {
+  // fired by cycle: c1 n/a(false), c2 true, c3 false, c4 true, c5 false
+  const fired = [false, true, false, true, false];
+  assert.equal(expectedStaleSurvivors(fired, 1), 0); // depth 1: no predecessor
+  assert.equal(expectedStaleSurvivors(fired, 3), 1); // cycle 3 didn't fire (k=1)
+  assert.equal(expectedStaleSurvivors(fired, 5), 2); // cycles 3 and 5 didn't fire (k=2, non-contiguous)
+});
+
+test('survivorIdentityViolations: clean run (identity holds) → []', () => {
+  const fired = [false, true, false, true, false];
+  const snapshots = [
+    { depth: 1, staleSurvivors: 0 },
+    { depth: 3, staleSurvivors: 1 },
+    { depth: 5, staleSurvivors: 2 },
+  ];
+  assert.deepEqual(survivorIdentityViolations(fired, snapshots), []);
+});
+
+test('survivorIdentityViolations: wrong-target supersede (survivors EXCEED non-firing) flagged', () => {
+  const fired = [false, true, true, true]; // every cycle fired → expected 0 survivors at every depth
+  const snapshots = [{ depth: 4, staleSurvivors: 1 }]; // but one stale point lingered → a real bug
+  assert.deepEqual(survivorIdentityViolations(fired, snapshots), [{ depth: 4, expected: 0, actual: 1 }]);
 });
