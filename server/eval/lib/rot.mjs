@@ -15,3 +15,19 @@ export function chainPurity(chainStatuses, latestIdx) {
   const latestCurrent = chainStatuses[latestIdx] === 'current';
   return { staleSurvivors, latestCurrent, latestOnly: staleSurvivors === 0 && latestCurrent };
 }
+
+/**
+ * Retrieval-level purity at one depth — identical definition for UM and mem0.
+ * @param {string[]} resultBodies normalized top-K result bodies, in rank order
+ * @param {string[]} chainFacts normalized full chain facts
+ * @param {number} depth facts[0..depth-1] are seeded; latest = chainFacts[depth-1]
+ */
+export function retrievalPurity(resultBodies, chainFacts, depth) {
+  const latest = chainFacts[depth - 1];
+  const present = new Set(resultBodies);
+  let staleSurfaced = 0;
+  for (let i = 0; i < depth - 1; i++) if (present.has(chainFacts[i])) staleSurfaced++;
+  const latestSurfaced = present.has(latest);
+  const latestTop1 = resultBodies[0] === latest;
+  return { staleSurfaced, latestSurfaced, latestTop1, onlyCurrent: latestSurfaced && staleSurfaced === 0 };
+}

@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -18,4 +18,25 @@ test('chainPurity: accumulation — two stale survivors still current', () => {
 test('chainPurity: latest itself wrongly superseded → latestCurrent false', () => {
   const statuses = { 0: 'superseded', 1: 'superseded', 2: 'current', 3: 'superseded' };
   assert.deepEqual(chainPurity(statuses, 3), { staleSurvivors: 1, latestCurrent: false, latestOnly: false });
+});
+
+test('retrievalPurity: only latest surfaced, top-1 → onlyCurrent', () => {
+  const facts = ['fact a', 'fact b', 'fact c']; // normalized
+  const results = ['fact c', 'unrelated x', 'unrelated y']; // top-K bodies, rank order
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 0, latestSurfaced: true, latestTop1: true, onlyCurrent: true });
+});
+
+test('retrievalPurity: a stale version leaks into results → not onlyCurrent', () => {
+  const facts = ['fact a', 'fact b', 'fact c'];
+  const results = ['fact c', 'fact a']; // stale fact a still surfaced
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 1, latestSurfaced: true, latestTop1: true, onlyCurrent: false });
+});
+
+test('retrievalPurity: latest present but out-ranked → latestTop1 false', () => {
+  const facts = ['fact a', 'fact b', 'fact c'];
+  const results = ['fact b', 'fact c']; // stale b ranks above latest c
+  assert.deepEqual(retrievalPurity(results, facts, 3),
+    { staleSurfaced: 1, latestSurfaced: true, latestTop1: false, onlyCurrent: false });
 });
