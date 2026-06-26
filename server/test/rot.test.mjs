@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -85,4 +85,21 @@ test('survivorIdentityViolations: wrong-target supersede (survivors EXCEED non-f
   const fired = [false, true, true, true]; // every cycle fired → expected 0 survivors at every depth
   const snapshots = [{ depth: 4, staleSurvivors: 1 }]; // but one stale point lingered → a real bug
   assert.deepEqual(survivorIdentityViolations(fired, snapshots), [{ depth: 4, expected: 0, actual: 1 }]);
+});
+
+test('resurrectionScan: sticky tombstone holds → 0', () => {
+  const vectors = [
+    { depth: 1, pointStatuses: { 0: 'current' } },
+    { depth: 2, pointStatuses: { 0: 'superseded', 1: 'current' } },
+    { depth: 3, pointStatuses: { 0: 'superseded', 1: 'superseded', 2: 'current' } },
+  ];
+  assert.equal(resurrectionScan(vectors), 0);
+});
+
+test('resurrectionScan: a point goes superseded→current again → counted', () => {
+  const vectors = [
+    { depth: 2, pointStatuses: { 0: 'superseded', 1: 'current' } },
+    { depth: 3, pointStatuses: { 0: 'current', 1: 'superseded', 2: 'current' } }, // fact 0 resurrected
+  ];
+  assert.equal(resurrectionScan(vectors), 1);
 });

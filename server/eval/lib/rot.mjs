@@ -62,3 +62,21 @@ export function survivorIdentityViolations(perCycleFired, snapshots) {
   }
   return out;
 }
+
+/**
+ * Count points that transition superseded → current as depth increases (sticky-tombstone
+ * violation; architecturally expected 0). Needs the full per-depth status vector per chain.
+ * @param {Array<{depth:number, pointStatuses:Record<number,'current'|'superseded'>}>} perDepthStatusVectors
+ */
+export function resurrectionScan(perDepthStatusVectors) {
+  const ordered = [...perDepthStatusVectors].sort((a, b) => a.depth - b.depth);
+  const everSuperseded = new Set();
+  let resurrections = 0;
+  for (const { pointStatuses } of ordered) {
+    for (const [idx, status] of Object.entries(pointStatuses)) {
+      if (status === 'superseded') everSuperseded.add(idx);
+      else if (status === 'current' && everSuperseded.has(idx)) { resurrections++; everSuperseded.delete(idx); }
+    }
+  }
+  return resurrections;
+}
