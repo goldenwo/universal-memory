@@ -1,0 +1,4345 @@
+{
+  "timestamp": "2026-06-26T02:37:23.601Z",
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "evalUser": "um-rot-cmp-eval",
+  "mode": "memory-rot longitudinal: incrementally seed 8 contradicting facts → snapshot status+retrieval purity per depth; UM vs raw mem0",
+  "flags": {
+    "UM_AUTOSUPERSEDE_ENABLED": "true",
+    "UM_DEDUP_ENABLED": "true",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "false"
+  },
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32"
+  },
+  "calibration": [
+    {
+      "id": "rot01",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.5444,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.6071,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.6107,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.4913,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.4527,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.4689,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.4941,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot02",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.591,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.622,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.5818,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.6045,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.6018,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.6246,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.5723,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot03",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.616,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.6078,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.5251,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.5662,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.5646,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.606,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.5861,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot04",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7979,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7581,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.7358,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7666,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7516,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.709,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7671,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot05",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7497,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7433,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.7228,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7063,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7278,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.5845,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.6277,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot06",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.8729,
+          "band": "inband",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.8315,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.7694,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7257,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7346,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.8062,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7478,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot07",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7308,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7159,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.6523,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.6537,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.6267,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.6085,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.6091,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot08",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7569,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7602,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.7489,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7178,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.6865,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.6627,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7181,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot09",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7288,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.6511,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.609,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7211,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7232,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.6508,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.6062,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot10",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7214,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7053,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.695,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.7233,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7477,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.6891,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7022,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot11",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.7611,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.735,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.6824,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.6976,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7199,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.7518,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7118,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    },
+    {
+      "id": "rot12",
+      "pairs": [
+        {
+          "i": 1,
+          "cos": 0.705,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 2,
+          "cos": 0.7227,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 3,
+          "cos": 0.7012,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 4,
+          "cos": 0.6722,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 5,
+          "cos": 0.7462,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 6,
+          "cos": 0.7356,
+          "band": "detector",
+          "fires": true
+        },
+        {
+          "i": 7,
+          "cos": 0.7049,
+          "band": "detector",
+          "fires": true
+        }
+      ],
+      "outOfBand": 0
+    }
+  ],
+  "rotSweep": {
+    "depths": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "chainCount": 12,
+    "arms": {
+      "um": {
+        "byDepth": [
+          {
+            "depth": 1,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 2,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 3,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 4,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 5,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 6,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 7,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          },
+          {
+            "depth": 8,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1,
+            "statusLatestOnlyRate": 1,
+            "meanStaleSurvivors": 0
+          }
+        ]
+      },
+      "mem0": {
+        "byDepth": [
+          {
+            "depth": 1,
+            "onlyCurrentRate": 1,
+            "meanStaleSurfaced": 0,
+            "latestTop1Rate": 1
+          },
+          {
+            "depth": 2,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 1,
+            "latestTop1Rate": 0.3333333333333333
+          },
+          {
+            "depth": 3,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 2,
+            "latestTop1Rate": 0.3333333333333333
+          },
+          {
+            "depth": 4,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 3,
+            "latestTop1Rate": 0.25
+          },
+          {
+            "depth": 5,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 4,
+            "latestTop1Rate": 0.08333333333333333
+          },
+          {
+            "depth": 6,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 5,
+            "latestTop1Rate": 0.3333333333333333
+          },
+          {
+            "depth": 7,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 6,
+            "latestTop1Rate": 0
+          },
+          {
+            "depth": 8,
+            "onlyCurrentRate": 0,
+            "meanStaleSurfaced": 7,
+            "latestTop1Rate": 0
+          }
+        ]
+      }
+    },
+    "gapByDepth": [
+      {
+        "depth": 1,
+        "onlyCurrentGap": 0,
+        "staleSurfacedGap": 0
+      },
+      {
+        "depth": 2,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 1
+      },
+      {
+        "depth": 3,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 2
+      },
+      {
+        "depth": 4,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 3
+      },
+      {
+        "depth": 5,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 4
+      },
+      {
+        "depth": 6,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 5
+      },
+      {
+        "depth": 7,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 6
+      },
+      {
+        "depth": 8,
+        "onlyCurrentGap": 1,
+        "staleSurfacedGap": 7
+      }
+    ],
+    "diagnostics": {
+      "resurrectionCount": 0,
+      "fireRateByCycle": [
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "judgeConfByCycle": [
+        {
+          "cycle": 1,
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "mean": null,
+          "max": null,
+          "min": null
+        },
+        {
+          "cycle": 2,
+          "count": 11,
+          "p50": 0.9,
+          "p95": 1,
+          "min": 0.9,
+          "max": 1,
+          "mean": 0.9090909090909093
+        },
+        {
+          "cycle": 3,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        },
+        {
+          "cycle": 4,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        },
+        {
+          "cycle": 5,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        },
+        {
+          "cycle": 6,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        },
+        {
+          "cycle": 7,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        },
+        {
+          "cycle": 8,
+          "count": 12,
+          "p50": 0.9,
+          "p95": 0.9,
+          "min": 0.9,
+          "max": 0.9,
+          "mean": 0.9000000000000002
+        }
+      ],
+      "validity": [
+        {
+          "depth": 1,
+          "fireRate": null,
+          "valid": true
+        },
+        {
+          "depth": 2,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 3,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 4,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 5,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 6,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 7,
+          "fireRate": 1,
+          "valid": true
+        },
+        {
+          "depth": 8,
+          "fireRate": 1,
+          "valid": true
+        }
+      ],
+      "identityViolations": [],
+      "effectiveDepthByChain": {
+        "rot01": 8,
+        "rot02": 8,
+        "rot03": 8,
+        "rot04": 8,
+        "rot05": 8,
+        "rot06": 8,
+        "rot07": 8,
+        "rot08": 8,
+        "rot09": 8,
+        "rot10": 8,
+        "rot11": 8,
+        "rot12": 8
+      },
+      "engagedDepthByChain": {
+        "rot01": 7,
+        "rot02": 7,
+        "rot03": 7,
+        "rot04": 7,
+        "rot05": 7,
+        "rot06": 7,
+        "rot07": 7,
+        "rot08": 7,
+        "rot09": 7,
+        "rot10": 7,
+        "rot11": 7,
+        "rot12": 7
+      }
+    },
+    "perChain": {
+      "um": [
+        {
+          "id": "rot01",
+          "lane": "work",
+          "anchor": "s001",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot02",
+          "lane": "home",
+          "anchor": "s002",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot03",
+          "lane": "work",
+          "anchor": "s003",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot04",
+          "lane": "dev",
+          "anchor": "s004",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot05",
+          "lane": "finance",
+          "anchor": "s007",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot06",
+          "lane": "dev",
+          "anchor": "s009",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "SUPERSEDED_INBAND",
+              "firedPath": "inband",
+              "fired": true,
+              "confidence": null
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot07",
+          "lane": "dev",
+          "anchor": "s017",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot08",
+          "lane": "travel",
+          "anchor": "s010",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot09",
+          "lane": "work",
+          "anchor": "s012",
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot10",
+          "lane": "dev",
+          "anchor": null,
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot11",
+          "lane": "travel",
+          "anchor": null,
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 1
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot12",
+          "lane": "health",
+          "anchor": null,
+          "effectiveDepth": 8,
+          "engagedDepth": 7,
+          "perCycle": [
+            {
+              "cycle": 1,
+              "event": "ADD",
+              "firedPath": null,
+              "fired": false,
+              "confidence": null
+            },
+            {
+              "cycle": 2,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 3,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 4,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 5,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 6,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 7,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            },
+            {
+              "cycle": 8,
+              "event": "ADD",
+              "firedPath": "detector",
+              "fired": true,
+              "confidence": 0.9
+            }
+          ],
+          "snapshots": [
+            {
+              "depth": 1,
+              "pointStatuses": {
+                "0": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 3,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 4,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 5,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 6,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 7,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 8,
+              "pointStatuses": {
+                "0": "superseded",
+                "1": "superseded",
+                "2": "superseded",
+                "3": "superseded",
+                "4": "superseded",
+                "5": "superseded",
+                "6": "superseded",
+                "7": "current"
+              },
+              "staleSurvivors": 0,
+              "latestCurrent": true,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            }
+          ]
+        }
+      ],
+      "mem0": [
+        {
+          "id": "rot01",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot02",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot03",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot04",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot05",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot06",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot07",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot08",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot09",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot10",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot11",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "rot12",
+          "snapshots": [
+            {
+              "depth": 1,
+              "retrieval": {
+                "staleSurfaced": 0,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": true
+              }
+            },
+            {
+              "depth": 2,
+              "retrieval": {
+                "staleSurfaced": 1,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 3,
+              "retrieval": {
+                "staleSurfaced": 2,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 4,
+              "retrieval": {
+                "staleSurfaced": 3,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 5,
+              "retrieval": {
+                "staleSurfaced": 4,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 6,
+              "retrieval": {
+                "staleSurfaced": 5,
+                "latestSurfaced": true,
+                "latestTop1": true,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 7,
+              "retrieval": {
+                "staleSurfaced": 6,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            },
+            {
+              "depth": 8,
+              "retrieval": {
+                "staleSurfaced": 7,
+                "latestSurfaced": true,
+                "latestTop1": false,
+                "onlyCurrent": false
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "memoriesUntouched": true
+}
