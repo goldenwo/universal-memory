@@ -624,6 +624,38 @@ export function formatCorpusSweep(result) {
   return lines.join('\n');
 }
 
+const fmtMB = (b) => (b == null ? '   -  ' : (b / 1_048_576).toFixed(1).padStart(6));
+
+/** Pure render of result.storageSweep — a footprint-vs-N table + the Pi RAM headline.
+ *  Returns '' when no sweep is present (caller decides whether to print). */
+export function formatStorageSweep(result) {
+  const ss = result?.storageSweep;
+  if (!ss || !Array.isArray(ss.rows) || ss.rows.length === 0) return '';
+  const lines = [];
+  lines.push('=== Storage & index growth (footprint vs N) ===');
+  lines.push(`  dim=${ss.dim} distance=${ss.distance} hnswM=${ss.hnswM} indexingThreshold=${ss.indexingThreshold} payloadB/pt=${ss.payloadBytesPerPoint}`);
+  lines.push('       N  pts  regime  vec MB  payld MB  proj RAM MB  measured MB  B/fact(vec+pay+idx)  flags');
+  for (const r of ss.rows) {
+    const flags = [r.seedIncomplete ? 'seed-incomplete' : '',
+                   (r.indexedRegime === 'hnsw') !== indexedAtOrAbove(r.requestedN, ss.indexingThreshold) ? 'regime-divergence' : '']
+      .filter(Boolean).join(',') || '-';
+    const bf = r.bytesPerFact ?? {};
+    lines.push(
+      `  ${String(r.requestedN).padStart(6)}  ${String(r.pointsCount).padStart(5)}  ${(r.indexedRegime ?? '?').padEnd(5)}  ` +
+      `${fmtMB(r.vectorBytes)}  ${fmtMB((r.payloadBytesPerPoint ?? 0) * r.requestedN)}  ${fmtMB(r.projected?.ramBytes)}     ` +
+      `${fmtMB(r.measuredDiskBytes)}     ${bf.vector ?? 0}+${bf.payload ?? 0}+${bf.indexOverhead ?? 0}=${bf.total ?? 0}   ${flags}`,
+    );
+  }
+  if (ss.piProjection) {
+    lines.push('');
+    lines.push(`  >> Pi headline: projected qdrant RAM at ${ss.piProjection.atN} facts ≈ ${fmtMB(ss.piProjection.ramBytesProjected).trim()} MB`);
+  }
+  return lines.join('\n');
+}
+
+/** Local helper: model-predicted HNSW regime (mirrors storage-model.indexed without importing it here). */
+function indexedAtOrAbove(n, threshold) { return n >= threshold; }
+
 // ---------------------------------------------------------------------------
 // Fixture loader (I/O, no live calls) — JSON-Lines, one object per line.
 // Identical contract to d3/lane: utf8, split on /\r?\n/, drop blank lines, throw
@@ -668,6 +700,12 @@ export function parseArgs(argv) {
       args.sweepSizes = parsed.length ? parsed : undefined;
     }
     else if (a === '--seed') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v)) args.seed = v; }
+    else if (a === '--storage-sweep') args.storageSweep = true;
+    else if (a === '--storage-sizes') {
+      const parsed = (argv[++i] ?? '').split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0);
+      args.storageSizes = parsed.length ? parsed : undefined;
+    }
+    else if (a === '--storage-dim') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v) && v > 0) args.storageDim = v; }
   }
   return args;
 }
@@ -1262,6 +1300,133 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   };
 }
 
+/**
+ * Storage & index growth (#19). Seeds N SYNTHETIC points (seeded unit vectors + a payload that
+ * replicates add.mjs buildPayload) DIRECTLY into a scratch collection — bypassing umAdd/embeddings,
+ * so this runs with NO API keys, only a local Docker qdrant. A size measurement is content-
+ * independent, so faithfulness lives in payload-schema + collection-config parity (qdrant defaults,
+ * Cosine, prod dim), not the write path; dedup is bypassed by construction so the corpus reaches
+ * EXACTLY N. Sweep straddles the 20000 indexing threshold to capture the HNSW-onset knee.
+ * LIVE layer — no unit test; scratch-isolated; 'memories' asserted untouched.
+ */
+export async function runStorageSweep({ recallRows = [], storageSizes, dim = VECTOR_DIM, seed = 0, runid } = {}) {
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const { randomUUID } = await import('node:crypto');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileP = promisify(execFile);
+  const { lanesFromRows, generateDistractors } = await import('./lib/corpus-distractors.mjs');
+  const {
+    vectorBytes, indexed, hnswGraphBytes, projectFootprint,
+    buildSyntheticPayload, payloadBytes, makeRandomUnitVector,
+    DEFAULT_INDEXING_THRESHOLD, DEFAULT_HNSW_M,
+  } = await import('./lib/storage-model.mjs');
+
+  const host = process.env.QDRANT_HOST ?? 'localhost';
+  const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+  const client = new QdrantClient({ host, port });
+
+  const lanes = lanesFromRows(recallRows);
+  if (lanes.length === 0) throw new Error('runStorageSweep: no lanes from --recall fixture (need synthetic text source)');
+  const THRESHOLD = DEFAULT_INDEXING_THRESHOLD;
+  const HNSW_M = DEFAULT_HNSW_M;
+  const sizes = [...new Set((storageSizes ?? [1000, 10000, 20000, 30000, 50000]))].sort((a, b) => a - b);
+  const rid = runid ?? `${process.pid}`;
+  const storagePath = process.env.UM_QDRANT_STORAGE_PATH; // host-visible qdrant storage dir, else disk = null
+
+  // Representative synthetic text pool (cycled) → realistic payload bytes without 50k strings.
+  const pool = generateDistractors(Math.min(Math.max(...sizes), 2000), { seed, lanes });
+  const payloadBytesPerPoint = Math.round(
+    pool.reduce((s, d) => s + payloadBytes(buildSyntheticPayload({ text: d.text, lane: d.lane, userId: EVAL_USER, index: 0 })), 0) / pool.length,
+  );
+
+  const memoriesBefore = await countPoints(client, 'memories');
+  const rows = [];
+  for (const requestedN of sizes) {
+    const col = `${SCRATCH_PREFIX}storage_${isoDate()}_${rid}_${requestedN}`;
+    assertScratchSafe(col);
+    try {
+      await ensureCollection(client, col, dim); // qdrant defaults (Cosine, in-RAM vectors) — prod-faithful
+
+      // --- direct batched seed (dedup bypassed → exactly N) ---
+      const BATCH = 1000;
+      for (let i = 0; i < requestedN; i += BATCH) {
+        const points = [];
+        for (let j = i; j < Math.min(i + BATCH, requestedN); j++) {
+          const d = pool[j % pool.length];
+          points.push({
+            id: randomUUID(),
+            vector: makeRandomUnitVector(dim, j + seed * 1_000_000),
+            payload: buildSyntheticPayload({ text: d.text, lane: d.lane, userId: EVAL_USER, index: j }),
+          });
+        }
+        await client.upsert(col, { wait: true, points });
+      }
+
+      // --- settle: wait for optimizers to merge segments before measuring ---
+      const deadline = Date.now() + 120_000;
+      let info = await client.getCollection(col);
+      while (info.status !== 'green' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 250));
+        info = await client.getCollection(col);
+      }
+
+      // --- measure ---
+      let measuredDiskBytes = null;
+      if (storagePath) {
+        try {
+          const { stdout } = await execFileP('du', ['-sb', `${storagePath}/collections/${col}`]);
+          const n = parseInt(stdout.trim().split(/\s+/)[0], 10);
+          if (Number.isFinite(n)) measuredDiskBytes = n;
+        } catch { measuredDiskBytes = null; } // channel unavailable in this env → model stands alone
+      }
+
+      const pointsCount = info.points_count ?? 0;
+      const indexedVectors = info.indexed_vectors_count ?? 0;
+      const projected = projectFootprint({ n: requestedN, dim, payloadBytesPerPoint, hnswM: HNSW_M, threshold: THRESHOLD });
+      const idxOverhead = indexed(requestedN, THRESHOLD) ? Math.round(hnswGraphBytes(requestedN, HNSW_M) / requestedN) : 0;
+      rows.push({
+        requestedN,
+        pointsCount,
+        seedIncomplete: pointsCount !== requestedN,
+        segments: info.segments_count ?? null,
+        indexedVectors,
+        indexedRegime: indexedVectors > 0 ? 'hnsw' : 'flat',  // MEASURED regime
+        vectorBytes: vectorBytes(requestedN, dim),
+        payloadBytesPerPoint,
+        measuredDiskBytes,
+        projected,
+        bytesPerFact: { vector: dim * 4, payload: payloadBytesPerPoint, indexOverhead: idxOverhead, total: dim * 4 + payloadBytesPerPoint + idxOverhead },
+      });
+    } finally {
+      await dropCollectionQuiet(client, col).catch((e) => console.error('[mq-eval] storage teardown:', e?.message));
+    }
+  }
+
+  // Faithfulness: the smallest rung MUST reach exactly N (direct upsert, no dedup) — §4.2a.
+  const smallest = rows.reduce((m, r) => (r.requestedN < m.requestedN ? r : m), rows[0]);
+  if (smallest && smallest.pointsCount !== smallest.requestedN) {
+    throw new Error(`mq-eval storage FAITHFULNESS: smallest rung N=${smallest.requestedN} stored ${smallest.pointsCount} points (expected exact)`);
+  }
+
+  const memoriesAfter = await countPoints(client, 'memories');
+  if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+    throw new Error(`mq-eval ISOLATION VIOLATION (storage sweep): 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+  }
+
+  const piRow = rows.find((r) => r.requestedN === 50000) ?? rows[rows.length - 1];
+  return {
+    timestamp: new Date().toISOString(),
+    evalUser: EVAL_USER,
+    env: { node: process.version, platform: process.platform, qdrantStoragePath: storagePath ?? null },
+    storageSweep: {
+      dim, hnswM: HNSW_M, indexingThreshold: THRESHOLD, distance: 'Cosine', payloadBytesPerPoint, seed,
+      rows,
+      piProjection: piRow ? { atN: piRow.requestedN, ramBytesProjected: piRow.projected.ramBytes, note: 'projected qdrant RAM (vectors + HNSW); qdrant process baseline additive' } : null,
+    },
+  };
+}
+
 async function writeJson(path, obj) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf8');
@@ -1273,6 +1438,27 @@ async function writeJson(path, obj) {
 
 async function cliMain() {
   const args = parseArgs(process.argv);
+
+  // Storage & index growth (#19): footprint vs N. NO API key (synthetic vectors, direct upsert);
+  // needs a local Docker qdrant + --recall (supplies lanes for realistic synthetic text). Returns early.
+  if (args.storageSweep) {
+    if (!args.recall) {
+      console.error('[mq-eval] --storage-sweep requires --recall <path> (supplies lanes for synthetic text)');
+      process.exit(2);
+    }
+    const recallRows = await loadFixtureJsonl(args.recall);
+    const sizes = args.storageSizes ?? [1000, 10000, 20000, 30000, 50000];
+    console.log(`[mq-eval] storage sweep: dim=${args.storageDim ?? VECTOR_DIM}, sizes=${sizes.join(',')}, seed=${args.seed ?? 0} — seeding scratch qdrant (no API key; real vault untouched)...`);
+    const sweep = await runStorageSweep({ recallRows, storageSizes: args.storageSizes, dim: args.storageDim ?? VECTOR_DIM, seed: args.seed });
+    const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
+    const out = args.out ?? join(resultsDir, `mq-storage-sweep-${isoDate()}.json`);
+    await writeJson(out, sweep);
+    console.log(`[mq-eval] Storage sweep written to ${out}`);
+    console.log('');
+    console.log(formatStorageSweep(sweep));
+    return;
+  }
+
   if (!args.recall && !args.staleness) {
     console.error('Usage: memory-quality-eval.mjs --recall <path> [--staleness <path>] [--out <path> | --out-prefix <path>]');
     process.exit(2);

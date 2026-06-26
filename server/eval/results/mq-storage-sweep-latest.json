@@ -1,0 +1,159 @@
+{
+  "timestamp": "2026-06-26T04:22:04.477Z",
+  "evalUser": "um-mq-eval",
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32",
+    "qdrantStoragePath": null
+  },
+  "storageSweep": {
+    "dim": 1536,
+    "hnswM": 16,
+    "indexingThreshold": 20000,
+    "distance": "Cosine",
+    "payloadBytesPerPoint": 240,
+    "seed": 0,
+    "rows": [
+      {
+        "requestedN": 1000,
+        "pointsCount": 1000,
+        "seedIncomplete": false,
+        "segments": 8,
+        "indexedVectors": 0,
+        "indexedRegime": "flat",
+        "vectorBytes": 6144000,
+        "payloadBytesPerPoint": 240,
+        "measuredDiskBytes": null,
+        "projected": {
+          "ramBytes": 6144000,
+          "diskBytes": 6384000,
+          "breakdown": {
+            "vectors": 6144000,
+            "hnsw": 0,
+            "payload": 240000,
+            "base": 0
+          }
+        },
+        "bytesPerFact": {
+          "vector": 6144,
+          "payload": 240,
+          "indexOverhead": 0,
+          "total": 6384
+        }
+      },
+      {
+        "requestedN": 10000,
+        "pointsCount": 10000,
+        "seedIncomplete": false,
+        "segments": 8,
+        "indexedVectors": 0,
+        "indexedRegime": "flat",
+        "vectorBytes": 61440000,
+        "payloadBytesPerPoint": 240,
+        "measuredDiskBytes": null,
+        "projected": {
+          "ramBytes": 61440000,
+          "diskBytes": 63840000,
+          "breakdown": {
+            "vectors": 61440000,
+            "hnsw": 0,
+            "payload": 2400000,
+            "base": 0
+          }
+        },
+        "bytesPerFact": {
+          "vector": 6144,
+          "payload": 240,
+          "indexOverhead": 0,
+          "total": 6384
+        }
+      },
+      {
+        "requestedN": 20000,
+        "pointsCount": 20000,
+        "seedIncomplete": false,
+        "segments": 8,
+        "indexedVectors": 0,
+        "indexedRegime": "flat",
+        "vectorBytes": 122880000,
+        "payloadBytesPerPoint": 240,
+        "measuredDiskBytes": null,
+        "projected": {
+          "ramBytes": 125440000,
+          "diskBytes": 130240000,
+          "breakdown": {
+            "vectors": 122880000,
+            "hnsw": 2560000,
+            "payload": 4800000,
+            "base": 0
+          }
+        },
+        "bytesPerFact": {
+          "vector": 6144,
+          "payload": 240,
+          "indexOverhead": 128,
+          "total": 6512
+        }
+      },
+      {
+        "requestedN": 30000,
+        "pointsCount": 30000,
+        "seedIncomplete": false,
+        "segments": 6,
+        "indexedVectors": 24000,
+        "indexedRegime": "hnsw",
+        "vectorBytes": 184320000,
+        "payloadBytesPerPoint": 240,
+        "measuredDiskBytes": null,
+        "projected": {
+          "ramBytes": 188160000,
+          "diskBytes": 195360000,
+          "breakdown": {
+            "vectors": 184320000,
+            "hnsw": 3840000,
+            "payload": 7200000,
+            "base": 0
+          }
+        },
+        "bytesPerFact": {
+          "vector": 6144,
+          "payload": 240,
+          "indexOverhead": 128,
+          "total": 6512
+        }
+      },
+      {
+        "requestedN": 50000,
+        "pointsCount": 50000,
+        "seedIncomplete": false,
+        "segments": 8,
+        "indexedVectors": 47000,
+        "indexedRegime": "hnsw",
+        "vectorBytes": 307200000,
+        "payloadBytesPerPoint": 240,
+        "measuredDiskBytes": null,
+        "projected": {
+          "ramBytes": 313600000,
+          "diskBytes": 325600000,
+          "breakdown": {
+            "vectors": 307200000,
+            "hnsw": 6400000,
+            "payload": 12000000,
+            "base": 0
+          }
+        },
+        "bytesPerFact": {
+          "vector": 6144,
+          "payload": 240,
+          "indexOverhead": 128,
+          "total": 6512
+        }
+      }
+    ],
+    "piProjection": {
+      "atN": 50000,
+      "ramBytesProjected": 313600000,
+      "note": "projected qdrant RAM (vectors + HNSW); qdrant process baseline additive"
+    }
+  }
+}
