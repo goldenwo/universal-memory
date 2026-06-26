@@ -39,7 +39,7 @@ import { embed } from '../lib/embed.mjs';
 import {
   chainPurity, retrievalPurity, effectiveDepth, engagedDepth,
   survivorIdentityViolations, resurrectionScan, aggregateRotByDepth,
-  gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep,
+  gapByDepth, rungValidity, judgeConfidenceByCycle, formatRotSweep, calibrationBand,
 } from './lib/rot.mjs';
 
 const EVAL_USER = 'um-rot-cmp-eval';
@@ -73,8 +73,11 @@ function parseArms(argv) {
 
 /**
  * Pre-flight cosine calibration (§5.3 fixture-acceptance gate). For each chain, embed all 8 facts and
- * classify the 7 adjacent pairs against the in-band window [0.84, 0.95]; warn on any out-of-band pair so
- * the operator can rework the chain before trusting its supersession behavior.
+ * classify the 7 adjacent pairs via calibrationBand() — a pair "fires" if it supersedes via EITHER the
+ * write-time in-band path [0.84, 0.95] OR the session-end detector (cosine >= 0.45). Warn ONLY on pairs
+ * that will NOT supersede (> 0.95 keep-older, or < 0.45 not-retrieved) so the operator can rework the
+ * chain before trusting its supersession behavior. (Pre-keyed-run this used [0.84, 0.95] and false-flagged
+ * every detector-path chain — see calibrationBand in lib/rot.mjs.)
  */
 async function calibrate(rows) {
   const report = [];
@@ -84,11 +87,11 @@ async function calibrate(rows) {
     const pairs = [];
     for (let i = 1; i < vecs.length; i++) {
       const c = cosine(vecs[i - 1], vecs[i]);
-      pairs.push({ i, cos: +c.toFixed(4), band: c > 0.95 ? 'above' : c < 0.84 ? 'below' : 'in' });
+      pairs.push({ i, cos: +c.toFixed(4), ...calibrationBand(c) });
     }
-    const outOfBand = pairs.filter((p) => p.band !== 'in');
-    report.push({ id: r.id, pairs, outOfBand: outOfBand.length });
-    if (outOfBand.length) console.warn(`[rot-calib] ${r.id}: ${outOfBand.length}/7 pairs out of band`, outOfBand);
+    const wontFire = pairs.filter((p) => !p.fires);
+    report.push({ id: r.id, pairs, outOfBand: wontFire.length });
+    if (wontFire.length) console.warn(`[rot-calib] ${r.id}: ${wontFire.length}/${pairs.length} pairs will NOT supersede`, wontFire);
   }
   return report;
 }
