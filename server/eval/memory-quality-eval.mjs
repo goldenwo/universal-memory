@@ -1331,6 +1331,7 @@ export async function runStorageSweep({ recallRows = [], storageSizes, dim = VEC
   const THRESHOLD = DEFAULT_INDEXING_THRESHOLD;
   const HNSW_M = DEFAULT_HNSW_M;
   const sizes = [...new Set((storageSizes ?? [1000, 10000, 20000, 30000, 50000]))].sort((a, b) => a - b);
+  if (sizes.length === 0 || sizes[sizes.length - 1] <= 0) throw new Error('runStorageSweep: storageSizes must contain at least one positive size');
   const rid = runid ?? `${process.pid}`;
   const storagePath = process.env.UM_QDRANT_STORAGE_PATH; // host-visible qdrant storage dir, else disk = null
 
@@ -1363,13 +1364,25 @@ export async function runStorageSweep({ recallRows = [], storageSizes, dim = VEC
         await client.upsert(col, { wait: true, points });
       }
 
-      // --- settle: wait for optimizers to merge segments before measuring ---
+      // --- settle: wait for optimizers to finish before measuring. qdrant reports
+      // 'green' (idle) or 'grey' (optimizers possible-but-not-triggered — e.g. a
+      // sub-threshold collection) as quiescent and measurable; 'yellow' = optimizing.
+      // Tolerate transient getCollection errors (retry until the deadline) so a single
+      // network blip during a multi-minute live run doesn't discard the whole sweep.
       const deadline = Date.now() + 120_000;
-      let info = await client.getCollection(col);
-      while (info.status !== 'green' && Date.now() < deadline) {
+      const settled = (s) => s === 'green' || s === 'grey';
+      let info;
+      while (Date.now() < deadline) {
+        try {
+          info = await client.getCollection(col);
+          if (settled(info.status)) break;
+          if (info.status === 'red') { console.error(`[mq-eval] storage N=${requestedN}: collection status 'red' — measuring anyway`); break; }
+        } catch (e) {
+          console.error(`[mq-eval] storage settle poll (N=${requestedN}) transient: ${e?.message}`);
+        }
         await new Promise((r) => setTimeout(r, 250));
-        info = await client.getCollection(col);
       }
+      if (!info) throw new Error(`mq-eval storage N=${requestedN}: getCollection unavailable through the 120s settle window`);
 
       // --- measure ---
       let measuredDiskBytes = null;
