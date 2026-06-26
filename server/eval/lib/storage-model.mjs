@@ -85,3 +85,32 @@ export function makeRandomUnitVector(dim, seed) {
   for (let i = 0; i < dim; i++) v[i] /= norm;
   return v;
 }
+
+/**
+ * HNSW graph RAM estimate: each point holds ~m bidirectional links on layer 0, stored as
+ * uint32 ids (FLOAT32_BYTES = 4). ≈ 128 B/point at m=16. Calibration target — refine against
+ * the dry run's measured index overhead.
+ */
+export function hnswGraphBytes(n, m = DEFAULT_HNSW_M) {
+  return n * m * 2 * FLOAT32_BYTES;
+}
+
+/**
+ * Analytical footprint at corpus size n. RAM = in-RAM float32 vectors + HNSW graph (only above
+ * the indexing threshold) + an additive process/base term (0 in the per-collection model).
+ * Disk = vectors + payload + index (qdrant persists all three). This is the deliverable; the
+ * live run calibrates the constants.
+ */
+export function projectFootprint({
+  n, dim, payloadBytesPerPoint,
+  hnswM = DEFAULT_HNSW_M, threshold = DEFAULT_INDEXING_THRESHOLD, baseRamBytes = 0,
+}) {
+  const vectors = vectorBytes(n, dim);
+  const hnsw = indexed(n, threshold) ? hnswGraphBytes(n, hnswM) : 0;
+  const payload = n * payloadBytesPerPoint;
+  return {
+    ramBytes: vectors + hnsw + baseRamBytes,
+    diskBytes: vectors + hnsw + payload,
+    breakdown: { vectors, hnsw, payload, base: baseRamBytes },
+  };
+}
