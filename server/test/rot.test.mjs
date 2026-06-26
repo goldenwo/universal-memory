@@ -1,7 +1,7 @@
 // server/test/rot.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth } from '../eval/lib/rot.mjs';
+import { chainPurity, retrievalPurity, effectiveDepth, engagedDepth, expectedStaleSurvivors, survivorIdentityViolations, resurrectionScan, aggregateRotByDepth, gapByDepth, rungValidity } from '../eval/lib/rot.mjs';
 
 test('chainPurity: clean chain — only the latest is current', () => {
   // depth 4: facts[0..2] superseded, facts[3] current, latestIdx=3
@@ -128,4 +128,21 @@ test('aggregateRotByDepth: mem0 arm is retrieval-only (no status fields)', () =>
   ];
   const agg = aggregateRotByDepth(chains, 'mem0');
   assert.deepEqual(agg[0], { depth: 2, onlyCurrentRate: 0, meanStaleSurfaced: 2, latestTop1Rate: 0 });
+});
+
+test('gapByDepth: UM minus mem0 on retrieval onlyCurrent (+ staleSurfaced delta)', () => {
+  const um = [{ depth: 4, onlyCurrentRate: 1.0, meanStaleSurfaced: 0 }];
+  const mem0 = [{ depth: 4, onlyCurrentRate: 0.25, meanStaleSurfaced: 3 }];
+  assert.deepEqual(gapByDepth(um, mem0), [{ depth: 4, onlyCurrentGap: 0.75, staleSurfacedGap: 3 }]);
+});
+
+test('rungValidity: per-depth fired rate gate — under-engaged deep rung is INVALID', () => {
+  // cycle index → fired rate across chains. depth 1 never fires (valid by definition).
+  const fireRateByCycle = [0, 1.0, 0.9, 0.5]; // cycle 4 fired on only 50% of chains
+  assert.deepEqual(rungValidity(fireRateByCycle, 0.8), [
+    { depth: 1, fireRate: null, valid: true },   // no supersession expected at depth 1
+    { depth: 2, fireRate: 1.0, valid: true },
+    { depth: 3, fireRate: 0.9, valid: true },
+    { depth: 4, fireRate: 0.5, valid: false },   // < 0.8 → excluded from the gap series
+  ]);
 });

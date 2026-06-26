@@ -114,3 +114,29 @@ export function aggregateRotByDepth(perChainSnapshots, arm) {
   }
   return out;
 }
+
+/** Differentiator series: UM advantage per depth (retrieval-level, apples-to-apples). */
+export function gapByDepth(umAgg, mem0Agg) {
+  const m = new Map(mem0Agg.map((r) => [r.depth, r]));
+  return umAgg.map((u) => {
+    const mm = m.get(u.depth) ?? { onlyCurrentRate: 0, meanStaleSurfaced: 0 };
+    return {
+      depth: u.depth,
+      onlyCurrentGap: u.onlyCurrentRate - mm.onlyCurrentRate,
+      staleSurfacedGap: mm.meanStaleSurfaced - u.meanStaleSurfaced,
+    };
+  });
+}
+
+/**
+ * Per-rung trust gate: depth d (≥2) is VALID only if the cycle-d fired rate ≥ threshold.
+ * Depth 1 is always valid (no contradiction yet). Keys on the per-depth rate, never engagedDepth.
+ * @param {number[]} fireRateByCycle cycle d → fireRateByCycle[d-1]
+ */
+export function rungValidity(fireRateByCycle, threshold = 0.8) {
+  return fireRateByCycle.map((fr, i) => {
+    const depth = i + 1;
+    if (depth === 1) return { depth, fireRate: null, valid: true };
+    return { depth, fireRate: fr, valid: fr >= threshold };
+  });
+}
