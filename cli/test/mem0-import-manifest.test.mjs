@@ -6,7 +6,12 @@ import {
   MANIFEST_SCHEMA_VERSION,
   validateManifest,
   mergeUserEdits,
+  buildImportMetadata,
+  renderReviewMd,
+  countKeepers,
+  IMPORT_METADATA_KEYS,
 } from '../lib/mem0-import-manifest.mjs';
+import { RESERVED_METADATA_FIELDS } from '../../server/lib/dedup-constants.mjs';
 
 const ok = (over = {}) => ({ mem0_id: 'a', text: 't', category: 'personal', keep: true, reason: 'r', decided_by: 'judge', ...over });
 
@@ -53,4 +58,29 @@ test('mergeUserEdits: a user decision wins over the judge', () => {
   assert.equal(by.b.keep, true);
   assert.equal(by.b.decided_by, 'user');
   assert.equal(by.a.keep, true);
+});
+
+test('buildImportMetadata shape', () => {
+  const m = buildImportMetadata({ mem0_id: 'a', category: 'dev', importedAt: '2026-06-27T00:00:00Z' });
+  assert.deepEqual(m, { mem0_id: 'a', category: 'dev', imported_at: '2026-06-27T00:00:00Z' });
+});
+
+test('GUARD: import metadata keys never collide with the reserved-field set', () => {
+  const reserved = new Set(RESERVED_METADATA_FIELDS);
+  for (const k of IMPORT_METADATA_KEYS) {
+    assert.ok(!reserved.has(k), `import key ${k} must not be reserved (would break future re-imports)`);
+  }
+});
+
+test('countKeepers + renderReviewMd', () => {
+  const rows = [
+    { mem0_id: 'a', text: 't', category: 'personal', keep: true, reason: 'r', decided_by: 'judge' },
+    { mem0_id: 'b', text: 'u', category: 'junk', keep: false, reason: 'r', decided_by: 'judge' },
+    { mem0_id: 'c', text: 'v', category: 'unjudged', keep: false, reason: 'err', decided_by: 'judge' },
+  ];
+  assert.equal(countKeepers(rows), 1);
+  const md = renderReviewMd(rows);
+  // unjudged is its OWN blocking bucket, not folded into "dropped" (spec §4.3).
+  assert.ok(md.includes('kept 1') && md.includes('dropped 1') && md.includes('unjudged 1'));
+  assert.ok(/unjudged/i.test(md), 'review must surface an unjudged section');
 });

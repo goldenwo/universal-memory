@@ -59,3 +59,47 @@ export function mergeUserEdits(judged, existing) {
   const userById = new Map(existing.filter((r) => r.decided_by === 'user').map((r) => [r.mem0_id, r]));
   return judged.map((r) => userById.get(r.mem0_id) ?? r);
 }
+
+// Provenance metadata written onto each imported qdrant point (flattened by
+// buildPayload). NONE of these keys may collide with the server's reserved-field
+// set (guarded by a unit test) or a future re-import would throw.
+export const IMPORT_METADATA_KEYS = ['mem0_id', 'category', 'imported_at'];
+
+export function buildImportMetadata({ mem0_id, category, importedAt }) {
+  return { mem0_id, category, imported_at: importedAt };
+}
+
+export function countKeepers(rows) {
+  return rows.filter((r) => r.keep === true).length;
+}
+
+// Human-readable review surface — grouped by keep then category, with an explicit
+// `unjudged` section the operator must resolve before --apply.
+export function renderReviewMd(rows) {
+  const kept = rows.filter((r) => r.keep === true);
+  const dropped = rows.filter((r) => r.keep === false && r.category !== 'unjudged');
+  const unjudged = rows.filter((r) => r.category === 'unjudged');
+  const group = (list) => {
+    const byCat = {};
+    for (const r of list) (byCat[r.category] ||= []).push(r);
+    return (
+      Object.entries(byCat)
+        .map(([cat, rs]) => `### ${cat} (${rs.length})\n` + rs.map((r) => `- \`${r.mem0_id}\` — ${r.text}  _(${r.reason})_`).join('\n'))
+        .join('\n\n') || '_(none)_'
+    );
+  };
+  return [
+    `# mem0 → UM import review`,
+    `kept ${kept.length} / dropped ${dropped.length} / unjudged ${unjudged.length}`,
+    ``,
+    `## KEEP`,
+    group(kept),
+    ``,
+    `## DROP`,
+    group(dropped),
+    ``,
+    `## UNJUDGED — resolve before --apply`,
+    group(unjudged),
+    ``,
+  ].join('\n');
+}
