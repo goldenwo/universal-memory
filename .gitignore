@@ -8,6 +8,10 @@
 # Runtime data
 server/data/
 server/qdrant/
+
+# mem0 import working dir (operator's PERSONAL facts manifest — must never be committed;
+# cli/mem0-import.mjs also hard-refuses to write under the repo tree, this is the backstop)
+.mem0-import/
 server/logs/
 data/
 *.db
