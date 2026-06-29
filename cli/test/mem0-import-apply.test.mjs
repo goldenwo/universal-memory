@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseArgs, runDump, runJudge } from '../mem0-import.mjs';
+import { parseArgs, runDump, runJudge, runApplyPreflights } from '../mem0-import.mjs';
 
 test('parseArgs reads stage + workdir + manifest', () => {
   const a = parseArgs(['--apply', '--workdir', '/tmp/imp', '--manifest', '/tmp/imp/m.jsonl']);
@@ -54,4 +54,44 @@ test('runJudge without --yes is a cost-gate no-op (no manifest written)', async 
   const res = await runJudge({ records: [{ mem0_id: 'm1', text: 'x' }], workdir: dir, invoke: async () => { throw new Error('should not be called'); }, yes: false });
   assert.equal(res.skipped, true);
   await assert.rejects(() => fs.readFile(path.join(dir, 'manifest.jsonl'), 'utf8'));
+});
+
+const fakeMemory = (coll) => ({ config: { vectorStore: { config: { collectionName: coll } } } });
+const okRow = { mem0_id: 'a', text: 't', category: 'personal', keep: true, reason: 'r', decided_by: 'judge' };
+
+test('preflight: MEM0_USER_ID unset → hard fail (no test-user fallback)', async () => {
+  await assert.rejects(
+    () => runApplyPreflights({ env: {}, memory: fakeMemory('memories'), rows: [], readStampFn: async () => null, embedFn: async () => ({}) }),
+    /MEM0_USER_ID/,
+  );
+});
+
+test('preflight: scratch/eval collection target → refused', async () => {
+  await assert.rejects(
+    () => runApplyPreflights({ env: { MEM0_USER_ID: 'u' }, memory: fakeMemory('eval_mq_x'), rows: [], readStampFn: async () => null, embedFn: async () => ({}) }),
+    /scratch|eval_/,
+  );
+});
+
+test('preflight: embedding-stamp mismatch → abort', async () => {
+  const readStampFn = async () => ({ provider: 'openai', model: 'old-model', dim: 1536 });
+  const embedFn = async () => ({ provider: 'openai', model: 'new-model', vector: new Array(1536).fill(0) });
+  await assert.rejects(
+    () => runApplyPreflights({ env: { MEM0_USER_ID: 'u' }, memory: fakeMemory('memories'), rows: [], readStampFn, embedFn }),
+    /embedding/i,
+  );
+});
+
+test('preflight: passes for a matching stamp + valid manifest, returns userId', async () => {
+  const readStampFn = async () => ({ provider: 'openai', model: 'm', dim: 2 });
+  const embedFn = async () => ({ provider: 'openai', model: 'm', vector: [0, 0] });
+  const res = await runApplyPreflights({ env: { MEM0_USER_ID: 'u' }, memory: fakeMemory('memories'), rows: [okRow], readStampFn, embedFn });
+  assert.equal(res.userId, 'u');
+  assert.equal(res.collection, 'memories');
+});
+
+test('preflight: no stamp on a fresh collection is allowed (warn, not abort)', async () => {
+  const embedFn = async () => ({ provider: 'openai', model: 'm', vector: [0, 0] });
+  const res = await runApplyPreflights({ env: { MEM0_USER_ID: 'u' }, memory: fakeMemory('memories'), rows: [okRow], readStampFn: async () => null, embedFn });
+  assert.equal(res.userId, 'u');
 });

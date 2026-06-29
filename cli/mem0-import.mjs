@@ -131,3 +131,41 @@ export async function runJudge({ records, workdir, invoke, yes = false }) {
   console.log(`[judge] manifest + review written. kept ${kept}. STOP -- review review.md, edit manifest.jsonl, then --apply.`);
   return { kept, manifestPath };
 }
+
+// Reusable guard for an eval/scratch collection name (never write the live import there).
+function isScratchCollection(name) {
+  return /^eval_/.test(name) || (name !== 'memories' && /scratch|test/i.test(name));
+}
+
+// All --apply preflights fail CLOSED (throw) before any write. Stamp read + a probe
+// embed are injected as seams (readStampFn, embedFn) so this is unit-testable offline.
+export async function runApplyPreflights({ env, memory, rows, readStampFn, embedFn }) {
+  // 1. MEM0_USER_ID required -- NO 'test-user' fallback (would strand the corpus
+  //    in a partition the live server never reads).
+  const userId = env.MEM0_USER_ID;
+  if (!userId) throw new Error("--apply: MEM0_USER_ID is required (refusing reindex's test-user fallback)");
+
+  // 2. Target guard -- never write the live import into a scratch/eval collection.
+  const collection = memory.config.vectorStore.config.collectionName;
+  if (isScratchCollection(collection)) {
+    throw new Error(`--apply: refusing to write to scratch/eval collection '${collection}'`);
+  }
+
+  // 3. Manifest validation (fail-closed).
+  validateManifest(rows);
+
+  // 4. Embedding-stamp gate -- the importer's actual provider/model/dim (from a probe
+  //    embed) must match the collection's stamp, else vectors land in a foreign space.
+  //    A null stamp (fresh/unstamped collection) is allowed with a warning.
+  const stamp = await readStampFn({ memory });
+  const probe = await embedFn('_um_import_stamp_probe');
+  if (!stamp) {
+    console.warn(`[apply] WARN: collection '${collection}' has no embedding stamp (fresh collection assumed).`);
+  } else if (stamp.provider !== probe.provider || stamp.model !== probe.model || stamp.dim !== probe.vector.length) {
+    throw new Error(
+      `--apply: embedding mismatch: collection stamp ${stamp.provider}/${stamp.model}/${stamp.dim} ` +
+        `vs importer ${probe.provider}/${probe.model}/${probe.vector.length}`,
+    );
+  }
+  return { userId, collection };
+}
