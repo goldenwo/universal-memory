@@ -13,6 +13,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { judgeFacts } from './lib/mem0-import-judge.mjs';
 import {
   serializeManifest,
@@ -237,4 +238,43 @@ export async function runApplyWrite({ memory, qc, collection, userId, rows, impo
     `[apply] written ${written} / skipped-unchanged ${skippedUnchanged} / dropped ${rows.filter((x) => !x.keep).length} / failed ${failed}; count ${counted.count}`,
   );
   return { written, skippedUnchanged, failed, count: counted.count };
+}
+
+// CLI dispatch. The apply path's heavy deps (@qdrant, reindex/createMemoryInstance,
+// embedding-stamp) are dynamic-imported so the module loads anywhere the stage
+// functions are imported for testing; they resolve at runtime in the deps-flat image.
+export async function main(argv = process.argv.slice(2), env = process.env) {
+  const args = parseArgs(argv);
+  const workdir = args.workdir || path.join(process.cwd(), '.mem0-import');
+
+  if (args.stage === 'dump') {
+    await runDump({ source: args.source, workdir });
+  } else if (args.stage === 'judge') {
+    const dump = await fs.readFile(path.join(workdir, 'mem0-dump.jsonl'), 'utf8');
+    const records = dump.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
+    await runJudge({ records, workdir, invoke: makeJudgeInvoke(env), yes: args.yes });
+  } else if (args.stage === 'apply') {
+    const { QdrantClient } = await import('@qdrant/js-client-rest');
+    const { createMemoryInstance } = await import('./reindex.mjs');
+    const { readStamp } = await import('../server/lib/embedding-stamp.mjs');
+    const collection = env.QDRANT_COLLECTION || 'memories';
+    const memory = await createMemoryInstance({ env, collection });
+    const qc = new QdrantClient({ host: env.QDRANT_HOST || 'localhost', port: parseInt(env.QDRANT_PORT || '6333', 10) });
+    const { rows } = parseManifest(await fs.readFile(args.manifest || path.join(workdir, 'manifest.jsonl'), 'utf8'));
+    const { userId } = await runApplyPreflights({ env, memory, rows, readStampFn: readStamp, embedFn: (t) => embed(t) });
+    if (!args.yes) {
+      console.log(`[apply] would write ${rows.filter((r) => r.keep).length} keepers to '${collection}' as userId=${userId}. Re-run with --yes.`);
+      return;
+    }
+    await runApplyWrite({ memory, qc, collection, userId, rows, importedAt: new Date().toISOString() });
+  } else {
+    console.log('usage: mem0-import (--dump --source <jsonl> | --judge [--yes] | --apply [--manifest <path>] [--yes]) [--workdir <dir>]');
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 }
