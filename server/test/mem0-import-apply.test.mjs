@@ -34,6 +34,17 @@ test('runDump reads a hand-saved JSONL source into canonical records + counts', 
   assert.equal(dump.mem0_id, 'm1');
 });
 
+test('runDump refuses a workdir inside a git repo tree (privacy guard, spec §6/§2)', async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0repo-'));
+  await fs.mkdir(path.join(repo, '.git')); // fake repo-root marker
+  const src = path.join(repo, 'source.jsonl');
+  await fs.writeFile(src, JSON.stringify({ id: 'm1', memory: 'x' }) + '\n');
+  await assert.rejects(
+    () => runDump({ source: src, workdir: path.join(repo, '.mem0-import') }),
+    /repo tree|refusing/i,
+  );
+});
+
 test('runJudge writes manifest + review with an injected invoke', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0imp-'));
   const records = [

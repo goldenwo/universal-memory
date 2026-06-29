@@ -10,7 +10,8 @@
  * Spec: docs/plans/2026-06-27-mem0-import-spec.md. Plan: docs/plans/2026-06-27-mem0-import-plan.md.
  */
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -47,12 +48,44 @@ export function parseArgs(argv) {
   return out;
 }
 
+// Walk up from `dir` (or its nearest existing ancestor) to find a git repo root.
+function findRepoRoot(dir) {
+  let cur = path.resolve(dir);
+  while (!existsSync(cur) && path.dirname(cur) !== cur) cur = path.dirname(cur);
+  while (true) {
+    if (existsSync(path.join(cur, '.git'))) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+// PRIVACY GUARD (spec §6/§2): the working dir holds the operator's PERSONAL facts
+// (dump + manifest). Refuse to write it under any git repo tree, where a stray
+// `git add -A` could commit it. The default workdir lives in the home dir; this guard
+// also catches an operator who points --workdir into a repo. `.mem0-import/` is also
+// gitignored as a backstop.
+function assertWorkdirSafe(workdir) {
+  const abs = path.resolve(workdir);
+  const repoRoot = findRepoRoot(abs);
+  if (repoRoot) {
+    const rel = path.relative(repoRoot, abs);
+    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+      throw new Error(
+        `mem0-import: refusing to write the personal-fact workdir under a git repo tree (${repoRoot}). ` +
+          `Pass --workdir <path outside the repo>, e.g. ${path.join(os.homedir(), '.um', 'mem0-import')}.`,
+      );
+    }
+  }
+}
+
 // Source = a hand-saved JSONL export of mem0-pi facts (produced out-of-band via the
 // mem0-pi memory_list MCP tool / getAll). Each line: {id, memory} (mem0's shape) OR
 // {mem0_id, text}. Canonicalize to {mem0_id, text}; persist mem0-dump.jsonl. The COUNT
 // is the corroboration boundary — the operator must confirm it equals mem0's total
 // before any decommission (one-way migration).
 export async function runDump({ source, workdir }) {
+  assertWorkdirSafe(workdir);
   const raw = await fs.readFile(source, 'utf8');
   const records = raw
     .split('\n')
@@ -107,6 +140,7 @@ export function makeJudgeInvoke(env) {
 // is carried forward verbatim, never re-judged (no re-spend). `unjudged` rows ARE
 // re-judged. The judge returns no `text`, so it is joined back to each record's text.
 export async function runJudge({ records, workdir, invoke, yes = false }) {
+  assertWorkdirSafe(workdir);
   await fs.mkdir(workdir, { recursive: true });
   const manifestPath = path.join(workdir, 'manifest.jsonl');
   const existing = await readExistingManifest(manifestPath);
@@ -245,7 +279,8 @@ export async function runApplyWrite({ memory, qc, collection, userId, rows, impo
 // functions are imported for testing; they resolve at runtime in the deps-flat image.
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const args = parseArgs(argv);
-  const workdir = args.workdir || path.join(process.cwd(), '.mem0-import');
+  // Default workdir is OUTSIDE the repo (private; holds the operator's personal facts).
+  const workdir = args.workdir || path.join(os.homedir(), '.um', 'mem0-import');
 
   if (args.stage === 'dump') {
     await runDump({ source: args.source, workdir });
