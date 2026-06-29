@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite } from '../mem0-import.mjs';
+import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite } from '../../cli/mem0-import.mjs';
 
 // The live write-loop test runs only with UM_LIVE_TESTS=1 (mirrors cli/test/reindex-e2e),
 // needing a reachable qdrant + OPENAI_API_KEY + server deps resolvable. The heavy deps
@@ -106,7 +106,7 @@ test('preflight: no stamp on a fresh collection is allowed (warn, not abort)', a
 
 test('apply write loop: idempotent, lane-tagged, reconciles drops', { skip: LIVE_SKIP }, async () => {
   const { QdrantClient } = await import('@qdrant/js-client-rest');
-  const { createMemoryInstance } = await import('../reindex.mjs');
+  const { createMemoryInstance } = await import('../../cli/reindex.mjs');
   const collection = `eval_import_${Date.now()}`;
   const env = { ...process.env, QDRANT_COLLECTION: collection, MEM0_USER_ID: 'import-test-user' };
   const memory = await createMemoryInstance({ env, collection });

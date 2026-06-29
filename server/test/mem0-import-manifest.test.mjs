@@ -10,8 +10,8 @@ import {
   renderReviewMd,
   countKeepers,
   IMPORT_METADATA_KEYS,
-} from '../lib/mem0-import-manifest.mjs';
-import { RESERVED_METADATA_FIELDS } from '../../server/lib/dedup-constants.mjs';
+} from '../../cli/lib/mem0-import-manifest.mjs';
+import { RESERVED_METADATA_FIELDS } from '../lib/dedup-constants.mjs';
 
 const ok = (over = {}) => ({ mem0_id: 'a', text: 't', category: 'personal', keep: true, reason: 'r', decided_by: 'judge', ...over });
 

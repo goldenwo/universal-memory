@@ -6,7 +6,7 @@ import {
   buildJudgeSystemPrompt,
   buildJudgeUserPrompt,
   judgeFacts,
-} from '../lib/mem0-import-judge.mjs';
+} from '../../cli/lib/mem0-import-judge.mjs';
 
 test('parseJudgeResponse: validates enum, derives keep, falls back to unjudged', () => {
   const ids = ['a', 'b', 'c', 'd', 'e'];
