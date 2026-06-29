@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseArgs, runDump, runJudge, runApplyPreflights } from '../mem0-import.mjs';
+import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite } from '../mem0-import.mjs';
+
+// The live write-loop test runs only with UM_LIVE_TESTS=1 (mirrors cli/test/reindex-e2e),
+// needing a reachable qdrant + OPENAI_API_KEY + server deps resolvable. The heavy deps
+// (@qdrant/js-client-rest, reindex/createMemoryInstance) are dynamic-imported INSIDE the
+// gated test so this file loads cleanly offline (where those deps aren't on cli/'s path).
+const LIVE_SKIP = !process.env.UM_LIVE_TESTS;
+const QHOST = process.env.QDRANT_HOST || 'localhost';
+const QPORT = parseInt(process.env.QDRANT_PORT || '6333', 10);
 
 test('parseArgs reads stage + workdir + manifest', () => {
   const a = parseArgs(['--apply', '--workdir', '/tmp/imp', '--manifest', '/tmp/imp/m.jsonl']);
@@ -94,4 +102,54 @@ test('preflight: no stamp on a fresh collection is allowed (warn, not abort)', a
   const embedFn = async () => ({ provider: 'openai', model: 'm', vector: [0, 0] });
   const res = await runApplyPreflights({ env: { MEM0_USER_ID: 'u' }, memory: fakeMemory('memories'), rows: [okRow], readStampFn: async () => null, embedFn });
   assert.equal(res.userId, 'u');
+});
+
+test('apply write loop: idempotent, lane-tagged, reconciles drops', { skip: LIVE_SKIP }, async () => {
+  const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const { createMemoryInstance } = await import('../reindex.mjs');
+  const collection = `eval_import_${Date.now()}`;
+  const env = { ...process.env, QDRANT_COLLECTION: collection, MEM0_USER_ID: 'import-test-user' };
+  const memory = await createMemoryInstance({ env, collection });
+  const qc = new QdrantClient({ host: QHOST, port: QPORT });
+  const userId = 'import-test-user';
+  const rows1 = [
+    { mem0_id: 'k1', text: 'Golden prefers TDD', category: 'personal', keep: true, reason: 'r', decided_by: 'judge' },
+    { mem0_id: 'k2', text: 'edge-catcher repo is private', category: 'dev', keep: true, reason: 'r', decided_by: 'judge' },
+    { mem0_id: 'd1', text: 'Date is 2026-04-15', category: 'ephemeral', keep: false, reason: 'r', decided_by: 'judge' },
+  ];
+
+  try {
+    const r1 = await runApplyWrite({ memory, qc, collection, userId, rows: rows1, importedAt: '2026-06-27T00:00:00Z' });
+    assert.equal(r1.written, 2);
+    assert.equal(r1.count, 2, 'count == keepers');
+
+    // (a) every kept point has surfaces=['mem0-import'] + a lane key + provenance
+    const kept = await qc.scroll(collection, {
+      filter: { must: [{ key: 'userId', match: { value: userId } }, { key: 'surfaces', match: { value: 'mem0-import' } }] },
+      with_payload: true,
+      limit: 50,
+    });
+    assert.equal(kept.points.length, 2);
+    assert.ok(kept.points.every((p) => 'lane' in p.payload), 'imported points carry a lane');
+    assert.ok(kept.points.every((p) => p.payload.mem0_id));
+
+    // (b) second apply is a no-op (idempotent) + skip path taken (0 re-writes)
+    const r2 = await runApplyWrite({ memory, qc, collection, userId, rows: rows1, importedAt: '2026-06-27T01:00:00Z' });
+    assert.equal(r2.count, 2);
+    assert.equal(r2.skippedUnchanged, 2, 'unchanged keepers skip embed+write');
+    assert.equal(r2.written, 0);
+
+    // (c) flip k2 -> keep:false -> re-apply -> its point is GONE, count == new keeper count
+    const rows2 = rows1.map((r) => (r.mem0_id === 'k2' ? { ...r, keep: false, category: 'junk', decided_by: 'user' } : r));
+    const r3 = await runApplyWrite({ memory, qc, collection, userId, rows: rows2, importedAt: '2026-06-27T02:00:00Z' });
+    assert.equal(r3.count, 1, 'dropped keeper reconciled away');
+    const after = await qc.scroll(collection, {
+      filter: { must: [{ key: 'userId', match: { value: userId } }, { key: 'mem0_id', match: { value: 'k2' } }] },
+      with_payload: true,
+      limit: 5,
+    });
+    assert.equal(after.points.length, 0, 'k2 point deleted on drop');
+  } finally {
+    await qc.deleteCollection(collection).catch(() => {});
+  }
 });

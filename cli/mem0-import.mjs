@@ -21,7 +21,11 @@ import {
   validateManifest,
   renderReviewMd,
   countKeepers,
+  buildImportMetadata,
 } from './lib/mem0-import-manifest.mjs';
+import { umAdd } from '../server/lib/add.mjs';
+import { embed } from '../server/lib/embed.mjs';
+import { classifyLane } from '../server/lib/lane-classifier.mjs';
 
 export function md5(s) {
   return createHash('md5').update(s).digest('hex');
@@ -168,4 +172,69 @@ export async function runApplyPreflights({ env, memory, rows, readStampFn, embed
     );
   }
   return { userId, collection };
+}
+
+const importFilter = (userId, mem0_id) => ({
+  must: [
+    { key: 'userId', match: { value: userId } },
+    { key: 'mem0_id', match: { value: mem0_id } },
+  ],
+});
+
+// Stage 3 write loop. Drives the FULL manifest so operator drops are reconciled (not
+// just keepers added). Per keeper: skip-if-unchanged (payload.hash == md5(text), 0
+// embeds) else embed -> lane-classify -> delete-by-mem0_id -> umAdd(infer:false,
+// _systemMigration:true). Delete-then-add keyed on mem0_id gives true idempotency.
+export async function runApplyWrite({ memory, qc, collection, userId, rows, importedAt }) {
+  // 1. Reconcile drops: delete any prior point for a keep:false row (no-op if absent).
+  for (const r of rows.filter((x) => x.keep === false)) {
+    await qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) });
+  }
+
+  let written = 0;
+  let skippedUnchanged = 0;
+  let failed = 0;
+  for (const r of rows.filter((x) => x.keep === true)) {
+    try {
+      // skip-if-unchanged FIRST (no embed): existing point with matching hash -> skip.
+      const existing = await qc.scroll(collection, { filter: importFilter(userId, r.mem0_id), with_payload: true, limit: 1 });
+      const cur = existing.points?.[0];
+      if (cur && cur.payload?.hash === md5(r.text)) {
+        skippedUnchanged++;
+        continue;
+      }
+      // else: embed once -> classify lane from that vector -> delete prior -> add fresh.
+      const { vector } = await embed(r.text);
+      const { lane } = await classifyLane(vector);
+      await qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) });
+      await umAdd({
+        memory,
+        text: r.text,
+        userId,
+        infer: false,
+        _systemMigration: true,
+        surface: 'mem0-import',
+        metadata: { ...buildImportMetadata({ mem0_id: r.mem0_id, category: r.category, importedAt }), ...(lane ? { lane } : {}) },
+        _qdrantClient: qc,
+      });
+      written++;
+    } catch (e) {
+      failed++;
+      console.error(`[apply] FAILED mem0_id=${r.mem0_id}: ${e.message} (safe to re-run --apply)`);
+    }
+  }
+
+  // Post-write assertion (userId-scoped): #points with surfaces 'mem0-import' == #keepers.
+  const keepers = rows.filter((x) => x.keep === true).length;
+  const counted = await qc.count(collection, {
+    exact: true,
+    filter: { must: [{ key: 'userId', match: { value: userId } }, { key: 'surfaces', match: { value: 'mem0-import' } }] },
+  });
+  if (counted.count !== keepers) {
+    throw new Error(`[apply] count assertion failed: ${counted.count} mem0-import points != ${keepers} keepers (after reconcile)`);
+  }
+  console.log(
+    `[apply] written ${written} / skipped-unchanged ${skippedUnchanged} / dropped ${rows.filter((x) => !x.keep).length} / failed ${failed}; count ${counted.count}`,
+  );
+  return { written, skippedUnchanged, failed, count: counted.count };
 }
