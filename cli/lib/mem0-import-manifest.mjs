@@ -37,3 +37,25 @@ export function parseManifest(text) {
   });
   return { version: header.schema_version, rows };
 }
+
+// FAIL CLOSED: throw on any malformed row, naming the offending data line (1-based).
+export function validateManifest(rows) {
+  const seen = new Set();
+  rows.forEach((r, i) => {
+    const line = i + 1;
+    for (const k of ['mem0_id', 'text', 'category', 'reason']) {
+      if (typeof r?.[k] !== 'string' || r[k] === '') throw new Error(`manifest line ${line}: missing/empty ${k}`);
+    }
+    if (typeof r.keep !== 'boolean') throw new Error(`manifest line ${line}: keep must be a boolean, got ${typeof r.keep}`);
+    if (seen.has(r.mem0_id)) throw new Error(`manifest line ${line}: duplicate mem0_id ${r.mem0_id}`);
+    seen.add(r.mem0_id);
+  });
+  return rows;
+}
+
+// Merge a fresh judge pass over an existing manifest: a row whose decided_by==='user'
+// in `existing` wins (operator edits are never clobbered by a re-judge).
+export function mergeUserEdits(judged, existing) {
+  const userById = new Map(existing.filter((r) => r.decided_by === 'user').map((r) => [r.mem0_id, r]));
+  return judged.map((r) => userById.get(r.mem0_id) ?? r);
+}
