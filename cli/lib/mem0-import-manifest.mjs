@@ -22,7 +22,12 @@ export function serializeManifest(rows) {
 export function parseManifest(text) {
   const lines = text.split('\n').filter((l) => l.trim() !== '');
   if (lines.length === 0) throw new Error('manifest: empty');
-  const header = JSON.parse(lines[0]);
+  let header;
+  try {
+    header = JSON.parse(lines[0]);
+  } catch {
+    throw new Error('manifest: malformed header line (expected {"schema_version":N})');
+  }
   if (header.schema_version !== MANIFEST_SCHEMA_VERSION) {
     throw new Error(
       `manifest: unsupported schema_version ${header.schema_version} (expected ${MANIFEST_SCHEMA_VERSION})`,
