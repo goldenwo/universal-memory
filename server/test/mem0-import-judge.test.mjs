@@ -33,6 +33,27 @@ test('parseJudgeResponse: validates enum, derives keep, falls back to unjudged',
   assert.ok(KEEP_CATEGORIES.includes('personal') && KEEP_CATEGORIES.includes('dev'));
 });
 
+test('parseJudgeResponse: valid category but missing/empty reason → non-empty reason (manifest-safe)', () => {
+  // The live gpt-4.1-nano judge sometimes returns a categorized row with no reason; the
+  // manifest is fail-closed on empty reason, so normalizeRow must backfill a placeholder
+  // while preserving the category. (Regression: surfaced on the first live --judge run.)
+  const content = JSON.stringify({
+    results: [
+      { mem0_id: 'a', category: 'personal' },           // reason missing
+      { mem0_id: 'b', category: 'dev', reason: '' },     // reason empty
+      { mem0_id: 'c', category: 'junk', reason: '   ' }, // reason whitespace-only
+    ],
+  });
+  const rows = parseJudgeResponse(content, ['a', 'b', 'c']);
+  const by = Object.fromEntries(rows.map((r) => [r.mem0_id, r]));
+  assert.equal(by.a.category, 'personal', 'category preserved despite missing reason');
+  assert.equal(by.b.category, 'dev');
+  for (const id of ['a', 'b', 'c']) {
+    assert.equal(typeof by[id].reason, 'string');
+    assert.notEqual(by[id].reason, '', `reason for ${id} must be non-empty (manifest is fail-closed)`);
+  }
+});
+
 test('parseJudgeResponse: malformed JSON → all rows unjudged, none lost', () => {
   const rows = parseJudgeResponse('not json{', ['x', 'y']);
   assert.deepEqual(rows.map((r) => r.category), ['unjudged', 'unjudged']);

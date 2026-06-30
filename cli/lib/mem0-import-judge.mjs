@@ -22,7 +22,13 @@ export function deriveKeep(category) {
 // Validate one judged row; off-enum/missing → 'unjudged' (NOT a silent drop).
 function normalizeRow(mem0_id, raw) {
   const category = ALL_CATEGORIES.includes(raw?.category) ? raw.category : 'unjudged';
-  const reason = typeof raw?.reason === 'string' ? raw.reason : '';
+  // The live LLM occasionally omits/empties `reason` on an otherwise valid row, but the
+  // manifest is fail-closed and requires a non-empty reason (validateManifest). Default a
+  // missing/empty/whitespace reason to a clear placeholder so one terse row never tanks the
+  // whole batch — the category (the load-bearing keep/drop decision) is preserved and still
+  // shown in review.md for the operator.
+  const rawReason = typeof raw?.reason === 'string' ? raw.reason.trim() : '';
+  const reason = rawReason || '(no reason given)';
   return { mem0_id, category, keep: deriveKeep(category), reason, decided_by: 'judge' };
 }
 
