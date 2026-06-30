@@ -216,14 +216,64 @@ const importFilter = (userId, mem0_id) => ({
   ],
 });
 
+// qdrant can transiently 5xx — most notably right after a collection is created, while
+// a shard is not yet `Active` ("Failed to apply operation to at least one Active replica
+// ... Please retry"), or on a brief network blip. The raw-qc ops below (delete-by-filter,
+// scroll, count) are all idempotent, so retry transients a few times with linear backoff
+// and surface anything non-transient (4xx, 404 missing-collection) immediately. Mirrors
+// the eval settle loop's transient tolerance (#19, memory-quality-eval.mjs).
+const TRANSIENT_QDRANT_RE = /please retry|Active.*replica|Service internal error|fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|network/i;
+export function isTransientQdrant(e) {
+  if (!e) return false;
+  if (typeof e.status === 'number' && e.status >= 500) return true;
+  return TRANSIENT_QDRANT_RE.test(`${e.message ?? ''} ${e?.data?.status?.error ?? ''}`);
+}
+export async function withQdrantRetry(fn, { attempts = 5, baseMs = 200, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isTransientQdrant(e) || i >= attempts - 1) throw e;
+      await sleep(baseMs * (i + 1));
+    }
+  }
+}
+
+// Ensure the target collection exists before runApplyWrite's raw-qc ops. mem0ai
+// creates the collection only via an un-awaited constructor init race
+// (`this.initialize().catch()` in node_modules/mem0ai qdrant store); its vector-store
+// ops don't await it — only the Memory-level public methods do (`_ensureInitialized`).
+// The raw qc.delete/scroll/count below bypass that guard, so on a fresh target
+// collection (a clean Pi `memories`, a rehearsal collection, or the scratch test
+// collection) the first op 404s. Mirror the eval harness's "ensureCollection BEFORE
+// operate (avoid auto-create race)" remedy: create it non-destructively with mem0ai's
+// own params (Cosine; dim from a probe embed so it is provider-agnostic and matches
+// what umAdd will write). Race-tolerant: if createCollection throws because mem0ai's
+// background init won the race, re-check existence and swallow.
+export async function ensureImportCollection({ qc, collection, embedFn }) {
+  const exists = async () => (await qc.getCollections()).collections.some((c) => c.name === collection);
+  if (await exists()) return false;
+  const { vector } = await embedFn('_um_import_collection_probe');
+  try {
+    await qc.createCollection(collection, { vectors: { size: vector.length, distance: 'Cosine' } });
+    return true;
+  } catch (e) {
+    if (await exists()) return false; // lost the create race to mem0ai's background init
+    throw e;
+  }
+}
+
 // Stage 3 write loop. Drives the FULL manifest so operator drops are reconciled (not
 // just keepers added). Per keeper: skip-if-unchanged (payload.hash == md5(text), 0
 // embeds) else embed -> lane-classify -> delete-by-mem0_id -> umAdd(infer:false,
 // _systemMigration:true). Delete-then-add keyed on mem0_id gives true idempotency.
 export async function runApplyWrite({ memory, qc, collection, userId, rows, importedAt }) {
+  // 0. Ensure the collection exists (the raw-qc ops below bypass mem0ai's init guard).
+  await ensureImportCollection({ qc, collection, embedFn: (t) => embed(t) });
+
   // 1. Reconcile drops: delete any prior point for a keep:false row (no-op if absent).
   for (const r of rows.filter((x) => x.keep === false)) {
-    await qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) });
+    await withQdrantRetry(() => qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) }));
   }
 
   let written = 0;
@@ -232,7 +282,7 @@ export async function runApplyWrite({ memory, qc, collection, userId, rows, impo
   for (const r of rows.filter((x) => x.keep === true)) {
     try {
       // skip-if-unchanged FIRST (no embed): existing point with matching hash -> skip.
-      const existing = await qc.scroll(collection, { filter: importFilter(userId, r.mem0_id), with_payload: true, limit: 1 });
+      const existing = await withQdrantRetry(() => qc.scroll(collection, { filter: importFilter(userId, r.mem0_id), with_payload: true, limit: 1 }));
       const cur = existing.points?.[0];
       if (cur && cur.payload?.hash === md5(r.text)) {
         skippedUnchanged++;
@@ -241,7 +291,7 @@ export async function runApplyWrite({ memory, qc, collection, userId, rows, impo
       // else: embed once -> classify lane from that vector -> delete prior -> add fresh.
       const { vector } = await embed(r.text);
       const { lane } = await classifyLane(vector);
-      await qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) });
+      await withQdrantRetry(() => qc.delete(collection, { wait: true, filter: importFilter(userId, r.mem0_id) }));
       await umAdd({
         memory,
         text: r.text,
@@ -261,10 +311,10 @@ export async function runApplyWrite({ memory, qc, collection, userId, rows, impo
 
   // Post-write assertion (userId-scoped): #points with surfaces 'mem0-import' == #keepers.
   const keepers = rows.filter((x) => x.keep === true).length;
-  const counted = await qc.count(collection, {
+  const counted = await withQdrantRetry(() => qc.count(collection, {
     exact: true,
     filter: { must: [{ key: 'userId', match: { value: userId } }, { key: 'surfaces', match: { value: 'mem0-import' } }] },
-  });
+  }));
   if (counted.count !== keepers) {
     throw new Error(`[apply] count assertion failed: ${counted.count} mem0-import points != ${keepers} keepers (after reconcile)`);
   }
