@@ -6,6 +6,10 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — server boots against legacy qdrant (≤1.7) with an existing collection
+
+- **`patches/mem0ai+2.4.6.patch` extended: `Qdrant.ensureCollection` tolerates a 400 "already exists"** ([`server/patches/mem0ai+2.4.6.patch`](server/patches/mem0ai+2.4.6.patch)). qdrant ≤1.7 returns HTTP **400** — not the 409 newer versions emit — for a duplicate `createCollection`. mem0ai 2.4.6 catches only 409/401/403 there, so booting the server against a legacy qdrant that already holds the `memories` collection made init throw and the HTTP server never bind (first hit deploying to a Raspberry Pi stuck on `y0mg/qdrant-raspberry-pi` v1.7.3 because the official image SIGABRTs on that host). The new hunk treats a 400 whose body (`error.data.status.error`) contains "already exists" like a 409 — it falls into the existing dimension-verify branch — while genuine 400s keep throwing. Contract-locked in [`server/test/patch-contract.test.mjs`](server/test/patch-contract.test.mjs); W6.2 canonical counts unchanged (no new `[mem0-patch]` warn lines or dynamic imports); the `source.sha256` pin is of the pristine upstream file, so it is untouched.
+
 ## [1.5.2] — 2026-06-24
 
 ### Changed — fact-extraction abstains on non-durable noise

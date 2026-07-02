@@ -95,6 +95,27 @@ test('W6.2 patch: mem0ai/oss imports cleanly (module load succeeds)', async () =
   assert.equal(typeof mod.EmbedderFactory, 'function', 'mem0ai/oss must export EmbedderFactory');
 });
 
+test('legacy-qdrant patch: ensureCollection tolerates a 400 "already exists"', () => {
+  // qdrant ≤1.7 (e.g. the Pi's y0mg/qdrant-raspberry-pi v1.7.3) returns
+  // HTTP 400 — not 409 — for a duplicate createCollection. mem0ai's
+  // ensureCollection catches only 409/401/403, so against a legacy
+  // server with an existing collection, init throws and the HTTP server
+  // never binds. The patch adds a guarded 400 case that matches the
+  // qdrant error body ("already exists") and keeps genuine 400s throwing.
+  if (!existsSync(MEM0_INDEX)) return;
+  const src = readFileSync(MEM0_INDEX, 'utf-8');
+  assert.match(
+    src,
+    /const legacyQdrantAlreadyExists = error\?\.status === 400 &&[^\n]*already exists/,
+    'ensureCollection must treat a 400 whose body says "already exists" like a 409 (legacy qdrant ≤1.7); see server/patches/README.md',
+  );
+  assert.match(
+    src,
+    /=== 403 \|\| legacyQdrantAlreadyExists\)/,
+    'the legacy-400 guard must be OR-ed into the existing 409/401/403 exists-branch, not replace it',
+  );
+});
+
 test('W6.2 patch: pg destructure has defensive `let pkg = {}` init', () => {
   // The pg patch is special-cased: `var { Client } = pkg;` immediately
   // follows the patched import at module load, so the catch block must
