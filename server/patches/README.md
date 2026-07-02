@@ -9,13 +9,25 @@ build fails loud.
 
 ## Files
 
-- `mem0ai+2.4.6.patch` — W6.2 image-size reduction. 14 hunks against
-  `node_modules/mem0ai/dist/oss/index.mjs`. Converts eager static
-  imports of 11 unique unused-provider peerDep packages (12 import
-  statements skippable, 2 of better-sqlite3 retained because mem0
-  unconditionally instantiates `SQLiteManager` for history) to
-  fail-soft dynamic try/catch with `[mem0-patch] <pkg> not installed
-  (peer-skipped) — expected on boot per W6.2` warn lines.
+- `mem0ai+2.4.6.patch` — 15 hunks against
+  `node_modules/mem0ai/dist/oss/index.mjs`:
+  - **W6.2 image-size reduction (14 hunks).** Converts eager static
+    imports of 11 unique unused-provider peerDep packages (12 import
+    statements skippable, 2 of better-sqlite3 retained because mem0
+    unconditionally instantiates `SQLiteManager` for history) to
+    fail-soft dynamic try/catch with `[mem0-patch] <pkg> not installed
+    (peer-skipped) — expected on boot per W6.2` warn lines.
+  - **Legacy-qdrant 400 "already exists" tolerance (1 hunk).** qdrant
+    ≤1.7 returns HTTP 400 — not 409 — for a duplicate
+    `createCollection`; mem0ai's `Qdrant.ensureCollection` catches only
+    409/401/403, so against a legacy server with an existing collection
+    (e.g. the Pi's `y0mg/qdrant-raspberry-pi` v1.7.3, used because the
+    official image SIGABRTs on that host) init throws and the HTTP
+    server never binds. The hunk adds a guarded case: a 400 whose body
+    (`error.data.status.error`) says "already exists" is treated like a
+    409 (falls into the existing dimension-verify branch); genuine 400s
+    still throw. Contract-locked by
+    `server/test/patch-contract.test.mjs`.
 - `mem0ai+2.4.6.source.sha256` — single-line SHA-256 of the upstream
   `dist/oss/index.mjs` for mem0ai@2.4.6. Verified at Docker build time
   via `sha256sum` (see `server/Dockerfile`).
@@ -77,7 +89,11 @@ emits:**
    var { Client } = pkg;  // module-init destructure — needs pkg = {} default
    ```
 
-5. **Generate the patch file** via `npx patch-package mem0ai`.
+5. **Re-apply the legacy-qdrant 400 hunk** to the new version's
+   `Qdrant.ensureCollection` (see Files above), then **generate the
+   patch file** via `npx patch-package mem0ai`. If upstream has widened
+   its own catch to handle a 400 "already exists", drop the hunk and
+   its contract test instead.
 
 6. **Verify the patch applies cleanly with the expected counts** before
    step 7. **This order is critical: the hash-pin is the lock, not a

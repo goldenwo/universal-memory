@@ -1,5 +1,5 @@
 diff --git a/node_modules/mem0ai/dist/oss/index.mjs b/node_modules/mem0ai/dist/oss/index.mjs
-index caed7cb..5d54c16 100644
+index caed7cb..b875a3d 100644
 --- a/node_modules/mem0ai/dist/oss/index.mjs
 +++ b/node_modules/mem0ai/dist/oss/index.mjs
 @@ -358,7 +358,7 @@ var AnthropicLLM = class {
@@ -29,7 +29,17 @@ index caed7cb..5d54c16 100644
  import fs2 from "fs";
  import path2 from "path";
  
-@@ -903,7 +903,7 @@ var Qdrant = class {
+@@ -861,7 +861,8 @@ var Qdrant = class {
+         }
+       });
+     } catch (error) {
+-      if ((error == null ? void 0 : error.status) === 409 || (error == null ? void 0 : error.status) === 401 || (error == null ? void 0 : error.status) === 403) {
++      const legacyQdrantAlreadyExists = error?.status === 400 && String(error?.data?.status?.error ?? "").toLowerCase().includes("already exists");
++      if ((error == null ? void 0 : error.status) === 409 || (error == null ? void 0 : error.status) === 401 || (error == null ? void 0 : error.status) === 403 || legacyQdrantAlreadyExists) {
+         if (name === this.collectionName) {
+           try {
+             const collectionInfo = await this.client.getCollection(name);
+@@ -903,7 +904,7 @@ var Qdrant = class {
  };
  
  // src/oss/src/vector_stores/vectorize.ts
@@ -38,7 +48,7 @@ index caed7cb..5d54c16 100644
  var VectorizeDB = class {
    constructor(config) {
      this.client = null;
-@@ -1280,7 +1280,7 @@ var VectorizeDB = class {
+@@ -1280,7 +1281,7 @@ var VectorizeDB = class {
  };
  
  // src/oss/src/vector_stores/redis.ts
@@ -47,7 +57,7 @@ index caed7cb..5d54c16 100644
  var DEFAULT_FIELDS = [
    { name: "memory_id", type: "tag" },
    { name: "hash", type: "tag" },
-@@ -1874,7 +1874,7 @@ var LMStudioLLM = class extends OpenAILLM {
+@@ -1874,7 +1875,7 @@ var LMStudioLLM = class extends OpenAILLM {
  };
  
  // src/oss/src/vector_stores/supabase.ts
@@ -56,7 +66,7 @@ index caed7cb..5d54c16 100644
  var SupabaseDB = class {
    constructor(config) {
      this.client = createClient2(config.supabaseUrl, config.supabaseKey);
-@@ -2117,7 +2117,7 @@ See the SQL migration instructions in the code comments.`
+@@ -2117,7 +2118,7 @@ See the SQL migration instructions in the code comments.`
  };
  
  // src/oss/src/storage/SQLiteManager.ts
@@ -65,7 +75,7 @@ index caed7cb..5d54c16 100644
  var SQLiteManager = class {
    constructor(dbPath) {
      ensureSQLiteDirectory(dbPath);
-@@ -2202,7 +2202,7 @@ var MemoryHistoryManager = class {
+@@ -2202,7 +2203,7 @@ var MemoryHistoryManager = class {
  };
  
  // src/oss/src/storage/SupabaseHistoryManager.ts
@@ -74,7 +84,7 @@ index caed7cb..5d54c16 100644
  import { v4 as uuidv42 } from "uuid";
  var SupabaseHistoryManager = class {
    constructor(config) {
-@@ -2461,11 +2461,7 @@ var AzureOpenAIEmbedder = class {
+@@ -2461,11 +2462,7 @@ var AzureOpenAIEmbedder = class {
  };
  
  // src/oss/src/llms/langchain.ts
@@ -87,7 +97,7 @@ index caed7cb..5d54c16 100644
  
  // src/oss/src/prompts/index.ts
  import { z as z2 } from "zod";
-@@ -3067,7 +3063,7 @@ var LangchainEmbedder = class {
+@@ -3067,7 +3064,7 @@ var LangchainEmbedder = class {
  };
  
  // src/oss/src/vector_stores/langchain.ts
@@ -96,7 +106,7 @@ index caed7cb..5d54c16 100644
  var LangchainVectorStore = class {
    // Simple in-memory user ID
    constructor(config) {
-@@ -3215,12 +3211,8 @@ var LangchainVectorStore = class {
+@@ -3215,12 +3212,8 @@ var LangchainVectorStore = class {
  };
  
  // src/oss/src/vector_stores/azure_ai_search.ts
@@ -111,7 +121,7 @@ index caed7cb..5d54c16 100644
  var AzureAISearch = class {
    constructor(config) {
      this.serviceName = config.serviceName;
-@@ -3664,7 +3656,7 @@ var AzureAISearch = class {
+@@ -3664,7 +3657,7 @@ var AzureAISearch = class {
  };
  
  // src/oss/src/vector_stores/pgvector.ts
@@ -120,7 +130,7 @@ index caed7cb..5d54c16 100644
  var { Client } = pkg;
  var PGVector = class {
    constructor(config) {
-@@ -4169,7 +4161,7 @@ var ConfigManager = class {
+@@ -4169,7 +4162,7 @@ var ConfigManager = class {
  };
  
  // src/oss/src/memory/graph_memory.ts
