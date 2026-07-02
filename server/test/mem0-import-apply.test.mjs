@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite } from '../../cli/mem0-import.mjs';
+import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite, ensureImportCollection, isTransientQdrant, withQdrantRetry } from '../../cli/mem0-import.mjs';
 
 // The live write-loop test runs only with UM_LIVE_TESTS=1 (mirrors cli/test/reindex-e2e),
 // needing a reachable qdrant + OPENAI_API_KEY + server deps resolvable. The heavy deps
@@ -115,6 +115,89 @@ test('preflight: no stamp on a fresh collection is allowed (warn, not abort)', a
   assert.equal(res.userId, 'u');
 });
 
+// ensureImportCollection — the fix for the raw-qc-before-mem0ai-init 404 (offline, fake qc).
+test('ensureImportCollection: existing collection → no create', async () => {
+  let created = 0;
+  const qc = {
+    getCollections: async () => ({ collections: [{ name: 'memories' }] }),
+    createCollection: async () => { created++; },
+  };
+  const res = await ensureImportCollection({ qc, collection: 'memories', embedFn: async () => ({ vector: [0, 0] }) });
+  assert.equal(res, false);
+  assert.equal(created, 0);
+});
+
+test('ensureImportCollection: missing collection → creates with probe dim + Cosine', async () => {
+  let createdWith = null;
+  const qc = {
+    getCollections: async () => ({ collections: [] }),
+    createCollection: async (name, cfg) => { createdWith = { name, cfg }; },
+  };
+  const res = await ensureImportCollection({ qc, collection: 'memories', embedFn: async () => ({ vector: new Array(1536).fill(0) }) });
+  assert.equal(res, true);
+  assert.equal(createdWith.name, 'memories');
+  assert.equal(createdWith.cfg.vectors.size, 1536);
+  assert.equal(createdWith.cfg.vectors.distance, 'Cosine');
+});
+
+test('ensureImportCollection: create loses race to mem0ai init but now exists → swallow', async () => {
+  let calls = 0;
+  const qc = {
+    getCollections: async () => ({ collections: calls++ === 0 ? [] : [{ name: 'memories' }] }),
+    createCollection: async () => { throw Object.assign(new Error('Conflict'), { status: 409 }); },
+  };
+  const res = await ensureImportCollection({ qc, collection: 'memories', embedFn: async () => ({ vector: [0] }) });
+  assert.equal(res, false);
+});
+
+test('ensureImportCollection: create fails and still missing → rethrow', async () => {
+  const qc = {
+    getCollections: async () => ({ collections: [] }),
+    createCollection: async () => { throw new Error('qdrant unreachable'); },
+  };
+  await assert.rejects(
+    () => ensureImportCollection({ qc, collection: 'memories', embedFn: async () => ({ vector: [0] }) }),
+    /qdrant unreachable/,
+  );
+});
+
+// withQdrantRetry — transient-resilience for the raw-qc ops (post-createCollection
+// "Active replica ... Please retry" 5xx + network blips). Offline; injected sleep.
+test('isTransientQdrant: 5xx + replica/please-retry/network are transient; 4xx is not', () => {
+  assert.equal(isTransientQdrant({ status: 500 }), true);
+  assert.equal(isTransientQdrant({ status: 503 }), true);
+  assert.equal(isTransientQdrant({ data: { status: { error: 'Failed to apply operation to at least one `Active` replica. Please retry.' } } }), true);
+  assert.equal(isTransientQdrant({ message: 'fetch failed' }), true);
+  assert.equal(isTransientQdrant({ status: 404, message: 'Not Found' }), false);
+  assert.equal(isTransientQdrant({ status: 409 }), false);
+  assert.equal(isTransientQdrant(null), false);
+});
+
+test('withQdrantRetry: retries a transient then succeeds', async () => {
+  let n = 0;
+  const res = await withQdrantRetry(async () => { if (n++ < 2) throw { status: 500 }; return 'ok'; }, { sleep: async () => {} });
+  assert.equal(res, 'ok');
+  assert.equal(n, 3);
+});
+
+test('withQdrantRetry: a non-transient error throws immediately (no retry)', async () => {
+  let n = 0;
+  await assert.rejects(
+    () => withQdrantRetry(async () => { n++; throw Object.assign(new Error('Not Found'), { status: 404 }); }, { sleep: async () => {} }),
+    /Not Found/,
+  );
+  assert.equal(n, 1);
+});
+
+test('withQdrantRetry: exhausts attempts on a persistent transient then throws last', async () => {
+  let n = 0;
+  await assert.rejects(
+    () => withQdrantRetry(async () => { n++; throw { status: 500, message: 'Internal Server Error' }; }, { attempts: 3, sleep: async () => {} }),
+    (e) => e.status === 500,
+  );
+  assert.equal(n, 3);
+});
+
 test('apply write loop: idempotent, lane-tagged, reconciles drops', { skip: LIVE_SKIP }, async () => {
   const { QdrantClient } = await import('@qdrant/js-client-rest');
   const { createMemoryInstance } = await import('../../cli/reindex.mjs');
@@ -124,7 +207,10 @@ test('apply write loop: idempotent, lane-tagged, reconciles drops', { skip: LIVE
   const qc = new QdrantClient({ host: QHOST, port: QPORT });
   const userId = 'import-test-user';
   const rows1 = [
-    { mem0_id: 'k1', text: 'Golden prefers TDD', category: 'personal', keep: true, reason: 'r', decided_by: 'judge' },
+    // k1 is phrased near a `work` taxonomy exemplar so it classifies robustly (~0.59 ≫
+    // τ=0.30) — deterministic positive coverage of the classify → persist lane path.
+    // k2 ('edge-catcher repo is private') scores ~0.27 < τ and legitimately abstains.
+    { mem0_id: 'k1', text: "Reviewed a teammate's pull request before the release.", category: 'dev', keep: true, reason: 'r', decided_by: 'judge' },
     { mem0_id: 'k2', text: 'edge-catcher repo is private', category: 'dev', keep: true, reason: 'r', decided_by: 'judge' },
     { mem0_id: 'd1', text: 'Date is 2026-04-15', category: 'ephemeral', keep: false, reason: 'r', decided_by: 'judge' },
   ];
@@ -134,15 +220,26 @@ test('apply write loop: idempotent, lane-tagged, reconciles drops', { skip: LIVE
     assert.equal(r1.written, 2);
     assert.equal(r1.count, 2, 'count == keepers');
 
-    // (a) every kept point has surfaces=['mem0-import'] + a lane key + provenance
+    // (a) every kept point has surfaces=['mem0-import'] + provenance; lanes follow the
+    // classifier's contract (abstain below threshold/margin → ABSENT key, never lane:null).
     const kept = await qc.scroll(collection, {
       filter: { must: [{ key: 'userId', match: { value: userId } }, { key: 'surfaces', match: { value: 'mem0-import' } }] },
       with_payload: true,
       limit: 50,
     });
     assert.equal(kept.points.length, 2);
-    assert.ok(kept.points.every((p) => 'lane' in p.payload), 'imported points carry a lane');
-    assert.ok(kept.points.every((p) => p.payload.mem0_id));
+    assert.ok(kept.points.every((p) => p.payload.mem0_id), 'every imported point carries mem0_id provenance');
+    // Lane invariant: a present lane is a non-empty string. The classifier legitimately
+    // abstains below threshold/margin (→ ABSENT key); persisting lane:null would break
+    // the no-null-payload invariant (add.mjs normalizes null → absent).
+    assert.ok(
+      kept.points.every((p) => !('lane' in p.payload) || (typeof p.payload.lane === 'string' && p.payload.lane.length > 0)),
+      'lane, when present, is a non-empty string (abstention → absent, never lane:null)',
+    );
+    // Positive: k1 (near a `work` exemplar) classifies → its lane rides classify →
+    // umAdd(caller-supplied lane wins, _systemMigration skips re-classify) → payload.
+    const k1pt = kept.points.find((p) => p.payload.mem0_id === 'k1');
+    assert.ok(k1pt && typeof k1pt.payload.lane === 'string' && k1pt.payload.lane.length > 0, 'a robustly-classifying fact carries its lane');
 
     // (b) second apply is a no-op (idempotent) + skip path taken (0 re-writes)
     const r2 = await runApplyWrite({ memory, qc, collection, userId, rows: rows1, importedAt: '2026-06-27T01:00:00Z' });
