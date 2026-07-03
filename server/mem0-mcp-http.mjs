@@ -54,7 +54,8 @@ import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
-import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
+import { extractBearer, extractCompatToken, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
+import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
@@ -2395,7 +2396,11 @@ export function createRequestHandler(ctx = {}) {
 	// Step 4: auth check. Skipped when the endpoint-class row says
 	// bypassAuth (e.g. /health) OR when loopback-bypass applies AND
 	// no forwarded header is present.
-	if (!route.bypassAuth && !shouldBypassLoopback(req)) {
+	// mem0-compat rows (route.compat, compat spec §6) get NO loopback
+	// bypass: a mem0 client always sends its key, and docker-bridge peer
+	// addresses make loopback semantics misleading on that deployment
+	// shape — so the compat marker vetoes shouldBypassLoopback here.
+	if (!route.bypassAuth && (route.compat === true || !shouldBypassLoopback(req))) {
 		const expected = process.env.UM_AUTH_TOKEN;
 		if (!expected) {
 			// Counter-finish log fires via res.end shim; emit a structured
@@ -2415,7 +2420,10 @@ export function createRequestHandler(ctx = {}) {
 			)));
 			return;
 		}
-		const received = extractBearer(req);
+		// mem0-compat rows accept `Token <key>` alongside `Bearer <key>`
+		// (compat spec §6) — same UM_AUTH_TOKEN, different scheme parser.
+		// Everything else keeps the Bearer-only extractor.
+		const received = route.compat === true ? extractCompatToken(req) : extractBearer(req);
 		// Gap-3 OAuth (spec §4.2): /mcp auth becomes an OR behind one verifier
 		// interface — legacy bearer OR an OAuth access token. ctx.oauth is
 		// undefined whenever the flag is off (gated at construction), so the
@@ -2704,6 +2712,35 @@ export function createRequestHandler(ctx = {}) {
 			const result = await handleMcpMessage(body, ctx);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
+			return;
+		}
+		// mem0 Platform-compat facade dispatch (compat spec §3/§6, plan Task 3).
+		// Gated on the endpoint-class row's compat marker: reaching here means
+		// UM_MEM0_COMPAT_ENABLED=true (flag-off hard-404s at Step-3a, BEFORE
+		// auth — the ordering invariant) and Step-4 validated the Token|Bearer
+		// key with no loopback bypass. Body is read/parsed here (routes own
+		// their body reads — house pattern); the dispatcher returns
+		// {status, body} in the mem0 error dialect ({detail}), including the
+		// 404 for unknown /v1/* + /v2/* paths, so every compat response speaks
+		// the client's typed-error mapping rather than the §5.1 envelope.
+		if (route.compat === true) {
+			let compatBody;
+			if (req.method === 'POST' || req.method === 'PUT') {
+				try {
+					const raw = await readBody(req);
+					compatBody = raw ? JSON.parse(raw) : undefined;
+				} catch (e) {
+					// Mem0-dialect errors even for transport-level failures: the
+					// compat client parses {detail}, not the UM envelope.
+					const tooLarge = e && e.code === 'INPUT_TOO_LARGE';
+					res.writeHead(tooLarge ? 413 : 400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ detail: tooLarge ? e.message : 'invalid JSON body' }));
+					return;
+				}
+			}
+			const out = await handleMem0Compat(req, url, compatBody, ctx);
+			res.writeHead(out.status, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(out.body));
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {

@@ -17,8 +17,13 @@
  *   - toMem0AddResults — umAdd's {results:[{id, memory, event}]} passed
  *     through defensively to the mem0 add-response shape.
  *
- * Route wiring, auth, and endpoint-class rows live in later batches
- * (mem0-mcp-http.mjs / auth.mjs / endpoint-class.mjs) — not here.
+ *   - handleMem0Compat — the compat-route dispatcher (Batch 2 skeleton):
+ *     method+path → per-route handler returning {status, body} in the mem0
+ *     error dialect ({detail}). Business logic lands in Batch 3; every
+ *     known route is a 501 stub today, unknown compat paths 404.
+ *
+ * Endpoint-class row + Step-4 auth selection live in endpoint-class.mjs /
+ * auth.mjs / mem0-mcp-http.mjs (spec §6) — not here.
  */
 
 /** Typed error for filter-DSL violations; the route layer maps it to 400. */
@@ -222,4 +227,69 @@ export function toMem0Record(raw, opts) { // eslint-disable-line no-unused-vars
 export function toMem0AddResults(umAddResult) {
   const results = Array.isArray(umAddResult?.results) ? umAddResult.results : [];
   return { results: results.map(({ id, memory, event }) => ({ id, memory, event })) };
+}
+
+// ---------------------------------------------------------------------------
+// Compat-route dispatcher (spec §3 route table; plan Task 3 skeleton).
+// ---------------------------------------------------------------------------
+
+/**
+ * Batch-2 stub: every known compat route answers 501 until Batch 3 lands
+ * its business logic. Kept as ONE named function so the route table below
+ * reads as the contract and each Batch-3 handler replaces a stub in place.
+ *
+ * @returns {{status: number, body: {detail: string}}}
+ */
+function notImplemented() {
+  return { status: 501, body: { detail: 'not implemented (batch 3)' } };
+}
+
+/**
+ * The client-pinned route subset (spec §3 R1-R11; R11 spans two paths).
+ * First-match scan on method + pattern; capture groups become
+ * `params` for the handler (e.g. the memory id, the entity type/id).
+ * Trailing slashes are part of the contract — the client sends them.
+ *
+ * Handlers receive ({ req, url, body, ctx, params }) and return
+ * {status, body}; errors use the mem0 dialect {detail} (spec §6).
+ */
+const COMPAT_ROUTES = [
+  { id: 'R1',  method: 'GET',    pattern: /^\/v1\/ping\/$/,                      handler: notImplemented },
+  { id: 'R2',  method: 'POST',   pattern: /^\/v1\/memories\/$/,                  handler: notImplemented },
+  { id: 'R3',  method: 'POST',   pattern: /^\/v2\/memories\/search\/$/,          handler: notImplemented },
+  { id: 'R4',  method: 'POST',   pattern: /^\/v2\/memories\/$/,                  handler: notImplemented },
+  { id: 'R5',  method: 'GET',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
+  { id: 'R6',  method: 'PUT',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
+  { id: 'R7',  method: 'DELETE', pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
+  { id: 'R8',  method: 'DELETE', pattern: /^\/v1\/memories\/$/,                  handler: notImplemented },
+  { id: 'R9',  method: 'DELETE', pattern: /^\/v2\/entities\/([^/]+)\/([^/]+)\/$/, handler: notImplemented },
+  { id: 'R10', method: 'GET',    pattern: /^\/v1\/entities\/$/,                  handler: notImplemented },
+  { id: 'R11', method: 'GET',    pattern: /^\/v1\/events\/$/,                    handler: notImplemented },
+  { id: 'R11', method: 'GET',    pattern: /^\/v1\/event\/([^/]+)\/$/,            handler: notImplemented },
+];
+
+/**
+ * Dispatch one authenticated compat request (mem0 Platform dialect).
+ *
+ * Called from mem0-mcp-http.mjs AFTER the middleware chain: the
+ * endpoint-class row has already 404'd flag-off requests at Step-3a and
+ * Step-4 has validated the Token|Bearer key — this function never sees an
+ * unauthenticated request. The caller reads/parses the JSON body (house
+ * pattern: routes own their body reads) and writes the returned
+ * {status, body} as the JSON response.
+ *
+ * @param {import('node:http').IncomingMessage|{method: string}} req — only `method` is read here
+ * @param {URL} url — parsed request URL (pathname + searchParams)
+ * @param {object|undefined} body — parsed JSON body (undefined for body-less methods)
+ * @param {object} ctx — DI context (memory etc.), forwarded to handlers for Batch 3
+ * @returns {Promise<{status: number, body: object}>} mem0-dialect response; errors are {detail}
+ */
+export async function handleMem0Compat(req, url, body, ctx) {
+  for (const route of COMPAT_ROUTES) {
+    if (req.method !== route.method) continue;
+    const m = route.pattern.exec(url.pathname);
+    if (!m) continue;
+    return route.handler({ req, url, body, ctx, params: m.slice(1) });
+  }
+  return { status: 404, body: { detail: 'unknown compat route' } };
 }

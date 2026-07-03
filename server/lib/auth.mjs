@@ -14,6 +14,19 @@ export function extractBearer(req) {
   return m ? m[1] : null;
 }
 
+// mem0 Platform-compat facade (compat spec §6): mem0 SaaS clients send
+// `Authorization: Token <key>` (some send Bearer). Accept BOTH schemes —
+// but ONLY on compat routes: Step-4 selects this extractor when the
+// endpoint-class row carries compat:true; every other route keeps
+// extractBearer. Same return contract as extractBearer (token string or
+// null); the extracted value is validated against the same UM_AUTH_TOKEN.
+export function extractCompatToken(req) {
+  const h = req.headers?.authorization;
+  if (!h || typeof h !== 'string') return null;
+  const m = /^(?:Token|Bearer)\s(.+)$/.exec(h);
+  return m ? m[1] : null;
+}
+
 export function compareTokens(received, expected) {
   // W6.4 hardening: hash both inputs to fixed-size SHA-256 digests before
   // timing-safe compare. This eliminates any length-dependent timing channel
