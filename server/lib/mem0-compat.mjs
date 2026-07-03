@@ -17,14 +17,29 @@
  *   - toMem0AddResults — umAdd's {results:[{id, memory, event}]} passed
  *     through defensively to the mem0 add-response shape.
  *
- *   - handleMem0Compat — the compat-route dispatcher (Batch 2 skeleton):
- *     method+path → per-route handler returning {status, body} in the mem0
- *     error dialect ({detail}). Business logic lands in Batch 3; every
- *     known route is a 501 stub today, unknown compat paths 404.
+ *   - handleMem0Compat — the compat-route dispatcher: method+path → per-route
+ *     handler returning {status, body} in the mem0 error dialect ({detail}).
+ *     Batch 3 (plan Tasks 4-6) owns the business logic. Handlers receive the
+ *     DI ctx forwarded by mem0-mcp-http.mjs's compat dispatch site:
+ *       ctx.userId  — RESOLVED_USER_ID (spec §5 single-operator identity)
+ *       ctx.memory  — the mem0 Memory client (raw search/getAll/delete)
+ *     plus the house `_`-prefixed test seams (_qdrantClient, _umAdd,
+ *     _factsProviderOverride, _embedProviderOverride) — same seam names as
+ *     umAdd so production forwards them untouched.
  *
  * Endpoint-class row + Step-4 auth selection live in endpoint-class.mjs /
  * auth.mjs / mem0-mcp-http.mjs (spec §6) — not here.
  */
+
+import { createHash } from 'node:crypto';
+import { umAdd as defaultUmAdd } from './add.mjs';
+import { embed as defaultEmbed } from './embed.mjs';
+import { getRealClient } from './qdrant-client-resolver.mjs';
+import { filterSystemDocs } from './system-docs.mjs';
+import { SERVER_VERSION } from './version.mjs';
+
+/** Same hash algorithm as add.mjs's buildPayload (its md5 is module-private). */
+function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
 /** Typed error for filter-DSL violations; the route layer maps it to 400. */
 export class CompatFilterError extends Error {
@@ -183,9 +198,12 @@ export function applyMem0Filters(records, descriptor) {
  * memoryClient.search/getAll) to the mem0 Platform dialect (spec §4):
  * {id, memory, created_at?, updated_at?, categories, metadata, user_id?, score?}.
  *
- * Translation: metadata.createdAt→created_at, metadata.updatedAt→updated_at,
- * metadata.userId→user_id — each OMITTED when absent (client uses ??
- * fallbacks; omission-not-null). categories is synthesized from
+ * Translation: createdAt→created_at, updatedAt→updated_at, userId→user_id —
+ * read from metadata first, then from the RAW record's top level (mem0ai's
+ * raw search/getAll EXCLUDES these keys from metadata and hoists them to the
+ * record top level — dist/oss excludedKeys; qdrant-point-sourced callers may
+ * instead leave them in metadata). Each is OMITTED when absent (client uses
+ * ?? fallbacks; omission-not-null). categories is synthesized from
  * metadata.lane + any stored metadata.categories array, deduped — [] when
  * none (the client filters on r.categories, so [] beats omission there).
  * metadata is passed through as-is (client reads its own stored keys off
@@ -208,9 +226,12 @@ export function toMem0Record(raw, opts) { // eslint-disable-line no-unused-vars
   }
 
   const out = { id: raw?.id, memory: raw?.memory, categories, metadata };
-  if (metadata.createdAt !== undefined) out.created_at = metadata.createdAt;
-  if (metadata.updatedAt !== undefined) out.updated_at = metadata.updatedAt;
-  if (metadata.userId !== undefined) out.user_id = metadata.userId;
+  const createdAt = metadata.createdAt ?? raw?.createdAt;
+  const updatedAt = metadata.updatedAt ?? raw?.updatedAt;
+  const userId = metadata.userId ?? raw?.userId;
+  if (createdAt !== undefined) out.created_at = createdAt;
+  if (updatedAt !== undefined) out.updated_at = updatedAt;
+  if (userId !== undefined) out.user_id = userId;
   if (typeof raw?.score === 'number') out.score = raw.score;
   return out;
 }
@@ -230,19 +251,399 @@ export function toMem0AddResults(umAddResult) {
 }
 
 // ---------------------------------------------------------------------------
-// Compat-route dispatcher (spec §3 route table; plan Task 3 skeleton).
+// Route handlers (spec §3 route table; plan Tasks 4-6).
 // ---------------------------------------------------------------------------
 
-/**
- * Batch-2 stub: every known compat route answers 501 until Batch 3 lands
- * its business logic. Kept as ONE named function so the route table below
- * reads as the contract and each Batch-3 handler replaces a stub in place.
- *
- * @returns {{status: number, body: {detail: string}}}
- */
-function notImplemented() {
-  return { status: 501, body: { detail: 'not implemented (batch 3)' } };
+/** Shorthand for the mem0 error dialect. */
+function detailError(status, detail) {
+  return { status, body: { detail } };
 }
+
+/** 400 for any impersonation attempt (spec §5 — no silent remap). */
+function userIdMismatch(provided, operatorId) {
+  return detailError(
+    400,
+    `user_id "${provided}" does not match this instance's operator user id "${operatorId}" — UM is single-operator (spec §5); omit user_id or send the operator id`,
+  );
+}
+
+/** Uniform by-id 404 — foreign-point existence is NOT leaked (spec §6). */
+function notFound() {
+  return detailError(404, 'Resource not found: no memory with the given id');
+}
+
+/**
+ * Resolve the operator identity + memory client from the dispatch ctx.
+ * mem0-mcp-http.mjs's compat dispatch site always supplies both; a missing
+ * value is a wiring bug and fails loud (→ 500 via the dispatcher catch).
+ */
+function resolveCompatCtx(ctx) {
+  const operatorId = ctx?.userId;
+  const memory = ctx?.memory;
+  if (!operatorId) throw new Error('mem0-compat: ctx.userId (RESOLVED_USER_ID) missing');
+  if (!memory) throw new Error('mem0-compat: ctx.memory (memory client) missing');
+  return { operatorId, memory };
+}
+
+/**
+ * Full-list scan limit for the facade's list/scan-delete/count paths.
+ * mem0's getAll defaults to limit=100, which would silently truncate R4
+ * paging (page_size cap is 500) and — worse — leave R8/R9 bulk deletes
+ * incomplete. Explicit generous ceiling; single-operator instance scale is
+ * hundreds–low-thousands of points (spec §3 R8 "O(N) acceptable").
+ */
+const COMPAT_SCAN_LIMIT = 10000;
+
+/** Raw getAll for the operator → system docs stripped (read-path parity). */
+async function scanAll(memory, operatorId) {
+  const all = await memory.getAll({ userId: operatorId, limit: COMPAT_SCAN_LIMIT });
+  return filterSystemDocs(all?.results ?? all ?? []);
+}
+
+/**
+ * Reject a parsed filter descriptor that tries to scope to a FOREIGN
+ * user_id (spec §5: presence anywhere in a request must equal the
+ * operator). A matching user_id condition is fine — it matches everything
+ * on a single-operator instance.
+ */
+function foreignUserIdIn(descriptor, operatorId) {
+  return descriptor?.conditions?.find((c) => c.key === 'user_id' && c.value !== operatorId) ?? null;
+}
+
+/**
+ * Fetch one point by id via the raw qdrant client and enforce the spec §6
+ * scope check. Returns null for absent points, foreign-userId points, AND
+ * invalid ids the qdrant client rejects (e.g. non-UUID strings → HTTP 400
+ * upstream) — all collapse to the same non-leaking 404 at the route layer.
+ */
+async function fetchScopedPoint(ctx, memory, operatorId, id) {
+  const client = ctx?._qdrantClient ?? await getRealClient(memory);
+  const collection = memory.config.vectorStore.config.collectionName;
+  let points;
+  try {
+    points = await client.retrieve(collection, { ids: [id], with_payload: true });
+  } catch {
+    return null; // invalid id shape → indistinguishable from absent (404)
+  }
+  const arr = Array.isArray(points) ? points : points?.points ?? [];
+  const point = arr[0];
+  if (!point || point.payload?.userId !== operatorId) return null;
+  return { point, client, collection };
+}
+
+/**
+ * qdrant point → the RAW-record shape toMem0Record expects, mirroring
+ * mem0ai's own projection (same excludedKeys set): payload.data → memory,
+ * camelCase bookkeeping hoisted to the top level, everything else →
+ * metadata. Keeps R5/R6 responses byte-consistent with R3/R4 records.
+ */
+const MEM0_EXCLUDED_PAYLOAD_KEYS = new Set(['userId', 'agentId', 'runId', 'hash', 'data', 'createdAt', 'updatedAt']);
+
+function pointToRawRecord(point) {
+  const payload = point?.payload ?? {};
+  const metadata = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (!MEM0_EXCLUDED_PAYLOAD_KEYS.has(k)) metadata[k] = v;
+  }
+  const raw = { id: point?.id, memory: payload.data, metadata };
+  if (payload.createdAt !== undefined) raw.createdAt = payload.createdAt;
+  if (payload.updatedAt !== undefined) raw.updatedAt = payload.updatedAt;
+  if (payload.userId !== undefined) raw.userId = payload.userId;
+  return raw;
+}
+
+/**
+ * Payload keys a compat client's `metadata` may never overwrite on R6:
+ * scope (userId), content bookkeeping (data/hash — the handler owns their
+ * refresh), and timestamps the schema carries/sets itself. The D1/D3
+ * supersession-state fields are protected for the same reason
+ * assertNoReservedFields protects them on the write path.
+ */
+const R6_PROTECTED_KEYS = new Set(['userId', 'data', 'hash', 'createdAt', 'updatedAt', 'status', 'supersededBy', 'supersededAt']);
+
+function sanitizeUpdateMetadata(metadata) {
+  const out = {};
+  for (const [k, v] of Object.entries(metadata ?? {})) {
+    if (!R6_PROTECTED_KEYS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** Read-path status filter — same exclusion set as doSearch (parity). */
+function isRecallable(rawItem) {
+  const md = rawItem?.metadata ?? {};
+  return !(
+    md.status === 'superseded' ||
+    md.status === 'deprecated' ||
+    md.status === 'rejected' ||
+    md.invalidated_at != null
+  );
+}
+
+// --- R1 ---------------------------------------------------------------------
+
+async function handlePing() {
+  return { status: 200, body: { status: 'ok', name: 'universal-memory', version: SERVER_VERSION } };
+}
+
+// --- R2 ---------------------------------------------------------------------
+
+async function handleAdd({ req, body, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const b = body ?? {};
+  if (b.user_id !== undefined && b.user_id !== operatorId) {
+    return userIdMismatch(b.user_id, operatorId);
+  }
+  const messages = (Array.isArray(b.messages) ? b.messages : [])
+    .filter((m) => m && typeof m.content === 'string' && m.content.length > 0);
+  if (messages.length === 0) {
+    return detailError(400, 'messages[] with at least one non-empty content entry is required');
+  }
+
+  // Partition keys + categories are stored INTO metadata under their
+  // snake_case wire names so applyMem0Filters' metadata fallback matches
+  // them on read (spec §5; pure-test ambiguity note).
+  const metadata = { ...(b.metadata ?? {}) };
+  for (const key of ['agent_id', 'app_id', 'run_id']) {
+    if (typeof b[key] === 'string' && b[key].length > 0) metadata[key] = b[key];
+  }
+  if (Array.isArray(b.categories)) metadata.categories = b.categories;
+
+  // Provenance (spec §7): X-Mem0-Source header lowercased, else 'mem0-compat'.
+  const sourceHeader = req?.headers?.['x-mem0-source'];
+  const surface = typeof sourceHeader === 'string' && sourceHeader.trim().length > 0
+    ? sourceHeader.trim().toLowerCase()
+    : 'mem0-compat';
+
+  const add = ctx?._umAdd ?? defaultUmAdd;
+  const common = {
+    memory,
+    userId: operatorId,
+    metadata,
+    surface,
+    _qdrantClient: ctx?._qdrantClient,
+    _factsProviderOverride: ctx?._factsProviderOverride,
+    _embedProviderOverride: ctx?._embedProviderOverride,
+  };
+
+  if (b.infer === false) {
+    // Verbatim store path: one umAdd(infer:false) per message (spec §3 R2).
+    const results = [];
+    for (const m of messages) {
+      const r = await add({ ...common, text: m.content, infer: false });
+      results.push(...toMem0AddResults(r).results);
+    }
+    return { status: 200, body: { results } };
+  }
+
+  // Default path: the whole conversation as ONE role-prefixed transcript →
+  // a single umAdd — UM's extractor pulls multiple facts from a blob, so one
+  // call preserves mem0's whole-conversation extraction semantics (spec §3 R2).
+  const transcript = messages.map((m) => `${m.role ?? 'user'}: ${m.content}`).join('\n');
+  const r = await add({ ...common, text: transcript, infer: true });
+  return { status: 200, body: toMem0AddResults(r) };
+}
+
+// --- R3 ---------------------------------------------------------------------
+
+async function handleSearch({ body, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const b = body ?? {};
+  const descriptor = parseMem0Filters(b.filters); // CompatFilterError → 400 via dispatcher
+  const foreign = foreignUserIdIn(descriptor, operatorId);
+  if (foreign) return userIdMismatch(foreign.value, operatorId);
+  if (b.user_id !== undefined && b.user_id !== operatorId) {
+    return userIdMismatch(b.user_id, operatorId);
+  }
+  if (typeof b.query !== 'string' || b.query.trim().length === 0) {
+    return detailError(400, 'query is required');
+  }
+  // rerank / keyword_search / fields: accepted, documented no-ops (spec §2).
+
+  const topK = Number.isInteger(b.top_k) && b.top_k > 0 ? b.top_k : 10;
+  // Facade-side filters can only shrink the result set → over-fetch, then
+  // filter, then truncate (spec §3 "Application point").
+  const fetchLimit = Math.max(topK * 3, 30);
+  const raw = await memory.search(b.query, { userId: operatorId, limit: fetchLimit });
+  let items = raw?.results ?? raw ?? [];
+  // Read-path parity with doSearch: superseded/system records never surface.
+  items = filterSystemDocs(items).filter(isRecallable);
+
+  let records = items.map((r) => toMem0Record(r));
+  records = applyMem0Filters(records, descriptor);
+  const threshold = typeof b.threshold === 'number' ? b.threshold : 0.3;
+  records = records.filter((r) => typeof r.score !== 'number' || r.score >= threshold);
+  return { status: 200, body: { results: records.slice(0, topK) } };
+}
+
+// --- R4 ---------------------------------------------------------------------
+
+async function handleList({ url, body, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const b = body ?? {};
+  const descriptor = parseMem0Filters(b.filters); // CompatFilterError → 400 via dispatcher
+  const foreign = foreignUserIdIn(descriptor, operatorId);
+  if (foreign) return userIdMismatch(foreign.value, operatorId);
+  if (b.user_id !== undefined && b.user_id !== operatorId) {
+    return userIdMismatch(b.user_id, operatorId);
+  }
+
+  const items = await scanAll(memory, operatorId);
+  const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
+
+  const pageRaw = Number.parseInt(url.searchParams.get('page') ?? '', 10);
+  const sizeRaw = Number.parseInt(url.searchParams.get('page_size') ?? '', 10);
+  const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1;
+  // page_size capped at 500: attacker-supplied sizes don't drive unbounded
+  // per-row projection (spec §3 R4).
+  const pageSize = Math.min(Number.isInteger(sizeRaw) && sizeRaw >= 1 ? sizeRaw : 100, 500);
+  const start = (page - 1) * pageSize;
+  return { status: 200, body: { results: records.slice(start, start + pageSize) } };
+}
+
+// --- R5 ---------------------------------------------------------------------
+
+async function handleGet({ params, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const scoped = await fetchScopedPoint(ctx, memory, operatorId, params[0]);
+  if (!scoped) return notFound();
+  return { status: 200, body: toMem0Record(pointToRawRecord(scoped.point)) };
+}
+
+// --- R6 ---------------------------------------------------------------------
+
+async function handleUpdate({ params, body, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const scoped = await fetchScopedPoint(ctx, memory, operatorId, params[0]);
+  if (!scoped) return notFound();
+  const { point, client, collection } = scoped;
+
+  const b = body ?? {};
+  const text = typeof b.text === 'string' && b.text.length > 0 ? b.text : undefined;
+  const hasMetadata = b.metadata !== null && typeof b.metadata === 'object' && !Array.isArray(b.metadata);
+  if (text === undefined && !hasMetadata) {
+    return detailError(400, 'at least one of text / metadata is required');
+  }
+  const mergeMetadata = hasMetadata ? sanitizeUpdateMetadata(b.metadata) : {};
+  const updatedAt = new Date().toISOString();
+
+  let payload;
+  if (text !== undefined) {
+    // Explicit user edit is authoritative (mem0 semantics) — deliberately
+    // bypasses dedup/supersession. Re-embed via the SAME embed orchestrator
+    // umAdd uses (collection's stamped model → no stamp drift), then upsert
+    // the SAME point id preserving the full umAdd payload schema: data/hash
+    // refreshed, surfaces/status/userId/createdAt carried, updatedAt set.
+    // A post-update hash collision with a DIFFERENT point is tolerated by
+    // design — two points may share a hash (spec §3 R6 invariants).
+    const { vector } = await defaultEmbed(text, { _providerOverride: ctx?._embedProviderOverride });
+    payload = { ...point.payload, ...mergeMetadata, data: text, hash: md5(text), updatedAt };
+    await client.upsert(collection, { points: [{ id: point.id, vector, payload }] });
+  } else {
+    // Metadata-only: additive setPayload merge (supersede.mjs idiom); the
+    // stored vector + text are untouched.
+    payload = { ...point.payload, ...mergeMetadata, updatedAt };
+    await client.setPayload(collection, { points: [point.id], payload: { ...mergeMetadata, updatedAt } });
+  }
+
+  const record = toMem0Record(pointToRawRecord({ id: point.id, payload }));
+  return { status: 200, body: { ...record, event: 'UPDATE' } };
+}
+
+// --- R7 ---------------------------------------------------------------------
+
+async function handleDeleteById({ params, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const scoped = await fetchScopedPoint(ctx, memory, operatorId, params[0]);
+  if (!scoped) return notFound();
+  await memory.delete(String(scoped.point.id));
+  return { status: 200, body: { message: 'Memory deleted successfully!' } };
+}
+
+// --- R8/R9 shared scan-delete ------------------------------------------------
+
+/**
+ * Facade-side scoped scan-then-delete-by-ids (spec §3 R8 mechanism —
+ * O(N) by design at single-operator instance scale; NOT a new indexed
+ * delete path). `metadataScopes` is {agent_id?, app_id?, run_id?}; all
+ * present entries must match the stored metadata (AND). System docs are
+ * excluded by scanAll — a user-scope wipe never deletes the embedding stamp.
+ */
+async function scanDelete(memory, operatorId, metadataScopes) {
+  const items = await scanAll(memory, operatorId);
+  const entries = Object.entries(metadataScopes);
+  const matches = items.filter((r) => entries.every(([k, v]) => r?.metadata?.[k] === v));
+  for (const r of matches) {
+    await memory.delete(String(r.id));
+  }
+  return { status: 200, body: { message: `${matches.length} memories deleted` } };
+}
+
+// --- R8 ---------------------------------------------------------------------
+
+async function handleBulkDelete({ url, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const qp = url.searchParams;
+  const scopeKeys = ['user_id', 'agent_id', 'app_id', 'run_id']
+    .filter((k) => typeof qp.get(k) === 'string' && qp.get(k).length > 0);
+  if (scopeKeys.length === 0) {
+    return detailError(400, 'at least one scope param is required (user_id / agent_id / app_id / run_id) — refusing an unscoped bulk delete');
+  }
+  const userId = qp.get('user_id');
+  if (userId !== null && userId !== '' && userId !== operatorId) {
+    return userIdMismatch(userId, operatorId);
+  }
+  const metadataScopes = {};
+  for (const k of scopeKeys) {
+    if (k !== 'user_id') metadataScopes[k] = qp.get(k);
+  }
+  return scanDelete(memory, operatorId, metadataScopes);
+}
+
+// --- R9 ---------------------------------------------------------------------
+
+const ENTITY_METADATA_KEYS = { agent: 'agent_id', app: 'app_id', run: 'run_id' };
+
+async function handleEntityDelete({ params, ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const [type, id] = params;
+  if (type === 'user') {
+    // §6 no-leak: a foreign user entity 404s (not 400) — its existence is
+    // exactly as undisclosed as a foreign point id.
+    if (id !== operatorId) return notFound();
+    return scanDelete(memory, operatorId, {});
+  }
+  const metadataKey = ENTITY_METADATA_KEYS[type];
+  if (!metadataKey) return detailError(400, `unknown entity type "${type}" — expected user/agent/app/run`);
+  return scanDelete(memory, operatorId, { [metadataKey]: id });
+}
+
+// --- R10 --------------------------------------------------------------------
+
+async function handleEntities({ ctx }) {
+  const { operatorId, memory } = resolveCompatCtx(ctx);
+  const items = await scanAll(memory, operatorId);
+  return {
+    status: 200,
+    body: { results: [{ type: 'user', id: operatorId, total_memories: items.length }] },
+  };
+}
+
+// --- R11 --------------------------------------------------------------------
+
+async function handleEventsList() {
+  // SaaS ingestion-event concept — UM has none; the plugin's event tools
+  // degrade to "no events" (spec §3 R11).
+  return { status: 200, body: { results: [] } };
+}
+
+async function handleEventById() {
+  return detailError(404, 'Resource not found: events are not tracked by this server');
+}
+
+// ---------------------------------------------------------------------------
+// Compat-route dispatcher (spec §3 route table).
+// ---------------------------------------------------------------------------
 
 /**
  * The client-pinned route subset (spec §3 R1-R11; R11 spans two paths).
@@ -254,18 +655,18 @@ function notImplemented() {
  * {status, body}; errors use the mem0 dialect {detail} (spec §6).
  */
 const COMPAT_ROUTES = [
-  { id: 'R1',  method: 'GET',    pattern: /^\/v1\/ping\/$/,                      handler: notImplemented },
-  { id: 'R2',  method: 'POST',   pattern: /^\/v1\/memories\/$/,                  handler: notImplemented },
-  { id: 'R3',  method: 'POST',   pattern: /^\/v2\/memories\/search\/$/,          handler: notImplemented },
-  { id: 'R4',  method: 'POST',   pattern: /^\/v2\/memories\/$/,                  handler: notImplemented },
-  { id: 'R5',  method: 'GET',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
-  { id: 'R6',  method: 'PUT',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
-  { id: 'R7',  method: 'DELETE', pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: notImplemented },
-  { id: 'R8',  method: 'DELETE', pattern: /^\/v1\/memories\/$/,                  handler: notImplemented },
-  { id: 'R9',  method: 'DELETE', pattern: /^\/v2\/entities\/([^/]+)\/([^/]+)\/$/, handler: notImplemented },
-  { id: 'R10', method: 'GET',    pattern: /^\/v1\/entities\/$/,                  handler: notImplemented },
-  { id: 'R11', method: 'GET',    pattern: /^\/v1\/events\/$/,                    handler: notImplemented },
-  { id: 'R11', method: 'GET',    pattern: /^\/v1\/event\/([^/]+)\/$/,            handler: notImplemented },
+  { id: 'R1',  method: 'GET',    pattern: /^\/v1\/ping\/$/,                      handler: handlePing },
+  { id: 'R2',  method: 'POST',   pattern: /^\/v1\/memories\/$/,                  handler: handleAdd },
+  { id: 'R3',  method: 'POST',   pattern: /^\/v2\/memories\/search\/$/,          handler: handleSearch },
+  { id: 'R4',  method: 'POST',   pattern: /^\/v2\/memories\/$/,                  handler: handleList },
+  { id: 'R5',  method: 'GET',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: handleGet },
+  { id: 'R6',  method: 'PUT',    pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: handleUpdate },
+  { id: 'R7',  method: 'DELETE', pattern: /^\/v1\/memories\/([^/]+)\/$/,         handler: handleDeleteById },
+  { id: 'R8',  method: 'DELETE', pattern: /^\/v1\/memories\/$/,                  handler: handleBulkDelete },
+  { id: 'R9',  method: 'DELETE', pattern: /^\/v2\/entities\/([^/]+)\/([^/]+)\/$/, handler: handleEntityDelete },
+  { id: 'R10', method: 'GET',    pattern: /^\/v1\/entities\/$/,                  handler: handleEntities },
+  { id: 'R11', method: 'GET',    pattern: /^\/v1\/events\/$/,                    handler: handleEventsList },
+  { id: 'R11', method: 'GET',    pattern: /^\/v1\/event\/([^/]+)\/$/,            handler: handleEventById },
 ];
 
 /**
@@ -289,7 +690,18 @@ export async function handleMem0Compat(req, url, body, ctx) {
     if (req.method !== route.method) continue;
     const m = route.pattern.exec(url.pathname);
     if (!m) continue;
-    return route.handler({ req, url, body, ctx, params: m.slice(1) });
+    try {
+      return await route.handler({ req, url, body, ctx, params: m.slice(1) });
+    } catch (err) {
+      // Every compat response speaks the client's dialect — a thrown
+      // CompatFilterError is the caller's malformed filter (→ 400); anything
+      // else is ours (→ 500). Never let an exception escape to the outer
+      // handler, which would answer in the UM §5.1 envelope instead.
+      if (err instanceof CompatFilterError) {
+        return { status: 400, body: { detail: err.message } };
+      }
+      return { status: 500, body: { detail: err?.message ?? 'internal error' } };
+    }
   }
   return { status: 404, body: { detail: 'unknown compat route' } };
 }

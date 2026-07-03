@@ -109,31 +109,10 @@ test('extractBearer still rejects the Token scheme (non-compat routes stay Beare
 });
 
 // ---------------------------------------------------------------------------
-// 3. Dispatcher skeleton — handleMem0Compat (unit, offline)
+// 3. Dispatcher — handleMem0Compat (unit, offline). Per-route business-logic
+//    coverage lives in mem0-compat-handlers.test.mjs (Batch 3); here we pin
+//    only the dispatch-layer contract (route match / no-match).
 // ---------------------------------------------------------------------------
-
-// The 11 spec routes (R11 covers both /v1/events/ and /v1/event/{id}/).
-const SPEC_ROUTES = [
-  ['R1',   'GET',    '/v1/ping/'],
-  ['R2',   'POST',   '/v1/memories/'],
-  ['R3',   'POST',   '/v2/memories/search/'],
-  ['R4',   'POST',   '/v2/memories/'],
-  ['R5',   'GET',    '/v1/memories/some-id/'],
-  ['R6',   'PUT',    '/v1/memories/some-id/'],
-  ['R7',   'DELETE', '/v1/memories/some-id/'],
-  ['R8',   'DELETE', '/v1/memories/'],
-  ['R9',   'DELETE', '/v2/entities/user/op/'],
-  ['R10',  'GET',    '/v1/entities/'],
-  ['R11',  'GET',    '/v1/events/'],
-  ['R11',  'GET',    '/v1/event/some-id/'],
-];
-
-for (const [id, method, path] of SPEC_ROUTES) {
-  test(`dispatcher: ${id} ${method} ${path} → 501 skeleton (batch 3 owns the logic)`, async () => {
-    const out = await handleMem0Compat({ method }, new URL(path, 'http://x'), undefined, {});
-    assert.deepEqual(out, { status: 501, body: { detail: 'not implemented (batch 3)' } });
-  });
-}
 
 test('dispatcher: unknown compat path → 404 {detail} (mem0 error dialect)', async () => {
   const out = await handleMem0Compat({ method: 'GET' }, new URL('/v1/nope/', 'http://x'), undefined, {});
@@ -201,7 +180,10 @@ test('ORDERING INVARIANT (spec §6): flag OFF + bad token → 404, not 401', asy
   } finally { await close(); }
 });
 
-test('flag ON + Token-scheme correct key → past auth, 501 skeleton', async () => {
+test('flag ON + Token-scheme correct key → past auth, into the handler (R2 400 on empty body)', async () => {
+  // An empty JSON body carries no messages[] → the R2 handler answers 400
+  // in the mem0 dialect. Reaching a HANDLER response (not 401/404) is the
+  // pin: auth ran, passed, and dispatch happened.
   const { close, url } = await startServer({ token: 'secret-token', compatFlag: 'true', memory: fakeMemory });
   try {
     const r = await fetch(url('/v1/memories/'), {
@@ -213,18 +195,21 @@ test('flag ON + Token-scheme correct key → past auth, 501 skeleton', async () 
       },
       body: '{}',
     });
-    assert.equal(r.status, 501);
-    assert.deepEqual(await r.json(), { detail: 'not implemented (batch 3)' });
+    assert.equal(r.status, 400);
+    assert.equal(typeof (await r.json()).detail, 'string');
   } finally { await close(); }
 });
 
-test('flag ON + Bearer-scheme correct key → past auth, 501 skeleton', async () => {
+test('flag ON + Bearer-scheme correct key → past auth, R1 ping 200', async () => {
   const { close, url } = await startServer({ token: 'secret-token', compatFlag: 'true', memory: fakeMemory });
   try {
     const r = await fetch(url('/v1/ping/'), {
       headers: { 'Authorization': 'Bearer secret-token', 'X-Forwarded-For': '1.2.3.4' },
     });
-    assert.equal(r.status, 501);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.status, 'ok');
+    assert.equal(body.name, 'universal-memory');
   } finally { await close(); }
 });
 
@@ -272,11 +257,11 @@ test('loopback no-bypass: pure loopback, no token → 401 on compat route (spec 
   } finally { await close(); }
 });
 
-test('loopback no-bypass: pure loopback WITH Token key → 501 (auth ran and passed)', async () => {
+test('loopback no-bypass: pure loopback WITH Token key → 200 ping (auth ran and passed)', async () => {
   const { close, url } = await startServer({ token: 'secret-token', compatFlag: 'true', memory: fakeMemory });
   try {
     const r = await fetch(url('/v1/ping/'), { headers: { 'Authorization': 'Token secret-token' } });
-    assert.equal(r.status, 501);
+    assert.equal(r.status, 200);
   } finally { await close(); }
 });
 

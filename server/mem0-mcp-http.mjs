@@ -2738,7 +2738,12 @@ export function createRequestHandler(ctx = {}) {
 					return;
 				}
 			}
-			const out = await handleMem0Compat(req, url, compatBody, ctx);
+			// Handlers resolve identity + clients off ctx (DI-friendly for the
+			// handler tests): the operator id and the memory client are bound
+			// here the same way the doList/umAdd call sites bind them; injected
+			// seams (_qdrantClient, _factsProviderOverride, _embedProviderOverride)
+			// ride along via the ctx spread.
+			const out = await handleMem0Compat(req, url, compatBody, { ...ctx, memory: resolvedMemory(), userId: USER_ID });
 			res.writeHead(out.status, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(out.body));
 			return;
