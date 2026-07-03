@@ -67,7 +67,13 @@ import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
 import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
 
-function md5(s) { return createHash('md5').update(s).digest('hex'); }
+/**
+ * Content hash used across the write path (buildPayload's `hash` field,
+ * computeFactId's uuidv5 seed). Exported so siblings that must stay
+ * byte-identical with this hashing (e.g. lib/mem0-compat.mjs's R6
+ * text-update refresh) reuse it instead of re-declaring the algorithm.
+ */
+export function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
 /**
  * Compute the deterministic uuidv5 point-ID for a dedup-eligible fact write.

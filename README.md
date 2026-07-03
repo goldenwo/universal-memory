@@ -130,6 +130,7 @@ Surface-specific guides:
 - **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
 - **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall-only.** Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
 - **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end.
+- **mem0 Platform clients (e.g. the OpenClaw memory plugin):** see [docs/mem0-compat.md](docs/mem0-compat.md) — a flag-gated facade (`UM_MEM0_COMPAT_ENABLED=true`) speaking the mem0 Platform HTTP dialect. Already on mem0? Point the client's `baseUrl` at your UM server and use your `UM_AUTH_TOKEN` as the API key — zero client changes.
 - **CLI (`um`):** see [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`).
 
 ---

@@ -2770,6 +2770,188 @@ sys.exit(0 if any(m in str(r.get('title','')) + str(r.get('body','')) + str(r.ge
 	echo "[smoke]     Tier-2 #9 S8 cross-surface records cleaned up"
 fi
 
+# mem0-compat S9 — mem0 Platform-dialect round-trip probe (compat spec §8;
+# docs/mem0-compat.md is the canonical contract). Gated by
+# UM_SMOKE_MEM0_COMPAT=1 (explicit opt-in), mirroring S2–S8. Exercises the
+# flag-gated compat facade end-to-end over the wire, exactly as a stock mem0
+# Platform client (e.g. openclaw-mem0 in mode:"platform") would speak it:
+# add (R2, infer:false) → search (R3, mem0 record shape) → get (R5) →
+# delete (R7) → search-gone, plus the auth negatives (wrong key → 401 under
+# both schemes).
+#
+# FLAG: the compat routes hard-404 at the endpoint-class row unless the
+# SERVER runs with UM_MEM0_COMPAT_ENABLED=true (the facade ships default-off
+# / inert). CI sets that on the server under test — smoke.yml appends it to
+# .env alongside the rate-limit override, then force-recreates — so in CI
+# this probe RUNS. A flag-off stack gets a 404 from the R1 ping pre-check
+# and SKIPS cleanly with an actionable hint (the S7 OAuth-off posture).
+#
+# AUTH: compat routes accept `Authorization: Token <key>` AND `Bearer <key>`
+# (same UM_AUTH_TOKEN; lib/auth.mjs extractCompatToken) and have NO loopback
+# bypass — a mem0 client always sends its key (compat spec §6). Every call
+# here uses the Token scheme (the dialect under test) via its own 0600
+# curl-config tmpfile (token never in argv — same R1-hardening pattern as
+# the Bearer wrapper at the top of this script), EXCEPT one positive Bearer
+# check (the R5 get goes through the wrapped curl()) proving both schemes
+# are accepted against the same token.
+#
+# DETERMINISM: the R2 write sends infer:false → the verbatim store path
+# (one stored record per message, no LLM extraction variance), so the
+# marker text round-trips byte-exact and the probe never depends on
+# extraction behavior.
+#
+# Position: AFTER S8 and BEFORE the boot-smoke gate (same rationale as
+# S2–S8 — $ENDPOINT / $UM_AUTH_TOKEN in scope, deferred auth cleanup still
+# pending). Self-cleaning incl. on failure (S8's cleanup pattern): every
+# record the probe wrote is deleted via the compat R7 DELETE, so the store
+# returns to baseline.
+if [ "${UM_SMOKE_MEM0_COMPAT:-}" = "1" ]; then
+	echo "[smoke] mem0-compat S9 — Platform-dialect round-trip (UM_SMOKE_MEM0_COMPAT=1)"
+
+	if [ -z "${UM_AUTH_TOKEN:-}" ]; then
+		# Compat routes have no loopback bypass (compat spec §6) — without a
+		# token the probe cannot authenticate at all, so skip with a hint
+		# rather than fail a legitimately tokenless local rig.
+		echo "[smoke] S9 SKIP: no UM_AUTH_TOKEN available — compat routes require auth even on loopback (docs/mem0-compat.md); set UM_AUTH_TOKEN to run"
+	else
+		# Token-scheme curl config (0600 tmpfile; token never in argv).
+		_S9_AUTH_CONFIG=$(mktemp -t smoke-s9-auth.XXXXXX 2>/dev/null || mktemp)
+		chmod 600 "$_S9_AUTH_CONFIG"
+		printf 'header = "Authorization: Token %s"\n' "$UM_AUTH_TOKEN" > "$_S9_AUTH_CONFIG"
+		s9_curl() { command curl --config "$_S9_AUTH_CONFIG" "$@"; }
+
+		S9_MARKER="mem0compat-$(date +%s)-$$"
+		S9_IDS=""
+
+		# Failure-safe cleanup: delete every record this probe wrote (via the
+		# compat R7 DELETE, Token scheme), even on assertion failure, then
+		# drop the auth-config tmpfile.
+		s9_cleanup() {
+			for id in $S9_IDS; do
+				[ -n "$id" ] || continue
+				s9_curl -s -X DELETE "$ENDPOINT/v1/memories/$id/" >/dev/null 2>&1 || true
+			done
+			rm -f "$_S9_AUTH_CONFIG"
+		}
+		s9_fail() { echo "[smoke] S9 FAIL: $1" >&2; s9_cleanup; _um_smoke_auth_cleanup; exit 1; }
+
+		# (a) Flag pre-check — R1 ping. 200 ⇒ facade enabled, run the probe;
+		# 404 ⇒ UM_MEM0_COMPAT_ENABLED off on the server (the shipped
+		# default) ⇒ skip cleanly; anything else ⇒ fail.
+		_s9_ping_status=$(s9_curl -s -o /dev/null -w '%{http_code}' "$ENDPOINT/v1/ping/" 2>/dev/null || echo "000")
+		if [ "$_s9_ping_status" = "404" ]; then
+			echo "[smoke] S9 SKIP: compat facade disabled on the server (GET /v1/ping/ → 404) — set UM_MEM0_COMPAT_ENABLED=true in the server env to run"
+			rm -f "$_S9_AUTH_CONFIG"
+		elif [ "$_s9_ping_status" != "200" ]; then
+			s9_fail "GET /v1/ping/ returned HTTP $_s9_ping_status (expected 200 flag-on / 404 flag-off) — server unreachable or misrouting compat paths"
+		else
+			echo "[smoke]     R1 ping OK (facade enabled)"
+
+			# (b) R2 add — mem0 message shape, infer:false → verbatim store
+			# (deterministic; marker round-trips byte-exact). X-Mem0-Source
+			# tags provenance (compat spec §7) so soak tooling can count
+			# probe writes distinctly if a run ever leaks one.
+			S9_ADD_RESP=$(s9_curl -sf -X POST "$ENDPOINT/v1/memories/" \
+				-H 'Content-Type: application/json' \
+				-H 'X-Mem0-Source: smoke-s9' \
+				-d "{\"messages\":[{\"role\":\"user\",\"content\":\"The mem0-compat verification code is $S9_MARKER.\"}],\"infer\":false}") \
+				|| s9_fail "POST /v1/memories/ (R2, Token scheme) request failed"
+			S9_IDS=$(echo "$S9_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    if r.get('id'): print(r['id'])
+") || s9_fail "R2 add returned malformed JSON: $S9_ADD_RESP"
+			[ -n "$S9_IDS" ] || s9_fail "R2 add (infer:false) stored 0 records — the verbatim path must store every message: $S9_ADD_RESP"
+			S9_ID=$(echo "$S9_IDS" | head -1)
+			echo "[smoke]     R2 add OK: stored $(echo "$S9_IDS" | wc -w | tr -d ' ') record(s) via Token scheme, id=$S9_ID"
+
+			# (c) R3 search — poll until the marker surfaces (writes settle
+			# async; same 15x2s budget as S8). Asserts the mem0 record shape
+			# on the hit: id + memory fields present.
+			S9_FOUND=0
+			S9_SEARCH_RESP=""
+			for i in $(seq 1 15); do
+				S9_SEARCH_RESP=$(s9_curl -s -X POST "$ENDPOINT/v2/memories/search/" \
+					-H 'Content-Type: application/json' \
+					-d "{\"query\":\"$S9_MARKER\",\"top_k\":10}") || true
+				if echo "$S9_SEARCH_RESP" | S9_MARKER="$S9_MARKER" python3 -c "
+import json, os, sys
+m = os.environ['S9_MARKER']
+results = json.load(sys.stdin).get('results', [])
+hits = [r for r in results if m in str(r.get('memory', ''))]
+assert hits, 'marker not in any results[].memory'
+assert all(r.get('id') and 'memory' in r for r in hits), 'hit missing id/memory field'
+" 2>/dev/null; then S9_FOUND=1; break; fi
+				sleep 2
+			done
+			[ "$S9_FOUND" = "1" ] || s9_fail "marker '$S9_MARKER' never surfaced in POST /v2/memories/search/ results[].memory after 30s. Last response: $S9_SEARCH_RESP"
+			echo "[smoke]     R3 search OK: marker found in results[].memory (mem0 record shape: id + memory present)"
+
+			# (d) R5 get by id — deliberately via the BEARER-scheme wrapped
+			# curl() from the auth-setup block: the one positive Bearer check
+			# (compat routes accept both schemes against the same UM_AUTH_TOKEN).
+			S9_GET_RESP=$(curl -sf "$ENDPOINT/v1/memories/$S9_ID/") \
+				|| s9_fail "GET /v1/memories/$S9_ID/ (R5, Bearer scheme) failed — compat must accept Bearer alongside Token"
+			echo "$S9_GET_RESP" | S9_MARKER="$S9_MARKER" S9_ID="$S9_ID" python3 -c "
+import json, os, sys
+rec = json.load(sys.stdin)
+assert str(rec.get('id')) == os.environ['S9_ID'], 'R5 returned wrong id: ' + str(rec.get('id'))
+assert os.environ['S9_MARKER'] in str(rec.get('memory', '')), 'R5 record.memory missing the marker'
+" || s9_fail "R5 get returned a malformed/wrong record: $S9_GET_RESP"
+			echo "[smoke]     R5 get OK (Bearer scheme accepted alongside Token)"
+
+			# (e) R7 delete by id (Token scheme).
+			s9_curl -sf -X DELETE "$ENDPOINT/v1/memories/$S9_ID/" >/dev/null \
+				|| s9_fail "DELETE /v1/memories/$S9_ID/ (R7, Token scheme) failed"
+			echo "[smoke]     R7 delete OK"
+
+			# (f) R3 search again — the deleted record must be GONE. Deletes
+			# are synchronous point ops, but allow a short settle budget so a
+			# slow index refresh can't flake the run.
+			S9_GONE=0
+			S9_SEARCH2_RESP=""
+			for i in $(seq 1 5); do
+				S9_SEARCH2_RESP=$(s9_curl -s -X POST "$ENDPOINT/v2/memories/search/" \
+					-H 'Content-Type: application/json' \
+					-d "{\"query\":\"$S9_MARKER\",\"top_k\":10}") || true
+				if echo "$S9_SEARCH2_RESP" | S9_ID="$S9_ID" python3 -c "
+import json, os, sys
+ids = {str(r.get('id')) for r in json.load(sys.stdin).get('results', [])}
+sys.exit(1 if os.environ['S9_ID'] in ids else 0)
+" 2>/dev/null; then S9_GONE=1; break; fi
+				sleep 2
+			done
+			[ "$S9_GONE" = "1" ] || s9_fail "deleted id $S9_ID still present in post-delete search results: $S9_SEARCH2_RESP"
+			echo "[smoke]     R3 post-delete search OK: deleted record gone"
+
+			# (g) Auth negatives — wrong key under BOTH schemes → 401 (compat
+			# spec §6: validated against the same UM_AUTH_TOKEN; no loopback
+			# bypass). Bare `command curl` with inline headers: the wrong-key
+			# literals are fake placeholders, so argv exposure is a non-issue.
+			_s9_neg_bearer=$(command curl -s -o /dev/null -w '%{http_code}' \
+				-X POST "$ENDPOINT/v2/memories/search/" \
+				-H 'Authorization: Bearer wrong' \
+				-H 'Content-Type: application/json' \
+				-d "{\"query\":\"$S9_MARKER\"}" 2>/dev/null || echo "000")
+			[ "$_s9_neg_bearer" = "401" ] || s9_fail "wrong Bearer key got HTTP $_s9_neg_bearer (expected 401)"
+			_s9_neg_token=$(command curl -s -o /dev/null -w '%{http_code}' \
+				-X POST "$ENDPOINT/v2/memories/search/" \
+				-H 'Authorization: Token smoke-s9-wrong-key' \
+				-H 'Content-Type: application/json' \
+				-d "{\"query\":\"$S9_MARKER\"}" 2>/dev/null || echo "000")
+			[ "$_s9_neg_token" = "401" ] || s9_fail "wrong Token key got HTTP $_s9_neg_token (expected 401)"
+			echo "[smoke]     auth negatives OK: wrong key → 401 under both Token and Bearer schemes"
+
+			# Cleanup — restore baseline (R2 stores one record per message on
+			# the infer:false path; delete them all, incl. any beyond the one
+			# R7 already removed).
+			s9_cleanup
+			echo "[smoke] mem0-compat S9 PASS: Platform-dialect round-trip proven end-to-end (add → search → get → delete → gone; Token + Bearer accepted; wrong key 401s)"
+		fi
+	fi
+fi
+
 # Auth cleanup deferred to after the boot-smoke gate below — the curl()
 # wrapper defined at the auth-setup block prepends `--config $TMPFILE` to
 # every curl call (so the bearer token never appears in argv). Cleanup

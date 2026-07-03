@@ -54,7 +54,9 @@ import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
-import { extractBearer, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
+import { extractBearer, extractCompatToken, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
+import { handleMem0Compat } from './lib/mem0-compat.mjs';
+import { isRecallable } from './lib/recallable.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
@@ -109,6 +111,20 @@ function resolveRouteTemplate(pathname, method) {
   if (pathname.startsWith('/api/recent/')) return '/api/recent/:project';
   if (pathname.startsWith('/api/state/')) return '/api/state/:project';
   if (pathname.startsWith('/api/') && method === 'DELETE') return '/api/:id';
+  // mem0 Platform-compat facade (compat spec §3 route table): the 11
+  // client-pinned routes. Runtime segments (:id, :type) collapse to their
+  // template so compat traffic never buckets under '/__unknown__' and
+  // per-id paths cannot grow metric cardinality. Method is deliberately
+  // not part of the template (house idiom — R5/R6/R7 share one template).
+  if (pathname === '/v1/ping/') return '/v1/ping/';
+  if (pathname === '/v1/memories/') return '/v1/memories/';
+  if (/^\/v1\/memories\/[^/]+\/$/.test(pathname)) return '/v1/memories/:id/';
+  if (pathname === '/v2/memories/search/') return '/v2/memories/search/';
+  if (pathname === '/v2/memories/') return '/v2/memories/';
+  if (/^\/v2\/entities\/[^/]+\/[^/]+\/$/.test(pathname)) return '/v2/entities/:type/:id/';
+  if (pathname === '/v1/entities/') return '/v1/entities/';
+  if (pathname === '/v1/events/') return '/v1/events/';
+  if (/^\/v1\/event\/[^/]+\/$/.test(pathname)) return '/v1/event/:id/';
   return null;
 }
 
@@ -705,14 +721,18 @@ function tagRetryable(err) {
 // DRY helper: emit a uniform 429 response.
 // Used at both rate-limit sites (shared admit block + OAuth admit block).
 // Behavior: 429 status, Content-Type application/json, Retry-After header,
-// LIMIT_RATE_EXCEEDED envelope.
+// LIMIT_RATE_EXCEEDED envelope — or, when `compat` is true (mem0-compat
+// routes, compat spec §6), the mem0 error dialect {detail} the client
+// actually parses.
 // ---------------------------------------------------------------------------
-function send429(res, retryAfterSec) {
+function send429(res, retryAfterSec, compat = false) {
 	res.writeHead(429, {
 		'Content-Type': 'application/json',
 		'Retry-After': String(retryAfterSec),
 	});
-	res.end(JSON.stringify(errorResponse('LIMIT_RATE_EXCEEDED', 'rate limit exceeded')));
+	res.end(JSON.stringify(compat
+		? { detail: 'rate limit exceeded' }
+		: errorResponse('LIMIT_RATE_EXCEEDED', 'rate limit exceeded')));
 }
 
 // ---------------------------------------------------------------------------
@@ -1771,15 +1791,9 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		}
 	}
 	if (!includeSuperseded) {
-		items = items.filter((r) => {
-			const md = r.metadata || {};
-			const excluded =
-				md.status === 'superseded' ||
-				md.status === 'deprecated' ||
-				md.status === 'rejected' ||
-				(md.invalidated_at != null);
-			return !excluded;
-		});
+		// Shared read-path exclusion predicate (lib/recallable.mjs) — the
+		// same set the mem0-compat facade applies, so the surfaces can't drift.
+		items = items.filter(isRecallable);
 	}
 	// Optional temporal decay re-ranking (off by default).
 	// Set UM_TEMPORAL_DECAY=true to enable; UM_DECAY_HALF_LIFE_DAYS controls
@@ -2395,7 +2409,11 @@ export function createRequestHandler(ctx = {}) {
 	// Step 4: auth check. Skipped when the endpoint-class row says
 	// bypassAuth (e.g. /health) OR when loopback-bypass applies AND
 	// no forwarded header is present.
-	if (!route.bypassAuth && !shouldBypassLoopback(req)) {
+	// mem0-compat rows (route.compat, compat spec §6) get NO loopback
+	// bypass: a mem0 client always sends its key, and docker-bridge peer
+	// addresses make loopback semantics misleading on that deployment
+	// shape — so the compat marker vetoes shouldBypassLoopback here.
+	if (!route.bypassAuth && (route.compat === true || !shouldBypassLoopback(req))) {
 		const expected = process.env.UM_AUTH_TOKEN;
 		if (!expected) {
 			// Counter-finish log fires via res.end shim; emit a structured
@@ -2409,13 +2427,21 @@ export function createRequestHandler(ctx = {}) {
 				error_class: 'auth_unconfigured',
 			}, 'auth misconfigured'), 'log:auth:misconfigured');
 			res.writeHead(500, { 'Content-Type': 'application/json' });
-			res.end(JSON.stringify(errorResponse(
-				'SERVER_INTERNAL',
-				'server auth not configured (UM_AUTH_TOKEN unset)'
-			)));
+			// Compat routes answer in the mem0 dialect ({detail}) even for
+			// pre-dispatch failures — the client parses detail, not the UM
+			// envelope (compat spec §6 error dialect).
+			res.end(JSON.stringify(route.compat === true
+				? { detail: 'server auth not configured (UM_AUTH_TOKEN unset)' }
+				: errorResponse(
+					'SERVER_INTERNAL',
+					'server auth not configured (UM_AUTH_TOKEN unset)'
+				)));
 			return;
 		}
-		const received = extractBearer(req);
+		// mem0-compat rows accept `Token <key>` alongside `Bearer <key>`
+		// (compat spec §6) — same UM_AUTH_TOKEN, different scheme parser.
+		// Everything else keeps the Bearer-only extractor.
+		const received = route.compat === true ? extractCompatToken(req) : extractBearer(req);
 		// Gap-3 OAuth (spec §4.2): /mcp auth becomes an OR behind one verifier
 		// interface — legacy bearer OR an OAuth access token. ctx.oauth is
 		// undefined whenever the flag is off (gated at construction), so the
@@ -2457,6 +2483,14 @@ export function createRequestHandler(ctx = {}) {
 				error_code: 'AUTH_INVALID',
 				error_class: errorClass,
 			}, 'auth failed'), 'log:auth:failed');
+			// Compat routes speak the mem0 error dialect ({detail}) and skip
+			// the UM plugin-upgrade hint (meaningless to a mem0 client) and
+			// the OAuth breadcrumb (compat is never /mcp) — compat spec §6.
+			if (route.compat === true) {
+				res.writeHead(401, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ detail: 'invalid or missing API key' }));
+				return;
+			}
 			// Round-8 upgrade hint: legacy plugins (pre-v0.6) lack an
 			// identifying User-Agent. When the UA is missing or not a
 			// UM client, steer the user toward the plugin upgrade flow;
@@ -2518,11 +2552,16 @@ export function createRequestHandler(ctx = {}) {
 	//     LIMIT_RATE_EXCEEDED auto-tags retryable:true.
 	//   - res.end shim flushes the C.5 metrics counter for status=429
 	//     and the C.3 finish-log on the way out.
-	if (!route.bypassRateLimit && !shouldBypassLoopback(req)) {
+	// mem0-compat rows veto the loopback bypass here EXACTLY like Step-4's
+	// auth veto (compat spec §6): docker-bridge peers make loopback
+	// semantics misleading on the deployment shape compat targets, so the
+	// limiter applies to compat traffic from any peer. 429s answer in the
+	// mem0 dialect ({detail}) via send429's compat flag.
+	if (!route.bypassRateLimit && (route.compat === true || !shouldBypassLoopback(req))) {
 		const ipKey = extractRateLimitKey(req);
 		const decision = admit(ipKey);
 		if (!decision.admitted) {
-			send429(res, decision.retryAfterSec);
+			send429(res, decision.retryAfterSec, route.compat === true);
 			return;
 		}
 	}
@@ -2704,6 +2743,40 @@ export function createRequestHandler(ctx = {}) {
 			const result = await handleMcpMessage(body, ctx);
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
+			return;
+		}
+		// mem0 Platform-compat facade dispatch (compat spec §3/§6, plan Task 3).
+		// Gated on the endpoint-class row's compat marker: reaching here means
+		// UM_MEM0_COMPAT_ENABLED=true (flag-off hard-404s at Step-3a, BEFORE
+		// auth — the ordering invariant) and Step-4 validated the Token|Bearer
+		// key with no loopback bypass. Body is read/parsed here (routes own
+		// their body reads — house pattern); the dispatcher returns
+		// {status, body} in the mem0 error dialect ({detail}), including the
+		// 404 for unknown /v1/* + /v2/* paths, so every compat response speaks
+		// the client's typed-error mapping rather than the §5.1 envelope.
+		if (route.compat === true) {
+			let compatBody;
+			if (req.method === 'POST' || req.method === 'PUT') {
+				try {
+					const raw = await readBody(req);
+					compatBody = raw ? JSON.parse(raw) : undefined;
+				} catch (e) {
+					// Mem0-dialect errors even for transport-level failures: the
+					// compat client parses {detail}, not the UM envelope.
+					const tooLarge = e && e.code === 'INPUT_TOO_LARGE';
+					res.writeHead(tooLarge ? 413 : 400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ detail: tooLarge ? e.message : 'invalid JSON body' }));
+					return;
+				}
+			}
+			// Handlers resolve identity + clients off ctx (DI-friendly for the
+			// handler tests): the operator id and the memory client are bound
+			// here the same way the doList/umAdd call sites bind them; injected
+			// seams (_qdrantClient, _factsProviderOverride, _embedProviderOverride)
+			// ride along via the ctx spread.
+			const out = await handleMem0Compat(req, url, compatBody, { ...ctx, memory: resolvedMemory(), userId: USER_ID });
+			res.writeHead(out.status, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(out.body));
 			return;
 		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
