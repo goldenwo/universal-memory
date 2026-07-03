@@ -17,6 +17,10 @@
  * Return shape:
  *   { bypassAuth: boolean, bypassRateLimit: boolean }   // normal path
  *   { returnStatus: number }                            // hard short-circuit
+ *
+ * Normal-path rows MAY additionally carry marker fields consumed by the
+ * middleware chain — currently `compat: true` on the mem0-compat row
+ * (Step-4 extractor selection + loopback no-bypass, compat spec §6).
  */
 
 import { configuredProviders } from './oauth/idp/config.mjs';
@@ -64,6 +68,18 @@ const ROWS = [
   // row (not an exact path) — public only when OAuth is on AND a provider is fully
   // configured; otherwise hard-404 (default-closed, like the other OAuth rows).
   { match: (p, s) => p.startsWith('/oauth/idp/'),                    pol: (e) => oauthIdpPolicy(e) },
+
+  // /v1/* + /v2/*: mem0 Platform-compat facade (compat spec §6). Flag-off
+  // (UM_MEM0_COMPAT_ENABLED unset/false, read at request time like the
+  // OAuth rows) → hard-404 at the Step-3a short-circuit, which runs BEFORE
+  // auth — the tested ordering invariant (flag off + bad token → 404, not
+  // 401; a handler-level 404 would leak a 401 first). Flag-on → the normal
+  // auth + rate-limit path (bypassAuth:false, bypassRateLimit:false — the
+  // standard /api/ posture) PLUS compat:true, the row-shape extension
+  // Step-4 keys on to (a) select the Token|Bearer extractor and (b) deny
+  // the loopback no-auth bypass (spec §6: a mem0 client always sends its
+  // key; docker-bridge peers make loopback semantics misleading here).
+  { match: (p, s) => p.startsWith('/v1/') || p.startsWith('/v2/'),   pol: (e) => mem0CompatPolicy(e) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
@@ -136,6 +152,16 @@ function oauthRevokePolicy(env, sourceIp) {
   if (!oauthEnabled(env)) return { returnStatus: 404 };
   if (!isLoopbackIp(sourceIp)) return { returnStatus: 404 };
   return { bypassAuth: true, bypassRateLimit: true };
+}
+
+// mem0 Platform-compat routes (/v1/* + /v2/*). Default-closed like the
+// OAuth rows: the flag unset or anything but 'true' hard-404s so the
+// facade ships inert (compat spec §2). When on, auth + the SHARED rate
+// limiter both apply (standard API treatment, spec §6) and compat:true
+// marks the row for Step-4's extractor selection + loopback no-bypass.
+function mem0CompatPolicy(env) {
+  if ((env.UM_MEM0_COMPAT_ENABLED ?? 'false') !== 'true') return { returnStatus: 404 };
+  return { bypassAuth: false, bypassRateLimit: false, compat: true };
 }
 
 function oauthIdpPolicy(env) {
