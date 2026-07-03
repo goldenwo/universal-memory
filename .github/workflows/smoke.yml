@@ -178,6 +178,14 @@ jobs:
             echo "# detector runs). Exact-dup (hash) dedup tests are unaffected; no smoke"
             echo "# test relies on a 0.84 embedding-PARAPHRASE merge (D1 S2 uses exact text)."
             echo "UM_DEDUP_EMBEDDING_THRESHOLD=0.95"
+            echo ""
+            echo "# mem0 Platform-compat facade — enable the flag-gated /v1/*+/v2/*"
+            echo "# compat routes ON THE SERVER under test so the S9 probe"
+            echo "# (UM_SMOKE_MEM0_COMPAT=1 in the smoke step below) exercises the"
+            echo "# dialect end-to-end instead of skipping on the flag-off 404."
+            echo "# The facade ships default-off/inert; this is the explicit CI"
+            echo "# opt-in (docs/mem0-compat.md)."
+            echo "UM_MEM0_COMPAT_ENABLED=true"
           } >> .env
           # `restart` reuses the existing container's env vars — does NOT
           # re-read .env. Use `up -d --force-recreate` to rebuild the
@@ -306,6 +314,16 @@ jobs:
           # stack already runs writes-enabled above anyway. Self-cleaning (DELETE)
           # so the 5/5 baseline-preservation check stays green.
           UM_SMOKE_XSURFACE: "1"
+          # mem0-compat — UM_SMOKE_MEM0_COMPAT=1 fires the S9 Platform-dialect
+          # round-trip probe: R2 add (infer:false verbatim path, Token-scheme
+          # auth) → R3 search (mem0 record shape: id + memory) → R5 get (the
+          # one Bearer-scheme positive check — both schemes accepted) → R7
+          # delete → post-delete search-gone, plus wrong-key 401 negatives
+          # under both schemes. Requires UM_MEM0_COMPAT_ENABLED=true ON THE
+          # SERVER — appended to .env in the reconfig step above (the facade
+          # ships default-off/inert; against a flag-off stack S9 skips cleanly
+          # on the /v1/ping/ 404). Self-cleaning via the compat R7 DELETE.
+          UM_SMOKE_MEM0_COMPAT: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
