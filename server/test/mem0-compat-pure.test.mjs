@@ -28,56 +28,74 @@ test('parseMem0Filters: empty AND / empty OR → null', () => {
 test('parseMem0Filters: flat string-equality keys (user_id/agent_id/app_id/run_id)', () => {
   for (const key of ['user_id', 'agent_id', 'app_id', 'run_id']) {
     const d = parseMem0Filters({ [key]: 'v1' });
-    assert.deepEqual(d, { conditions: [{ key, op: 'eq', value: 'v1' }], mode: 'AND' });
+    assert.deepEqual(d, { branches: [[{ key, op: 'eq', value: 'v1' }]], mode: 'AND' });
   }
 });
 
-test('parseMem0Filters: flat multi-key condition object → AND of conditions', () => {
+test('parseMem0Filters: flat multi-key condition object → ONE branch of AND\'d conditions', () => {
   const d = parseMem0Filters({ user_id: 'u1', agent_id: 'a1' });
   assert.equal(d.mode, 'AND');
-  assert.equal(d.conditions.length, 2);
-  assert.deepEqual(d.conditions[0], { key: 'user_id', op: 'eq', value: 'u1' });
-  assert.deepEqual(d.conditions[1], { key: 'agent_id', op: 'eq', value: 'a1' });
+  assert.equal(d.branches.length, 1);
+  assert.deepEqual(d.branches[0], [
+    { key: 'user_id', op: 'eq', value: 'u1' },
+    { key: 'agent_id', op: 'eq', value: 'a1' },
+  ]);
 });
 
 test('parseMem0Filters: categories.contains', () => {
   const d = parseMem0Filters({ categories: { contains: 'work' } });
   assert.deepEqual(d, {
-    conditions: [{ key: 'categories', op: 'contains', value: 'work' }],
+    branches: [[{ key: 'categories', op: 'contains', value: 'work' }]],
     mode: 'AND',
   });
 });
 
-test('parseMem0Filters: created_at gte + lte → two conditions', () => {
+test('parseMem0Filters: created_at gte + lte → two conditions in one branch', () => {
   const d = parseMem0Filters({ created_at: { gte: '2026-01-01T00:00:00Z', lte: '2026-02-01T00:00:00Z' } });
   assert.equal(d.mode, 'AND');
-  assert.deepEqual(d.conditions, [
+  assert.deepEqual(d.branches, [[
     { key: 'created_at', op: 'gte', value: '2026-01-01T00:00:00Z' },
     { key: 'created_at', op: 'lte', value: '2026-02-01T00:00:00Z' },
-  ]);
+  ]]);
 });
 
 test('parseMem0Filters: created_at with only gte', () => {
   const d = parseMem0Filters({ created_at: { gte: '2026-01-01T00:00:00Z' } });
-  assert.deepEqual(d.conditions, [{ key: 'created_at', op: 'gte', value: '2026-01-01T00:00:00Z' }]);
+  assert.deepEqual(d.branches, [[{ key: 'created_at', op: 'gte', value: '2026-01-01T00:00:00Z' }]]);
 });
 
-test('parseMem0Filters: AND of flat conditions', () => {
+test('parseMem0Filters: AND of flat conditions → one branch per flat object', () => {
   const d = parseMem0Filters({ AND: [{ user_id: 'u1' }, { categories: { contains: 'ops' } }] });
   assert.equal(d.mode, 'AND');
-  assert.deepEqual(d.conditions, [
-    { key: 'user_id', op: 'eq', value: 'u1' },
-    { key: 'categories', op: 'contains', value: 'ops' },
+  assert.deepEqual(d.branches, [
+    [{ key: 'user_id', op: 'eq', value: 'u1' }],
+    [{ key: 'categories', op: 'contains', value: 'ops' }],
   ]);
 });
 
-test('parseMem0Filters: top-level OR of flat conditions', () => {
+test('parseMem0Filters: top-level OR of flat conditions → one branch per flat object', () => {
   const d = parseMem0Filters({ OR: [{ agent_id: 'a1' }, { run_id: 'r1' }] });
   assert.equal(d.mode, 'OR');
-  assert.deepEqual(d.conditions, [
-    { key: 'agent_id', op: 'eq', value: 'a1' },
-    { key: 'run_id', op: 'eq', value: 'r1' },
+  assert.deepEqual(d.branches, [
+    [{ key: 'agent_id', op: 'eq', value: 'a1' }],
+    [{ key: 'run_id', op: 'eq', value: 'r1' }],
   ]);
+});
+
+test('parseMem0Filters: OR preserves multi-condition branches (no flatten)', () => {
+  const d = parseMem0Filters({ OR: [{ agent_id: 'a', run_id: 'r1' }, { agent_id: 'b', run_id: 'r2' }] });
+  assert.equal(d.mode, 'OR');
+  assert.deepEqual(d.branches, [
+    [{ key: 'agent_id', op: 'eq', value: 'a' }, { key: 'run_id', op: 'eq', value: 'r1' }],
+    [{ key: 'agent_id', op: 'eq', value: 'b' }, { key: 'run_id', op: 'eq', value: 'r2' }],
+  ]);
+});
+
+test('parseMem0Filters: empty flat objects contribute no branch; all-empty → null', () => {
+  // A vacuous OR branch must not become a match-everything arm.
+  const d = parseMem0Filters({ OR: [{}, { agent_id: 'a1' }] });
+  assert.deepEqual(d.branches, [[{ key: 'agent_id', op: 'eq', value: 'a1' }]]);
+  assert.equal(parseMem0Filters({ OR: [{}, {}] }), null);
 });
 
 // --- fail-loud cases ---
@@ -219,12 +237,69 @@ test('applyMem0Filters: AND semantics — all conditions must hold', () => {
   assert.deepEqual(out.map((r) => r.id), ['1']);
 });
 
-test('applyMem0Filters: OR semantics — any condition suffices', () => {
+test('applyMem0Filters: OR semantics — any branch suffices', () => {
   const out = applyMem0Filters(
     recs,
     parseMem0Filters({ OR: [{ user_id: 'other' }, { categories: { contains: 'work' } }] }),
   );
   assert.deepEqual(out.map((r) => r.id), ['1', '3']);
+});
+
+test('applyMem0Filters: OR branches keep per-branch AND — cross-pairing must NOT match', () => {
+  // {OR:[(a,r1),(b,r2)]}: a record carrying (a,r2) satisfies agent_id from
+  // branch 1 and run_id from branch 2 but NEITHER branch fully — excluded.
+  const descriptor = parseMem0Filters({
+    OR: [{ agent_id: 'a', run_id: 'r1' }, { agent_id: 'b', run_id: 'r2' }],
+  });
+  const rows = [
+    { id: 'a-r1', categories: [], metadata: { agent_id: 'a', run_id: 'r1' } },
+    { id: 'a-r2', categories: [], metadata: { agent_id: 'a', run_id: 'r2' } }, // cross-pairing
+    { id: 'b-r2', categories: [], metadata: { agent_id: 'b', run_id: 'r2' } },
+    { id: 'b-r1', categories: [], metadata: { agent_id: 'b', run_id: 'r1' } }, // cross-pairing
+  ];
+  const out = applyMem0Filters(rows, descriptor);
+  assert.deepEqual(out.map((r) => r.id), ['a-r1', 'b-r2']);
+});
+
+test('applyMem0Filters: OR branch with created_at {gte,lte} stays a bounded range within its branch', () => {
+  // The window must NOT decompose into "gte OR lte" (which matches everything).
+  const descriptor = parseMem0Filters({
+    OR: [
+      { created_at: { gte: '2026-02-01T00:00:00Z', lte: '2026-02-28T00:00:00Z' } },
+      { agent_id: 'a9' },
+    ],
+  });
+  const rows = [
+    { id: 'before', created_at: '2026-01-10T00:00:00Z', categories: [], metadata: {} },
+    { id: 'inside', created_at: '2026-02-10T00:00:00Z', categories: [], metadata: {} },
+    { id: 'after', created_at: '2026-03-10T00:00:00Z', categories: [], metadata: {} },
+    { id: 'other-arm', created_at: '2026-06-10T00:00:00Z', categories: [], metadata: { agent_id: 'a9' } },
+  ];
+  const out = applyMem0Filters(rows, descriptor);
+  assert.deepEqual(out.map((r) => r.id), ['inside', 'other-arm']);
+});
+
+test('applyMem0Filters: created_at compares as instants — +05:00 bound vs Z-stored value', () => {
+  // 2026-02-10T05:00:00+05:00 === 2026-02-10T00:00:00Z (same instant).
+  // Lexicographic string compare would order '0…Z' < '0…+05:00' wrongly.
+  const rows = [{ id: 'z', created_at: '2026-02-10T00:00:00Z', categories: [], metadata: {} }];
+  const gte = parseMem0Filters({ created_at: { gte: '2026-02-10T05:00:00+05:00' } });
+  assert.deepEqual(applyMem0Filters(rows, gte).map((r) => r.id), ['z'], 'inclusive equal instant (gte)');
+  const lte = parseMem0Filters({ created_at: { lte: '2026-02-10T05:00:00+05:00' } });
+  assert.deepEqual(applyMem0Filters(rows, lte).map((r) => r.id), ['z'], 'inclusive equal instant (lte)');
+  const laterBound = parseMem0Filters({ created_at: { gte: '2026-02-10T05:00:01+05:00' } });
+  assert.deepEqual(applyMem0Filters(rows, laterBound), [], 'one second past the instant excludes');
+});
+
+test('applyMem0Filters: unparseable created_at on either side fails the condition (NaN)', () => {
+  const rows = [
+    { id: 'garbage-stored', created_at: 'not-a-date', categories: [], metadata: {} },
+    { id: 'ok', created_at: '2026-02-10T00:00:00Z', categories: [], metadata: {} },
+  ];
+  const d = parseMem0Filters({ created_at: { gte: '2026-01-01T00:00:00Z' } });
+  assert.deepEqual(applyMem0Filters(rows, d).map((r) => r.id), ['ok']);
+  const garbageBound = parseMem0Filters({ created_at: { lte: 'nonsense' } });
+  assert.deepEqual(applyMem0Filters(rows, garbageBound), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -313,19 +388,34 @@ test('toMem0Record: does not mutate the input', () => {
 // toMem0AddResults — umAdd result → mem0 dialect
 // ---------------------------------------------------------------------------
 
-test('toMem0AddResults: passes through id/memory/event', () => {
+test('toMem0AddResults: translates internal events to the mem0 dialect (docs R2 row)', () => {
+  // Merge family (DEDUP_MERGED / SUPERSEDED_INBAND) reads as "an existing
+  // memory changed" to a mem0 client → UPDATE. Internal tokens never leak.
   const out = toMem0AddResults({
     results: [
       { id: 'i1', memory: 'f1', event: 'ADD' },
       { id: 'i2', memory: 'f2', event: 'DEDUP_MERGED', supersededId: 'zzz' },
+      { id: 'i3', memory: 'f3', event: 'SUPERSEDED_INBAND', supersededId: 'yyy' },
     ],
   });
   assert.deepEqual(out, {
     results: [
       { id: 'i1', memory: 'f1', event: 'ADD' },
-      { id: 'i2', memory: 'f2', event: 'DEDUP_MERGED' },
+      { id: 'i2', memory: 'f2', event: 'UPDATE' },
+      { id: 'i3', memory: 'f3', event: 'UPDATE' },
     ],
   });
+});
+
+test('toMem0AddResults: absent / NONE / unknown events degrade to NONE', () => {
+  const out = toMem0AddResults({
+    results: [
+      { id: 'i1', memory: 'f1' },
+      { id: 'i2', memory: 'f2', event: 'NONE' },
+      { id: 'i3', memory: 'f3', event: 'SOME_FUTURE_INTERNAL_EVENT' },
+    ],
+  });
+  assert.deepEqual(out.results.map((r) => r.event), ['NONE', 'NONE', 'NONE']);
 });
 
 test('toMem0AddResults: defensive shapes — undefined / missing results / null', () => {

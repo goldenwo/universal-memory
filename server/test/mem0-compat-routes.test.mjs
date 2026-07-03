@@ -137,14 +137,22 @@ const fakeMemory = {
   }),
 };
 
-// Start a server with UM_AUTH_TOKEN and UM_MEM0_COMPAT_ENABLED pinned.
-// Saves/restores BOTH env vars on close (env hygiene — house pattern).
-async function startServer({ token, compatFlag, memory }) {
-  const prevTok = process.env.UM_AUTH_TOKEN;
-  const prevFlag = process.env.UM_MEM0_COMPAT_ENABLED;
-  process.env.UM_AUTH_TOKEN = token;
-  if (compatFlag === undefined) delete process.env.UM_MEM0_COMPAT_ENABLED;
-  else process.env.UM_MEM0_COMPAT_ENABLED = compatFlag;
+// Start a server with UM_AUTH_TOKEN and UM_MEM0_COMPAT_ENABLED pinned,
+// plus any extra env overrides (e.g. rate-limit knobs — createRateLimiter
+// reads env at handler-construction time). Saves/restores ALL touched env
+// vars on close (env hygiene — house pattern).
+async function startServer({ token, compatFlag, memory, env = {} }) {
+  const overrides = {
+    UM_AUTH_TOKEN: token,
+    UM_MEM0_COMPAT_ENABLED: compatFlag,
+    ...env,
+  };
+  const prev = {};
+  for (const [k, v] of Object.entries(overrides)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   const srv = createServer(createRequestHandler({ memory }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
@@ -152,10 +160,10 @@ async function startServer({ token, compatFlag, memory }) {
   const close = async () => {
     srv.close();
     await once(srv, 'close');
-    if (prevTok === undefined) delete process.env.UM_AUTH_TOKEN;
-    else process.env.UM_AUTH_TOKEN = prevTok;
-    if (prevFlag === undefined) delete process.env.UM_MEM0_COMPAT_ENABLED;
-    else process.env.UM_MEM0_COMPAT_ENABLED = prevFlag;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   };
   const url = (p) => `http://127.0.0.1:${port}${p}`;
   return { port, close, url };
@@ -213,13 +221,33 @@ test('flag ON + Bearer-scheme correct key → past auth, R1 ping 200', async () 
   } finally { await close(); }
 });
 
-test('flag ON + wrong token → 401', async () => {
+test('flag ON + wrong token → 401 in the mem0 dialect ({detail}, no UM envelope, no upgrade hint)', async () => {
   const { close, url } = await startServer({ token: 'secret-token', compatFlag: 'true', memory: fakeMemory });
   try {
     const r = await fetch(url('/v1/ping/'), {
       headers: { 'Authorization': 'Token wrong-token', 'X-Forwarded-For': '1.2.3.4' },
     });
     assert.equal(r.status, 401);
+    const body = await r.json();
+    // The mem0 client parses {detail} — the UM §5.1 envelope (body.error)
+    // and the plugin-upgrade hint must not appear on compat routes.
+    assert.equal(typeof body.detail, 'string');
+    assert.equal(body.error, undefined);
+    assert.doesNotMatch(body.detail, /upgrade plugin/);
+  } finally { await close(); }
+});
+
+test('flag ON + UM_AUTH_TOKEN unset → 500 in the mem0 dialect ({detail}, no UM envelope)', async () => {
+  // token: '' → auth is required (compat never bypasses) but unconfigured.
+  const { close, url } = await startServer({ token: '', compatFlag: 'true', memory: fakeMemory });
+  try {
+    const r = await fetch(url('/v1/ping/'), {
+      headers: { 'Authorization': 'Token anything', 'X-Forwarded-For': '1.2.3.4' },
+    });
+    assert.equal(r.status, 500);
+    const body = await r.json();
+    assert.equal(typeof body.detail, 'string');
+    assert.equal(body.error, undefined);
   } finally { await close(); }
 });
 
@@ -273,5 +301,36 @@ test('loopback bypass UNCHANGED for /api/* while the compat flag is on (guard)',
   try {
     const r = await fetch(url('/api/list'));
     assert.equal(r.status, 200);
+  } finally { await close(); }
+});
+
+// ---------------------------------------------------------------------------
+// 6. Rate-limit consistency (Step-5): compat rows veto the loopback bypass
+//    EXACTLY like Step-4's auth veto, and 429s speak the mem0 dialect.
+// ---------------------------------------------------------------------------
+
+test('rate limit applies to compat routes even from pure loopback; 429 is {detail}', async () => {
+  // rpm=1/burst=1: the first authed loopback compat request drains the
+  // bucket; the second must 429 — proving shouldBypassLoopback was vetoed
+  // for the compat row (a non-compat loopback request is never limited).
+  const { close, url } = await startServer({
+    token: 'secret-token',
+    compatFlag: 'true',
+    memory: fakeMemory,
+    env: { UM_RATE_LIMIT_RPM: '1', UM_RATE_LIMIT_BURST: '1' },
+  });
+  try {
+    const first = await fetch(url('/v1/ping/'), { headers: { 'Authorization': 'Token secret-token' } });
+    assert.equal(first.status, 200);
+    const second = await fetch(url('/v1/ping/'), { headers: { 'Authorization': 'Token secret-token' } });
+    assert.equal(second.status, 429);
+    assert.equal(typeof second.headers.get('retry-after'), 'string');
+    const body = await second.json();
+    assert.equal(typeof body.detail, 'string');
+    assert.equal(body.error, undefined, '429 speaks the mem0 dialect, not the UM envelope');
+    // Guard: the same exhausted bucket does NOT limit non-compat loopback
+    // traffic — /api/* keeps its loopback bypass.
+    const api = await fetch(url('/api/list'));
+    assert.equal(api.status, 200);
   } finally { await close(); }
 });

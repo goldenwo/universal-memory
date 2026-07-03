@@ -7,11 +7,18 @@ export const FORWARDED_HEADERS = [
   'tailscale-user-login', 'tailscale-user-name',
 ];
 
-export function extractBearer(req) {
+// Shared Authorization-header extractor: the two public extractors differ
+// ONLY in which auth schemes their pattern accepts. Returns the token
+// string or null (absent/malformed header, wrong scheme, empty token).
+function extractAuthToken(req, schemePattern) {
   const h = req.headers?.authorization;
   if (!h || typeof h !== 'string') return null;
-  const m = /^Bearer\s(.+)$/.exec(h);
+  const m = schemePattern.exec(h);
   return m ? m[1] : null;
+}
+
+export function extractBearer(req) {
+  return extractAuthToken(req, /^Bearer\s(.+)$/);
 }
 
 // mem0 Platform-compat facade (compat spec §6): mem0 SaaS clients send
@@ -21,10 +28,7 @@ export function extractBearer(req) {
 // extractBearer. Same return contract as extractBearer (token string or
 // null); the extracted value is validated against the same UM_AUTH_TOKEN.
 export function extractCompatToken(req) {
-  const h = req.headers?.authorization;
-  if (!h || typeof h !== 'string') return null;
-  const m = /^(?:Token|Bearer)\s(.+)$/.exec(h);
-  return m ? m[1] : null;
+  return extractAuthToken(req, /^(?:Token|Bearer)\s(.+)$/);
 }
 
 export function compareTokens(received, expected) {

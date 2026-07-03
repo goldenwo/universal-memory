@@ -165,6 +165,26 @@ Graceful degradations:
 - Also out of scope (non-goals): orgs/projects, graph memory, webhooks, exports,
   feedback, batch endpoints, and any client SDK or plugin fork.
 
+### Known divergences
+
+Places where the facade's behavior deliberately differs from mem0 SaaS in
+observable ways:
+
+- **R6 metadata keys cannot be deleted.** Metadata-only updates use qdrant's
+  `setPayload`, which *merges* keys — an omitted key keeps its stored value, and
+  sending `{"key": null}` stores a literal `null` rather than removing the key.
+  There is no key-removal affordance on the facade.
+- **Entity filters and deletes match only facade-written metadata.**
+  `agent_id`/`app_id`/`run_id` are stored under their snake_case wire names by
+  the R2 write path; R3/R4 filters and R8/R9 deletes match on those stored keys.
+  Points written by other UM surfaces (MCP, REST, importer) carry no such keys
+  and are never targeted by entity-scoped operations — fine in supported
+  deployments, where UM is the only writer to its own store.
+- **Event vocabulary is translated, not passed through.** UM's internal add
+  events map to the mem0 dialect: `ADD` → `ADD`; the merge family
+  (`DEDUP_MERGED`, `SUPERSEDED_INBAND`) → `UPDATE`; absent/unknown → `NONE`.
+  A client never sees an internal event token.
+
 ## Identity semantics
 
 UM is **single-user-per-instance**. Compat requests may carry `user_id`; when

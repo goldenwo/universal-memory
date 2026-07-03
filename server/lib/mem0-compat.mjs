@@ -14,8 +14,9 @@
  *     dialect: camelCase internals (userId/createdAt/updatedAt) translated
  *     to snake_case, `categories` synthesized from metadata.lane + any
  *     stored categories, absent fields OMITTED (client uses ?? fallbacks).
- *   - toMem0AddResults — umAdd's {results:[{id, memory, event}]} passed
- *     through defensively to the mem0 add-response shape.
+ *   - toMem0AddResults — umAdd's {results:[{id, memory, event}]} projected
+ *     defensively to the mem0 add-response shape, internal events translated
+ *     to the dialect vocabulary (ADD | UPDATE | NONE — COMPAT_EVENT_MAP).
  *
  *   - handleMem0Compat — the compat-route dispatcher: method+path → per-route
  *     handler returning {status, body} in the mem0 error dialect ({detail}).
@@ -31,15 +32,15 @@
  * auth.mjs / mem0-mcp-http.mjs (spec §6) — not here.
  */
 
-import { createHash } from 'node:crypto';
-import { umAdd as defaultUmAdd } from './add.mjs';
+import { umAdd as defaultUmAdd, md5 } from './add.mjs';
+import { D3_SERVER_MANAGED_STATUS_FIELDS } from './dedup-constants.mjs';
 import { embed as defaultEmbed } from './embed.mjs';
+import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
+import { isRecallable } from './recallable.mjs';
+import { withRetry } from './retry.mjs';
 import { filterSystemDocs } from './system-docs.mjs';
 import { SERVER_VERSION } from './version.mjs';
-
-/** Same hash algorithm as add.mjs's buildPayload (its md5 is module-private). */
-function md5(s) { return createHash('md5').update(s).digest('hex'); }
 
 /** Typed error for filter-DSL violations; the route layer maps it to 400. */
 export class CompatFilterError extends Error {
@@ -114,8 +115,15 @@ function parseFlatCondition(obj) {
  * Supported condition keys: user_id/agent_id/app_id/run_id (string equality),
  * categories:{contains:string}, created_at:{gte?,lte?}.
  *
+ * Descriptor shape: `branches` is an array of condition ARRAYS — one array
+ * per flat condition object. Per-branch grouping is LOAD-BEARING for OR:
+ * `{OR:[{agent_id:'a',run_id:'r1'},{agent_id:'b',run_id:'r2'}]}` matches
+ * (a,r1) or (b,r2) but NOT the cross-pairing (a,r2) — every condition
+ * inside a branch stays AND'd within that branch. Empty flat objects
+ * contribute no branch (a vacuous branch must not match everything).
+ *
  * @param {object|undefined} filters
- * @returns {{conditions: {key: string, op: string, value: string}[], mode: 'AND'|'OR'}|null}
+ * @returns {{branches: {key: string, op: string, value: string}[][], mode: 'AND'|'OR'}|null}
  *   null when filters is undefined/empty (no filtering).
  * @throws {CompatFilterError} on unknown keys, malformed value shapes, or
  *   AND/OR nesting (OR is top-level only; fail-loud → 400 at the route layer).
@@ -135,18 +143,20 @@ export function parseMem0Filters(filters) {
     if (keys.length > 1) {
       throw new CompatFilterError(`${mode} must be the sole top-level filter key`, mode);
     }
-    const branches = filters[mode];
-    if (!Array.isArray(branches)) {
+    const flatObjects = filters[mode];
+    if (!Array.isArray(flatObjects)) {
       throw new CompatFilterError(`${mode} requires an array of flat conditions`, mode);
     }
-    const conditions = branches.flatMap((branch) => parseFlatCondition(branch));
-    if (conditions.length === 0) return null;
-    return { conditions, mode };
+    const branches = flatObjects
+      .map((flat) => parseFlatCondition(flat))
+      .filter((branch) => branch.length > 0);
+    if (branches.length === 0) return null;
+    return { branches, mode };
   }
 
   const conditions = parseFlatCondition(filters);
   if (conditions.length === 0) return null;
-  return { conditions, mode: 'AND' };
+  return { branches: [conditions], mode: 'AND' };
 }
 
 /**
@@ -166,9 +176,14 @@ function matchCondition(record, cond) {
     return Array.isArray(record.categories) && record.categories.includes(value);
   }
   if (op === 'gte' || op === 'lte') {
-    const actual = record.created_at;
-    if (typeof actual !== 'string') return false; // missing timestamp cannot satisfy a bound
-    return op === 'gte' ? actual >= value : actual <= value;
+    // Compare as INSTANTS, not strings: a +05:00-offset bound and a
+    // Z-stored timestamp are the same moment in different notations —
+    // lexicographic compare would misorder them. NaN on either side
+    // (missing/garbage timestamp) fails the condition.
+    const actualMs = Date.parse(record.created_at);
+    const boundMs = Date.parse(value);
+    if (Number.isNaN(actualMs) || Number.isNaN(boundMs)) return false;
+    return op === 'gte' ? actualMs >= boundMs : actualMs <= boundMs;
   }
   // eq — dialect field first, metadata-stored partition keys second (spec §5)
   const actual = record[key] !== undefined ? record[key] : record.metadata?.[key];
@@ -179,17 +194,22 @@ function matchCondition(record, cond) {
  * Apply a parsed filter descriptor to projected records (pure, facade-side
  * post-retrieval filtering — spec §3 "Application point").
  *
+ * OR = at least one branch fully satisfied (every condition within it);
+ * AND = every branch fully satisfied. Conditions never OR across branch
+ * boundaries — the per-branch AND grouping is the whole point.
+ *
  * @param {object[]} records — mem0-dialect records (post-toMem0Record)
- * @param {{conditions: object[], mode: 'AND'|'OR'}|null} descriptor
+ * @param {{branches: object[][], mode: 'AND'|'OR'}|null} descriptor
  * @returns {object[]}
  */
 export function applyMem0Filters(records, descriptor) {
   if (!descriptor) return records;
-  const { conditions, mode } = descriptor;
+  const { branches, mode } = descriptor;
+  const branchMatches = (record) => (branch) => branch.every((cond) => matchCondition(record, cond));
   return records.filter((record) =>
     mode === 'OR'
-      ? conditions.some((cond) => matchCondition(record, cond))
-      : conditions.every((cond) => matchCondition(record, cond)),
+      ? branches.some(branchMatches(record))
+      : branches.every(branchMatches(record)),
   );
 }
 
@@ -211,10 +231,9 @@ export function applyMem0Filters(records, descriptor) {
  * fields; score is included only when it is a number.
  *
  * @param {{id: string, memory?: string, metadata?: object, score?: number}} raw
- * @param {object} [opts] — reserved for later batches (unused)
  * @returns {object} mem0-dialect record
  */
-export function toMem0Record(raw, opts) { // eslint-disable-line no-unused-vars
+export function toMem0Record(raw) {
   const metadata = raw?.metadata ?? {};
 
   const categories = [];
@@ -237,17 +256,39 @@ export function toMem0Record(raw, opts) { // eslint-disable-line no-unused-vars
 }
 
 /**
+ * Internal umAdd event vocabulary → the mem0 dialect the client parses
+ * (ADD | UPDATE | NONE — docs/mem0-compat.md R2 row). The merge family
+ * (DEDUP_MERGED: surface merged into an existing point; SUPERSEDED_INBAND:
+ * new point upserted, older point demoted) both read as "an existing
+ * memory changed" to a mem0 client → UPDATE. Absent/unknown events
+ * degrade to NONE — never leak an internal token the client can't map.
+ */
+const COMPAT_EVENT_MAP = Object.freeze({
+  ADD: 'ADD',
+  DEDUP_MERGED: 'UPDATE',
+  SUPERSEDED_INBAND: 'UPDATE',
+  NONE: 'NONE',
+});
+
+/**
  * Translate umAdd's return shape ({results:[{id, memory, event}]} — see
- * server/lib/add.mjs) to the mem0 add-response dialect. Defensive: any
- * missing/malformed input degrades to {results: []}; extra per-result
- * fields (e.g. supersededId) are dropped.
+ * server/lib/add.mjs) to the mem0 add-response dialect: internal events
+ * mapped through COMPAT_EVENT_MAP. Defensive: any missing/malformed input
+ * degrades to {results: []}; extra per-result fields (e.g. supersededId)
+ * are dropped.
  *
  * @param {{results?: {id: string, memory: string, event: string}[]}|undefined} umAddResult
  * @returns {{results: {id: string, memory: string, event: string}[]}}
  */
 export function toMem0AddResults(umAddResult) {
   const results = Array.isArray(umAddResult?.results) ? umAddResult.results : [];
-  return { results: results.map(({ id, memory, event }) => ({ id, memory, event })) };
+  return {
+    results: results.map(({ id, memory, event }) => ({
+      id,
+      memory,
+      event: COMPAT_EVENT_MAP[event] ?? 'NONE',
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +337,10 @@ const COMPAT_SCAN_LIMIT = 10000;
 
 /** Raw getAll for the operator → system docs stripped (read-path parity). */
 async function scanAll(memory, operatorId) {
-  const all = await memory.getAll({ userId: operatorId, limit: COMPAT_SCAN_LIMIT });
+  const all = await withRetry(
+    () => memory.getAll({ userId: operatorId, limit: COMPAT_SCAN_LIMIT }),
+    { op: 'compat-getAll' },
+  );
   return filterSystemDocs(all?.results ?? all ?? []);
 }
 
@@ -304,10 +348,15 @@ async function scanAll(memory, operatorId) {
  * Reject a parsed filter descriptor that tries to scope to a FOREIGN
  * user_id (spec §5: presence anywhere in a request must equal the
  * operator). A matching user_id condition is fine — it matches everything
- * on a single-operator instance.
+ * on a single-operator instance. Scans every branch: a foreign user_id in
+ * ANY position (even one OR arm) is an impersonation attempt.
  */
 function foreignUserIdIn(descriptor, operatorId) {
-  return descriptor?.conditions?.find((c) => c.key === 'user_id' && c.value !== operatorId) ?? null;
+  for (const branch of descriptor?.branches ?? []) {
+    const cond = branch.find((c) => c.key === 'user_id' && c.value !== operatorId);
+    if (cond) return cond;
+  }
+  return null;
 }
 
 /**
@@ -315,15 +364,33 @@ function foreignUserIdIn(descriptor, operatorId) {
  * scope check. Returns null for absent points, foreign-userId points, AND
  * invalid ids the qdrant client rejects (e.g. non-UUID strings → HTTP 400
  * upstream) — all collapse to the same non-leaking 404 at the route layer.
+ *
+ * Error classification is deliberate: ONLY what IS absence maps to null —
+ * an empty retrieve result, or a 400 the qdrant client raises for a
+ * malformed id (@qdrant/js-client rejections carry `.status`). Anything
+ * else (5xx, undefined status = network failure) is a transient/upstream
+ * fault and RETHROWS after the retry budget → the dispatcher's 500 path.
+ * Collapsing those to 404 would misreport "qdrant down" as "not found".
  */
 async function fetchScopedPoint(ctx, memory, operatorId, id) {
   const client = ctx?._qdrantClient ?? await getRealClient(memory);
   const collection = memory.config.vectorStore.config.collectionName;
   let points;
   try {
-    points = await client.retrieve(collection, { ids: [id], with_payload: true });
-  } catch {
-    return null; // invalid id shape → indistinguishable from absent (404)
+    points = await withRetry(
+      () => client.retrieve(collection, { ids: [id], with_payload: true })
+        .catch((e) => {
+          // Malformed-id 400 is deterministic — retrying it is pointless.
+          if (e?.status === 400) e.retryable = false;
+          throw e;
+        }),
+      { op: 'compat-retrieve' },
+    );
+  } catch (err) {
+    // withRetry wraps the original error as UPSTREAM_FAILURE{cause}.
+    const status = err?.status ?? err?.cause?.status;
+    if (status === 400) return null; // invalid id shape → indistinguishable from absent (404)
+    throw err;
   }
   const arr = Array.isArray(points) ? points : points?.points ?? [];
   const point = arr[0];
@@ -355,11 +422,17 @@ function pointToRawRecord(point) {
 /**
  * Payload keys a compat client's `metadata` may never overwrite on R6:
  * scope (userId), content bookkeeping (data/hash — the handler owns their
- * refresh), and timestamps the schema carries/sets itself. The D1/D3
- * supersession-state fields are protected for the same reason
- * assertNoReservedFields protects them on the write path.
+ * refresh), timestamps the schema carries/sets itself, plus surface
+ * attribution (surfaces) and lane partitioning (lane) — both server-
+ * managed. The supersession-state fields come from the SAME canonical
+ * constant assertNoReservedFields enforces on the write path
+ * (D3_SERVER_MANAGED_STATUS_FIELDS: status/supersededBy/supersededAt) so
+ * the two guards cannot drift.
  */
-const R6_PROTECTED_KEYS = new Set(['userId', 'data', 'hash', 'createdAt', 'updatedAt', 'status', 'supersededBy', 'supersededAt']);
+const R6_PROTECTED_KEYS = new Set([
+  ...D3_SERVER_MANAGED_STATUS_FIELDS,
+  'userId', 'data', 'hash', 'createdAt', 'updatedAt', 'surfaces', 'lane',
+]);
 
 function sanitizeUpdateMetadata(metadata) {
   const out = {};
@@ -369,16 +442,9 @@ function sanitizeUpdateMetadata(metadata) {
   return out;
 }
 
-/** Read-path status filter — same exclusion set as doSearch (parity). */
-function isRecallable(rawItem) {
-  const md = rawItem?.metadata ?? {};
-  return !(
-    md.status === 'superseded' ||
-    md.status === 'deprecated' ||
-    md.status === 'rejected' ||
-    md.invalidated_at != null
-  );
-}
+// Read-path status filter: shared isRecallable (lib/recallable.mjs) — the
+// SAME predicate doSearch applies, so compat reads can never drift from
+// the house read-path exclusion semantics.
 
 // --- R1 ---------------------------------------------------------------------
 
@@ -444,27 +510,47 @@ async function handleAdd({ req, body, ctx }) {
   return { status: 200, body: toMem0AddResults(r) };
 }
 
-// --- R3 ---------------------------------------------------------------------
-
-async function handleSearch({ body, ctx }) {
+/**
+ * Shared R3/R4 request preamble: resolve the operator ctx, parse filters
+ * (CompatFilterError → 400 via the dispatcher), and enforce the spec §5
+ * no-impersonation rule for user_id in BOTH filters and the body. Returns
+ * either {error: {status, body}} (return it as-is) or the resolved scope.
+ */
+function resolveScopedRead(ctx, body) {
   const { operatorId, memory } = resolveCompatCtx(ctx);
   const b = body ?? {};
-  const descriptor = parseMem0Filters(b.filters); // CompatFilterError → 400 via dispatcher
+  const descriptor = parseMem0Filters(b.filters);
   const foreign = foreignUserIdIn(descriptor, operatorId);
-  if (foreign) return userIdMismatch(foreign.value, operatorId);
+  if (foreign) return { error: userIdMismatch(foreign.value, operatorId) };
   if (b.user_id !== undefined && b.user_id !== operatorId) {
-    return userIdMismatch(b.user_id, operatorId);
+    return { error: userIdMismatch(b.user_id, operatorId) };
   }
+  return { operatorId, memory, b, descriptor };
+}
+
+// --- R3 ---------------------------------------------------------------------
+
+/** top_k ceiling — mirrors the R4 page_size cap (attacker-supplied sizes
+ *  must not drive unbounded over-fetch: fetchLimit stays ≤ 3×500). */
+const MAX_TOP_K = 500;
+
+async function handleSearch({ body, ctx }) {
+  const scope = resolveScopedRead(ctx, body);
+  if (scope.error) return scope.error;
+  const { operatorId, memory, b, descriptor } = scope;
   if (typeof b.query !== 'string' || b.query.trim().length === 0) {
     return detailError(400, 'query is required');
   }
   // rerank / keyword_search / fields: accepted, documented no-ops (spec §2).
 
-  const topK = Number.isInteger(b.top_k) && b.top_k > 0 ? b.top_k : 10;
+  const topK = Math.min(Number.isInteger(b.top_k) && b.top_k > 0 ? b.top_k : 10, MAX_TOP_K);
   // Facade-side filters can only shrink the result set → over-fetch, then
   // filter, then truncate (spec §3 "Application point").
   const fetchLimit = Math.max(topK * 3, 30);
-  const raw = await memory.search(b.query, { userId: operatorId, limit: fetchLimit });
+  const raw = await withRetry(
+    () => memory.search(b.query, { userId: operatorId, limit: fetchLimit }),
+    { op: 'compat-search' },
+  );
   let items = raw?.results ?? raw ?? [];
   // Read-path parity with doSearch: superseded/system records never surface.
   items = filterSystemDocs(items).filter(isRecallable);
@@ -479,16 +565,12 @@ async function handleSearch({ body, ctx }) {
 // --- R4 ---------------------------------------------------------------------
 
 async function handleList({ url, body, ctx }) {
-  const { operatorId, memory } = resolveCompatCtx(ctx);
-  const b = body ?? {};
-  const descriptor = parseMem0Filters(b.filters); // CompatFilterError → 400 via dispatcher
-  const foreign = foreignUserIdIn(descriptor, operatorId);
-  if (foreign) return userIdMismatch(foreign.value, operatorId);
-  if (b.user_id !== undefined && b.user_id !== operatorId) {
-    return userIdMismatch(b.user_id, operatorId);
-  }
+  const scope = resolveScopedRead(ctx, body);
+  if (scope.error) return scope.error;
+  const { operatorId, memory, descriptor } = scope;
 
-  const items = await scanAll(memory, operatorId);
+  // Read-path parity with R3/doSearch: superseded records never surface.
+  const items = (await scanAll(memory, operatorId)).filter(isRecallable);
   const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
 
   const pageRaw = Number.parseInt(url.searchParams.get('page') ?? '', 10);
@@ -507,7 +589,11 @@ async function handleGet({ params, ctx }) {
   const { operatorId, memory } = resolveCompatCtx(ctx);
   const scoped = await fetchScopedPoint(ctx, memory, operatorId, params[0]);
   if (!scoped) return notFound();
-  return { status: 200, body: toMem0Record(pointToRawRecord(scoped.point)) };
+  const raw = pointToRawRecord(scoped.point);
+  // Read-path parity with R3/R4: a superseded point is as invisible by id
+  // as it is in search/list — 404, same non-leak shape as absent/foreign.
+  if (!isRecallable(raw)) return notFound();
+  return { status: 200, body: toMem0Record(raw) };
 }
 
 // --- R6 ---------------------------------------------------------------------
@@ -538,12 +624,18 @@ async function handleUpdate({ params, body, ctx }) {
     // design — two points may share a hash (spec §3 R6 invariants).
     const { vector } = await defaultEmbed(text, { _providerOverride: ctx?._embedProviderOverride });
     payload = { ...point.payload, ...mergeMetadata, data: text, hash: md5(text), updatedAt };
-    await client.upsert(collection, { points: [{ id: point.id, vector, payload }] });
+    await withRetry(
+      () => client.upsert(collection, { points: [{ id: point.id, vector, payload }] }),
+      { op: 'compat-upsert' },
+    );
   } else {
     // Metadata-only: additive setPayload merge (supersede.mjs idiom); the
     // stored vector + text are untouched.
     payload = { ...point.payload, ...mergeMetadata, updatedAt };
-    await client.setPayload(collection, { points: [point.id], payload: { ...mergeMetadata, updatedAt } });
+    await withRetry(
+      () => client.setPayload(collection, { points: [point.id], payload: { ...mergeMetadata, updatedAt } }),
+      { op: 'compat-setPayload' },
+    );
   }
 
   const record = toMem0Record(pointToRawRecord({ id: point.id, payload }));
@@ -556,7 +648,7 @@ async function handleDeleteById({ params, ctx }) {
   const { operatorId, memory } = resolveCompatCtx(ctx);
   const scoped = await fetchScopedPoint(ctx, memory, operatorId, params[0]);
   if (!scoped) return notFound();
-  await memory.delete(String(scoped.point.id));
+  await withRetry(() => memory.delete(String(scoped.point.id)), { op: 'compat-delete' });
   return { status: 200, body: { message: 'Memory deleted successfully!' } };
 }
 
@@ -574,7 +666,9 @@ async function scanDelete(memory, operatorId, metadataScopes) {
   const entries = Object.entries(metadataScopes);
   const matches = items.filter((r) => entries.every(([k, v]) => r?.metadata?.[k] === v));
   for (const r of matches) {
-    await memory.delete(String(r.id));
+    // Per-id loop stays O(N) by design (spec §3 R8); each delete gets its
+    // own retry budget so one transient blip doesn't abort the sweep.
+    await withRetry(() => memory.delete(String(r.id)), { op: 'compat-delete' });
   }
   return { status: 200, body: { message: `${matches.length} memories deleted` } };
 }
@@ -622,7 +716,9 @@ async function handleEntityDelete({ params, ctx }) {
 
 async function handleEntities({ ctx }) {
   const { operatorId, memory } = resolveCompatCtx(ctx);
-  const items = await scanAll(memory, operatorId);
+  // Count what a read can actually see (R4 parity): superseded points are
+  // excluded, so total_memories always equals the R4 full-list length.
+  const items = (await scanAll(memory, operatorId)).filter(isRecallable);
   return {
     status: 200,
     body: { results: [{ type: 'user', id: operatorId, total_memories: items.length }] },
@@ -693,14 +789,32 @@ export async function handleMem0Compat(req, url, body, ctx) {
     try {
       return await route.handler({ req, url, body, ctx, params: m.slice(1) });
     } catch (err) {
-      // Every compat response speaks the client's dialect — a thrown
-      // CompatFilterError is the caller's malformed filter (→ 400); anything
-      // else is ours (→ 500). Never let an exception escape to the outer
-      // handler, which would answer in the UM §5.1 envelope instead.
-      if (err instanceof CompatFilterError) {
+      // Every compat response speaks the client's dialect — never let an
+      // exception escape to the outer handler, which would answer in the
+      // UM §5.1 envelope instead.
+      //
+      // Caller-input errors are safe to echo: a thrown CompatFilterError is
+      // a malformed filter, and code INPUT_INVALID marks the house
+      // validation family (umAdd's reserved-metadata guard, lane-slug
+      // validation — see dedup-constants.mjs). Both → 400 {detail}.
+      if (err instanceof CompatFilterError || err?.code === 'INPUT_INVALID') {
         return { status: 400, body: { detail: err.message } };
       }
-      return { status: 500, body: { detail: err?.message ?? 'internal error' } };
+      // Everything else is OURS: log the full error server-side, answer
+      // with a fixed generic detail. NEVER err.message — the B.13 redaction
+      // posture (an internal message can leak connection strings, stack
+      // hints, upstream hostnames) applies to the compat dialect too.
+      const logger = ctx?._logger ?? getLogger();
+      try {
+        logger.error({
+          compat_route: route.id,
+          endpoint: url.pathname,
+          err_code: err?.code,
+          err_message: err?.message,
+          err_stack: err?.stack,
+        }, 'mem0-compat handler error');
+      } catch { /* logging must never break the response */ }
+      return { status: 500, body: { detail: 'internal error' } };
     }
   }
   return { status: 404, body: { detail: 'unknown compat route' } };

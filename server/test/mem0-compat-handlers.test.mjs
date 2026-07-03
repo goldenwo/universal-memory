@@ -29,7 +29,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { handleMem0Compat } from '../lib/mem0-compat.mjs';
+import { ReservedMetadataFieldError } from '../lib/dedup-constants.mjs';
 import { SERVER_VERSION } from '../lib/version.mjs';
+
+// The facade wraps its memory/qdrant calls in withRetry (retry.mjs). Zero
+// the retry budget so deliberate-failure tests don't sit through the real
+// 100/200/400ms backoff; retry timing itself is pinned in retry.test.mjs.
+process.env.UM_UPSTREAM_RETRY_MAX = '0';
 
 const md5 = (s) => createHash('md5').update(s).digest('hex');
 
@@ -149,8 +155,10 @@ test('R2 add: messages[] joined into ONE role-prefixed transcript umAdd (infer d
   assert.equal(args.userId, OP);
   assert.equal(args.memory, ctx.memory);
   assert.equal(args.surface, 'mem0-compat');
-  // extra per-result fields (supersededId) dropped by the dialect projection
-  assert.deepEqual(out.body, { results: [{ id: 'i1', memory: 'f1', event: 'ADD' }, { id: 'i2', memory: 'f2', event: 'DEDUP_MERGED' }] });
+  // extra per-result fields (supersededId) dropped by the dialect projection;
+  // internal merge-family events translated to the dialect's UPDATE
+  // (docs/mem0-compat.md R2 row — a client never sees DEDUP_MERGED).
+  assert.deepEqual(out.body, { results: [{ id: 'i1', memory: 'f1', event: 'ADD' }, { id: 'i2', memory: 'f2', event: 'UPDATE' }] });
 });
 
 test('R2 add: X-Mem0-Source header → lowercased surface tag (provenance §7)', async () => {
@@ -250,6 +258,34 @@ test('R3 search: top_k default 10 → over-fetch limit 30; explicit threshold ho
   assert.deepEqual(out.body.results.map((r) => r.id), ['s1']);
 });
 
+test('R3 search: oversized top_k clamps to 500 (mirrors the R4 page_size cap)', async () => {
+  const memory = makeMemory({ searchResults: [rawRecord('s1', { score: 0.9 })] });
+  const out = await call('POST', '/v2/memories/search/', { query: 'q', top_k: 999999 }, ctxOf({ memory }));
+  assert.equal(out.status, 200);
+  // fetchLimit = max(clampedTopK*3, 30) = 1500 — attacker-supplied top_k
+  // cannot drive unbounded over-fetch.
+  assert.deepEqual(memory.calls.search[0].opts, { userId: OP, limit: 1500 });
+});
+
+test('R3 search: transient search failure retried to success (withRetry wrap)', async () => {
+  const memory = makeMemory({ searchResults: [rawRecord('s1', { score: 0.9 })] });
+  const realSearch = memory.search.bind(memory);
+  let failuresLeft = 1;
+  memory.search = async (query, opts) => {
+    if (failuresLeft-- > 0) throw new Error('transient blip');
+    return realSearch(query, opts);
+  };
+  const prev = process.env.UM_UPSTREAM_RETRY_MAX;
+  process.env.UM_UPSTREAM_RETRY_MAX = '2'; // re-enable retries for this test only
+  try {
+    const out = await call('POST', '/v2/memories/search/', { query: 'q' }, ctxOf({ memory }));
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.body.results.map((r) => r.id), ['s1']);
+  } finally {
+    process.env.UM_UPSTREAM_RETRY_MAX = prev;
+  }
+});
+
 test('R3 search: facade-side filters post-retrieval (agent_id via stored metadata)', async () => {
   const memory = makeMemory({
     searchResults: [
@@ -320,6 +356,20 @@ test('R4 list: full-list projection + filters + system-doc exclusion', async () 
   assert.equal(out.body.results[0].user_id, OP);
 });
 
+test('R4 list: superseded-status records excluded (read-path parity with R3/doSearch)', async () => {
+  const memory = makeMemory({
+    getAllResults: [
+      rawRecord('g1'),
+      rawRecord('g2', { metadata: { status: 'superseded' } }),
+      rawRecord('g3', { metadata: { status: 'deprecated' } }),
+      rawRecord('g4', { metadata: { invalidated_at: '2026-06-01T00:00:00Z' } }),
+    ],
+  });
+  const out = await call('POST', '/v2/memories/', {}, ctxOf({ memory }));
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.body.results.map((r) => r.id), ['g1']);
+});
+
 test('R4 list: page/page_size window from query params', async () => {
   const memory = makeMemory({
     getAllResults: ['g1', 'g2', 'g3', 'g4', 'g5'].map((id) => rawRecord(id)),
@@ -372,6 +422,38 @@ test('R5 get: foreign-userId point → 404 (existence not leaked)', async () => 
 test('R5 get: absent id → 404 {detail}', async () => {
   const out = await call('GET', '/v1/memories/nope/', undefined, ctxOf({ qdrant: makeQdrant() }));
   assert.equal(out.status, 404);
+});
+
+test('R5 get: superseded point → 404 (as invisible by id as in search/list)', async () => {
+  const qdrant = makeQdrant([point('p1', { extra: { status: 'superseded' } })]);
+  const out = await call('GET', '/v1/memories/p1/', undefined, ctxOf({ qdrant }));
+  assert.equal(out.status, 404);
+  assert.match(out.body.detail, /not found/i);
+});
+
+test('R5 get: qdrant 400 (malformed id) → 404, indistinguishable from absent', async () => {
+  // The @qdrant client rejects a non-UUID id with a .status=400 error —
+  // that IS absence for the dialect (no-leak posture), not a server fault.
+  const qdrant = makeQdrant();
+  qdrant.retrieve = async () => { throw Object.assign(new Error('Bad Request'), { status: 400 }); };
+  const out = await call('GET', '/v1/memories/not-a-uuid/', undefined, ctxOf({ qdrant }));
+  assert.equal(out.status, 404);
+  assert.match(out.body.detail, /not found/i);
+});
+
+test('R5 get: connection-level retrieve failure → 500 {detail:"internal error"}, NOT 404', async () => {
+  // No .status on the error = network failure (ECONNREFUSED-style). Mapping
+  // that to 404 would misreport "qdrant down" as "memory does not exist".
+  const qdrant = makeQdrant();
+  qdrant.retrieve = async () => {
+    throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:6333'), { code: 'ECONNREFUSED' });
+  };
+  const logs = [];
+  const ctx = { ...ctxOf({ qdrant }), _logger: { error: (...args) => logs.push(args) } };
+  const out = await call('GET', '/v1/memories/p1/', undefined, ctx);
+  assert.equal(out.status, 500);
+  assert.deepEqual(out.body, { detail: 'internal error' });
+  assert.equal(logs.length, 1, 'server fault logged via the house logger');
 });
 
 // ---------------------------------------------------------------------------
@@ -464,6 +546,24 @@ test('R6 update: client metadata cannot clobber schema fields (userId/data/hash/
   assert.equal(p.payload.note, 'ok');
 });
 
+test('R6 update: server-managed attribution/partition/supersession keys stripped from metadata', async () => {
+  // surfaces + lane are server-managed (attribution / partitioning); the
+  // supersession-state trio comes from D3_SERVER_MANAGED_STATUS_FIELDS —
+  // the same canonical constant assertNoReservedFields enforces on write.
+  const qdrant = makeQdrant([point('p1')]);
+  const out = await call('PUT', '/v1/memories/p1/', {
+    metadata: { surfaces: 'discord', lane: 'evil', status: 'superseded', supersededBy: 'x', supersededAt: 'now', note: 'ok' },
+  }, ctxOf({ qdrant }));
+  assert.equal(out.status, 200);
+  const { payload } = qdrant.calls.setPayload[0].args;
+  assert.equal('surfaces' in payload, false);
+  assert.equal('lane' in payload, false);
+  assert.equal('status' in payload, false);
+  assert.equal('supersededBy' in payload, false);
+  assert.equal('supersededAt' in payload, false);
+  assert.equal(payload.note, 'ok');
+});
+
 // ---------------------------------------------------------------------------
 // R7 — DELETE /v1/memories/{id}/
 // ---------------------------------------------------------------------------
@@ -541,6 +641,25 @@ test('R8 bulk delete: multiple scope params AND together', async () => {
   assert.equal(out.status, 200);
 });
 
+test('R8 bulk delete: per-id delete gets its own retry budget (one blip does not abort the sweep)', async () => {
+  const memory = bulkFixture();
+  const realDelete = memory.delete.bind(memory);
+  let failuresLeft = 1; // first delete attempt blips once, then succeeds
+  memory.delete = async (id) => {
+    if (failuresLeft-- > 0) throw new Error('transient blip');
+    return realDelete(id);
+  };
+  const prev = process.env.UM_UPSTREAM_RETRY_MAX;
+  process.env.UM_UPSTREAM_RETRY_MAX = '2';
+  try {
+    const out = await call('DELETE', `/v1/memories/?user_id=${OP}`, undefined, ctxOf({ memory }));
+    assert.equal(out.status, 200);
+    assert.deepEqual(memory.calls.delete.sort(), ['g1', 'g2', 'g3'], 'all three deleted despite the blip');
+  } finally {
+    process.env.UM_UPSTREAM_RETRY_MAX = prev;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // R9 — DELETE /v2/entities/{type}/{id}/
 // ---------------------------------------------------------------------------
@@ -585,6 +704,17 @@ test('R10 entities: single-operator projection with total_memories (system docs 
   assert.deepEqual(out.body, { results: [{ type: 'user', id: OP, total_memories: 3 }] });
 });
 
+test('R10 entities: superseded records not counted (total_memories === R4 list length)', async () => {
+  const memory = makeMemory({
+    getAllResults: [
+      rawRecord('g1'),
+      rawRecord('g2', { metadata: { status: 'superseded' } }),
+    ],
+  });
+  const out = await call('GET', '/v1/entities/', undefined, ctxOf({ memory }));
+  assert.deepEqual(out.body.results[0].total_memories, 1);
+});
+
 // ---------------------------------------------------------------------------
 // R11 — events (degrade to empty / 404)
 // ---------------------------------------------------------------------------
@@ -605,10 +735,28 @@ test('R11 events: by id → 404 {detail}', async () => {
 // Error dialect — handler exceptions stay {detail}, never the UM envelope
 // ---------------------------------------------------------------------------
 
-test('dispatcher: handler exception → 500 {detail} in the mem0 dialect', async () => {
+test('dispatcher: handler exception → 500 with a FIXED generic detail (B.13 redaction) + logged', async () => {
   const memory = makeMemory();
-  memory.search = async () => { throw new Error('qdrant down'); };
-  const out = await call('POST', '/v2/memories/search/', { query: 'q' }, ctxOf({ memory }));
+  memory.search = async () => { throw new Error('qdrant down at 10.0.0.7:6333'); };
+  const logs = [];
+  const ctx = { ...ctxOf({ memory }), _logger: { error: (fields, msg) => logs.push({ fields, msg }) } };
+  const out = await call('POST', '/v2/memories/search/', { query: 'q' }, ctx);
   assert.equal(out.status, 500);
-  assert.equal(typeof out.body.detail, 'string');
+  // NEVER err.message on the wire — internal messages can carry hosts/stack hints.
+  assert.deepEqual(out.body, { detail: 'internal error' });
+  assert.equal(logs.length, 1, 'error logged server-side');
+  assert.match(logs[0].fields.err_message, /qdrant down/);
+  assert.equal(typeof logs[0].fields.err_stack, 'string');
+});
+
+test('dispatcher: INPUT_INVALID from umAdd (reserved metadata) → 400 {detail: err.message}', async () => {
+  // Caller-input validation errors are safe to echo — the reserved-field
+  // guard message tells the client exactly which key it must not send.
+  const umAdd = async () => { throw new ReservedMetadataFieldError('surfaces'); };
+  const out = await call('POST', '/v1/memories/', {
+    messages: [{ role: 'user', content: 'x' }],
+    metadata: { surfaces: ['smuggled'] },
+  }, ctxOf({ umAdd }));
+  assert.equal(out.status, 400);
+  assert.match(out.body.detail, /metadata\.surfaces is reserved/);
 });
