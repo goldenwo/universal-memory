@@ -236,14 +236,33 @@ test('cimd: client_name truncated to 120 chars; absent → "(unnamed client)"', 
   assert.equal(out2.client_name, '(unnamed client)');
 });
 
-test('cimd: invalid grant_types → null; valid subset echoed; default authorization_code', async () => {
+test('cimd: grant_types intersected with supported; authorization_code required; default authorization_code', async () => {
+  // No supported grant survives the intersection (client can't run our code
+  // flow at all) → reject.
   const bad = createCimdResolver({ fetchImpl: makeFetchSpy({ response: makeResponse({ body: validDoc({ grant_types: ['password'] }) }) }) });
   assert.equal(await bad(CLIENT_URL), null);
+  // Declares refresh_token only — the code flow is impossible → reject.
+  const noCode = createCimdResolver({ fetchImpl: makeFetchSpy({ response: makeResponse({ body: validDoc({ grant_types: ['refresh_token'] }) }) }) });
+  assert.equal(await noCode(CLIENT_URL), null);
   const good = createCimdResolver({ fetchImpl: makeFetchSpy({ response: makeResponse({ body: validDoc({ grant_types: ['authorization_code', 'refresh_token'] }) }) }) });
   const out = await good(CLIENT_URL);
   assert.deepEqual(out.grant_types, ['authorization_code', 'refresh_token']);
   const dflt = createCimdResolver({ fetchImpl: makeFetchSpy({ response: makeResponse({ body: validDoc({ grant_types: undefined }) }) }) });
   assert.deepEqual((await dflt(CLIENT_URL)).grant_types, ['authorization_code']);
+});
+
+test('cimd: vendor-declared extra grant types are tolerated, not fatal (claude.ai 2026-07 drift)', async () => {
+  // Live regression: claude.ai's metadata document added
+  // urn:ietf:params:oauth:grant-type:jwt-bearer alongside the supported
+  // pair. Rejecting the WHOLE document on an unsupported extra broke the
+  // connector with invalid_client/"unknown client_id" at /oauth/authorize.
+  // Contract: intersect with the supported set (UM simply never issues the
+  // extras) as long as authorization_code survives.
+  const drifted = createCimdResolver({ fetchImpl: makeFetchSpy({ response: makeResponse({ body: validDoc({ grant_types: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer'] }) }) }) });
+  const out = await drifted(CLIENT_URL);
+  assert.ok(out, 'drifted metadata must still resolve');
+  assert.deepEqual(out.grant_types, ['authorization_code', 'refresh_token'],
+    'unsupported extras are dropped by intersection, not fatal');
 });
 
 // =========================================================================
