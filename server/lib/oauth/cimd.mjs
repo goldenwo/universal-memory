@@ -95,14 +95,23 @@ function buildClientRecord(doc, clientIdUrl) {
   const authMethod = doc.token_endpoint_auth_method;
   if (authMethod !== undefined && authMethod !== 'none') return null;
 
-  // grant_types: optional; if present must subset the supported set.
+  // grant_types: optional; if present, INTERSECT with the supported set
+  // rather than reject on unsupported extras. Vendors evolve their static
+  // metadata documents (claude.ai added
+  // urn:ietf:params:oauth:grant-type:jwt-bearer in 2026-07, which as a
+  // fatal subset-violation broke the connector with "unknown client_id");
+  // a declared-but-unsupported grant is simply one UM will never issue.
+  // Still fail-closed where it matters: the intersection MUST contain
+  // authorization_code — a client that cannot run the code flow has no
+  // business at /oauth/authorize.
   let grantTypes = ['authorization_code'];
   if (doc.grant_types !== undefined) {
-    if (!Array.isArray(doc.grant_types) || doc.grant_types.length === 0
-      || !doc.grant_types.every((g) => ALLOWED_GRANT_TYPES.has(g))) {
+    if (!Array.isArray(doc.grant_types) || doc.grant_types.length === 0) {
       return null;
     }
-    grantTypes = doc.grant_types;
+    const supported = doc.grant_types.filter((g) => ALLOWED_GRANT_TYPES.has(g));
+    if (!supported.includes('authorization_code')) return null;
+    grantTypes = supported;
   }
 
   // client_name: optional; TRUNCATE (HTML-escaped at consent render).
