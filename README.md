@@ -48,7 +48,7 @@ flowchart LR
   C --> D["Recall on any surface<br/>Claude Code · claude.ai · ChatGPT · Desktop"]
 ```
 
-Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the `um` CLI. The server extracts facts, dedups them, and routes them into lanes, storing everything as markdown under git with a Qdrant vector index alongside. Any surface — MCP, REST, or an OAuth connector — reads and writes that one vault.
+Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the `um` CLI. The server extracts facts, dedups them, and routes them into lanes — facts land in a local Qdrant index, while authored knowledge (ADRs, session summaries, documents) lives as markdown files you can keep under git. Any surface — MCP, REST, or an OAuth connector — reads and writes that one vault.
 
 ---
 
@@ -68,7 +68,7 @@ Prefer to wire it yourself? Use Docker Compose directly:
 
 ```bash
 cd universal-memory/server
-cp .env.example .env         # set OPENAI_API_KEY and VAULT_PATH
+cp .env.example .env         # set OPENAI_API_KEY and UM_VAULT_DIR
 docker compose up -d
 ```
 
