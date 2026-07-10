@@ -3,7 +3,7 @@
 Bridges are one-way ingestion pipelines — they read from an external memory
 store and translate each record into a markdown file in your UM vault. The
 first bridge ships in v0.6: `um-bridge-claude-mem` ingests sessions from
-[claude-mem](https://github.com/jonathanlhart/claude-mem)'s SQLite database.
+[claude-mem](https://github.com/thedotmack/claude-mem)'s SQLite database.
 
 See [`server/config/BRIDGES.md`](../server/config/BRIDGES.md) for the canonical
 registry of supported bridges.
