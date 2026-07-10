@@ -37,6 +37,18 @@ One wizard, and you're capturing memories in minutes.
 
 You finish a Claude Code session mid-refactor. The next morning you open a fresh session in the same repo and — before you type anything — Claude already knows the current focus, what's in flight, and the decisions from yesterday. No re-briefing, no scrolling back. That's a synthesized `state.md`, written at the end of every session and injected at the start of the next one.
 
+### By the numbers
+
+Every figure is measured by UM's own evals and regenerable by a documented command — sources, environments, and caveats in [docs/benchmarks.md](docs/benchmarks.md). (Numbers for the engines UM builds on live in [their repos](#built-on-proven-foundations), not here.)
+
+| | Measured |
+|---|---|
+| **Recall latency** | p50 **211 ms** end-to-end against UM's API — on a Raspberry Pi 5 running the production instance ([details](docs/benchmarks.md#recall-latency--end-to-end-labeled)) |
+| **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention 7/8 — on UM's 40-row benchmark ([details](docs/benchmarks.md#fact-extraction-fidelity)) |
+| **Duplicate writes** | **100%** of identical re-writes merged, **0** false merges, **0** store growth on full rewrite ([details](docs/benchmarks.md#duplicate-write-handling)) |
+| **Checkpoint cost** | **$0.000155** median per session state-of-play synthesis ([details](docs/benchmarks.md#session-checkpoint-cost)) |
+| **Rigor** | 1,651 tests, 0 failures, on every PR ([details](docs/benchmarks.md#test--eval-rigor)) |
+
 ---
 
 ## How it works
