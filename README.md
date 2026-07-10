@@ -54,7 +54,7 @@ Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the 
 
 - **mem0 inside, by default** — every UM server embeds [mem0 OSS](https://github.com/mem0ai/mem0) as its vector-memory engine (version-pinned and contract-tested, so upgrades are deliberate, never silent). UM layers session continuity, lanes, dedup + supersession, and its own evaluated extraction pipeline on top of it.
 - **mem0 API-compatible** — any existing mem0 Platform client adopts UM without code changes: set `UM_MEM0_COMPAT_ENABLED=true`, point the client's `baseUrl` at your server, use your `UM_AUTH_TOKEN` as the API key. See [docs/mem0-compat.md](docs/mem0-compat.md).
-- **claude-mem friendly** — already running [claude-mem](https://github.com/jonathanlhart/claude-mem)? The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault so cross-surface queries see it too. See [docs/bridges.md](docs/bridges.md).
+- **claude-mem friendly** — already running [claude-mem](https://github.com/thedotmack/claude-mem)? The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault so cross-surface queries see it too. See [docs/bridges.md](docs/bridges.md).
 
 ---
 
