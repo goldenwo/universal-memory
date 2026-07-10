@@ -242,3 +242,11 @@ test('/favicon.svg/x is NOT a favicon path (exact match guard)', () => {
   const r = endpointClassRoute(req('/favicon.svg/x'));
   assert.deepEqual(r, { bypassAuth: false, bypassRateLimit: false });
 });
+
+test('/favicon.png is NOT routed (falls through to default-closed policy)', () => {
+  // Guards against reflexively widening the favicon OR to cover every
+  // extension — only .svg and .ico are boot-loaded assets (Task 3 review
+  // follow-up).
+  const r = endpointClassRoute(req('/favicon.png'));
+  assert.deepEqual(r, { bypassAuth: false, bypassRateLimit: false });
+});
