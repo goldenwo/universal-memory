@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose an enhancement to universal-memory
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Framing the underlying problem (not just the proposed fix) helps a lot when weighing tradeoffs.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What's the gap or pain point? Who hits it, and how often?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: Sketch of how this might work (API shape, CLI flag, config option, etc.). Rough is fine.
+
+  - type: checkboxes
+    id: surfaces
+    attributes:
+      label: Surfaces affected
+      description: Which surfaces would this touch?
+      options:
+        - label: Claude Code
+        - label: claude.ai connector
+        - label: ChatGPT
+        - label: Claude Desktop
+        - label: Codex
+        - label: um CLI
+        - label: REST API
+        - label: mem0-compat facade

@@ -110,7 +110,7 @@ The user's global CC config at `~/.claude/CLAUDE.md` configures the mem0-pi MCP 
 
 > **On session start:** A `SessionStart` hook auto-injects the top-10 most relevant mem0 facts for the current project into context. You usually do not need to call `memory_search` immediately — read the injected block first.
 
-This injection is owned entirely by the user's global `CLAUDE.md` and the `mem0-pi` MCP server running on `pi-openclaw`. UM's server has no visibility into this injection: it does not know which facts were selected, how many tokens they consume, or when the injection occurs relative to UM's own `additionalContext` emission.
+This injection is owned entirely by the user's global `CLAUDE.md` and the `mem0-pi` MCP server running on `<your-host>`. UM's server has no visibility into this injection: it does not know which facts were selected, how many tokens they consume, or when the injection occurs relative to UM's own `additionalContext` emission.
 
 Conclusion: mem0-pi injection is a CC-side configuration outside UM's control. UM's `/api/state` call and mem0-pi's top-10 injection are two independent hooks that both contribute context at session start; neither is aware of the other.
 
@@ -259,7 +259,7 @@ A replacement `memory_exec(operation, args)` schema would describe an `operation
 
 ```
 === which um ===
-which: no um in (/c/Users/wogol/bin:/mingw64/bin:/usr/local/bin:/usr/bin:/bin:...)
+which: no um in (/c/Users/<you>/bin:/mingw64/bin:/usr/local/bin:/usr/bin:/bin:...)
 exit: 1
 
 === type um ===
@@ -392,7 +392,7 @@ N/A: name-propagation enumeration (MEDIUM punchlist item) — only required if `
 
 Ran `[ -d "$UM_VAULT_DIR/.git" ] && echo PRESENT || echo ABSENT` on the authoring machine:
 
-- Resolved `$UM_VAULT_DIR` path: `/c/Users/wogol/.um/vault` (source: `$UM_VAULT_DIR` unset; derived via `vault.sh` default `$HOME/.um/vault`)
+- Resolved `$UM_VAULT_DIR` path: `/c/Users/<you>/.um/vault` (source: `$UM_VAULT_DIR` unset; derived via `vault.sh` default `$HOME/.um/vault`)
 - Vault directory exists: YES (contains `authored/`, `captures/`, `sessions/`, `state/`)
 - Result: **ABSENT**
 
@@ -401,7 +401,7 @@ Ran `[ -d "$UM_VAULT_DIR/.git" ] && echo PRESENT || echo ABSENT` on the authorin
 - **PRESENT:** A.9 `um validate` SHIPS as the 8th daily-use subcommand. Phase A headline: 8 subcommands.
 - **ABSENT / VAULT_NOT_FOUND:** A.9 `um validate` DROPS. Phase A headline: 7 subcommands. Plan orientation "outcome 2" updated accordingly.
 
-**Locked call for v0.4:** DROPS — the authoring vault at `/c/Users/wogol/.um/vault` has no `.git` directory. The vault-as-git signal is ABSENT; `um validate` has no meaningful git-aware semantic to expose. Phase A ships 7 subcommands.
+**Locked call for v0.4:** DROPS — the authoring vault at `/c/Users/<you>/.um/vault` has no `.git` directory. The vault-as-git signal is ABSENT; `um validate` has no meaningful git-aware semantic to expose. Phase A ships 7 subcommands.
 
 ## 7. Phase 0 decisions — go/no-go per downstream gate
 
@@ -410,7 +410,7 @@ Ran `[ -d "$UM_VAULT_DIR/.git" ] && echo PRESENT || echo ABSENT` on the authorin
 | B.1 progressive disclosure | **SHIPS** | L2 responses at 884–1,386 tokens (tiktoken) per call; compounding across a session pushes total context well above the 2.5K effective threshold (§1, §2b) | Unconditional — ships regardless of B.2/B.3 outcome. Row 4b caveat (real summarizer cost ~2× higher than projected) strengthens the case. |
 | B.2 memory_exec | **DROPS** | §5: writes schema sum = 502 tokens; hypothetical memory_exec ≈ 125 tokens → net savings ≈ 377 tokens (1.5 KB). Savings = 0 in default mode after B.3 removes write schemas from listTools entirely. | Design cost not justified. Revisit post-v0.4 only if writes-enabled becomes the common path. Anthropic article cited in §5.1 does not support schema consolidation. |
 | B.3 schema hygiene | **SHIPS** | L1 schemas = 769/798 tokens total; write tools = 502/525 tokens = ~65% of that budget. Removing writes from default listTools is the highest-leverage per-session schema saving across all three MCP surfaces (CC, Claude Desktop, Codex). | Default: writes-disabled. Writes as opt-in. B.3 affects all MCP surfaces simultaneously. |
-| A.9 `um validate` | **DROPS** | Vault-as-git signal = ABSENT on authoring machine (`/c/Users/wogol/.um/vault` has no `.git` directory — §6b) | Phase A ships 7 subcommands. Revisit if user migrates vault to git at a later point. |
+| A.9 `um validate` | **DROPS** | Vault-as-git signal = ABSENT on authoring machine (`/c/Users/<you>/.um/vault` has no `.git` directory — §6b) | Phase A ships 7 subcommands. Revisit if user migrates vault to git at a later point. |
 | CLI canonical name | **`um`** | §6: no default-installed `um` binary on Git Bash (Windows 11), Ubuntu 22.04, Ubuntu 24.04, or macOS. Homebrew formula `um` (personal man pages) has ~42 installs/yr — latent, not default conflict. | No rename to `umem`. Latent macOS Homebrew overlap accepted. |
 | ETag feasibility | **Deferred to v0.5+** | §4: `session-start.sh` uses `curl` without `If-None-Match`; server-side ETag logic is correct but permanently unused given the current client. No public evidence CC's internal HTTP layer caches hook responses via ETag. | Revisit if `session-start.sh` is rewritten to store/re-send ETags, or if CC adopts cached-hook-response upstream. |
 | Aggregate savings >2K threshold (Phase 0 gate) | **MET** | B.1 compaction targets multi-K per-call savings on response payloads (L2 = 884–1,453 tokens per call, compounding). B.3 removes ~502 write tokens from default schema budget across all MCP surfaces. Combined savings easily exceeds the 2K raw / 2.5K effective threshold. | v0.4 proceeds past Phase 0. B.2 drop does not affect the gate — B.1 alone clears it. |

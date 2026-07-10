@@ -19,7 +19,7 @@ The specific invariant under test: when a bash `mkdir` and a Node `fs.mkdirSync`
 | Kernel              | MINGW64_NT-10.0-26200 Desktop 3.6.5-22c95533.x86_64 (MSYS2)      |
 | Node                | v25.2.1                                                          |
 | `mkdir` binary      | `/usr/bin/mkdir` (GNU coreutils 8.32)                            |
-| Filesystem          | NTFS (system drive; `C:\Users\wogol\AppData\Local\Temp`)         |
+| Filesystem          | NTFS (system drive; `C:\Users\<you>\AppData\Local\Temp`)         |
 
 ## Harness
 
@@ -41,7 +41,7 @@ Two substantive changes were needed to make the test meaningful on Windows. Both
 
 The harness in the task spec hardcoded `LOCK="${TMPDIR:-/tmp}/lockdir-race-$$.lockdir"` and embedded that string in both the bash `mkdir` and the `node -e` body. On MSYS2 this produces two *different* physical paths:
 
-- Bash's `/tmp` → `C:\Users\wogol\AppData\Local\Temp` (the MSYS2 virtual mount).
+- Bash's `/tmp` → `C:\Users\<you>\AppData\Local\Temp` (the MSYS2 virtual mount).
 - Node's `/tmp` → resolves relative to the invocation drive's root; at the time of writing, `path.resolve('/tmp')` in Node returned `E:\tmp` (because the process cwd was on `E:`).
 
 With the original harness, each "race" iteration had bash creating a directory under `C:\…\Temp\` and node creating a directory under `E:\tmp\`. The two surfaces never contended for the same FS object, so the invariant was trivially satisfied but for the wrong reason — a hidden false-negative. The first run with the original harness reported `Bash wins: 100, losses: 0 / Node wins: 0, losses: 0 / Anomalies: 0`: node produced neither wins nor losses because its separate-path attempts all "succeeded" in parallel without ever being counted against bash's wins. This was only visible because of the 0/0 pattern for node losses.

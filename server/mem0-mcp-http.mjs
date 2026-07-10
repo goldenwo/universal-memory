@@ -154,6 +154,15 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
 
+// ---------------------------------------------------------------------------
+// Favicon assets — boot-loaded once as raw bytes (spec 2026-07-09
+// public-release-polish §4). The endpoint-class /favicon.svg + /favicon.ico
+// row grants bypassAuth+bypassRateLimit; that bypass is only safe because
+// serving is memory-bytes-only — do NOT replace with per-request fs reads.
+// ---------------------------------------------------------------------------
+const _FAVICON_SVG = readFileSync(path.resolve(__dirname, 'assets/brand/favicon.svg'));
+const _FAVICON_ICO = readFileSync(path.resolve(__dirname, 'assets/brand/favicon.ico'));
+
 /**
  * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
  * Uses [...str] (code-point-aware iteration) rather than slice(0, N) which operates on
@@ -2706,6 +2715,19 @@ export function createRequestHandler(ctx = {}) {
 			const text = await registry.metrics();
 			res.writeHead(200, { 'Content-Type': registry.contentType });
 			res.end(text);
+			return;
+		}
+		// Static brand assets, boot-loaded above (spec 2026-07-09
+		// public-release-polish §4). Endpoint-class already grants
+		// bypassAuth+bypassRateLimit for these two exact paths — serving
+		// from memory keeps that bypass safe (no per-request I/O).
+		if (req.method === 'GET' && (url.pathname === '/favicon.svg' || url.pathname === '/favicon.ico')) {
+			const isSvg = url.pathname === '/favicon.svg';
+			res.writeHead(200, {
+				'Content-Type': isSvg ? 'image/svg+xml' : 'image/x-icon',
+				'Cache-Control': 'public, max-age=86400',
+			});
+			res.end(isSvg ? _FAVICON_SVG : _FAVICON_ICO);
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {

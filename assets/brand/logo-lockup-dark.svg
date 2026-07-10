@@ -1,0 +1,6 @@
+<svg width="300" height="72" viewBox="0 0 300 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>um — universal memory</title>
+  <path d="M20 16 v18.5 a12.5 12.5 0 0 0 25 0 v-6.5 a6.7 6.7 0 0 0 -10.8 -5" stroke="#7c7ce8" stroke-width="5" stroke-linecap="round"/>
+  <text x="62" y="42" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="34" font-weight="650" letter-spacing="-1" fill="#f0f3f6">um</text>
+  <text x="62" y="62" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14" letter-spacing="0.2" fill="#8b949e">universal memory</text>
+</svg>

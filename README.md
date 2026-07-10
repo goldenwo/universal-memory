@@ -1,63 +1,54 @@
-# universal-memory
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-lockup-dark.svg">
+    <img src="assets/brand/logo-lockup-light.svg" alt="um — universal memory" width="300">
+  </picture>
 
-Self-hosted AI memory that closes the session-continuity gap across every Claude surface.
+  <p>
+    Self-hosted memory that follows you across every AI — Claude Code, claude.ai, ChatGPT, your own bots.<br>
+    <em>Automatic capture in Claude Code and your bots. Automatic recall everywhere. The vault is yours.</em>
+  </p>
 
-[![smoke](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml)
-[![release](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml/badge.svg)](https://github.com/goldenwo/universal-memory/actions/workflows/release.yml)
+  <p>
+    <a href="https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml"><img src="https://github.com/goldenwo/universal-memory/actions/workflows/smoke.yml/badge.svg" alt="smoke"></a>
+    <img src="https://img.shields.io/github/v/release/goldenwo/universal-memory?color=5b5bd6" alt="release">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-57606a" alt="license: MIT"></a>
+    <img src="https://img.shields.io/badge/platform-docker%20·%20arm64%20·%20amd64-57606a" alt="platform: docker · arm64 · amd64">
+  </p>
+</div>
 
-Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
+| 🧠 One vault, every surface | 🔄 Sessions that resume | 🔒 Yours, on your hardware |
+|---|---|---|
+| A fact captured in Claude Code is recalled in claude.ai on your phone. MCP, REST, OAuth connectors, mem0-compatible API (opt-in flag). | Every session ends with a synthesized state-of-play; the next one starts already knowing where you left off. | Runs on anything from a Raspberry Pi up. Markdown vault + local vector store. No cloud account, no telemetry. |
 
----
+```bash
+git clone https://github.com/goldenwo/universal-memory
+cd universal-memory
+bash installer/install.sh
+```
 
-## The problem
-
-Claude Code, Claude.ai, and Claude Desktop share no memory by default. A decision made in a morning coding session is invisible to an afternoon writing session and invisible to tomorrow. universal-memory fixes that: one memory store, accessible from every Claude surface, so context follows you instead of resetting each time.
-
----
-
-## What you get
-
-- **Session continuity** — a `state.md` file per project is injected at the start of every session. Current focus, in-flight work, recent decisions, next actions — all there without manual setup.
-- **Cross-surface access** — any MCP client (Claude Code, Claude.ai connector, Claude Desktop) can read and write memory via 11 MCP tools (4 read tools visible by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Progressive disclosure: read responses return compact snippets by default; opt into full bodies via `?full=1` or `full: true`. Work captured in Claude Code is visible from Claude.ai the same day.
-- **Cross-env first-class capture** — capture is not Claude Code-only. Claude.ai, ChatGPT Desktop, and Codex use `memory_append_turn` to feed conversation turns directly into the raw-capture pipeline, and `memory_checkpoint` to trigger session summaries and `state.md` refresh — the same pipeline that Claude Code's Stop/SessionEnd hooks drive automatically.
-- **Command-line toolkit** — 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts, cron jobs, and power-user workflows. Composable with grep / awk / jq. Installs standalone via `installer/install-cli.sh` against any reachable UM server.
-- **Authored knowledge that lasts** — structured documents (ADRs, character sheets, hypotheses, goals, strategies) live in plain markdown with frontmatter versioning. Superseded documents are auditable; current ones are surfaced by default. **New in v1.1:** two Claude Code skills cover both authored and casual capture. `/adr "<title>"` writes an ADR to `docs/decisions/NNNN-<slug>.md` in the consumer's repo, commits it, and registers the decision atomically with the UM server in one step. `/remember <text>` is the doctype-free counterpart for casual no-project saves — POSTs the fact directly to the server (no file, no git repo required), with D1 dedup ensuring identical text is idempotent by content.
-- **Markdown as source of truth** — no vendor lock-in. If any component (vector store, LLM provider, plugin format) is replaced, your knowledge survives as readable files under git.
-- **Upstream bridges** — one-way ingest from external memory stores. The first bridge, `um-bridge-claude-mem`, mirrors your claude-mem session history into the UM vault as searchable markdown so cross-surface queries see it too. Bridge-emitted content is fenced with `<external-summary source="…">` markers so the summarizer treats it as data, not instruction. See [`docs/bridges.md`](docs/bridges.md).
-
----
-
-## Who this is for
-
-Anyone who uses Claude across multiple sessions and wants continuity. This is not a coder-only tool.
-
-- A novelist tracking character sheets, plot decisions, and chapter notes across weeks of writing sessions.
-- A researcher logging hypotheses, experiment outcomes, and literature notes across tools.
-- A person tracking life goals, learning plans, and personal decisions.
-- A team capturing architecture decisions, quarterly strategies, and meeting outcomes.
-- A developer who wants session state and ADRs to follow them across machines and surfaces.
+One wizard, and you're capturing memories in minutes.
 
 ---
 
-## How it differs from alternatives
+## See it work
 
-**vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds on top: session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface. Using mem0 alone means no session state, no catchup mechanism, no document versioning.
+![Two terminal panels: a session ends mid-refactor; the next session starts with the synthesized state-of-play already injected](assets/brand/proof-continuity.png)
 
-**vs Claude-mem** — Claude-mem is Claude Code-only. universal-memory is cross-surface: Claude.ai, Claude Desktop, and any MCP client can read and write the same memory store via the server. **The two compose**: `um-bridge-claude-mem` ingests claude-mem's session history into the UM vault, so a session logged in Claude Code becomes searchable from Claude.ai too.
-
-**vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault that a human can open in any editor can also be queried by agents at conversation speed via the MCP surface.
+You finish a Claude Code session mid-refactor. The next morning you open a fresh session in the same repo and — before you type anything — Claude already knows the current focus, what's in flight, and the decisions from yesterday. No re-briefing, no scrolling back. That's a synthesized `state.md`, written at the end of every session and injected at the start of the next one.
 
 ---
 
-## Three surfaces, one vault
+## How it works
 
-universal-memory exposes the same vault through three equal-peer interfaces:
+```mermaid
+flowchart LR
+  A["Capture sources<br/>Claude Code hooks · bots · CLI"] --> B["Extract · dedup<br/>route to lanes"]
+  B --> C[("One vault<br/>markdown + Qdrant")]
+  C --> D["Recall on any surface<br/>Claude Code · claude.ai · ChatGPT · Desktop"]
+```
 
-- **MCP** — every Claude surface (Code, Desktop, Claude.ai) + Codex + Custom GPT via the [Model Context Protocol](https://modelcontextprotocol.io). Progressive disclosure: read responses default to compact snippets; request full bodies explicitly.
-- **REST** — OpenAPI 3.1 at `/openapi.yaml`. Use from ChatGPT Custom GPT Actions, the OpenAI Responses API, or any HTTP client. Same compact-shape defaults.
-- **CLI (`um`)** — 7-subcommand shell toolkit for scripting, cron, and power-user flows. Composable with grep / awk / jq.
-
-All three read and write the same markdown vault. Pick whichever fits the moment; switch freely.
+Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the `um` CLI. The server extracts facts, dedups them, and routes them into lanes — facts land in a local Qdrant index, while authored knowledge (ADRs, session summaries, documents) lives as markdown files you can keep under git. Any surface — MCP, REST, or an OAuth connector — reads and writes that one vault.
 
 ---
 
@@ -65,97 +56,118 @@ All three read and write the same markdown vault. Pick whichever fits the moment
 
 ### 1. Start the memory server
 
-```bash
-git clone https://github.com/goldenwo/universal-memory
-cd universal-memory/server
-cp .env.example .env         # set OPENAI_API_KEY and VAULT_PATH
-docker compose up -d
-```
-
-Or use the one-command install wizard — see [docs/quickstart.md](docs/quickstart.md).
-
-### 1b. (Optional) Install the `um` CLI
-
-For shell scripting, cron jobs, or power-user flows, install the CLI independently of the server. Point it at any reachable UM server (local or remote):
+The one-command wizard sets up your `.env`, prompts for your OpenAI API key and vault directory, and starts the Docker stack:
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory
 cd universal-memory
+bash installer/install.sh
+```
+
+Prefer to wire it yourself? Use Docker Compose directly:
+
+```bash
+cd universal-memory/server
+cp .env.example .env         # set OPENAI_API_KEY and UM_VAULT_DIR
+docker compose up -d
+```
+
+Verify it started:
+
+```bash
+curl http://localhost:6335/health
+# {"ok":true,"memories":0}
+```
+
+Full walkthrough: [docs/quickstart.md](docs/quickstart.md).
+
+### 2. First Claude Code session
+
+Register the plugin (exact steps in [docs/quickstart.md](docs/quickstart.md)) and open a session. As you work, the Stop hook appends raw captures to the vault; the SessionEnd hook synthesizes a summary. Nothing else is required.
+
+### 3. Second session — continuity works
+
+At the start of the next session, the SessionStart hook detects the unprocessed captures, writes a fresh `state.md`, and injects it as context before your first message. Run `/um-checkpoint` any time mid-session to refresh `state.md` on demand.
+
+### Install the `um` CLI
+
+For shell scripting, cron jobs, or power-user flows, install the CLI on its own and point it at any reachable UM server:
+
+```bash
+cd universal-memory
 bash installer/install-cli.sh
 ```
 
-See [installer/install-cli.md](installer/install-cli.md) for full details, and [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference.
+See [installer/install-cli.md](installer/install-cli.md) and the [subcommand reference](docs/um-cli.md).
 
-### 2. First Claude Code session with the UM plugin
+---
 
-Install the plugin (see [docs/quickstart.md](docs/quickstart.md) for the exact command). Open a Claude Code session. As you work, the Stop hook appends raw captures to the vault. Nothing else is required.
+## Surfaces
 
-### 3. Second Claude Code session — continuity works
+The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write. The full parity matrix — setup steps, project-signal, tier ladder — lives in [docs/surfaces.md](docs/surfaces.md).
 
-At the start of the next session, the SessionStart hook:
-- Detects unprocessed captures from the previous session.
-- Synthesizes them into a session summary.
-- Writes a fresh `state.md`.
-- Injects `state.md` as context before your first message.
+| Surface | Capture | Recall | Setup |
+|---|---|---|---|
+| **Claude Code** | Automatic (session hooks) | Automatic (`state.md` injected at session start) | One command |
+| **claude.ai** (web + mobile) | Say "remember" | On demand, via MCP tools | OAuth connector |
+| **ChatGPT** (Desktop / Custom GPT) | Say "remember" | On demand, via MCP or REST | Connector + tunnel |
+| **Claude Desktop** | Say "remember" | On demand, via MCP tools | Local config, no tunnel |
+| **`um` CLI** | `um capture` | `um state` / `um search` | One command |
+| **mem0-compatible clients** (e.g. Discord bots) | Automatic (client-driven) | Automatic | Point `baseUrl` at UM — opt-in flag `UM_MEM0_COMPAT_ENABLED=true` |
 
-Your current focus, in-flight tasks, recent decisions, and next actions are waiting.
+Any request reaching UM through a tunnel or reverse proxy must carry `Authorization: Bearer <UM_AUTH_TOKEN>`; loopback installs skip auth by default. Connector guides: [claude.ai](docs/connecting-claude-ai.md) · [ChatGPT Desktop](docs/connecting-chatgpt-desktop.md) · [mem0-compat](docs/mem0-compat.md).
 
-### 4. Force a checkpoint mid-session
+---
 
-At any point during a session, run:
+## What you get
 
-```
-/um-checkpoint
-```
+- **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
+- **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (4 read tools by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Read responses return compact snippets by default; opt into full bodies with `full: true`.
+- **Cross-environment capture** — capture is not Claude Code-only. claude.ai, ChatGPT Desktop, and Codex feed conversation turns into the same pipeline via `memory_append_turn`, and trigger summaries with `memory_checkpoint`.
+- **Command-line toolkit** — a 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
+- **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.
+- **Markdown as source of truth** — no vendor lock-in. Swap the vector store, LLM provider, or plugin format and your knowledge survives as readable files under git.
+- **Upstream bridges** — one-way ingest from external memory stores. `um-bridge-claude-mem` mirrors your claude-mem history into the UM vault as searchable markdown. See [docs/bridges.md](docs/bridges.md).
 
-This immediately refreshes `state.md` from accumulated captures. Useful after a significant decision you want captured before continuing.
+## Who this is for
 
-### 5. From Claude.ai or ChatGPT Desktop — connect and capture
+Anyone who uses AI across multiple sessions and wants continuity — not a coder-only tool.
 
-Connect the MCP server to any MCP-capable surface via the connector URL (`http://your-host:6335/mcp`, or a tunnel URL for remote surfaces). Once connected:
+- A novelist tracking character sheets, plot decisions, and chapter notes across weeks of writing.
+- A researcher logging hypotheses, experiment outcomes, and literature notes across tools.
+- A person tracking life goals, learning plans, and personal decisions.
+- A team capturing architecture decisions, quarterly strategies, and meeting outcomes.
+- A developer who wants session state and ADRs to follow them across machines and surfaces.
 
-```
-memory_state("my-project")    # loads current state.md from the remote surface
-memory_search("query")        # semantic search across all indexed documents
-memory_capture(...)           # write a new document to the vault from the remote surface
-```
+---
 
-> **Authentication.** Any request reaching UM through a tunnel or reverse proxy must include `Authorization: Bearer <UM_AUTH_TOKEN>`. See [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) or [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for connector-specific setup. Loopback installs (Claude Desktop → `localhost:6335` directly) do not require auth.
+## How it differs
 
-Captures made from any surface are visible in Claude Code sessions and vice versa.
+**vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface on top. mem0 alone has no session state, no catchup, no document versioning.
 
-Surface-specific guides:
-- **ChatGPT Desktop:** see [docs/connecting-chatgpt-desktop.md](docs/connecting-chatgpt-desktop.md) for tunnel options, connector setup, and the rubric paste-in.
-- **Claude.ai / Claude Desktop:** see [docs/connecting-claude-ai.md](docs/connecting-claude-ai.md) for tunnel options, connector setup (web + desktop app), and the rubric paste-in.
-- **ChatGPT Custom GPT (web):** see [plugins/chatgpt-custom-gpt/universal-memory/README.md](plugins/chatgpt-custom-gpt/universal-memory/README.md) for wiring UM's REST surface to a personal Custom GPT via Actions (search / state / add / delete; no MCP-only tools).
-- **Codex CLI (OpenAI):** see [plugins/codex/universal-memory/README.md](plugins/codex/universal-memory/README.md) for the config-only plugin + MCP connector setup. **Recall-only.** Codex sessions can call `memory_search` / `memory_state` / `memory_capture` via MCP, but the automatic raw-capture + summary pipeline stays Claude-Code-only until Codex ships `SessionEnd`, plugin-bundled hooks, and Windows hook support. Background in [docs/codex-integration-notes.md](docs/codex-integration-notes.md).
-- **OpenAI Assistants API (developer integration):** see [examples/openai-assistants/](examples/openai-assistants/) — Node + Python examples of an Assistant using UM as a memory tool. Smoke-tested end-to-end.
-- **mem0 Platform clients (e.g. the OpenClaw memory plugin):** see [docs/mem0-compat.md](docs/mem0-compat.md) — a flag-gated facade (`UM_MEM0_COMPAT_ENABLED=true`) speaking the mem0 Platform HTTP dialect. Already on mem0? Point the client's `baseUrl` at your UM server and use your `UM_AUTH_TOKEN` as the API key — zero client changes.
-- **CLI (`um`):** see [docs/um-cli.md](docs/um-cli.md) for the 7-subcommand reference (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`).
+**vs claude-mem** — claude-mem is Claude Code-only; universal-memory is cross-surface, so claude.ai, Claude Desktop, and any MCP client read and write the same store. The two also compose: `um-bridge-claude-mem` ingests claude-mem history into the UM vault.
+
+**vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault a human opens in any editor is also queryable by agents at conversation speed over the MCP surface.
 
 ---
 
 ## MCP tool surface
 
-11 tools total — 4 read tools (`memory_search`, `memory_list`, `memory_state`, `memory_recent`) visible to any MCP client by default; 7 write tools (`memory_add`, `memory_capture`, `memory_checkpoint`, `memory_delete`, `memory_forget`, `memory_supersede`, `memory_append_turn`) visible only when `UM_MCP_WRITE_ENABLED=true`. See [docs/mcp-tools.md](docs/mcp-tools.md) for full schemas and examples.
-
-Read tools (`memory_search`, `memory_list`, `memory_recent`, `memory_state`) return compact snippets by default (~200 bytes per hit); pass `full: true` to retrieve full bodies.
+11 tools total — 4 read tools visible to any MCP client by default; 7 write tools visible only when `UM_MCP_WRITE_ENABLED=true`. Read tools return compact snippets by default; pass `full: true` for full bodies. Full schemas and examples in [docs/mcp-tools.md](docs/mcp-tools.md).
 
 | Tool | Type | What it does |
 |---|---|---|
 | `memory_search` | read | Semantic search over indexed documents |
 | `memory_list` | read | List all indexed memories |
 | `memory_state` | read | Load `state.md` for a project |
-| `memory_recent` | read | Recent authored docs for a project, filesystem-mtime-sorted (`project` required) |
+| `memory_recent` | read | Recent authored docs for a project (mtime-sorted) |
 | `memory_add` | write | Add a fact to the index |
 | `memory_capture` | write | Write a new authored document to the vault |
 | `memory_checkpoint` | write | Trigger session summary + state refresh |
 | `memory_forget` | write | Deprecate a document by ID |
 | `memory_supersede` | write | Replace a document; preserves audit chain |
-| `memory_append_turn` | write | Append a conversation turn to raw-capture pipeline (non-CC surfaces) |
+| `memory_append_turn` | write | Append a conversation turn to the raw-capture pipeline |
 | `memory_delete` | write | Remove a memory from the index |
-
-Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`.
 
 ---
 
@@ -163,37 +175,32 @@ Write tools require `UM_MCP_WRITE_ENABLED=true` in your `.env`.
 
 ```
 universal-memory/
-├── server/                      Self-hostable backend (Qdrant + mem0 + MCP endpoint)
-├── installer/
-│   ├── install.sh               Full server install wizard (docker compose + env)
-│   └── install-cli.sh           Standalone `um` CLI install (no server required)
-├── plugins/
-│   ├── claude-code/             Claude Code plugin (hooks, /um-checkpoint skill)
-│   ├── codex/                   Codex CLI plugin (config-only MCP connector)
-│   └── chatgpt-custom-gpt/      ChatGPT Custom GPT recipe (Actions + system prompt)
-├── docs/
-│   ├── architecture.md          Two-tier design, three pillars, MCP surface
-│   ├── state-of-play.md         state.md concept reference
-│   ├── frontmatter-schema.md    Document schema and versioning reference
-│   ├── mcp-tools.md             Full MCP tool reference with examples
-│   ├── um-cli.md                `um` CLI subcommand reference
-│   └── quickstart.md            Install walkthroughs
-└── .github/workflows/           CI smoke tests and release pipeline
+├── server/       Self-hostable backend (Qdrant + mem0 + MCP/REST endpoints)
+├── installer/    Install wizards (server, CLI, plugins)
+├── cli/          `um` command-line toolkit source
+├── plugins/      Per-surface connectors (Claude Code, Codex, ChatGPT Custom GPT)
+├── examples/     Integration examples (OpenAI Assistants, …)
+└── docs/         Architecture, surfaces matrix, connector guides, references
 ```
 
 ---
 
 ## Upgrading
 
-universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult both:
+universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult [MIGRATION.md](MIGRATION.md) for per-version upgrade steps and [CHANGELOG.md](CHANGELOG.md) for full release notes. Pin a release tag rather than tracking `latest` in production.
 
-- [MIGRATION.md](MIGRATION.md) — step-by-step upgrade guidance per version transition (v0.3 → v0.4 → v0.5 → v0.6 → v0.7 → v0.8 → v1.0 → v1.1 → v1.2).
-- [CHANGELOG.md](CHANGELOG.md) — full per-release notes (Added / Changed / Fixed / Docs).
-
-Pin a release tag rather than tracking `latest` in production.
+Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
 
 ---
 
-## License
+## Outbound calls & privacy
 
-MIT — see [LICENSE](LICENSE).
+The server makes outbound calls only to the OpenAI API (embeddings + fact extraction). No telemetry, no analytics, no other phone-home.
+
+---
+
+## Security, contributing, license
+
+- Found a vulnerability? See [SECURITY.md](SECURITY.md).
+- Want to contribute? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+- License: MIT — see [LICENSE](LICENSE).
