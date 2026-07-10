@@ -196,3 +196,9 @@ test('consent page: provider id is HTML-escaped in the formaction attribute', ()
   assert.doesNotMatch(html, /formaction="\/oauth\/idp\/g"x\/login"/); // a raw quote would break out of the attribute
   assert.match(html, /&quot;/);                                        // it is escaped instead
 });
+
+test('consent page carries brand lockup and favicon link', () => {
+  const html = renderConsentPage(baseArgs);
+  assert.ok(html.includes('<link rel="icon" href="/favicon.svg"'));
+  assert.ok(html.includes('data-brand="um-lockup"'));
+});
