@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { OAUTH_TTLS } from '../lib/oauth/state-store.mjs';
 import {
   signConsentCookie,
@@ -199,6 +200,17 @@ test('consent page: provider id is HTML-escaped in the formaction attribute', ()
 
 test('consent page carries brand lockup and favicon link', () => {
   const html = renderConsentPage(baseArgs);
-  assert.ok(html.includes('<link rel="icon" href="/favicon.svg"'));
+  assert.ok(html.includes('<link rel="icon" href="/favicon.svg" type="image/svg+xml">'));
   assert.ok(html.includes('data-brand="um-lockup"'));
+});
+
+test('consent page lockup path geometry matches favicon.svg (shared brand constant)', () => {
+  const faviconSvg = readFileSync(new URL('../assets/brand/favicon.svg', import.meta.url), 'utf8');
+  const faviconD = faviconSvg.match(/<path d="([^"]+)"/)?.[1];
+  assert.ok(faviconD, 'favicon.svg must contain a path d attribute');
+  const html = renderConsentPage(baseArgs);
+  const lockupD = html.match(/data-brand="um-lockup"[\s\S]*?<path d="([^"]+)"/)?.[1];
+  assert.ok(lockupD, 'consent page lockup svg must contain a path d attribute');
+  // Path data only — stroke-width intentionally differs (6 standard mark vs 9 favicon small-mark cut).
+  assert.equal(lockupD, faviconD);
 });
