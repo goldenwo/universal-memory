@@ -1,0 +1,50 @@
+{"id":"dedup-000","text":"My preferred code editor for zephyr-00 is Nova Edit.","variant_text":"My preferred code editor for zephyr-00 is Nova Edit.","kind":"exact"}
+{"id":"dedup-001","text":"The primary programming language for nyx-01 is Crystal.","variant_text":"The primary programming language for nyx-01 is Crystal.","kind":"exact"}
+{"id":"dedup-002","text":"The database used by glint-02 is TiDB.","variant_text":"The database used by glint-02 is TiDB.","kind":"exact"}
+{"id":"dedup-003","text":"The CI provider for vortex-03 is Concourse.","variant_text":"The CI provider for vortex-03 is Concourse.","kind":"exact"}
+{"id":"dedup-004","text":"The default branch name for ember-04 is stem.","variant_text":"The default branch name for ember-04 is stem.","kind":"exact"}
+{"id":"dedup-005","text":"My standup time for koru-05 is 9:15am.","variant_text":"My standup time for koru-05 is 9:15am.","kind":"exact"}
+{"id":"dedup-006","text":"The minimum test coverage threshold for tarn-06 is 76%.","variant_text":"The minimum test coverage threshold for tarn-06 is 76%.","kind":"exact"}
+{"id":"dedup-007","text":"The backup schedule for oxide-07 is weekly.","variant_text":"The backup schedule for oxide-07 is weekly.","kind":"exact"}
+{"id":"dedup-008","text":"The on-call rotation length for flare-08 is ten days.","variant_text":"The on-call rotation length for flare-08 is ten days.","kind":"exact"}
+{"id":"dedup-009","text":"The lint tool used by holt-09 is Semgrep-lite.","variant_text":"The lint tool used by holt-09 is Semgrep-lite.","kind":"exact"}
+{"id":"dedup-010","text":"My preferred code editor for quill-10 is Nova Edit.","variant_text":"My preferred code editor for quill-10 is Nova Edit.","kind":"exact"}
+{"id":"dedup-011","text":"The primary programming language for brisk-11 is Crystal.","variant_text":"The primary programming language for brisk-11 is Crystal.","kind":"exact"}
+{"id":"dedup-012","text":"The database used by moss-12 is TiDB.","variant_text":"The database used by moss-12 is TiDB.","kind":"exact"}
+{"id":"dedup-013","text":"The CI provider for crux-13 is Concourse.","variant_text":"The CI provider for crux-13 is Concourse.","kind":"exact"}
+{"id":"dedup-014","text":"The default branch name for yonder-14 is stem.","variant_text":"The default branch name for yonder-14 is stem.","kind":"exact"}
+{"id":"dedup-015","text":"My standup time for pilcrow-15 is 9:15am.","variant_text":"My standup time for pilcrow-15 is 9:15am.","kind":"exact"}
+{"id":"dedup-016","text":"The minimum test coverage threshold for ridge-16 is 76%.","variant_text":"The minimum test coverage threshold for ridge-16 is 76%.","kind":"exact"}
+{"id":"dedup-017","text":"The backup schedule for sable-17 is weekly.","variant_text":"The backup schedule for sable-17 is weekly.","kind":"exact"}
+{"id":"dedup-018","text":"The on-call rotation length for drift-18 is ten days.","variant_text":"The on-call rotation length for drift-18 is ten days.","kind":"exact"}
+{"id":"dedup-019","text":"The lint tool used by ember2-19 is Semgrep-lite.","variant_text":"The lint tool used by ember2-19 is Semgrep-lite.","kind":"exact"}
+{"id":"dedup-020","text":"My preferred code editor for talon-20 is Nova Edit.","variant_text":"For talon-20, I like to write code using Nova Edit.","kind":"paraphrase"}
+{"id":"dedup-021","text":"The primary programming language for birch-21 is Crystal.","variant_text":"birch-21 is written primarily in Crystal.","kind":"paraphrase"}
+{"id":"dedup-022","text":"The database used by fable-22 is TiDB.","variant_text":"fable-22 stores its data in TiDB.","kind":"paraphrase"}
+{"id":"dedup-023","text":"The CI provider for grove-23 is Concourse.","variant_text":"grove-23 runs its CI pipeline on Concourse.","kind":"paraphrase"}
+{"id":"dedup-024","text":"The default branch name for lumen-24 is stem.","variant_text":"lumen-24's default git branch is called stem.","kind":"paraphrase"}
+{"id":"dedup-025","text":"My standup time for cinder-25 is 9:15am.","variant_text":"I usually join the cinder-25 standup at 9:15am.","kind":"paraphrase"}
+{"id":"dedup-026","text":"The minimum test coverage threshold for thicket-26 is 76%.","variant_text":"thicket-26 requires at least 76% test coverage.","kind":"paraphrase"}
+{"id":"dedup-027","text":"The backup schedule for wren-27 is weekly.","variant_text":"Backups for wren-27 run on a weekly schedule.","kind":"paraphrase"}
+{"id":"dedup-028","text":"The on-call rotation length for marl-28 is ten days.","variant_text":"The on-call rotation for marl-28 lasts ten days.","kind":"paraphrase"}
+{"id":"dedup-029","text":"The lint tool used by osprey-29 is Semgrep-lite.","variant_text":"osprey-29 lints its code with Semgrep-lite.","kind":"paraphrase"}
+{"id":"dedup-030","text":"My preferred code editor for zephyr-30 is Nova Edit.","variant_text":"For zephyr-30, I like to write code using Nova Edit.","kind":"paraphrase"}
+{"id":"dedup-031","text":"The primary programming language for nyx-31 is Crystal.","variant_text":"nyx-31 is written primarily in Crystal.","kind":"paraphrase"}
+{"id":"dedup-032","text":"The database used by glint-32 is TiDB.","variant_text":"glint-32 stores its data in TiDB.","kind":"paraphrase"}
+{"id":"dedup-033","text":"The CI provider for vortex-33 is Concourse.","variant_text":"vortex-33 runs its CI pipeline on Concourse.","kind":"paraphrase"}
+{"id":"dedup-034","text":"The default branch name for ember-34 is stem.","variant_text":"ember-34's default git branch is called stem.","kind":"paraphrase"}
+{"id":"dedup-035","text":"My standup time for koru-35 is 9:15am.","variant_text":"I usually join the koru-35 standup at 9:15am.","kind":"paraphrase"}
+{"id":"dedup-036","text":"The minimum test coverage threshold for tarn-36 is 76%.","variant_text":"tarn-36 requires at least 76% test coverage.","kind":"paraphrase"}
+{"id":"dedup-037","text":"The backup schedule for oxide-37 is weekly.","variant_text":"Backups for oxide-37 run on a weekly schedule.","kind":"paraphrase"}
+{"id":"dedup-038","text":"The on-call rotation length for flare-38 is ten days.","variant_text":"The on-call rotation for flare-38 lasts ten days.","kind":"paraphrase"}
+{"id":"dedup-039","text":"The lint tool used by holt-39 is Semgrep-lite.","variant_text":"holt-39 lints its code with Semgrep-lite.","kind":"paraphrase"}
+{"id":"dedup-040","text":"My preferred code editor for quill-40 is Nova Edit.","variant_text":"My standup time for talon-140 is 10:05am.","kind":"control"}
+{"id":"dedup-041","text":"The primary programming language for brisk-41 is Crystal.","variant_text":"The minimum test coverage threshold for birch-141 is 68%.","kind":"control"}
+{"id":"dedup-042","text":"The database used by moss-42 is TiDB.","variant_text":"The backup schedule for fable-142 is hourly.","kind":"control"}
+{"id":"dedup-043","text":"The CI provider for crux-43 is Concourse.","variant_text":"The on-call rotation length for grove-143 is one week.","kind":"control"}
+{"id":"dedup-044","text":"The default branch name for yonder-44 is stem.","variant_text":"The lint tool used by lumen-144 is Oxlint.","kind":"control"}
+{"id":"dedup-045","text":"My standup time for pilcrow-45 is 9:15am.","variant_text":"My preferred code editor for cinder-145 is Pinery.","kind":"control"}
+{"id":"dedup-046","text":"The minimum test coverage threshold for ridge-46 is 76%.","variant_text":"The primary programming language for thicket-146 is Nim.","kind":"control"}
+{"id":"dedup-047","text":"The backup schedule for sable-47 is weekly.","variant_text":"The database used by wren-147 is SurrealDB.","kind":"control"}
+{"id":"dedup-048","text":"The on-call rotation length for drift-48 is ten days.","variant_text":"The CI provider for marl-148 is Buildkite.","kind":"control"}
+{"id":"dedup-049","text":"The lint tool used by ember2-49 is Semgrep-lite.","variant_text":"The default branch name for osprey-149 is mainline.","kind":"control"}

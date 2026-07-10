@@ -1,0 +1,339 @@
+{
+  "timestamp": "2026-07-10T19:58:09.908Z",
+  "fixture": "eval/extraction-set.jsonl",
+  "judgeModel": "gpt-4o-mini",
+  "factsModel": "gpt-4.1-nano (provider default)",
+  "pinnable": true,
+  "extraction": {
+    "rows": 40,
+    "graded": 40,
+    "parseFails": 0,
+    "precision": 1,
+    "recall": 0.98,
+    "f1": 0.99,
+    "noiseAbstained": 7,
+    "noiseTotal": 8,
+    "perRow": [
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      }
+    ]
+  }
+}
