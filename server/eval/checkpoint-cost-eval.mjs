@@ -8,9 +8,19 @@
  * IS_MAIN so importing this module for its pure export never opens a socket.
  *
  * Purpose: measure the real dollar + token cost of ONE session-checkpoint
- * synthesis (POST /api/checkpoint) over N runs against a FIXTURE project
- * (`bench-checkpoint-cost` — never a real project name), so the README can
+ * synthesis (POST /api/checkpoint) over N runs against FIXTURE projects
+ * (`bench-checkpoint-cost-<i>` — never real project names), so the README can
  * report a measured median/p95 cost per checkpoint instead of a guess.
+ *
+ * WALLED ITERATIONS: each iteration gets its OWN fixture project
+ * (`bench-checkpoint-cost-0` .. `-<N-1>`). doCheckpoint has no incremental
+ * cursor — without `since` it re-summarizes ALL of the project's same-day raw
+ * captures, and captures are never archived after a checkpoint. Sharing one
+ * project across same-day iterations therefore measures "the Nth checkpoint
+ * over an accumulating transcript" (tokens_in grows ~linearly run-over-run),
+ * NOT the steady-state number a reader cares about. Per-iteration projects
+ * wall each measurement off: N independent samples of "one checkpoint over a
+ * fresh 4-turn session".
  *
  * Unlike every other eval/*.mjs harness (which import mem0ai/Memory/embed
  * directly and drive them in-process), this one targets a LIVE, already-running
@@ -20,31 +30,33 @@
  * pays: the full HTTP + auth + reindex pipeline, not an in-process shortcut.
  *
  * Per iteration i of N:
- *   1. POST 4 templated conversation turns via /api/append-turn (content varies
- *      per i so checkpoint synthesis has fresh material — a checkpoint with no
- *      new captures since the last one may no-op and report near-zero cost,
- *      which would silently understate the measurement).
- *   2. POST /api/checkpoint for the fixture project.
+ *   1. POST 4 templated conversation turns via /api/append-turn into project
+ *      `bench-checkpoint-cost-<i>` (content also varies per i so synthesis has
+ *      real, distinct material — a checkpoint with no new captures may no-op
+ *      and report near-zero cost, silently understating the measurement).
+ *   2. POST /api/checkpoint for that iteration's project.
  *   3. Record { cost_usd, tokens_in, tokens_out } from the response — fail-loud
  *      if any of the three is not a finite number (a checkpoint response
  *      missing cost telemetry is a regression, not a benign gap).
  *
- * Cleanup (always — success or failure): delete the qdrant points the
- * checkpoints created under `project: bench-checkpoint-cost` in the `memories`
- * collection, and remove the fixture project's captures/, sessions/, state/
- * subtrees under the vault dir. Scoped ONLY to the fixture project slug —
- * never touches any other project's data.
+ * Cleanup (always — success or failure): for EVERY iteration project
+ * `bench-checkpoint-cost-<i>` (i in 0..N-1), delete its qdrant points from the
+ * `memories` collection and remove its captures/, sessions/, state/ subtrees
+ * under the vault dir. Scoped ONLY to the fixture project slugs — never
+ * touches any other project's data.
  */
 
 import { fileURLToPath } from 'node:url';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-export const FIXTURE_PROJECT = 'bench-checkpoint-cost';
+export const FIXTURE_PROJECT_PREFIX = 'bench-checkpoint-cost';
 const DEFAULT_BASE = 'http://127.0.0.1:6335';
 const DEFAULT_N = 20;
 const MIN_SUCCESSES = 15;
-const TURNS_PER_ITERATION = 4;
+
+/** Per-iteration fixture project slug — walls each iteration's captures/summary/facts off from every other's. */
+const fixtureProject = (i) => `${FIXTURE_PROJECT_PREFIX}-${i}`;
 
 // ---------------------------------------------------------------------------
 // PURE aggregation (no I/O) — unit-tested directly in
@@ -178,15 +190,16 @@ async function postJson(base, path, body) {
   return { ok: res.ok, status: res.status, json };
 }
 
-/** Run one checkpoint iteration: re-seed 4 turns, then checkpoint. Returns the cost sample or throws a descriptive error. */
+/** Run one checkpoint iteration in its OWN project: seed 4 turns, then checkpoint. Returns the cost sample or throws a descriptive error. */
 async function runIteration(base, i) {
+  const project = fixtureProject(i);
   for (const turn of buildTurns(i)) {
-    const r = await postJson(base, '/api/append-turn', { project: FIXTURE_PROJECT, ...turn });
+    const r = await postJson(base, '/api/append-turn', { project, ...turn });
     if (!r.ok) {
       throw new Error(`append-turn failed (iteration ${i}): HTTP ${r.status} ${JSON.stringify(r.json)}`);
     }
   }
-  const r = await postJson(base, '/api/checkpoint', { project: FIXTURE_PROJECT });
+  const r = await postJson(base, '/api/checkpoint', { project });
   if (!r.ok) {
     throw new Error(`checkpoint failed (iteration ${i}): HTTP ${r.status} ${JSON.stringify(r.json)}`);
   }
@@ -197,39 +210,45 @@ async function runIteration(base, i) {
   return { cost_usd, tokens_in, tokens_out };
 }
 
-/** Delete every qdrant point tagged with the fixture project, from the live `memories` collection. Best-effort — logs and continues on failure. */
-async function cleanupQdrant() {
+/** Delete every qdrant point tagged with ANY of the N iteration projects, from the live `memories` collection. Best-effort — logs and continues on failure. */
+async function cleanupQdrant(n) {
   try {
     const { QdrantClient } = await import('@qdrant/js-client-rest');
     const host = process.env.QDRANT_HOST ?? 'localhost';
     const port = Number.parseInt(process.env.QDRANT_PORT ?? '6333', 10);
     const client = new QdrantClient({ host, port });
+    // One delete with a should-clause per iteration project (exact-value match
+    // only — never a prefix wildcard, so no other project can be swept in).
     await client.delete('memories', {
       wait: true,
-      filter: { must: [{ key: 'project', match: { value: FIXTURE_PROJECT } }] },
+      filter: { should: Array.from({ length: n }, (_, i) => ({ key: 'project', match: { value: fixtureProject(i) } })) },
     });
-    console.log(`[checkpoint-cost-eval] cleanup: deleted qdrant points for project=${FIXTURE_PROJECT}`);
+    console.log(`[checkpoint-cost-eval] cleanup: deleted qdrant points for projects ${fixtureProject(0)}..${fixtureProject(n - 1)}`);
   } catch (err) {
     console.error(`[checkpoint-cost-eval] cleanup: qdrant delete failed (non-fatal): ${err.message}`);
   }
 }
 
-/** Remove the fixture project's captures/sessions/state subtrees under the vault dir. Scoped to FIXTURE_PROJECT only. Best-effort. */
-async function cleanupVault() {
+/** Remove every iteration project's captures/sessions/state subtrees under the vault dir. Scoped to the fixture slugs only. Best-effort. */
+async function cleanupVault(n) {
   const vaultDir = process.env.UM_VAULT_DIR;
   if (!vaultDir) {
     console.error('[checkpoint-cost-eval] cleanup: UM_VAULT_DIR not set — skipping vault cleanup');
     return;
   }
-  for (const sub of ['captures', 'sessions', 'state']) {
-    const target = join(vaultDir, sub, FIXTURE_PROJECT);
-    try {
-      await rm(target, { recursive: true, force: true });
-      console.log(`[checkpoint-cost-eval] cleanup: removed ${target}`);
-    } catch (err) {
-      console.error(`[checkpoint-cost-eval] cleanup: failed to remove ${target} (non-fatal): ${err.message}`);
+  let removed = 0;
+  for (let i = 0; i < n; i++) {
+    for (const sub of ['captures', 'sessions', 'state']) {
+      const target = join(vaultDir, sub, fixtureProject(i));
+      try {
+        await rm(target, { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        console.error(`[checkpoint-cost-eval] cleanup: failed to remove ${target} (non-fatal): ${err.message}`);
+      }
     }
   }
+  console.log(`[checkpoint-cost-eval] cleanup: removed ${removed} vault subtrees under ${vaultDir} for ${FIXTURE_PROJECT_PREFIX}-0..${n - 1}`);
 }
 
 async function writeJson(path, obj) {
@@ -265,7 +284,7 @@ async function cliMain() {
 
   await preflightHealth(args.base);
 
-  console.log(`[checkpoint-cost-eval] running ${args.n} checkpoint iterations against ${args.base} (project=${FIXTURE_PROJECT})...`);
+  console.log(`[checkpoint-cost-eval] running ${args.n} walled checkpoint iterations against ${args.base} (projects=${FIXTURE_PROJECT_PREFIX}-0..${args.n - 1})...`);
 
   const runs = [];
   let failures = 0;
@@ -283,8 +302,8 @@ async function cliMain() {
       }
     }
   } finally {
-    await cleanupQdrant();
-    await cleanupVault();
+    await cleanupQdrant(args.n);
+    await cleanupVault(args.n);
   }
 
   if (runs.length < MIN_SUCCESSES) {
@@ -299,6 +318,7 @@ async function cliMain() {
   const aggregate = aggregateCostRuns(runs);
   const result = {
     timestamp: new Date().toISOString(),
+    protocol: 'walled iterations — one fixture project per iteration (steady-state: one checkpoint over a fresh 4-turn session)',
     n_requested: args.n,
     n_succeeded: runs.length,
     n_failed: failures,

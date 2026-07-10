@@ -1,5 +1,6 @@
 {
-  "timestamp": "2026-07-10T20:06:34.626Z",
+  "timestamp": "2026-07-10T20:16:00.318Z",
+  "protocol": "walled iterations — one fixture project per iteration (steady-state: one checkpoint over a fresh 4-turn session)",
   "n_requested": 20,
   "n_succeeded": 20,
   "n_failed": 0,
@@ -7,116 +8,116 @@
   "aggregate": {
     "n": 20,
     "cost_usd": {
-      "median": 0.00047212499999999994,
-      "p95": 0.0007507499999999999
+      "median": 0.00015465,
+      "p95": 0.00016664999999999998
     },
     "tokens_in": {
-      "median": 2376.5
+      "median": 391
     },
     "tokens_out": {
-      "median": 188.5
+      "median": 160
     }
   },
   "runs": [
     {
-      "cost_usd": 0.00014504999999999997,
+      "cost_usd": 0.00015884999999999999,
       "tokens_in": 391,
-      "tokens_out": 144
-    },
-    {
-      "cost_usd": 0.0001902,
-      "tokens_in": 600,
       "tokens_out": 167
     },
     {
-      "cost_usd": 0.00023354999999999998,
-      "tokens_in": 809,
-      "tokens_out": 187
+      "cost_usd": 0.00015524999999999998,
+      "tokens_in": 391,
+      "tokens_out": 161
     },
     {
-      "cost_usd": 0.0002757,
-      "tokens_in": 1018,
-      "tokens_out": 205
-    },
-    {
-      "cost_usd": 0.00029565,
-      "tokens_in": 1227,
-      "tokens_out": 186
-    },
-    {
-      "cost_usd": 0.00034139999999999995,
-      "tokens_in": 1436,
-      "tokens_out": 210
-    },
-    {
-      "cost_usd": 0.00034815,
-      "tokens_in": 1645,
-      "tokens_out": 169
-    },
-    {
-      "cost_usd": 0.00045929999999999994,
-      "tokens_in": 1854,
-      "tokens_out": 302
-    },
-    {
-      "cost_usd": 0.00038745,
-      "tokens_in": 2063,
-      "tokens_out": 130
-    },
-    {
-      "cost_usd": 0.00045419999999999993,
-      "tokens_in": 2272,
-      "tokens_out": 189
-    },
-    {
-      "cost_usd": 0.00048494999999999994,
-      "tokens_in": 2481,
-      "tokens_out": 188
-    },
-    {
-      "cost_usd": 0.0006314999999999999,
-      "tokens_in": 2690,
-      "tokens_out": 380
-    },
-    {
-      "cost_usd": 0.00052485,
-      "tokens_in": 2899,
-      "tokens_out": 150
-    },
-    {
-      "cost_usd": 0.0006923999999999999,
-      "tokens_in": 3108,
-      "tokens_out": 377
-    },
-    {
-      "cost_usd": 0.00062055,
-      "tokens_in": 3317,
-      "tokens_out": 205
-    },
-    {
-      "cost_usd": 0.0006188999999999999,
-      "tokens_in": 3526,
-      "tokens_out": 150
-    },
-    {
-      "cost_usd": 0.00067365,
-      "tokens_in": 3735,
-      "tokens_out": 189
-    },
-    {
-      "cost_usd": 0.0006887999999999999,
-      "tokens_in": 3944,
+      "cost_usd": 0.00015585,
+      "tokens_in": 391,
       "tokens_out": 162
     },
     {
-      "cost_usd": 0.0007507499999999999,
-      "tokens_in": 4153,
-      "tokens_out": 213
+      "cost_usd": 0.00013544999999999999,
+      "tokens_in": 391,
+      "tokens_out": 128
     },
     {
-      "cost_usd": 0.0007712999999999999,
-      "tokens_in": 4362,
-      "tokens_out": 195
+      "cost_usd": 0.00015045,
+      "tokens_in": 391,
+      "tokens_out": 153
+    },
+    {
+      "cost_usd": 0.00015945,
+      "tokens_in": 391,
+      "tokens_out": 168
+    },
+    {
+      "cost_usd": 0.00014925,
+      "tokens_in": 391,
+      "tokens_out": 151
+    },
+    {
+      "cost_usd": 0.00016125,
+      "tokens_in": 391,
+      "tokens_out": 171
+    },
+    {
+      "cost_usd": 0.00014025,
+      "tokens_in": 391,
+      "tokens_out": 136
+    },
+    {
+      "cost_usd": 0.00015345,
+      "tokens_in": 391,
+      "tokens_out": 158
+    },
+    {
+      "cost_usd": 0.00013845,
+      "tokens_in": 391,
+      "tokens_out": 133
+    },
+    {
+      "cost_usd": 0.00015404999999999998,
+      "tokens_in": 391,
+      "tokens_out": 159
+    },
+    {
+      "cost_usd": 0.00017385,
+      "tokens_in": 391,
+      "tokens_out": 192
+    },
+    {
+      "cost_usd": 0.00016664999999999998,
+      "tokens_in": 391,
+      "tokens_out": 180
+    },
+    {
+      "cost_usd": 0.00013605,
+      "tokens_in": 391,
+      "tokens_out": 129
+    },
+    {
+      "cost_usd": 0.00016005,
+      "tokens_in": 391,
+      "tokens_out": 169
+    },
+    {
+      "cost_usd": 0.00013485,
+      "tokens_in": 391,
+      "tokens_out": 127
+    },
+    {
+      "cost_usd": 0.00016125,
+      "tokens_in": 391,
+      "tokens_out": 171
+    },
+    {
+      "cost_usd": 0.00016125,
+      "tokens_in": 391,
+      "tokens_out": 171
+    },
+    {
+      "cost_usd": 0.00014445,
+      "tokens_in": 391,
+      "tokens_out": 143
     }
   ],
   "environment": {
