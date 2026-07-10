@@ -38,6 +38,13 @@ const ROWS = [
   // uptime monitors). No auth, no rate-limit, no env flags.
   { match: (p, s) => p === '/health',                                pol: () => ({ bypassAuth: true,  bypassRateLimit: true  }) },
 
+  // /favicon.svg + /favicon.ico: static brand assets (spec 2026-07-09
+  // public-release-polish §4). UNCONDITIONALLY public — independent of
+  // UM_OAUTH_ENABLED (browsers auto-request the favicon on every deploy;
+  // do NOT clone the OAuth-gated pattern, review finding #2) — and
+  // rate-limit-bypassed (boot-loaded static bytes, finding #5).
+  { match: (p, s) => p === '/favicon.svg' || p === '/favicon.ico',   pol: () => ({ bypassAuth: true,  bypassRateLimit: true  }) },
+
   // /openapi.yaml?gpt=1: Custom GPT import path. GPT builder fetches
   // the spec unauthenticated during schema discovery; this rule
   // MUST come before the catch-all /openapi.yaml row below.

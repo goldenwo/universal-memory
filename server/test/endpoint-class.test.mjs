@@ -219,3 +219,26 @@ test('/oauth/idp/* hard-404s on a partial provider trio (not fully configured)',
   const partial = { UM_OAUTH_ENABLED: 'true', UM_OAUTH_IDP_GITHUB_CLIENT_ID: 'c' };
   assert.equal(endpointClassRoute(req('/oauth/idp/github/login'), partial).returnStatus, 404);
 });
+
+// ---------------------------------------------------------------------------
+// /favicon.svg + /favicon.ico rows — static brand assets, unconditionally
+// public (spec 2026-07-09 public-release-polish §4).
+// ---------------------------------------------------------------------------
+
+test('/favicon.svg and /favicon.ico bypass auth and rate-limit', () => {
+  for (const p of ['/favicon.svg', '/favicon.ico']) {
+    const r = endpointClassRoute(req(p));
+    assert.deepEqual(r, { bypassAuth: true, bypassRateLimit: true });
+  }
+});
+
+test('favicon rows are flag-independent (public even with OAuth off and auth configured)', () => {
+  const env = { UM_OAUTH_ENABLED: 'false', UM_AUTH_TOKEN: 'sometoken' };
+  const r = endpointClassRoute(req('/favicon.svg'), env);
+  assert.deepEqual(r, { bypassAuth: true, bypassRateLimit: true });
+});
+
+test('/favicon.svg/x is NOT a favicon path (exact match guard)', () => {
+  const r = endpointClassRoute(req('/favicon.svg/x'));
+  assert.deepEqual(r, { bypassAuth: false, bypassRateLimit: false });
+});
