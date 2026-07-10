@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerabilities
+    url: https://github.com/goldenwo/universal-memory/blob/main/SECURITY.md
+    about: Please do not open a public issue for security vulnerabilities — follow the reporting process in SECURITY.md instead.
