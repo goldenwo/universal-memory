@@ -65,8 +65,8 @@ Resolved paths as of v0.4.0-alpha:
 | Thing | Path |
 |---|---|
 | Repo | `E:/Projects/universal-memory/` |
-| Vault (default) | `$HOME/.um/vault/` — i.e. `C:/Users/wogol/.um/vault/` |
-| Plugin installed | `C:/Users/wogol/.claude/plugins/universal-memory/` |
+| Vault (default) | `$HOME/.um/vault/` — i.e. `~/.um/vault/` (e.g. `C:/Users/<you>/.um/vault/` on Windows) |
+| Plugin installed | `~/.claude/plugins/universal-memory/` |
 | Server docker stack | `E:/Projects/universal-memory/server/docker-compose.yml` |
 | Server container image | `ghcr.io/goldenwo/universal-memory-server:0.4.0-alpha` |
 | MCP endpoint | `http://localhost:6335/mcp` (bound to `127.0.0.1` only) |

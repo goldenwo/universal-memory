@@ -68,7 +68,7 @@ Installing plugin "claude-mem"...
 
   Installation Complete
   Version:     12.3.9
-  Plugin dir:  C:\Users\wogol\.claude\plugins\marketplaces\thedotmack
+  Plugin dir:  C:\Users\<you>\.claude\plugins\marketplaces\thedotmack
   IDEs:        claude-code
 
   Next Steps
@@ -83,8 +83,8 @@ Install **succeeded** on both steps, fully non-interactively. No prompts were tr
 
 Since no DB exists to dump, the schema documented in §5 below was extracted directly from the source migration files in the installed plugin tree:
 
-- `C:\Users\wogol\.claude\plugins\marketplaces\thedotmack\src\services\sqlite\migrations.ts` (migrations 001–003 in the snippet read)
-- `C:\Users\wogol\.claude\plugins\marketplaces\thedotmack\src\types\database.ts` (record-type interfaces)
+- `C:\Users\<you>\.claude\plugins\marketplaces\thedotmack\src\services\sqlite\migrations.ts` (migrations 001–003 in the snippet read)
+- `C:\Users\<you>\.claude\plugins\marketplaces\thedotmack\src\types\database.ts` (record-type interfaces)
 
 The user's post-session `sqlite3 ~/.claude-mem/claude-mem.db ".schema"` dump (via the script in §4) will confirm which migration version the installed build has actually applied (12.3.9 is likely well past v3).
 
@@ -118,7 +118,7 @@ v12.4+), regenerate the fixture from the updated source.
 ### What was synthesized
 
 - **Fixture DB:** `server/test/fixtures/claude-mem-sessions-v12.3.9.db` (147,456 bytes)
-- **Schema:** migrations 001 + 002 applied verbatim from the installed plugin source at `C:\Users\wogol\.claude\plugins\marketplaces\thedotmack\src\services\sqlite\migrations.ts`. `PRAGMA user_version = 2`.
+- **Schema:** migrations 001 + 002 applied verbatim from the installed plugin source at `C:\Users\<you>\.claude\plugins\marketplaces\thedotmack\src\services\sqlite\migrations.ts`. `PRAGMA user_version = 2`.
 - **Tables created:** `sessions`, `memories`, `overviews`, `diagnostics`, `transcript_events` (plus all 001+002 indexes, including the hierarchical-memory fields `title`/`subtitle`/`facts`/`concepts`/`files_touched` on `memories`).
 - **Rows inserted:** 3 each in `sessions`, `memories`, `overviews` — all with `session_id` values `test-session-001`, `test-session-002`, `test-session-003` and deterministic `created_at_epoch` values anchored at `2026-01-15T10:00:00Z` (BASE_EPOCH = 1768514400) + 0h / +1h / +2h.
 - **Synthetic labeling:** every `memories.title` starts with `[synthetic]`; every `overviews.content` begins with the sentence "Synthetic fixture for bridge testing — not real claude-mem data." `sessions.metadata_json` also carries a `synthetic: true` flag.
