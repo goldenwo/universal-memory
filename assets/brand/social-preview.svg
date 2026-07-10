@@ -1,0 +1,11 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <title>um — universal memory</title>
+  <rect width="1280" height="640" fill="#fafafa"/>
+  <g transform="translate(505, 208)">
+    <path d="M16 12 v22 a15 15 0 0 0 30 0 v-8 a8 8 0 0 0 -13 -6" fill="none" stroke="#5b5bd6" stroke-width="6" stroke-linecap="round" transform="scale(2.2)"/>
+    <text x="165" y="82" font-family="'Segoe UI', Arial, sans-serif" font-size="86" font-weight="600" letter-spacing="-2.5" fill="#1f2328">um</text>
+  </g>
+  <text x="640" y="366" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="34" letter-spacing="0.4" fill="#656d76">universal memory</text>
+  <text x="640" y="438" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="27" fill="#1f2328">Self-hosted memory that follows you across every AI.</text>
+  <text x="640" y="478" text-anchor="middle" font-family="'Segoe UI', Arial, sans-serif" font-size="27" fill="#656d76">Capture once. Recall everywhere. The vault is yours.</text>
+</svg>

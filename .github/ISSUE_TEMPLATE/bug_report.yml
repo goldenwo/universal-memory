@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a problem with universal-memory (server, CLI, or a client surface)
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more concrete detail you give, the faster this can be triaged.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Server/CLI version (e.g. `v1.5.2`, or the image tag / git SHA you're running).
+      placeholder: v1.5.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Where did you hit this?
+      options:
+        - Claude Code
+        - claude.ai connector
+        - ChatGPT
+        - Claude Desktop
+        - Codex
+        - um CLI
+        - REST API
+        - mem0-compat facade
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: What happened / repro steps
+      description: Describe the bug and the steps to reproduce it.
+      placeholder: |
+        1. Run `um search "..."`
+        2. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      description: What did you expect to happen, and what actually happened instead?
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant server logs
+      description: Paste any relevant server/CLI output. This will be rendered as a shell code block automatically.
+      render: shell

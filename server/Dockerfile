@@ -70,6 +70,7 @@ COPY mem0-mcp-http.mjs ./
 COPY openapi.mjs ./
 COPY lib/ ./lib/
 COPY config/ ./config/
+COPY assets/ ./assets/
 COPY entrypoint.sh ./
 RUN chmod +x ./entrypoint.sh
 EXPOSE 6335
