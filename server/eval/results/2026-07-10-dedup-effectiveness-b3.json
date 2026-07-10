@@ -1,0 +1,525 @@
+{
+  "timestamp": "2026-07-10T20:30:25.197Z",
+  "protocol": "per-row: POST text, then POST variant_text via live /api/add (infer:true — see VERBATIM-PATH FINDING); merge detected via results[].event===DEDUP_MERGED + id-stability; final full-rewrite pass of every original text asserts store growth == 0 (Layer-1 hash-dedup idempotency)",
+  "n_requested": 50,
+  "n_succeeded": 48,
+  "n_failed": 2,
+  "failures": [
+    "dedup-020 (paraphrase): expected exactly 1 extracted fact, got 2 ({\"results\":[{\"id\":\"57b00061-3343-5ccc-86f3-a5afab0a18b1\",\"memory\":\"the writer likes to write code using Nova Edit\",\"event\":\"ADD\"},{\"id\":\"7cd30974-01ef-51b7-aeb2-ed0387f4efdc\",\"memory\":\"talon-20\",\"event\":\"ADD\"}]})",
+    "dedup-030 (paraphrase): expected exactly 1 extracted fact, got 2 ({\"results\":[{\"id\":\"57b00061-3343-5ccc-86f3-a5afab0a18b1\",\"memory\":\"the writer likes to write code using Nova Edit\",\"event\":\"DEDUP_MERGED\"},{\"id\":\"86c95201-8005-503f-ad61-099d5ae3038f\",\"memory\":\"the writer is associated with zephyr-30\",\"event\":\"ADD\"}]})"
+  ],
+  "report": {
+    "n": 48,
+    "byKind": {
+      "exact": {
+        "n": 20,
+        "mergeRate": 1
+      },
+      "paraphrase": {
+        "n": 18,
+        "mergeRate": 0.2777777777777778
+      },
+      "control": {
+        "n": 10,
+        "falseMerges": 0
+      }
+    },
+    "overall": {
+      "duplicateMergeRate": 0.6578947368421053,
+      "falseMergeRate": 0
+    }
+  },
+  "rows": [
+    {
+      "id": "dedup-000",
+      "kind": "exact",
+      "originalId": "6b7d1e27-eced-57f7-907d-454f92c6ba96",
+      "originalEvent": "ADD",
+      "variantId": "6b7d1e27-eced-57f7-907d-454f92c6ba96",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-001",
+      "kind": "exact",
+      "originalId": "f26967d8-fff6-5b0c-b5c9-96f33106b541",
+      "originalEvent": "ADD",
+      "variantId": "f26967d8-fff6-5b0c-b5c9-96f33106b541",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-002",
+      "kind": "exact",
+      "originalId": "c5064f6c-56d8-533e-9665-0b24cfadb61f",
+      "originalEvent": "ADD",
+      "variantId": "c5064f6c-56d8-533e-9665-0b24cfadb61f",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-003",
+      "kind": "exact",
+      "originalId": "9454dc95-a33a-5679-a479-511e0f282739",
+      "originalEvent": "ADD",
+      "variantId": "9454dc95-a33a-5679-a479-511e0f282739",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-004",
+      "kind": "exact",
+      "originalId": "28383936-d6df-5f4f-9b2a-c4e054431a1d",
+      "originalEvent": "ADD",
+      "variantId": "28383936-d6df-5f4f-9b2a-c4e054431a1d",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-005",
+      "kind": "exact",
+      "originalId": "a6630604-89c8-5d9f-b498-f41e0c9f88c7",
+      "originalEvent": "ADD",
+      "variantId": "a6630604-89c8-5d9f-b498-f41e0c9f88c7",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-006",
+      "kind": "exact",
+      "originalId": "710e9dc7-c482-5c2a-8ae1-4a0eedfd3a54",
+      "originalEvent": "ADD",
+      "variantId": "710e9dc7-c482-5c2a-8ae1-4a0eedfd3a54",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-007",
+      "kind": "exact",
+      "originalId": "c78d170d-a785-593f-b74f-07a9c44629d5",
+      "originalEvent": "ADD",
+      "variantId": "c78d170d-a785-593f-b74f-07a9c44629d5",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-008",
+      "kind": "exact",
+      "originalId": "fedd6031-9d38-5811-a610-bea1b52fb5a5",
+      "originalEvent": "ADD",
+      "variantId": "fedd6031-9d38-5811-a610-bea1b52fb5a5",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-009",
+      "kind": "exact",
+      "originalId": "5cc5d10d-fa32-5da6-877c-b1b631f15bd9",
+      "originalEvent": "ADD",
+      "variantId": "5cc5d10d-fa32-5da6-877c-b1b631f15bd9",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-010",
+      "kind": "exact",
+      "originalId": "1ce3fae2-1564-526c-8e8e-6bc23fe7cadf",
+      "originalEvent": "ADD",
+      "variantId": "1ce3fae2-1564-526c-8e8e-6bc23fe7cadf",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-011",
+      "kind": "exact",
+      "originalId": "4b626139-0a54-5ab1-a4e2-dfa4349e4a06",
+      "originalEvent": "ADD",
+      "variantId": "4b626139-0a54-5ab1-a4e2-dfa4349e4a06",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-012",
+      "kind": "exact",
+      "originalId": "a8912899-066a-533b-8183-86ff31fe859e",
+      "originalEvent": "ADD",
+      "variantId": "a8912899-066a-533b-8183-86ff31fe859e",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-013",
+      "kind": "exact",
+      "originalId": "18dc4406-422b-5efa-a2da-1a984a2923f0",
+      "originalEvent": "ADD",
+      "variantId": "18dc4406-422b-5efa-a2da-1a984a2923f0",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-014",
+      "kind": "exact",
+      "originalId": "ac23f806-1254-5dbe-8050-d9e050711691",
+      "originalEvent": "ADD",
+      "variantId": "ac23f806-1254-5dbe-8050-d9e050711691",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-015",
+      "kind": "exact",
+      "originalId": "792ee037-436b-5ad9-903d-acd61a185163",
+      "originalEvent": "ADD",
+      "variantId": "792ee037-436b-5ad9-903d-acd61a185163",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-016",
+      "kind": "exact",
+      "originalId": "26695603-73c1-5893-b4ab-b175cec863ea",
+      "originalEvent": "ADD",
+      "variantId": "26695603-73c1-5893-b4ab-b175cec863ea",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-017",
+      "kind": "exact",
+      "originalId": "3ae56cd6-6f54-5b7b-8e82-e2505effd52c",
+      "originalEvent": "ADD",
+      "variantId": "3ae56cd6-6f54-5b7b-8e82-e2505effd52c",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-018",
+      "kind": "exact",
+      "originalId": "3daefce0-cc70-5046-8c05-097b16820a51",
+      "originalEvent": "ADD",
+      "variantId": "3daefce0-cc70-5046-8c05-097b16820a51",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-019",
+      "kind": "exact",
+      "originalId": "df59ff96-fabd-5b13-adef-6103c1fa5140",
+      "originalEvent": "ADD",
+      "variantId": "df59ff96-fabd-5b13-adef-6103c1fa5140",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-021",
+      "kind": "paraphrase",
+      "originalId": "884054ba-469f-5984-a476-86b931899095",
+      "originalEvent": "ADD",
+      "variantId": "884054ba-469f-5984-a476-86b931899095",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-022",
+      "kind": "paraphrase",
+      "originalId": "e8017411-9f68-5bfd-b867-17d9b4d13ad4",
+      "originalEvent": "ADD",
+      "variantId": "3d5373e4-14d1-5641-bce2-84893a934acf",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-023",
+      "kind": "paraphrase",
+      "originalId": "66428b25-6fa7-5d45-9e37-65cf7f609a83",
+      "originalEvent": "ADD",
+      "variantId": "7e70df21-e2ed-52dd-ad4c-502e52aa7b65",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-024",
+      "kind": "paraphrase",
+      "originalId": "d92babdc-85e3-56c4-a99c-0e13076314b9",
+      "originalEvent": "ADD",
+      "variantId": "88df719f-5df3-57a3-b2c4-30d01c19f26a",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-025",
+      "kind": "paraphrase",
+      "originalId": "2209f7e9-2cd3-5134-85ba-bbb9ac48128e",
+      "originalEvent": "ADD",
+      "variantId": "de28a648-8f7e-57aa-a717-fbab029499cd",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-026",
+      "kind": "paraphrase",
+      "originalId": "8d42edce-8606-5b27-9f33-6537f2d7e816",
+      "originalEvent": "ADD",
+      "variantId": "8d42edce-8606-5b27-9f33-6537f2d7e816",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-027",
+      "kind": "paraphrase",
+      "originalId": "44331d5a-bc3c-5bec-96ae-fcf89d806be6",
+      "originalEvent": "ADD",
+      "variantId": "44331d5a-bc3c-5bec-96ae-fcf89d806be6",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-028",
+      "kind": "paraphrase",
+      "originalId": "236b5ba7-7d31-5820-89ce-31275708ecf0",
+      "originalEvent": "ADD",
+      "variantId": "7454d12a-c528-525b-8803-6d946204efcb",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-029",
+      "kind": "paraphrase",
+      "originalId": "c9ccc2f3-2b16-5220-8b66-8158139102c9",
+      "originalEvent": "ADD",
+      "variantId": "9f16dbb3-7dd4-5a50-813c-0b7b6e14bf4e",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-031",
+      "kind": "paraphrase",
+      "originalId": "f26967d8-fff6-5b0c-b5c9-96f33106b541",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "8f67296e-ca0e-5e13-99d1-e5c4213240fd",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-032",
+      "kind": "paraphrase",
+      "originalId": "c5064f6c-56d8-533e-9665-0b24cfadb61f",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "e8f5569b-1b07-57df-9e30-f1ab26557885",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-033",
+      "kind": "paraphrase",
+      "originalId": "9454dc95-a33a-5679-a479-511e0f282739",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "bcf69d44-88ff-5d78-a905-4f77e492202a",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-034",
+      "kind": "paraphrase",
+      "originalId": "28383936-d6df-5f4f-9b2a-c4e054431a1d",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "cbbe82fc-dabb-57e4-a3df-b444efb11065",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-035",
+      "kind": "paraphrase",
+      "originalId": "a6630604-89c8-5d9f-b498-f41e0c9f88c7",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "aa46edf2-8527-5717-a01e-5f7616e879cd",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-036",
+      "kind": "paraphrase",
+      "originalId": "710e9dc7-c482-5c2a-8ae1-4a0eedfd3a54",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "895ca6f3-e59d-5f10-96c3-113ae8c9d4df",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-037",
+      "kind": "paraphrase",
+      "originalId": "c78d170d-a785-593f-b74f-07a9c44629d5",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "c78d170d-a785-593f-b74f-07a9c44629d5",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-038",
+      "kind": "paraphrase",
+      "originalId": "fedd6031-9d38-5811-a610-bea1b52fb5a5",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "00f28610-4e3f-5153-8f98-5125563af094",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-039",
+      "kind": "paraphrase",
+      "originalId": "5cc5d10d-fa32-5da6-877c-b1b631f15bd9",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "5cc5d10d-fa32-5da6-877c-b1b631f15bd9",
+      "variantEvent": "DEDUP_MERGED",
+      "mergedOnVariant": true,
+      "idStable": true
+    },
+    {
+      "id": "dedup-040",
+      "kind": "control",
+      "originalId": "1ce3fae2-1564-526c-8e8e-6bc23fe7cadf",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "b2619ea9-450e-5442-bdd0-aa0686057995",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-041",
+      "kind": "control",
+      "originalId": "4b626139-0a54-5ab1-a4e2-dfa4349e4a06",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "f0e1223b-373e-5359-96c0-2225086478c5",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-042",
+      "kind": "control",
+      "originalId": "a8912899-066a-533b-8183-86ff31fe859e",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "510b9341-251b-570e-a7b3-21f9cb7f9ae5",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-043",
+      "kind": "control",
+      "originalId": "18dc4406-422b-5efa-a2da-1a984a2923f0",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "29713373-c6ca-56f5-950b-2ca90bb0955e",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-044",
+      "kind": "control",
+      "originalId": "ac23f806-1254-5dbe-8050-d9e050711691",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "7ac89f95-06ab-53f8-a803-997f26cd9d9d",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-045",
+      "kind": "control",
+      "originalId": "792ee037-436b-5ad9-903d-acd61a185163",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "627f6676-7949-5a0e-ae13-af82c755355c",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-046",
+      "kind": "control",
+      "originalId": "26695603-73c1-5893-b4ab-b175cec863ea",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "0a778ab4-1af3-5c08-bd03-bfd5bf588bc5",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-047",
+      "kind": "control",
+      "originalId": "3ae56cd6-6f54-5b7b-8e82-e2505effd52c",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "0ab440d9-f7cd-5581-a75e-551dde54a59b",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-048",
+      "kind": "control",
+      "originalId": "3daefce0-cc70-5046-8c05-097b16820a51",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "936ee969-cae9-5d7d-a2dd-9c078780da97",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    },
+    {
+      "id": "dedup-049",
+      "kind": "control",
+      "originalId": "df59ff96-fabd-5b13-adef-6103c1fa5140",
+      "originalEvent": "DEDUP_MERGED",
+      "variantId": "8352f6a6-886b-5a3f-aa84-73c826ee4757",
+      "variantEvent": "ADD",
+      "mergedOnVariant": false,
+      "idStable": false
+    }
+  ],
+  "storeGrowthOnRewrite": 0,
+  "storeGrowthOk": true,
+  "environment": {
+    "node": "v25.2.1",
+    "um_dedup_enabled": "true (default)",
+    "um_dedup_embedding_threshold": "0.84 (default)",
+    "um_autosupersede_enabled": "true (default)",
+    "um_facts_model": null,
+    "um_provider": "openai",
+    "date": "2026-07-10"
+  }
+}
