@@ -6,6 +6,10 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — MCP tool descriptions carry proactive-use guidance
+
+- **`memory_add` and `memory_search` descriptions now say WHEN to call, not just what they do** ([`server/mem0-mcp-http.mjs`](server/mem0-mcp-http.mjs)). MCP clients (claude.ai connector, Claude Code, any vendor) read tool descriptions in every conversation, so the description is the one always-present lever for capture/recall behavior: `memory_add` now instructs models to store durable facts proactively (one concise fact per call, skip ephemeral filler); `memory_search` now instructs recalling before answering when past context could help. No schema or behavior change — description strings only. Follows Anthropic tool-use guidance (descriptions should cover when-to-use).
+
 ## [1.6.0] — 2026-07-10
 
 ### Added — mem0 Platform-compat facade (default-off)
