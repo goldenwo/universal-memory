@@ -491,7 +491,7 @@ export const TOOLS = [
 	// ── Original 4 tools ────────────────────────────────────────────────────
 	{
 		name: 'memory_search',
-		description: 'Semantic search with optional status / metadata filters (project, type, lane, persona — all AND-combined). Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
+		description: 'Semantic search over stored memories. Use PROACTIVELY when past context could help — the user\'s projects, prior decisions, preferences, or state-of-play — before answering from scratch. Optional status / metadata filters (project, type, lane, persona — all AND-combined). Returns compact shape (id, title, score, snippet) by default; pass full=true for full body.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -517,7 +517,7 @@ export const TOOLS = [
 	},
 	{
 		name: 'memory_add',
-		description: 'Add a fact to long-term memory',
+		description: 'Store a durable fact in long-term memory. Use PROACTIVELY when the user states a lasting fact, preference, decision, or conclusion worth remembering across sessions — do not wait to be asked. One concise fact per call; skip ephemeral or conversational filler (server-side extraction dedupes and abstains on noise).',
 		inputSchema: {
 			type: 'object',
 			properties: {
