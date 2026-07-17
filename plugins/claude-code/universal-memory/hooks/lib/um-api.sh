@@ -5,14 +5,17 @@
 # Sourced (NOT executed) by stop.sh / session-end.sh / session-start.sh /
 # user-prompt-submit.sh / auto-start.sh. Defines:
 #
-#   um_api_endpoint  — composed endpoint resolution (spec §4 tiers 1–4)
-#   um_api_token     — bearer token from ${UM_TOKEN_FILE:-~/.um/auth-token}
-#   um_api_post      — curl POST wrapper (connect 3s / total 10s, X-UM-Source,
-#                      Bearer auth when a token exists; body → stdout,
-#                      HTTP code → $UM_API_HTTP_CODE, rc 0 iff 2xx)
-#   um_log           — one-line-per-fire append to ~/.um/hook.log
-#   um_find_python   — py → python3 → python interpreter probe (Windows-aware)
-#   um_g7_message    — the pinned "captures are OFF" actionable banner (spec §5 G7)
+#   um_api_endpoint    — composed endpoint resolution (spec §4 tiers 1–4)
+#   um_api_configured  — rc 0 iff an endpoint is EXPLICITLY configured
+#                        (env tiers or non-empty ~/.um/endpoint file)
+#   um_api_token       — bearer token from ${UM_TOKEN_FILE:-~/.um/auth-token}
+#   um_api_post        — curl POST wrapper (connect 3s / total 10s, X-UM-Source,
+#                        Bearer auth when a token exists; body → stdout,
+#                        HTTP code → $UM_API_HTTP_CODE, rc 0 iff 2xx)
+#   um_api_get         — curl GET wrapper, same wire contract as um_api_post
+#   um_log             — one-line-per-fire append to ~/.um/hook.log
+#   um_find_python     — py → python3 → python interpreter probe (Windows-aware)
+#   um_g7_message      — the pinned "captures are OFF" actionable banner (spec §5 G7)
 #
 # Endpoint resolution SUBSUMES endpoint.sh (single source of truth for the env
 # tiers — do not fork its semantics): gate on um_endpoint_configured() (tiers
@@ -39,17 +42,35 @@ um_api_endpoint() {
     um_resolve_endpoint
     return 0
   fi
-  local file="$HOME/.um/endpoint" value=""
-  if [ -r "$file" ]; then
-    # First line only — trimming the WHOLE file would mash a multi-line file
-    # (stray comment/second URL) into one bogus endpoint (T3 review NIT-7).
-    value=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]') || value=""
-  fi
+  local value
+  value=$(_um_api_endpoint_file)
   if [ -n "$value" ]; then
     printf '%s\n' "$value"
     return 0
   fi
   um_resolve_endpoint
+}
+
+# _um_api_endpoint_file (internal)
+# Prints the trimmed first line of ~/.um/endpoint, or nothing when the file
+# is absent/empty. First line only — trimming the WHOLE file would mash a
+# multi-line file (stray comment/second URL) into one bogus endpoint
+# (T3 review NIT-7). Never fails.
+_um_api_endpoint_file() {
+  local file="$HOME/.um/endpoint"
+  [ -r "$file" ] || return 0
+  head -n1 "$file" 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# um_api_configured
+# rc 0 iff an endpoint is EXPLICITLY configured: env tiers 1–2 (per
+# endpoint.sh's um_endpoint_configured) OR a non-empty ~/.um/endpoint file
+# (tier 3). rc 1 when only the loopback default (tier 4) would apply —
+# callers that want to stay silent on unconfigured boxes gate on this
+# (e.g. session-start.sh's rubric-only bail).
+um_api_configured() {
+  um_endpoint_configured && return 0
+  [ -n "$(_um_api_endpoint_file)" ]
 }
 
 # um_api_token
@@ -73,19 +94,38 @@ um_api_token() {
 # it). Returns 0 iff HTTP 2xx.
 um_api_post() {
   local path="$1" body="$2" max_time="${3:-10}"
+  _um_api_request "$path" "$max_time" -X POST -d "$body"
+}
+
+# um_api_get <path> [max_time_seconds]
+# GET <resolved-endpoint><path>. Same wire contract as um_api_post (headers,
+# Bearer auth, timeouts, sentinel parse) with no request body. Response body
+# → stdout; HTTP code → global UM_API_HTTP_CODE ('000' on transport failure —
+# call OUTSIDE command substitution when you need the code; the rc alone
+# survives substitution). Returns 0 iff HTTP 2xx.
+um_api_get() {
+  local path="$1" max_time="${2:-10}"
+  _um_api_request "$path" "$max_time"
+}
+
+# _um_api_request <path> <max_time> [extra curl args...] (internal)
+# Shared curl core for um_api_post/um_api_get — endpoint+token resolution,
+# standard headers, __UM_HTTP_CODE__ sentinel parse into UM_API_HTTP_CODE.
+_um_api_request() {
+  local path="$1" max_time="$2"
+  shift 2
   local endpoint token url raw code
   endpoint=$(um_api_endpoint)
   token=$(um_api_token)
   url="${endpoint%/}${path}"
 
   local -a curl_args=(
-    -s -X POST "$url"
+    -s "$@" "$url"
     --connect-timeout 3
     --max-time "$max_time"
     -H 'Content-Type: application/json'
     -H 'X-UM-Source: claude-code-plugin'
     -w '\n__UM_HTTP_CODE__%{http_code}'
-    -d "$body"
   )
   if [ -n "$token" ]; then
     curl_args+=(-H "Authorization: Bearer $token")
@@ -136,7 +176,8 @@ um_find_python() {
 # um_g7_message <reason> [endpoint]
 # The pinned G7 actionable banner (spec §5): session-start.sh PREPENDS this to
 # the additionalContext it injects — exit-0 hook stderr is invisible to users.
-#   reason ∈ {unreachable, writes-disabled}; anything else gets a generic form.
+#   reason ∈ {unreachable, writes-disabled, auth}; anything else gets a
+#   generic form.
 um_g7_message() {
   local reason="$1" endpoint="${2:-}"
   case "$reason" in
@@ -147,6 +188,10 @@ um_g7_message() {
     writes-disabled)
       printf '⚠ UM: captures are OFF — server has writes disabled; see %s\n' \
         "$UM_DOCS_LINK"
+      ;;
+    auth)
+      printf '⚠ UM: captures are OFF — server rejected the token (check %s); see %s\n' \
+        "${UM_TOKEN_FILE:-~/.um/auth-token}" "$UM_DOCS_LINK"
       ;;
     *)
       printf '⚠ UM: captures are OFF (%s); see %s\n' "$reason" "$UM_DOCS_LINK"

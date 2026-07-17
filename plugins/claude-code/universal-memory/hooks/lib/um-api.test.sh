@@ -11,6 +11,7 @@
 #   E4. Default tier — http://localhost:6335 when nothing configured
 #   E5. Empty/whitespace-only file falls through to default
 #   E6. Multi-line file — first line trimmed, later lines ignored
+#   C1-C4. um_api_configured — env tier / file tier ⇒ 0; nothing/blank file ⇒ 1
 #   T1. Token from default ~/.um/auth-token (trimmed)
 #   T2. Token file override via UM_TOKEN_FILE env
 #   T3. Absent token file ⇒ empty token, rc 0
@@ -20,9 +21,10 @@
 #   P4. um_api_post surfaces 403 (rc non-zero, code=403)
 #   P5. um_api_post transport failure ⇒ code=000, rc non-zero
 #   P6. um_api_post max-time override (3rd arg)
+#   Q1-Q5. um_api_get — GET (no -X POST/-d), headers/auth/code/sentinel contract
 #   Y1-Y3. um_find_python probe order (py → python3 → python; none ⇒ rc 1)
 #   L1. um_log appends "<ts> <hook> <msg>" to ~/.um/hook.log (dir auto-created)
-#   G1. G7 message variants (unreachable / writes-disabled)
+#   G1. G7 message variants (unreachable / writes-disabled / auth)
 
 set -uo pipefail
 
@@ -136,6 +138,37 @@ GOT=$(run_api "$H" -- "um_api_endpoint" 2>/dev/null)
 assert_eq "E6: first line trimmed, later lines ignored" "$GOT" "http://first.example:6337"
 
 # ===========================================================================
+# um_api_configured — explicit-config gate (env tiers OR non-empty file tier)
+# ===========================================================================
+echo "=== C1: um_api_configured — env tier ⇒ configured ==="
+H=$(fresh_home c1)
+RC=0
+run_api "$H" UM_SERVER_URL="http://remote.example:6337" -- "um_api_configured" >/dev/null 2>&1 || RC=$?
+assert_eq "C1: rc 0 when UM_SERVER_URL set" "$RC" "0"
+
+echo "=== C2: um_api_configured — file tier ⇒ configured ==="
+H=$(fresh_home c2)
+mkdir -p "$H/.um"
+printf 'http://pi.example:6337\n' > "$H/.um/endpoint"
+RC=0
+run_api "$H" -- "um_api_configured" >/dev/null 2>&1 || RC=$?
+assert_eq "C2: rc 0 when ~/.um/endpoint non-empty" "$RC" "0"
+
+echo "=== C3: um_api_configured — nothing configured ⇒ rc 1 ==="
+H=$(fresh_home c3)
+RC=0
+run_api "$H" -- "um_api_configured" >/dev/null 2>&1 || RC=$?
+assert_eq "C3: rc 1 when only the loopback default would apply" "$RC" "1"
+
+echo "=== C4: um_api_configured — whitespace-only file ⇒ rc 1 ==="
+H=$(fresh_home c4)
+mkdir -p "$H/.um"
+printf '   \n' > "$H/.um/endpoint"
+RC=0
+run_api "$H" -- "um_api_configured" >/dev/null 2>&1 || RC=$?
+assert_eq "C4: rc 1 when file is whitespace-only" "$RC" "1"
+
+# ===========================================================================
 # Token resolution
 # ===========================================================================
 echo "=== T1: token from default ~/.um/auth-token ==="
@@ -246,6 +279,63 @@ assert_contains "P6: max-time overridden to 120" "$ARGS" "--max-time"$'\n'"120"
 assert_contains "P6: connect timeout still 3" "$ARGS" "--connect-timeout"$'\n'"3"
 
 # ===========================================================================
+# um_api_get — same wire contract as um_api_post, GET verb, no body
+# ===========================================================================
+echo "=== Q1: um_api_get happy path (200) ==="
+H=$(fresh_home q1)
+mkdir -p "$H/.um"
+printf 'sekret-token-123\n' > "$H/.um/auth-token"
+write_mock_curl 200
+# shellcheck disable=SC2016  # single quotes deliberate: $UM_API_HTTP_CODE expands in the INNER bash
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" -- \
+  'um_api_get /api/state/proj; echo "CODE=$UM_API_HTTP_CODE"')
+ARGS=$(cat "$TMPDIR_ROOT/curl_args")
+assert_contains "Q1: response body on stdout" "$OUT" '{"ok":true}'
+assert_contains "Q1: http code surfaced (200)" "$OUT" "CODE=200"
+assert_contains "Q1: URL composed endpoint+path" "$ARGS" "http://remote.example:6337/api/state/proj"
+assert_contains "Q1: X-UM-Source header" "$ARGS" "X-UM-Source: claude-code-plugin"
+assert_contains "Q1: Bearer auth when token present" "$ARGS" "Authorization: Bearer sekret-token-123"
+assert_contains "Q1: connect timeout 3s" "$ARGS" "--connect-timeout"$'\n'"3"
+assert_contains "Q1: total timeout 10s default" "$ARGS" "--max-time"$'\n'"10"
+assert_not_contains "Q1: no POST verb on GET" "$ARGS" "POST"
+assert_not_contains "Q1: no -d body flag on GET" "$ARGS" "-d"
+assert_not_contains "Q1: no sentinel leaked to stdout" "$OUT" "__UM_HTTP_CODE__"
+
+echo "=== Q2: um_api_get without token ⇒ no Authorization header ==="
+H=$(fresh_home q2)
+write_mock_curl 200
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" -- \
+  'um_api_get /api/state/proj')
+ARGS=$(cat "$TMPDIR_ROOT/curl_args")
+assert_not_contains "Q2: no Authorization header without token" "$ARGS" "Authorization"
+
+echo "=== Q3: um_api_get non-2xx ⇒ rc 1, code surfaced ==="
+H=$(fresh_home q3)
+write_mock_curl 404
+# shellcheck disable=SC2016  # single quotes deliberate: $UM_API_HTTP_CODE expands in the INNER bash
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" -- \
+  'if um_api_get /api/state/proj >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "Q3: non-zero rc on 404" "$OUT" "RC=1"
+assert_contains "Q3: code 404 surfaced" "$OUT" "CODE=404"
+
+echo "=== Q4: um_api_get transport failure ⇒ code 000 ==="
+H=$(fresh_home q4)
+write_mock_curl 000 7
+# shellcheck disable=SC2016  # single quotes deliberate: $UM_API_HTTP_CODE expands in the INNER bash
+OUT=$(run_api "$H" UM_SERVER_URL="http://unreachable.example:6337" -- \
+  'if um_api_get /api/state/proj >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "Q4: non-zero rc on transport failure" "$OUT" "RC=1"
+assert_contains "Q4: code 000 on transport failure" "$OUT" "CODE=000"
+
+echo "=== Q5: um_api_get max-time override (2nd arg) ==="
+H=$(fresh_home q5)
+write_mock_curl 200
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" -- \
+  'um_api_get /api/state/proj 3')
+ARGS=$(cat "$TMPDIR_ROOT/curl_args")
+assert_contains "Q5: max-time overridden to 3" "$ARGS" "--max-time"$'\n'"3"
+
+# ===========================================================================
 # um_find_python — probe order via PATH-shim fake interpreters
 # ===========================================================================
 # write_fake_interp <name> <exit_code>
@@ -306,6 +396,10 @@ assert_contains "G1: unreachable carries docs link" "$GOT" "https://"
 GOT=$(run_api "$H" -- 'um_g7_message writes-disabled')
 assert_contains "G1: writes-disabled variant" "$GOT" "writes disabled"
 assert_contains "G1: writes-disabled has captures-OFF prefix" "$GOT" "UM: captures are OFF"
+GOT=$(run_api "$H" -- 'um_g7_message auth')
+assert_contains "G1: auth variant names the token" "$GOT" "token"
+assert_contains "G1: auth variant has captures-OFF prefix" "$GOT" "UM: captures are OFF"
+assert_contains "G1: auth variant carries docs link" "$GOT" "https://"
 
 # ---------------------------------------------------------------------------
 # Summary
