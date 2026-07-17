@@ -22,8 +22,17 @@
 #               rejected the empty body before anything was written
 #        2xx  → healthy (shouldn't happen for an empty body; treated as
 #               writes-enabled)
+#        429  → no banner: the remote rate-limiter (loopback-bypassed),
+#               transient — NOT server-too-old
 #        5xx  → no banner: reachable + writes configured; transient error or
 #               mount misconfig — the capture hooks log error=http-<code>
+#      Known accepted edges: (a) a server misconfigured with UM_VAULT_DIR
+#      unset 400s real captures too, so the probe reports "healthy" while
+#      captures fail — not silent though: the capture hooks log
+#      error=http-400 (ops misconfig, out of banner scope). (b) a 3xx from
+#      the endpoint falls to the no-banner branch although captures are dead
+#      — curl runs without -L, and endpoints are explicitly configured, so
+#      redirecting endpoints are accepted as out of scope.
 #      On failure the banner is PREPENDED to additionalContext.
 #   4. Synchronous read branch — GET /api/state/:project via um-api.sh
 #      (Bearer-authed — required for remote endpoints), staleness rules,
@@ -57,6 +66,13 @@ LIB_DIR="$SCRIPT_DIR/lib"
 UM_HOOK_NAME="session-start"
 # shellcheck source=lib/um-api.sh
 source "$LIB_DIR/um-api.sh"
+
+# Interpreter probe FIRST (Windows Store `python3` stubs exist on PATH but
+# don't run): a bare `python3` here would silently kill the ENTIRE injection
+# — G7 banner included — via the fallback envelope, with no breadcrumb. This
+# script is the only A8/A9-visible channel, so a missing interpreter must at
+# least leave a hook.log line.
+PY=$(um_find_python) || { um_log "skip=no-python"; printf '{}\n'; exit 0; }
 
 # Memory routing rubric — sourced from docs/memory-routing-rubric.md
 # (canonical location; all platforms reference it).
@@ -127,7 +143,7 @@ You can run `/um-preview` anytime to see what state.md would look like right now
 # (spec §4) — a file-tier-only remote install must NOT bail here.
 # ---------------------------------------------------------------------------
 if ! um_api_configured 2>/dev/null; then
-  python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
+  "$PY" -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
     "$UM_ROUTING_RUBRIC" 2>/dev/null || echo '{}'
   exit 0
 fi
@@ -151,7 +167,8 @@ PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 # ---------------------------------------------------------------------------
 UM_G7_BANNER=""
 um_api_post '/api/append-turn' '{}' 3 >/dev/null 2>&1 || true
-case "$UM_API_HTTP_CODE" in
+PROBE_CODE="$UM_API_HTTP_CODE"
+case "$PROBE_CODE" in
   400 | 2[0-9][0-9])
     # Healthy: reachable, authed, writes enabled (400 = the empty probe body
     # was rejected by validation AFTER the write gate passed; nothing written).
@@ -169,6 +186,11 @@ case "$UM_API_HTTP_CODE" in
     UM_G7_BANNER=$(um_g7_message auth)
     um_log "probe error=auth"
     ;;
+  429)
+    # Remote rate-limiter (60 RPM, loopback-bypassed — bites exactly remote
+    # deployments). Transient like 5xx, NOT server-too-old: no banner.
+    um_log "probe error=http-429"
+    ;;
   4[0-9][0-9])
     # Server predates the /api capture routes (spec §5 skew taxonomy).
     UM_G7_BANNER=$(um_g7_message "server too old (HTTP $UM_API_HTTP_CODE) — upgrade it")
@@ -184,12 +206,17 @@ esac
 # ---------------------------------------------------------------------------
 # 5. Read branch — fetch state.md via the authed API wrapper (3s budget).
 # rc (2xx-or-not) survives command substitution even though the code doesn't.
+# Skipped when the probe couldn't even connect (000): the GET cannot succeed
+# where the POST found no server, and skipping halves the down-server stall.
 # ---------------------------------------------------------------------------
 UM_STATE_FETCH_OK=0
-if response=$(um_api_get "/api/state/$PROJECT" 3 2>/dev/null); then
-  UM_STATE_FETCH_OK=1
-else
-  response='{}'
+response='{}'
+if [ "$PROBE_CODE" != "000" ]; then
+  if response=$(um_api_get "/api/state/$PROJECT" 3 2>/dev/null); then
+    UM_STATE_FETCH_OK=1
+  else
+    response='{}'
+  fi
 fi
 
 # Single Python invocation: parse state, apply staleness rules, decide the
@@ -200,7 +227,7 @@ export UM_ROUTING_RUBRIC
 export UM_WELCOME_TEXT
 export UM_G7_BANNER
 export UM_STATE_FETCH_OK
-printf '%s' "$response" | python3 -c '
+printf '%s' "$response" | "$PY" -c '
 import json, sys, re, os
 from datetime import datetime, timezone
 

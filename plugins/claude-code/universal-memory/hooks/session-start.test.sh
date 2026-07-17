@@ -24,6 +24,13 @@
 #   12. Return time — full script (mocked curl) completes in <800ms
 #   13. Inline fallback rubric matches canonical docs/memory-routing-rubric.md
 #   14. <external-summary> blocks labeled, not echoed raw
+#   15. Probe 429 (remote rate-limiter) → NO banner (transient, not
+#       server-too-old), error=http-429 logged
+#   16. Probe 000 → the state GET is SKIPPED (cannot succeed where the probe
+#       could not connect; halves the down-server stall)
+#   17. Interpreter resolution via um_find_python — a broken python3 stub
+#       (Windows Store alias) must not kill the injection when `py` works;
+#       NO working interpreter ⇒ {} + skip=no-python logged (never silent)
 
 set -uo pipefail
 
@@ -123,9 +130,13 @@ MOCK
 }
 
 # Transport failure for ALL calls (server unreachable): curl exit 7, code 000.
+# Records each invocation's argv to $MOCK_BIN/curl_calls (one line per call)
+# so tests can assert which endpoints were (not) contacted.
 write_mock_curl_unreachable() {
-  cat > "$MOCK_BIN/curl" <<'MOCK'
+  rm -f "$MOCK_BIN/curl_calls"
+  cat > "$MOCK_BIN/curl" <<MOCK
 #!/bin/bash
+echo "\$*" >> "$MOCK_BIN/curl_calls"
 printf '\n__UM_HTTP_CODE__000'
 exit 7
 MOCK
@@ -415,12 +426,14 @@ printf '\nTest 11: UM_IN_SUMMARIZER_SUBPROCESS no longer short-circuits\n'
 }
 
 # ---------------------------------------------------------------------------
-# Test 12: return time < 800ms (mocked curl)
-# Threshold accommodates Windows/MSYS Python startup overhead (200-300ms per
-# python3 invocation). Generous enough to catch real regressions (a 2s+
-# regression = hang or network-call leak) without flaking on platform variance.
+# Test 12: return time < 1500ms (mocked curl)
+# Threshold accommodates Windows/MSYS process-spawn overhead: the hook now
+# runs an interpreter PROBE (um_find_python executes `py -c ''`, T6a review
+# IMPORTANT-1) plus one python invocation, auto-start, and two curl calls —
+# ~900-1150ms observed baseline on this platform. Still catches real
+# regressions: a hang or leaked network call shows as 3s+ (curl timeouts).
 # ---------------------------------------------------------------------------
-printf '\nTest 12: Return time < 800ms\n'
+printf '\nTest 12: Return time < 1500ms\n'
 {
   state_resp_file 1 "$TMPDIR_ROOT/resp12.json" >/dev/null
   write_mock_api 400 "$TMPDIR_ROOT/resp12.json"
@@ -431,10 +444,10 @@ printf '\nTest 12: Return time < 800ms\n'
   elapsed=$((end_ms - start_ms))
 
   printf '    elapsed: %dms\n' "$elapsed"
-  if [ "$elapsed" -lt 800 ]; then
-    pass "T12: return time <800ms (${elapsed}ms)"
+  if [ "$elapsed" -lt 1500 ]; then
+    pass "T12: return time <1500ms (${elapsed}ms)"
   else
-    fail "T12: return time exceeded 800ms (${elapsed}ms)"
+    fail "T12: return time exceeded 1500ms (${elapsed}ms)"
   fi
 }
 
@@ -552,6 +565,75 @@ Second block payload.
   assert_contains "T14: two-block — first BEGIN labeled" "$ac2" "[BEGIN external-summary source=claude-mem"
   assert_contains "T14: two-block — second BEGIN labeled" "$ac2" "[BEGIN external-summary source=other-bridge"
   assert_not_contains "T14: two-block — no raw open tag survives" "$ac2" '<external-summary source='
+}
+
+# ---------------------------------------------------------------------------
+# Test 15: probe 429 (remote rate-limiter) → NO banner, error=http-429 logged
+# The 60 RPM limiter is loopback-bypassed, so it bites exactly remote
+# deployments — a "server too old" banner would be a false alarm with the
+# wrong prescription.
+# ---------------------------------------------------------------------------
+printf '\nTest 15: rate-limited probe (429) → no banner\n'
+{
+  rm -f "$FAKE_HOME/.um/hook.log"
+  state_resp_file 2 "$TMPDIR_ROOT/resp15.json" >/dev/null
+  write_mock_api 429 "$TMPDIR_ROOT/resp15.json"
+  output=$(run_hook)
+  ac=$(extract_additional_context "$output")
+  assert_envelope_ok "T15: valid JSON envelope" "$ac"
+  assert_not_contains "T15: NO captures-OFF banner on 429" "$ac" "captures are OFF"
+  assert_contains "T15: state still injected" "$ac" "Current focus"
+  assert_contains "T15: hook.log carries error=http-429" \
+    "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "error=http-429"
+}
+
+# ---------------------------------------------------------------------------
+# Test 16: probe 000 → the state GET is skipped (no /api/state curl call)
+# ---------------------------------------------------------------------------
+printf '\nTest 16: unreachable probe skips the state GET\n'
+{
+  write_mock_curl_unreachable
+  run_hook >/dev/null
+  calls=$(cat "$MOCK_BIN/curl_calls" 2>/dev/null || true)
+  assert_contains "T16: probe call happened" "$calls" "/api/append-turn"
+  assert_not_contains "T16: state GET skipped when probe got 000" "$calls" "/api/state"
+}
+
+# ---------------------------------------------------------------------------
+# Test 17: interpreter resolution via um_find_python (Windows Store stubs)
+# ---------------------------------------------------------------------------
+printf '\nTest 17: interpreter probe — broken python3 stub / no interpreter\n'
+{
+  REAL_PY=$(command -v python3)
+  # (a) broken python3 stub (Store alias) but a working `py` → full envelope
+  cat > "$MOCK_BIN/py" <<MOCK
+#!/bin/bash
+exec "$REAL_PY" "\$@"
+MOCK
+  printf '#!/bin/bash\nexit 49\n' > "$MOCK_BIN/python3"
+  printf '#!/bin/bash\nexit 49\n' > "$MOCK_BIN/python"
+  chmod +x "$MOCK_BIN/py" "$MOCK_BIN/python3" "$MOCK_BIN/python"
+
+  write_mock_api 400 -
+  output=$(run_hook)
+  ac=$(extract_additional_context "$output")
+  assert_envelope_ok "T17a: valid envelope with broken python3 stub" "$ac"
+  assert_rubric_present "$ac" "T17a: "
+
+  # (b) NO working interpreter → {} emitted, skip=no-python logged.
+  # The py stub must be BROKEN (not removed) — removal would fall through to
+  # the machine's real `py` launcher on Windows dev boxes.
+  rm -f "$FAKE_HOME/.um/hook.log"
+  printf '#!/bin/bash\nexit 49\n' > "$MOCK_BIN/py"
+  output=$(run_hook)
+  exit_code=$?
+  assert_eq "T17b: exit 0 with no interpreter" "$exit_code" "0"
+  assert_eq "T17b: bare {} envelope with no interpreter" "$(printf '%s' "$output" | tr -d '[:space:]')" "{}"
+  assert_contains "T17b: hook.log carries skip=no-python" \
+    "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "skip=no-python"
+
+  # cleanup — later tests need the real interpreters
+  rm -f "$MOCK_BIN/py" "$MOCK_BIN/python3" "$MOCK_BIN/python"
 }
 
 # ---------------------------------------------------------------------------
