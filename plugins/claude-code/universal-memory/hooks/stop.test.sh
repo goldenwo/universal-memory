@@ -24,8 +24,19 @@
 #   S9.  Invalid session_id ⇒ skip=bad-session-id, no POSTs, no cursor file.
 #   S10. Cursor age sweep — >7d-old cursor removed; fresh cursor kept;
 #        invalid-named old file left alone (glob guard).
-#   S11. stop_hook_active=true ⇒ exit 0, zero POSTs (loop guard).
+#   S11. stop_hook_active=true ⇒ exit 0, zero POSTs, skip=stop-hook-active.
 #   S12. UM_IN_SUMMARIZER_SUBPROCESS=1 ⇒ exit 0, zero POSTs (recursion guard).
+#   S13. Project sanitization — cwd basename with invalid chars ⇒ [^A-Za-z0-9._-]
+#        mapped to '-' client-side (server hard-fails unsanitized slugs).
+#   S14. 401 (rotated token) ⇒ error=auth, no cursor advance, exit 0.
+#   S15. 400 (input rejected) ⇒ error=input-invalid, no cursor advance, exit 0.
+#   S16. No-cursor fallback window is 12 messages (spec: "last 6 exchanges"):
+#        14 eligible ⇒ fire1 sends 6 + skip=delta-capped; fire2 the next 6.
+#   S17. JSON-escaping round-trip — quotes/backslash/tab/newline survive
+#        byte-exact through the POSTed body.
+#   S18. Multibyte truncation — content straddling 8192 bytes stays valid
+#        UTF-8 and ≤8192 bytes.
+#   S19. Missing transcript file ⇒ skip=no-transcript, zero POSTs.
 
 unset UM_IN_SUMMARIZER_SUBPROCESS
 
@@ -237,7 +248,7 @@ reset_calls
 run_stop "$H" "$STDIN"
 
 assert_eq "S1: exit 0" "$RUN_EXIT" "0"
-assert_eq "S1: exactly 4 POSTs (fixture eligible lines 2,6,8,12)" "$(call_count)" "4"
+assert_eq "S1: exactly 5 POSTs (fixture eligible lines 2,6,8,12,13)" "$(call_count)" "5"
 assert_contains "S1: POSTs target /api/append-turn" "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/append-turn"
 
 assert_eq "S1: body1 role=user"       "$(body_field 1 role)" "user"
@@ -250,11 +261,13 @@ assert_eq "S1: body3 role=assistant"  "$(body_field 3 role)" "assistant"
 assert_contains "S1: body3 content"   "$(body_field 3 content)" "The config loader does not handle a missing file."
 assert_eq "S1: body4 role=user"       "$(body_field 4 role)" "user"
 assert_eq "S1: body4 content (blocks-array user text)" "$(body_field 4 content)" "Great, now also add a unit test for the missing-file guard."
+assert_eq "S1: body5 keeps ONLY the real block of a mixed reminder+text line" \
+  "$(body_field 5 content)" "Also bump the CHANGELOG for the guard fix."
 
 CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
 assert_file_exists "S1: cursor file created" "$CURSOR_FILE"
-assert_eq "S1: cursor at transcript end (12 lines)" "$(cat "$CURSOR_FILE" 2>/dev/null)" "12"
-assert_contains "S1: hook.log records posted" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=4"
+assert_eq "S1: cursor at transcript end (13 lines)" "$(cat "$CURSOR_FILE" 2>/dev/null)" "13"
+assert_contains "S1: hook.log records posted" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=5"
 
 # ===========================================================================
 # S2: A2 happy half — second fire, same transcript ⇒ zero new POSTs
@@ -264,7 +277,7 @@ reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "S2: exit 0" "$RUN_EXIT" "0"
 assert_eq "S2: zero POSTs on unchanged transcript" "$(call_count)" "0"
-assert_eq "S2: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "12"
+assert_eq "S2: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "13"
 
 # ===========================================================================
 # S3: A2 failure half — 5xx on POST #2 of 3 ⇒ resend exactly the remainder
@@ -404,13 +417,15 @@ STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
 reset_calls
 run_stop "$H" "$STDIN"
 S8_ALL=$(cat "$CAP_DIR"/body_* 2>/dev/null)
-assert_eq "S8: exactly 4 POSTs (nothing ineligible leaks)" "$(call_count)" "4"
+assert_eq "S8: exactly 5 POSTs (nothing ineligible leaks)" "$(call_count)" "5"
 assert_not_contains "S8: isMeta skill injection skipped (line 3)" "$S8_ALL" "Injected skill body text"
 assert_not_contains "S8: system-reminder content skipped (line 4)" "$S8_ALL" "injected reminder about context state"
 assert_not_contains "S8: thinking-only assistant skipped (line 5)" "$S8_ALL" "Scrubbed thinking text"
 assert_not_contains "S8: tool_result user line skipped (line 7)" "$S8_ALL" "loadConfig"
 assert_not_contains "S8: isSidechain skipped (line 9)" "$S8_ALL" "Subagent task prompt text"
 assert_not_contains "S8: synthetic api-error assistant skipped (line 11)" "$S8_ALL" "API Error: 529"
+assert_not_contains "S8: reminder block of mixed line dropped (line 13)" "$S8_ALL" "Mixed-line reminder block"
+assert_contains "S8: real block of mixed line kept (line 13)" "$S8_ALL" "Also bump the CHANGELOG"
 
 # ===========================================================================
 # S9: Invalid session_id ⇒ skip=bad-session-id, no POSTs, no path use
@@ -466,6 +481,7 @@ reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "S11: exit 0" "$RUN_EXIT" "0"
 assert_eq "S11: zero POSTs when stop_hook_active" "$(call_count)" "0"
+assert_contains "S11: skip=stop-hook-active logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=stop-hook-active"
 
 # ===========================================================================
 # S12: UM_IN_SUMMARIZER_SUBPROCESS=1 ⇒ exit 0, zero POSTs
@@ -485,6 +501,162 @@ S12_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
 assert_eq "S12: exit 0" "$S12_EXIT" "0"
 assert_eq "S12: zero POSTs under guard" "$(call_count)" "0"
 assert_eq "S12: no output under guard" "$S12_OUT" ""
+
+# ===========================================================================
+# S13: Project sanitization — invalid cwd-basename chars mapped to '-'
+# ===========================================================================
+echo "=== S13: project sanitization ==="
+H=$(fresh_home s13)
+TP="$TMPDIR_ROOT/s13-transcript.jsonl"
+write_transcript "$TP" 1 "s13"
+CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_SPACE")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S13: exit 0" "$RUN_EXIT" "0"
+assert_eq "S13: one POST" "$(call_count)" "1"
+assert_eq "S13: project slug sanitized ('my project' -> 'my-project')" \
+  "$(body_field 1 project)" "my-project"
+
+# ===========================================================================
+# S14: 401 (rotated/invalid token) ⇒ error=auth, no cursor advance
+# ===========================================================================
+echo "=== S14: 401 auth failure ==="
+H=$(fresh_home s14)
+TP="$TMPDIR_ROOT/s14-transcript.jsonl"
+write_transcript "$TP" 2 "s14"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
+mkdir -p "$H/.um/state"
+printf '0' > "$CURSOR_FILE"
+
+reset_calls 401
+run_stop "$H" "$STDIN"
+assert_eq "S14: exit 0" "$RUN_EXIT" "0"
+assert_eq "S14: stops after the 401 (1 call)" "$(call_count)" "1"
+assert_eq "S14: cursor NOT advanced" "$(cat "$CURSOR_FILE" 2>/dev/null)" "0"
+assert_contains "S14: error=auth logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "error=auth"
+assert_not_contains "S14: NOT misfiled as server-too-old" "$(cat "$H/.um/hook.log" 2>/dev/null)" "server-too-old"
+
+# ===========================================================================
+# S15: 400 (input rejected) ⇒ error=input-invalid, no cursor advance
+# ===========================================================================
+echo "=== S15: 400 input-invalid ==="
+H=$(fresh_home s15)
+TP="$TMPDIR_ROOT/s15-transcript.jsonl"
+write_transcript "$TP" 2 "s15"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
+mkdir -p "$H/.um/state"
+printf '0' > "$CURSOR_FILE"
+
+reset_calls 400
+run_stop "$H" "$STDIN"
+assert_eq "S15: exit 0" "$RUN_EXIT" "0"
+assert_eq "S15: cursor NOT advanced" "$(cat "$CURSOR_FILE" 2>/dev/null)" "0"
+assert_contains "S15: error=input-invalid logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "error=input-invalid"
+assert_not_contains "S15: NOT misfiled as server-too-old" "$(cat "$H/.um/hook.log" 2>/dev/null)" "server-too-old"
+
+# ===========================================================================
+# S16: No-cursor fallback window = 12 messages ("last 6 exchanges"); the
+# 6/fire cap + cursor carry the remainder across fires
+# ===========================================================================
+echo "=== S16: no-cursor 12-message window + cap carry ==="
+H=$(fresh_home s16)
+TP="$TMPDIR_ROOT/s16-transcript.jsonl"
+write_transcript "$TP" 14 "s16"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S16: fire1 exit 0" "$RUN_EXIT" "0"
+assert_eq "S16: fire1 sends 6 (cap), window starts at msg 3 of 14" "$(call_count)" "6"
+assert_eq "S16: fire1 body1 = msg 3 (12-message window, not 6)" "$(body_field 1 content)" "s16-3 content"
+assert_eq "S16: fire1 body6 = msg 8" "$(body_field 6 content)" "s16-8 content"
+assert_contains "S16: fire1 skip=delta-capped dropped=6" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=delta-capped dropped=6"
+assert_eq "S16: fire1 cursor at last acked (line 8)" "$(cat "$CURSOR_FILE" 2>/dev/null)" "8"
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S16: fire2 sends the next 6" "$(call_count)" "6"
+assert_eq "S16: fire2 body1 = msg 9" "$(body_field 1 content)" "s16-9 content"
+assert_eq "S16: fire2 body6 = msg 14" "$(body_field 6 content)" "s16-14 content"
+assert_eq "S16: fire2 cursor at transcript end" "$(cat "$CURSOR_FILE" 2>/dev/null)" "14"
+
+# ===========================================================================
+# S17: JSON-escaping round-trip — quotes/backslash/tab/newline byte-exact
+# ===========================================================================
+echo "=== S17: JSON-escaping round-trip ==="
+H=$(fresh_home s17)
+TP="$TMPDIR_ROOT/s17-transcript.jsonl"
+# shellcheck disable=SC2016,SC1112  # literal $HOME + unicode quote are the payload
+"$PYBIN" -c '
+import json, sys
+tricky = "He said: \"use C:\\temp\\x\"\n\tthen `rm -rf` -- $HOME and a smart’quote"
+e = {"isSidechain": False, "type": "user",
+     "message": {"role": "user", "content": tricky},
+     "timestamp": "2026-07-17T14:00:00.000Z"}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(e) + "\n")' "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S17: one POST" "$(call_count)" "1"
+# shellcheck disable=SC2016,SC1112  # literal $HOME + unicode quote are the payload
+S17_OK=$("$PYBIN" -c '
+import json, sys
+tricky = "He said: \"use C:\\temp\\x\"\n\tthen `rm -rf` -- $HOME and a smart’quote"
+with open(sys.argv[1], encoding="utf-8") as fh:
+    b = json.load(fh)
+print("exact" if b["content"] == tricky.strip() else "MISMATCH:" + repr(b["content"]))' \
+  "$CAP_DIR/body_1")
+assert_eq "S17: quotes/backslash/tab/newline round-trip byte-exact" "$S17_OK" "exact"
+
+# ===========================================================================
+# S18: Multibyte truncation — valid UTF-8, ≤8192 bytes, no split char
+# ===========================================================================
+echo "=== S18: multibyte truncation at the 8192 boundary ==="
+H=$(fresh_home s18)
+TP="$TMPDIR_ROOT/s18-transcript.jsonl"
+"$PYBIN" -c '
+import json, sys
+e = {"isSidechain": False, "type": "assistant",
+     "message": {"role": "assistant", "content": "日" * 3000},
+     "timestamp": "2026-07-17T14:00:00.000Z"}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(e) + "\n")' "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S18: one POST" "$(call_count)" "1"
+S18_CHECK=$("$PYBIN" -c '
+import json, sys
+with open(sys.argv[1], "rb") as fh:
+    raw = fh.read()
+b = json.loads(raw.decode("utf-8"))          # json.loads fails on invalid UTF-8
+c = b["content"]
+nbytes = len(c.encode("utf-8"))
+ok = nbytes <= 8192 and nbytes >= 8190 and set(c) == {"日"}
+print("ok" if ok else f"BAD:bytes={nbytes}")' "$CAP_DIR/body_1")
+assert_eq "S18: truncated content is whole-char UTF-8 within 8192 bytes" "$S18_CHECK" "ok"
+assert_contains "S18: skip=truncated logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=truncated"
+
+# ===========================================================================
+# S19: Missing transcript file ⇒ skip=no-transcript, zero POSTs
+# ===========================================================================
+echo "=== S19: missing transcript ==="
+H=$(fresh_home s19)
+STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/does-not-exist.jsonl")" "$(native_path "$CWD_N")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S19: exit 0" "$RUN_EXIT" "0"
+assert_eq "S19: zero POSTs" "$(call_count)" "0"
+assert_contains "S19: skip=no-transcript logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-transcript"
 
 # ===========================================================================
 # Summary

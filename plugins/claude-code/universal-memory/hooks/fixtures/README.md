@@ -54,6 +54,7 @@ Common fields as above (docs' SessionEnd example omits `permission_mode`) plus
 | 10 | `type:"system"`, `subtype:"api_error"` | skip — not user/assistant |
 | 11 | `type:"assistant"`, `model:"<synthetic>"`, `isApiErrorMessage:true` (client-synthesized API-error line) | structurally kept by naive type filters — tests should decide |
 | 12 | `type:"user"`, content = blocks array `[{type:"text"}]` (non-meta) | keep |
+| 13 | `type:"user"`, content = blocks array `[system-reminder text block, real text block]` | keep the REAL block only — reminder filtering is per-block, not on the joined text (T3 review IMPORTANT-1) |
 
 Envelope fields on user/assistant lines (all observed live): `parentUuid`,
 `isSidechain`, `promptId` (user lines), `type`, `message`, `uuid`, `timestamp`,

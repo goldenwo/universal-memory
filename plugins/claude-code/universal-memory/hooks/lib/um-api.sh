@@ -41,7 +41,9 @@ um_api_endpoint() {
   fi
   local file="$HOME/.um/endpoint" value=""
   if [ -r "$file" ]; then
-    value=$(tr -d '[:space:]' < "$file" 2>/dev/null) || value=""
+    # First line only — trimming the WHOLE file would mash a multi-line file
+    # (stray comment/second URL) into one bogus endpoint (T3 review NIT-7).
+    value=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]') || value=""
   fi
   if [ -n "$value" ]; then
     printf '%s\n' "$value"

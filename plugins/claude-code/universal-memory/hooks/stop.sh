@@ -39,8 +39,10 @@ UM_HOOK_NAME="stop"
 # shellcheck source=lib/um-api.sh
 source "$SCRIPT_DIR/lib/um-api.sh"
 
-# Per-fire POST cap and server content-byte cap (spec §5 / append-turn.mjs).
+# Per-fire POST cap, no-cursor fallback window ("last 6 exchanges" = 12
+# messages, spec §5), and server content-byte cap (append-turn.mjs).
 UM_STOP_CAP=6
+UM_STOP_WINDOW=12
 UM_STOP_MAXBYTES=8192
 
 # ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ PROJECT=$(printf '%s\n' "$META" | sed -n '4p')
 
 # Loop guard: a fire caused by a previous stop-hook continuation must exit
 # early (fixtures/README.md field contract) — otherwise hook loops.
-if [ "$STOP_ACTIVE" = "true" ]; then exit 0; fi
+if [ "$STOP_ACTIVE" = "true" ]; then um_log "skip=stop-hook-active"; exit 0; fi
 
 # Defense-in-depth: re-validate before path use even though python already did.
 if ! [[ "$SESSION_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -91,6 +93,10 @@ if ! [[ "$SESSION_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
 fi
 if [ -z "$TRANSCRIPT_PATH" ]; then um_log "skip=no-transcript"; exit 0; fi
 if [ -z "$PROJECT" ]; then PROJECT=$(basename "${CLAUDE_CWD:-$(pwd)}"); fi
+# Sanitize the derived project slug client-side — the server hard-fails
+# non-[A-Za-z0-9._-] projects (400), which would otherwise loop as permanent
+# per-fire errors (T3 review IMPORTANT-2 / spec §5 amendment).
+PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
 # ---------------------------------------------------------------------------
 # Cursor state dir + age sweep (>7d) in the same pass. The sweep applies the
@@ -130,6 +136,7 @@ fi
 # ---------------------------------------------------------------------------
 MANIFEST=$(UM_STOP_TRANSCRIPT="$TRANSCRIPT_PATH" UM_STOP_CURSOR="$CURSOR" \
   UM_STOP_PROJECT="$PROJECT" UM_STOP_CAP="$UM_STOP_CAP" \
+  UM_STOP_WINDOW="$UM_STOP_WINDOW" \
   UM_STOP_MAXBYTES="$UM_STOP_MAXBYTES" "$PY" -c '
 import json, os, sys
 
@@ -137,6 +144,7 @@ path = os.environ["UM_STOP_TRANSCRIPT"]
 cursor = os.environ.get("UM_STOP_CURSOR", "")
 project = os.environ["UM_STOP_PROJECT"]
 cap = int(os.environ["UM_STOP_CAP"])
+window = int(os.environ["UM_STOP_WINDOW"])
 maxb = int(os.environ["UM_STOP_MAXBYTES"])
 
 try:
@@ -174,26 +182,37 @@ with fh:
             continue
         c = m.get("content")
         if isinstance(c, str):
-            text = c
+            # Plain-string reminder content is reminder-only — skip whole.
+            text = c.strip()
+            if text.startswith("<system-reminder>"):
+                continue
         elif isinstance(c, list):
-            text = "\n".join(
-                b.get("text", "") for b in c
-                if isinstance(b, dict) and b.get("type") == "text" and b.get("text")
-            )
+            # Filter at the BLOCK level: a reminder block can precede the
+            # user`s real text block in one message — dropping on the JOINED
+            # text would lose the real content (T3 review IMPORTANT-1).
+            parts = []
+            for b in c:
+                if not (isinstance(b, dict) and b.get("type") == "text"
+                        and b.get("text")):
+                    continue
+                if b["text"].strip().startswith("<system-reminder>"):
+                    continue
+                parts.append(b["text"])
+            text = "\n".join(parts).strip()
         else:
             continue
-        text = text.strip()
-        if not text or text.startswith("<system-reminder>"):
+        if not text:
             continue
         msgs.append((lineno, role, text, e.get("timestamp")))
 
 if cursor.isdigit():
     delta = [m for m in msgs if m[0] > int(cursor)]
 else:
-    # Cursor absent/unreadable: bounded trailing window (spec §5) — older
-    # messages are dropped by decision, so the baseline is safe to write
-    # before any ack.
-    delta = msgs[-cap:]
+    # Cursor absent/unreadable: bounded trailing window (spec §5, "last 6
+    # exchanges" = 12 messages) — older messages are dropped by decision, so
+    # the baseline is safe to write before any ack. The per-fire cap +
+    # cursor carry the window remainder across fires.
+    delta = msgs[-window:]
     if delta:
         print("BASELINE\t%d" % (delta[0][0] - 1))
 
@@ -255,6 +274,15 @@ while IFS=$'\t' read -r kind f1 f2 f3; do
           000)
             um_log "error=http-000"
             um_g7_message unreachable "$ENDPOINT" >&2
+            ;;
+          # 400/401 carved out of server-too-old (spec §5 T3-review
+          # amendment): "upgrade your server" is the wrong prescription for
+          # rejected input or a rotated token.
+          400)
+            um_log "error=input-invalid"
+            ;;
+          401)
+            um_log "error=auth"
             ;;
           4[0-9][0-9])
             um_log "skip=server-too-old http=$UM_API_HTTP_CODE"

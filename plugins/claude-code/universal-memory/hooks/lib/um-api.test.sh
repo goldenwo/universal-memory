@@ -10,6 +10,7 @@
 #   E3. File tier — ~/.um/endpoint used when no env vars set (trimmed)
 #   E4. Default tier — http://localhost:6335 when nothing configured
 #   E5. Empty/whitespace-only file falls through to default
+#   E6. Multi-line file — first line trimmed, later lines ignored
 #   T1. Token from default ~/.um/auth-token (trimmed)
 #   T2. Token file override via UM_TOKEN_FILE env
 #   T3. Absent token file ⇒ empty token, rc 0
@@ -126,6 +127,13 @@ mkdir -p "$H/.um"
 printf '   \n' > "$H/.um/endpoint"
 GOT=$(run_api "$H" -- "um_api_endpoint" 2>/dev/null)
 assert_eq "E5: whitespace-only file ignored" "$GOT" "http://localhost:6335"
+
+echo "=== E6: multi-line file uses first line only ==="
+H=$(fresh_home e6)
+mkdir -p "$H/.um"
+printf ' http://first.example:6337 \n# a stray comment line\nhttp://second.example:9\n' > "$H/.um/endpoint"
+GOT=$(run_api "$H" -- "um_api_endpoint" 2>/dev/null)
+assert_eq "E6: first line trimmed, later lines ignored" "$GOT" "http://first.example:6337"
 
 # ===========================================================================
 # Token resolution
