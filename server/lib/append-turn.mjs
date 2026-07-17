@@ -8,6 +8,7 @@ import { obsFallback } from './obs-fallback.mjs';
 import { applyDefaultProject, TOOL_IDS } from './default-project.mjs';
 import { getLogger } from './logger.mjs';
 import { currentRequestId } from './request-context.mjs';
+import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-day-file expansion would explode cardinality).
@@ -167,6 +168,18 @@ export async function doAppendTurn(args, ctx = {}) {
   } finally {
     await releaseFn(lockdirPath);
   }
+
+  // T5 (#159 spec §6): capture.turn counter, emitted INSIDE the shared lib so
+  // HTTP, MCP tools, and any future callers count uniformly through one code
+  // path. Fire-and-forget — recordCaptureEvent never throws / never fails the
+  // already-durable capture. Surface is threaded from the transport layer
+  // (X-UM-Source / X-Mem0-Source header); absent ⇒ 'unknown'.
+  recordCaptureEvent({
+    surface: ctx.surface,
+    project: effectiveProject,
+    event: CAPTURE_EVENTS.TURN,
+    outcome: 'stored',
+  });
 
   return {
     schema_version: 1,  // v0.4 "Version your contracts" — additive fields in later

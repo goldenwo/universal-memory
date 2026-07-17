@@ -319,7 +319,7 @@ g2_assert_metric() {
   # 6.2e-7, 5e+10. Rejects: 0, 0.0, 0.000.
   echo "$lines" | grep -qE '\} ([0-9]*[1-9][0-9]*(\.[0-9]+)?|[0-9]*\.[0-9]*[1-9][0-9]*)([eE][-+]?[0-9]+)?' || {
     echo "FAIL: $label metric did not fire (metric=$metric_name, required-labels=$*)"
-    echo "[smoke]     g2_metrics body length: $(echo "$g2_metrics" | wc -c) bytes"
+    echo "[smoke]     g2_metrics body length: ${#g2_metrics} chars"
     echo "[smoke]     ALL um_provider_* data lines:"
     echo "$g2_metrics" | grep -E '^um_provider_' | head -30
     exit 1
@@ -1357,7 +1357,6 @@ echo "[smoke]     Task 10 MCP surface tests passed"
 echo "[smoke] 4g/5 Task 2.5 POST /api/delete — delete-by-metadata"
 
 T_DEL_ID="smoke-t-delete-by-meta"
-T_DEL_IDS=""
 
 # Step 1: add doc with explicit metadata id
 echo "[smoke]     Step 1: add doc with metadata.id=$T_DEL_ID"
@@ -1370,13 +1369,6 @@ data = json.load(sys.stdin)
 assert 'results' in data, 'response missing results key: ' + json.dumps(data)
 print('OK: add with metadata.id=$T_DEL_ID succeeded')
 " || { echo "FAIL: 4g step 1 add failed"; exit 1; }
-
-T_DEL_IDS=$(echo "$DEL_ADD_RESP" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for r in data.get('results', []):
-    if r.get('id'): print(r['id'])
-")
 
 # Step 2: verify findable via /api/search
 echo "[smoke]     Step 2: verify doc is findable"
@@ -2949,6 +2941,204 @@ sys.exit(1 if os.environ['S9_ID'] in ids else 0)
 			s9_cleanup
 			echo "[smoke] mem0-compat S9 PASS: Platform-dialect round-trip proven end-to-end (add → search → get → delete → gone; Token + Bearer accepted; wrong key 401s)"
 		fi
+	fi
+fi
+
+# #159 S10 — remote round-trip probe (spec docs/plans/2026-07-16-cc-plugin-remote-spec.md
+# A6: "new smoke section covers the remote round-trip in CI"). Gated by
+# UM_SMOKE_REMOTE_RT=1 (explicit opt-in), mirroring S2–S9. Proves the capture
+# pipeline the #159 arc exists for, end-to-end against the live container:
+#
+#   append-turn ×2 (X-UM-Source: smoke-s10) → capture.turn counters row
+#   (surface attributed from the header, spec §6) → checkpoint → GET
+#   /api/state/<project> shows the synthesized state → capture.checkpoint
+#   counters row.
+#
+# GATING STRUCTURE (three tiers):
+#   1. UM_SMOKE_REMOTE_RT=1        — section opt-in (S2–S9 convention).
+#   2. writes-mode probe           — /api/append-turn is UM_MCP_WRITE_ENABLED-
+#      gated (403 INPUT_INVALID when off). A 403 on the first turn ⇒ SKIP
+#      cleanly with a hint (the S9 flag-off posture) — a writes-disabled stack
+#      is a legitimate config, not a failure.
+#   3. UM_SMOKE_REMOTE_RT_LLM      — the checkpoint+state legs call the real
+#      summarizer LLM upstream (doCheckpoint synthesis). Default "1" (CI has
+#      OPENAI_API_KEY — the whole smoke job gates on it); set =0 on a keyless
+#      local rig to run ONLY the ungated append-turn+counters legs.
+#
+# COUNTERS ASSERTION: the container writes um-counters.db next to
+# MEM0_HISTORY_DB_PATH (capture-events.mjs countersDbPath()); the host can't
+# read it directly, so we `docker exec node -e` inside the container —
+# better-sqlite3 is a direct dep in the image (T5) and WORKDIR=/app puts
+# /app/node_modules on the require path. Sums over `day` (UTC-midnight
+# straddle safe). When no docker/container is visible (remote endpoint), the
+# counters legs SKIP with a message — the HTTP legs still prove the pipeline.
+#
+# Position: AFTER S9 and BEFORE the boot-smoke gate (same rationale as S2–S9 —
+# $ENDPOINT + wrapped curl() still in scope). Self-cleaning incl. on failure
+# (S8/S9 pattern): checkpoint summary doc deleted by metadata id, marker-
+# bearing indexed docs (the reindexed raw-capture doc) deleted via search,
+# vault dirs removed when host-visible.
+if [ "${UM_SMOKE_REMOTE_RT:-}" = "1" ]; then
+	echo "[smoke] #159 S10 — remote round-trip: append-turn → counters → checkpoint → state (UM_SMOKE_REMOTE_RT=1)"
+
+	S10_PROJECT="s10-rt-$(date +%s)-$$"
+	S10_MARKER="s10remote-$(date +%s)-$$"
+	S10_SURFACE="smoke-s10"
+	S10_SUMMARY_ID=""
+
+	# Container handle for the counters read. Reuse the Task-1 detection when
+	# it found one; else re-probe (S10 may run against a stack the metrics
+	# scrape didn't need docker for).
+	S10_CONTAINER="${UM_CONTAINER:-}"
+	if [ -z "$S10_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
+		S10_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'memory-server' | head -1 || true)
+	fi
+
+	# Failure-safe cleanup (S8/S9 pattern): delete the indexed checkpoint
+	# summary by metadata id, delete any marker-bearing indexed docs (the
+	# fire-and-forget append-turn reindex indexes the raw capture doc), and
+	# remove the vault dirs when they're host-visible.
+	s10_cleanup() {
+		if [ -n "$S10_SUMMARY_ID" ]; then
+			curl -sf -X POST "$ENDPOINT/api/delete" -H 'Content-Type: application/json' \
+				-d "{\"metadata\":{\"id\":\"$S10_SUMMARY_ID\"}}" >/dev/null 2>&1 || true
+		fi
+		_s10_hits=$(curl -sf -X POST "$ENDPOINT/api/search" \
+			-H 'Content-Type: application/json' \
+			-d "{\"query\":\"$S10_MARKER\",\"limit\":10}" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    for r in json.load(sys.stdin).get('results', []):
+        if r.get('id'): print(r['id'])
+except Exception:
+    pass
+" 2>/dev/null || true)
+		for id in $_s10_hits; do
+			curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null 2>&1 || true
+		done
+		if [ -n "${UM_VAULT_DIR:-}" ]; then
+			rm -rf "$UM_VAULT_DIR/captures/$S10_PROJECT" "$UM_VAULT_DIR/sessions/$S10_PROJECT" "$UM_VAULT_DIR/state/$S10_PROJECT" 2>/dev/null || true
+			rm -f "$UM_VAULT_DIR/.telemetry/"*"-$S10_PROJECT.count" 2>/dev/null || true
+		fi
+	}
+	s10_fail() { echo "[smoke] S10 FAIL: $1" >&2; s10_cleanup; _um_smoke_auth_cleanup; exit 1; }
+
+	# Counters read helper: sum the (surface, project, event) counter inside
+	# the container. Args: <event>. Echoes the integer sum (0 when the row —
+	# or the whole DB — doesn't exist yet).
+	s10_counter_sum() {
+		docker exec -i "$S10_CONTAINER" node -e '
+const path = require("path");
+const [surface, project, event] = process.argv.slice(1);
+let sum = 0;
+try {
+  const Database = require("better-sqlite3");
+  const dbPath = process.env.UM_COUNTERS_DB_PATH
+    || path.join(path.dirname(process.env.MEM0_HISTORY_DB_PATH || "/tmp/mem0-history.db"), "um-counters.db");
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const row = db.prepare("SELECT COALESCE(SUM(count),0) AS c FROM counters WHERE surface=? AND project=? AND event=?").get(surface, project, event);
+  sum = row ? row.c : 0;
+} catch (e) { /* missing DB ⇒ 0 */ }
+console.log(sum);
+' "$S10_SURFACE" "$S10_PROJECT" "$1" 2>/dev/null || echo "exec-failed"
+	}
+
+	# (a) Leg 1 — append-turn ×2 with X-UM-Source. The FIRST call doubles as
+	# the writes-mode probe: 403 ⇒ writes disabled ⇒ SKIP cleanly. Body +
+	# status captured in one call (the Task-4 `__HTTP__` sentinel pattern) —
+	# no temp file, so the section stays portable to Git-Bash dev boxes where
+	# a literal /tmp path is invisible to the Windows python3.
+	_s10_raw=$(curl -s -o - -w '\n__HTTP__%{http_code}' -X POST "$ENDPOINT/api/append-turn" \
+		-H 'Content-Type: application/json' \
+		-H "X-UM-Source: $S10_SURFACE" \
+		-d "{\"project\":\"$S10_PROJECT\",\"content\":\"User asked about the remote round-trip marker $S10_MARKER.\",\"role\":\"user\"}" 2>/dev/null || echo "__HTTP__000")
+	_s10_status="${_s10_raw##*__HTTP__}"
+	_s10_body1="${_s10_raw%$'\n'__HTTP__*}"
+	if [ "$_s10_status" = "403" ]; then
+		echo "[smoke] S10 SKIP: /api/append-turn returned 403 — MCP writes disabled on the server (set UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw to run)"
+	elif [ "$_s10_status" != "200" ]; then
+		s10_fail "turn 1 POST /api/append-turn returned HTTP $_s10_status (expected 200 writes-on / 403 writes-off): $_s10_body1"
+	else
+		echo "$_s10_body1" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true: ' + json.dumps(data)
+assert data.get('path'), 'expected capture path in response'
+" || s10_fail "turn 1 response malformed: $_s10_body1"
+		curl -sf -X POST "$ENDPOINT/api/append-turn" \
+			-H 'Content-Type: application/json' \
+			-H "X-UM-Source: $S10_SURFACE" \
+			-d "{\"project\":\"$S10_PROJECT\",\"content\":\"Assistant answered; the round-trip marker is $S10_MARKER.\",\"role\":\"assistant\"}" >/dev/null \
+			|| s10_fail "turn 2 POST /api/append-turn failed"
+		echo "[smoke]     S10 leg 1 OK: 2 turns appended (project=$S10_PROJECT, X-UM-Source=$S10_SURFACE)"
+
+		# (b) Leg 2 — capture.turn counters row (spec §6: surface from the
+		# X-UM-Source header). Emission is synchronous on the write path
+		# (better-sqlite3), so no settle poll is needed.
+		if [ -n "$S10_CONTAINER" ]; then
+			_s10_turns=$(s10_counter_sum "capture.turn")
+			case "$_s10_turns" in
+				exec-failed) s10_fail "docker exec counters read failed in container $S10_CONTAINER" ;;
+				''|*[!0-9]*) s10_fail "counters read returned non-numeric '$_s10_turns'" ;;
+			esac
+			[ "$_s10_turns" -ge 2 ] || s10_fail "expected capture.turn counter >= 2 for (surface=$S10_SURFACE, project=$S10_PROJECT), got $_s10_turns — um-counters.db row missing"
+			echo "[smoke]     S10 leg 2 OK: capture.turn counters row exists (count=$_s10_turns, surface=$S10_SURFACE)"
+		else
+			echo "[smoke]     S10 leg 2 SKIP: no docker container visible (remote endpoint?) — counters row asserted only when the DB is reachable via docker exec"
+		fi
+
+		# (c) Leg 3 — checkpoint → /api/state (LLM-dependent; opt-out via
+		# UM_SMOKE_REMOTE_RT_LLM=0 on keyless rigs).
+		if [ "${UM_SMOKE_REMOTE_RT_LLM:-1}" = "0" ]; then
+			echo "[smoke]     S10 leg 3 SKIP: UM_SMOKE_REMOTE_RT_LLM=0 (checkpoint synthesis needs a real LLM key on the server)"
+		else
+			S10_CKPT_RESP=$(curl -sf -X POST "$ENDPOINT/api/checkpoint" \
+				-H 'Content-Type: application/json' \
+				-H "X-UM-Source: $S10_SURFACE" \
+				-d "{\"project\":\"$S10_PROJECT\"}") \
+				|| s10_fail "POST /api/checkpoint failed"
+			S10_SUMMARY_ID=$(echo "$S10_CKPT_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true: ' + json.dumps(data)
+assert data.get('summary_id'), 'expected summary_id'
+assert data.get('state_updated') is True, 'expected state_updated:true'
+print(data['summary_id'])
+") || s10_fail "checkpoint response malformed: $S10_CKPT_RESP"
+			echo "[smoke]     S10 checkpoint OK: summary_id=$S10_SUMMARY_ID, state_updated=true"
+
+			# GET /api/state/<project> — the synthesized state must be
+			# non-null with a non-empty body (Task 8 asserts the read
+			# contract; here we assert the checkpoint actually SYNTHESIZED it).
+			S10_STATE_RESP=$(curl -sf "$ENDPOINT/api/state/$S10_PROJECT") \
+				|| s10_fail "GET /api/state/$S10_PROJECT failed"
+			echo "$S10_STATE_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data.get('ok') is True, 'expected ok:true: ' + json.dumps(data)
+state = data.get('state')
+assert state is not None, 'state is null — checkpoint did not synthesize state.md'
+assert state.get('body', '').strip(), 'state body is empty'
+" || s10_fail "/api/state shows no synthesized state: $S10_STATE_RESP"
+			echo "[smoke]     S10 leg 3 OK: /api/state/$S10_PROJECT shows the synthesized state"
+
+			# capture.checkpoint counters row (same reachability caveat as leg 2).
+			if [ -n "$S10_CONTAINER" ]; then
+				_s10_ckpts=$(s10_counter_sum "capture.checkpoint")
+				case "$_s10_ckpts" in
+					exec-failed) s10_fail "docker exec counters read failed in container $S10_CONTAINER" ;;
+					''|*[!0-9]*) s10_fail "counters read returned non-numeric '$_s10_ckpts'" ;;
+				esac
+				[ "$_s10_ckpts" -ge 1 ] || s10_fail "expected capture.checkpoint counter >= 1 for (surface=$S10_SURFACE, project=$S10_PROJECT), got $_s10_ckpts"
+				echo "[smoke]     S10 leg 3 OK: capture.checkpoint counters row exists (count=$_s10_ckpts)"
+			else
+				echo "[smoke]     S10 checkpoint-counters SKIP: no docker container visible"
+			fi
+		fi
+
+		# Cleanup — restore baseline.
+		s10_cleanup
+		echo "[smoke] #159 S10 PASS: remote round-trip proven (append-turn → counters → checkpoint → state)"
 	fi
 fi
 

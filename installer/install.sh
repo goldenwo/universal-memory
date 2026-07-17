@@ -13,6 +13,11 @@
 #   --all           Install all detected components (default when no flags + non-TTY)
 #   --interactive   Launch the interactive wizard
 #   --yes / -y      Non-interactive; accept defaults
+#   --remote [URL]  Remote-client flow (#159 T7, spec §7): verify a remote UM
+#                   server (health + authed write probe) and write
+#                   ~/.um/endpoint + ~/.um/auth-token (600). URL may come from
+#                   the optional argument, --server-url, or an interactive
+#                   prompt. Skips vault/compose/auto-start entirely.
 #   --server-url U  Pass --server-url to sub-installers
 #   --skip-docker   Pass --skip-docker to server installer
 #   --no-path       Pass --no-path to CLI installer
@@ -32,6 +37,7 @@ INSTALL_CLI=0
 INSTALL_ALL=0
 FORCE_WIZARD=0
 ASSUME_YES=0
+REMOTE_MODE=0
 
 # ---- Per-delegate arg filtering ------------------------------------------------
 # COMMON_ARGS go to every delegate; per-component arrays go only to their target.
@@ -50,6 +56,16 @@ while [[ $# -gt 0 ]]; do
     --all)           INSTALL_ALL=1 ;;
     --yes|-y)        ASSUME_YES=1; COMMON_ARGS+=("$1") ;;
     --interactive)   FORCE_WIZARD=1 ;;
+    --remote)
+      # Reconciled with --server-url (both keep working): --remote triggers
+      # the remote flow; `--remote URL` shorthand sets the URL too.
+      REMOTE_MODE=1
+      if [[ $# -gt 1 && "$2" != -* ]]; then
+        UM_SERVER_URL="$2"; export UM_SERVER_URL
+        CLI_ARGS+=(--server-url "$2"); PLUGIN_ARGS+=(--server-url "$2")
+        shift
+      fi
+      ;;
     --server-url)    UM_SERVER_URL="$2"; export UM_SERVER_URL; CLI_ARGS+=("$1" "$2"); PLUGIN_ARGS+=("$1" "$2"); shift ;;
     --skip-docker)   SERVER_ARGS+=("$1") ;;
     --no-path)       CLI_ARGS+=("$1") ;;
@@ -76,6 +92,10 @@ Component flags:
 Behaviour flags:
   --yes, -y         Non-interactive; accept defaults
   --interactive     Launch the setup wizard
+  --remote [URL]    Remote-client setup: verify a remote UM server (health +
+                    authed write probe) and write ~/.um/endpoint +
+                    ~/.um/auth-token (mode 600). Prompts for missing values
+                    on a TTY; token may be empty for loopback/no-auth.
   --server-url URL  Override the server URL passed to sub-installers
   --skip-docker     Skip Docker checks (passed to server installer)
   --no-path         Skip PATH modification (passed to CLI installer)
@@ -89,6 +109,140 @@ HELP
 if [[ ${_show_help:-0} -eq 1 ]]; then
   show_help
   exit 0
+fi
+
+# ─── Remote-client flow (#159 T7, spec §7) ────────────────────────────────────
+# Verify endpoint+token (GET /health THEN an authed WRITE probe — the probe
+# distinguishes 403 writes-disabled / 401 auth / 404 server-too-old / 5xx
+# mount-or-server / 000 unreachable), and only on success write the §4 file
+# tier: ~/.um/endpoint + ~/.um/auth-token (600). Failure ⇒ actionable message,
+# non-zero exit, NO config written (A5/A8). Runs BEFORE mode selection: remote
+# mode skips vault-dir/compose/auto-start prompts entirely, and `--remote`
+# alone must not fall into the wizard or the --all back-compat path.
+run_remote_flow() {
+  if [[ ${DRY_RUN:-0} -eq 1 ]]; then
+    echo "[install] [dry-run] would: verify remote endpoint (GET /health + authed write probe) and write ~/.um/endpoint (+ ~/.um/auth-token, 600)"
+    return 0
+  fi
+
+  command -v curl >/dev/null 2>&1 || { echo "ERROR: --remote requires curl in PATH." >&2; exit 1; }
+
+  # Shared probe logic lives in the plugin subtree (T8's um-setup.sh sources
+  # the same file); marker-block.sh is the existing idempotent profile writer.
+  local script_dir verify_lib marker_lib
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  verify_lib="$script_dir/../plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+  marker_lib="$script_dir/lib/marker-block.sh"
+  if [[ ! -r "$verify_lib" || ! -r "$marker_lib" ]]; then
+    # curl|bash without a checkout: fall back to the clone dir (cloning if needed).
+    if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+      command -v git >/dev/null 2>&1 || { echo "ERROR: --remote needs a repo checkout (or git to clone one). Run: git clone $REPO && bash universal-memory/installer/install.sh --remote <url>" >&2; exit 1; }
+      printf 'Cloning %s to %s (for the remote-flow libraries)...\n' "$REPO" "$INSTALL_DIR"
+      git clone "$REPO" "$INSTALL_DIR"
+    fi
+    verify_lib="$INSTALL_DIR/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+    marker_lib="$INSTALL_DIR/installer/lib/marker-block.sh"
+    [[ -r "$verify_lib" && -r "$marker_lib" ]] || { echo "ERROR: remote-flow libraries not found under $INSTALL_DIR." >&2; exit 1; }
+  fi
+  # shellcheck source=/dev/null
+  source "$verify_lib"
+  # shellcheck source=lib/marker-block.sh
+  source "$marker_lib"
+
+  # Endpoint: --remote URL / --server-url / UM_SERVER_URL env / TTY prompt.
+  if [[ -z "${UM_SERVER_URL:-}" && -t 0 && $ASSUME_YES -eq 0 ]]; then
+    read -r -p "UM server URL (e.g. http://your-host:6337): " UM_SERVER_URL || true
+  fi
+  if [[ -z "${UM_SERVER_URL:-}" ]]; then
+    echo "ERROR: --remote requires an endpoint URL — pass '--remote <url>' or '--server-url <url>' (or run on a TTY to be prompted)." >&2
+    exit 1
+  fi
+  local endpoint token
+  endpoint="${UM_SERVER_URL%/}"
+  export UM_SERVER_URL="$endpoint"
+
+  # Token: env / TTY prompt (hidden input; empty is valid for loopback no-auth).
+  token="${UM_AUTH_TOKEN:-}"
+  if [[ -z "$token" && -t 0 && $ASSUME_YES -eq 0 ]]; then
+    read -rs -p "Auth token (leave empty for loopback/no-auth): " token || true
+    echo
+  fi
+
+  echo "[install] verifying UM server at $endpoint ..."
+  local verify_rc=0
+  um_verify_endpoint "$endpoint" "$token" || verify_rc=$?
+  if [[ $verify_rc -ne 0 ]]; then
+    echo "[install] remote verification FAILED — no config written." >&2
+    exit "$verify_rc"
+  fi
+  echo "[install] server verified: reachable, authed, writes enabled."
+
+  # Config write (§4 file tier). umask 077 closes the create-then-chmod window.
+  mkdir -p "$HOME/.um"
+  ( umask 077; printf '%s\n' "$endpoint" > "$HOME/.um/endpoint" )
+  chmod 600 "$HOME/.um/endpoint" 2>/dev/null || true
+  echo "[install] wrote $HOME/.um/endpoint"
+  if [[ -n "$token" ]]; then
+    ( umask 077; printf '%s\n' "$token" > "$HOME/.um/auth-token" )
+    chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
+    echo "[install] wrote $HOME/.um/auth-token (600)"
+  elif [[ -f "$HOME/.um/auth-token" ]]; then
+    echo "[install] note: existing $HOME/.um/auth-token kept (no token given)."
+  fi
+
+  # Pre-existing UM_SERVER_URL in shell profiles (spec §7): an env export
+  # SHADOWS the just-written file tier (§4 precedence). If it lives in our
+  # marker block, update it idempotently; if it is the user's own export,
+  # warn explicitly rather than editing their profile.
+  local marker_start='# --- universal-memory (auto-added by install.sh) ---'
+  local marker_end='# --- end universal-memory ---'
+  local rc_file
+  for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rc_file" ]] || continue
+    if grep -qF "$marker_start" "$rc_file"; then
+      # _write_marker_block regenerates the WHOLE block from current env — a
+      # non-hydrated shell (env -i, fresh terminal) silently wipes a stored
+      # UM_OPENAI_API_KEY / non-default UM_SUMMARIZER. Detect and SAY so
+      # (notice only — the block is still regenerated as before).
+      local _prev_block _prev_key _prev_sum _new_sum
+      _prev_block=$(awk -v s="$marker_start" -v e="$marker_end" '$0==s{b=1;next} $0==e{b=0;next} b' "$rc_file")
+      _prev_key=$(printf '%s\n' "$_prev_block" | sed -n "s/^export UM_OPENAI_API_KEY='\(.*\)'$/\1/p" | head -n1)
+      _prev_sum=$(printf '%s\n' "$_prev_block" | sed -n "s/^export UM_SUMMARIZER='\(.*\)'$/\1/p" | head -n1)
+      _new_sum="${UM_SUMMARIZER:-openai}"
+      if { [[ -n "$_prev_key" && "$_prev_key" != "${UM_OPENAI_API_KEY:-}" ]]; } \
+          || { [[ -n "$_prev_sum" && "$_prev_sum" != "$_new_sum" ]]; }; then
+        echo "[install] note: previous marker-block values not present in this shell's env were reset — re-run the full installer if you still need the local summarizer config (UM_OPENAI_API_KEY / UM_SUMMARIZER)."
+      fi
+      _write_marker_block "$rc_file" "" ""
+      echo "[install] updated universal-memory marker block in $rc_file (UM_SERVER_URL → $endpoint)"
+    fi
+    # No `grep -q` here: under pipefail an early-exiting grep can SIGPIPE the
+    # awk and flip a real match into a 141 pipeline status. Capture instead.
+    if [[ -n "$(awk -v s="$marker_start" -v e="$marker_end" '$0==s{b=1;next} $0==e{b=0;next} !b' "$rc_file" \
+        | grep -E '(^|[[:space:]])(export[[:space:]]+)?UM_SERVER_URL=' || true)" ]]; then
+      echo "WARNING: $rc_file exports UM_SERVER_URL outside the universal-memory marker block — that env export SHADOWS the just-written ~/.um/endpoint. Update or remove it if you meant to use $endpoint." >&2
+    fi
+  done
+
+  # Repoint caveat (spec §5): a local vault with raw captures pending — a
+  # remote server cannot read this filesystem, so repointing strands them.
+  # Warn, never block.
+  local vault
+  vault="${UM_VAULT_DIR:-$HOME/.um/vault}"
+  if [[ -d "$vault" ]] && [[ -n "$(find "$vault" -path '*/captures/*' -type f -print -quit 2>/dev/null)" ]]; then
+    echo "WARNING: local vault at $vault has un-checkpointed raw captures — repointing to a remote server strands them. Run one session-end / checkpoint against your LOCAL server first, then re-run this." >&2
+  fi
+
+  echo "[install] remote client configured. Hooks and the um CLI will now resolve $endpoint."
+}
+
+if [[ $REMOTE_MODE -eq 1 ]]; then
+  run_remote_flow
+  # Remote-only invocation: done. With component flags, fall through so e.g.
+  # `--remote URL --plugin-cc` also installs the plugin against that server.
+  if [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 && $FORCE_WIZARD -eq 0 ]]; then
+    exit 0
+  fi
 fi
 
 # Mode selection

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-marketplace.json",
+  "name": "universal-memory",
+  "owner": {
+    "name": "goldenwo",
+    "url": "https://github.com/goldenwo",
+    "email": "68965162+goldenwo@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "universal-memory",
+      "source": "./plugins/claude-code/universal-memory",
+      "description": "Cross-session, cross-device memory for Claude Code. Session hooks capture every conversation to a universal-memory server (local Docker or remote self-hosted) and inject the synthesized state-of-play at the start of the next session. First run: /um-setup.",
+      "version": "1.7.0",
+      "author": {
+        "name": "goldenwo",
+        "url": "https://github.com/goldenwo"
+      },
+      "homepage": "https://github.com/goldenwo/universal-memory/blob/main/docs/claude-code-plugin.md",
+      "repository": "https://github.com/goldenwo/universal-memory",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "context",
+        "cross-session",
+        "self-hosted",
+        "session-continuity",
+        "mcp"
+      ]
+    }
+  ]
+}

@@ -33,6 +33,7 @@
  */
 
 import { umAdd as defaultUmAdd, md5 } from './add.mjs';
+import { surfaceFromHeaders } from './capture-events.mjs';
 import { D3_SERVER_MANAGED_STATUS_FIELDS } from './dedup-constants.mjs';
 import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
@@ -476,10 +477,10 @@ async function handleAdd({ req, body, ctx }) {
   if (Array.isArray(b.categories)) metadata.categories = b.categories;
 
   // Provenance (spec §7): X-Mem0-Source header lowercased, else 'mem0-compat'.
-  const sourceHeader = req?.headers?.['x-mem0-source'];
-  const surface = typeof sourceHeader === 'string' && sourceHeader.trim().length > 0
-    ? sourceHeader.trim().toLowerCase()
-    : 'mem0-compat';
+  // T5 (#159 spec §6): derivation shared with the /api + /mcp routes via
+  // surfaceFromHeaders (X-UM-Source now also honored, X-Mem0-Source stays the
+  // compat alias) so the header set can't drift between the two dialects.
+  const surface = surfaceFromHeaders(req?.headers, 'mem0-compat');
 
   const add = ctx?._umAdd ?? defaultUmAdd;
   const common = {

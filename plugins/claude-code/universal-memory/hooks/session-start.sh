@@ -1,34 +1,78 @@
 #!/bin/bash
 # session-start.sh — universal-memory SessionStart hook for Claude Code
+# (#159 T6a, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5)
 #
 # Behavior:
-#   1. Auto-start check (existing v0.1.3) — ensures docker stack is up if needed.
-#   2. If UM_ENDPOINT unset → exit 0 silently.
-#   3. Detached catchup branch — if orphan raw captures exist, fork session-end.sh
-#      in the background with the orphan date range.
-#   4. Synchronous read branch — fetch state.md via GET /api/state/:project,
-#      apply staleness rules, inject as additionalContext.
+#   1. Auto-start check — ensures a LOCAL docker stack is up if configured.
+#   2. If no endpoint is explicitly configured (env tiers or ~/.um/endpoint
+#      file, per um-api.sh) → emit rubric-only additionalContext, exit 0.
+#   3. G7 visibility assessment (spec §5): exit-0 hook stderr goes only to
+#      Claude Code's debug log — users never see it — so session-start owns
+#      the ONLY user-visible channel for capture health (A8/A9). One cheap,
+#      side-effect-free probe of the WRITE path: POST /api/append-turn with
+#      an empty JSON body. The server checks the write gate BEFORE body
+#      validation, so:
+#        000  → server unreachable      → ⚠ banner (unreachable)
+#        403  → writes disabled         → ⚠ banner (writes-disabled) [A8/A9]
+#        401  → auth failure            → ⚠ banner (auth) — captures are
+#               equally dead on a rotated/bad token
+#        404 / other 4xx (≠400) → server predates the /api capture routes
+#               → ⚠ banner (server too old)
+#        400  → HEALTHY: reachable, authed, writes ENABLED — validation
+#               rejected the empty body before anything was written
+#        2xx  → healthy (shouldn't happen for an empty body; treated as
+#               writes-enabled)
+#        429  → no banner: the remote rate-limiter (loopback-bypassed),
+#               transient — NOT server-too-old
+#        5xx  → no banner: reachable + writes configured; transient error or
+#               mount misconfig — the capture hooks log error=http-<code>
+#      Known accepted edges: (a) a server misconfigured with UM_VAULT_DIR
+#      unset 400s real captures too, so the probe reports "healthy" while
+#      captures fail — not silent though: the capture hooks log
+#      error=http-400 (ops misconfig, out of banner scope). (b) a 3xx from
+#      the endpoint falls to the no-banner branch although captures are dead
+#      — curl runs without -L, and endpoints are explicitly configured, so
+#      redirecting endpoints are accepted as out of scope.
+#      On failure the banner is PREPENDED to additionalContext.
+#   4. Synchronous read branch — GET /api/state/:project via um-api.sh
+#      (Bearer-authed — required for remote endpoints), staleness rules,
+#      inject as additionalContext.
+#   5. First-session welcome banner — "has activity" is now defined on the
+#      server's /api/state response (spec §5): fetch succeeded AND state is
+#      null ⇒ first run ⇒ welcome banner. No local vault scan (UM_VAULT_DIR
+#      is no longer a client-side concept). A failed fetch shows NO welcome
+#      (conservative: unknown ≠ first run).
+#
+# Retired here (spec §5): the orphan-catchup branch (raw-capture mtime scan +
+# detached SessionEnd-hook fork with a raw date range) — no client-side raw
+# files exist under API-always; and the client-summarizer recursion guard —
+# its writer died with the T4 client-summarizer retirement.
 #
 # Staleness rules (based on valid_from frontmatter field):
 #   Age ≤ 7 days  → inject verbatim under "# State of play"
 #   Age 7-30 days → inject with "# State of play (last active YYYY-MM-DD, may be outdated)" prefix
-#   Age > 30 days → empty additionalContext (stale, skip)
-#   Missing/null  → empty additionalContext
+#   Age > 30 days → rubric-only additionalContext (stale, skip)
+#   Missing/null  → rubric-only additionalContext
 #
 # Token budget: ~1k tokens max. No /api/search injection here.
 #
 # Exits silently (exit 0) on any failure — never block session start.
 
-# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
-# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
-# this, the nested `claude` process would re-trigger this hook, causing
-# duplicate captures at best and infinite loop at worst.
-if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
-
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
+
+UM_HOOK_NAME="session-start"
+# shellcheck source=lib/um-api.sh
+source "$LIB_DIR/um-api.sh"
+
+# Interpreter probe FIRST (Windows Store `python3` stubs exist on PATH but
+# don't run): a bare `python3` here would silently kill the ENTIRE injection
+# — G7 banner included — via the fallback envelope, with no breadcrumb. This
+# script is the only A8/A9-visible channel, so a missing interpreter must at
+# least leave a hook.log line.
+PY=$(um_find_python) || { um_log "skip=no-python"; printf '{}\n'; exit 0; }
 
 # Memory routing rubric — sourced from docs/memory-routing-rubric.md
 # (canonical location; all platforms reference it).
@@ -52,7 +96,7 @@ else
     # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
     # shellcheck disable=SC2089,SC2016  # single-quoted literal content
     # (backticks, $vars) is deliberately not re-evaluated; variable is
-    # env-exported (line 192) and read as-is by python3 via os.environ.get —
+    # env-exported below and read as-is by python3 via os.environ.get —
     # no word-splitting at use site. SC2016 disabled for the same reason:
     # the rubric mentions things like `$VAULT` and tool names which must
     # remain literal.
@@ -71,9 +115,6 @@ When uncertain, prefer a capture call over trusting session-end — durable docs
   fi
 fi
 
-# shellcheck disable=SC1091
-source "$LIB_DIR/vault.sh"
-
 # ---------------------------------------------------------------------------
 # 1. Auto-start (existing v0.1.3) — ensure docker stack is up if needed
 # ---------------------------------------------------------------------------
@@ -82,159 +123,143 @@ if [ -x "$AUTO_START_SCRIPT" ]; then
   bash "$AUTO_START_SCRIPT" || true  # fail-soft
 fi
 
-# ---------------------------------------------------------------------------
-# First-session welcome banner detection
-# ---------------------------------------------------------------------------
-# "First-ever session" = vault has no prior activity: no files exist under
-# state/, captures/, or sessions/. Subdirs may exist (a fresh install creates
-# them) but must be empty of actual content.
-#
-# When detected, prepend a welcome banner to additionalContext so a
-# just-installed user gets a one-time primer on what UM does and how to
-# preview state.md.
-UM_WELCOME_BANNER=""
-UM_VAULT_ROOT=$(vault_path)
-has_activity=false
-for subdir in state captures sessions; do
-  if [ -d "$UM_VAULT_ROOT/$subdir" ] && \
-     find "$UM_VAULT_ROOT/$subdir" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
-    has_activity=true
-    break
-  fi
-done
-if [ "$has_activity" = false ]; then
-  # The banner contains literal `$VAULT/...` which must remain literal — the
-  # banner is rendered to the user, not eval'd here.
-  # shellcheck disable=SC2016
-  UM_WELCOME_BANNER='## Welcome to universal-memory
+# First-session welcome banner TEXT. Whether it is shown is decided in the
+# Python block below from the /api/state response (spec §5: has_activity =
+# non-null server state, not local vault files).
+# shellcheck disable=SC2016  # backticked `/um-preview` is literal display text
+UM_WELCOME_TEXT='## Welcome to universal-memory
 
-This is your first session. What happens from here:
-- Every turn is captured (cheaply) to `$VAULT/captures/<project>/raw/<date>.md`
-- When this session ends cleanly, a summary will be written and state.md will appear
-- Next session, state.md will be auto-injected for context
+This is your first session on this project. What happens from here:
+- Conversation turns are captured to your UM server as you work
+- When this session ends, the server synthesizes a state.md checkpoint
+- Next session, that state.md is auto-injected for context
 
 You can run `/um-preview` anytime to see what state.md would look like right now.
-Cost: ~$0.0003 per session end (claude-agent-sdk = $0).
 '
+
+# ---------------------------------------------------------------------------
+# 2. Bail if no endpoint is explicitly configured — rubric-only context.
+# um_api_configured covers the env tiers AND the ~/.um/endpoint file tier
+# (spec §4) — a file-tier-only remote install must NOT bail here.
+# ---------------------------------------------------------------------------
+if ! um_api_configured 2>/dev/null; then
+  # Documented SessionStart envelope (code.claude.com/docs/en/hooks): the
+  # additionalContext MUST ride inside hookSpecificOutput with the event name —
+  # a top-level additionalContext is silently ignored by Claude Code.
+  "$PY" -c "import json,sys; print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': sys.argv[1]}}))" \
+    "$UM_ROUTING_RUBRIC" 2>/dev/null || echo '{}'
+  exit 0
 fi
 
-# Helper: compose additionalContext with optional welcome banner prepended.
-# Called from both the endpoint-unset bail branch and the Python block below.
-um_compose_with_welcome() {
-  local body="$1"
-  if [ -n "$UM_WELCOME_BANNER" ]; then
-    if [ -n "$body" ]; then
-      printf '%s\n%s' "$UM_WELCOME_BANNER" "$body"
-    else
-      printf '%s' "$UM_WELCOME_BANNER"
-    fi
+endpoint=$(um_api_endpoint 2>/dev/null)
+
+# ---------------------------------------------------------------------------
+# 3. Project slug — cwd basename, sanitized to [A-Za-z0-9._-] client-side
+# (mirrors the server's PROJECT_SLUG_RE; same guard as the capture hooks,
+# spec §5 amendment).
+# ---------------------------------------------------------------------------
+_cwd="${CLAUDE_CWD:-$(pwd)}"
+PROJECT=$(basename "${_cwd//\\//}")
+PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
+
+# ---------------------------------------------------------------------------
+# 4. G7 visibility assessment (spec §5) — cheap side-effect-free write-path
+# probe; taxonomy in the header. Called OUTSIDE command substitution so
+# UM_API_HTTP_CODE survives. Short 3s budget: this runs synchronously at
+# session start.
+# ---------------------------------------------------------------------------
+UM_G7_BANNER=""
+um_api_post '/api/append-turn' '{}' 3 >/dev/null 2>&1 || true
+PROBE_CODE="$UM_API_HTTP_CODE"
+case "$PROBE_CODE" in
+  400 | 2[0-9][0-9])
+    # Healthy: reachable, authed, writes enabled (400 = the empty probe body
+    # was rejected by validation AFTER the write gate passed; nothing written).
+    um_log "probe http=$UM_API_HTTP_CODE writes=enabled"
+    ;;
+  000)
+    UM_G7_BANNER=$(um_g7_message unreachable "$endpoint")
+    um_log "probe error=http-000"
+    ;;
+  403)
+    UM_G7_BANNER=$(um_g7_message writes-disabled)
+    um_log "probe skip=writes-disabled"
+    ;;
+  401)
+    UM_G7_BANNER=$(um_g7_message auth)
+    um_log "probe error=auth"
+    ;;
+  429)
+    # Remote rate-limiter (60 RPM, loopback-bypassed — bites exactly remote
+    # deployments). Transient like 5xx, NOT server-too-old: no banner.
+    um_log "probe error=http-429"
+    ;;
+  4[0-9][0-9])
+    # Server predates the /api capture routes (spec §5 skew taxonomy).
+    UM_G7_BANNER=$(um_g7_message "server too old (HTTP $UM_API_HTTP_CODE) — upgrade it")
+    um_log "probe skip=server-too-old http=$UM_API_HTTP_CODE"
+    ;;
+  *)
+    # 5xx: reachable + writes configured — transient or mount misconfig;
+    # the capture hooks own the error=http-<code> reporting. No banner.
+    um_log "probe error=http-$UM_API_HTTP_CODE"
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 5. Read branch — fetch state.md via the authed API wrapper (3s budget).
+# rc (2xx-or-not) survives command substitution even though the code doesn't.
+# Skipped when the probe couldn't even connect (000): the GET cannot succeed
+# where the POST found no server, and skipping halves the down-server stall.
+# ---------------------------------------------------------------------------
+UM_STATE_FETCH_OK=0
+response='{}'
+if [ "$PROBE_CODE" != "000" ]; then
+  if response=$(um_api_get "/api/state/$PROJECT" 3 2>/dev/null); then
+    UM_STATE_FETCH_OK=1
   else
-    printf '%s' "$body"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# 2. Bail if endpoint unset — emit rubric-only additionalContext
-# v1.1: source the shared endpoint resolver. Falls back to inline
-# resolution if the lib file is absent (pre-v1.1 install). Resolver emits
-# a deprecation warn on stderr if UM_ENDPOINT is the only one set.
-# ---------------------------------------------------------------------------
-if [ -r "$LIB_DIR/endpoint.sh" ]; then
-  # shellcheck source=lib/endpoint.sh
-  source "$LIB_DIR/endpoint.sh"
-  if ! um_endpoint_configured; then
-    ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
-    python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
-      "$ac_out" 2>/dev/null || echo '{}'
-    exit 0
-  fi
-  endpoint=$(um_resolve_endpoint)
-else
-  # Fail-soft fallback for pre-v1.1 installs.
-  if [ -z "${UM_SERVER_URL:-}${UM_ENDPOINT:-}" ]; then
-    ac_out=$(um_compose_with_welcome "$UM_ROUTING_RUBRIC")
-    python3 -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
-      "$ac_out" 2>/dev/null || echo '{}'
-    exit 0
-  fi
-  endpoint="${UM_SERVER_URL:-${UM_ENDPOINT:-}}"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Project + vault
-# ---------------------------------------------------------------------------
-PROJECT=$(project_name)
-VAULT=$(vault_path)
-
-# ---------------------------------------------------------------------------
-# 4. Catchup branch (detached background)
-# ---------------------------------------------------------------------------
-ORPHANS=$(find_orphans "$PROJECT" 2>/dev/null || true)
-if [ -n "$ORPHANS" ]; then
-  # Compute oldest + newest raw file mtime as epoch seconds
-  oldest_mtime=""
-  newest_mtime=""
-  while IFS= read -r raw_rel; do
-    [ -n "$raw_rel" ] || continue
-    raw_abs="$VAULT/$raw_rel"
-    [ -f "$raw_abs" ] || continue
-    mtime=$(stat -c %Y "$raw_abs" 2>/dev/null || stat -f %m "$raw_abs" 2>/dev/null || echo 0)
-    if [ -z "$oldest_mtime" ] || [ "$mtime" -lt "$oldest_mtime" ]; then
-      oldest_mtime=$mtime
-    fi
-    if [ -z "$newest_mtime" ] || [ "$mtime" -gt "$newest_mtime" ]; then
-      newest_mtime=$mtime
-    fi
-  done <<< "$ORPHANS"
-
-  if [ -n "$oldest_mtime" ] && [ -n "$newest_mtime" ]; then
-    since=$(date -u -d "@$oldest_mtime" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-            date -u -r "$oldest_mtime" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-    until_ts=$(date -u -d "@$newest_mtime" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-               date -u -r "$newest_mtime" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-
-    if [ -n "$since" ] && [ -n "$until_ts" ]; then
-      # Fork detached — session-end.sh handles UM_DETACH=1 internally
-      UM_PROJECT="$PROJECT" \
-      UM_CATCHUP_RAW_SINCE="$since" \
-      UM_CATCHUP_RAW_UNTIL="$until_ts" \
-      UM_DETACH=1 \
-      bash "$SCRIPT_DIR/session-end.sh" &
-      disown 2>/dev/null || true
-    fi
+    response='{}'
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# 5. Read branch — fetch state.md via API (synchronous, 3s timeout)
-# `endpoint` is set above (resolver path or fallback).
-# ---------------------------------------------------------------------------
-response=$(curl -sfm 3 "$endpoint/api/state/$PROJECT" 2>/dev/null || echo '{}')
-
-# Single Python invocation: parse state, apply staleness rules, emit JSON output.
-# Combining parse + JSON encode avoids a second python3 startup (~200ms on Windows).
-# UM_ROUTING_RUBRIC and UM_WELCOME_BANNER are passed via env so they are always
-# composed into additionalContext.
+# Single Python invocation: parse state, apply staleness rules, decide the
+# welcome banner (fetch ok + state null = first run), prepend the G7 banner,
+# emit the JSON envelope. Values passed via env so quoting is never an issue.
 # shellcheck disable=SC2090  # env-export is the use site; python reads via os.environ.
 export UM_ROUTING_RUBRIC
-export UM_WELCOME_BANNER
-printf '%s' "$response" | python3 -c '
+export UM_WELCOME_TEXT
+export UM_G7_BANNER
+export UM_STATE_FETCH_OK
+printf '%s' "$response" | "$PY" -c '
 import json, sys, re, os
 from datetime import datetime, timezone
 
 rubric = os.environ.get("UM_ROUTING_RUBRIC", "")
-welcome = os.environ.get("UM_WELCOME_BANNER", "")
+welcome_text = os.environ.get("UM_WELCOME_TEXT", "")
+g7 = os.environ.get("UM_G7_BANNER", "")
+fetch_ok = os.environ.get("UM_STATE_FETCH_OK", "0") == "1"
+show_welcome = False  # decided after the state parse
 
-def with_welcome(body_out):
-    if welcome and body_out:
-        return welcome + "\n" + body_out
-    if welcome:
-        return welcome
-    return body_out
+def compose(body_out):
+    parts = [p for p in (
+        g7,
+        welcome_text if show_welcome else "",
+        body_out,
+    ) if p]
+    return "\n".join(parts)
+
+def emit(body_out):
+    # Documented SessionStart envelope (code.claude.com/docs/en/hooks):
+    # additionalContext MUST ride inside hookSpecificOutput with the event
+    # name — a top-level additionalContext is silently ignored by Claude Code.
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": compose(body_out),
+    }}) + "\n")
+    sys.exit(0)
 
 def emit_rubric_only():
-    sys.stdout.write(json.dumps({"additionalContext": with_welcome(rubric)}) + "\n")
-    sys.exit(0)
+    emit(rubric)
 
 def with_rubric(body_out):
     if rubric:
@@ -264,9 +289,14 @@ def label_external_summaries(text):
 try:
     data = json.load(sys.stdin)
 except Exception:
+    # Malformed/failed response: conservative — no welcome (unknown is not
+    # "first run"); the G7 banner (if any) still rides on the rubric.
     emit_rubric_only()
 
-state = data.get("state")
+state = data.get("state") if isinstance(data, dict) else None
+# spec §5: has_activity = non-null /api/state response. First run = the
+# fetch SUCCEEDED and the server has no state for this project.
+show_welcome = fetch_ok and not state
 if not state:
     emit_rubric_only()
 
@@ -279,8 +309,7 @@ if not valid_from:
 
 if not valid_from:
     # No age info — treat as fresh, inject verbatim
-    sys.stdout.write(json.dumps({"additionalContext": with_welcome(with_rubric(label_external_summaries(body)))}) + "\n")
-    sys.exit(0)
+    emit(with_rubric(label_external_summaries(body)))
 
 # Compute age in days
 try:
@@ -293,7 +322,8 @@ except Exception:
 
 if age_days > 30:
     emit_rubric_only()  # state stale, but rubric still injected
-elif age_days > 7:
+
+if age_days > 7:
     try:
         date_str = vf_dt.strftime("%Y-%m-%d")
     except Exception:
@@ -305,11 +335,7 @@ elif age_days > 7:
 else:
     body_out = body
 
-sys.stdout.write(json.dumps({"additionalContext": with_welcome(with_rubric(label_external_summaries(body_out)))}) + "\n")
+emit(with_rubric(label_external_summaries(body_out)))
 ' 2>/dev/null || printf '{}\n'
-
-# ---------------------------------------------------------------------------
-# (output already emitted by Python above)
-# ---------------------------------------------------------------------------
 
 exit 0

@@ -47,6 +47,7 @@ import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
+import { surfaceFromHeaders } from './lib/capture-events.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
@@ -1067,7 +1068,12 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				}
 				: callerMetadata;
 			const result = await withRetry(() =>
-				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface })
+				// T5 (#159 spec §6): caller-supplied surface still wins (D1 F.1
+				// contract); otherwise fall back to the header-derived ctx.surface
+				// so capture.extraction counters carry real attribution. Provider /
+				// qdrant seams threaded from ctx for parity with REST /api/add
+				// (same DI shape createRequestHandler forwards to /mcp).
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface ?? ctx?.surface, _qdrantClient: ctx?._qdrantClient, _factsProviderOverride: ctx?._factsProviderOverride, _embedProviderOverride: ctx?._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -1190,7 +1196,8 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true in your .env',
 				));
 			}
-			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc };
+			// T5 (#159 spec §6): surface threads into the lib's capture.checkpoint emit.
+			const checkpointCtx = { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc, surface: ctx?.surface };
 			if (isAutoSupersedeEnabled()) {
 				// Resolve qdrant context for the detector — ON by default since the v1.2
 				// flip (opt-out: only literal 'false' disables). Resolved only inside the gate.
@@ -1392,7 +1399,9 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
 				));
 			}
-			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR });
+			// T5 (#159 spec §6): ctx.surface (derived from X-UM-Source at the /mcp
+			// route) rides into the lib's capture.turn counter emit.
+			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR, surface: ctx?.surface });
 			// B.9 (spec §5.4): fire-and-forget reindex for MCP parity with the
 			// REST endpoint. Errors logged, never propagated — the turn is
 			// already on disk and will reindex on the next successful pass.
@@ -1598,9 +1607,11 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 	}
 	try {
 		const { project, content, role, timestamp, conversation_id } = req.body || {};
+		// T5 (#159 spec §6): ctx.surface (derived from X-UM-Source at the route)
+		// threads into the lib's capture.turn counter emit.
 		const result = await doAppendTurn(
 			{ project, content, role, timestamp, conversation_id },
-			{ vaultDir: ctx.vaultDir },
+			{ vaultDir: ctx.vaultDir, surface: ctx.surface },
 		);
 		if (!result.ok) {
 			// B.6b (spec §5.2): field-level size violations from the lib layer
@@ -1688,9 +1699,10 @@ export async function handleCheckpointRequest(req, res, ctx) {
 	try {
 		const { project, since, until, skip_state_merge } = req.body || {};
 		const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
+		// T5 (#159 spec §6): ctx.surface threads into the lib's capture.checkpoint emit.
 		const result = await checkpointFn(
 			{ project, since, until, skip_state_merge },
-			{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc },
+			{ vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR, reindexFn: ctx._reindexFn ?? reindexDoc, surface: ctx.surface },
 		);
 		if (!result.ok) {
 			// B.10: doCheckpoint returns structured `error: { code, message }` for
@@ -2762,7 +2774,11 @@ export function createRequestHandler(ctx = {}) {
 			}
 			// Forward DI ctx so handleToolCall → do* helpers see the injected
 			// memory stub in tests, mirroring the REST routes' pattern.
-			const result = await handleMcpMessage(body, ctx);
+			// T5 (#159 spec §6): thread the capture surface (X-UM-Source /
+			// X-Mem0-Source header, absent ⇒ 'unknown') into the tool ctx so the
+			// MCP write tools count through the same shared-lib emit sites as
+			// the REST routes. Spread — never mutate the shared DI ctx.
+			const result = await handleMcpMessage(body, { ...ctx, surface: surfaceFromHeaders(req.headers) });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
 			return;
@@ -3008,7 +3024,10 @@ export function createRequestHandler(ctx = {}) {
 			let result;
 			try {
 				result = await withRetry(() =>
-					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+					// T5 review IMPORTANT-2: body `surface` still wins (D1 F.1), but a
+					// client sending only X-UM-Source / X-Mem0-Source no longer lands
+					// as surface='unknown' — uniform with the MCP + compat paths.
+					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: surface ?? surfaceFromHeaders(req.headers), _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 						.catch((e) => { throw tagRetryable(e); })
 				, { op: 'add' });
 			} catch (err) {
@@ -3217,7 +3236,8 @@ export function createRequestHandler(ctx = {}) {
 			await handleAppendTurnRequest(
 				{ body: reqBody },
 				httpRes,
-				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+				// T5 (#159 spec §6): surface attribution from X-UM-Source / X-Mem0-Source.
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled(), surface: surfaceFromHeaders(req.headers) },
 			);
 			return;
 		}
@@ -3243,7 +3263,8 @@ export function createRequestHandler(ctx = {}) {
 			await handleCheckpointRequest(
 				{ body: reqBody },
 				httpRes,
-				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled() },
+				// T5 (#159 spec §6): surface attribution from X-UM-Source / X-Mem0-Source.
+				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled(), surface: surfaceFromHeaders(req.headers) },
 			);
 			return;
 		}
