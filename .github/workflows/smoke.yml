@@ -439,6 +439,12 @@ jobs:
       # was the second half of the same shellchecked-but-unrun gap. Wired
       # in as a follow-up to PR #39's installer-cc wire-up.
       - run: bash installer/install-plugin-codex.test.sh
+      # install-remote.test.sh covers the #159 T7 remote-client flow
+      # (install.sh --remote): the um_verify_endpoint probe taxonomy plus the
+      # dead-endpoint / writes-disabled / server-too-old / live-loopback /
+      # orphan-warning / marker-vs-shadowing exit criteria. Stubbed curl —
+      # no network.
+      - run: bash installer/install-remote.test.sh
       # create-adr.test.sh covers the v1.1 W1.1 /adr skill bash helper
       # (sanitization, slug, auto-numbering, self-application guard, payload
       # shape, 401 warn-only/loud-fail asymmetry, sync semantics). Stub HTTP
