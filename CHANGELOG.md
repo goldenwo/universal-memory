@@ -6,6 +6,27 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### ⚠ Migration — in-place upgraders: capture now requires two server flags
+
+> **If you upgrade an existing local install in place (`git pull` + restart, no installer run), plugin capture goes dark until you edit `server/.env`:**
+>
+> ```bash
+> UM_MCP_WRITE_ENABLED=true   # shipped default: false — the server 403s every capture
+> UM_MOUNT_MODE=rw            # shipped default: ro — flag-true + ro mount fails 5xx (EROFS)
+> ```
+>
+> **then `docker compose up -d`.** The Claude Code plugin's hooks are now API-always (every capture goes through `POST /api/append-turn` / `POST /api/checkpoint`), and those routes hard-gate on `UM_MCP_WRITE_ENABLED`. This is not silent: every skipped capture logs `skip=writes-disabled` to `~/.um/hook.log` AND the very next session start injects a visible "⚠ UM: captures are OFF" banner. Your existing `captures/` files remain server-side inputs — nothing is lost.
+>
+> Also retired: the client-side summarizer (`session-end.sh` no longer calls an LLM) — client installs **no longer need an OpenAI/LLM API key**; synthesis always runs server-side with the server's key. The plugin's bespoke local-file capture path (lockdirs, `UM_VAULT_DIR` on the client) is replaced by the server API; local same-box installs keep working via the loopback default.
+
+### Added — Claude Code plugin: remote-server mode + marketplace install (#159)
+
+- **Plugin hooks are API-always thin HTTP clients** ([`plugins/claude-code/universal-memory/hooks/`](plugins/claude-code/universal-memory/hooks/)). All four hooks (SessionStart, UserPromptSubmit, Stop, SessionEnd) speak HTTP + bearer auth to any UM server — local Docker or remote self-hosted — with a shared config contract: `UM_SERVER_URL` env → deprecated `UM_ENDPOINT` → the new `~/.um/endpoint` file tier → loopback default. `stop.sh` now parses the real transcript (Claude Code's Stop stdin is metadata, not the transcript — the pre-1.7 hook captured ~300-byte metadata blobs) with a per-session delta cursor: no duplicates, no loss, cursor advances only on acked POSTs. `session-end.sh` fires a detached server-side checkpoint. Every fire logs one line to `~/.um/hook.log`; failure modes are distinct (`skip=writes-disabled`, `skip=server-too-old`, `error=http-<code>`) and surface as a visible session-start banner — never silent capture death.
+- **Marketplace install** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)): `claude plugin marketplace add goldenwo/universal-memory` then `claude plugin install universal-memory@universal-memory`. Version-drift-gated against `server/package.json`.
+- **`/um-setup` first-run command** ([`plugins/claude-code/universal-memory/hooks/um-setup.sh`](plugins/claude-code/universal-memory/hooks/um-setup.sh)): plugin-bundled setup for marketplace installs (which ship no config) — endpoint + token prompt, health check + **authed write probe** distinguishing 403 writes-disabled / 401 auth / 404 server-too-old / 5xx mount-or-server / 000 unreachable, then writes `~/.um/endpoint` + `~/.um/auth-token` (600) only on success. Same verify + write conventions as the installer's new `install.sh --remote` flow (shared `verify-endpoint.sh` helper).
+- **Server-side capture counters (#171 day-one)**: durable per-day `(surface, project, event, outcome)` counters in a UM-owned SQLite file (`UM_COUNTERS_DB_PATH`, defaulting next to the mem0 history DB so one bind mount persists both). Fire-and-forget — never fails a capture.
+- **Minimum server version: the plugin requires server ≥ v1.7.0** (this release — the pinned `/api` capture contract). Probes and hooks report an older server as a distinct "server too old — upgrade it" condition, never conflated with writes-disabled. Operator + client guide: [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md).
+
 ### Changed — MCP tool descriptions carry proactive-use guidance
 
 - **`memory_add` and `memory_search` descriptions now say WHEN to call, not just what they do** ([`server/mem0-mcp-http.mjs`](server/mem0-mcp-http.mjs)). MCP clients (claude.ai connector, Claude Code, any vendor) read tool descriptions in every conversation, so the description is the one always-present lever for capture/recall behavior: `memory_add` now instructs models to store durable facts proactively (one concise fact per call, skip ephemeral filler); `memory_search` now instructs recalling before answering when past context could help. No schema or behavior change — description strings only. Follows Anthropic tool-use guidance (descriptions should cover when-to-use).
