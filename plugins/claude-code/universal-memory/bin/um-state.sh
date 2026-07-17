@@ -9,6 +9,19 @@ LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 # shellcheck source=../hooks/lib/resolve-project.sh
 source "$LIB_DIR/resolve-project.sh"
 
+# #159 T6b: file-aware endpoint resolution — same composed semantic as the
+# hooks (spec §4: UM_SERVER_URL env → deprecated UM_ENDPOINT env →
+# ~/.um/endpoint file → http://localhost:6335). um-api.sh lives in the same
+# lib dir (installer glob-copies hooks/lib/*.sh); fall back to the legacy
+# env-only default when it is absent (pre-#159 partial install).
+if [ -r "$LIB_DIR/um-api.sh" ]; then
+  # shellcheck source=../hooks/lib/um-api.sh
+  source "$LIB_DIR/um-api.sh"
+  DEFAULT_SERVER="$(um_api_endpoint)"
+else
+  DEFAULT_SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+fi
+
 _usage() {
   cat <<EOF
 Usage: um state [<project>] [options]
@@ -20,7 +33,7 @@ Arguments:
 
 Options:
   --json            Emit a single JSON object: {project, body, valid_from}. Default is plain body.
-  --server URL      Override server URL (default: \$UM_SERVER_URL or http://localhost:6335)
+  --server URL      Override server URL (default: \$UM_SERVER_URL, else ~/.um/endpoint, else http://localhost:6335)
   --help, -h        Show this message
 
 Exit codes:
@@ -31,7 +44,7 @@ EOF
 }
 
 CLI_PROJECT=""
-SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+SERVER="$DEFAULT_SERVER"
 JSON_OUT=0
 
 while [ $# -gt 0 ]; do

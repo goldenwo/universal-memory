@@ -2,21 +2,24 @@
 # hooks/user-prompt-submit.test.sh — tests for user-prompt-submit.sh
 #
 # Run: bash user-prompt-submit.test.sh
-# All 7 test cases must pass (exit 0 = pass, non-zero = fail).
+# All test cases must pass (exit 0 = pass, non-zero = fail).
 #
 # Scenarios:
 #   1. Empty stdin → empty JSON, exit 0
-#   2. UM_ENDPOINT unset → empty JSON, exit 0
+#   2. No endpoint configured (env empty, no ~/.um/endpoint) → empty JSON, exit 0
 #   3. First prompt, server returns 0 results → empty JSON, counter = 1
 #   4. First prompt, server returns 3 hits → additionalContext with header, counter = 1
 #   5. Second prompt (counter already = 1) → empty JSON, counter = 2
 #   6. Third prompt → still empty, counter = 3
 #   7. Very long prompt (10k chars) → truncated before sending, still works
-
-# Prevent environment leakage from the developer's shell — if a prior test run
-# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
-# would exit 0 and assertions would falsely pass.
-unset UM_IN_SUMMARIZER_SUBPROCESS
+#   8. UM_IN_SUMMARIZER_SUBPROCESS=1 → hook fires NORMALLY (T6b removed the
+#      recursion guard: no hook invokes the client summarizer anymore, and a
+#      um-preview-spawned `claude -p` firing this hook costs one bounded curl)
+#   9. Counter lives at ~/.um/state/prompt-count-<session_id> (NOT the vault —
+#      UM_VAULT_DIR is no longer a client-side concept, spec §4)
+#  10. Hostile session id is sanitized ([^A-Za-z0-9._-] → '-') before path use
+#  11. Age sweep: prompt-count files >7d old are removed; fresh ones stay
+#  12. ~/.um/endpoint file tier alone (no env) is enough to fire the search
 
 set -uo pipefail
 
@@ -104,20 +107,24 @@ make_search_response_empty() {
 }
 
 # ---------------------------------------------------------------------------
-# Temp dir setup
+# Temp dir setup — ISOLATED HOME (the hook writes ~/.um/state and reads
+# ~/.um/endpoint + ~/.um/auth-token; never touch the developer's real ones)
 # ---------------------------------------------------------------------------
 TMPDIR_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
-VAULT="$TMPDIR_ROOT/vault"
-export UM_VAULT_DIR="$VAULT"
+export HOME="$TMPDIR_ROOT/home"
+mkdir -p "$HOME"
 export CLAUDE_CWD="$TMPDIR_ROOT/testproject"
 export CLAUDE_SESSION_ID="test-session-abc123"
 
 MOCK_BIN="$TMPDIR_ROOT/mock_bin"
 mkdir -p "$MOCK_BIN"
 
-COUNTER_FILE="$VAULT/.telemetry/session-test-session-abc123.count"
+# T6b: counter relocated from $VAULT/.telemetry/ to ~/.um/state/ (same home
+# as stop.sh's cursors — UM_VAULT_DIR stops being a client concept, spec §4).
+STATE_DIR="$HOME/.um/state"
+COUNTER_FILE="$STATE_DIR/prompt-count-test-session-abc123"
 
 # Helper: write a mock curl returning given JSON
 write_mock_curl() {
@@ -137,25 +144,30 @@ reset_counter() {
   rm -f "$COUNTER_FILE"
 }
 
-# Helper: run hook with given stdin, returns output
+# Helper: run hook with given stdin, returns output.
+# UM_SERVER_URL pinned empty so a developer-shell export can't shadow the
+# test's UM_ENDPOINT tier.
 run_hook() {
   local stdin_text="$1"
   printf '%s' "$stdin_text" | \
     PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
     UM_ENDPOINT="http://localhost:19999" \
-    UM_VAULT_DIR="$UM_VAULT_DIR" \
     CLAUDE_CWD="$CLAUDE_CWD" \
     CLAUDE_SESSION_ID="test-session-abc123" \
     bash "$HOOK" 2>/dev/null
 }
 
-# Helper: run hook with UM_ENDPOINT unset
+# Helper: run hook with NO endpoint configured (env tiers empty; isolated
+# HOME has no ~/.um/endpoint file)
 run_hook_no_endpoint() {
   local stdin_text="$1"
   printf '%s' "$stdin_text" | \
     PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
     UM_ENDPOINT="" \
-    UM_VAULT_DIR="$UM_VAULT_DIR" \
     CLAUDE_CWD="$CLAUDE_CWD" \
     CLAUDE_SESSION_ID="test-session-abc123" \
     bash "$HOOK" 2>/dev/null
@@ -170,8 +182,9 @@ printf '\nTest 1: Empty stdin\n'
   write_mock_curl "$(make_search_response_empty)"
   output=$(printf '' | \
     PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
     UM_ENDPOINT="http://localhost:19999" \
-    UM_VAULT_DIR="$UM_VAULT_DIR" \
     CLAUDE_CWD="$CLAUDE_CWD" \
     CLAUDE_SESSION_ID="test-session-abc123" \
     bash "$HOOK" 2>/dev/null)
@@ -182,9 +195,9 @@ printf '\nTest 1: Empty stdin\n'
 }
 
 # ---------------------------------------------------------------------------
-# Test 2: UM_ENDPOINT unset → empty JSON, exit 0
+# Test 2: No endpoint configured → empty JSON, exit 0
 # ---------------------------------------------------------------------------
-printf '\nTest 2: UM_ENDPOINT unset\n'
+printf '\nTest 2: No endpoint configured\n'
 {
   reset_counter
   output=$(run_hook_no_endpoint "What should I work on today?")
@@ -279,7 +292,6 @@ printf '\nTest 7: Very long prompt (10k chars)\n'
   cat > "$MOCK_BIN/curl" <<CURLDUMP
 #!/bin/bash
 # Capture the -d argument (POST body) to verify truncation
-# Args: sfm 3 -X POST <url> -H Content-Type... -d <payload>
 while [[ "\$#" -gt 0 ]]; do
   if [[ "\$1" == "-d" ]]; then
     printf '%s' "\$2" > "$received_file"
@@ -314,9 +326,6 @@ except Exception:
     fi
   else
     # curl mock didn't write the file — the hook may have bailed before curl
-    # That's acceptable: a very long prompt that gets truncated to 5000 chars
-    # is still meaningful; the hook should have run curl.
-    # Check that we still got output (hit path via make_search_response_3hits)
     ac=$(extract_ac "$output")
     assert_not_empty "long prompt still produces hits after truncation" "$ac"
   fi
@@ -325,27 +334,136 @@ except Exception:
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: Recursive-hook guard — UM_IN_SUMMARIZER_SUBPROCESS=1 exits silently
+# Test 8: guard REMOVED — hook fires normally inside a summarizer subprocess.
+# T6b decision: no hook spawns the client summarizer anymore (T4 retired it);
+# summarize.sh survives only via the manual `um-preview` CLI, and a nested
+# `claude -p` firing this hook costs exactly one bounded (3s/10s) curl — no
+# recursion is possible because this hook never spawns `claude`.
 # ---------------------------------------------------------------------------
-# Critical for A3's claude-agent-sdk backend: the nested `claude -p` process
-# inherits UM_IN_SUMMARIZER_SUBPROCESS=1 in its env, and its own hooks (which
-# source this file via the plugin) must exit immediately to prevent infinite
-# recursion.
-printf '\nTest 8: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1)\n'
+printf '\nTest 8: UM_IN_SUMMARIZER_SUBPROCESS=1 no longer short-circuits\n'
 {
-  GUARD_OUT=$(UM_IN_SUMMARIZER_SUBPROCESS=1 \
+  reset_counter
+  write_mock_curl "$(make_search_response_3hits)"
+  output=$(printf '%s' "What tasks are outstanding?" | \
+    UM_IN_SUMMARIZER_SUBPROCESS=1 \
+    PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
     UM_ENDPOINT="http://localhost:19999" \
-    UM_VAULT_DIR="$UM_VAULT_DIR" \
     CLAUDE_CWD="$CLAUDE_CWD" \
     CLAUDE_SESSION_ID="test-session-abc123" \
-    bash "$HOOK" 2>&1)
-  GUARD_EXIT=$?
-  assert_eq "T8: guard exits 0 when UM_IN_SUMMARIZER_SUBPROCESS=1" "$GUARD_EXIT" "0"
-  if [ -z "$GUARD_OUT" ] || [ "$GUARD_OUT" = "{}" ]; then
-    pass "T8: guard emits no output (or empty JSON {})"
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T8: exit 0 with UM_IN_SUMMARIZER_SUBPROCESS=1" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_not_empty "T8: search still fires (guard removed)" "$ac"
+  assert_file_count "T8: counter written despite sentinel var" "$COUNTER_FILE" "1"
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: counter is NOT written to the vault (UM_VAULT_DIR ignored)
+# ---------------------------------------------------------------------------
+printf '\nTest 9: counter lives in ~/.um/state, not the vault\n'
+{
+  reset_counter
+  write_mock_curl "$(make_search_response_empty)"
+  vault_dir="$TMPDIR_ROOT/decoy-vault"
+  mkdir -p "$vault_dir"
+  output=$(printf '%s' "Where does the counter go?" | \
+    PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_VAULT_DIR="$vault_dir" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="http://localhost:19999" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>/dev/null)
+  assert_file_count "T9: counter written under ~/.um/state" "$COUNTER_FILE" "1"
+  if [ -e "$vault_dir/.telemetry" ]; then
+    fail "T9: vault .telemetry dir was created (should not exist)"
   else
-    fail "T8: guard should emit empty output, got: $GUARD_OUT"
+    pass "T9: no vault .telemetry dir created"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Test 10: hostile session id sanitized before path use
+# ---------------------------------------------------------------------------
+printf '\nTest 10: hostile session id sanitized\n'
+{
+  write_mock_curl "$(make_search_response_empty)"
+  evil_id='../../evil/id'
+  sanitized='..-..-evil-id'
+  rm -f "$STATE_DIR/prompt-count-$sanitized"
+  output=$(printf '%s' "Does path traversal work?" | \
+    PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="http://localhost:19999" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="$evil_id" \
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T10: exit 0 with hostile session id" "$exit_code" "0"
+  assert_file_count "T10: counter written to SANITIZED name" \
+    "$STATE_DIR/prompt-count-$sanitized" "1"
+  if [ -e "$HOME/.um/evil" ] || [ -e "$TMPDIR_ROOT/home/evil" ]; then
+    fail "T10: path traversal escaped the state dir"
+  else
+    pass "T10: no traversal outside the state dir"
+  fi
+  rm -f "$STATE_DIR/prompt-count-$sanitized"
+}
+
+# ---------------------------------------------------------------------------
+# Test 11: age sweep — stale prompt-count files (>7d) removed, fresh kept
+# ---------------------------------------------------------------------------
+printf '\nTest 11: stale counter sweep\n'
+{
+  reset_counter
+  write_mock_curl "$(make_search_response_empty)"
+  mkdir -p "$STATE_DIR"
+  stale="$STATE_DIR/prompt-count-old-session"
+  fresh="$STATE_DIR/prompt-count-fresh-session"
+  printf '3\n' > "$stale"
+  printf '2\n' > "$fresh"
+  touch -d '10 days ago' "$stale" 2>/dev/null || touch -t "$(date -v-10d +%Y%m%d%H%M 2>/dev/null || echo 202601010000)" "$stale"
+  run_hook "Sweep check prompt" >/dev/null
+  if [ -f "$stale" ]; then
+    fail "T11: stale counter (>7d) not swept"
+  else
+    pass "T11: stale counter swept"
+  fi
+  if [ -f "$fresh" ]; then
+    pass "T11: fresh counter preserved"
+  else
+    fail "T11: fresh counter wrongly deleted"
+  fi
+  rm -f "$fresh"
+}
+
+# ---------------------------------------------------------------------------
+# Test 12: ~/.um/endpoint file tier alone configures the hook (spec §4 tier 3)
+# ---------------------------------------------------------------------------
+printf '\nTest 12: endpoint file tier (no env)\n'
+{
+  reset_counter
+  write_mock_curl "$(make_search_response_3hits)"
+  mkdir -p "$HOME/.um"
+  printf 'http://filetier:6335\n' > "$HOME/.um/endpoint"
+  output=$(printf '%s' "What tasks are outstanding?" | \
+    PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T12: exit 0 on file-tier config" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_not_empty "T12: search fired via file-tier endpoint" "$ac"
+  rm -f "$HOME/.um/endpoint"
 }
 
 # ---------------------------------------------------------------------------

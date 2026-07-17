@@ -1,34 +1,41 @@
 #!/bin/bash
 # user-prompt-submit.sh — inject vector-search hits on first prompt only.
+# (#159 T6b, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §4–§5)
 #
 # Behavior:
 #   - Fires on EVERY user prompt (registered as UserPromptSubmit hook).
-#   - On first prompt of a session: POST /api/search with the prompt text,
+#   - On first prompt of a session: POST /api/search with the prompt text
+#     (via um-api.sh — Bearer-authed, works against remote endpoints),
 #     inject top 3-5 hits as "## Relevant from your memory" additionalContext.
 #   - On subsequent prompts: exit 0 with empty output immediately.
 #
 # Session tracking:
-#   Counter file: $VAULT/.telemetry/session-<SESSION_ID>.count
-#   "First" = file absent OR contains "0".
-#   Counter increments on every invocation regardless.
+#   Counter file: ~/.um/state/prompt-count-<SESSION_ID> — same home as
+#   stop.sh's delta cursors. UM_VAULT_DIR is no longer a client-side concept
+#   (spec §4), so the old $VAULT/.telemetry location is gone. The session id
+#   is sanitized to [A-Za-z0-9._-] before any path use, and counters older
+#   than 7 days are swept on each fire (mirrors stop.sh's cursor sweep).
+#   "First" = file absent OR contains "0". Counter increments on every
+#   invocation regardless.
+#
+# Retired here (T6b): the UM_IN_SUMMARIZER_SUBPROCESS recursion guard. Its
+# writer chain died with the T4 client-summarizer retirement — no hook spawns
+# `claude -p` anymore. summarize.sh (alive only via the manual `um-preview`
+# CLI) still exports the sentinel, but a nested claude firing this hook costs
+# exactly one bounded curl and cannot recurse (this hook never spawns claude).
 #
 # Token budget: ~2k tokens max (~8k chars). Truncate if over.
 #
 # Exits silently (exit 0) on any failure — never block the prompt.
-
-# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
-# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
-# this, the nested `claude` process would re-trigger this hook, causing
-# duplicate captures at best and infinite loop at worst.
-if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-# shellcheck disable=SC1091
-source "$LIB_DIR/vault.sh"
+UM_HOOK_NAME="user-prompt-submit"
+# shellcheck source=lib/um-api.sh
+source "$LIB_DIR/um-api.sh"
 
 # ---------------------------------------------------------------------------
 # 1. Read prompt from stdin
@@ -71,25 +78,13 @@ if [ "${#PROMPT_TEXT}" -lt 5 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Endpoint check — no endpoint means nothing to search.
-# v1.1: source the shared endpoint resolver. Falls back to legacy inline
-# resolution if the lib file is absent (pre-v1.1 install). Resolver emits
-# a deprecation warn on stderr if UM_ENDPOINT is the only one set.
+# 2. Config gate — spec §4 composed resolution via um-api.sh: env tiers
+#    (UM_SERVER_URL / deprecated UM_ENDPOINT) → ~/.um/endpoint file → none.
+#    Unconfigured boxes stay silent.
 # ---------------------------------------------------------------------------
-if [ -r "$LIB_DIR/endpoint.sh" ]; then
-  # shellcheck source=lib/endpoint.sh
-  source "$LIB_DIR/endpoint.sh"
-  if ! um_endpoint_configured; then
-    printf '{}\n'
-    exit 0
-  fi
-  ENDPOINT=$(um_resolve_endpoint)
-else
-  if [ -z "${UM_SERVER_URL:-}${UM_ENDPOINT:-}" ]; then
-    printf '{}\n'
-    exit 0
-  fi
-  ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-}}"
+if ! um_api_configured; then
+  printf '{}\n'
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -106,16 +101,30 @@ if [ -z "$SESSION_ID" ]; then
     date +%s
   )" | md5sum 2>/dev/null | cut -c1-16 || printf '%s' "$$-$(date +%s)")
 fi
+# Sanitize before ANY path use (same character class stop.sh validates):
+# hostile/odd ids ('/', spaces, ...) collapse deterministically to '-', so
+# the counter name is path-safe yet stable across fires of the same session.
+SESSION_ID="${SESSION_ID//[^A-Za-z0-9._-]/-}"
 # Final safety net
 [ -z "$SESSION_ID" ] && SESSION_ID="fallback-$$"
 
 # ---------------------------------------------------------------------------
-# 4. Session counter — check if first prompt, increment regardless
+# 4. Session counter — check if first prompt, increment regardless.
+#    Lives in ~/.um/state (stop-cursor's home); stale counters (>7d) are
+#    swept with the same per-candidate character guard stop.sh uses.
 # ---------------------------------------------------------------------------
-VAULT=$(vault_path)
-COUNTER_DIR="$VAULT/.telemetry"
-COUNTER_FILE="$COUNTER_DIR/session-${SESSION_ID}.count"
-mkdir -p "$COUNTER_DIR"
+STATE_DIR="$HOME/.um/state"
+COUNTER_FILE="$STATE_DIR/prompt-count-$SESSION_ID"
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+for f in "$STATE_DIR"/prompt-count-*; do
+  [ -f "$f" ] || continue
+  sid_part="${f##*/prompt-count-}"
+  [[ "$sid_part" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+  if [ -n "$(find "$f" -maxdepth 0 -mtime +7 2>/dev/null)" ]; then
+    rm -f "$f" 2>/dev/null || true
+  fi
+done
 
 current_count=0
 if [ -f "$COUNTER_FILE" ]; then
@@ -127,7 +136,7 @@ if [ -f "$COUNTER_FILE" ]; then
 fi
 
 # Increment and persist
-printf '%d\n' "$((current_count + 1))" > "$COUNTER_FILE"
+printf '%d\n' "$((current_count + 1))" > "$COUNTER_FILE" 2>/dev/null || true
 
 # Not the first prompt → emit empty output immediately
 if [ "$current_count" -ge 1 ]; then
@@ -139,9 +148,8 @@ fi
 # 5. FIRST PROMPT — vector search
 # ---------------------------------------------------------------------------
 # Cross-project search — no project filter on the query. If project-scoped
-# search is wanted here in the future, compute PROJECT=$(project_name) and
+# search is wanted here in the future, compute the project client-side and
 # pass it via the search payload.
-# `ENDPOINT` is set above (resolver path or fallback).
 
 # Build POST body: use 'query' field (not 'q') for POST /api/search
 search_payload=$(printf '%s' "$PROMPT_TEXT" | python3 -c '
@@ -155,9 +163,11 @@ if [ -z "$search_payload" ]; then
   exit 0
 fi
 
-response=$(curl -sfm 3 -X POST "$ENDPOINT/api/search" \
-  -H 'Content-Type: application/json' \
-  -d "$search_payload" 2>/dev/null || printf '{"results":[]}\n')
+# um_api_post resolves the endpoint (env → file → default), adds the Bearer
+# token when one exists, and bounds the call (connect 3s / total 10s). The
+# body flows through even on non-2xx; downstream parsing is fail-soft.
+response=$(um_api_post "/api/search" "$search_payload" 2>/dev/null) || true
+[ -z "$response" ] && response='{"results":[]}'
 
 # ---------------------------------------------------------------------------
 # 6. Assemble context block from search results

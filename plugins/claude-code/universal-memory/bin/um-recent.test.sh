@@ -206,6 +206,23 @@ else
   fail "T9-user-agent-header: $CLI missing UM User-Agent marker"
 fi
 
+# ─── T-file-tier: ~/.um/endpoint file tier (no env) — #159 T6b spec §4 ──────
+echo ""
+echo "=== T-file-tier: ~/.um/endpoint used when env unset ==="
+tmpft=$(mktemp -d)
+args_fileft="$tmpft/curl-args"
+_make_recording_curl "$tmpft/bin" '{"results":[]}' "$args_fileft"
+mkdir -p "$tmpft/home/.um"
+printf 'http://filetier:6335\n' > "$tmpft/home/.um/endpoint"
+PATH="$tmpft/bin:$PATH" HOME="$tmpft/home" UM_SERVER_URL="" UM_ENDPOINT="" \
+  bash "$BIN" "p" >/dev/null 2>&1 || true
+if grep -q "http://filetier:6335" "$args_fileft" 2>/dev/null; then
+  pass "T-file-tier-endpoint"
+else
+  fail "T-file-tier-endpoint: $(cat "$args_fileft" 2>/dev/null || echo 'args file missing')"
+fi
+rm -rf "$tmpft"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-recent.sh: $PASS passed, $FAIL failed"

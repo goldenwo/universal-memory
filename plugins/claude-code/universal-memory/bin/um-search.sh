@@ -4,6 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
+LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
+
+# #159 T6b: file-aware endpoint resolution — same composed semantic as the
+# hooks (spec §4: UM_SERVER_URL env → deprecated UM_ENDPOINT env →
+# ~/.um/endpoint file → http://localhost:6335). um-api.sh lives in the same
+# lib dir (installer glob-copies hooks/lib/*.sh); fall back to the legacy
+# env-only default when it is absent (pre-#159 partial install).
+if [ -r "$LIB_DIR/um-api.sh" ]; then
+  # shellcheck source=../hooks/lib/um-api.sh
+  source "$LIB_DIR/um-api.sh"
+  DEFAULT_SERVER="$(um_api_endpoint)"
+else
+  DEFAULT_SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+fi
 
 _usage() {
   cat <<EOF
@@ -17,7 +31,7 @@ Arguments:
 Options:
   --full            Request full bodies (default: compact snippet only)
   --limit N         Max results (default 5)
-  --server URL      Override server URL (default: \$UM_SERVER_URL or http://localhost:6335)
+  --server URL      Override server URL (default: \$UM_SERVER_URL, else ~/.um/endpoint, else http://localhost:6335)
   --help, -h        Show this message
 
 Output:
@@ -51,7 +65,7 @@ _urlencode() {
 QUERY=""
 FULL=0
 LIMIT=5
-SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+SERVER="$DEFAULT_SERVER"
 QUERY_PROVIDED=0
 
 while [ $# -gt 0 ]; do
