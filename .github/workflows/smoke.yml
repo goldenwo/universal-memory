@@ -324,6 +324,17 @@ jobs:
           # ships default-off/inert; against a flag-off stack S9 skips cleanly
           # on the /v1/ping/ 404). Self-cleaning via the compat R7 DELETE.
           UM_SMOKE_MEM0_COMPAT: "1"
+          # #159 T9 — UM_SMOKE_REMOTE_RT=1 fires the S10 remote round-trip
+          # probe: append-turn ×2 (X-UM-Source header) → capture.turn counters
+          # row read via `docker exec node -e` from the container's
+          # um-counters.db (spec §6 surface attribution) → /api/checkpoint →
+          # GET /api/state/<project> shows the synthesized state →
+          # capture.checkpoint counters row. The checkpoint leg calls the real
+          # summarizer (OPENAI_API_KEY above); a keyless local rig can set
+          # UM_SMOKE_REMOTE_RT_LLM=0 to run only the append-turn+counters
+          # legs. Requires UM_MCP_WRITE_ENABLED=true (set above) — against a
+          # writes-off stack S10 skips cleanly on the 403.
+          UM_SMOKE_REMOTE_RT: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
           # DE5 stamp in its own collection — no stamp-mismatch when switching
@@ -372,6 +383,37 @@ jobs:
         if: always()
         working-directory: server
         run: docker compose down --volumes || true
+
+  # #159 T9 — plugin hook + hook-lib test suites, EXECUTED (not just
+  # shellchecked). The arc's motivating failure was silent capture death:
+  # hooks that pass shellcheck but break at runtime. These suites are pure
+  # local-stub tests (isolated HOME + MOCK_BIN curl stubs — no network, no
+  # secrets), so the job runs unconditionally, including on fork PRs.
+  # ubuntu-latest ships bash + python3 + python3-yaml (frontmatter.sh needs
+  # pyyaml — same preinstall the installer-test job's comment relies on).
+  # Loop aggregates failures so one broken suite doesn't hide another.
+  hook-tests:
+    name: Plugin hook tests (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run hooks/*.test.sh + hooks/lib/*.test.sh
+        run: |
+          set -u
+          rc=0
+          for t in plugins/claude-code/universal-memory/hooks/*.test.sh \
+                   plugins/claude-code/universal-memory/hooks/lib/*.test.sh; do
+            echo "::group::$t"
+            if bash "$t"; then
+              echo "PASS: $t"
+            else
+              echo "::error::FAIL: $t"
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$rc"
 
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})
