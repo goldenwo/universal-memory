@@ -101,7 +101,16 @@ Full walkthrough: [docs/quickstart.md](docs/quickstart.md).
 
 ### 2. First Claude Code session
 
-Register the plugin (exact steps in [docs/quickstart.md](docs/quickstart.md)) and open a session. As you work, the Stop hook appends raw captures to the vault; the SessionEnd hook synthesizes a summary. Nothing else is required.
+Install the plugin straight from this repo's marketplace and run its first-run setup once:
+
+```bash
+claude plugin marketplace add goldenwo/universal-memory
+claude plugin install universal-memory@universal-memory
+```
+
+then `/um-setup` inside Claude Code (endpoint + token prompt; it verifies the server with a health check and an authed write probe before writing any config). Open a session — the Stop hook streams turns to the server, the SessionEnd hook triggers a server-side summary. Nothing else is required.
+
+**Pointing at a remote server?** Same two commands plus `/um-setup` with your server's URL — the hooks are thin HTTP clients, local and remote alike. On the **server**, capture requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (both default off). Server must be ≥ v1.7.0. Full guide: [docs/claude-code-plugin.md](docs/claude-code-plugin.md).
 
 ### 3. Second session — continuity works
 

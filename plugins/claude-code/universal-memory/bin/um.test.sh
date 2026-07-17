@@ -253,8 +253,13 @@ T11_PLUG="$T11_HOME/.local/.claude-plugin"
 mkdir -p "$T11_BIN" "$T11_LIB" "$T11_PLUG"
 cp "$UM" "$T11_BIN/um"
 chmod +x "$T11_BIN/um"
-for f in config.sh resolve-project.sh vault.sh frontmatter.sh summarize.sh update-state.sh; do
-  cp "$REAL_LIB_DIR/$f" "$T11_LIB/$f"
+# install-cli.sh glob-copies hooks/lib/*.sh, so mirror the FULL lib dir here
+# (a hand-enumerated subset went stale when the dispatcher's health check
+# grew endpoint.sh in #159 — pre-existing T11 red fixed alongside the
+# whole-branch review pass).
+for f in "$REAL_LIB_DIR"/*.sh; do
+  case "$f" in *.test.sh) continue ;; esac
+  cp "$f" "$T11_LIB/$(basename "$f")"
 done
 cp "$REAL_PLUGIN_DIR/.claude-plugin/plugin.json" "$T11_PLUG/plugin.json"
 # Run WITHOUT setting UM_LIB_DIR — the dispatcher must find libs at the standalone path
@@ -264,7 +269,7 @@ if [ "$rc11" -eq 0 ]; then
 else
   fail "T11: um --version failed ($rc11): $out11"
 fi
-if echo "$out11" | grep -qE "0\.4\.0-alpha|0\.[0-9]+\.[0-9]+"; then
+if echo "$out11" | grep -qE "[0-9]+\.[0-9]+\.[0-9]+"; then
   pass "T11: um --version prints version via standalone fallback"
 else
   fail "T11: version string not printed: $out11"

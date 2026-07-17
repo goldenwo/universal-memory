@@ -4,6 +4,25 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
+LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
+
+# #159 T6b: file-aware endpoint resolution — same composed semantic as the
+# hooks (spec §4: UM_SERVER_URL env → deprecated UM_ENDPOINT env →
+# ~/.um/endpoint file → http://localhost:6335). um-api.sh lives in the same
+# lib dir (installer glob-copies hooks/lib/*.sh); fall back to the legacy
+# env-only default when it is absent (pre-#159 partial install).
+if [ -r "$LIB_DIR/um-api.sh" ]; then
+  # shellcheck source=../hooks/lib/um-api.sh
+  source "$LIB_DIR/um-api.sh"
+  DEFAULT_SERVER="$(um_api_endpoint)"
+  # Token: env else ~/.um/auth-token file (um_api_token) — a marketplace
+  # /um-setup install writes the token file but exports nothing, so env-only
+  # resolution would resolve the remote endpoint and then 401.
+  AUTH_TOKEN="${UM_AUTH_TOKEN:-$(um_api_token)}"
+else
+  DEFAULT_SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+  AUTH_TOKEN="${UM_AUTH_TOKEN:-}"
+fi
 
 _usage() {
   cat <<EOF
@@ -17,7 +36,7 @@ Arguments:
 Options:
   --full            Request full bodies (default: compact snippet only)
   --limit N         Max results (default 5)
-  --server URL      Override server URL (default: \$UM_SERVER_URL or http://localhost:6335)
+  --server URL      Override server URL (default: \$UM_SERVER_URL, else ~/.um/endpoint, else http://localhost:6335)
   --help, -h        Show this message
 
 Output:
@@ -51,7 +70,7 @@ _urlencode() {
 QUERY=""
 FULL=0
 LIMIT=5
-SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+SERVER="$DEFAULT_SERVER"
 QUERY_PROVIDED=0
 
 while [ $# -gt 0 ]; do
@@ -90,7 +109,7 @@ URL="$SERVER/api/search?q=$Q_ENC&limit=$LIMIT"
 
 # Fetch
 response=$(_um_curl_wrap "um-search" -fSsm 10 --fail-with-body \
-  -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
+  -H "Authorization: Bearer ${AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3
 

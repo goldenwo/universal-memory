@@ -1,40 +1,56 @@
 #!/bin/bash
 # user-prompt-submit.sh — inject vector-search hits on first prompt only.
+# (#159 T6b, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §4–§5)
 #
 # Behavior:
 #   - Fires on EVERY user prompt (registered as UserPromptSubmit hook).
-#   - On first prompt of a session: POST /api/search with the prompt text,
+#   - On first prompt of a session: POST /api/search with the prompt text
+#     (via um-api.sh — Bearer-authed, works against remote endpoints),
 #     inject top 3-5 hits as "## Relevant from your memory" additionalContext.
 #   - On subsequent prompts: exit 0 with empty output immediately.
 #
 # Session tracking:
-#   Counter file: $VAULT/.telemetry/session-<SESSION_ID>.count
-#   "First" = file absent OR contains "0".
-#   Counter increments on every invocation regardless.
+#   Counter file: ~/.um/state/prompt-count-<SESSION_ID> — same home as
+#   stop.sh's delta cursors. UM_VAULT_DIR is no longer a client-side concept
+#   (spec §4), so the old $VAULT/.telemetry location is gone. The session id
+#   is sanitized to [A-Za-z0-9._-] before any path use, and counters older
+#   than 7 days are swept on each fire (mirrors stop.sh's cursor sweep).
+#   "First" = file absent OR contains "0". Counter increments on every
+#   invocation regardless.
+#
+# Retired here (T6b): the UM_IN_SUMMARIZER_SUBPROCESS recursion guard. Its
+# writer chain died with the T4 client-summarizer retirement — no hook spawns
+# `claude -p` anymore. summarize.sh (alive only via the manual `um-preview`
+# CLI) still exports the sentinel, but a nested claude firing this hook costs
+# exactly one bounded curl and cannot recurse (this hook never spawns claude).
 #
 # Token budget: ~2k tokens max (~8k chars). Truncate if over.
 #
 # Exits silently (exit 0) on any failure — never block the prompt.
-
-# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
-# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
-# this, the nested `claude` process would re-trigger this hook, causing
-# duplicate captures at best and infinite loop at worst.
-if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
 
-# shellcheck disable=SC1091
-source "$LIB_DIR/vault.sh"
+UM_HOOK_NAME="user-prompt-submit"
+# shellcheck source=lib/um-api.sh
+source "$LIB_DIR/um-api.sh"
+
+# Interpreter probe FIRST (same rationale as session-start.sh): on Windows a
+# bare `python3` is often a Microsoft Store app-execution-alias stub that
+# exists on PATH but doesn't run — it would silently kill the whole feature.
+PY=$(um_find_python) || { printf '{}\n'; exit 0; }
 
 # ---------------------------------------------------------------------------
-# 1. Read prompt from stdin
+# 1. Read prompt + session_id from stdin
 #    Claude Code passes the UserPromptSubmit event as a JSON envelope:
-#      {"prompt": "<user message text>"}
+#      {"session_id": "...", "prompt": "<user message text>", ...}
 #    Fall back to treating stdin as plain text if JSON parse fails.
+#    One python pass extracts BOTH fields: line 1 = session_id (whitespace
+#    collapsed so the line protocol holds; '' when stdin lacks it), rest =
+#    prompt truncated CHARACTER-safe to 5000 chars (a byte-level `head -c`
+#    could split a multibyte char and crash a strict decode downstream).
 # ---------------------------------------------------------------------------
 RAW_STDIN=$(cat)
 
@@ -43,26 +59,32 @@ if [ -z "$RAW_STDIN" ]; then
   exit 0
 fi
 
-PROMPT_TEXT=$(printf '%s' "$RAW_STDIN" | python3 -c '
-import sys, json
-raw = sys.stdin.read()
+PARSED=$(printf '%s' "$RAW_STDIN" | "$PY" -c '
+import sys, json, re
+raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+session_id = ""
+text = raw
 try:
     data = json.loads(raw)
     # Try known envelope fields in priority order
-    text = (data.get("prompt") or
-            data.get("user_message") or
-            data.get("message") or
-            data.get("text") or
-            "")
-    if text:
-        print(text)
-    else:
-        # JSON but no recognized field — fall back to raw
-        print(raw)
+    candidate = (data.get("prompt") or
+                 data.get("user_message") or
+                 data.get("message") or
+                 data.get("text") or
+                 "")
+    if isinstance(candidate, str) and candidate:
+        text = candidate
+    # session_id rides the same envelope (CC hook input contract)
+    sid = data.get("session_id") or ""
+    if isinstance(sid, str):
+        session_id = re.sub(r"\s+", "-", sid.strip())
 except Exception:
-    # Not JSON — treat as plain text
-    print(raw)
-' 2>/dev/null | head -c 5000)
+    pass  # Not JSON — treat as plain text, no session_id
+print(session_id)
+print(text[:5000])
+' 2>/dev/null)
+SESSION_ID_STDIN=$(printf '%s\n' "$PARSED" | head -n1)
+PROMPT_TEXT=$(printf '%s\n' "$PARSED" | tail -n +2)
 
 # Bail if prompt too short to be meaningful
 if [ "${#PROMPT_TEXT}" -lt 5 ]; then
@@ -71,31 +93,25 @@ if [ "${#PROMPT_TEXT}" -lt 5 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Endpoint check — no endpoint means nothing to search.
-# v1.1: source the shared endpoint resolver. Falls back to legacy inline
-# resolution if the lib file is absent (pre-v1.1 install). Resolver emits
-# a deprecation warn on stderr if UM_ENDPOINT is the only one set.
+# 2. Config gate — spec §4 composed resolution via um-api.sh: env tiers
+#    (UM_SERVER_URL / deprecated UM_ENDPOINT) → ~/.um/endpoint file → none.
+#    Unconfigured boxes stay silent.
 # ---------------------------------------------------------------------------
-if [ -r "$LIB_DIR/endpoint.sh" ]; then
-  # shellcheck source=lib/endpoint.sh
-  source "$LIB_DIR/endpoint.sh"
-  if ! um_endpoint_configured; then
-    printf '{}\n'
-    exit 0
-  fi
-  ENDPOINT=$(um_resolve_endpoint)
-else
-  if [ -z "${UM_SERVER_URL:-}${UM_ENDPOINT:-}" ]; then
-    printf '{}\n'
-    exit 0
-  fi
-  ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-}}"
+if ! um_api_configured; then
+  printf '{}\n'
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Session ID — prefer CLAUDE_SESSION_ID; derive fallback from PPID + mtime
+# 3. Session ID — stdin's session_id is authoritative (Claude Code sends it in
+# the hook input envelope and does NOT set CLAUDE_SESSION_ID). The env var and
+# the PPID/mtime derivation survive ONLY as fallbacks for stdin that lacks it
+# (plain-text stdin, older CC). Without the stdin source, macOS/Windows fell
+# through /proc to `date +%s` — a NEW id every prompt, so the "first prompt
+# only" gate fired every prompt and leaked one counter file per prompt.
 # ---------------------------------------------------------------------------
-SESSION_ID="${CLAUDE_SESSION_ID:-}"
+SESSION_ID="$SESSION_ID_STDIN"
+[ -z "$SESSION_ID" ] && SESSION_ID="${CLAUDE_SESSION_ID:-}"
 if [ -z "$SESSION_ID" ]; then
   # Derive a stable-ish session identifier from parent PID + its start time
   # (changes on restart, stable within a session)
@@ -106,16 +122,30 @@ if [ -z "$SESSION_ID" ]; then
     date +%s
   )" | md5sum 2>/dev/null | cut -c1-16 || printf '%s' "$$-$(date +%s)")
 fi
+# Sanitize before ANY path use (same character class stop.sh validates):
+# hostile/odd ids ('/', spaces, ...) collapse deterministically to '-', so
+# the counter name is path-safe yet stable across fires of the same session.
+SESSION_ID="${SESSION_ID//[^A-Za-z0-9._-]/-}"
 # Final safety net
 [ -z "$SESSION_ID" ] && SESSION_ID="fallback-$$"
 
 # ---------------------------------------------------------------------------
-# 4. Session counter — check if first prompt, increment regardless
+# 4. Session counter — check if first prompt, increment regardless.
+#    Lives in ~/.um/state (stop-cursor's home); stale counters (>7d) are
+#    swept with the same per-candidate character guard stop.sh uses.
 # ---------------------------------------------------------------------------
-VAULT=$(vault_path)
-COUNTER_DIR="$VAULT/.telemetry"
-COUNTER_FILE="$COUNTER_DIR/session-${SESSION_ID}.count"
-mkdir -p "$COUNTER_DIR"
+STATE_DIR="$HOME/.um/state"
+COUNTER_FILE="$STATE_DIR/prompt-count-$SESSION_ID"
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+for f in "$STATE_DIR"/prompt-count-*; do
+  [ -f "$f" ] || continue
+  sid_part="${f##*/prompt-count-}"
+  [[ "$sid_part" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+  if [ -n "$(find "$f" -maxdepth 0 -mtime +7 2>/dev/null)" ]; then
+    rm -f "$f" 2>/dev/null || true
+  fi
+done
 
 current_count=0
 if [ -f "$COUNTER_FILE" ]; then
@@ -127,7 +157,7 @@ if [ -f "$COUNTER_FILE" ]; then
 fi
 
 # Increment and persist
-printf '%d\n' "$((current_count + 1))" > "$COUNTER_FILE"
+printf '%d\n' "$((current_count + 1))" > "$COUNTER_FILE" 2>/dev/null || true
 
 # Not the first prompt → emit empty output immediately
 if [ "$current_count" -ge 1 ]; then
@@ -139,12 +169,11 @@ fi
 # 5. FIRST PROMPT — vector search
 # ---------------------------------------------------------------------------
 # Cross-project search — no project filter on the query. If project-scoped
-# search is wanted here in the future, compute PROJECT=$(project_name) and
+# search is wanted here in the future, compute the project client-side and
 # pass it via the search payload.
-# `ENDPOINT` is set above (resolver path or fallback).
 
 # Build POST body: use 'query' field (not 'q') for POST /api/search
-search_payload=$(printf '%s' "$PROMPT_TEXT" | python3 -c '
+search_payload=$(printf '%s' "$PROMPT_TEXT" | "$PY" -c '
 import json, sys
 text = sys.stdin.read().strip()
 print(json.dumps({"query": text, "limit": 5}))
@@ -155,14 +184,16 @@ if [ -z "$search_payload" ]; then
   exit 0
 fi
 
-response=$(curl -sfm 3 -X POST "$ENDPOINT/api/search" \
-  -H 'Content-Type: application/json' \
-  -d "$search_payload" 2>/dev/null || printf '{"results":[]}\n')
+# um_api_post resolves the endpoint (env → file → default), adds the Bearer
+# token when one exists, and bounds the call (connect 3s / total 10s). The
+# body flows through even on non-2xx; downstream parsing is fail-soft.
+response=$(um_api_post "/api/search" "$search_payload" 2>/dev/null) || true
+[ -z "$response" ] && response='{"results":[]}'
 
 # ---------------------------------------------------------------------------
 # 6. Assemble context block from search results
 # ---------------------------------------------------------------------------
-additional_context=$(printf '%s' "$response" | python3 -c '
+additional_context=$(printf '%s' "$response" | "$PY" -c '
 import json, sys
 
 try:
@@ -205,11 +236,16 @@ print("\n".join(lines))
 # 7. Emit output
 # ---------------------------------------------------------------------------
 if [ -n "$additional_context" ]; then
-  # Match session-start.sh output format: {"additionalContext": "..."}
-  printf '%s' "$additional_context" | python3 -c '
+  # Documented UserPromptSubmit envelope (code.claude.com/docs/en/hooks):
+  # additionalContext MUST ride inside hookSpecificOutput with the event
+  # name — a top-level additionalContext is silently ignored by Claude Code.
+  printf '%s' "$additional_context" | "$PY" -c '
 import json, sys
 content = sys.stdin.read()
-sys.stdout.write(json.dumps({"additionalContext": content}) + "\n")
+sys.stdout.write(json.dumps({"hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": content,
+}}) + "\n")
 ' 2>/dev/null || printf '{}\n'
 else
   printf '{}\n'

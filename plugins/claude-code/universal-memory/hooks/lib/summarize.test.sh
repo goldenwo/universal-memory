@@ -607,7 +607,7 @@ chmod +x "$TEST_DIR/claude"
 # Pipe a small transcript; check claude's stdin contains the system prompt opening phrase
 echo "short transcript" | \
   PATH="$TEST_DIR:$PATH" UM_SUMMARIZER=claude-agent-sdk \
-  bash plugins/claude-code/universal-memory/hooks/lib/summarize.sh > /dev/null 2>&1
+  bash "$SUMMARIZE" > /dev/null 2>&1
 
 if grep -qi "Summarize a Claude Code session" "$CAPTURE"; then
   pass "T-I4: claude-agent-sdk received system prompt"

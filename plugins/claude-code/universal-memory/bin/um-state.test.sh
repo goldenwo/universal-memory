@@ -174,6 +174,42 @@ else
   fail "T8-user-agent-header: $CLI missing UM User-Agent marker"
 fi
 
+# ─── T9: ~/.um/endpoint file tier (no env) — #159 T6b spec §4 ───────────────
+echo ""
+echo "=== T9: ~/.um/endpoint file tier used when env unset ==="
+tmp=$(mktemp -d)
+args_file="$tmp/curl-args"
+_make_recording_curl "$tmp/bin" '{"ok":true,"project":"p","state":null,"valid_from":null}' "$args_file"
+mkdir -p "$tmp/home/.um"
+printf 'http://filetier:6335\n' > "$tmp/home/.um/endpoint"
+PATH="$tmp/bin:$PATH" HOME="$tmp/home" UM_SERVER_URL="" UM_ENDPOINT="" \
+  bash "$BIN" "p" >/dev/null 2>&1 || true
+if grep -q "http://filetier:6335" "$args_file" 2>/dev/null; then
+  pass "T9-file-tier-endpoint"
+else
+  fail "T9-file-tier-endpoint: $(cat "$args_file" 2>/dev/null || echo 'args file missing')"
+fi
+rm -rf "$tmp"
+
+# ─── T10: ~/.um/auth-token file tier — Bearer from file when env empty ──────
+# A marketplace /um-setup install writes ~/.um/auth-token but exports nothing;
+# env-only token resolution would resolve the remote endpoint and then 401.
+echo ""
+echo "=== T10: ~/.um/auth-token file used when UM_AUTH_TOKEN env empty ==="
+tmp=$(mktemp -d)
+args_file="$tmp/curl-args"
+_make_recording_curl "$tmp/bin" '{"ok":true,"project":"p","state":null,"valid_from":null}' "$args_file"
+mkdir -p "$tmp/home/.um"
+printf 'file-tier-token-xyz\n' > "$tmp/home/.um/auth-token"
+PATH="$tmp/bin:$PATH" HOME="$tmp/home" UM_SERVER_URL="http://mock" UM_AUTH_TOKEN="" \
+  bash "$BIN" "p" >/dev/null 2>&1 || true
+if grep -q "Bearer file-tier-token-xyz" "$args_file" 2>/dev/null; then
+  pass "T10-token-file-tier"
+else
+  fail "T10-token-file-tier: $(cat "$args_file" 2>/dev/null || echo 'args file missing')"
+fi
+rm -rf "$tmp"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-state.sh: $PASS passed, $FAIL failed"

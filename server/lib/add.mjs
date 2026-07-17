@@ -66,6 +66,19 @@ import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
 import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
+import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
+
+/**
+ * T5 (#159 spec §6): map umAdd's per-fact result events onto the pinned
+ * capture.extraction outcome vocabulary. ADD ⇒ stored; DEDUP_MERGED ⇒ deduped;
+ * SUPERSEDED_INBAND ⇒ superseded. (abstained is emitted at the zero-facts
+ * site; error paths propagate to the caller and are not per-fact outcomes.)
+ */
+function extractionOutcomeFor(resultEvent) {
+  if (resultEvent === 'DEDUP_MERGED') return 'deduped';
+  if (resultEvent === 'SUPERSEDED_INBAND') return 'superseded';
+  return 'stored';
+}
 
 /**
  * Content hash used across the write path (buildPayload's `hash` field,
@@ -265,7 +278,20 @@ export async function umAdd({
       items = [text];
     }
 
-    if (items.length === 0) return { results: [] };
+    if (items.length === 0) {
+      // T5 (#159 spec §6): the extractor looked and found nothing memorable —
+      // the arc's motivating "abstained" signal (stored vs abstained vs deduped).
+      // _systemMigration (reindex / bulk import) emits NO capture.* counters.
+      if (_systemMigration !== true) {
+        recordCaptureEvent({
+          surface,
+          project: metadata?.project,
+          event: CAPTURE_EVENTS.EXTRACTION,
+          outcome: 'abstained',
+        });
+      }
+      return { results: [] };
+    }
 
     // Hoist client construction OUT of the per-item loop. infer:true with N
     // extracted facts would otherwise allocate N QdrantClient transports
@@ -447,6 +473,23 @@ export async function umAdd({
         }
       } else {
         results.push({ id, memory: item, event: 'ADD' });
+      }
+    }
+
+    // T5 (#159 spec §6): capture.extraction counters at the facts-result site —
+    // the one place per-fact outcomes are known (stored / deduped / superseded).
+    // Emitted INSIDE the shared lib so MCP memory_add, /api/add, and mem0-compat
+    // writes count uniformly. _systemMigration calls emit NO capture.* counters
+    // (a reindex of thousands of docs must not spike the freshness signal).
+    // Fire-and-forget: recordCaptureEvent never throws.
+    if (_systemMigration !== true) {
+      for (const r of results) {
+        recordCaptureEvent({
+          surface,
+          project: metadata?.project,
+          event: CAPTURE_EVENTS.EXTRACTION,
+          outcome: extractionOutcomeFor(r.event ?? r.metadata?.event),
+        });
       }
     }
     return { results };

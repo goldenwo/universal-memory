@@ -54,15 +54,14 @@ case "$SUMMARIZER" in
       SUMMARIZER=openai
     else
       # Read stdin (the prompt/transcript) and pipe to `claude -p` in
-      # non-interactive mode. CRITICAL: set UM_IN_SUMMARIZER_SUBPROCESS=1 so
-      # the nested `claude` process's own hooks (if any) exit immediately via
-      # the guard added to all 4 CC hooks — prevents infinite recursion
-      # between summarize.sh and the hooks it indirectly triggers.
+      # non-interactive mode.
       #
-      # Note: only the RHS env-var assignment matters for recursion prevention.
-      # The LHS of the pipe is a bash builtin (`printf`) whose env doesn't
-      # propagate anywhere meaningful — only the `claude` child process on the
-      # RHS needs the sentinel to short-circuit its hooks.
+      # UM_IN_SUMMARIZER_SUBPROCESS is VESTIGIAL as of #159 T6b: no CC hook
+      # reads it anymore (the recursion guards were removed with the T4
+      # client-summarizer retirement — hooks no longer spawn claude, so no
+      # recursion is possible; a nested hook fire costs one bounded curl).
+      # The export is kept as a harmless marker for any third-party hook
+      # that may still key off it.
       STDIN_CONTENT=$(cat)
       SUMMARY=$(printf '%s\n\n%s' "$_UM_SYSTEM_PROMPT" "$STDIN_CONTENT" | \
                 UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null)

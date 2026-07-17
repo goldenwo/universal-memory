@@ -60,6 +60,11 @@ services:
       # cleared every restart. To keep mem0's edit/dedup history, uncomment
       # the next line AND set MEM0_HISTORY_DB_PATH=/var/lib/mem0/history.db
       # in .env. Host path './data/mem0-history' is created on first up.
+      # The UM-owned capture counters DB (um-counters.db, spec §6 / #171)
+      # defaults to the SAME directory as MEM0_HISTORY_DB_PATH, so this one
+      # mount durably persists both files. Without it the counters still
+      # function on ephemeral /tmp storage (best-effort durability, cleared on
+      # restart). Override the location with UM_COUNTERS_DB_PATH in .env.
       # - ./data/mem0-history:/var/lib/mem0
     ports:
       - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"
