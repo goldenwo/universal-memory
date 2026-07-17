@@ -48,6 +48,7 @@ import { lockContentionsTotal } from './metrics.mjs';
 import { applyDefaultProject, TOOL_IDS, validateLanePersonaSlug } from './default-project.mjs';
 import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
 import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled } from './supersede.mjs';
+import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -619,6 +620,16 @@ export async function doCheckpoint(args, ctx = {}) {
     }
     if (!reindexSucceeded) {
       const totalRetries = ctx.retryDelaysMs !== undefined ? retryDelaysMs.length : 3;
+      // T5 (#159 spec §6): error paths count too — a qdrant outage must be
+      // visible in the counters, not silently uncounted. This is the pinned
+      // UPSTREAM_FAILURE emit site (retry-exhausted reindex ⇒ HTTP 502).
+      // Fire-and-forget: recordCaptureEvent never throws.
+      recordCaptureEvent({
+        surface: ctx.surface,
+        project,
+        event: CAPTURE_EVENTS.CHECKPOINT,
+        outcome: 'error',
+      });
       return {
         schema_version: 1,
         ok: false,
@@ -643,6 +654,15 @@ export async function doCheckpoint(args, ctx = {}) {
       const fh = await fs.open(costPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
       try { await fh.writeFile(String(daySpent + costUsd), 'utf8'); } finally { await fh.close(); }
     } catch {}
+
+    // T5 (#159 spec §6): capture.checkpoint counter, emitted INSIDE the shared
+    // lib (one code path for HTTP + MCP tools). Fire-and-forget.
+    recordCaptureEvent({
+      surface: ctx.surface,
+      project,
+      event: CAPTURE_EVENTS.CHECKPOINT,
+      outcome: 'stored',
+    });
 
     const result = {
       schema_version: 1,
