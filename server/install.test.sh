@@ -375,6 +375,46 @@ assert_contains "T6: session-end-dry-run check passes" "$T6_OUT" "session-end-dr
 assert_contains "T6: cleanup passes" "$T6_OUT" "cleanup"
 assert_contains "T6: all checks passed message" "$T6_OUT" "All checks passed"
 
+# ─── T6b: --verify fails with flag-naming hint when server has writes disabled ─
+echo ""
+echo "=== T6b: --verify names UM_MCP_WRITE_ENABLED when writes are disabled ==="
+T6B="$TMPROOT/t6b"
+mkdir -p "$T6B/vault" "$T6B/plugins" "$T6B/home"
+touch "$T6B/home/.bashrc"
+make_fakebin "$T6B/bin" 200
+T6B_SH=$(make_isolated_server "$T6B/server")
+cp -r "$PLUGIN_SRC" "$T6B/plugins/universal-memory"
+
+# Stock read-only server: /api/* answers 403 (writes disabled); /health still 200.
+cat > "$T6B/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"/health"* ]]; then
+  printf '{"status":"ok"}'
+  exit 0
+fi
+if [[ "$args" == *"/api/"* ]]; then
+  printf '{"error":"WRITES_DISABLED"}\n__UM_HTTP_CODE__403'
+  exit 0
+fi
+exit 0
+FAKE
+chmod +x "$T6B/bin/curl"
+
+T6B_EXIT=0
+T6B_OUT=$(env PATH="$T6B/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T6B/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T6B/plugins" \
+  HOME="$T6B/home" \
+  bash "$T6B_SH" --verify 2>&1) || T6B_EXIT=$?
+
+assert_exit_nonzero "T6b: --verify exits non-zero when writes disabled" "$T6B_EXIT"
+assert_contains "T6b: hint names the write flags" "$T6B_OUT" "UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw"
+assert_not_contains "T6b: no wrong token prescription" "$T6B_OUT" "Check server/token."
+
 # ─── T7: --verify fails when plugin missing ───────────────────────────────────
 echo ""
 echo "=== T7: --verify fails when plugin not installed ==="

@@ -195,7 +195,7 @@ print(json.dumps({
     "transcript_path": os.environ["UM_VERIFY_TRANSCRIPT"],
     "cwd": "install-verify",
     "stop_hook_active": False,
-}))' 2>/dev/null)
+}))' 2>/dev/null) || true
     _SMOKE_TOKEN_FILE="${UM_TOKEN_FILE:-$HOME/.um/auth-token}"
     printf '%s' "$_SMOKE_META" | \
       env HOME="$_SMOKE_HOME" UM_SERVER_URL="http://localhost:$_PORT" \
@@ -204,6 +204,12 @@ print(json.dumps({
     _SMOKE_LOG=$(cat "$_SMOKE_HOME/.um/hook.log" 2>/dev/null || true)
     if printf '%s' "$_SMOKE_LOG" | grep -q 'posted http=2'; then
       _vpass "hook-smoke" "stop.sh posted a smoke turn to /api/append-turn"
+    elif printf '%s' "$_SMOKE_LOG" | grep -q 'skip=writes-disabled'; then
+      # Stock defaults ship read-only — captures are this arc's whole point,
+      # so verify fails, but with the flag-naming prescription (not "check
+      # your token").
+      _vfail "hook-smoke" "captures require UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw in server/.env (see docs/claude-code-plugin.md)"
+      _verify_fail=1
     else
       _vfail "hook-smoke" "stop.sh did not post (hook.log: ${_SMOKE_LOG:-empty}). Check server/token."
       _verify_fail=1
@@ -217,22 +223,31 @@ print(json.dumps({
   # skip=empty-stdin and exiting 0 (parse, lib sourcing, and log plumbing all
   # exercised; nothing written server-side).
   _SESSION_END="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/session-end.sh"
-  if [ -f "$_SESSION_END" ]; then
-    if env HOME="${_SMOKE_HOME:-$HOME}" ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 30} bash "$_SESSION_END" </dev/null >/dev/null 2>&1 \
-       && grep -q 'session-end skip=empty-stdin' "${_SMOKE_HOME:-$HOME}/.um/hook.log" 2>/dev/null; then
+  if [ ! -f "$_SESSION_END" ]; then
+    _vfail "session-end-dry-run" "session-end.sh not found at $_SESSION_END"
+    _verify_fail=1
+  elif [ -z "$_SMOKE_HOME" ]; then
+    # No scratch HOME ⇒ fail outright — falling back to the real ~/.um/hook.log
+    # could false-pass on a stale line (and would drop a stray line in it).
+    _vfail "session-end-dry-run" "cannot stage dry-run (mktemp failed)"
+    _verify_fail=1
+  else
+    if env HOME="$_SMOKE_HOME" ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 30} bash "$_SESSION_END" </dev/null >/dev/null 2>&1 \
+       && grep -q 'session-end skip=empty-stdin' "$_SMOKE_HOME/.um/hook.log" 2>/dev/null; then
       _vpass "session-end-dry-run" "exited 0, logged skip=empty-stdin (no checkpoint posted)"
     else
       _vfail "session-end-dry-run" "session-end.sh dry-run failed. Check env vars and logs."
       _verify_fail=1
     fi
-  else
-    _vfail "session-end-dry-run" "session-end.sh not found at $_SESSION_END"
-    _verify_fail=1
   fi
 
   # ── cleanup ───────────────────────────────────────────────────────────────
   if [ -n "$_SMOKE_HOME" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
-  _vpass "cleanup" "removed smoke scratch dir"
+  # The POSTed smoke turn also lands server-side in the vault raw capture for
+  # the install-verify project — remove it like the pre-#159 verify did. The
+  # counters row + any already-indexed point are accepted best-effort residue.
+  rm -rf "$_VAULT/captures/install-verify" 2>/dev/null || true
+  _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
 
   echo ""
   if [ "$_verify_fail" -eq 0 ]; then
