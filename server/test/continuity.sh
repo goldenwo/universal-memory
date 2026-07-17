@@ -120,6 +120,13 @@ HOOK_LOG="$TEST_HOME/.um/hook.log"
 SEARCH_ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
 if [ "$LIVE" = "1" ]; then
   HOOK_ENDPOINT="$SEARCH_ENDPOINT"
+  # Live-mode preflight: the whole point of this mode is driving the real
+  # hooks against a real server — if it's unreachable, every leg degrades
+  # into five cryptic error=http-000 lines. Fail loud and early instead.
+  # (First CI live run tripped exactly this: smoke.sh's boot gate ends with
+  # `docker compose down`, which had taken the main stack with it.)
+  curl -sf --max-time 3 "$HOOK_ENDPOINT/health" >/dev/null 2>&1 \
+    || fail "live mode requires a reachable server — /health probe failed at $HOOK_ENDPOINT"
   if [ -n "$_UM_CONT_TOKEN" ]; then
     printf '%s' "$_UM_CONT_TOKEN" > "$TEST_HOME/.um/auth-token"
     chmod 600 "$TEST_HOME/.um/auth-token"

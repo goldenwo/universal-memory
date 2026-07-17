@@ -344,6 +344,32 @@ jobs:
           umask 000
           bash ./test/smoke.sh
 
+      # smoke.sh's 6/6 mocked-SDK boot gate ends with `docker compose down`
+      # (its per-provider boot stacks share the compose project name), which
+      # takes the MAIN stack down too — so from here the server is GONE. The
+      # pre-#159 continuity test never noticed: its pipeline was client-side
+      # and its only server call was a soft check. The v2 live leg drives the
+      # real capture hooks against the real server, so bring the stack back
+      # up first. Plain `docker compose up -d` reuses the .env install.sh
+      # wrote (auth token, OPENAI_API_KEY, CI rate-limit overrides) and the
+      # persisted qdrant volume; UM_CONTAINER_USER is re-exported to match
+      # the original bring-up (vault file ownership, see the install step).
+      - name: Restore server stack for continuity tests
+        working-directory: server
+        run: |
+          export UM_CONTAINER_USER="$(id -u):$(id -g)"
+          docker compose up -d
+          for i in $(seq 1 60); do
+            curl -sf --max-time 2 http://localhost:6335/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf --max-time 2 http://localhost:6335/health >/dev/null || {
+            echo "::error::server did not come back up for the continuity tests"
+            docker compose logs memory-server 2>&1 | tail -50
+            exit 1
+          }
+          echo "[ci] server stack restored for continuity tests"
+
       # Continuity pipeline test — runs BOTH mock + live modes so a mock-
       # scaffold regression (canned-response shape, JSON parsing, etc.) is
       # caught fast and cheap, before the live OpenAI run validates the
