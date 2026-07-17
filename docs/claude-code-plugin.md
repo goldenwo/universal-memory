@@ -142,6 +142,37 @@ capture.
 Auth: remote servers should require `Authorization: Bearer <UM_AUTH_TOKEN>`;
 loopback skips auth by default (`UM_ALLOW_LOOPBACK_NOAUTH=true`).
 
+### Deployment health: `GET /api/stats` + `um-alert.sh`
+
+`GET /api/stats` (bearer required — this endpoint never gets the loopback
+no-auth bypass) answers "is memory alive" in one JSON document: per-surface
+capture freshness (`last_day_seen` + `freshness_hours`), 7-day pipeline
+outcomes, corpus size/growth, recall volume, and since-boot serving-latency
+percentiles. A missing counters DB degrades gracefully (`capture: null` +
+`degraded: ["counters-unavailable"]`, HTTP 200) — fresh installs have no
+counters file until the first capture.
+
+Honesty note on the recall figures: `searches_today` / `searches_7d` count
+search **and list** reads on the mem0-compat surface — a platform-mode client
+that polls list (as some plugins do) inflates them relative to "questions a
+human asked".
+
+`um-alert.sh` turns that endpoint into a cron-able freshness check — the
+direct fix for silent capture death (captures dark for days with zero
+signal). Exit codes: `0` fresh, `1` stale (no surface — or the `--surface`
+one — captured within `--max-age-hours`, default 26), `2` the check itself
+couldn't run (unreachable / auth / degraded counters — distinct from
+staleness on purpose). It reads the same `~/.um/endpoint` + `~/.um/auth-token`
+config as the hooks. The CLI installer places it at
+`~/.local/share/um/cli/um-alert.sh`:
+
+```cron
+26 6 * * * $HOME/.local/share/um/cli/um-alert.sh || <your-notify-command>
+```
+
+(The one-line stale/failure message goes to stderr, so cron's mail — or your
+notify hook — carries the diagnosis.)
+
 ## Troubleshooting
 
 - **⚠ "captures are OFF — server unreachable"**: check the URL in

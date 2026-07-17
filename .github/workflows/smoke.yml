@@ -478,6 +478,8 @@ jobs:
                      plugins/claude-code/universal-memory/bin/um-preview \
                      plugins/claude-code/universal-memory/bin/um-supersede \
                      plugins/claude-code/universal-memory/bin/um-tunnel \
+                     plugins/claude-code/universal-memory/bin/um-alert.sh \
+                     plugins/claude-code/universal-memory/bin/um-alert.test.sh \
                      plugins/claude-code/universal-memory/hooks/*.sh \
                      plugins/claude-code/universal-memory/hooks/lib/*.sh \
                      plugins/claude-code/universal-memory/skills/create-adr/create-adr.sh \
@@ -523,6 +525,11 @@ jobs:
       # via stubbed curl/cloudflared/tailscale). Was shellchecked but never
       # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
       - run: bash plugins/claude-code/universal-memory/bin/um-tunnel.test.sh
+      # um-alert.test.sh covers the #171 Stage-A capture-freshness check's
+      # exit taxonomy (0 fresh / 1 stale / 2 check-couldn't-run) against a
+      # stubbed curl — pure local MOCK_BIN, no network. Wired explicitly:
+      # nothing here is glob-covered (plan U3 audit).
+      - run: bash plugins/claude-code/universal-memory/bin/um-alert.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
