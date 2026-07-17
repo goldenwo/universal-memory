@@ -39,6 +39,7 @@ import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { isRecallable } from './recallable.mjs';
+import { noteRecallSearch } from './recall-telemetry.mjs';
 import { withRetry } from './retry.mjs';
 import { filterSystemDocs } from './system-docs.mjs';
 import { SERVER_VERSION } from './version.mjs';
@@ -535,7 +536,7 @@ function resolveScopedRead(ctx, body) {
  *  must not drive unbounded over-fetch: fetchLimit stays ≤ 3×500). */
 const MAX_TOP_K = 500;
 
-async function handleSearch({ body, ctx }) {
+async function handleSearch({ req, body, ctx }) {
   const scope = resolveScopedRead(ctx, body);
   if (scope.error) return scope.error;
   const { operatorId, memory, b, descriptor } = scope;
@@ -548,10 +549,19 @@ async function handleSearch({ body, ctx }) {
   // Facade-side filters can only shrink the result set → over-fetch, then
   // filter, then truncate (spec §3 "Application point").
   const fetchLimit = Math.max(topK * 3, 30);
+  // U2 (#171): recall telemetry at HANDLER level (NOT scanAll — shared with
+  // bulk-delete; deletes are not recalls). The compat facade reads via raw
+  // memory.search, never doSearch, so this is production read path 2 (plan
+  // U2 R6). Duration measured around the underlying engine call.
+  const recallStartedAt = Date.now();
   const raw = await withRetry(
     () => memory.search(b.query, { userId: operatorId, limit: fetchLimit }),
     { op: 'compat-search' },
   );
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: Date.now() - recallStartedAt,
+  });
   let items = raw?.results ?? raw ?? [];
   // Read-path parity with doSearch: superseded/system records never surface.
   items = filterSystemDocs(items).filter(isRecallable);
@@ -565,13 +575,21 @@ async function handleSearch({ body, ctx }) {
 
 // --- R4 ---------------------------------------------------------------------
 
-async function handleList({ url, body, ctx }) {
+async function handleList({ req, url, body, ctx }) {
   const scope = resolveScopedRead(ctx, body);
   if (scope.error) return scope.error;
   const { operatorId, memory, descriptor } = scope;
 
   // Read-path parity with R3/doSearch: superseded records never surface.
+  // U2 (#171): the R4 list is a production read too — same handler-level
+  // telemetry as R3 (emitting here, not inside scanAll, keeps the R8/R9
+  // bulk-delete scans OUT of the recall counters — plan U2 audit).
+  const recallStartedAt = Date.now();
   const items = (await scanAll(memory, operatorId)).filter(isRecallable);
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: Date.now() - recallStartedAt,
+  });
   const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
 
   const pageRaw = Number.parseInt(url.searchParams.get('page') ?? '', 10);
