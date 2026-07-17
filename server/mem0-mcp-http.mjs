@@ -1070,8 +1070,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			const result = await withRetry(() =>
 				// T5 (#159 spec §6): caller-supplied surface still wins (D1 F.1
 				// contract); otherwise fall back to the header-derived ctx.surface
-				// so capture.extraction counters carry real attribution.
-				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface ?? ctx?.surface })
+				// so capture.extraction counters carry real attribution. Provider /
+				// qdrant seams threaded from ctx for parity with REST /api/add
+				// (same DI shape createRequestHandler forwards to /mcp).
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface ?? ctx?.surface, _qdrantClient: ctx?._qdrantClient, _factsProviderOverride: ctx?._factsProviderOverride, _embedProviderOverride: ctx?._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -3022,7 +3024,10 @@ export function createRequestHandler(ctx = {}) {
 			let result;
 			try {
 				result = await withRetry(() =>
-					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface, _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+					// T5 review IMPORTANT-2: body `surface` still wins (D1 F.1), but a
+					// client sending only X-UM-Source / X-Mem0-Source no longer lands
+					// as surface='unknown' — uniform with the MCP + compat paths.
+					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: surface ?? surfaceFromHeaders(req.headers), _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 						.catch((e) => { throw tagRetryable(e); })
 				, { op: 'add' });
 			} catch (err) {

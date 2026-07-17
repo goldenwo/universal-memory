@@ -25,10 +25,12 @@ import {
   _resetCaptureEventsForTest,
   _setDbFactoryForTest,
 } from '../lib/capture-events.mjs';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { doAppendTurn } from '../lib/append-turn.mjs';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
 import { umAdd } from '../lib/add.mjs';
-import { handleToolCall, handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
+import { handleToolCall, handleAppendTurnRequest, createRequestHandler } from '../mem0-mcp-http.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -239,6 +241,40 @@ test('recordCaptureEvent swallows persistent SQLITE_BUSY after the single retry'
   }
 });
 
+// ---------- unit: poisoned open (review IMPORTANT-1) ----------
+
+test('a corrupt um-counters.db file never throws and never fails the emit path', async () => {
+  const dbPath = await freshCountersDb();
+  await fs.writeFile(dbPath, 'this is definitely not a sqlite database — garbage bytes');
+  try {
+    assert.doesNotThrow(() => recordCaptureEvent({
+      surface: 's', project: 'p', event: CAPTURE_EVENTS.TURN, outcome: 'stored',
+    }));
+    assert.doesNotThrow(() => recordCaptureEvent({
+      surface: 's', project: 'p', event: CAPTURE_EVENTS.TURN, outcome: 'stored',
+    }));
+  } finally {
+    _resetCaptureEventsForTest();
+  }
+});
+
+test('a poisoned open is negative-cached — openDb is not re-entered per emit (no fd leak)', async () => {
+  await freshCountersDb();
+  let factoryCalls = 0;
+  _setDbFactoryForTest(() => {
+    factoryCalls += 1;
+    throw new Error('simulated corrupt-db open failure');
+  });
+  try {
+    recordCaptureEvent({ surface: 's', project: 'p', event: CAPTURE_EVENTS.TURN, outcome: 'stored' });
+    recordCaptureEvent({ surface: 's', project: 'p', event: CAPTURE_EVENTS.TURN, outcome: 'stored' });
+    recordCaptureEvent({ surface: 's', project: 'p', event: CAPTURE_EVENTS.TURN, outcome: 'stored' });
+    assert.equal(factoryCalls, 1, 'a failed open must be cached, not retried (and re-leaked) on every emit');
+  } finally {
+    _resetCaptureEventsForTest();
+  }
+});
+
 // ---------- unit: surfaceFromHeaders ----------
 
 test('surfaceFromHeaders: X-UM-Source wins, X-Mem0-Source is the alias, absent ⇒ unknown', () => {
@@ -249,6 +285,13 @@ test('surfaceFromHeaders: X-UM-Source wins, X-Mem0-Source is the alias, absent �
   assert.equal(surfaceFromHeaders(undefined), 'unknown');
   assert.equal(surfaceFromHeaders({ 'x-um-source': '   ' }), 'unknown', 'whitespace-only ⇒ fallback');
   assert.equal(surfaceFromHeaders({}, 'mem0-compat'), 'mem0-compat', 'custom fallback preserved for the compat facade');
+});
+
+test('surfaceFromHeaders caps the derived value at 64 chars (NIT-5: bounded PK cardinality)', () => {
+  const garbage = 'X'.repeat(200);
+  const derived = surfaceFromHeaders({ 'x-um-source': garbage });
+  assert.equal(derived.length, 64);
+  assert.equal(derived, 'x'.repeat(64));
 });
 
 // ---------- integration: doAppendTurn (capture.turn) ----------
@@ -466,6 +509,108 @@ test('umAdd dedup hit emits capture.extraction outcome=deduped', async () => {
     assert.equal(rows[0].outcome, 'deduped');
   } finally {
     if (prevDedup !== undefined) process.env.UM_DEDUP_ENABLED = prevDedup;
+  }
+});
+
+test('umAdd in-band supersession emits capture.extraction outcome=superseded', async () => {
+  const dbPath = await freshCountersDb();
+  // Layer-2 embedding hit in the contradiction band + confirming judge ⇒
+  // SUPERSEDED_INBAND (fixture mirrors add.test.mjs Gap-5 P3 tests).
+  const older = { id: 'older-pt', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const result = await umAdd({
+    memory: mockMemory,
+    text: 'I live in Denver now',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', lane: 'work' },
+    infer: false,
+    surface: 'discord',
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: {
+      scroll: async () => ({ points: [] }),        // no Layer-1 hash hit
+      search: async () => [older],                 // Layer-2 in-band hit
+      upsert: async () => ({ status: 'ok' }),
+      setPayload: async () => ({ status: 'ok' }),
+    },
+    _autoSupersedeEnabled: true,
+    _judgeContradiction: async () => ({ contradicts: true, confidence: 0.9, reasoning: 'newer invalidates older' }),
+  });
+  assert.equal(result.results[0].event, 'SUPERSEDED_INBAND', JSON.stringify(result));
+  const rows = readRows(dbPath);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].event, 'capture.extraction');
+  assert.equal(rows[0].outcome, 'superseded');
+  assert.equal(rows[0].surface, 'discord');
+});
+
+test('MCP memory_add: caller-supplied args.surface wins over the header-derived ctx.surface (D1 F.1)', async () => {
+  const dbPath = await freshCountersDb();
+  const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  const upserts = [];
+  try {
+    await handleToolCall(
+      'memory_add',
+      { text: 'a fact from a named caller', surface: 'caller-surface', metadata: { project: 'um-proj' } },
+      {
+        memory: mockMemory,
+        surface: 'header-surface',                 // what the /mcp route derives from X-UM-Source
+        _factsProviderOverride: factsPassthrough(['a fact from a named caller']),
+        _embedProviderOverride: embedOverride,
+        _qdrantClient: { upsert: async (c, body) => { upserts.push(body); return {}; } },
+      },
+    );
+    assert.equal(upserts.length, 1);
+    assert.deepEqual(upserts[0].points[0].payload.surfaces, ['caller-surface'], 'stored attribution uses the caller value');
+    const rows = readRows(dbPath);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].event, 'capture.extraction');
+    assert.equal(rows[0].surface, 'caller-surface', 'counter attribution uses the caller value, not the header');
+  } finally {
+    if (prevWrite !== undefined) process.env.UM_MCP_WRITE_ENABLED = prevWrite; else delete process.env.UM_MCP_WRITE_ENABLED;
+  }
+});
+
+// ---------- integration: REST /api/add header-derived surface (review IMPORTANT-2) ----------
+
+test('REST /api/add with X-UM-Source and no body surface uses the header for counters + stored attribution', async () => {
+  const dbPath = await freshCountersDb();
+  const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
+  const prevToken = process.env.UM_AUTH_TOKEN;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  process.env.UM_AUTH_TOKEN = 'test-token';
+  const upserts = [];
+  const srv = createServer(createRequestHandler({
+    memory: mockMemory,
+    _qdrantClient: { upsert: async (c, body) => { upserts.push(body); return {}; } },
+    _factsProviderOverride: factsPassthrough(['header-attributed fact']),
+    _embedProviderOverride: embedOverride,
+  }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/add`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer test-token',
+        'X-UM-Source': 'Claude-Code',
+      },
+      body: JSON.stringify({ text: 'hello', metadata: { project: 'um-proj' } }), // NO body surface
+    });
+    assert.equal(r.status, 200, await r.text().catch(() => ''));
+    await r.text().catch(() => '');
+    assert.equal(upserts.length, 1);
+    assert.deepEqual(upserts[0].points[0].payload.surfaces, ['claude-code'], 'stored surfaces attribution from the header');
+    const rows = readRows(dbPath);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].event, 'capture.extraction');
+    assert.equal(rows[0].surface, 'claude-code', 'counter surface from X-UM-Source, not unknown');
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    if (prevWrite !== undefined) process.env.UM_MCP_WRITE_ENABLED = prevWrite; else delete process.env.UM_MCP_WRITE_ENABLED;
+    if (prevToken !== undefined) process.env.UM_AUTH_TOKEN = prevToken; else delete process.env.UM_AUTH_TOKEN;
   }
 });
 

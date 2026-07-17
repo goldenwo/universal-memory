@@ -74,6 +74,7 @@ const UPSERT_SQL = `
 let _db = null;
 let _upsertStmt = null;
 let _dbFactory = null;             // test seam — replaces openDb entirely
+let _openFailure = null;           // negative cache — poisoned open is not retried per emit
 const _warnedErrorClasses = new Set(); // warn once per process per error class
 
 /**
@@ -89,20 +90,46 @@ export function countersDbPath() {
 
 function openDb() {
   if (_db) return _db;
+  // Negative cache (review IMPORTANT-1): a failed open poisons the singleton
+  // for the rest of the process instead of re-opening (and, worse, re-LEAKING
+  // an fd) on every emit. Counters stay dark until restart — acceptable for a
+  // fire-and-forget observability path; warnOnce already surfaced the cause.
+  if (_openFailure) throw _openFailure;
   if (_dbFactory) {
-    _db = _dbFactory();
+    try {
+      _db = _dbFactory();
+    } catch (err) {
+      _openFailure = err;
+      throw err;
+    }
     return _db;
   }
   const Database = require('better-sqlite3');
   const dbPath = countersDbPath();
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
-  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  db.exec(CREATE_TABLE_SQL);
-  // Stamp user_version at create only — a later schema rev bumps it in its
-  // own (additive-column-only) migration; never re-stamp an existing DB down.
-  if (db.pragma('user_version', { simple: true }) === 0) {
-    db.pragma(`user_version = ${COUNTERS_USER_VERSION}`);
+  let db;
+  try {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    db = new Database(dbPath);
+  } catch (err) {
+    _openFailure = err;
+    throw err;
+  }
+  try {
+    db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    db.exec(CREATE_TABLE_SQL);
+    // Stamp user_version at create only — a later schema rev bumps it in its
+    // own (additive-column-only) migration; never re-stamp an existing DB down.
+    if (db.pragma('user_version', { simple: true }) === 0) {
+      db.pragma(`user_version = ${COUNTERS_USER_VERSION}`);
+    }
+  } catch (err) {
+    // Review IMPORTANT-1 (fd leak): the constructor succeeded but setup threw
+    // (e.g. a corrupt/truncated um-counters.db → SQLITE_NOTADB on the first
+    // statement). Close the handle before rethrowing — otherwise every emit
+    // re-enters here and leaks another fd until EMFILE fails UNRELATED requests.
+    try { db.close(); } catch { /* best-effort */ }
+    _openFailure = err;
+    throw err;
   }
   _db = db;
   return _db;
@@ -136,8 +163,10 @@ function warnOnce(err) {
  */
 export function surfaceFromHeaders(headers, fallback = 'unknown') {
   const raw = headers?.['x-um-source'] ?? headers?.['x-mem0-source'];
+  // 64-char cap (review NIT-5): surface is a primary-key column — a garbage /
+  // duplicate-joined header must not mint unbounded distinct counter rows.
   return typeof raw === 'string' && raw.trim().length > 0
-    ? raw.trim().toLowerCase()
+    ? raw.trim().toLowerCase().slice(0, 64)
     : fallback;
 }
 
@@ -188,6 +217,7 @@ export function _resetCaptureEventsForTest() {
   _db = null;
   _upsertStmt = null;
   _dbFactory = null;
+  _openFailure = null;
   _warnedErrorClasses.clear();
 }
 
