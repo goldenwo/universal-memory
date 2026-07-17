@@ -25,7 +25,6 @@
 #   S10. Cursor age sweep — >7d-old cursor removed; fresh cursor kept;
 #        invalid-named old file left alone (glob guard).
 #   S11. stop_hook_active=true ⇒ exit 0, zero POSTs, skip=stop-hook-active.
-#   S12. UM_IN_SUMMARIZER_SUBPROCESS=1 ⇒ exit 0, zero POSTs (recursion guard).
 #   S13. Project sanitization — cwd basename with invalid chars ⇒ [^A-Za-z0-9._-]
 #        mapped to '-' client-side (server hard-fails unsanitized slugs).
 #   S14. 401 (rotated token) ⇒ error=auth, no cursor advance, exit 0.
@@ -37,8 +36,6 @@
 #   S18. Multibyte truncation — content straddling 8192 bytes stays valid
 #        UTF-8 and ≤8192 bytes.
 #   S19. Missing transcript file ⇒ skip=no-transcript, zero POSTs.
-
-unset UM_IN_SUMMARIZER_SUBPROCESS
 
 set -uo pipefail
 
@@ -482,25 +479,6 @@ run_stop "$H" "$STDIN"
 assert_eq "S11: exit 0" "$RUN_EXIT" "0"
 assert_eq "S11: zero POSTs when stop_hook_active" "$(call_count)" "0"
 assert_contains "S11: skip=stop-hook-active logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=stop-hook-active"
-
-# ===========================================================================
-# S12: UM_IN_SUMMARIZER_SUBPROCESS=1 ⇒ exit 0, zero POSTs
-# ===========================================================================
-echo "=== S12: summarizer-subprocess recursion guard ==="
-H=$(fresh_home s12)
-TP="$TMPDIR_ROOT/s12-transcript.jsonl"
-write_transcript "$TP" 2 "s12"
-STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
-
-reset_calls
-S12_EXIT=0
-S12_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
-  UM_SERVER_URL="http://mock.example:6335" \
-  UM_IN_SUMMARIZER_SUBPROCESS=1 \
-  bash "$STOP" <<< "$STDIN" 2>&1) || S12_EXIT=$?
-assert_eq "S12: exit 0" "$S12_EXIT" "0"
-assert_eq "S12: zero POSTs under guard" "$(call_count)" "0"
-assert_eq "S12: no output under guard" "$S12_OUT" ""
 
 # ===========================================================================
 # S13: Project sanitization — invalid cwd-basename chars mapped to '-'

@@ -27,11 +27,6 @@
 #   - Age sweep: cursor files >7 days old are removed in the same pass.
 #   - Fail-open: never exits non-zero — CC session integrity beats capture.
 
-# Recursive-hook guard — if invoked inside a summarizer subprocess (the
-# claude-agent-sdk backend spawns `claude -p`), exit immediately. T4 retires
-# this alongside the summarizer writer.
-if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
-
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

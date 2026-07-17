@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
-# hooks/session-end.test.sh — integration tests for session-end.sh
+# hooks/session-end.test.sh — tests for session-end.sh v2 (#159 T4: detached
+# POST /api/checkpoint {project}; client summarizer retired).
 #
 # Run: bash session-end.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
 #
-# Scenarios:
-#   1. No raw captures → exit 0 silently, nothing written
-#   2. Happy path — fixture raw + mocked summarize/update-state via curl → summary + state written, reindex attempted
-#   3. Summarize returns empty (LLM down) → summary NOT written; state.md unchanged; raw safe
-#   4. Update-state returns empty (malformed LLM output) → summary written; state.md unchanged
-#   5. Reindex POST fails → summary on disk; warning logged; exit 0
-#   6. Lock held → state update skipped; summary still written
-
-# Prevent environment leakage from the developer's shell — if a prior test run
-# or interactive session exported UM_IN_SUMMARIZER_SUBPROCESS=1, every hook
-# would exit 0 and assertions would falsely pass.
-unset UM_IN_SUMMARIZER_SUBPROCESS
+# Scenarios (spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5):
+#   E1. Happy path — fixture-shaped stdin ⇒ ONE POST to /api/checkpoint with
+#       body exactly {"project":"<cwd-basename>"} and --max-time 120 (the
+#       checkpoint override, not the shared 10s); parent exits 0; the
+#       DETACHED child logs `posted http=200` to hook.log.
+#   E2. 403 (writes disabled) ⇒ skip=writes-disabled + G7 banner text logged.
+#   E3. 5xx (500) ⇒ error=http-500 logged.
+#   E4. 000 (unreachable/transport failure) ⇒ error=http-000 + G7
+#       "server unreachable at <endpoint>" logged.
+#   E5. Detach — mock curl sleeps 3s; the hook returns in <2s (does NOT wait
+#       for the child), and the child's log line lands afterwards.
+#   E6. Project sanitization — cwd basename with invalid chars ⇒
+#       [^A-Za-z0-9._-] mapped to '-' (server hard-fails unsanitized slugs).
+#   E7. Empty stdin ⇒ skip=empty-stdin, zero POSTs.
+#   E8. 502 (checkpoint UPSTREAM_FAILURE: state.md WAS written, reindex
+#       failed) ⇒ error=http-502 with the partial-success note.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_END="$SCRIPT_DIR/session-end.sh"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-
-# shellcheck source=installer/lib/test-harness.sh
-source "$REPO_ROOT/installer/lib/test-harness.sh"
+FIXTURES="$SCRIPT_DIR/fixtures"
 
 # ---------------------------------------------------------------------------
-# Test harness
+# Test harness (house style: inline helpers)
 # ---------------------------------------------------------------------------
 PASS=0
 FAIL=0
@@ -37,525 +39,346 @@ pass() { PASS=$((PASS + 1)); printf '  PASS: %s\n' "$1"; }
 fail() {
   FAIL=$((FAIL + 1))
   FAILURES+=("$1")
-  printf '  FAIL: %s\n' "$1"
+  printf '  FAIL: %s — %s\n' "$1" "${2:-}"
 }
 
 assert_eq() {
   local name="$1" got="$2" want="$3"
   if [ "$got" = "$want" ]; then pass "$name"
-  else fail "$name (got='$got', want='$want')"; fi
-}
-
-assert_empty() {
-  local name="$1" got="$2"
-  if [ -z "$got" ]; then pass "$name"
-  else fail "$name (expected empty, got='${got:0:120}')"; fi
-}
-
-assert_not_empty() {
-  local name="$1" got="$2"
-  if [ -n "$got" ]; then pass "$name"
-  else fail "$name (expected non-empty, got empty)"; fi
+  else fail "$name" "got='$got', want='$want'"; fi
 }
 
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" == *"$needle"* ]]; then pass "$name"
-  else fail "$name (expected to contain '$needle')"; fi
+  else fail "$name" "expected to contain '$needle', got '${haystack:0:200}'"; fi
 }
 
-assert_file_exists() {
-  local name="$1" path="$2"
-  if [ -f "$path" ]; then pass "$name"
-  else fail "$name (file not found: $path)"; fi
-}
-
-assert_file_missing() {
-  local name="$1" path="$2"
-  if [ ! -f "$path" ]; then pass "$name"
-  else fail "$name (file should not exist: $path)"; fi
+assert_not_contains() {
+  local name="$1" haystack="$2" needle="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then pass "$name"
+  else fail "$name" "expected NOT to contain '$needle'"; fi
 }
 
 # ---------------------------------------------------------------------------
-# Temp dir + global setup
+# Environment probes + isolation setup
 # ---------------------------------------------------------------------------
 TMPDIR_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
-export UM_VAULT_DIR="$TMPDIR_ROOT/vault"
-export CLAUDE_CWD="$TMPDIR_ROOT/testproject"
-export UM_PROJECT="testproject"
-export OPENAI_API_KEY="sk-test-fake-key-for-session-end-tests"
-export UM_ENDPOINT="http://localhost:19999"  # guaranteed unreachable
+# Resolve the same interpreter the hook will (py → python3 → python).
+PYBIN=""
+for _c in py python3 python; do
+  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c '' >/dev/null 2>&1; then
+    PYBIN="$_c"; break
+  fi
+done
+if [ -z "$PYBIN" ]; then
+  echo "SKIP: no working python interpreter — session-end.sh tests need one" >&2
+  exit 1
+fi
+
+# Convert a bash path to the platform-native shape (what Claude Code actually
+# puts in cwd/transcript_path on Windows). No-op on Linux CI.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"
+  else printf '%s' "$1"; fi
+}
 
 MOCK_BIN="$TMPDIR_ROOT/mock_bin"
-mkdir -p "$MOCK_BIN"
+CAP_DIR="$TMPDIR_ROOT/captured"
+mkdir -p "$MOCK_BIN" "$CAP_DIR"
 
-# Fixture raw capture content
-RAW_CONTENT="## 12:00:00Z
-
-User: Can you implement the feature?
-Assistant: I've implemented the feature in src/feature.py. The function handle_request now accepts an optional timeout parameter defaulting to 30 seconds. I also added test coverage in tests/test_feature.py.
-User: Great, commit it.
-Assistant: Committed as 'feat: add handle_request with timeout (abc1234)'."
-
-# Fixture summary body (what summarize.sh would return)
-SUMMARY_BODY="## What happened
-
-Implemented handle_request feature in src/feature.py with timeout support.
-
-## Key decisions
-
-- Default timeout set to 30 seconds
-
-## Next steps
-
-- Run integration tests
-- Deploy to staging"
-
-# Fixture state.md body (what update-state.sh would return)
-FIXTURE_STATE="---
-schema_version: 1
-type: state
-id: state-testproject
-title: State of play — testproject
-status: current
-valid_from: 2026-04-17T12:00:00Z
-project: testproject
----
-
-# State of play — testproject
-
-## Current focus
-Completed handle_request feature implementation.
-
-## In flight
-- Deploy to staging
-
-## Recent decisions
-- 2026-04-17: Default timeout set to 30 seconds
-
-## Next actions
-- Run integration tests
-- Deploy to staging
-
-## Open questions
-- None
-
-## Environment
-Branch: close-continuity-gap"
-
-# ---------------------------------------------------------------------------
-# Helper: set up today's raw capture for project
-# ---------------------------------------------------------------------------
-setup_raw_capture() {
-  local vault="$UM_VAULT_DIR"
-  local project="${UM_PROJECT:-testproject}"
-  local today
-  today=$(date -u +%Y-%m-%d)
-  local raw_dir="$vault/captures/$project/raw"
-  mkdir -p "$raw_dir"
-  printf '%s\n' "$RAW_CONTENT" > "$raw_dir/$today.md"
-  echo "$raw_dir/$today.md"
-}
-
-# ---------------------------------------------------------------------------
-# Helper: write mock curl that handles both OpenAI (summarize/update-state)
-# and /api/reindex calls
-#
-# summarize_content: what summarize.sh should return (written to a temp file
-#   consumed by mock curl for the OpenAI call)
-# update_state_content: what update-state.sh should return
-# reindex_status: HTTP status for /api/reindex (200 = success, 500 = fail)
-# ---------------------------------------------------------------------------
-write_full_mock_curl() {
-  local summarize_content_file="$1"   # file containing summary body
-  local update_state_content_file="$2"  # file containing state.md content
-  local reindex_status="${3:-200}"
-  local mock_path="$MOCK_BIN/curl"
-
-  # Build the OpenAI JSON response for summarize (call 1)
-  local summarize_json_file="$TMPDIR_ROOT/summarize_fixture.json"
-  python3 - "$summarize_content_file" "$summarize_json_file" <<'PYEOF'
-import sys, json
-with open(sys.argv[1], "r") as f:
-    content = f.read()
-resp = {
-    "choices": [{"message": {"content": content}}],
-    "usage": {"prompt_tokens": 150, "completion_tokens": 80}
-}
-with open(sys.argv[2], "w") as f:
-    json.dump(resp, f)
-PYEOF
-
-  # Build the OpenAI JSON response for update-state (call 2)
-  local state_json_file="$TMPDIR_ROOT/state_fixture.json"
-  python3 - "$update_state_content_file" "$state_json_file" <<'PYEOF'
-import sys, json
-with open(sys.argv[1], "r") as f:
-    content = f.read()
-resp = {
-    "choices": [{"message": {"content": content}}],
-    "usage": {"prompt_tokens": 250, "completion_tokens": 180}
-}
-with open(sys.argv[2], "w") as f:
-    json.dump(resp, f)
-PYEOF
-
-  # Counter file: tracks how many times curl was called (for routing)
-  local counter_file="$TMPDIR_ROOT/curl_call_count"
-  echo "0" > "$counter_file"
-
-  # Write mock curl: first call → summarize response, second call → state response
-  # /api/reindex calls (contain "reindex" in the URL args) → reindex_status
-  cat > "$mock_path" <<MOCK_EOF
-#!/usr/bin/env bash
-# Mock curl for session-end tests
-# Detect if this is a reindex call (URL contains "reindex")
-is_reindex=0
-for arg in "\$@"; do
-  if [[ "\$arg" == *"reindex"* ]]; then
-    is_reindex=1
-    break
-  fi
-done
-
-if [ "\$is_reindex" -eq 1 ]; then
-  if [ "${reindex_status}" -eq 200 ] 2>/dev/null; then
-    printf '{"ok":true}\n'
-    printf '\n__UM_HTTP_CODE__200'
-  else
-    # Simulate failure: non-zero exit (like curl -sf would fail)
-    exit 1
-  fi
-  exit 0
-fi
-
-# OpenAI call: route by call count
-count=\$(cat "$counter_file" 2>/dev/null || echo 0)
-count=\$((count + 1))
-echo "\$count" > "$counter_file"
-
-if [ "\$count" -le 1 ]; then
-  cat "$summarize_json_file"
-  printf '\n__UM_HTTP_CODE__200'
-else
-  cat "$state_json_file"
-  printf '\n__UM_HTTP_CODE__200'
-fi
-MOCK_EOF
-  chmod +x "$mock_path"
-}
-
-# ===========================================================================
-# Test 1: No raw captures → exit 0 silently, nothing written
-# ===========================================================================
-echo "=== Test 1: No raw captures ==="
-
-# Ensure vault raw dir is clean for this project
-rm -rf "$UM_VAULT_DIR/captures/${UM_PROJECT:-testproject}" 2>/dev/null || true
-
-T1_EXIT=0
-T1_STDERR=$(bash "$SESSION_END" 2>&1) || T1_EXIT=$?
-T1_SESSION_COUNT=$(find "$UM_VAULT_DIR/sessions" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-
-assert_eq "T1: exit code 0 with no raw captures" "$T1_EXIT" "0"
-assert_empty "T1: no stderr output on silent no-op" "$T1_STDERR"
-assert_eq "T1: no session summary written" "$T1_SESSION_COUNT" "0"
-
-# Verify state.md was not created
-state_file_t1="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md"
-assert_file_missing "T1: state.md not created" "$state_file_t1"
-
-# ===========================================================================
-# Test 2: Happy path — fixture raw + mocked summarize + update-state
-# ===========================================================================
-echo "=== Test 2: Happy path ==="
-
-setup_raw_capture >/dev/null
-
-# Write fixture files for mock
-T2_SUMMARY_FILE="$TMPDIR_ROOT/t2_summary.md"
-printf '%s\n' "$SUMMARY_BODY" > "$T2_SUMMARY_FILE"
-
-T2_STATE_FILE="$TMPDIR_ROOT/t2_state.md"
-printf '%s\n' "$FIXTURE_STATE" > "$T2_STATE_FILE"
-
-write_full_mock_curl "$T2_SUMMARY_FILE" "$T2_STATE_FILE" "200"
-
-_tx_capture T2 env PATH="$MOCK_BIN:$PATH" bash "$SESSION_END"
-T2_STDERR="$TX_OUT_T2"
-T2_EXIT="$TX_EXIT_T2"
-_dump_on_fail T2
-
-assert_eq "T2: exit code 0 on success" "$T2_EXIT" "0"
-
-# Verify session summary was written
-T2_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-assert_not_empty "T2: sessions dir exists" "$([ -d "$T2_SESSIONS_DIR" ] && echo yes || echo '')"
-# Find the summary file (pattern: YYYYMMDD-HHMMSS-testproject.md)
-T2_SUMMARY_PATH=$(find "$T2_SESSIONS_DIR" -name '*-testproject.md' 2>/dev/null | head -1)
-assert_not_empty "T2: session summary file written" "$T2_SUMMARY_PATH"
-
-if [ -n "$T2_SUMMARY_PATH" ]; then
-  T2_CONTENT=$(cat "$T2_SUMMARY_PATH")
-  assert_contains "T2: summary has schema_version in frontmatter" "$T2_CONTENT" "schema_version: 1"
-  assert_contains "T2: summary has type: session_summary" "$T2_CONTENT" "type: session_summary"
-  assert_contains "T2: summary has project field" "$T2_CONTENT" "project: testproject"
-  assert_contains "T2: summary has valid_from field" "$T2_CONTENT" "valid_from:"
-  assert_contains "T2: summary body contains session content" "$T2_CONTENT" "## What happened"
-fi
-
-# Verify state.md was written
-T2_STATE_PATH="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md"
-assert_file_exists "T2: state.md written" "$T2_STATE_PATH"
-if [ -f "$T2_STATE_PATH" ]; then
-  T2_STATE_CONTENT=$(cat "$T2_STATE_PATH")
-  assert_contains "T2: state.md has Current focus" "$T2_STATE_CONTENT" "## Current focus"
-  assert_contains "T2: state.md has Recent decisions" "$T2_STATE_CONTENT" "## Recent decisions"
-fi
-
-# Verify reindex was attempted (stderr should NOT contain reindex failure)
-if [[ "$T2_STDERR" == *"reindex failed"* ]]; then
-  fail "T2: reindex unexpectedly failed (mock should succeed)"
-else
-  pass "T2: reindex succeeded (no failure in stderr)"
-fi
-
-# ===========================================================================
-# Test 3: Summarize returns empty (LLM down / no API key)
-#         → summary NOT written; state.md unchanged; raw captures preserved
-# ===========================================================================
-echo "=== Test 3: Summarize returns empty (LLM down) ==="
-
-# Remove any existing state.md so we can verify it wasn't created
-T3_STATE_FILE="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md"
-rm -f "$T3_STATE_FILE" 2>/dev/null || true
-
-# Write mock curl that returns empty content for OpenAI (summarize will return empty)
-T3_EMPTY_CONTENT_FILE="$TMPDIR_ROOT/t3_empty.md"
-printf '' > "$T3_EMPTY_CONTENT_FILE"  # empty content → summarize.sh exits without output
-
-# Mock curl returns a valid JSON with empty content string
-cat > "$MOCK_BIN/curl" <<'MOCK_EOF'
-#!/usr/bin/env bash
-# Returns empty content → summarize.sh will produce empty stdout
-is_reindex=0
-for arg in "$@"; do
-  if [[ "$arg" == *"reindex"* ]]; then
-    is_reindex=1; break
-  fi
-done
-if [ "$is_reindex" -eq 1 ]; then
-  printf '{"ok":true}\n'; printf '\n__UM_HTTP_CODE__200'; exit 0
-fi
-# Return HTTP 401 → summarize.sh will give up and produce empty stdout
-printf '{"error":"unauthorized"}\n'
-printf '\n__UM_HTTP_CODE__401'
-MOCK_EOF
-chmod +x "$MOCK_BIN/curl"
-
-_tx_capture T3 env PATH="$MOCK_BIN:$PATH" \
-  UM_OPENAI_API_KEY="sk-test-fake" \
-  OPENAI_API_KEY="sk-test-fake" \
-  bash "$SESSION_END"
-T3_STDERR="$TX_OUT_T3"
-T3_EXIT="$TX_EXIT_T3"
-_dump_on_fail T3
-
-assert_eq "T3: exit code 0 when summarize returns empty" "$T3_EXIT" "0"
-# Summary should NOT have been written (summarize returned empty) — verified
-# below via stderr skip-reason check + state.md missing assertion.
-assert_contains "T3: stderr explains summarize was empty" "$T3_STDERR" "summarize returned empty"
-assert_file_missing "T3: state.md not created" "$T3_STATE_FILE"
-
-# Verify raw capture is still intact
-T3_RAW_FILE="$UM_VAULT_DIR/captures/${UM_PROJECT:-testproject}/raw/$(date -u +%Y-%m-%d).md"
-assert_file_exists "T3: raw capture still on disk" "$T3_RAW_FILE"
-
-# ===========================================================================
-# Test 4: Update-state returns empty (malformed LLM output)
-#         → summary IS written; state.md NOT written/unchanged
-# ===========================================================================
-echo "=== Test 4: Update-state returns empty (malformed output) ==="
-
-# Reset state.md
-T4_STATE_FILE="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md"
-rm -f "$T4_STATE_FILE" 2>/dev/null || true
-
-# Summary fixture: returns valid summary body
-T4_SUMMARY_FILE="$TMPDIR_ROOT/t4_summary.md"
-printf '%s\n' "$SUMMARY_BODY" > "$T4_SUMMARY_FILE"
-
-# State fixture: returns malformed output (missing required headers)
-T4_MALFORMED_STATE_FILE="$TMPDIR_ROOT/t4_malformed_state.md"
-cat > "$T4_MALFORMED_STATE_FILE" <<'FIXTURE_EOF'
----
-schema_version: 1
-type: state
----
-
-# Incomplete state
-
-## Current focus
-Something.
-FIXTURE_EOF
-
-# Build JSON responses
-T4_SUMMARIZE_JSON="$TMPDIR_ROOT/t4_summarize.json"
-python3 - "$T4_SUMMARY_FILE" "$T4_SUMMARIZE_JSON" <<'PYEOF'
-import sys, json
-with open(sys.argv[1], "r") as f:
-    content = f.read()
-resp = {"choices":[{"message":{"content": content}}], "usage":{"prompt_tokens":100,"completion_tokens":50}}
-with open(sys.argv[2], "w") as f:
-    json.dump(resp, f)
-PYEOF
-
-T4_STATE_JSON="$TMPDIR_ROOT/t4_state.json"
-python3 - "$T4_MALFORMED_STATE_FILE" "$T4_STATE_JSON" <<'PYEOF'
-import sys, json
-with open(sys.argv[1], "r") as f:
-    content = f.read()
-resp = {"choices":[{"message":{"content": content}}], "usage":{"prompt_tokens":200,"completion_tokens":80}}
-with open(sys.argv[2], "w") as f:
-    json.dump(resp, f)
-PYEOF
-
-T4_COUNTER="$TMPDIR_ROOT/t4_call_count"
-echo "0" > "$T4_COUNTER"
-
+# Mock curl: captures the URL, -d body, and FULL argv of every call to
+# $CAP_DIR/{url,body,args}_N, then answers with the HTTP code from line N of
+# $CAP_DIR/codes (default 200). Code 000 simulates a transport failure
+# (exit 7, no output). Optional $CAP_DIR/sleep makes each call sleep that
+# many seconds BEFORE responding (detach test). Counter at $CAP_DIR/count.
 cat > "$MOCK_BIN/curl" <<MOCK_EOF
 #!/usr/bin/env bash
-is_reindex=0
-for arg in "\$@"; do
-  if [[ "\$arg" == *"reindex"* ]]; then
-    is_reindex=1; break
-  fi
+CAP_DIR="$CAP_DIR"
+MOCK_EOF
+cat >> "$MOCK_BIN/curl" <<'MOCK_EOF'
+count=$(cat "$CAP_DIR/count" 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > "$CAP_DIR/count"
+
+url=""; body=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-d" ]; then body="$arg"; fi
+  case "$arg" in
+    http://*|https://*) url="$arg" ;;
+  esac
+  prev="$arg"
 done
-if [ "\$is_reindex" -eq 1 ]; then
-  printf '{"ok":true}\n'; printf '\n__UM_HTTP_CODE__200'; exit 0
+printf '%s' "$url"  > "$CAP_DIR/url_$count"
+printf '%s' "$body" > "$CAP_DIR/body_$count"
+printf '%s\n' "$@"  > "$CAP_DIR/args_$count"
+
+naptime=$(cat "$CAP_DIR/sleep" 2>/dev/null)
+if [ -n "$naptime" ]; then sleep "$naptime"; fi
+
+code=$(sed -n "${count}p" "$CAP_DIR/codes" 2>/dev/null)
+[ -n "$code" ] || code=200
+if [ "$code" = "000" ]; then
+  exit 7
 fi
-count=\$(cat "$T4_COUNTER" 2>/dev/null || echo 0)
-count=\$((count + 1))
-echo "\$count" > "$T4_COUNTER"
-if [ "\$count" -le 1 ]; then
-  cat "$T4_SUMMARIZE_JSON"; printf '\n__UM_HTTP_CODE__200'
-else
-  cat "$T4_STATE_JSON"; printf '\n__UM_HTTP_CODE__200'
-fi
+printf '{"ok":true}\n__UM_HTTP_CODE__%s' "$code"
+exit 0
 MOCK_EOF
 chmod +x "$MOCK_BIN/curl"
 
-_tx_capture T4 env PATH="$MOCK_BIN:$PATH" bash "$SESSION_END"
-T4_EXIT="$TX_EXIT_T4"
-_dump_on_fail T4
+# reset_calls [codes...] — clear captured calls and set the per-call HTTP
+# code sequence (one code per line; calls past the list get 200).
+reset_calls() {
+  rm -f "$CAP_DIR"/url_* "$CAP_DIR"/body_* "$CAP_DIR"/args_* \
+        "$CAP_DIR/count" "$CAP_DIR/codes" "$CAP_DIR/sleep"
+  local c
+  for c in "$@"; do echo "$c" >> "$CAP_DIR/codes"; done
+}
 
-assert_eq "T4: exit code 0 when update-state returns empty" "$T4_EXIT" "0"
+call_count() { cat "$CAP_DIR/count" 2>/dev/null || echo 0; }
 
-# Session summary SHOULD be written (partial success)
-T4_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-T4_SUMMARY_PATH=$(find "$T4_SESSIONS_DIR" -name '*.md' 2>/dev/null | tail -1)
-assert_not_empty "T4: session summary still written despite state failure" "$T4_SUMMARY_PATH"
+# fresh_home <name> → prints a new isolated HOME path
+fresh_home() {
+  local d="$TMPDIR_ROOT/home_$1"
+  mkdir -p "$d"
+  printf '%s' "$d"
+}
 
-if [ -n "$T4_SUMMARY_PATH" ]; then
-  T4_CONTENT=$(cat "$T4_SUMMARY_PATH")
-  assert_contains "T4: summary has correct type" "$T4_CONTENT" "type: session_summary"
+# make_stdin <session_id> <cwd(native)> — SessionEnd metadata JSON
+# (fixtures/session-end-stdin.json shape).
+make_stdin() {
+  "$PYBIN" -c '
+import json, sys
+print(json.dumps({
+    "session_id": sys.argv[1],
+    "transcript_path": "C:\\Users\\x\\.claude\\projects\\p\\t.jsonl",
+    "cwd": sys.argv[2],
+    "hook_event_name": "SessionEnd",
+    "reason": "other",
+}))' "$1" "$2"
+}
+
+# run_session_end <home> <stdin_json> — run the hook isolated; mock curl
+# first on PATH, deterministic endpoint, no token file. stdout+stderr →
+# $RUN_OUT, exit code → $RUN_EXIT. The DETACHED child keeps running after
+# this returns — use wait_for_log to observe its outcome.
+run_session_end() {
+  local home="$1" stdin_json="$2"
+  RUN_EXIT=0
+  RUN_OUT=$(HOME="$home" PATH="$MOCK_BIN:$PATH" \
+    UM_SERVER_URL="http://mock.example:6335" \
+    UM_TOKEN_FILE="$home/.um/auth-token" \
+    bash "$SESSION_END" <<< "$stdin_json" 2>&1) || RUN_EXIT=$?
+}
+
+# wait_for_log <home> <needle> [timeout_s] — poll hook.log for the detached
+# child's line. Returns 0 when found, 1 on timeout.
+wait_for_log() {
+  local home="$1" needle="$2" timeout="${3:-10}" i=0
+  while [ "$i" -lt $((timeout * 10)) ]; do
+    if grep -qF "$needle" "$home/.um/hook.log" 2>/dev/null; then return 0; fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+SID="e5f1a2b3-0000-4000-8000-000000000001"
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N"
+
+# Sanity: the checked-in stdin fixture stays in the shape make_stdin mirrors.
+if [ -f "$FIXTURES/session-end-stdin.json" ]; then
+  FIX_KEYS=$("$PYBIN" -c '
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print(",".join(sorted(k for k in ("session_id", "cwd", "hook_event_name") if k in d)))' \
+    "$FIXTURES/session-end-stdin.json")
+  assert_eq "fixture: session-end-stdin.json carries the contract fields" \
+    "$FIX_KEYS" "cwd,hook_event_name,session_id"
 fi
 
-# state.md should NOT be written (update-state returned empty due to malformed output)
-assert_file_missing "T4: state.md NOT written on malformed update-state output" "$T4_STATE_FILE"
-
 # ===========================================================================
-# Test 5: Reindex POST fails → summary on disk; warning logged; exit 0
+# E1: Happy path — one POST /api/checkpoint, exact body, max-time 120
 # ===========================================================================
-echo "=== Test 5: Reindex POST fails ==="
+echo "=== E1: happy path (detached checkpoint POST) ==="
+H=$(fresh_home e1)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
-# Use mock where reindex fails (exit 1 = curl -sf failure)
-T5_SUMMARY_FILE="$TMPDIR_ROOT/t5_summary.md"
-printf '%s\n' "$SUMMARY_BODY" > "$T5_SUMMARY_FILE"
+reset_calls
+run_session_end "$H" "$STDIN"
+assert_eq "E1: parent exits 0" "$RUN_EXIT" "0"
+assert_eq "E1: parent produces no output" "$RUN_OUT" ""
 
-T5_STATE_FILE_FIXTURE="$TMPDIR_ROOT/t5_state.md"
-printf '%s\n' "$FIXTURE_STATE" > "$T5_STATE_FILE_FIXTURE"
-
-write_full_mock_curl "$T5_SUMMARY_FILE" "$T5_STATE_FILE_FIXTURE" "500"
-
-T5_EXIT=0
-T5_STDERR=$(PATH="$MOCK_BIN:$PATH" bash "$SESSION_END" 2>&1) || T5_EXIT=$?
-
-assert_eq "T5: exit code 0 when reindex fails" "$T5_EXIT" "0"
-
-# Summary should still be on disk
-T5_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-T5_SUMMARY_PATH=$(find "$T5_SESSIONS_DIR" -name '*.md' 2>/dev/null | tail -1)
-assert_not_empty "T5: summary on disk despite reindex failure" "$T5_SUMMARY_PATH"
-
-# Stderr should mention reindex failure
-assert_contains "T5: stderr warns about reindex failure" "$T5_STDERR" "reindex failed"
-
-# ===========================================================================
-# Test 6: Lock held → state update skipped; summary still written
-# ===========================================================================
-echo "=== Test 6: Lock held by another process ==="
-
-T6_SUMMARY_FILE="$TMPDIR_ROOT/t6_summary.md"
-printf '%s\n' "$SUMMARY_BODY" > "$T6_SUMMARY_FILE"
-
-T6_STATE_FIXTURE="$TMPDIR_ROOT/t6_state.md"
-printf '%s\n' "$FIXTURE_STATE" > "$T6_STATE_FIXTURE"
-
-write_full_mock_curl "$T6_SUMMARY_FILE" "$T6_STATE_FIXTURE" "200"
-
-# Pre-create the lockdir so mkdir will fail
-T6_LOCKDIR="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md.lockdir"
-mkdir -p "$T6_LOCKDIR"
-
-# Remove existing state.md for this test
-T6_STATE_FILE="$UM_VAULT_DIR/state/${UM_PROJECT:-testproject}/state.md"
-rm -f "$T6_STATE_FILE" 2>/dev/null || true
-
-T6_EXIT=0
-T6_STDERR=$(PATH="$MOCK_BIN:$PATH" bash "$SESSION_END" 2>&1) || T6_EXIT=$?
-
-# Clean up lockdir AFTER test
-rmdir "$T6_LOCKDIR" 2>/dev/null || true
-
-assert_eq "T6: exit code 0 when lock held" "$T6_EXIT" "0"
-
-# Session summary SHOULD be written (lock only blocks state update)
-T6_SESSIONS_DIR="$UM_VAULT_DIR/sessions/${UM_PROJECT:-testproject}"
-T6_SUMMARY_PATH=$(find "$T6_SESSIONS_DIR" -name '*.md' 2>/dev/null | tail -1)
-assert_not_empty "T6: summary written despite lock failure" "$T6_SUMMARY_PATH"
-
-# state.md should NOT be written (lock was held)
-assert_file_missing "T6: state.md not written when lock held" "$T6_STATE_FILE"
-
-# Stderr should mention lock failure
-assert_contains "T6: stderr warns about lock failure" "$T6_STDERR" "could not acquire lock"
-
-# ===========================================================================
-# Test 7: Recursive-hook guard — UM_IN_SUMMARIZER_SUBPROCESS=1 exits silently
-# ===========================================================================
-# Critical for A3's claude-agent-sdk backend: the nested `claude -p` process
-# inherits UM_IN_SUMMARIZER_SUBPROCESS=1 in its env, and its own hooks (which
-# source this file via the plugin) must exit immediately to prevent infinite
-# recursion.
-echo "=== Test 7: Recursive-hook guard (UM_IN_SUMMARIZER_SUBPROCESS=1) ==="
-
-T7_GUARD_OUT=$(UM_IN_SUMMARIZER_SUBPROCESS=1 bash "$SESSION_END" 2>&1)
-T7_GUARD_EXIT=$?
-
-assert_eq "T7: guard exits 0 when UM_IN_SUMMARIZER_SUBPROCESS=1" "$T7_GUARD_EXIT" "0"
-if [ -z "$T7_GUARD_OUT" ] || [ "$T7_GUARD_OUT" = "{}" ]; then
-  pass "T7: guard emits no output (or empty JSON {})"
+if wait_for_log "$H" "posted http=200"; then
+  pass "E1: child logs posted http=200"
 else
-  fail "T7: guard should emit empty output, got: $T7_GUARD_OUT"
+  fail "E1: child logs posted http=200" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "E1: exactly one POST" "$(call_count)" "1"
+assert_eq "E1: POST targets /api/checkpoint" \
+  "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/checkpoint"
+assert_eq "E1: body is exactly {\"project\":...}" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+E1_ARGS=$(cat "$CAP_DIR/args_1" 2>/dev/null | tr '\n' ' ')
+assert_contains "E1: curl uses the 120s checkpoint timeout" "$E1_ARGS" "--max-time 120 "
+assert_not_contains "E1: NOT the shared 10s timeout" "$E1_ARGS" "--max-time 10 "
+assert_contains "E1: log line attributed to session-end" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" " session-end "
+
+# ===========================================================================
+# E2: 403 writes-disabled ⇒ skip=writes-disabled + G7 banner in hook.log
+# ===========================================================================
+echo "=== E2: 403 writes-disabled ==="
+H=$(fresh_home e2)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 403
+run_session_end "$H" "$STDIN"
+assert_eq "E2: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "skip=writes-disabled"; then
+  pass "E2: skip=writes-disabled logged"
+else
+  fail "E2: skip=writes-disabled logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+if wait_for_log "$H" "captures are OFF"; then
+  pass "E2: G7 writes-disabled banner in hook.log"
+else
+  fail "E2: G7 writes-disabled banner in hook.log" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_not_contains "E2: NOT misfiled as server-too-old" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "server-too-old"
+
+# ===========================================================================
+# E3: 5xx ⇒ error=http-<code>
+# ===========================================================================
+echo "=== E3: 500 server error ==="
+H=$(fresh_home e3)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 500
+run_session_end "$H" "$STDIN"
+assert_eq "E3: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-500"; then
+  pass "E3: error=http-500 logged"
+else
+  fail "E3: error=http-500 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# E4: unreachable (000) ⇒ error=http-000 + G7 unreachable banner
+# ===========================================================================
+echo "=== E4: unreachable (transport failure) ==="
+H=$(fresh_home e4)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 000
+run_session_end "$H" "$STDIN"
+assert_eq "E4: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-000"; then
+  pass "E4: error=http-000 logged"
+else
+  fail "E4: error=http-000 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+if wait_for_log "$H" "server unreachable at http://mock.example:6335"; then
+  pass "E4: G7 unreachable banner names the endpoint"
+else
+  fail "E4: G7 unreachable banner names the endpoint" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# E5: Detach — hook returns immediately while the child is still in-flight
+# ===========================================================================
+echo "=== E5: detach (parent does not wait for the child) ==="
+H=$(fresh_home e5)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls
+echo 3 > "$CAP_DIR/sleep"   # curl takes 3s — parent must not wait for it
+E5_START=$(date +%s)
+run_session_end "$H" "$STDIN"
+E5_ELAPSED=$(( $(date +%s) - E5_START ))
+assert_eq "E5: parent exits 0" "$RUN_EXIT" "0"
+if [ "$E5_ELAPSED" -lt 2 ]; then
+  pass "E5: parent returned in <2s while curl sleeps 3s (detached)"
+else
+  fail "E5: parent returned in <2s while curl sleeps 3s (detached)" "took ${E5_ELAPSED}s"
+fi
+E5_LOG_AT_EXIT=$(cat "$H/.um/hook.log" 2>/dev/null)
+assert_not_contains "E5: child had NOT logged yet at parent exit" \
+  "$E5_LOG_AT_EXIT" "posted http="
+if wait_for_log "$H" "posted http=200"; then
+  pass "E5: child completes and logs after the parent exited"
+else
+  fail "E5: child completes and logs after the parent exited" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# E6: Project sanitization — invalid cwd-basename chars mapped to '-'
+# ===========================================================================
+echo "=== E6: project sanitization ==="
+H=$(fresh_home e6)
+CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SPACE")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+assert_eq "E6: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "posted http=200"; then
+  pass "E6: child posted"
+else
+  fail "E6: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "E6: project slug sanitized ('my project' -> 'my-project')" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"my-project"}'
+
+# ===========================================================================
+# E7: Empty stdin ⇒ skip=empty-stdin, zero POSTs
+# ===========================================================================
+echo "=== E7: empty stdin ==="
+H=$(fresh_home e7)
+
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  bash "$SESSION_END" </dev/null 2>&1) || RUN_EXIT=$?
+assert_eq "E7: exit 0" "$RUN_EXIT" "0"
+assert_eq "E7: zero POSTs" "$(call_count)" "0"
+assert_contains "E7: skip=empty-stdin logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-stdin"
+
+# ===========================================================================
+# E8: 502 UPSTREAM_FAILURE ⇒ error=http-502 + partial-success note
+# (state.md WAS written server-side; only the vector index is stale)
+# ===========================================================================
+echo "=== E8: 502 checkpoint upstream failure (partial success) ==="
+H=$(fresh_home e8)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 502
+run_session_end "$H" "$STDIN"
+assert_eq "E8: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-502"; then
+  pass "E8: error=http-502 logged"
+else
+  fail "E8: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+if wait_for_log "$H" "state-written-index-stale"; then
+  pass "E8: partial-success note (state written, index stale)"
+else
+  fail "E8: partial-success note (state written, index stale)" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 
 # ===========================================================================
 # Summary
 # ===========================================================================
-
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

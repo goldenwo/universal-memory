@@ -1,277 +1,111 @@
 #!/usr/bin/env bash
-# hooks/session-end.sh — orchestrates summarize + state update + reindex pipeline
+# session-end.sh v2 — detached checkpoint trigger to POST /api/checkpoint
+# (#159 T4, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5).
 #
-# Usage: session-end.sh (no args; reads env vars)
+# Claude Code passes SessionEnd hooks a small metadata JSON on stdin
+# ({session_id, transcript_path, cwd, reason, hook_event_name, ...}). This
+# hook reads it ONLY to derive the project slug — no transcript parsing, no
+# client-side summarizer (the server's checkpoint pipeline owns synthesis;
+# the old summarize.sh/update-state.sh orchestration is retired).
 #
-# Env vars (all optional):
-#   UM_PROJECT              - override project (default: from vault.sh project_name())
-#   UM_CATCHUP_RAW_SINCE    - ISO-8601 timestamp; start of raw capture range
-#   UM_CATCHUP_RAW_UNTIL    - ISO-8601 timestamp; end of raw capture range
-#                             (unset = today only)
-#   UM_ENDPOINT             - server URL for /api/reindex (default: http://localhost:6335)
-#   UM_VAULT_DIR            - vault root (via vault.sh default)
-#   UM_DETACH               - if "1", fork detached background process (for catchup/checkpoint)
-#
-# Exit 0 on any outcome (fail-soft).
-
-# Recursive-hook guard — if invoked inside a summarizer subprocess (A3's
-# claude-agent-sdk backend spawns `claude -p`), exit immediately. Without
-# this, the nested `claude` process would re-trigger this hook, causing
-# duplicate captures at best and infinite loop at worst.
-if [ "${UM_IN_SUMMARIZER_SUBPROCESS:-}" = "1" ]; then exit 0; fi
+# Behavior (all pinned by spec §5):
+#   - POST /api/checkpoint {project} — DETACHED (the v2 keeps the old
+#     UM_DETACH wisdom): the parent backgrounds a fully fd-detached child
+#     and returns immediately; server-side LLM synthesis routinely exceeds
+#     the shared 10s curl budget, so the child uses its own 120s max-time
+#     and Claude Code's hook timeout never sees the wait.
+#   - The CHILD logs the final result to ~/.um/hook.log. Reason taxonomy
+#     (same as stop.sh, spec §5 T3-review amendment): skip=writes-disabled
+#     (403, + G7 banner text), error=input-invalid (400), error=auth (401),
+#     skip=server-too-old (other non-403 4xx), error=http-<code> (5xx,
+#     000=unreachable + G7 banner text). Checkpoint-specific: 502
+#     UPSTREAM_FAILURE means state.md WAS written and only the vector index
+#     is stale — the log carries note=state-written-index-stale.
+#   - Project = cwd basename, sanitized to [A-Za-z0-9._-] client-side
+#     (mirrors the server's PROJECT_SLUG_RE; unsanitized slugs 400).
+#   - Fail-open: the parent always exits 0 — CC session integrity beats
+#     capture.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$SCRIPT_DIR/lib"
-
-# Source vault.sh (which auto-sources frontmatter.sh)
-if ! declare -f vault_path >/dev/null 2>&1; then
-  # shellcheck source=./lib/vault.sh
-  source "$LIB_DIR/vault.sh"
-fi
+UM_HOOK_NAME="session-end"
+# shellcheck source=lib/um-api.sh
+source "$SCRIPT_DIR/lib/um-api.sh"
 
 # ---------------------------------------------------------------------------
-# I1: honor UM_SUMMARY_ENABLED — skip entire pipeline when disabled
+# stdin = hook metadata JSON. Only cwd matters here.
 # ---------------------------------------------------------------------------
-if [ "${UM_SUMMARY_ENABLED:-true}" = "false" ]; then
-  echo "[session-end] UM_SUMMARY_ENABLED=false — skipping summary pipeline" >&2
-  exit 0
-fi
+HOOK_INPUT=$(cat)
+if [ -z "$HOOK_INPUT" ]; then um_log "skip=empty-stdin"; exit 0; fi
 
-# ---------------------------------------------------------------------------
-# Detached mode — re-invoke self without UM_DETACH, fork to background
-# ---------------------------------------------------------------------------
-if [ "${UM_DETACH:-0}" = "1" ]; then
-  vault=$(vault_path)
-  mkdir -p "$vault/.telemetry" 2>/dev/null || true
-  (
-    exec >> "$vault/.telemetry/session-end-detached-$(date -u +%Y%m%d).log" 2>&1
-    UM_DETACH='' bash "$0"  # re-invoke self without detach flag to do the work
-  ) </dev/null >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-  exit 0
-fi
+PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
 
-# ---------------------------------------------------------------------------
-# Step 1: Resolve project + vault + range
-# ---------------------------------------------------------------------------
-project="${UM_PROJECT:-$(project_name)}"
-vault=$(vault_path)
+PROJECT=$(printf '%s' "$HOOK_INPUT" | "$PY" -c '
+import json, os, sys
+try:
+    meta = json.load(sys.stdin)
+except Exception:
+    print("SKIP:bad-stdin"); sys.exit(0)
+cwd = meta.get("cwd") or ""
+print(os.path.basename(cwd.replace("\\", "/").rstrip("/")) if cwd else "")
+' 2>/dev/null)
 
-today=$(date -u +%Y-%m-%d)
+case "$PROJECT" in
+  SKIP:*) um_log "skip=${PROJECT#SKIP:}"; exit 0 ;;
+esac
+if [ -z "$PROJECT" ]; then PROJECT=$(basename "${CLAUDE_CWD:-$(pwd)}"); fi
+# Sanitize client-side — the server hard-fails non-[A-Za-z0-9._-] projects
+# (400), same guard as stop.sh (spec §5 amendment).
+PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
-# Determine raw files to process
-raw_files=()
-
-if [ -n "${UM_CATCHUP_RAW_SINCE:-}" ] && [ -n "${UM_CATCHUP_RAW_UNTIL:-}" ]; then
-  # Range mode: select raw files by mtime within SINCE..UNTIL
-  raw_dir="$vault/captures/$project/raw"
-  if [ -d "$raw_dir" ]; then
-    # Convert ISO timestamps to epoch seconds
-    since_epoch=$(date -d "${UM_CATCHUP_RAW_SINCE}" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "${UM_CATCHUP_RAW_SINCE}" +%s 2>/dev/null || echo 0)
-    until_epoch=$(date -d "${UM_CATCHUP_RAW_UNTIL}" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "${UM_CATCHUP_RAW_UNTIL}" +%s 2>/dev/null || echo 9999999999)
-
-    while IFS= read -r -d '' raw_file; do
-      raw_mtime=$(stat -c %Y "$raw_file" 2>/dev/null || stat -f %m "$raw_file" 2>/dev/null || echo 0)
-      if [ "$raw_mtime" -ge "$since_epoch" ] && [ "$raw_mtime" -le "$until_epoch" ]; then
-        raw_files+=("$raw_file")
-      fi
-    done < <(find "$raw_dir" -type f -name '*.md' -print0 2>/dev/null)
-  fi
-else
-  # Default: today's file only
-  today_file="$vault/captures/$project/raw/${today}.md"
-  if [ -f "$today_file" ]; then
-    raw_files+=("$today_file")
-  fi
-fi
+# Safe to interpolate: the slug is reduced to [A-Za-z0-9._-] above, so no
+# JSON metacharacters can survive into the body.
+BODY="{\"project\":\"$PROJECT\"}"
 
 # ---------------------------------------------------------------------------
-# Step 2: Read raw captures — concatenate into single transcript
+# Detached child. All three fds are detached so the parent's caller (and the
+# test harness's command substitution) never waits on the child; um_log is
+# the child's only output channel. `disown` drops it from job control so a
+# parent-shell teardown can't HUP it mid-checkpoint.
 # ---------------------------------------------------------------------------
-if [ "${#raw_files[@]}" -eq 0 ]; then
-  # No raw captures — silent exit
-  exit 0
-fi
-
-transcript=""
-for raw_file in "${raw_files[@]}"; do
-  if [ -f "$raw_file" ]; then
-    content=$(cat "$raw_file" 2>/dev/null || true)
-    if [ -n "$content" ]; then
-      if [ -n "$transcript" ]; then
-        transcript="${transcript}"$'\n'"${content}"
-      else
-        transcript="$content"
-      fi
-    fi
-  fi
-done
-
-if [ -z "$transcript" ]; then
-  # All files were empty — silent exit
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Step 3: Call summarize.sh — capture summary body
-# ---------------------------------------------------------------------------
-summary_body=$(printf '%s' "$transcript" | UM_PROJECT="$project" bash "$LIB_DIR/summarize.sh" 2>/dev/null || true)
-
-if [ -z "$summary_body" ]; then
-  # summarize.sh returned empty — already logged the reason; exit silently
-  echo "[session-end] summarize returned empty (LLM unavailable or transcript too short), skipping" >&2
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4: Build session summary file path
-# ---------------------------------------------------------------------------
-ts=$(date -u +%Y%m%d-%H%M%S)
-summary_id="${ts}-${project}"
-summary_path="$vault/sessions/$project/${summary_id}.md"
-iso_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-# ---------------------------------------------------------------------------
-# Step 5: Write session summary atomically
-# ---------------------------------------------------------------------------
-mkdir -p "$(dirname "$summary_path")" || { echo "[session-end] could not mkdir for summary, skipping" >&2; exit 0; }
-
-summary_fm="schema_version: 1
-type: session_summary
-id: ${summary_id}
-title: Session summary — ${project} @ ${iso_now}
-status: current
-valid_from: ${iso_now}
-project: ${project}"
-
-if ! fm_write "$summary_path" "$summary_fm" "$summary_body"; then
-  echo "[session-end] failed to write session summary to $summary_path" >&2
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Step 6: Acquire lock on state.md
-# ---------------------------------------------------------------------------
-state_file="$vault/state/$project/state.md"
-lockdir="$vault/state/$project/state.md.lockdir"
-mkdir -p "$(dirname "$lockdir")" || { echo "[session-end] could not mkdir for lock, skipping state update" >&2; exit 0; }
-
-# Capture state.md mtime BEFORE the update attempt (for accurate telemetry)
-state_mtime_before=0
-if [ -f "$state_file" ]; then
-  state_mtime_before=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null || echo 0)
-fi
-
-# Clear stale lock if older than 10 minutes (crashed previous run)
-try_clear_stale_lock "$lockdir" 600
-
-LOCK_HELD=0
-for _ in 1 2 3 4 5; do
-  if mkdir "$lockdir" 2>/dev/null; then
-    LOCK_HELD=1
-    break
-  fi
-  sleep 1
-done
-
-if [ "$LOCK_HELD" -ne 1 ]; then
-  echo "[session-end] could not acquire lock on state.md after 5 attempts, skipping state update" >&2
-  # Summary is already safely written; still do reindex + telemetry below
-else
-  # Register trap to release lock on exit
-  # shellcheck disable=SC2064
-  trap "rmdir '$lockdir' 2>/dev/null; true" EXIT
-
-  # -------------------------------------------------------------------------
-  # Step 7: Read old state.md
-  # -------------------------------------------------------------------------
-  old_state=""
-  if [ -f "$state_file" ]; then
-    old_state=$(cat "$state_file" 2>/dev/null || true)
-  fi
-
-  # -------------------------------------------------------------------------
-  # Step 8: Call update-state.sh with separated-format stdin
-  # -------------------------------------------------------------------------
-  new_state=$(
-    {
-      printf '===UM-OLD-STATE===\n%s\n' "$old_state"
-      printf '===UM-SESSION-SUMMARY===\n%s\n' "$summary_body"
-      printf '===UM-END===\n'
-    } | UM_PROJECT="$project" bash "$LIB_DIR/update-state.sh" 2>/dev/null || true
-  )
-
-  if [ -z "$new_state" ]; then
-    echo "[session-end] update-state returned empty (LLM unavailable or malformed output), keeping existing state.md" >&2
-    # Summary is already on disk; release lock and continue
-    rmdir "$lockdir" 2>/dev/null || true
-    trap - EXIT
+ENDPOINT=$(um_api_endpoint 2>/dev/null)
+(
+  if um_api_post '/api/checkpoint' "$BODY" 120 </dev/null >/dev/null 2>&1; then
+    um_log "posted http=$UM_API_HTTP_CODE"
   else
-    # -----------------------------------------------------------------------
-    # Step 9: Write state.md atomically
-    # -----------------------------------------------------------------------
-    mkdir -p "$(dirname "$state_file")" || {
-      echo "[session-end] could not mkdir for state.md, skipping state write" >&2
-      rmdir "$lockdir" 2>/dev/null || true
-      trap - EXIT
-    }
-    tmp="${state_file}.tmp.$$"
-    if printf '%s' "$new_state" > "$tmp" 2>/dev/null; then
-      if mv "$tmp" "$state_file" 2>/dev/null; then
-        : # success
-      else
-        rm -f "$tmp" 2>/dev/null || true
-        echo "[session-end] failed to rename state.md.tmp, skipping state write" >&2
-      fi
-    else
-      rm -f "$tmp" 2>/dev/null || true
-      echo "[session-end] failed to write state.md.tmp, skipping state write" >&2
-    fi
-
-    # Step 10: Release lock (trap handles it, but be explicit)
-    rmdir "$lockdir" 2>/dev/null || true
-    trap - EXIT
+    case "$UM_API_HTTP_CODE" in
+      403)
+        um_log "skip=writes-disabled"
+        # SessionEnd has no visible channel (spec §5 G7) — the banner text
+        # goes to hook.log; session-start.sh owns the user-visible surface.
+        um_log "$(um_g7_message writes-disabled)"
+        ;;
+      000)
+        um_log "error=http-000"
+        um_log "$(um_g7_message unreachable "$ENDPOINT")"
+        ;;
+      # 400/401 carved out of server-too-old (spec §5 T3-review amendment).
+      400)
+        um_log "error=input-invalid"
+        ;;
+      401)
+        um_log "error=auth"
+        ;;
+      4[0-9][0-9])
+        um_log "skip=server-too-old http=$UM_API_HTTP_CODE"
+        ;;
+      502)
+        # Checkpoint UPSTREAM_FAILURE: state.md WAS written; only the
+        # reindex/vector step failed — partial success, not a lost session.
+        um_log "error=http-502 note=state-written-index-stale"
+        ;;
+      *)
+        um_log "error=http-$UM_API_HTTP_CODE"
+        ;;
+    esac
   fi
-fi
+) </dev/null >/dev/null 2>&1 &
+disown 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
-# Step 11: Reindex session summary (best-effort, skip on error)
-# Do NOT reindex state.md — server rejects type=state with 400
-# v1.1: source the shared endpoint resolver. Falls back to legacy inline
-# resolution if the lib file is absent (pre-v1.1 install).
-# ---------------------------------------------------------------------------
-if [ -r "$LIB_DIR/endpoint.sh" ]; then
-  # shellcheck source=lib/endpoint.sh
-  source "$LIB_DIR/endpoint.sh"
-  endpoint=$(um_resolve_endpoint)
-else
-  endpoint="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
-fi
-rel_path="sessions/$project/${summary_id}.md"
-
-curl -sfm 10 -X POST "$endpoint/api/reindex" \
-  -H 'Content-Type: application/json' \
-  -d "{\"path\": \"$rel_path\"}" >/dev/null 2>&1 || \
-  echo "[session-end] reindex failed (server may be down), summary is safe on disk" >&2
-
-# ---------------------------------------------------------------------------
-# Step 12: Append orchestration telemetry
-# ---------------------------------------------------------------------------
-log="$vault/.telemetry/session-end.log"
-mkdir -p "$(dirname "$log")" 2>/dev/null || true
-state_updated="0"
-if [ -f "$state_file" ]; then
-  state_mtime_after=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null || echo 0)
-  if [ "$state_mtime_after" -gt "$state_mtime_before" ]; then
-    state_updated="1"
-  fi
-fi
-printf '%s\tproject=%s\tsummary=%s\tstate_updated=%s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$project" "$summary_id" "$state_updated" >> "$log" 2>/dev/null || true
-
-# ---------------------------------------------------------------------------
-# Step 13: Exit 0 — always
-# ---------------------------------------------------------------------------
 exit 0
