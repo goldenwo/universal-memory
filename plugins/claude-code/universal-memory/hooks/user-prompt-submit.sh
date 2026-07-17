@@ -37,11 +37,20 @@ UM_HOOK_NAME="user-prompt-submit"
 # shellcheck source=lib/um-api.sh
 source "$LIB_DIR/um-api.sh"
 
+# Interpreter probe FIRST (same rationale as session-start.sh): on Windows a
+# bare `python3` is often a Microsoft Store app-execution-alias stub that
+# exists on PATH but doesn't run — it would silently kill the whole feature.
+PY=$(um_find_python) || { printf '{}\n'; exit 0; }
+
 # ---------------------------------------------------------------------------
-# 1. Read prompt from stdin
+# 1. Read prompt + session_id from stdin
 #    Claude Code passes the UserPromptSubmit event as a JSON envelope:
-#      {"prompt": "<user message text>"}
+#      {"session_id": "...", "prompt": "<user message text>", ...}
 #    Fall back to treating stdin as plain text if JSON parse fails.
+#    One python pass extracts BOTH fields: line 1 = session_id (whitespace
+#    collapsed so the line protocol holds; '' when stdin lacks it), rest =
+#    prompt truncated CHARACTER-safe to 5000 chars (a byte-level `head -c`
+#    could split a multibyte char and crash a strict decode downstream).
 # ---------------------------------------------------------------------------
 RAW_STDIN=$(cat)
 
@@ -50,26 +59,32 @@ if [ -z "$RAW_STDIN" ]; then
   exit 0
 fi
 
-PROMPT_TEXT=$(printf '%s' "$RAW_STDIN" | python3 -c '
-import sys, json
-raw = sys.stdin.read()
+PARSED=$(printf '%s' "$RAW_STDIN" | "$PY" -c '
+import sys, json, re
+raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+session_id = ""
+text = raw
 try:
     data = json.loads(raw)
     # Try known envelope fields in priority order
-    text = (data.get("prompt") or
-            data.get("user_message") or
-            data.get("message") or
-            data.get("text") or
-            "")
-    if text:
-        print(text)
-    else:
-        # JSON but no recognized field — fall back to raw
-        print(raw)
+    candidate = (data.get("prompt") or
+                 data.get("user_message") or
+                 data.get("message") or
+                 data.get("text") or
+                 "")
+    if isinstance(candidate, str) and candidate:
+        text = candidate
+    # session_id rides the same envelope (CC hook input contract)
+    sid = data.get("session_id") or ""
+    if isinstance(sid, str):
+        session_id = re.sub(r"\s+", "-", sid.strip())
 except Exception:
-    # Not JSON — treat as plain text
-    print(raw)
-' 2>/dev/null | head -c 5000)
+    pass  # Not JSON — treat as plain text, no session_id
+print(session_id)
+print(text[:5000])
+' 2>/dev/null)
+SESSION_ID_STDIN=$(printf '%s\n' "$PARSED" | head -n1)
+PROMPT_TEXT=$(printf '%s\n' "$PARSED" | tail -n +2)
 
 # Bail if prompt too short to be meaningful
 if [ "${#PROMPT_TEXT}" -lt 5 ]; then
@@ -88,9 +103,15 @@ if ! um_api_configured; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Session ID — prefer CLAUDE_SESSION_ID; derive fallback from PPID + mtime
+# 3. Session ID — stdin's session_id is authoritative (Claude Code sends it in
+# the hook input envelope and does NOT set CLAUDE_SESSION_ID). The env var and
+# the PPID/mtime derivation survive ONLY as fallbacks for stdin that lacks it
+# (plain-text stdin, older CC). Without the stdin source, macOS/Windows fell
+# through /proc to `date +%s` — a NEW id every prompt, so the "first prompt
+# only" gate fired every prompt and leaked one counter file per prompt.
 # ---------------------------------------------------------------------------
-SESSION_ID="${CLAUDE_SESSION_ID:-}"
+SESSION_ID="$SESSION_ID_STDIN"
+[ -z "$SESSION_ID" ] && SESSION_ID="${CLAUDE_SESSION_ID:-}"
 if [ -z "$SESSION_ID" ]; then
   # Derive a stable-ish session identifier from parent PID + its start time
   # (changes on restart, stable within a session)
@@ -152,7 +173,7 @@ fi
 # pass it via the search payload.
 
 # Build POST body: use 'query' field (not 'q') for POST /api/search
-search_payload=$(printf '%s' "$PROMPT_TEXT" | python3 -c '
+search_payload=$(printf '%s' "$PROMPT_TEXT" | "$PY" -c '
 import json, sys
 text = sys.stdin.read().strip()
 print(json.dumps({"query": text, "limit": 5}))
@@ -172,7 +193,7 @@ response=$(um_api_post "/api/search" "$search_payload" 2>/dev/null) || true
 # ---------------------------------------------------------------------------
 # 6. Assemble context block from search results
 # ---------------------------------------------------------------------------
-additional_context=$(printf '%s' "$response" | python3 -c '
+additional_context=$(printf '%s' "$response" | "$PY" -c '
 import json, sys
 
 try:
@@ -215,11 +236,16 @@ print("\n".join(lines))
 # 7. Emit output
 # ---------------------------------------------------------------------------
 if [ -n "$additional_context" ]; then
-  # Match session-start.sh output format: {"additionalContext": "..."}
-  printf '%s' "$additional_context" | python3 -c '
+  # Documented UserPromptSubmit envelope (code.claude.com/docs/en/hooks):
+  # additionalContext MUST ride inside hookSpecificOutput with the event
+  # name — a top-level additionalContext is silently ignored by Claude Code.
+  printf '%s' "$additional_context" | "$PY" -c '
 import json, sys
 content = sys.stdin.read()
-sys.stdout.write(json.dumps({"additionalContext": content}) + "\n")
+sys.stdout.write(json.dumps({"hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": content,
+}}) + "\n")
 ' 2>/dev/null || printf '{}\n'
 else
   printf '{}\n'

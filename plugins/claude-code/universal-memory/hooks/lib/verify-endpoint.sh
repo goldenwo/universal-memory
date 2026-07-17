@@ -17,12 +17,14 @@
 #        401       → auth/token problem
 #        404 / other 4xx → server predates the /api capture routes ("too old")
 #        429       → transient remote rate limit
+#        3xx       → redirecting endpoint (curl runs without -L everywhere in
+#                    the plugin) — configure the final URL directly
 #        5xx       → server-side error (flag-true + ro-mount misconfig lands
 #                    here as EROFS — NOT 403; message says mount/logs)
 #        000       → unreachable                                     [G7/A5]
 #   Prints one actionable message per failure branch to stderr and returns:
 #     0 healthy · 1 unreachable/unhealthy · 2 writes-disabled · 3 auth ·
-#     4 server-too-old · 5 server-error · 6 rate-limited
+#     4 server-too-old · 5 server-error · 6 rate-limited · 7 redirect
 #
 # Timeouts match um-api.sh's wire contract: connect 3s, total 10s.
 
@@ -101,6 +103,13 @@ um_verify_endpoint() {
       printf '✗ UM server unreachable at %s — connection failed during the write probe.\n  Check the URL, that the server is running, and any tunnel/firewall in between.\n  See %s\n' \
         "$endpoint" "$UM_VERIFY_DOCS_LINK" >&2
       return 1
+      ;;
+    3[0-9][0-9])
+      # The probes run curl without -L, and every capture hook does too — a
+      # redirecting endpoint means every capture dies on the redirect.
+      printf '✗ Endpoint redirects (HTTP %s) — configure the final URL (e.g. the https form) directly.\n' \
+        "$code" >&2
+      return 7
       ;;
     *)
       printf '✗ Server-side error on the write probe (HTTP %s).\n  Writes may be misconfigured: check the vault mount (UM_MOUNT_MODE=rw — a read-only mount fails with EROFS here, not 403) and the server logs.\n' \

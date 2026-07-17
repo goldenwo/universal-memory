@@ -15,8 +15,13 @@ if [ -r "$LIB_DIR/um-api.sh" ]; then
   # shellcheck source=../hooks/lib/um-api.sh
   source "$LIB_DIR/um-api.sh"
   DEFAULT_SERVER="$(um_api_endpoint)"
+  # Token: env else ~/.um/auth-token file (um_api_token) — a marketplace
+  # /um-setup install writes the token file but exports nothing, so env-only
+  # resolution would resolve the remote endpoint and then 401.
+  AUTH_TOKEN="${UM_AUTH_TOKEN:-$(um_api_token)}"
 else
   DEFAULT_SERVER="${UM_SERVER_URL:-http://localhost:6335}"
+  AUTH_TOKEN="${UM_AUTH_TOKEN:-}"
 fi
 
 _usage() {
@@ -104,7 +109,7 @@ URL="$SERVER/api/search?q=$Q_ENC&limit=$LIMIT"
 
 # Fetch
 response=$(_um_curl_wrap "um-search" -fSsm 10 --fail-with-body \
-  -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
+  -H "Authorization: Bearer ${AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3
 

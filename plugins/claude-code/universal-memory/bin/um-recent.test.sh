@@ -223,6 +223,25 @@ else
 fi
 rm -rf "$tmpft"
 
+# ─── T-token-file: ~/.um/auth-token — Bearer from file when env empty ───────
+# A marketplace /um-setup install writes ~/.um/auth-token but exports nothing;
+# env-only token resolution would resolve the remote endpoint and then 401.
+echo ""
+echo "=== T-token-file: ~/.um/auth-token used when UM_AUTH_TOKEN env empty ==="
+tmptk=$(mktemp -d)
+args_filetk="$tmptk/curl-args"
+_make_recording_curl "$tmptk/bin" '{"results":[]}' "$args_filetk"
+mkdir -p "$tmptk/home/.um"
+printf 'file-tier-token-xyz\n' > "$tmptk/home/.um/auth-token"
+PATH="$tmptk/bin:$PATH" HOME="$tmptk/home" UM_SERVER_URL="http://mock" UM_AUTH_TOKEN="" \
+  bash "$BIN" "p" >/dev/null 2>&1 || true
+if grep -q "Bearer file-tier-token-xyz" "$args_filetk" 2>/dev/null; then
+  pass "T-token-file-tier"
+else
+  fail "T-token-file-tier: $(cat "$args_filetk" 2>/dev/null || echo 'args file missing')"
+fi
+rm -rf "$tmptk"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-recent.sh: $PASS passed, $FAIL failed"

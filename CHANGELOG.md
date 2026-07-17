@@ -18,6 +18,8 @@ adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 > **then `docker compose up -d`.** The Claude Code plugin's hooks are now API-always (every capture goes through `POST /api/append-turn` / `POST /api/checkpoint`), and those routes hard-gate on `UM_MCP_WRITE_ENABLED`. This is not silent: every skipped capture logs `skip=writes-disabled` to `~/.um/hook.log` AND the very next session start injects a visible "⚠ UM: captures are OFF" banner. Your existing `captures/` files remain server-side inputs — nothing is lost.
 >
 > Also retired: the client-side summarizer (`session-end.sh` no longer calls an LLM) — client installs **no longer need an OpenAI/LLM API key**; synthesis always runs server-side with the server's key. The plugin's bespoke local-file capture path (lockdirs, `UM_VAULT_DIR` on the client) is replaced by the server API; local same-box installs keep working via the loopback default.
+>
+> **Repointing an existing LOCAL install at a REMOTE endpoint strands any un-checkpointed local raw captures** (a remote server cannot read this filesystem) — run one checkpoint (`/um-checkpoint` or a final session) against the local server *first*, then repoint.
 
 ### Added — Claude Code plugin: remote-server mode + marketplace install (#159)
 

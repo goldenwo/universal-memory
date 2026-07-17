@@ -144,19 +144,32 @@ MOCK
 }
 
 # Helper: extract additionalContext string value from JSON output.
-# Also the envelope-shape gate: prints __BAD_ENVELOPE__ when stdout is not a
-# JSON object with a string additionalContext.
+# Also the envelope-shape gate: prints __BAD_ENVELOPE__ when stdout is not the
+# DOCUMENTED Claude Code SessionStart envelope (code.claude.com/docs/en/hooks,
+# fetched 2026-07-17):
+#   {"hookSpecificOutput": {"hookEventName": "SessionStart",
+#                           "additionalContext": "<string>"}}
+# Top-level additionalContext is SILENTLY IGNORED by Claude Code — asserting
+# the wrapped shape here is what keeps the injection surface alive.
+# An empty {} no-op envelope is valid and yields "".
 extract_additional_context() {
   local json="$1"
   printf '%s' "$json" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
-    v = d.get("additionalContext", "")
-    if not isinstance(d, dict) or not isinstance(v, str):
+    if not isinstance(d, dict):
         print("__BAD_ENVELOPE__")
+    elif not d:
+        print("")  # {} no-op envelope — valid, no context
     else:
-        print(v)
+        h = d.get("hookSpecificOutput")
+        if (not isinstance(h, dict)
+                or h.get("hookEventName") != "SessionStart"
+                or not isinstance(h.get("additionalContext"), str)):
+            print("__BAD_ENVELOPE__")
+        else:
+            print(h["additionalContext"])
 except Exception:
     print("__BAD_ENVELOPE__")
 ' 2>/dev/null || echo "__BAD_ENVELOPE__"

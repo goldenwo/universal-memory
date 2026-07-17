@@ -143,7 +143,10 @@ You can run `/um-preview` anytime to see what state.md would look like right now
 # (spec §4) — a file-tier-only remote install must NOT bail here.
 # ---------------------------------------------------------------------------
 if ! um_api_configured 2>/dev/null; then
-  "$PY" -c "import json,sys; print(json.dumps({'additionalContext': sys.argv[1]}))" \
+  # Documented SessionStart envelope (code.claude.com/docs/en/hooks): the
+  # additionalContext MUST ride inside hookSpecificOutput with the event name —
+  # a top-level additionalContext is silently ignored by Claude Code.
+  "$PY" -c "import json,sys; print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': sys.argv[1]}}))" \
     "$UM_ROUTING_RUBRIC" 2>/dev/null || echo '{}'
   exit 0
 fi
@@ -246,7 +249,13 @@ def compose(body_out):
     return "\n".join(parts)
 
 def emit(body_out):
-    sys.stdout.write(json.dumps({"additionalContext": compose(body_out)}) + "\n")
+    # Documented SessionStart envelope (code.claude.com/docs/en/hooks):
+    # additionalContext MUST ride inside hookSpecificOutput with the event
+    # name — a top-level additionalContext is silently ignored by Claude Code.
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": compose(body_out),
+    }}) + "\n")
     sys.exit(0)
 
 def emit_rubric_only():

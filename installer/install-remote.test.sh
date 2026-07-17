@@ -115,6 +115,11 @@ if echo "$VERIFY_OUT" | grep -qi "mount" && echo "$VERIFY_OUT" | grep -qi "logs"
 run_verify 200 000
 if [ "$VERIFY_RC" -ne 0 ]; then pass "UT-probe-000: probe transport failure → non-zero"; else fail "UT-probe-000: rc 0"; fi
 
+run_verify 200 301
+if [ "$VERIFY_RC" -eq 7 ]; then pass "UT-3xx: probe 301 → rc 7 (distinct redirect rc)"; else fail "UT-3xx: rc $VERIFY_RC (out: $VERIFY_OUT)"; fi
+if echo "$VERIFY_OUT" | grep -qi "redirect"; then pass "UT-3xx: message names the redirect"; else fail "UT-3xx: redirect not named (out: $VERIFY_OUT)"; fi
+if echo "$VERIFY_OUT" | grep -qi "final URL"; then pass "UT-3xx: message says configure the final URL"; else fail "UT-3xx: final-URL hint missing (out: $VERIFY_OUT)"; fi
+
 # ─── Integration harness for install.sh --remote ─────────────────────────────
 # run_remote <tmpdir> [env VAR=... ...] -- <installer args...>
 # Runs the installer with stub curl + throwaway HOME=$tmpdir/home under a
@@ -223,6 +228,31 @@ if grep -q "export UM_SERVER_URL='http://pi:6337'" "$T/home/.bashrc"; then pass 
 if ! grep -q "old-local" "$T/home/.bashrc"; then pass "RT6: old URL removed"; else fail "RT6: old URL still present"; fi
 if [ "$(grep -cF '# --- universal-memory (auto-added by install.sh) ---' "$T/home/.bashrc")" = "1" ]; then pass "RT6: exactly one marker block"; else fail "RT6: marker block duplicated"; fi
 if grep -q "user content stays" "$T/home/.bashrc"; then pass "RT6: user content preserved"; else fail "RT6: user content lost"; fi
+if ! echo "$RT_OUT" | grep -qi "marker-block values"; then pass "RT6: no reset notice when block held no key/summarizer"; else fail "RT6: spurious reset notice (out: $RT_OUT)"; fi
+rm -rf "$T"
+
+# ─── RT6b: marker block holds key/summarizer the current env lacks ⇒ notice ──
+# Regenerating the block from a non-hydrated shell silently wipes stored
+# UM_OPENAI_API_KEY / UM_SUMMARIZER — the flow must at least SAY so.
+echo ""
+echo "=== RT6b: marker block with stored key + summarizer → reset notice printed ==="
+T=$(mktemp -d)
+mkdir -p "$T/home"
+cat > "$T/home/.bashrc" <<'RC'
+# --- universal-memory (auto-added by install.sh) ---
+export UM_OPENAI_API_KEY='XXX-stored-key-not-in-env'
+export UM_SUMMARIZER='ollama'
+export UM_SERVER_URL='http://old-local:6335'
+# --- end universal-memory ---
+RC
+run_remote "$T" -- --remote http://pi:6337 --yes
+if [ "$RT_RC" -eq 0 ]; then pass "RT6b: exit 0 (notice does not block)"; else fail "RT6b: exit $RT_RC (out: $RT_OUT)"; fi
+if echo "$RT_OUT" | grep -qi "marker-block values" && echo "$RT_OUT" | grep -qi "re-run the full installer"; then
+  pass "RT6b: reset notice printed"
+else
+  fail "RT6b: no reset notice (out: $RT_OUT)"
+fi
+if grep -q "export UM_SERVER_URL='http://pi:6337'" "$T/home/.bashrc"; then pass "RT6b: block still regenerated (notice-only, no behavior change)"; else fail "RT6b: block not updated"; fi
 rm -rf "$T"
 
 # ─── RT7: bare UM_SERVER_URL export (no marker) ⇒ shadowing warning ──────────

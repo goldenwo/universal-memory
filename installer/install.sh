@@ -200,6 +200,19 @@ run_remote_flow() {
   for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
     [[ -f "$rc_file" ]] || continue
     if grep -qF "$marker_start" "$rc_file"; then
+      # _write_marker_block regenerates the WHOLE block from current env — a
+      # non-hydrated shell (env -i, fresh terminal) silently wipes a stored
+      # UM_OPENAI_API_KEY / non-default UM_SUMMARIZER. Detect and SAY so
+      # (notice only — the block is still regenerated as before).
+      local _prev_block _prev_key _prev_sum _new_sum
+      _prev_block=$(awk -v s="$marker_start" -v e="$marker_end" '$0==s{b=1;next} $0==e{b=0;next} b' "$rc_file")
+      _prev_key=$(printf '%s\n' "$_prev_block" | sed -n "s/^export UM_OPENAI_API_KEY='\(.*\)'$/\1/p" | head -n1)
+      _prev_sum=$(printf '%s\n' "$_prev_block" | sed -n "s/^export UM_SUMMARIZER='\(.*\)'$/\1/p" | head -n1)
+      _new_sum="${UM_SUMMARIZER:-openai}"
+      if { [[ -n "$_prev_key" && "$_prev_key" != "${UM_OPENAI_API_KEY:-}" ]]; } \
+          || { [[ -n "$_prev_sum" && "$_prev_sum" != "$_new_sum" ]]; }; then
+        echo "[install] note: previous marker-block values not present in this shell's env were reset — re-run the full installer if you still need the local summarizer config (UM_OPENAI_API_KEY / UM_SUMMARIZER)."
+      fi
       _write_marker_block "$rc_file" "" ""
       echo "[install] updated universal-memory marker block in $rc_file (UM_SERVER_URL → $endpoint)"
     fi

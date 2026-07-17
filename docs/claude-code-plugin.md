@@ -77,7 +77,8 @@ What it does:
 3. On success only, writes `~/.um/endpoint` and `~/.um/auth-token`
    (mode 600). On failure it prints one actionable message per cause —
    unreachable / writes-disabled (403) / bad token (401) / server-too-old
-   (404) / rate-limited (429) / server-side error (5xx) — exits non-zero, and
+   (404) / rate-limited (429) / redirecting endpoint (3xx — configure the
+   final URL directly) / server-side error (5xx) — exits non-zero, and
    writes **nothing**.
 
 Non-interactive (scripts/CI): `--endpoint URL --token TOKEN`, or env
@@ -95,6 +96,11 @@ Endpoint precedence (spec §4):
 An env export **shadows** the file tier — `um-setup` warns when it detects
 that. Token: `${UM_TOKEN_FILE:-~/.um/auth-token}`; an absent/empty file means
 no `Authorization` header (loopback no-auth).
+
+**Switching an existing local install to a remote endpoint** strands any
+un-checkpointed local raw captures (the remote server cannot read this
+machine's filesystem) — run one checkpoint (`/um-checkpoint` or a final
+session) against the local server first, then repoint.
 
 ## What runs when
 
@@ -158,5 +164,4 @@ loopback skips auth by default (`UM_ALLOW_LOOPBACK_NOAUTH=true`).
 The 1.7.0 hooks retire local-file capture and the client-side summarizer. An
 in-place upgrade (`git pull` + restart) with a default `.env` goes
 capture-dark with a 403 until you flip the two flags above — the SessionStart
-banner will tell you. Full migration notes: [CHANGELOG.md](../CHANGELOG.md)
-and [MIGRATION.md](../MIGRATION.md).
+banner will tell you. Full migration notes: [CHANGELOG.md](../CHANGELOG.md).

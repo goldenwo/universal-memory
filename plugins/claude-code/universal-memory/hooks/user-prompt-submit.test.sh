@@ -75,14 +75,26 @@ assert_file_count() {
   else fail "$name (counter file='$path', got='$got', want='$want')"; fi
 }
 
-# Helper: extract additionalContext from hook JSON output
+# Helper: extract additionalContext from hook JSON output.
+# Asserts the DOCUMENTED Claude Code UserPromptSubmit envelope
+# (code.claude.com/docs/en/hooks, fetched 2026-07-17):
+#   {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+#                           "additionalContext": "<string>"}}
+# Top-level additionalContext is SILENTLY IGNORED by Claude Code, so a
+# top-level-only envelope must extract as empty (dead injection).
 extract_ac() {
   local json="$1"
   printf '%s' "$json" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
-    print(d.get("additionalContext", ""))
+    h = d.get("hookSpecificOutput")
+    if (not isinstance(h, dict)
+            or h.get("hookEventName") != "UserPromptSubmit"
+            or not isinstance(h.get("additionalContext"), str)):
+        print("")
+    else:
+        print(h["additionalContext"])
 except Exception:
     print("")
 ' 2>/dev/null || echo ""
@@ -236,6 +248,9 @@ printf '\nTest 4: First prompt, 3 search hits\n'
   assert_eq "exit 0 on first prompt with hits" "$exit_code" "0"
   ac=$(extract_ac "$output")
   assert_not_empty "additionalContext non-empty when hits returned" "$ac"
+  # Envelope-shape gate: the documented wrapped form, not top-level.
+  assert_contains "envelope carries hookSpecificOutput" "$output" '"hookSpecificOutput"'
+  assert_contains "envelope names UserPromptSubmit event" "$output" '"hookEventName": "UserPromptSubmit"'
   assert_contains "output has section header" "$ac" "## Relevant from your memory"
   assert_contains "output includes first hit title" "$ac" "Task A"
   assert_contains "output includes second hit" "$ac" "Arch note"
@@ -311,15 +326,17 @@ CURLDUMP
 
   # Verify the payload sent to API had the query truncated (≤5000 chars)
   if [ -f "$received_file" ]; then
+    # Feed via stdin — a Windows python cannot open git-bash /tmp paths
+    # (open() here used to fail → -1 → a vacuous "≤5000" pass).
     query_len=$(python3 -c "
 import json, sys
 try:
-    d = json.loads(open('$received_file').read())
+    d = json.loads(sys.stdin.read())
     print(len(d.get('query', '')))
 except Exception:
     print(-1)
-")
-    if [ "$query_len" -le 5000 ]; then
+" < "$received_file")
+    if [ "$query_len" -ge 1 ] && [ "$query_len" -le 5000 ]; then
       pass "prompt truncated to ≤5000 chars before API call (len=$query_len)"
     else
       fail "prompt not truncated (len=$query_len, expected ≤5000)"
@@ -464,6 +481,158 @@ printf '\nTest 12: endpoint file tier (no env)\n'
   ac=$(extract_ac "$output")
   assert_not_empty "T12: search fired via file-tier endpoint" "$ac"
   rm -f "$HOME/.um/endpoint"
+}
+
+# ---------------------------------------------------------------------------
+# Test 13: broken `python3` Store stub + working `py` ⇒ feature still works
+# (Windows: bare python3 is often a Microsoft Store alias that exists on PATH
+# but doesn't run — the hook must resolve an interpreter via um_find_python.)
+# ---------------------------------------------------------------------------
+printf '\nTest 13: broken python3 stub, working py\n'
+{
+  reset_counter
+  write_mock_curl "$(make_search_response_3hits)"
+  REAL_PY=$(command -v python3)
+  PY_MOCK="$TMPDIR_ROOT/py_mock_13"
+  mkdir -p "$PY_MOCK"
+  printf '#!/bin/bash\nexit 9\n' > "$PY_MOCK/python3"
+  printf '#!/bin/bash\nexec "%s" "$@"\n' "$REAL_PY" > "$PY_MOCK/py"
+  chmod +x "$PY_MOCK/python3" "$PY_MOCK/py"
+  output=$(printf '%s' "What tasks are outstanding?" | \
+    PATH="$PY_MOCK:$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="http://localhost:19999" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T13: exit 0 with broken python3 stub" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_not_empty "T13: search fires via py fallback" "$ac"
+  assert_file_count "T13: counter written" "$COUNTER_FILE" "1"
+}
+
+# ---------------------------------------------------------------------------
+# Test 14: NO working interpreter ⇒ {} and exit 0 (fail-soft, never block)
+# ---------------------------------------------------------------------------
+printf '\nTest 14: no working interpreter\n'
+{
+  reset_counter
+  write_mock_curl "$(make_search_response_3hits)"
+  PY_MOCK="$TMPDIR_ROOT/py_mock_14"
+  mkdir -p "$PY_MOCK"
+  for c in py python3 python; do
+    printf '#!/bin/bash\nexit 9\n' > "$PY_MOCK/$c"
+    chmod +x "$PY_MOCK/$c"
+  done
+  output=$(printf '%s' "What tasks are outstanding?" | \
+    PATH="$PY_MOCK:$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="http://localhost:19999" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T14: exit 0 with no interpreter" "$exit_code" "0"
+  assert_eq "T14: bare {} envelope" "$output" "{}"
+}
+
+# ---------------------------------------------------------------------------
+# Test 15: session_id from STDIN (the CC hook input contract carries it;
+# CLAUDE_SESSION_ID is NOT set by Claude Code) — stdin wins over the env
+# fallback, and a second fire with the same stdin session_id must not inject.
+# ---------------------------------------------------------------------------
+printf '\nTest 15: session_id sourced from stdin JSON\n'
+{
+  write_mock_curl "$(make_search_response_3hits)"
+  stdin_json='{"session_id":"stdin-sess-777","hook_event_name":"UserPromptSubmit","prompt":"What tasks are outstanding?"}'
+  stdin_counter="$STATE_DIR/prompt-count-stdin-sess-777"
+  rm -f "$stdin_counter"
+  run_hook_stdin_sid() {
+    printf '%s' "$stdin_json" | \
+      PATH="$MOCK_BIN:$PATH" \
+      HOME="$HOME" \
+      UM_SERVER_URL="" \
+      UM_ENDPOINT="http://localhost:19999" \
+      CLAUDE_CWD="$CLAUDE_CWD" \
+      CLAUDE_SESSION_ID="env-session-should-lose" \
+      bash "$HOOK" 2>/dev/null
+  }
+  output=$(run_hook_stdin_sid)
+  exit_code=$?
+  assert_eq "T15: exit 0 on stdin session_id" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_not_empty "T15: first fire injects" "$ac"
+  assert_file_count "T15: counter named from STDIN session_id" "$stdin_counter" "1"
+  if [ -f "$STATE_DIR/prompt-count-env-session-should-lose" ]; then
+    fail "T15: env session id used despite stdin session_id"
+  else
+    pass "T15: env fallback not used when stdin carries session_id"
+  fi
+  output2=$(run_hook_stdin_sid)
+  ac2=$(extract_ac "$output2")
+  assert_empty "T15: second fire same session_id does NOT inject" "$ac2"
+  assert_file_count "T15: counter = 2 after second fire" "$stdin_counter" "2"
+  rm -f "$stdin_counter"
+}
+
+# ---------------------------------------------------------------------------
+# Test 16: multibyte prompt around the truncation boundary — a byte-level
+# `head -c` could split a UTF-8 char and kill the strict JSON decode; the
+# truncation must be character-safe.
+# ---------------------------------------------------------------------------
+printf '\nTest 16: multibyte prompt truncated char-safe\n'
+{
+  reset_counter
+  received_file="$TMPDIR_ROOT/curl_received_mb.json"
+  rm -f "$received_file"
+  write_mock_curl "$(make_search_response_3hits)"  # seeds mock_curl_resp.json
+  cat > "$MOCK_BIN/curl" <<CURLDUMP
+#!/bin/bash
+while [[ "\$#" -gt 0 ]]; do
+  if [[ "\$1" == "-d" ]]; then
+    printf '%s' "\$2" > "$received_file"
+    break
+  fi
+  shift
+done
+cat "$(dirname "$received_file")/mock_curl_resp.json"
+exit 0
+CURLDUMP
+  chmod +x "$MOCK_BIN/curl"
+  mb_stdin=$(python3 -c 'import json; print(json.dumps({"session_id": "test-session-abc123", "prompt": "é" * 6000}))')
+  output=$(printf '%s' "$mb_stdin" | \
+    PATH="$MOCK_BIN:$PATH" \
+    HOME="$HOME" \
+    UM_SERVER_URL="" \
+    UM_ENDPOINT="http://localhost:19999" \
+    CLAUDE_CWD="$CLAUDE_CWD" \
+    CLAUDE_SESSION_ID="test-session-abc123" \
+    bash "$HOOK" 2>/dev/null)
+  exit_code=$?
+  assert_eq "T16: exit 0 on multibyte prompt" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_not_empty "T16: multibyte prompt still injects hits" "$ac"
+  if [ -f "$received_file" ]; then
+    # Feed via stdin — a Windows python cannot open git-bash /tmp paths.
+    query_len=$(python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(len(d.get('query', '')))
+except Exception:
+    print(-1)
+" < "$received_file")
+    if [ "$query_len" -ge 1 ] && [ "$query_len" -le 5000 ]; then
+      pass "T16: query truncated char-safe to ≤5000 chars (len=$query_len)"
+    else
+      fail "T16: bad query length after multibyte truncation (len=$query_len)"
+    fi
+  else
+    fail "T16: search request never reached curl (decode likely crashed)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
