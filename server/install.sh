@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # _UM_REPO_ROOT can be set externally (e.g. by tests running from a temp dir).
-REPO_ROOT="${_UM_REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")}"
+REPO_ROOT="${_UM_REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")}"
 ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
@@ -157,38 +157,72 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # ── hook-smoke ────────────────────────────────────────────────────────────
+  # v2 contract (#159): stop.sh reads hook-metadata JSON on stdin ({session_id,
+  # transcript_path, cwd, ...}) and POSTs each new transcript message to
+  # /api/append-turn — it no longer writes local vault captures. Smoke =
+  # synthetic 1-message transcript + metadata JSON, run under an isolated
+  # scratch HOME (cursor + hook.log stay out of the real ~/.um), endpoint
+  # pinned to the same server the server-health check probed, real token file
+  # honored. Pass = the hook's own log records a 2xx POST.
   _HOOK_SCRIPT="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/stop.sh"
-  _SMOKE_PROJECT="install-verify"
-  _SMOKE_DIR="$_VAULT/captures/$_SMOKE_PROJECT/raw"
-  _TODAY=$(date -u +%Y-%m-%d)
-  _SMOKE_FILE="$_SMOKE_DIR/$_TODAY.md"
+  _SMOKE_HOME=$(mktemp -d 2>/dev/null || echo "")
 
-  if [ -f "$_HOOK_SCRIPT" ]; then
-    mkdir -p "$_SMOKE_DIR" 2>/dev/null || true
-    _before_size=0
-    [ -f "$_SMOKE_FILE" ] && _before_size=$(wc -c < "$_SMOKE_FILE")
-
-    echo "verify smoke transcript" | UM_VAULT_DIR="$_VAULT" CLAUDE_CWD="$_SMOKE_PROJECT" bash "$_HOOK_SCRIPT" 2>/dev/null || true
-
-    if [ -f "$_SMOKE_FILE" ] && [ "$(wc -c < "$_SMOKE_FILE")" -gt "$_before_size" ]; then
-      _SMOKE_REL="captures/$_SMOKE_PROJECT/raw/$_TODAY.md"
-      _vpass "hook-smoke" "raw capture created at $_SMOKE_REL"
-    else
-      _vfail "hook-smoke" "stop.sh did not write to $_SMOKE_FILE"
-      _verify_fail=1
+  # Same interpreter probe as the hooks' um_find_python: bare python3/python
+  # on Windows are often Store app-execution-alias stubs; only a candidate
+  # that actually runs counts.
+  _VERIFY_PY=""
+  for _c in py python3 python; do
+    if command -v "$_c" >/dev/null 2>&1 && "$_c" -c '' >/dev/null 2>&1; then
+      _VERIFY_PY="$_c"
+      break
     fi
-  else
+  done
+
+  if [ ! -f "$_HOOK_SCRIPT" ]; then
     _vfail "hook-smoke" "stop.sh not found at $_HOOK_SCRIPT"
     _verify_fail=1
+  elif [ -z "$_SMOKE_HOME" ] || [ -z "$_VERIFY_PY" ]; then
+    _vfail "hook-smoke" "cannot stage smoke (mktemp or python missing)"
+    _verify_fail=1
+  else
+    _SMOKE_TRANSCRIPT="$_SMOKE_HOME/transcript.jsonl"
+    printf '%s\n' '{"type":"user","message":{"role":"user","content":"verify smoke transcript"},"timestamp":"2026-01-01T00:00:00Z"}' > "$_SMOKE_TRANSCRIPT"
+    # Metadata built via json.dumps so the temp path survives spaces/backslashes.
+    _SMOKE_META=$(UM_VERIFY_TRANSCRIPT="$_SMOKE_TRANSCRIPT" "$_VERIFY_PY" -c '
+import json, os
+print(json.dumps({
+    "session_id": "install-verify",
+    "transcript_path": os.environ["UM_VERIFY_TRANSCRIPT"],
+    "cwd": "install-verify",
+    "stop_hook_active": False,
+}))' 2>/dev/null)
+    _SMOKE_TOKEN_FILE="${UM_TOKEN_FILE:-$HOME/.um/auth-token}"
+    printf '%s' "$_SMOKE_META" | \
+      env HOME="$_SMOKE_HOME" UM_SERVER_URL="http://localhost:$_PORT" \
+          UM_TOKEN_FILE="$_SMOKE_TOKEN_FILE" \
+          ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 60} bash "$_HOOK_SCRIPT" >/dev/null 2>&1 || true
+    _SMOKE_LOG=$(cat "$_SMOKE_HOME/.um/hook.log" 2>/dev/null || true)
+    if printf '%s' "$_SMOKE_LOG" | grep -q 'posted http=2'; then
+      _vpass "hook-smoke" "stop.sh posted a smoke turn to /api/append-turn"
+    else
+      _vfail "hook-smoke" "stop.sh did not post (hook.log: ${_SMOKE_LOG:-empty}). Check server/token."
+      _verify_fail=1
+    fi
   fi
 
   # ── session-end-dry-run ───────────────────────────────────────────────────
+  # v2: session-end.sh reads metadata JSON and detaches a POST /api/checkpoint
+  # (server-side LLM synthesis). Verify must NOT trigger a real checkpoint —
+  # the dry-run feeds empty stdin, which the hook contract handles by logging
+  # skip=empty-stdin and exiting 0 (parse, lib sourcing, and log plumbing all
+  # exercised; nothing written server-side).
   _SESSION_END="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/session-end.sh"
   if [ -f "$_SESSION_END" ]; then
-    if UM_SUMMARY_ENABLED=false UM_VAULT_DIR="$_VAULT" ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 30} bash "$_SESSION_END" 2>/dev/null; then
-      _vpass "session-end-dry-run" "exited 0 (summary skipped per UM_SUMMARY_ENABLED=false)"
+    if env HOME="${_SMOKE_HOME:-$HOME}" ${_TIMEOUT_CMD:+$_TIMEOUT_CMD 30} bash "$_SESSION_END" </dev/null >/dev/null 2>&1 \
+       && grep -q 'session-end skip=empty-stdin' "${_SMOKE_HOME:-$HOME}/.um/hook.log" 2>/dev/null; then
+      _vpass "session-end-dry-run" "exited 0, logged skip=empty-stdin (no checkpoint posted)"
     else
-      _vfail "session-end-dry-run" "session-end.sh exited non-zero. Check env vars and logs."
+      _vfail "session-end-dry-run" "session-end.sh dry-run failed. Check env vars and logs."
       _verify_fail=1
     fi
   else
@@ -197,8 +231,8 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # ── cleanup ───────────────────────────────────────────────────────────────
-  rm -rf "$_VAULT/captures/$_SMOKE_PROJECT" 2>/dev/null || true
-  _vpass "cleanup" "removed $_VAULT/captures/$_SMOKE_PROJECT"
+  if [ -n "$_SMOKE_HOME" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
+  _vpass "cleanup" "removed smoke scratch dir"
 
   echo ""
   if [ "$_verify_fail" -eq 0 ]; then
@@ -775,6 +809,7 @@ _UM_MARKER_LIB="$REPO_ROOT/installer/lib/marker-block.sh"
 if [ ! -f "$_UM_MARKER_LIB" ]; then
   _UM_MARKER_LIB="$(dirname "${BASH_SOURCE[0]}")/../installer/lib/marker-block.sh"
 fi
+# shellcheck source=../installer/lib/marker-block.sh
 source "$_UM_MARKER_LIB"
 unset _UM_MARKER_LIB
 

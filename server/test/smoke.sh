@@ -319,7 +319,7 @@ g2_assert_metric() {
   # 6.2e-7, 5e+10. Rejects: 0, 0.0, 0.000.
   echo "$lines" | grep -qE '\} ([0-9]*[1-9][0-9]*(\.[0-9]+)?|[0-9]*\.[0-9]*[1-9][0-9]*)([eE][-+]?[0-9]+)?' || {
     echo "FAIL: $label metric did not fire (metric=$metric_name, required-labels=$*)"
-    echo "[smoke]     g2_metrics body length: $(echo "$g2_metrics" | wc -c) bytes"
+    echo "[smoke]     g2_metrics body length: ${#g2_metrics} chars"
     echo "[smoke]     ALL um_provider_* data lines:"
     echo "$g2_metrics" | grep -E '^um_provider_' | head -30
     exit 1
@@ -1357,7 +1357,6 @@ echo "[smoke]     Task 10 MCP surface tests passed"
 echo "[smoke] 4g/5 Task 2.5 POST /api/delete — delete-by-metadata"
 
 T_DEL_ID="smoke-t-delete-by-meta"
-T_DEL_IDS=""
 
 # Step 1: add doc with explicit metadata id
 echo "[smoke]     Step 1: add doc with metadata.id=$T_DEL_ID"
@@ -1370,13 +1369,6 @@ data = json.load(sys.stdin)
 assert 'results' in data, 'response missing results key: ' + json.dumps(data)
 print('OK: add with metadata.id=$T_DEL_ID succeeded')
 " || { echo "FAIL: 4g step 1 add failed"; exit 1; }
-
-T_DEL_IDS=$(echo "$DEL_ADD_RESP" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for r in data.get('results', []):
-    if r.get('id'): print(r['id'])
-")
 
 # Step 2: verify findable via /api/search
 echo "[smoke]     Step 2: verify doc is findable"

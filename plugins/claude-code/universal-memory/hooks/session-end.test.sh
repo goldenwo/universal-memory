@@ -222,7 +222,7 @@ assert_eq "E1: POST targets /api/checkpoint" \
   "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/checkpoint"
 assert_eq "E1: body is exactly {\"project\":...}" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
-E1_ARGS=$(cat "$CAP_DIR/args_1" 2>/dev/null | tr '\n' ' ')
+E1_ARGS=$(tr '\n' ' ' 2>/dev/null < "$CAP_DIR/args_1")
 assert_contains "E1: curl uses the 120s checkpoint timeout" "$E1_ARGS" "--max-time 120 "
 assert_not_contains "E1: NOT the shared 10s timeout" "$E1_ARGS" "--max-time 10 "
 assert_contains "E1: log line attributed to session-end" \

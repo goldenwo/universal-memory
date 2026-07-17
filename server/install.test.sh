@@ -23,7 +23,7 @@ set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$SCRIPT_DIR")")"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 INSTALL_SH="$SCRIPT_DIR/install.sh"
 PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
 
@@ -107,6 +107,13 @@ if [[ "\$args" == *"openai.com"* ]]; then
 fi
 if [[ "\$args" == *"/health"* ]]; then
   printf '{"status":"ok"}'
+  exit 0
+fi
+# v2 hook wire contract (#159): the hooks call /api/* with
+# -w '\n__UM_HTTP_CODE__%{http_code}' and parse the sentinel out of stdout.
+# A healthy fake server answers 200 in that shape.
+if [[ "\$args" == *"/api/"* ]]; then
+  printf '{"ok":true}\n__UM_HTTP_CODE__200'
   exit 0
 fi
 exit 0
@@ -204,7 +211,7 @@ printf '\n# --- universal-memory (auto-added by install.sh) ---\nexport UM_OPENA
   "''" "'" "'" >> "$T1C/home/.bashrc"
 
 T1C_EXIT=0
-T1C_OUT=$(run_install "$T1C/bin" "$T1C_SH" \
+run_install "$T1C/bin" "$T1C_SH" \
   UM_NONINTERACTIVE=1 \
   OPENAI_API_KEY=sk-real-key999 \
   MEM0_USER_ID=testuser \
@@ -216,7 +223,7 @@ T1C_OUT=$(run_install "$T1C/bin" "$T1C_SH" \
   CLAUDE_PLUGINS_DIR="$T1C/plugins" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
-  HOME="$T1C/home") || T1C_EXIT=$?
+  HOME="$T1C/home" >/dev/null || T1C_EXIT=$?
 
 assert_exit_zero "T1c: server install exits 0 after cli install" "$T1C_EXIT"
 assert_contains "T1c: real key lands in profile" "$(cat "$T1C/home/.bashrc")" "sk-real-key999"
@@ -433,7 +440,7 @@ T9_SH=$(make_isolated_server "$T9/server")
 ln -s "$T9/elsewhere" "$T9/plugins/universal-memory"
 
 T9_EXIT=0
-T9_OUT=$(run_install "$T9/bin" "$T9_SH" \
+run_install "$T9/bin" "$T9_SH" \
   UM_NONINTERACTIVE=1 \
   OPENAI_API_KEY=sk-testkey12345 \
   MEM0_USER_ID=testuser \
@@ -445,7 +452,7 @@ T9_OUT=$(run_install "$T9/bin" "$T9_SH" \
   CLAUDE_PLUGINS_DIR="$T9/plugins" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
-  HOME="$T9/home") || T9_EXIT=$?
+  HOME="$T9/home" >/dev/null || T9_EXIT=$?
 
 assert_exit_zero "T9: install exits 0 over stale symlink" "$T9_EXIT"
 # v0.5 contract: server/install.sh no longer handles plugin copy (delegated
@@ -456,7 +463,7 @@ assert_exit_zero "T9: install exits 0 over stale symlink" "$T9_EXIT"
 # path in server-only install accidentally traverses a plugin-dir symlink.
 # The stale-symlink replacement behavior moved to install-plugin-cc.sh and
 # is tracked as an install-plugin-cc.test.sh coverage gap for v0.6.
-T9_ELSEWHERE_COUNT=$(ls "$T9/elsewhere" 2>/dev/null | wc -l | tr -d ' ')
+T9_ELSEWHERE_COUNT=$(find "$T9/elsewhere" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "T9: stale symlink target not corrupted by server install" "$T9_ELSEWHERE_COUNT" "0"
 
 # ─── T10: C2 — malformed .env line does not crash --verify ────────────────────
@@ -523,7 +530,7 @@ T15_SH=$(make_isolated_server "$T15/server")
 T15_EXIT=0
 # Feed 'l' to select link at the copy/link/skip prompt, then 'N' to decline
 # the profile append prompt (orthogonal to this test).
-T15_OUT=$(printf 'l\nN\n' | env PATH="$T15/bin:$PATH" \
+printf 'l\nN\n' | env PATH="$T15/bin:$PATH" \
   _UM_REPO_ROOT="$T15_REPO" \
   OPENAI_API_KEY=sk-testkey12345 \
   MEM0_USER_ID=testuser \
@@ -536,7 +543,7 @@ T15_OUT=$(printf 'l\nN\n' | env PATH="$T15/bin:$PATH" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
   HOME="$T15/home" \
-  bash "$T15_SH" 2>&1) || T15_EXIT=$?
+  bash "$T15_SH" >/dev/null 2>&1 || T15_EXIT=$?
 
 assert_exit_zero "T15: install exits 0 in link mode" "$T15_EXIT"
 
@@ -656,6 +663,7 @@ T18_SH=$(make_isolated_server "$T18/server")
 # ONLY UM_OPENAI_API_KEY (no UM_SUMMARIZER) — this is what an existing
 # alpha user's .bashrc looks like before they upgrade.
 {
+  # shellcheck disable=SC2016  # literal $PATH is the point — this writes a PATH-guard line into the fake rc file
   printf 'export PATH=/usr/local/bin:$PATH\n'
   printf '\n'
   printf '# --- universal-memory (auto-added by install.sh) ---\n'
@@ -669,7 +677,7 @@ T18_SH=$(make_isolated_server "$T18/server")
 T18_EXIT=0
 # Pin PATH so detection sees our fake claude.
 T18_PATH="$T18/bin:/usr/bin:/bin"
-T18_OUT=$(env -i PATH="$T18_PATH" \
+env -i PATH="$T18_PATH" \
   _UM_REPO_ROOT="$REPO_ROOT" \
   UM_NONINTERACTIVE=1 \
   OPENAI_API_KEY=sk-testkey12345 \
@@ -683,7 +691,7 @@ T18_OUT=$(env -i PATH="$T18_PATH" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
   HOME="$T18/home" \
-  bash "$T18_SH" 2>&1) || T18_EXIT=$?
+  bash "$T18_SH" >/dev/null 2>&1 || T18_EXIT=$?
 
 assert_exit_zero "T18: upgrade re-install exits 0" "$T18_EXIT"
 T18_BASHRC=$(cat "$T18/home/.bashrc")
@@ -700,7 +708,7 @@ assert_contains "T18: user-added PATH line preserved" "$T18_BASHRC" "export PATH
 assert_contains "T18: user-added alias preserved" "$T18_BASHRC" 'alias ll="ls -la"'
 # Running install a THIRD time must remain idempotent — no duplicate blocks.
 T18B_EXIT=0
-T18B_OUT=$(env -i PATH="$T18_PATH" \
+env -i PATH="$T18_PATH" \
   _UM_REPO_ROOT="$REPO_ROOT" \
   UM_NONINTERACTIVE=1 \
   OPENAI_API_KEY=sk-testkey12345 \
@@ -714,7 +722,7 @@ T18B_OUT=$(env -i PATH="$T18_PATH" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
   HOME="$T18/home" \
-  bash "$T18_SH" 2>&1) || T18B_EXIT=$?
+  bash "$T18_SH" >/dev/null 2>&1 || T18B_EXIT=$?
 assert_exit_zero "T18: third run (idempotency) exits 0" "$T18B_EXIT"
 T18_START_COUNT2=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
 T18_END_COUNT2=$(grep -cF "# --- end universal-memory ---" "$T18/home/.bashrc")
@@ -725,7 +733,7 @@ assert_eq "T18: still exactly one marker-end after third run" "$T18_END_COUNT2" 
 # Run a fourth time and assert no line-count growth between runs 3 and 4.
 T18_LINES_3=$(wc -l < "$T18/home/.bashrc")
 T18C_EXIT=0
-T18C_OUT=$(env -i PATH="$T18_PATH" \
+env -i PATH="$T18_PATH" \
   _UM_REPO_ROOT="$REPO_ROOT" \
   UM_NONINTERACTIVE=1 \
   OPENAI_API_KEY=sk-testkey12345 \
@@ -739,7 +747,7 @@ T18C_OUT=$(env -i PATH="$T18_PATH" \
   UM_SKIP_KEY_VALIDATION=1 \
   SHELL=/bin/bash \
   HOME="$T18/home" \
-  bash "$T18_SH" 2>&1) || T18C_EXIT=$?
+  bash "$T18_SH" >/dev/null 2>&1 || T18C_EXIT=$?
 assert_exit_zero "T18: fourth run (idempotency) exits 0" "$T18C_EXIT"
 T18_LINES_4=$(wc -l < "$T18/home/.bashrc")
 assert_eq "T18: bashrc line count stable between run 3 and run 4" "$T18_LINES_4" "$T18_LINES_3"
