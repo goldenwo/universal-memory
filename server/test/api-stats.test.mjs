@@ -338,6 +338,31 @@ test('A4 compat: X-UM-Source header wins over the mem0-compat fallback', async (
   });
 });
 
+test('A4 compat: a post-processing throw ⇒ 500 AND no recall counter (emit-after-success)', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    // Engine call succeeds but the returned record detonates in
+    // post-processing (throwing `metadata` getter — the first pipeline step
+    // that touches metadata throws, whichever it is) — the dispatcher maps
+    // it to a 500. The recall counter must NOT have moved: a failed serve
+    // is not "recall volume" (doSearch emit-after-success parity).
+    const bad = { id: 'x', memory: 'm', score: 0.9 };
+    Object.defineProperty(bad, 'metadata', {
+      get() { throw new Error('post-processing boom'); },
+      enumerable: true,
+    });
+    const ctx = {
+      memory: { search: async () => ({ results: [bad] }) },
+      userId: 'op',
+    };
+    const req = { method: 'POST', headers: {} };
+    const out = await handleMem0Compat(req, new URL('/v2/memories/search/', 'http://x'), { query: 'q' }, ctx);
+    assert.equal(out.status, 500);
+    const stats = readCounterStats({ now: Date.now(), dbPath });
+    assert.equal(stats.available, false, 'no emission ⇒ counters db never created');
+    assert.equal(recallDurations().length, 0, 'no ring-buffer sample for a failed serve');
+  });
+});
+
 test('A4 compat: /v2/memories/ (list read) also counts as a recall', async () => {
   await withTelemetryDb(async (dbPath) => {
     const ctx = { memory: makeFakeMemory(5), userId: 'op' };

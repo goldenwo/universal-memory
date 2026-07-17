@@ -558,10 +558,7 @@ async function handleSearch({ req, body, ctx }) {
     () => memory.search(b.query, { userId: operatorId, limit: fetchLimit }),
     { op: 'compat-search' },
   );
-  noteRecallSearch({
-    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
-    durationMs: Date.now() - recallStartedAt,
-  });
+  const engineMs = Date.now() - recallStartedAt;
   let items = raw?.results ?? raw ?? [];
   // Read-path parity with doSearch: superseded/system records never surface.
   items = filterSystemDocs(items).filter(isRecallable);
@@ -570,6 +567,13 @@ async function handleSearch({ req, body, ctx }) {
   records = applyMem0Filters(records, descriptor);
   const threshold = typeof b.threshold === 'number' ? b.threshold : 0.3;
   records = records.filter((r) => typeof r.score !== 'number' || r.score >= threshold);
+  // Emit-after-success (U2 review nit): duration covers the ENGINE call only,
+  // but the emit waits until post-processing succeeds — a throw above becomes
+  // a 500 that was never counted as a served recall (doSearch parity).
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: engineMs,
+  });
   return { status: 200, body: { results: records.slice(0, topK) } };
 }
 
@@ -585,11 +589,9 @@ async function handleList({ req, url, body, ctx }) {
   // telemetry as R3 (emitting here, not inside scanAll, keeps the R8/R9
   // bulk-delete scans OUT of the recall counters — plan U2 audit).
   const recallStartedAt = Date.now();
-  const items = (await scanAll(memory, operatorId)).filter(isRecallable);
-  noteRecallSearch({
-    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
-    durationMs: Date.now() - recallStartedAt,
-  });
+  const scanned = await scanAll(memory, operatorId);
+  const engineMs = Date.now() - recallStartedAt;
+  const items = scanned.filter(isRecallable);
   const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
 
   const pageRaw = Number.parseInt(url.searchParams.get('page') ?? '', 10);
@@ -599,6 +601,12 @@ async function handleList({ req, url, body, ctx }) {
   // per-row projection (spec §3 R4).
   const pageSize = Math.min(Number.isInteger(sizeRaw) && sizeRaw >= 1 ? sizeRaw : 100, 500);
   const start = (page - 1) * pageSize;
+  // Emit-after-success (U2 review nit) — see the R3 note: engine-call
+  // duration, but only counted once post-processing/paging succeeded.
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: engineMs,
+  });
   return { status: 200, body: { results: records.slice(start, start + pageSize) } };
 }
 
