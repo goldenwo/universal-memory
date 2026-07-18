@@ -125,6 +125,12 @@ case "$HTTP_CODE" in
   401)
     echo "um-alert: CHECK FAILED — server rejected auth (401): check ${UM_TOKEN_FILE:-~/.um/auth-token}" >&2
     exit 2 ;;
+  404)
+    # Same skew taxonomy the hooks + installer probes use: a 404 on a route
+    # this client knows about means the SERVER predates it, not that the
+    # check found staleness. Upgrading is the actionable fix.
+    echo "um-alert: CHECK FAILED — $ENDPOINT has no /api/stats (HTTP 404): server too old — upgrade it to a release that ships the stats layer" >&2
+    exit 2 ;;
   *)
     echo "um-alert: CHECK FAILED — /api/stats returned HTTP $HTTP_CODE from $ENDPOINT" >&2
     exit 2 ;;

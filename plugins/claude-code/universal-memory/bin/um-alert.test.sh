@@ -309,6 +309,25 @@ else
   fail "T14-arg-error-message: $output"
 fi
 
+# ─── T16: 404 ⇒ "server too old" (skew taxonomy), exit 2 ───────────────────
+# Found by the U5 keyed run: a server predating /api/stats returned a generic
+# "returned HTTP 404" instead of the actionable upgrade message the hooks and
+# installer probes use for the same condition.
+echo ""
+echo "=== T16: 404 ⇒ server-too-old message + exit 2 ==="
+mock="$TMPDIR_ROOT/t16"; _make_mock_curl "$mock" 404 '{"error":"not found"}'
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then
+  pass "T16-exit-2"
+else
+  fail "T16-exit-2 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "server too old"; then
+  pass "T16-upgrade-message"
+else
+  fail "T16-upgrade-message: $output"
+fi
+
 # ─── T15: missing/empty option values ⇒ exit 2 (NEVER 1) ───────────────────
 # In the documented `um-alert.sh || <notify>` cron shape, exit 1 = STALE. A
 # typo'd invocation must not page "your capture pipeline is dead" — bash's
