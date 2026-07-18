@@ -309,6 +309,27 @@ else
   fail "T14-arg-error-message: $output"
 fi
 
+# ─── T15: missing/empty option values ⇒ exit 2 (NEVER 1) ───────────────────
+# In the documented `um-alert.sh || <notify>` cron shape, exit 1 = STALE. A
+# typo'd invocation must not page "your capture pipeline is dead" — bash's
+# ${2:?...} would have exited 1, the wrong class.
+echo ""
+echo "=== T15: missing/empty option value ⇒ exit 2, not 1 ==="
+for _case in "--max-age-hours" "--surface" "--server"; do
+  output=$(bash "$BIN" $_case 2>&1) && rc=0 || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    pass "T15-missing-value-exit-2 ($_case)"
+  else
+    fail "T15-missing-value-exit-2 ($_case): rc=$rc (1 would falsely mean STALE), out=$output"
+  fi
+done
+output=$(bash "$BIN" --max-age-hours "" 2>&1) && rc=0 || rc=$?
+if [ "$rc" -eq 2 ]; then
+  pass "T15-empty-value-exit-2"
+else
+  fail "T15-empty-value-exit-2: rc=$rc, out=$output"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

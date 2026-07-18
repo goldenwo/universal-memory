@@ -337,7 +337,7 @@ jobs:
           #
           # #171 Stage-A A6 — the stats + alert legs (S10 legs 4/5) ride the
           # same gate: GET /api/stats must show the smoke-s10 surface fresh
-          # (freshness_hours == 0, events_today >= 2) + recall/corpus
+          # (freshness_hours == 0, >= 2 capture events) + recall/corpus
           # sections, then bin/um-alert.sh must exit 0 on the fresh surface
           # and 1 on a never-captured one. No extra env: the legs need only
           # this flag + the bearer token install.sh already wrote to .env

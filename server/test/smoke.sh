@@ -2957,7 +2957,8 @@ fi
 # #171 Stage-A A6 rides S10's tail (legs 4/5): after the turns land, GET
 # /api/stats (bearer required — the route VETOES the loopback no-auth
 # bypass, spec §3) must show schema_version 1, capture[smoke-s10] with
-# freshness_hours == 0 (rows-today clamp) + events_today >= 2, a recall
+# freshness_hours == 0 (rows-today clamp) + >= 2 capture events (today, or
+# in the 7-day rollup when the run straddles UTC midnight), a recall
 # section, and corpus.points >= 1; then bin/um-alert.sh (spec §4/A3) must
 # exit 0 against the fresh S10 surface and 1 against a never-captured one.
 # Both legs need only the leg-1 turns, so they run under either LLM tier;
@@ -2995,7 +2996,10 @@ if [ "${UM_SMOKE_REMOTE_RT:-}" = "1" ]; then
 
 	S10_PROJECT="s10-rt-$(date +%s)-$$"
 	S10_MARKER="s10remote-$(date +%s)-$$"
-	S10_SURFACE="smoke-s10"
+	S10_SURFACE="smoke-s10-$(date +%s)-$$"   # run-scoped: counters GROUP BY surface
+		                                     # has no project dimension, and a constant
+		                                     # name would let a PRIOR run's rows satisfy
+		                                     # leg 4 on a persisted counters DB.
 	S10_SUMMARY_ID=""
 
 	# Container handle for the counters read. Reuse the Task-1 detection when
@@ -3154,7 +3158,8 @@ assert state.get('body', '').strip(), 'state body is empty'
 		# Asserted over the LIVE S10 residue: the two leg-1 turns landed
 		# today (UTC) under X-UM-Source: smoke-s10, so capture[smoke-s10]
 		# must show freshness_hours == 0 (rows-today clamp, spec §3 pinned
-		# formula) and events_today >= 2. Independent of the leg-3 LLM tier.
+		# formula) and >= 2 capture events (events_today, or the 7-day rollup
+		# on a midnight straddle). Independent of the leg-3 LLM tier.
 		# /api/stats is bearer-required with the loopback bypass VETOED
 		# (noLoopbackBypass, spec §3): without a configured bearer the route
 		# refuses the request (500 auth-misconfigured server-side / 401
@@ -3175,13 +3180,13 @@ capture = data.get('capture')
 assert isinstance(capture, dict), 'capture section missing/degraded (degraded=%r)' % data.get('degraded')
 info = capture.get(surface)
 assert info is not None, 'capture has no %r row (surfaces seen: %s)' % (surface, sorted(capture))
-# Turns landed moments ago => normally freshness_hours == 0 (rows-today clamp).
-# If the run straddles UTC midnight between leg 1 and leg 4 (leg-3's LLM
-# checkpoint takes minutes), last_day_seen rolls to yesterday and freshness
-# becomes hours-since-midnight -- still tiny. Accept <= 1.0h either way.
-fh = info.get('freshness_hours')
-assert isinstance(fh, (int, float)) and fh <= 1.0, 'expected freshness_hours <= 1.0 (turns landed moments ago), got %r' % fh
-# events_today covers same-day; the 7-day outcome rollup covers the straddle.
+# freshness stays PINNED at 0: stats round1() absorbs the first ~3 min past
+# UTC midnight, and leg-3's checkpoint re-stamps last_day_seen=today, so the
+# straddle never moves this clause (only events_today, below).
+assert info.get('freshness_hours') == 0, 'expected freshness_hours == 0 (turns landed moments ago), got %r' % info.get('freshness_hours')
+# events_today breaks on a UTC-midnight straddle between legs 1 and 4 (the
+# turns land on the previous day). The 7-day rollup spans both days, and the
+# run-scoped surface means it counts ONLY this run's turns -- no vacuity.
 events_today = info.get('events_today', 0)
 outcomes = info.get('outcomes_7d') or {}
 events_7d = sum(v for v in outcomes.values() if isinstance(v, (int, float)))
@@ -3190,7 +3195,7 @@ assert isinstance(data.get('recall'), dict), 'recall section missing'
 points = (data.get('corpus') or {}).get('points')
 assert isinstance(points, int) and points >= 1, 'expected corpus.points numeric >= 1, got %r' % points
 " || s10_fail "/api/stats response failed the A6 asserts: $_s10_stats_body"
-			echo "[smoke]     S10 leg 4 OK: /api/stats 200 — capture[$S10_SURFACE] fresh (0h, >=2 events today), recall present, corpus.points >= 1, schema_version 1"
+			echo "[smoke]     S10 leg 4 OK: /api/stats 200 — capture[$S10_SURFACE] fresh (0h, >=2 events today or in the 7d rollup), recall present, corpus.points >= 1, schema_version 1"
 
 			# (e) Leg 5 — bin/um-alert.sh against the same live stats (spec
 			# §4/A3): the fresh S10 surface ⇒ exit 0; a surface that has never

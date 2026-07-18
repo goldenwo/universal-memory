@@ -69,17 +69,27 @@ EOF
 MAX_AGE_HOURS=26
 SURFACE=""
 
+# A missing/empty option value is a CHECK-FAILED (exit 2), never exit 1: in the
+# documented `um-alert.sh || <notify>` cron shape, exit 1 means STALE, so a
+# typo'd invocation must not page the operator "your capture pipeline is dead".
+# (`${2:?...}` would exit 1 — the wrong class.)
+_require_value() { # _require_value <flag> <count> [value]
+  { [ "$2" -ge 2 ] && [ -n "${3:-}" ]; } && return 0
+  echo "um-alert: CHECK FAILED — $1 requires a value" >&2
+  exit 2
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h) _usage; exit 0 ;;
     --max-age-hours)
-      MAX_AGE_HOURS="${2:?--max-age-hours requires a number}"; shift 2 ;;
+      _require_value "$1" "$#" "${2:-}"; MAX_AGE_HOURS="$2"; shift 2 ;;
     --surface)
-      SURFACE="${2:?--surface requires a surface name}"; shift 2 ;;
+      _require_value "$1" "$#" "${2:-}"; SURFACE="$2"; shift 2 ;;
     --server)
       # um_api_endpoint's tier 1 — an env override beats the file tier, so
       # exporting here is exactly the sibling CLIs' --server semantic.
-      export UM_SERVER_URL="${2:?--server requires a URL}"; shift 2 ;;
+      _require_value "$1" "$#" "${2:-}"; export UM_SERVER_URL="$2"; shift 2 ;;
     *)
       echo "um-alert: unknown option: $1" >&2; _usage >&2; exit 2 ;;
   esac
