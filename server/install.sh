@@ -160,6 +160,62 @@ _um_port() {
 	printf '%s' "${_p##*:}"
 }
 
+# ─── Version reporting across the three updatable surfaces ───────────────────
+# The server container, the `um` CLI, and the Claude Code plugin update through
+# three different mechanisms with no shared release trigger, so they drift
+# independently. A host once ran a current server while its CLI sat a full
+# release behind — which silently made that release's capture-freshness cron
+# uninstallable, because the script it needed did not exist in that tree.
+# Nothing surfaced the gap. These helpers let --verify surface it.
+
+# Extract a top-level "version" from a JSON file. Empty when absent/unreadable.
+# grep+sed rather than jq: jq is not a dependency anywhere else in this script.
+_um_json_version() {
+	[ -f "$1" ] || return 0
+	grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$1" 2>/dev/null \
+		| head -1 \
+		| sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+		|| true
+}
+
+# Version of the server the running container was built from. Prefers the OCI
+# label the release workflow stamps, which stays accurate even when the image
+# is tagged `latest`; falls back to the image tag for locally-built images.
+_um_server_version() {
+	local _cid _img _ver
+	_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+	[ -n "$_cid" ] || return 0
+	_ver=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$_cid" 2>/dev/null || true)
+	if [ -z "$_ver" ] || [ "$_ver" = "<no value>" ]; then
+		_img=$(docker inspect -f '{{.Config.Image}}' "$_cid" 2>/dev/null || true)
+		_ver="${_img##*:}"
+		# A bare repo with no tag leaves the whole ref behind — not a version.
+		case "$_ver" in */*) _ver="" ;; esac
+	fi
+	printf '%s' "$_ver"
+}
+
+# True when $1 is a strictly lower dotted-numeric version than $2. Anything
+# non-numeric (`latest`, a digest, empty) returns false — an unknown version is
+# never reported as skew, because a false skew warning trains operators to
+# ignore the real one.
+_um_ver_lt() {
+	local _a="$1" _b="$2" _i _x _y
+	[[ "$_a" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+	[[ "$_b" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+	local IFS=.
+	local _A=() _B=()
+	read -ra _A <<< "$_a"
+	read -ra _B <<< "$_b"
+	for _i in 0 1 2; do
+		_x="${_A[$_i]:-0}"
+		_y="${_B[$_i]:-0}"
+		[ "$_x" -lt "$_y" ] && return 0
+		[ "$_x" -gt "$_y" ] && return 1
+	done
+	return 1
+}
+
 # I3: `timeout` (GNU coreutils / BSD) is optional. Probe once; call sites use
 # ${_TIMEOUT_CMD:+$_TIMEOUT_CMD <secs>} so its absence degrades to no timeout
 # rather than a hard failure. (`A && B` never trips errexit when A fails.)
@@ -170,6 +226,11 @@ command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
 if [ "${1:-}" = "--verify" ]; then
   _vpass() { printf '\033[1;32m[verify]\033[0m %-30s \xe2\x9c\x85  %s\n' "$1" "${2:-}"; }
   _vfail() { printf '\033[1;31m[verify]\033[0m %-30s \xe2\x9d\x8c  %s\n' "$1" "${2:-}" >&2; }
+  # Informational / advisory lines. Deliberately distinct glyphs: a version
+  # readout is not a passed check, and version skew is a warning an operator
+  # should act on without it failing an otherwise-healthy server verify.
+  _vinfo() { printf '\033[1;34m[verify]\033[0m %-30s \xe2\x84\xb9   %s\n' "$1" "${2:-}"; }
+  _vwarn() { printf '\033[1;33m[verify]\033[0m %-30s \xe2\x9a\xa0   %s\n' "$1" "${2:-}"; }
   _verify_fail=0
 
   # M2: Guard against unset HOME when neither HOME nor CLAUDE_PLUGINS_DIR is available.
@@ -335,6 +396,47 @@ print(json.dumps({
   # counters row + any already-indexed point are accepted best-effort residue.
   rm -rf "$_VAULT/captures/install-verify" 2>/dev/null || true
   _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
+
+  # ── versions ──────────────────────────────────────────────────────────────
+  # Three surfaces update through three different mechanisms — the server
+  # container (install.sh --upgrade / compose pull), the `um` CLI (re-run
+  # installer/install-cli.sh), and the Claude Code plugin (claude plugin
+  # update). Nothing keeps them in step, and until now nothing reported the
+  # drift either. Informational by default: an out-of-date CLI is a real
+  # problem but not a reason to fail a server verify.
+  echo ""
+  _SERVER_VER=$(_um_server_version)
+  _CLI_VER=$(_um_json_version "$HOME/.local/.claude-plugin/plugin.json")
+  _PLUGIN_SRC_VER=$(_um_json_version "$REPO_ROOT/plugins/claude-code/universal-memory/.claude-plugin/plugin.json")
+  _PLUGIN_INST_VER=$(_um_json_version "$_PLUGIN_DIR/.claude-plugin/plugin.json")
+
+  _vinfo "version-server"      "${_SERVER_VER:-unknown (is the container running?)}"
+  _vinfo "version-cli"         "${_CLI_VER:-not installed}${_CLI_VER:+   (um --version)}"
+  _vinfo "version-plugin"      "${_PLUGIN_INST_VER:-not installed}${_PLUGIN_INST_VER:+   (installed)}"
+  _vinfo "version-source-tree" "${_PLUGIN_SRC_VER:-unknown}"
+
+  # Skew 1: the client half is NEWER than the server. This is the shape that
+  # produces silent capture death — the plugin's routes 404 against a server
+  # that predates them, which surfaces only as skip=server-too-old in
+  # ~/.um/hook.log and a session-start banner.
+  if [ -n "$_SERVER_VER" ]; then
+    if [ -n "$_PLUGIN_INST_VER" ] && _um_ver_lt "$_SERVER_VER" "$_PLUGIN_INST_VER"; then
+      _vwarn "version-skew" "plugin $_PLUGIN_INST_VER is NEWER than server $_SERVER_VER — upgrade the server first: bash server/install.sh --upgrade"
+    fi
+    # Skew 2: the server predates the API-always capture contract. The plugin
+    # genuinely cannot capture against it, so this one fails the verify.
+    if [ -n "$_PLUGIN_INST_VER" ] && _um_ver_lt "$_SERVER_VER" "1.7.0"; then
+      _vfail "version-floor" "server $_SERVER_VER predates the /api capture contract (needs >= 1.7.0). The plugin cannot capture against it."
+      _verify_fail=1
+    fi
+  fi
+
+  # Skew 3: the CLI is behind the source tree it was installed from. This is
+  # the case that hid for a full release cycle: the server was current, the
+  # CLI was not, and the newer release's scripts simply were not on disk.
+  if [ -n "$_CLI_VER" ] && [ -n "$_PLUGIN_SRC_VER" ] && _um_ver_lt "$_CLI_VER" "$_PLUGIN_SRC_VER"; then
+    _vwarn "version-skew" "um CLI $_CLI_VER is BEHIND this source tree ($_PLUGIN_SRC_VER) — scripts added since $_CLI_VER are missing. Refresh: bash installer/install-cli.sh --no-path"
+  fi
 
   echo ""
   if [ "$_verify_fail" -eq 0 ]; then
@@ -675,6 +777,44 @@ if [ "${1:-}" = "--upgrade" ]; then
   Then check: $(_compose_hint 'logs memory-server')"
 	fi
 
+	# ── Post-success: refresh the um CLI ─────────────────────────────────────
+	# The `um` CLI (um-alert, um-search, um-state, ...) is a COPY of this repo's
+	# scripts under ~/.local/share/um. It has no self-update path, so it stays
+	# at whatever version was installed until someone re-runs the installer by
+	# hand. That is how a host came to run a current server with a CLI a full
+	# release behind — and why that release's capture-freshness cron could not
+	# be installed: um-alert.sh did not exist in that tree, with nothing
+	# anywhere reporting the gap.
+	#
+	# --upgrade already has the source tree and has just verified the server, so
+	# it is the one moment where refreshing the CLI is both safe and obvious.
+	# STRICTLY best-effort: the server upgrade has ALREADY SUCCEEDED here, and
+	# nothing below may fail it, roll it back, or change its exit code.
+	_UPG_CLI_DIR="${UM_CLI_DIR:-$HOME/.local/share/um/cli}"
+	_UPG_CLI_INSTALLER="$REPO_ROOT/installer/install-cli.sh"
+	if [ -d "$_UPG_CLI_DIR" ]; then
+		echo ""
+		echo "[upgrade] Refreshing the um CLI so it matches the server..."
+		if [ ! -f "$_UPG_CLI_INSTALLER" ]; then
+			# Tarball or partial tree: the CLI is installed but its installer is
+			# not here to re-run. Say so loudly — a silently stale CLI is the
+			# exact failure this step exists to end.
+			_uwarn "CLI is installed at $_UPG_CLI_DIR, but $_UPG_CLI_INSTALLER is missing."
+			_uwarn "  Your CLI is now OLDER than your server. From a full source tree, run:"
+			_uwarn "    bash installer/install-cli.sh --no-path"
+		# --no-path is load-bearing. install-cli.sh rewrites the shell rc marker
+		# block from the CURRENT environment, and --upgrade never collects an
+		# API key — so refreshing without it would blank UM_OPENAI_API_KEY in
+		# the operator's profile. An upgrade must not touch shell profiles.
+		elif bash "$_UPG_CLI_INSTALLER" --yes --no-path 2>&1 | sed 's/^/[cli] /'; then
+			_UPG_CLI_VER=$(_um_json_version "$HOME/.local/.claude-plugin/plugin.json")
+			_uok "um CLI refreshed${_UPG_CLI_VER:+ to $_UPG_CLI_VER}."
+		else
+			_uwarn "CLI refresh FAILED. The server upgrade is fine and still healthy — only the CLI is stale."
+			_uwarn "  Re-run it yourself:  bash $_UPG_CLI_INSTALLER --no-path"
+		fi
+	fi
+
 	# ── Success ──────────────────────────────────────────────────────────────
 	_UPG_HEALTH_BODY=$(curl -sf --max-time 5 "$_UPG_HEALTH" 2>/dev/null || true)
 	echo ""
@@ -693,6 +833,10 @@ EOF
 ║
 ║ What changed: CHANGELOG.md (release notes)
 ║               MIGRATION.md (per-version upgrade steps)
+║
+║ The server is only one of three surfaces. If you use the Claude Code
+║ plugin, update it too:  claude plugin update universal-memory
+║ Full order + failure signatures: docs/upgrading.md
 ║
 EOF
 	printf '║ To revert to the previous image:\n'

@@ -214,6 +214,8 @@ universal-memory/
 
 ## Upgrading
 
+universal-memory is three separately-updated surfaces — the **server**, the **Claude Code plugin**, and the **`um` CLI** — and they update through three different mechanisms. **[docs/upgrading.md](docs/upgrading.md) covers all three in order**, with the failure signature each one produces when it falls behind. The server is below; do it first, because the plugin will not talk to a server older than itself.
+
 ```bash
 cd server
 ./install.sh --upgrade          # to whatever your compose config resolves
@@ -235,6 +237,8 @@ curl http://localhost:6335/health   # or your MEM0_MCP_PORT
 Run compose commands from `server/` and without `-f`, so a host-specific `server/docker-compose.override.yml` is picked up (compose auto-loads that name; an explicit `-f` suppresses it). If `UM_IMAGE` is set in your `.env` it overrides `UM_VERSION` entirely — unset it, or edit `UM_IMAGE` instead of passing a version. (`--upgrade` refuses that combination rather than upgrading to something you did not ask for.)
 
 Set `UM_VERSION` in `server/.env` to make a pin durable across plain `docker compose up -d`.
+
+The other two surfaces: `claude plugin update universal-memory` (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 ### Host-specific overrides
 

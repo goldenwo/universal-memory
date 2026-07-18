@@ -1372,6 +1372,239 @@ assert_not_contains "T28: no quote leaked into the URL" "$T28_OUT" 'localhost:"6
 assert_contains "T28: inline comment stripped from vault path" "$T28_OUT" "vault-dir"
 assert_not_contains "T28: vault path has no comment residue" "$T28_OUT" "# inline comment"
 
+# ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
+# The CLI is a copy of the repo's scripts with no self-update path, so it stays
+# at whatever version was installed until someone re-runs the installer. That
+# is how a host ran a current server with a CLI a full release behind, making
+# that release's capture-freshness cron uninstallable.
+echo ""
+echo "=== T32: --upgrade refreshes the um CLI ==="
+T32="$TMPROOT/t32"
+mkdir -p "$T32/server" "$T32/home/.local/share/um/cli" "$T32/repo/installer"
+make_fakebin "$T32/bin" 200
+make_fake_docker_upgrade "$T32/bin"
+T32_SH=$(make_isolated_server "$T32/server")
+# Fake source tree whose install-cli.sh records how it was invoked.
+cat > "$T32/repo/installer/install-cli.sh" <<'FAKE'
+#!/usr/bin/env bash
+printf 'CLI-INSTALLER-RAN args=%s\n' "$*" >> "$UM_CLI_INSTALL_LOG"
+echo "um installed"
+exit 0
+FAKE
+chmod +x "$T32/repo/installer/install-cli.sh"
+T32_LOG="$T32/docker.log"
+T32_CLI_LOG="$T32/cli-installer.log"
+
+T32_EXIT=0
+T32_OUT=$(env -i PATH="$T32/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32/repo" HOME="$T32/home" \
+  FAKE_DOCKER_LOG="$T32_LOG" UM_CLI_INSTALL_LOG="$T32_CLI_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32_SH" --upgrade 2>&1) || T32_EXIT=$?
+
+assert_exit_zero "T32: upgrade exits 0" "$T32_EXIT"
+assert_contains "T32: announces the CLI refresh" "$T32_OUT" "Refreshing the um CLI"
+assert_file_exists "T32: CLI installer was invoked" "$T32_CLI_LOG"
+# --no-path is load-bearing: install-cli.sh rewrites the shell rc marker block
+# from the CURRENT environment, and --upgrade never collects an API key — so a
+# refresh without it would blank UM_OPENAI_API_KEY in the operator's profile.
+assert_contains "T32: refresh passes --no-path (never touches shell profiles)" \
+  "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--no-path"
+assert_contains "T32: refresh is non-interactive" \
+  "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--yes"
+assert_contains "T32: points at the three-surface doc" "$T32_OUT" "docs/upgrading.md"
+
+# ─── T32b: CLI not installed on this host ⇒ refresh is skipped silently ──────
+echo ""
+echo "=== T32b: no CLI installed ⇒ no refresh attempted ==="
+T32B="$TMPROOT/t32b"
+mkdir -p "$T32B/server" "$T32B/home" "$T32B/repo/installer"
+make_fakebin "$T32B/bin" 200
+make_fake_docker_upgrade "$T32B/bin"
+T32B_SH=$(make_isolated_server "$T32B/server")
+cp "$T32/repo/installer/install-cli.sh" "$T32B/repo/installer/install-cli.sh"
+T32B_CLI_LOG="$T32B/cli-installer.log"
+
+T32B_EXIT=0
+T32B_OUT=$(env -i PATH="$T32B/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32B/repo" HOME="$T32B/home" \
+  FAKE_DOCKER_LOG="$T32B/docker.log" UM_CLI_INSTALL_LOG="$T32B_CLI_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32B_SH" --upgrade 2>&1) || T32B_EXIT=$?
+
+assert_exit_zero "T32b: upgrade still exits 0" "$T32B_EXIT"
+assert_not_contains "T32b: no refresh announced" "$T32B_OUT" "Refreshing the um CLI"
+if [ -f "$T32B_CLI_LOG" ]; then
+  fail_test "T32b: CLI installer not invoked when CLI absent" "installer ran anyway"
+else
+  pass "T32b: CLI installer not invoked when CLI absent"
+fi
+
+# ─── T32c: a failing/missing CLI refresh never fails the server upgrade ──────
+# The server upgrade has already succeeded and been health-verified by this
+# point. A stale CLI is a real problem, but turning it into a failed exit code
+# would invite an operator to roll back a perfectly good server.
+echo ""
+echo "=== T32c: CLI refresh failure does not fail or roll back the upgrade ==="
+T32C="$TMPROOT/t32c"
+mkdir -p "$T32C/server" "$T32C/home/.local/share/um/cli" "$T32C/repo/installer"
+make_fakebin "$T32C/bin" 200
+make_fake_docker_upgrade "$T32C/bin"
+T32C_SH=$(make_isolated_server "$T32C/server")
+cat > "$T32C/repo/installer/install-cli.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "install-cli: python3 not found" >&2
+exit 1
+FAKE
+chmod +x "$T32C/repo/installer/install-cli.sh"
+T32C_LOG="$T32C/docker.log"
+
+T32C_EXIT=0
+T32C_OUT=$(env -i PATH="$T32C/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32C/repo" HOME="$T32C/home" \
+  FAKE_DOCKER_LOG="$T32C_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32C_SH" --upgrade 2>&1) || T32C_EXIT=$?
+
+assert_exit_zero "T32c: failing CLI refresh still exits 0" "$T32C_EXIT"
+assert_contains "T32c: reports the refresh failure" "$T32C_OUT" "CLI refresh FAILED"
+assert_contains "T32c: gives the manual command" "$T32C_OUT" "install-cli.sh --no-path"
+assert_contains "T32c: server upgrade still reported complete" "$T32C_OUT" "Upgrade complete"
+assert_not_contains "T32c: no rollback triggered" "$T32C_OUT" "AUTO-ROLLBACK"
+
+# ─── T32d: installer missing entirely (tarball / partial tree) ───────────────
+echo ""
+echo "=== T32d: CLI installed but installer absent ⇒ actionable warning ==="
+T32D="$TMPROOT/t32d"
+mkdir -p "$T32D/server" "$T32D/home/.local/share/um/cli" "$T32D/repo"
+make_fakebin "$T32D/bin" 200
+make_fake_docker_upgrade "$T32D/bin"
+T32D_SH=$(make_isolated_server "$T32D/server")
+
+T32D_EXIT=0
+T32D_OUT=$(env -i PATH="$T32D/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32D/repo" HOME="$T32D/home" \
+  FAKE_DOCKER_LOG="$T32D/docker.log" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32D_SH" --upgrade 2>&1) || T32D_EXIT=$?
+
+assert_exit_zero "T32d: still exits 0 on a partial tree" "$T32D_EXIT"
+assert_contains "T32d: names the missing installer" "$T32D_OUT" "install-cli.sh is missing"
+assert_contains "T32d: warns the CLI is now older" "$T32D_OUT" "OLDER than your server"
+
+# ─── T33: --verify reports all three versions and flags skew ────────────────
+echo ""
+echo "=== T33: --verify reports server / CLI / plugin versions ==="
+T33="$TMPROOT/t33"
+mkdir -p "$T33/vault" "$T33/plugins" "$T33/home/.local/.claude-plugin" "$T33/repo/plugins/claude-code"
+make_fakebin "$T33/bin" 200
+T33_SH=$(make_isolated_server "$T33/server")
+cp -r "$PLUGIN_SRC" "$T33/plugins/universal-memory"
+# The fake repo carries the REAL plugin tree (hooks and all) so the other
+# verify checks behave normally and any exit code is attributable to versions.
+cp -r "$PLUGIN_SRC" "$T33/repo/plugins/claude-code/universal-memory"
+# Installed CLI marker: a full release behind the source tree — the exact skew
+# that hid for a release cycle.
+printf '{"name":"universal-memory","version":"1.6.0"}\n' > "$T33/home/.local/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+# Installed plugin: NEWER than the server we will report (1.7.0).
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/plugins/universal-memory/.claude-plugin/plugin.json"
+# Fake docker that reports a running server carrying an OCI version label.
+cat > "$T33/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"compose version"* ]]; then echo "Docker Compose version v2.27.0"; exit 0; fi
+if [[ "$args" == info* ]] || [[ "$args" == *" info"* ]]; then echo "{}"; exit 0; fi
+if [[ "$args" == *"ps -q"* ]]; then echo "c0ffee1234ab"; exit 0; fi
+if [[ "$args" == *"org.opencontainers.image.version"* ]]; then echo "${FAKE_SERVER_VER:-1.7.0}"; exit 0; fi
+if [[ "$args" == *"ps"* ]]; then echo "NAME            STATUS"; echo "memory-server   Up 2 hours"; exit 0; fi
+exit 0
+FAKE
+chmod +x "$T33/bin/docker"
+
+T33_EXIT=0
+T33_OUT=$(env PATH="$T33/bin:$PATH" \
+  _UM_REPO_ROOT="$T33/repo" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33/plugins" \
+  HOME="$T33/home" \
+  bash "$T33_SH" --verify 2>&1) || T33_EXIT=$?
+
+# Both skews here are ADVISORY. A stale CLI or a newer plugin is worth saying
+# out loud, but failing an otherwise-healthy server verify over it would train
+# operators to ignore the exit code. Only the hard floor (T33c) fails.
+assert_exit_zero "T33: advisory skew does NOT fail verify" "$T33_EXIT"
+assert_contains "T33: reports server version"      "$T33_OUT" "version-server"
+assert_contains "T33: server version value"        "$T33_OUT" "1.7.0"
+assert_contains "T33: reports CLI version"         "$T33_OUT" "version-cli"
+assert_contains "T33: CLI version value"           "$T33_OUT" "1.6.0"
+assert_contains "T33: reports plugin version"      "$T33_OUT" "version-plugin"
+assert_contains "T33: reports source tree version" "$T33_OUT" "version-source-tree"
+# Skew A: installed plugin (1.8.1) newer than server (1.7.0).
+assert_contains "T33: flags plugin-newer-than-server skew" "$T33_OUT" "is NEWER than server"
+# Skew B: CLI (1.6.0) behind the source tree (1.8.1) — the release-cycle gap.
+assert_contains "T33: flags CLI-behind-source skew" "$T33_OUT" "BEHIND this source tree"
+assert_contains "T33: gives the CLI refresh command" "$T33_OUT" "install-cli.sh --no-path"
+
+# ─── T33b: matched versions produce no skew warnings ────────────────────────
+echo ""
+echo "=== T33b: no skew warnings when all three match ==="
+T33B="$TMPROOT/t33b"
+mkdir -p "$T33B/vault" "$T33B/plugins" "$T33B/home/.local/.claude-plugin" "$T33B/repo/plugins/claude-code"
+cp -r "$T33/bin" "$T33B/bin"
+T33B_SH=$(make_isolated_server "$T33B/server")
+cp -r "$PLUGIN_SRC" "$T33B/plugins/universal-memory"
+cp -r "$PLUGIN_SRC" "$T33B/repo/plugins/claude-code/universal-memory"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/home/.local/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/plugins/universal-memory/.claude-plugin/plugin.json"
+
+T33B_EXIT=0
+T33B_OUT=$(env PATH="$T33B/bin:$PATH" \
+  _UM_REPO_ROOT="$T33B/repo" \
+  FAKE_SERVER_VER=1.8.1 \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33B/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33B/plugins" \
+  HOME="$T33B/home" \
+  bash "$T33B_SH" --verify 2>&1) || T33B_EXIT=$?
+
+assert_exit_zero "T33b: --verify passes with matched versions" "$T33B_EXIT"
+assert_not_contains "T33b: no skew warning" "$T33B_OUT" "version-skew"
+assert_contains "T33b: all checks still pass" "$T33B_OUT" "All checks passed"
+
+# ─── T33c: a server below the capture-contract floor FAILS verify ───────────
+# Unlike the advisory skews, the plugin genuinely cannot capture against a
+# pre-1.7 server — every capture 404s. That is worth a non-zero exit.
+echo ""
+echo "=== T33c: server below the 1.7.0 capture floor fails verify ==="
+T33C="$TMPROOT/t33c"
+mkdir -p "$T33C/vault" "$T33C/plugins" "$T33C/home/.local/.claude-plugin" "$T33C/repo/plugins/claude-code"
+cp -r "$T33/bin" "$T33C/bin"
+T33C_SH=$(make_isolated_server "$T33C/server")
+cp -r "$PLUGIN_SRC" "$T33C/plugins/universal-memory"
+cp -r "$PLUGIN_SRC" "$T33C/repo/plugins/claude-code/universal-memory"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/plugins/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+
+T33C_EXIT=0
+T33C_OUT=$(env PATH="$T33C/bin:$PATH" \
+  _UM_REPO_ROOT="$T33C/repo" \
+  FAKE_SERVER_VER=1.6.0 \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33C/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33C/plugins" \
+  HOME="$T33C/home" \
+  bash "$T33C_SH" --verify 2>&1) || T33C_EXIT=$?
+
+assert_exit_nonzero "T33c: --verify fails below the capture floor" "$T33C_EXIT"
+assert_contains "T33c: names the floor" "$T33C_OUT" "version-floor"
+assert_contains "T33c: explains the consequence" "$T33C_OUT" "cannot capture against it"
+
 # ─── T26: drift gate — --upgrade's fallback image ref tracks the compose file ─
 # --upgrade resolves the target image from `docker compose config`, but falls
 # back to a hardcoded mirror of docker-compose.yml's memory-server `image:`

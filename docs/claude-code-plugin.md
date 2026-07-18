@@ -202,3 +202,18 @@ in-place upgrade (`git pull` + restart) with a default `.env` goes
 capture-dark with a 403 until you flip the two flags above — the SessionStart
 banner will tell you. Full migration notes: [MIGRATION.md](../MIGRATION.md)
 (§ "v1.6 → v1.7"), with release notes in [CHANGELOG.md](../CHANGELOG.md).
+
+## Keeping the plugin, server, and CLI in step
+
+The plugin is one of three separately-updated surfaces. Update it with
+
+```bash
+claude plugin update universal-memory   # then restart Claude Code
+```
+
+and **upgrade the server first** — the plugin's capture routes 404 against a
+server older than itself, which shows up only as `skip=server-too-old` in
+`~/.um/hook.log` and a session-start banner. Order, commands, failure
+signatures for each surface, and the tarball-install case:
+**[docs/upgrading.md](upgrading.md)**. `bash server/install.sh --verify`
+reports all three versions and flags skew.
