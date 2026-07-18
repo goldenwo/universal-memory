@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # install.sh — universal-memory server interactive installer.
-# Usage: ./install.sh          (interactive)
-#        ./install.sh --verify (post-install sanity check only)
-#        ./install.sh --yes    (non-interactive, accept all defaults)
-#        ./install.sh -y       (alias for --yes)
+# Usage: ./install.sh                 (interactive)
+#        ./install.sh --verify        (post-install sanity check only)
+#        ./install.sh --upgrade       (upgrade to the version compose resolves)
+#        ./install.sh --upgrade 1.8.1 (upgrade to a specific published version)
+#        ./install.sh --yes           (non-interactive, accept all defaults)
+#        ./install.sh -y              (alias for --yes)
 #        UM_NONINTERACTIVE=1 ./install.sh  (read all values from env, no prompts)
+#
+# --verify and --upgrade are sole-argument modes: each exits early and refuses
+# to be combined with --yes. --upgrade pre-flights the new image in a throwaway
+# container BEFORE swapping the running one, and auto-rolls-back to the exact
+# image that was running if the new container never reports healthy.
 #
 # Exits non-zero on any error. Prints what it does. Never installs Docker
 # for you — if Docker is missing it points at the upstream install docs
@@ -58,6 +65,51 @@ _um_cleanup() {
 }
 trap _um_cleanup EXIT INT TERM
 
+# ─── Shared helpers for the sole-argument modes (--verify / --upgrade) ───────
+# Both modes probe an already-running install, so both need the same two
+# things first: the values the operator put in server/.env (which they may
+# never have exported into their shell), and the port those values resolve to.
+# Factored here so the two modes can never drift apart on either — a --upgrade
+# that health-checked a different port than --verify would be its own outage.
+
+# Load .env WITHOUT clobbering vars the caller explicitly exported (tests pass
+# UM_VAULT_DIR / MEM0_MCP_PORT directly, and an explicit export must win over
+# the file). Malformed lines are skipped with a warning rather than aborting.
+_um_load_env_file() {
+	[ -f "$ENV_FILE" ] || return 0
+	while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+		# Skip comments and blank lines
+		[[ "$_k" =~ ^[[:space:]]*# ]] && continue
+		[ -z "$_k" ] && continue
+		# C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
+		if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+			warn "Skipping malformed .env line: '$_k' is not a valid variable name"
+			continue
+		fi
+		# Only export if not already set in environment
+		if [ -z "${!_k+x}" ]; then
+			export "$_k=$_v"
+		fi
+	done < "$ENV_FILE"
+}
+
+# The host port the server is reachable on. MEM0_MCP_PORT is a bare number in
+# every install.sh-written .env (validated numeric further down), but
+# docker-compose.yml also accepts a full host binding in that same variable
+# (e.g. "127.0.0.1:6335", or "0.0.0.0:6337" as self-hosted deployments run it),
+# so take the last colon-separated field to get the port out of either shape.
+# Never hardcode a port at a call site — installs do not all run on 6335.
+_um_port() {
+	local _p="${MEM0_MCP_PORT:-6335}"
+	printf '%s' "${_p##*:}"
+}
+
+# I3: `timeout` (GNU coreutils / BSD) is optional. Probe once; call sites use
+# ${_TIMEOUT_CMD:+$_TIMEOUT_CMD <secs>} so its absence degrades to no timeout
+# rather than a hard failure. (`A && B` never trips errexit when A fails.)
+_TIMEOUT_CMD=""
+command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
+
 # ─── --verify mode ───────────────────────────────────────────────────────────
 if [ "${1:-}" = "--verify" ]; then
   _vpass() { printf '\033[1;32m[verify]\033[0m %-30s \xe2\x9c\x85  %s\n' "$1" "${2:-}"; }
@@ -70,32 +122,11 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # Load .env so UM_VAULT_DIR etc. are available even if not already set in env.
-  # We read the file manually to avoid clobbering vars the caller has explicitly
-  # exported (e.g. when tests pass UM_VAULT_DIR directly).
-  if [ -f "$ENV_FILE" ]; then
-    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
-      # Skip comments and blank lines
-      [[ "$_k" =~ ^[[:space:]]*# ]] && continue
-      [ -z "$_k" ] && continue
-      # C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
-      if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-        warn "Skipping malformed .env line: '$_k' is not a valid variable name"
-        continue
-      fi
-      # Only export if not already set in environment
-      if [ -z "${!_k+x}" ]; then
-        export "$_k=$_v"
-      fi
-    done < "$ENV_FILE"
-  fi
+  _um_load_env_file
 
-  _PORT="${MEM0_MCP_PORT:-6335}"
+  _PORT="$(_um_port)"
   _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
-
-  # I3: Determine whether `timeout` is available (GNU coreutils / BSD).
-  _TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
 
   echo ""
   echo "[verify] Running post-install checks..."
@@ -259,6 +290,240 @@ print(json.dumps({
   fi
 fi
 
+# ─── --upgrade mode ──────────────────────────────────────────────────────────
+# Upgrade a running install, with a net. The v1.8.0 incident is the design
+# brief: a published arm64 image whose node_modules/mem0ai had been emptied by
+# a partial `npm prune` was pulled, swapped into the running stack, and
+# crash-looped in production. Recovery took a hand-written rollback script,
+# which itself had a bug — it rebuilt the container's `-p` port bindings from
+# `docker inspect` of a container already in `Restarting` state, which reports
+# none, so the server came back UNREACHABLE. Both bugs are fixed elsewhere; the
+# lesson that the upgrade procedure belongs in the product is fixed here.
+#
+# The ORDER is the whole feature:
+#   record → pull → PRE-FLIGHT → swap → health-verify → auto-rollback
+#
+#   • Pre-flight runs the NEW image in a throwaway container while the OLD one
+#     is still serving, so a broken image is caught before it can cause an
+#     outage rather than after.
+#   • Every container operation goes through `_compose` — compose owns ports,
+#     mounts, network and env. Hand-rolling `docker run` is precisely what
+#     turned the incident's recovery into a second outage.
+if [ "${1:-}" = "--upgrade" ]; then
+	_uinfo() { printf '\033[1;34m[upgrade]\033[0m %s\n' "$*"; }
+	_uok()   { printf '\033[1;32m[upgrade]\033[0m %s\n' "$*"; }
+	_uwarn() { printf '\033[1;33m[upgrade]\033[0m %s\n' "$*"; }
+	_ufail() { printf '\033[1;31m[upgrade]\033[0m %s\n' "$*" >&2; exit 1; }
+
+	# ── Argument contract ─────────────────────────────────────────────────────
+	# Sole-argument mode, optionally carrying a version: `--upgrade` or
+	# `--upgrade 1.8.1`. Anything else is rejected rather than silently
+	# ignored — same precedent as --verify.
+	_UPG_VERSION="${2:-}"
+	[ "$#" -le 2 ] || _ufail "--upgrade takes at most one argument (a version). Got: $*"
+	case "$_UPG_VERSION" in
+		-*) _ufail "--upgrade must be the sole argument; do not combine with $_UPG_VERSION." ;;
+	esac
+	if [ -n "$_UPG_VERSION" ] && ! [[ "$_UPG_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+		_ufail "Invalid version '$_UPG_VERSION'. Expected a published image tag, e.g. 1.8.1 or latest."
+	fi
+	# Operators reach for the git tag (v1.8.1); GHCR publishes bare semver
+	# (1.8.1). Translate rather than let the registry answer "manifest unknown".
+	if [[ "$_UPG_VERSION" =~ ^v[0-9] ]]; then
+		_UPG_VERSION="${_UPG_VERSION#v}"
+		_uinfo "Reading that as version '$_UPG_VERSION' (published tags are bare semver)."
+	fi
+
+	_um_load_env_file
+	_UPG_HEALTH="http://localhost:$(_um_port)/health"
+	# Test seam (same convention as _UM_REPO_ROOT): number of 2s health-poll
+	# attempts. Not an operator knob — the default is the contract.
+	_UPG_POLL_ATTEMPTS="${_UM_UPGRADE_POLL_ATTEMPTS:-30}"
+
+	# UM_IMAGE beats UM_VERSION in docker-compose.yml's `image:` line, so a
+	# pinned UM_IMAGE would silently ignore the version that was asked for.
+	# Upgrading to something other than what the operator typed is the exact
+	# class of surprise this mode exists to prevent.
+	if [ -n "$_UPG_VERSION" ] && [ -n "${UM_IMAGE:-}" ]; then
+		_ufail "UM_IMAGE is set ($UM_IMAGE) and takes precedence over the version you asked for ($_UPG_VERSION).
+  Unset UM_IMAGE (or edit it in $ENV_FILE) and re-run, or point UM_IMAGE at the image you want."
+	fi
+	[ -n "$_UPG_VERSION" ] && export UM_VERSION="$_UPG_VERSION"
+
+	command -v docker >/dev/null 2>&1 || _ufail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
+	docker compose version >/dev/null 2>&1 || _ufail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
+	docker info >/dev/null 2>&1 || _ufail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+	[ -f "$COMPOSE_FILE" ] || _ufail "Not finding $COMPOSE_FILE — run this from the repo's server/ directory or via ./install.sh."
+
+	# Bounded health poll. $1 = number of attempts, 2s apart. Returns 0 the
+	# moment /health answers, 1 on exhaustion. No sleep after the last attempt.
+	_upg_poll_health() {
+		local _attempts="$1" _i
+		for _i in $(seq 1 "$_attempts"); do
+			if curl -sf --max-time 3 "$_UPG_HEALTH" >/dev/null 2>&1; then
+				return 0
+			fi
+			if [ "$_i" -lt "$_attempts" ]; then sleep 2; fi
+		done
+		return 1
+	}
+
+	echo ""
+	echo "[upgrade] Upgrading the universal-memory server."
+
+	# ── Step 1/5: record the rollback target ─────────────────────────────────
+	echo ""
+	echo "[upgrade] Step 1/5 — recording the running image (rollback target)..."
+	_UPG_CID=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+	if [ -z "$_UPG_CID" ]; then
+		_ufail "No running memory-server container found — nothing to upgrade, and no image to roll back to.
+  If the stack is stopped:  docker compose -f $COMPOSE_FILE up -d
+  If this is a new install: bash server/install.sh"
+	fi
+	# Record the image ID (sha256), NOT .Config.Image (the tag). On the common
+	# latest→latest upgrade the tag is byte-identical before and after the
+	# pull, so "roll back to the tag" would restore the very image being rolled
+	# back FROM. The ID pins the exact bits now serving, and is by definition
+	# already present locally, so the rollback never depends on the registry.
+	_UPG_ROLLBACK_ID=$(docker inspect -f '{{.Image}}' "$_UPG_CID" 2>/dev/null || true)
+	_UPG_ROLLBACK_TAG=$(docker inspect -f '{{.Config.Image}}' "$_UPG_CID" 2>/dev/null || true)
+	if [ -z "$_UPG_ROLLBACK_ID" ]; then
+		_ufail "Could not determine the image behind container $_UPG_CID — refusing to upgrade with no rollback target.
+  Check: docker inspect $_UPG_CID"
+	fi
+	_uok "Rollback target: ${_UPG_ROLLBACK_TAG:-<untagged>} ($_UPG_ROLLBACK_ID)"
+
+	# ── Step 2/5: resolve + fetch the target image ───────────────────────────
+	echo ""
+	echo "[upgrade] Step 2/5 — resolving and fetching the target image..."
+	# Resolve the target from compose's OWN normalized config, so a customized
+	# compose file — or the UM_BUILD_LOCAL override stack — is honored.
+	# Pre-flighting a different image than the one compose goes on to deploy
+	# would defeat the entire point of pre-flighting.
+	#
+	# Deliberately NOT `config --images memory-server`: that also emits the
+	# images of everything the service `depends_on` (qdrant), in unspecified
+	# order, so taking the first line can hand back qdrant's image instead.
+	# Match the service by NAME and take its `image:` key.
+	_UPG_IMAGE=$(_compose config 2>/dev/null | awk '
+		/^  memory-server:/ { f = 1; next }
+		/^  [a-zA-Z]/       { f = 0 }
+		f && /^    image:/  { gsub(/^"|"$/, "", $2); print $2; exit }
+	' || true)
+	if [ -z "$_UPG_IMAGE" ]; then
+		# Fallback: mirror the default in docker-compose.yml's memory-server
+		# `image:` line. Pinned against drift by install.test.sh (T26).
+		_UPG_IMAGE="${UM_IMAGE:-ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}}"
+	fi
+	_uinfo "Target image: $_UPG_IMAGE"
+	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
+		_uinfo "UM_BUILD_LOCAL=1 — building from local source instead of pulling."
+		_compose build memory-server 2>&1 | sed 's/^/[compose] /' \
+			|| _ufail "Build failed. The running server was NOT touched and is still serving."
+	else
+		_compose pull memory-server 2>&1 | sed 's/^/[compose] /' \
+			|| _ufail "Pull failed. The running server was NOT touched and is still serving.
+  Confirm the tag exists: $_UPG_IMAGE"
+	fi
+
+	# ── Step 3/5: PRE-FLIGHT (the load-bearing step) ─────────────────────────
+	echo ""
+	echo "[upgrade] Step 3/5 — pre-flighting the new image (running server still up)..."
+	# Import the two things whose absence produced the v1.8.0 crash-loop:
+	# mem0ai/oss (the dependency the partial prune deleted) and the server's own
+	# lib/stats.mjs, which transitively pulls in logger + obs-fallback +
+	# capture-events, so a broader slice of the app is proven loadable than a
+	# single dependency probe would. Throwaway container: --rm, no ports, no
+	# volumes, no env — it cannot reach the running stack or the vault.
+	_UPG_PREFLIGHT_RC=0
+	_UPG_PREFLIGHT_OUT=$(${_TIMEOUT_CMD:+$_TIMEOUT_CMD 120} docker run --rm --entrypoint node "$_UPG_IMAGE" \
+		--input-type=module -e "await import('mem0ai/oss'); await import('./lib/stats.mjs');" 2>&1) || _UPG_PREFLIGHT_RC=$?
+	if [ "$_UPG_PREFLIGHT_RC" -ne 0 ]; then
+		printf '%s\n' "$_UPG_PREFLIGHT_OUT" | sed 's/^/[preflight] /' >&2
+		_ufail "Pre-flight FAILED (exit $_UPG_PREFLIGHT_RC) — $_UPG_IMAGE cannot load its own dependencies.
+
+  NOTHING WAS SWAPPED. Your running server is untouched and still serving.
+
+  Do not deploy this tag. Upgrade to a known-good version instead:
+    bash server/install.sh --upgrade <version>
+  If this tag is a fresh release, its image build is broken — please report it."
+	fi
+	_uok "Pre-flight passed — the new image loads mem0ai/oss and lib/stats.mjs."
+
+	# ── Step 4/5: swap ───────────────────────────────────────────────────────
+	echo ""
+	echo "[upgrade] Step 4/5 — swapping the container (compose owns ports/mounts/network)..."
+	_UPG_SWAP_RC=0
+	_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_SWAP_RC=$?
+
+	# ── Step 5/5: health-verify, else auto-rollback ──────────────────────────
+	echo ""
+	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UPG_POLL_ATTEMPTS * 2))s)..."
+	_UPG_HEALTHY=0
+	if [ "$_UPG_SWAP_RC" -eq 0 ] && _upg_poll_health "$_UPG_POLL_ATTEMPTS"; then
+		_UPG_HEALTHY=1
+	fi
+
+	if [ "$_UPG_HEALTHY" != "1" ]; then
+		if [ "$_UPG_SWAP_RC" -ne 0 ]; then
+			_uwarn "compose up -d failed (exit $_UPG_SWAP_RC)."
+		else
+			_uwarn "The new container never reported healthy at $_UPG_HEALTH."
+		fi
+		echo ""
+		echo "[upgrade] --- memory-server logs (last 50 lines) ---"
+		_compose logs --tail 50 memory-server 2>&1 | sed 's/^/[logs] /' || true
+		echo ""
+		echo "[upgrade] AUTO-ROLLBACK — restoring the image that was running..."
+		_uwarn "Restoring ${_UPG_ROLLBACK_TAG:-previous image} ($_UPG_ROLLBACK_ID)"
+		# Shell env beats .env for compose interpolation, so exporting UM_IMAGE
+		# overrides the `image:` line for this recreate. Exported (not an
+		# inline VAR=x prefix) because assignment-prefixes on shell FUNCTIONS
+		# have shell/mode-dependent persistence — not something a rollback path
+		# should be betting on.
+		export UM_IMAGE="$_UPG_ROLLBACK_ID"
+		_UPG_RB_RC=0
+		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
+		if [ "$_UPG_RB_RC" -eq 0 ] && _upg_poll_health "$_UPG_POLL_ATTEMPTS"; then
+			echo ""
+			_uok "ROLLBACK SUCCEEDED — ${_UPG_ROLLBACK_TAG:-the previous image} is running and healthy at $_UPG_HEALTH."
+			_uwarn "The upgrade to $_UPG_IMAGE did NOT take. Check the logs above before retrying."
+			exit 1
+		fi
+		echo ""
+		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
+  Recover manually:
+    UM_IMAGE=$_UPG_ROLLBACK_ID docker compose -f $COMPOSE_FILE up -d
+    curl $_UPG_HEALTH
+  Then check: docker compose -f $COMPOSE_FILE logs memory-server"
+	fi
+
+	# ── Success ──────────────────────────────────────────────────────────────
+	_UPG_HEALTH_BODY=$(curl -sf --max-time 5 "$_UPG_HEALTH" 2>/dev/null || true)
+	echo ""
+	cat <<EOF
+╔═════════════════════════════════════════════════════════════════════╗
+║ Upgrade complete — server healthy at $_UPG_HEALTH
+║
+║   now:    $_UPG_IMAGE
+║   was:    ${_UPG_ROLLBACK_TAG:-<untagged>} ($_UPG_ROLLBACK_ID)
+║   health: ${_UPG_HEALTH_BODY:-<no body>}
+║
+║ What changed: CHANGELOG.md (release notes)
+║               MIGRATION.md (per-version upgrade steps)
+║
+║ To revert to the previous image:
+║   UM_IMAGE=$_UPG_ROLLBACK_ID docker compose -f $COMPOSE_FILE up -d
+╚═════════════════════════════════════════════════════════════════════╝
+EOF
+	if [ -n "$_UPG_VERSION" ]; then
+		echo ""
+		info "This version was pinned for this run only. To make it stick across"
+		info "plain \`docker compose up -d\`, add UM_VERSION=$_UPG_VERSION to $ENV_FILE."
+	fi
+	exit 0
+fi
+
 # ─── CLI arg parsing (--yes / -y) ────────────────────────────────────────────
 # --yes/-y is a user-facing shortcut for "run non-interactively with sensible
 # defaults." It implies UM_NONINTERACTIVE=1 but is friendlier:
@@ -281,6 +546,11 @@ for _arg in "$@"; do
 			# Handled above; reaching here means the user combined flags.
 			# Honor the --verify early-exit behavior by rejecting the combo.
 			fail "--verify must be the sole argument; do not combine with --yes."
+			;;
+		--upgrade)
+			# Same as --verify: handled above as a sole-argument early-exit
+			# mode, so reaching here means it was passed after another flag.
+			fail "--upgrade must be the sole argument; do not combine with --yes."
 			;;
 	esac
 done
