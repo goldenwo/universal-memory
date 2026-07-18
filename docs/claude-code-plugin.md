@@ -21,8 +21,10 @@ Version skew is first-class: marketplace installs decouple the plugin from the
 server, so the setup probe and every hook distinguish
 
 - **HTTP 404 on the write probe → server too old.** The server predates the
-  `/api` capture contract — upgrade it (`git pull` + redeploy, or pull a
-  `ghcr.io/goldenwo/universal-memory-server` tag ≥ 1.7.0).
+  `/api` capture contract — upgrade it to a
+  `ghcr.io/goldenwo/universal-memory-server` tag ≥ 1.7.0
+  (`bash server/install.sh --upgrade`, which pre-flights the new image and
+  auto-rolls-back if it fails to come up).
 - **HTTP 403 → writes disabled.** The server is current but has
   `UM_MCP_WRITE_ENABLED=false` (the shipped default) — flip the flag, see
   [Operator side](#operator-side--server-flags-for-capture) below.
@@ -198,4 +200,5 @@ notify hook — carries the diagnosis.)
 The 1.7.0 hooks retire local-file capture and the client-side summarizer. An
 in-place upgrade (`git pull` + restart) with a default `.env` goes
 capture-dark with a 403 until you flip the two flags above — the SessionStart
-banner will tell you. Full migration notes: [CHANGELOG.md](../CHANGELOG.md).
+banner will tell you. Full migration notes: [MIGRATION.md](../MIGRATION.md)
+(§ "v1.6 → v1.7"), with release notes in [CHANGELOG.md](../CHANGELOG.md).

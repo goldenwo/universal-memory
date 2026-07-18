@@ -214,6 +214,26 @@ universal-memory/
 
 ## Upgrading
 
+```bash
+cd server
+./install.sh --upgrade          # to whatever your compose config resolves
+./install.sh --upgrade 1.8.1    # to a specific published version
+```
+
+`--upgrade` **pre-flights the new image in a throwaway container before it touches the running one**, and auto-rolls-back to the exact image that was running if the new container never reports healthy. That matters because a bad image can otherwise take down a working server: v1.8.0's arm64 image shipped with a dependency missing, and operators who pulled and swapped it got a crash-looping server in production. Pre-flighting catches that while the old container is still serving.
+
+Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
+
+Prefer to drive compose yourself? The equivalent, minus the pre-flight and rollback net:
+
+```bash
+cd server
+UM_VERSION=1.8.1 docker compose pull && UM_VERSION=1.8.1 docker compose up -d
+curl http://localhost:6335/health   # or your MEM0_MCP_PORT
+```
+
+Set `UM_VERSION` in `server/.env` to make a pin durable across plain `docker compose up -d`.
+
 universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult [MIGRATION.md](MIGRATION.md) for per-version upgrade steps and [CHANGELOG.md](CHANGELOG.md) for full release notes. Pin a release tag rather than tracking `latest` in production.
 
 Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
