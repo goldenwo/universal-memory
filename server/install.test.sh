@@ -897,8 +897,8 @@ if [[ "$args" == *"image inspect"* ]]; then
   exit 0
 fi
 if [[ "$args" == *"inspect"* ]]; then
-  if [[ "$args" == *".State.Restarting"* ]]; then
-    echo "${FAKE_RESTARTING:-false}"
+  if [[ "$args" == *".RestartCount"* ]]; then
+    echo "${FAKE_RESTART_COUNT:-0}"
     exit 0
   fi
   if [[ "$args" == *".Config.Image"* ]]; then
@@ -1169,7 +1169,7 @@ T29_EXIT=0
 # test would hang for 180s instead of failing fast.
 T29_OUT=$(env -i PATH="$T29/bin:/usr/bin:/bin" \
   _UM_REPO_ROOT="$REPO_ROOT" HOME="$T29/server" \
-  FAKE_DOCKER_LOG="$T29_LOG" FAKE_RESTARTING=true \
+  FAKE_DOCKER_LOG="$T29_LOG" FAKE_RESTART_COUNT=5 \
   MEM0_MCP_PORT=6335 \
   bash "$T29_SH" --upgrade 2>&1) || T29_EXIT=$?
 
@@ -1177,6 +1177,65 @@ assert_exit_nonzero "T29: exits non-zero on a crash-looping container" "$T29_EXI
 assert_contains "T29: names the crash-loop" "$T29_OUT" "CRASH-LOOPING"
 assert_contains "T29: says it is not waiting out the clock" "$T29_OUT" "Not waiting out the clock"
 assert_contains "T29: still rolled back" "$T29_OUT" "ROLLBACK SUCCEEDED"
+
+# ─── T29b: ONE transient death is not a crash-loop ───────────────────────────
+# `depends_on` does not wait for readiness, so a server that starts before
+# qdrant is accepting connections can die once and come up fine. Rolling that
+# back would abort an upgrade that was about to succeed — the false-failure
+# this whole state check exists to avoid, just with a different trigger.
+echo ""
+echo "=== T29b: a single restart is tolerated, not treated as a crash-loop ==="
+T29B="$TMPROOT/t29b"
+mkdir -p "$T29B/server"
+make_fakebin "$T29B/bin" 200
+make_fake_docker_upgrade "$T29B/bin"
+T29B_SH=$(make_isolated_server "$T29B/server")
+T29B_LOG="$T29B/docker.log"
+
+T29B_EXIT=0
+# Model the real timeline: the first probe finds nothing listening (the server
+# died once on a not-yet-ready qdrant), and a later probe succeeds. If the
+# tolerance were absent, the RestartCount=1 seen on that first failed probe
+# would end the upgrade before the second probe ever ran.
+cat > "$T29B/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"/health"* ]]; then
+  n_file="${TMPDIR:-/tmp}/t29b-health-calls"
+  n=$(cat "$n_file" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$n_file"
+  if [ "$n" -le 1 ]; then exit 7; fi
+  printf '{"ok":true,"memories":42}'
+  exit 0
+fi
+exit 0
+FAKE
+chmod +x "$T29B/bin/curl"
+rm -f "${TMPDIR:-/tmp}/t29b-health-calls"
+T29B_OUT=$(run_upgrade "$T29B/bin" "$T29B_SH" "$T29B_LOG" \
+  FAKE_RESTART_COUNT=1 _UM_UPGRADE_POLL_ATTEMPTS=3 -- --upgrade) || T29B_EXIT=$?
+assert_exit_zero "T29b: one restart + healthy ⇒ upgrade succeeds" "$T29B_EXIT"
+assert_contains "T29b: reports completion" "$T29B_OUT" "Upgrade complete"
+assert_not_contains "T29b: no crash-loop verdict" "$T29B_OUT" "CRASH-LOOPING"
+assert_not_contains "T29b: no rollback" "$T29B_OUT" "AUTO-ROLLBACK"
+
+# ─── T29c: legacy override filename is called out, never silently ignored ────
+echo ""
+echo "=== T29c: leftover docker-compose.local.yml warns that it is inert ==="
+T29C="$TMPROOT/t29c"
+mkdir -p "$T29C/server"
+make_fakebin "$T29C/bin" 200
+make_fake_docker_upgrade "$T29C/bin"
+T29C_SH=$(make_isolated_server "$T29C/server")
+printf 'services:\n  memory-server:\n    ports: !override\n      - "127.0.0.1:6399:6335"\n' \
+  > "$T29C/server/docker-compose.local.yml"
+T29C_LOG="$T29C/docker.log"
+
+T29C_EXIT=0
+T29C_OUT=$(run_upgrade "$T29C/bin" "$T29C_SH" "$T29C_LOG" -- --upgrade) || T29C_EXIT=$?
+assert_exit_zero "T29c: still runs" "$T29C_EXIT"
+assert_contains "T29c: warns the legacy file is inert" "$T29C_OUT" "NO LONGER APPLIED"
+assert_contains "T29c: gives the rename command" "$T29C_OUT" "docker-compose.override.yml"
+rm -f "$T29C/server/docker-compose.local.yml"
 
 # ─── T30: health URL comes from compose, not from MEM0_MCP_PORT ──────────────
 # A host override can REPLACE the published ports, so a URL derived from

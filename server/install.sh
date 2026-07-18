@@ -44,6 +44,8 @@ BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
 # An explicit -f SUPPRESSES compose's auto-load, so _compose() — which always
 # passes -f — must keep appending it by hand.
 LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.override.yml"
+# Pre-rename name, kept only to warn that a leftover file is now inert.
+LEGACY_LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
 
 # Human-facing command prefix. Recovery instructions must reproduce the SAME
 # file set _compose() uses; the reliable way to do that in a copy-pasteable
@@ -72,6 +74,17 @@ info()  { printf '\033[1;34m[install]\033[0m %s\n' "$*"; }
 ok()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[install]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# The host-override seam was briefly named docker-compose.local.yml. Compose
+# does not auto-load that name and _compose() no longer passes it, so a
+# leftover file is silently ignored — which is precisely the failure mode this
+# seam exists to prevent, and it would only be discovered when the stack came
+# back up wrong. Say so on every run until it is renamed.
+if [ -f "$LEGACY_LOCAL_OVERRIDE_FILE" ] && [ ! -f "$LOCAL_OVERRIDE_FILE" ]; then
+	warn "$LEGACY_LOCAL_OVERRIDE_FILE is NO LONGER APPLIED (renamed seam)."
+	warn "  Rename it so docker compose auto-loads it:"
+	warn "    mv '$LEGACY_LOCAL_OVERRIDE_FILE' '$LOCAL_OVERRIDE_FILE'"
+fi
 
 # ─── Temp file cleanup ───────────────────────────────────────────────────────
 # Script-level cleanup guarantees we never leak secrets (API keys) in /tmp,
@@ -411,21 +424,30 @@ if [ "${1:-}" = "--upgrade" ]; then
 	#
 	# It watches container STATE as well as the clock, because the two failure
 	# modes want opposite treatment and a timer alone cannot tell them apart:
-	#   • Restarting  ⇒ the container has already died at least once. Waiting
-	#     the full ceiling changes nothing, so say so and roll back now.
+	#   • Repeatedly dying ⇒ waiting out the ceiling changes nothing. Say so
+	#     and roll back now.
 	#   • Running but not answering ⇒ possibly just a slow boot on slow
 	#     hardware. Keep waiting; a clock-only check would call this a failure
 	#     and trigger a needless rollback of a perfectly good upgrade.
+	#
+	# The signal is RestartCount, not the instantaneous Restarting flag, and it
+	# tolerates the first two deaths. `depends_on` does not wait for readiness,
+	# so a memory-server that starts before qdrant is accepting connections can
+	# legitimately die once and come up fine on the retry — treating that first
+	# exit as a crash-loop would roll back an upgrade that was about to
+	# succeed. `up -d` recreates the container, so the count starts at 0 here.
+	# Docker's restart backoff is short early on, so a genuine crash-loop still
+	# trips this within seconds.
 	_upg_poll_health() {
-		local _attempts="$1" _i _cid _restarting
+		local _attempts="$1" _i _cid _restarts
 		for _i in $(seq 1 "$_attempts"); do
 			if curl -sf --max-time 3 "$_UPG_HEALTH" >/dev/null 2>&1; then
 				return 0
 			fi
 			_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
 			if [ -n "$_cid" ]; then
-				_restarting=$(docker inspect -f '{{.State.Restarting}}' "$_cid" 2>/dev/null || true)
-				if [ "$_restarting" = "true" ]; then
+				_restarts=$(docker inspect -f '{{.RestartCount}}' "$_cid" 2>/dev/null || true)
+				if [[ "$_restarts" =~ ^[0-9]+$ ]] && [ "$_restarts" -ge 3 ]; then
 					return 2
 				fi
 			fi
