@@ -4,6 +4,18 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-07-18
+
+### Added — UM Control Stage A: stats layer + capture-freshness alerting (#171)
+
+- **`GET /api/stats` — one authed endpoint answering "is memory alive"** ([`server/lib/stats.mjs`](server/lib/stats.mjs), [`server/mem0-mcp-http.mjs`](server/mem0-mcp-http.mjs)). Per-surface capture freshness (`freshness_hours`, `last_day_seen`, `errors_today`, 7-day outcome rollup), corpus size + per-project split + 7-day growth, recall volume and since-boot serving-latency percentiles, plus server version/uptime/writes-flag/mount-mode. Aggregated read-only from the v1.7.0 counters DB — no new write-path instrumentation, no new service. Bearer required and the loopback no-auth bypass is **vetoed** via a new decoupled `noLoopbackBypass` route marker (applied at both the auth and rate-limit sites; the mem0-compat flag's token scheme and error dialect are deliberately NOT reused). Degrades rather than fails: an unreadable counters DB yields `capture: null` + `degraded: ["counters-unavailable"]` at HTTP 200, with qdrant-sourced fields still live.
+- **`um-alert.sh` — the cron-able fix for silent capture death** ([`plugins/claude-code/universal-memory/bin/um-alert.sh`](plugins/claude-code/universal-memory/bin/um-alert.sh)). `26 6 * * * $HOME/.local/share/um/cli/um-alert.sh || <notify>` pages you when no surface (or a named `--surface`) has captured within `--max-age-hours` (default 26). Exit taxonomy is deliberately three-valued: `0` fresh, `1` STALE, `2` the check could not run (unreachable / auth / server-too-old / degraded counters) — "I can't see" is never reported as "your memory is dead".
+- **Recall telemetry on both production read paths**: `doSearch` (REST `/api/search` + MCP) *and* the mem0-compat facade's search/list handlers, which never touch `doSearch` — the path the Discord bot actually uses. Emission is gated on a real request surface, so the ~25 test/eval `doSearch` callers stay silent.
+
+### Fixed
+
+- **`/health` under-reported the corpus** — its `getAll` inherited mem0ai's default `limit=100`, silently capping the reported memory count on any deployment past 100 points (this one included). Both `/health` and the new stats corpus read now pass an explicit scan limit.
+
 ## [1.7.0] — 2026-07-17
 
 ### ⚠ Migration — in-place upgraders: capture now requires two server flags
