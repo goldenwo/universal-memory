@@ -85,8 +85,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Reject empty, non-numeric chars, 2+ dots, AND a bare "." (which passes the
+# other guards but makes float(".") throw an uncaught error downstream).
 case "$MAX_AGE_HOURS" in
-  ''|*[!0-9.]*|*.*.*)
+  ''|.|*[!0-9.]*|*.*.*)
     echo "um-alert: CHECK FAILED — --max-age-hours must be a number (got '$MAX_AGE_HOURS')" >&2
     exit 2 ;;
 esac

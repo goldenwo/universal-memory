@@ -291,6 +291,24 @@ else
   fail "T13-help-text: $output"
 fi
 
+# ─── T14: bare "." for --max-age-hours ⇒ arg-error message + exit 2 ─────────
+# (regression: "." passes the digit/dot glob guards but would make float(".")
+# throw an uncaught error and fall through to the misleading "internal parser"
+# exit-2 message instead of the clean arg-error one.)
+echo ""
+echo "=== T14: --max-age-hours . ⇒ arg-error + exit 2 ==="
+output=$(bash "$BIN" --max-age-hours . 2>&1) && rc=0 || rc=$?
+if [ "$rc" -eq 2 ]; then
+  pass "T14-exit-2"
+else
+  fail "T14-exit-2 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "must be a number"; then
+  pass "T14-arg-error-message"
+else
+  fail "T14-arg-error-message: $output"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

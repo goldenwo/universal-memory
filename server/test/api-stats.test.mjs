@@ -376,6 +376,60 @@ test('A4 compat: /v2/memories/ (list read) also counts as a recall', async () =>
 });
 
 // ---------------------------------------------------------------------------
+// A4 — REST /api/search HTTP path threads surface from X-UM-Source (plan R1).
+// The direct doSearch tests above pass surface in ctx, bypassing the route's
+// `surface: surfaceFromHeaders(req.headers)` spread. These exercise that
+// wiring end-to-end: a refactor dropping the spread at the POST/GET sites
+// would zero ALL /api/search recall attribution while passing every other
+// test — so each verb site gets its own HTTP-level pin.
+// ---------------------------------------------------------------------------
+
+test('A4 REST: POST /api/search threads X-UM-Source into the recall.search surface', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    const { close, url } = await startServer({ memory: makeFakeMemory(5) });
+    try {
+      const res = await fetch(url('/api/search'), {
+        method: 'POST',
+        headers: { ...authed.headers, 'Content-Type': 'application/json', 'X-UM-Source': 'claude-code-plugin' },
+        body: JSON.stringify({ query: 'q', limit: 5 }),
+      });
+      assert.equal(res.status, 200);
+      const stats = readCounterStats({ now: Date.now(), dbPath });
+      assert.equal(stats.recall.searches_today, 1, 'REST search must emit a recall.search row');
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db.prepare("SELECT surface FROM counters WHERE event = 'recall.search'").get();
+        assert.equal(row.surface, 'claude-code-plugin', 'REST surface must come from X-UM-Source, not the "unknown" fallback');
+      } finally { db.close(); }
+      assert.ok(latencySinceBoot().n >= 1, 'REST search lands a ring-buffer sample');
+    } finally {
+      await close();
+    }
+  });
+});
+
+test('A4 REST: GET /api/search threads X-UM-Source into the recall.search surface', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    const { close, url } = await startServer({ memory: makeFakeMemory(5) });
+    try {
+      const res = await fetch(url('/api/search?q=hello&limit=5'), {
+        headers: { ...authed.headers, 'X-UM-Source': 'chatgpt' },
+      });
+      assert.equal(res.status, 200);
+      const stats = readCounterStats({ now: Date.now(), dbPath });
+      assert.equal(stats.recall.searches_today, 1, 'GET REST search must emit a recall.search row');
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db.prepare("SELECT surface FROM counters WHERE event = 'recall.search'").get();
+        assert.equal(row.surface, 'chatgpt', 'GET REST surface must come from X-UM-Source');
+      } finally { db.close(); }
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A5 — degraded shapes (HTTP 200 throughout)
 // ---------------------------------------------------------------------------
 

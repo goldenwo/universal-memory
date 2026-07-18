@@ -155,7 +155,10 @@ counters file until the first capture.
 Honesty note on the recall figures: `searches_today` / `searches_7d` count
 search **and list** reads on the mem0-compat surface — a platform-mode client
 that polls list (as some plugins do) inflates them relative to "questions a
-human asked".
+human asked". The same list reads also feed the `latency_since_boot`
+percentiles (their full-scan durations land in the one shared ring), so
+p50/p95 mix search-serving and list-scan timings — read them as a rough
+deployment-health signal, not a pure query-latency SLA.
 
 `um-alert.sh` turns that endpoint into a cron-able freshness check — the
 direct fix for silent capture death (captures dark for days with zero

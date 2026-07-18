@@ -802,7 +802,7 @@ const COMPAT_ROUTES = [
  * pattern: routes own their body reads) and writes the returned
  * {status, body} as the JSON response.
  *
- * @param {import('node:http').IncomingMessage|{method: string}} req — only `method` is read here
+ * @param {import('node:http').IncomingMessage|{method: string, headers?: object}} req — `method` for dispatch; `headers` read by the search/list handlers for X-UM-Source recall-surface attribution (#171)
  * @param {URL} url — parsed request URL (pathname + searchParams)
  * @param {object|undefined} body — parsed JSON body (undefined for body-less methods)
  * @param {object} ctx — DI context (memory etc.), forwarded to handlers for Batch 3

@@ -1,4 +1,4 @@
-// server/test/stats.test.mjs — unit tests for the shared eval stats helper.
+// server/test/eval-stats.test.mjs — unit tests for the shared eval stats helper.
 //
 // TDD: written FIRST (before eval/lib/stats.mjs exists), per the eval-stats
 // extraction. The nearest-rank percentile + distribution-summary pattern lived

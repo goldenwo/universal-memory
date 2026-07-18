@@ -2961,8 +2961,10 @@ fi
 # section, and corpus.points >= 1; then bin/um-alert.sh (spec §4/A3) must
 # exit 0 against the fresh S10 surface and 1 against a never-captured one.
 # Both legs need only the leg-1 turns, so they run under either LLM tier;
-# they SKIP cleanly when no UM_AUTH_TOKEN is configured (tokenless
-# loopback stack ⇒ /api/stats 401s BY DESIGN — not a failure).
+# they SKIP cleanly when no UM_AUTH_TOKEN is configured — /api/stats vetoes
+# the loopback no-auth bypass, so without a bearer the route refuses the
+# request (500 "auth misconfigured" when the SERVER has no token; 401 when
+# only the client omits it) — either way it can't be exercised, so SKIP.
 #
 # GATING STRUCTURE (three tiers):
 #   1. UM_SMOKE_REMOTE_RT=1        — section opt-in (S2–S9 convention).
@@ -3154,10 +3156,11 @@ assert state.get('body', '').strip(), 'state body is empty'
 		# must show freshness_hours == 0 (rows-today clamp, spec §3 pinned
 		# formula) and events_today >= 2. Independent of the leg-3 LLM tier.
 		# /api/stats is bearer-required with the loopback bypass VETOED
-		# (noLoopbackBypass, spec §3): a tokenless loopback stack gets a 401
-		# BY DESIGN, so legs 4+5 SKIP (not fail) when no token is configured.
+		# (noLoopbackBypass, spec §3): without a configured bearer the route
+		# refuses the request (500 auth-misconfigured server-side / 401
+		# client-side), so legs 4+5 SKIP (not fail) when no token is set.
 		if [ -z "${UM_AUTH_TOKEN:-}" ]; then
-			echo "[smoke]     S10 legs 4+5 SKIP: no UM_AUTH_TOKEN — /api/stats vetoes the loopback no-auth bypass (401 by design); stats + alert legs need the bearer"
+			echo "[smoke]     S10 legs 4+5 SKIP: no UM_AUTH_TOKEN — /api/stats vetoes the loopback no-auth bypass; stats + alert legs need the bearer"
 		else
 			_s10_stats_raw=$(curl -s -o - -w '\n__HTTP__%{http_code}' "$ENDPOINT/api/stats" 2>/dev/null || echo "__HTTP__000")
 			_s10_stats_status="${_s10_stats_raw##*__HTTP__}"
@@ -3172,8 +3175,17 @@ capture = data.get('capture')
 assert isinstance(capture, dict), 'capture section missing/degraded (degraded=%r)' % data.get('degraded')
 info = capture.get(surface)
 assert info is not None, 'capture has no %r row (surfaces seen: %s)' % (surface, sorted(capture))
-assert info.get('freshness_hours') == 0, 'expected freshness_hours == 0 (turns landed today), got %r' % info.get('freshness_hours')
-assert info.get('events_today', 0) >= 2, 'expected events_today >= 2 (the leg-1 turns), got %r' % info.get('events_today')
+# Turns landed moments ago => normally freshness_hours == 0 (rows-today clamp).
+# If the run straddles UTC midnight between leg 1 and leg 4 (leg-3's LLM
+# checkpoint takes minutes), last_day_seen rolls to yesterday and freshness
+# becomes hours-since-midnight -- still tiny. Accept <= 1.0h either way.
+fh = info.get('freshness_hours')
+assert isinstance(fh, (int, float)) and fh <= 1.0, 'expected freshness_hours <= 1.0 (turns landed moments ago), got %r' % fh
+# events_today covers same-day; the 7-day outcome rollup covers the straddle.
+events_today = info.get('events_today', 0)
+outcomes = info.get('outcomes_7d') or {}
+events_7d = sum(v for v in outcomes.values() if isinstance(v, (int, float)))
+assert events_today >= 2 or events_7d >= 2, 'expected >= 2 capture events (today or 7d rollup), got today=%r 7d=%r' % (events_today, events_7d)
 assert isinstance(data.get('recall'), dict), 'recall section missing'
 points = (data.get('corpus') or {}).get('points')
 assert isinstance(points, int) and points >= 1, 'expected corpus.points numeric >= 1, got %r' % points
