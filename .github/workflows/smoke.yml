@@ -334,6 +334,15 @@ jobs:
           # UM_SMOKE_REMOTE_RT_LLM=0 to run only the append-turn+counters
           # legs. Requires UM_MCP_WRITE_ENABLED=true (set above) — against a
           # writes-off stack S10 skips cleanly on the 403.
+          #
+          # #171 Stage-A A6 — the stats + alert legs (S10 legs 4/5) ride the
+          # same gate: GET /api/stats must show the smoke-s10 surface fresh
+          # (freshness_hours == 0, events_today >= 2) + recall/corpus
+          # sections, then bin/um-alert.sh must exit 0 on the fresh surface
+          # and 1 on a never-captured one. No extra env: the legs need only
+          # this flag + the bearer token install.sh already wrote to .env
+          # (/api/stats vetoes the loopback no-auth bypass, so the token is
+          # load-bearing here — legs skip cleanly on a tokenless stack).
           UM_SMOKE_REMOTE_RT: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
