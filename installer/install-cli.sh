@@ -103,7 +103,7 @@ ok "Libraries installed to: $LIB_DIR ($copied_count files)"
 # --- copy CLI subcommand scripts ---
 PLUGIN_BIN="$REPO_ROOT/plugins/claude-code/universal-memory/bin"
 COPIED_SCRIPTS=0
-for script in um um-capture um-search.sh um-state.sh um-recent.sh um-list.sh um-capture.sh um-tail.sh um-forget um-supersede um-preview um-tunnel; do
+for script in um um-capture um-search.sh um-state.sh um-recent.sh um-list.sh um-capture.sh um-tail.sh um-forget um-supersede um-preview um-tunnel um-alert.sh; do
   if [ -f "$PLUGIN_BIN/$script" ]; then
     cp -p "$PLUGIN_BIN/$script" "$CLI_DIR/$script"
     chmod +x "$CLI_DIR/$script"

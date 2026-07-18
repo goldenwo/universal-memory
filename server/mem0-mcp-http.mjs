@@ -83,6 +83,8 @@ import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-doc
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 import { umAdd } from './lib/add.mjs';
+import { readCounterStats } from './lib/stats.mjs';
+import { noteRecallSearch, latencySinceBoot, LATENCY_LABEL } from './lib/recall-telemetry.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
 
@@ -102,6 +104,7 @@ function resolveRouteTemplate(pathname, method) {
   if (pathname === '/openapi.yaml') return '/openapi.yaml';
   if (pathname === '/metrics') return '/metrics';
   if (pathname === '/mcp') return '/mcp';
+  if (pathname === '/api/stats') return '/api/stats';
   if (pathname === '/api/search') return '/api/search';
   if (pathname === '/api/add') return '/api/add';
   if (pathname === '/api/list') return '/api/list';
@@ -154,6 +157,12 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
+
+// Full-corpus getAll ceiling for /health + /api/stats (#171 Stage A, plan U2
+// audit): mem0ai's getAll defaults to limit=100, which silently truncated the
+// /health count. Mirrors the compat facade's COMPAT_SCAN_LIMIT (mem0-compat.mjs)
+// — generous for single-operator scale (hundreds–low-thousands of points).
+const FULL_SCAN_LIMIT = 10000;
 
 // ---------------------------------------------------------------------------
 // Favicon assets — boot-loaded once as raw bytes (spec 2026-07-09
@@ -1785,6 +1794,12 @@ export async function handleCheckpointRequest(req, res, ctx) {
  *   handlers keeps middleware injection consistent (A.8 sweep).
  */
 export async function doSearch(query, limit, includeSuperseded, full = false, ctx = {}) {
+	// U2 (#171 Stage A): recall telemetry — serving duration measured across the
+	// WHOLE doSearch (engine + filter/decay/projection = "deployment serving
+	// latency"). Emission is GATED on ctx.surface inside noteRecallSearch: only
+	// the production HTTP/MCP/compat call sites thread a surface; the ~25
+	// test/eval callers pass none and emit nothing (plan U2 R4-b).
+	const recallStartedAt = Date.now();
 	// DI resolution: prefer ctx.memory (new convention), then treat ctx itself as a
 	// memoryClient if it exposes search (legacy positional pattern), else fall back
 	// to the module-level memory binding used by real requests.
@@ -1849,6 +1864,11 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		}
 		return base;
 	});
+	// Successful production recall → recall.search counter + latency sample.
+	// After the return-value build so the duration covers the full serving
+	// path; errors above propagate WITHOUT emitting (failed searches are not
+	// "recall volume" — they surface via um_mem0_ops_total{status="fail"}).
+	noteRecallSearch({ surface: ctx?.surface, durationMs: Date.now() - recallStartedAt });
 	return listEnvelope(mapped, extras);
 }
 
@@ -2300,7 +2320,11 @@ export function createRequestHandler(ctx = {}) {
 			// getAll() includes the embedding-stamp doc. Filter system docs out of
 			// the count so /health reflects user-facing memories only — preserves
 			// the contract that operators reading this endpoint see real-doc count.
-			const raw = await resolvedMemory().getAll({ userId: USER_ID });
+			// U2 (#171) audit fix: mem0ai's getAll defaults to limit=100 — without
+			// an explicit large limit this count silently capped at 100 once the
+			// corpus grew past it. Same ceiling as the stats corpus fetch below
+			// (FULL_SCAN_LIMIT, mirroring the compat facade's COMPAT_SCAN_LIMIT).
+			const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
 			const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
 			const memories = filterSystemDocs(items).length;
 			res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2434,7 +2458,9 @@ export function createRequestHandler(ctx = {}) {
 	// bypass: a mem0 client always sends its key, and docker-bridge peer
 	// addresses make loopback semantics misleading on that deployment
 	// shape — so the compat marker vetoes shouldBypassLoopback here.
-	if (!route.bypassAuth && (route.compat === true || !shouldBypassLoopback(req))) {
+	// route.noLoopbackBypass (/api/stats, #171 Stage-A spec §3) vetoes the
+	// SAME bypass without inheriting compat's token scheme / error dialect.
+	if (!route.bypassAuth && (route.compat === true || route.noLoopbackBypass === true || !shouldBypassLoopback(req))) {
 		const expected = process.env.UM_AUTH_TOKEN;
 		if (!expected) {
 			// Counter-finish log fires via res.end shim; emit a structured
@@ -2578,7 +2604,11 @@ export function createRequestHandler(ctx = {}) {
 	// semantics misleading on the deployment shape compat targets, so the
 	// limiter applies to compat traffic from any peer. 429s answer in the
 	// mem0 dialect ({detail}) via send429's compat flag.
-	if (!route.bypassRateLimit && (route.compat === true || !shouldBypassLoopback(req))) {
+	// route.noLoopbackBypass mirrors the veto here too (#171 Stage-A plan
+	// U2 R4-a): /api/stats runs a full corpus getAll per hit — a bridge
+	// peer must not skip rate-limiting on it. Its 429s stay UM-enveloped
+	// (send429 compat flag keys on route.compat alone).
+	if (!route.bypassRateLimit && (route.compat === true || route.noLoopbackBypass === true || !shouldBypassLoopback(req))) {
 		const ipKey = extractRateLimitKey(req);
 		const decision = admit(ipKey);
 		if (!decision.admitted) {
@@ -2817,6 +2847,82 @@ export function createRequestHandler(ctx = {}) {
 			res.end(JSON.stringify(out.body));
 			return;
 		}
+		// GET /api/stats — deployment-health stats (#171 Stage A, spec §3).
+		// Auth is fail-closed with the loopback bypass VETOED (endpoint-class
+		// noLoopbackBypass row + both middleware veto sites above). Sources:
+		// um-counters.db (read-only via readCounterStats — capture freshness,
+		// growth, recall counts), qdrant via getAll (corpus size/split), the
+		// in-process ring buffer (serving latency), process/env facts.
+		// Degraded-mode per §5 A5: a missing/unreadable counters db or a
+		// throwing memory client each null their OWN sections + append a
+		// `degraded` marker — HTTP 200 either way (fresh installs have no
+		// counters db; stats must not 500 over one dark source).
+		if (url.pathname === '/api/stats' && req.method === 'GET') {
+			const now = Date.now();
+			const degraded = [];
+
+			// Qdrant-sourced corpus fields. EXPLICIT large limit (FULL_SCAN_LIMIT)
+			// — mem0ai getAll defaults to limit=100 (the /health silent-cap bug).
+			let points = null;
+			let pointsByProject = null;
+			try {
+				const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
+				const items = filterSystemDocs(Array.isArray(raw) ? raw : (raw?.results ?? []));
+				points = items.length;
+				pointsByProject = {};
+				for (const r of items) {
+					const project = r?.metadata?.project;
+					// Fallback bucket: metadata.project is not guaranteed (plan U2).
+					const key = typeof project === 'string' && project.length > 0 ? project : '(unknown)';
+					pointsByProject[key] = (pointsByProject[key] ?? 0) + 1;
+				}
+			} catch (err) {
+				safeLog(() => getLogger().warn({
+					request_id: currentRequestId(),
+					endpoint: '/api/stats',
+					err_class: err?.code ?? err?.name ?? 'Error',
+					err_message: err?.message,
+				}, 'stats corpus fetch failed — serving degraded'), 'log:stats:corpus-unavailable');
+				degraded.push('corpus-unavailable');
+			}
+
+			// Counters-derived sections (readCounterStats never throws for
+			// db-state reasons — null-shaped when missing/unreadable, A5).
+			const counters = readCounterStats({ now });
+			if (!counters.available) degraded.push('counters-unavailable');
+
+			const body = {
+				schema_version: 1,
+				generated_at: new Date(now).toISOString(),
+				server: {
+					version: SERVER_VERSION,
+					uptime_s: Math.round(process.uptime()),
+					writes_enabled: isWriteEnabled(),
+					// CONFIGURED-value semantics (spec §3): the container cannot
+					// introspect the actual mount; actual writability failures
+					// surface via capture error counters instead.
+					mount_mode: process.env.UM_MOUNT_MODE || 'unknown',
+				},
+				corpus: {
+					points,
+					points_by_project: pointsByProject,
+					growth_7d: counters.growth_7d,
+					// Spec §3: growth is counters-derived (capture.extraction
+					// stored+superseded/day), NOT a qdrant time-series — labeled.
+					derived_from: 'extraction-counters',
+				},
+				capture: counters.capture,
+				recall: {
+					searches_today: counters.recall?.searches_today ?? null,
+					searches_7d: counters.recall?.searches_7d ?? null,
+					latency_since_boot: { ...latencySinceBoot(), label: LATENCY_LABEL },
+				},
+			};
+			if (degraded.length > 0) body.degraded = degraded;
+			res.writeHead(200, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify(body));
+			return;
+		}
 		if (url.pathname === '/api/search' && req.method === 'POST') {
 			// NOTE: `limit` is intentionally NOT given a destructuring default here so we
 			// can distinguish "caller omitted limit" (null/undefined → only_superseded default
@@ -2863,7 +2969,9 @@ export function createRequestHandler(ctx = {}) {
 			// then project to compact shape at the end if the client did not request full.
 			// D3.1: when only_superseded set, pass includeSup=true so doSearch keeps
 			// superseded records for inversion below. only_superseded wins over include_superseded.
-			let response = await doSearch(query, fetchLimitPost, onlySup ? true : includeSup, true, ctx);
+			// U2 (#171) R1 fix: thread the surface (spread — never mutate the shared
+			// DI ctx) so REST recalls attribute like /mcp instead of emitting nothing.
+			let response = await doSearch(query, fetchLimitPost, onlySup ? true : includeSup, true, { ...ctx, surface: surfaceFromHeaders(req.headers) });
 
 			// D3.1 only_superseded branch: delegate to shared helper.
 			if (onlySup) {
@@ -2947,7 +3055,8 @@ export function createRequestHandler(ctx = {}) {
 				: (hasExplicitLimitGet ? Math.min(rawLimitGet, 100) : 5);
 			// Always fetch full results (metadata preserved) so metadata typeFilter works,
 			// then project to compact shape at the end if the client did not request full.
-			let response = await doSearch(q, fetchLimitGet, onlySupGet ? true : includeSuperseded, true, ctx);
+			// U2 (#171) R1 fix: thread the surface — same as the POST site above.
+			let response = await doSearch(q, fetchLimitGet, onlySupGet ? true : includeSuperseded, true, { ...ctx, surface: surfaceFromHeaders(req.headers) });
 
 			// D3.1 only_superseded branch for GET: delegate to shared helper.
 			if (onlySupGet) {
