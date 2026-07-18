@@ -26,6 +26,13 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
+# Host-specific overrides (gitignored, never shipped). Self-hosters need to
+# pin things the base file cannot know: an alternate qdrant image for their
+# CPU, extra port bindings (e.g. a tailnet IP alongside loopback), bind-mount
+# paths outside the repo. Without this seam operators fall back to hand-rolled
+# `docker run`, which is how a v1.8.0 upgrade lost its port bindings and left
+# a server running-but-unreachable. Applied LAST so host config wins.
+LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
 
 # v1.0 W1.4 — image-mode detection. Default is pull-from-GHCR (fast, ~20s
 # first-run). Set UM_BUILD_LOCAL=1 in the calling environment to build
@@ -38,11 +45,10 @@ BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
 # This wrapper centralizes the file selection so every `docker compose`
 # call below honors the same mode without each site repeating the logic.
 _compose() {
-	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
-		docker compose -f "$COMPOSE_FILE" -f "$BUILD_OVERRIDE_FILE" "$@"
-	else
-		docker compose -f "$COMPOSE_FILE" "$@"
-	fi
+	local _files=(-f "$COMPOSE_FILE")
+	[ "${UM_BUILD_LOCAL:-0}" = "1" ] && _files+=(-f "$BUILD_OVERRIDE_FILE")
+	[ -f "$LOCAL_OVERRIDE_FILE" ] && _files+=(-f "$LOCAL_OVERRIDE_FILE")
+	docker compose "${_files[@]}" "$@"
 }
 
 info()  { printf '\033[1;34m[install]\033[0m %s\n' "$*"; }

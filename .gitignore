@@ -79,3 +79,5 @@ docs/decisions/
 
 # Visual-companion brainstorm sessions
 .superpowers/
+docker-compose.local.yml
+server/docker-compose.local.yml
