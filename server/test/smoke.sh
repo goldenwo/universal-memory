@@ -2954,6 +2954,19 @@ fi
 #   /api/state/<project> shows the synthesized state → capture.checkpoint
 #   counters row.
 #
+# #171 Stage-A A6 rides S10's tail (legs 4/5): after the turns land, GET
+# /api/stats (bearer required — the route VETOES the loopback no-auth
+# bypass, spec §3) must show schema_version 1, capture[smoke-s10] with
+# freshness_hours == 0 (rows-today clamp) + >= 2 capture events (today, or
+# in the 7-day rollup when the run straddles UTC midnight), a recall
+# section, and corpus.points >= 1; then bin/um-alert.sh (spec §4/A3) must
+# exit 0 against the fresh S10 surface and 1 against a never-captured one.
+# Both legs need only the leg-1 turns, so they run under either LLM tier;
+# they SKIP cleanly when no UM_AUTH_TOKEN is configured — /api/stats vetoes
+# the loopback no-auth bypass, so without a bearer the route refuses the
+# request (500 "auth misconfigured" when the SERVER has no token; 401 when
+# only the client omits it) — either way it can't be exercised, so SKIP.
+#
 # GATING STRUCTURE (three tiers):
 #   1. UM_SMOKE_REMOTE_RT=1        — section opt-in (S2–S9 convention).
 #   2. writes-mode probe           — /api/append-turn is UM_MCP_WRITE_ENABLED-
@@ -2983,7 +2996,10 @@ if [ "${UM_SMOKE_REMOTE_RT:-}" = "1" ]; then
 
 	S10_PROJECT="s10-rt-$(date +%s)-$$"
 	S10_MARKER="s10remote-$(date +%s)-$$"
-	S10_SURFACE="smoke-s10"
+	S10_SURFACE="smoke-s10-$(date +%s)-$$"   # run-scoped: counters GROUP BY surface
+		                                     # has no project dimension, and a constant
+		                                     # name would let a PRIOR run's rows satisfy
+		                                     # leg 4 on a persisted counters DB.
 	S10_SUMMARY_ID=""
 
 	# Container handle for the counters read. Reuse the Task-1 detection when
@@ -3020,6 +3036,8 @@ except Exception:
 			rm -rf "$UM_VAULT_DIR/captures/$S10_PROJECT" "$UM_VAULT_DIR/sessions/$S10_PROJECT" "$UM_VAULT_DIR/state/$S10_PROJECT" 2>/dev/null || true
 			rm -f "$UM_VAULT_DIR/.telemetry/"*"-$S10_PROJECT.count" 2>/dev/null || true
 		fi
+		# Leg-5 bearer tmpfile (unset until leg 5 runs — guarded expansion).
+		rm -f "${_s10_tokfile:-}" 2>/dev/null || true
 	}
 	s10_fail() { echo "[smoke] S10 FAIL: $1" >&2; s10_cleanup; _um_smoke_auth_cleanup; exit 1; }
 
@@ -3136,9 +3154,81 @@ assert state.get('body', '').strip(), 'state body is empty'
 			fi
 		fi
 
+		# (d) Leg 4 — GET /api/stats round-trip (#171 Stage A, spec §5 A6).
+		# Asserted over the LIVE S10 residue: the two leg-1 turns landed
+		# today (UTC) under X-UM-Source: smoke-s10, so capture[smoke-s10]
+		# must show freshness_hours == 0 (rows-today clamp, spec §3 pinned
+		# formula) and >= 2 capture events (events_today, or the 7-day rollup
+		# on a midnight straddle). Independent of the leg-3 LLM tier.
+		# /api/stats is bearer-required with the loopback bypass VETOED
+		# (noLoopbackBypass, spec §3): without a configured bearer the route
+		# refuses the request (500 auth-misconfigured server-side / 401
+		# client-side), so legs 4+5 SKIP (not fail) when no token is set.
+		if [ -z "${UM_AUTH_TOKEN:-}" ]; then
+			echo "[smoke]     S10 legs 4+5 SKIP: no UM_AUTH_TOKEN — /api/stats vetoes the loopback no-auth bypass; stats + alert legs need the bearer"
+		else
+			_s10_stats_raw=$(curl -s -o - -w '\n__HTTP__%{http_code}' "$ENDPOINT/api/stats" 2>/dev/null || echo "__HTTP__000")
+			_s10_stats_status="${_s10_stats_raw##*__HTTP__}"
+			_s10_stats_body="${_s10_stats_raw%$'\n'__HTTP__*}"
+			[ "$_s10_stats_status" = "200" ] || s10_fail "GET /api/stats returned HTTP $_s10_stats_status (expected 200): $_s10_stats_body"
+			echo "$_s10_stats_body" | S10_SURFACE="$S10_SURFACE" python3 -c "
+import json, os, sys
+data = json.load(sys.stdin)
+surface = os.environ['S10_SURFACE']
+assert data.get('schema_version') == 1, 'expected schema_version 1, got %r' % data.get('schema_version')
+capture = data.get('capture')
+assert isinstance(capture, dict), 'capture section missing/degraded (degraded=%r)' % data.get('degraded')
+info = capture.get(surface)
+assert info is not None, 'capture has no %r row (surfaces seen: %s)' % (surface, sorted(capture))
+# freshness stays PINNED at 0: stats round1() absorbs the first ~3 min past
+# UTC midnight, and leg-3's checkpoint re-stamps last_day_seen=today, so the
+# straddle never moves this clause (only events_today, below).
+assert info.get('freshness_hours') == 0, 'expected freshness_hours == 0 (turns landed moments ago), got %r' % info.get('freshness_hours')
+# events_today breaks on a UTC-midnight straddle between legs 1 and 4 (the
+# turns land on the previous day). The 7-day rollup spans both days, and the
+# run-scoped surface means it counts ONLY this run's turns -- no vacuity.
+events_today = info.get('events_today', 0)
+outcomes = info.get('outcomes_7d') or {}
+events_7d = sum(v for v in outcomes.values() if isinstance(v, (int, float)))
+assert events_today >= 2 or events_7d >= 2, 'expected >= 2 capture events (today or 7d rollup), got today=%r 7d=%r' % (events_today, events_7d)
+assert isinstance(data.get('recall'), dict), 'recall section missing'
+points = (data.get('corpus') or {}).get('points')
+assert isinstance(points, int) and points >= 1, 'expected corpus.points numeric >= 1, got %r' % points
+" || s10_fail "/api/stats response failed the A6 asserts: $_s10_stats_body"
+			echo "[smoke]     S10 leg 4 OK: /api/stats 200 — capture[$S10_SURFACE] fresh (0h, >=2 events today or in the 7d rollup), recall present, corpus.points >= 1, schema_version 1"
+
+			# (e) Leg 5 — bin/um-alert.sh against the same live stats (spec
+			# §4/A3): the fresh S10 surface ⇒ exit 0; a surface that has never
+			# captured ⇒ exit 1 (STALE). The script sources um-api.sh, which
+			# reads its bearer from a FILE (UM_TOKEN_FILE) — write it to a
+			# 0600 tmpfile (argv-safe, same rationale as the smoke curl()
+			# wrapper; removed in s10_cleanup) — and pin UM_LIB_DIR to the
+			# in-repo lib so the leg exercises THIS checkout, not whatever a
+			# prior installer left in ~/.local/share/um.
+			_s10_repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+			_s10_alert="$_s10_repo_root/plugins/claude-code/universal-memory/bin/um-alert.sh"
+			_s10_lib_dir="$_s10_repo_root/plugins/claude-code/universal-memory/hooks/lib"
+			[ -f "$_s10_alert" ] || s10_fail "um-alert.sh not found at $_s10_alert"
+			_s10_tokfile=$(mktemp -t smoke-s10-tok.XXXXXX 2>/dev/null || mktemp)
+			chmod 600 "$_s10_tokfile"
+			printf '%s' "$UM_AUTH_TOKEN" > "$_s10_tokfile"
+			_s10_alert_rc=0
+			_s10_alert_out=$(UM_SERVER_URL="$ENDPOINT" UM_TOKEN_FILE="$_s10_tokfile" UM_LIB_DIR="$_s10_lib_dir" \
+				bash "$_s10_alert" --surface "$S10_SURFACE" --max-age-hours 26 2>&1) || _s10_alert_rc=$?
+			[ "$_s10_alert_rc" -eq 0 ] || s10_fail "um-alert.sh --surface $S10_SURFACE expected exit 0 (fresh), got exit $_s10_alert_rc: $_s10_alert_out"
+			echo "[smoke]     S10 leg 5a OK: um-alert.sh exit 0 on the fresh surface — $_s10_alert_out"
+			_s10_never="s10-never-existed-$$"
+			_s10_alert_rc=0
+			_s10_alert_out=$(UM_SERVER_URL="$ENDPOINT" UM_TOKEN_FILE="$_s10_tokfile" UM_LIB_DIR="$_s10_lib_dir" \
+				bash "$_s10_alert" --surface "$_s10_never" --max-age-hours 26 2>&1) || _s10_alert_rc=$?
+			[ "$_s10_alert_rc" -eq 1 ] || s10_fail "um-alert.sh --surface $_s10_never expected exit 1 (STALE — never captured), got exit $_s10_alert_rc: $_s10_alert_out"
+			echo "[smoke]     S10 leg 5b OK: um-alert.sh exit 1 (STALE) on a never-captured surface — $_s10_alert_out"
+			rm -f "$_s10_tokfile"
+		fi
+
 		# Cleanup — restore baseline.
 		s10_cleanup
-		echo "[smoke] #159 S10 PASS: remote round-trip proven (append-turn → counters → checkpoint → state)"
+		echo "[smoke] #159 S10 PASS: remote round-trip proven (append-turn → counters → checkpoint → state → stats → alert)"
 	fi
 fi
 

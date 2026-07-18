@@ -434,6 +434,60 @@ test('doCheckpoint UPSTREAM_FAILURE (reindex exhausted) emits capture.checkpoint
   assert.equal(rows[0].project, 'ckproj');
 });
 
+// ---------- integration: checkpoint surface attribution (composed) ----------
+//
+// #171 U4-smoke follow-up: pins the COMPOSED invariant end-to-end. A live-smoke
+// observation attributed `capture.extraction surface=unknown` rows to the
+// checkpoint pipeline; code investigation shows doCheckpoint makes NO umAdd
+// calls — its only counter emissions are capture.checkpoint (ctx.surface,
+// checkpoint.mjs), and its production reindexFn (reindexDoc,
+// mem0-mcp-http.mjs) calls umAdd with _systemMigration:true, which suppresses
+// ALL capture.* emission (add.mjs guards). The two halves were pinned
+// separately above; this test composes them: a checkpoint with
+// ctx.surface='smoke-x' driving a PRODUCTION-SHAPED reindex (real umAdd,
+// _systemMigration:true, infer:false — reindexDoc's exact call shape) emits
+// exactly ONE counter row — capture.checkpoint/smoke-x — and ZERO
+// capture.extraction rows, ZERO surface='unknown' rows. If either half
+// regresses (someone drops _systemMigration from the reindex, or adds an
+// unthreaded umAdd inside doCheckpoint), this fails with a phantom row.
+
+test('doCheckpoint with production-shaped reindex: one capture.checkpoint row with ctx.surface, NO extraction/unknown rows', async () => {
+  const dbPath = await freshCountersDb();
+  const vault = await makeTempVault();
+  await seedCapture(vault, 'smokeproj', '2026-01-01.md', '# Session\nwork happened');
+  // reindexDoc's exact umAdd shape (mem0-mcp-http.mjs): infer:false +
+  // _systemMigration:true over the on-disk summary — but a REAL umAdd call,
+  // so the add.mjs emission guards are actually exercised, not stubbed away.
+  const reindexFn = async (relPath) => {
+    const fileText = await fs.readFile(path.join(vault, relPath), 'utf8');
+    await umAdd({
+      memory: mockMemory,
+      text: fileText,
+      userId: 'u-1',
+      metadata: { schema_version: 1, type: 'session_summary', id: 'ck-smoke', title: 't', project: 'smokeproj' },
+      infer: false,
+      _systemMigration: true,
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: { upsert: async () => ({}) },
+    });
+  };
+  const result = await doCheckpoint(
+    { project: 'smokeproj' },
+    { config: CHECKPOINT_CONFIG, vaultDir: vault, summarizeFn, updateStateFn, reindexFn, surface: 'smoke-x' },
+  );
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const rows = readRows(dbPath);
+  assert.equal(rows.length, 1, `checkpoint must emit exactly one counter row, got: ${JSON.stringify(rows)}`);
+  assert.deepEqual(
+    { surface: rows[0].surface, project: rows[0].project, event: rows[0].event, outcome: rows[0].outcome },
+    { surface: 'smoke-x', project: 'smokeproj', event: 'capture.checkpoint', outcome: 'stored' },
+  );
+  assert.equal(rows.filter((r) => r.event === 'capture.extraction').length, 0,
+    'a checkpoint-driven reindex must NOT emit capture.extraction (system-migration exclusion)');
+  assert.equal(rows.filter((r) => r.surface === 'unknown').length, 0,
+    'no counter row from a checkpoint may fall back to surface=unknown');
+});
+
 // ---------- integration: umAdd facts-result site (capture.extraction) ----------
 
 test('umAdd emits capture.extraction outcome=stored per persisted fact', async () => {

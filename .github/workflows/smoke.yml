@@ -334,6 +334,15 @@ jobs:
           # UM_SMOKE_REMOTE_RT_LLM=0 to run only the append-turn+counters
           # legs. Requires UM_MCP_WRITE_ENABLED=true (set above) — against a
           # writes-off stack S10 skips cleanly on the 403.
+          #
+          # #171 Stage-A A6 — the stats + alert legs (S10 legs 4/5) ride the
+          # same gate: GET /api/stats must show the smoke-s10 surface fresh
+          # (freshness_hours == 0, >= 2 capture events) + recall/corpus
+          # sections, then bin/um-alert.sh must exit 0 on the fresh surface
+          # and 1 on a never-captured one. No extra env: the legs need only
+          # this flag + the bearer token install.sh already wrote to .env
+          # (/api/stats vetoes the loopback no-auth bypass, so the token is
+          # load-bearing here — legs skip cleanly on a tokenless stack).
           UM_SMOKE_REMOTE_RT: "1"
           # v0.8: G2.5 mocked-SDK boot tests now isolated by per-provider
           # QDRANT_COLLECTION (boot_smoke_<provider>), so each boot lands its
@@ -478,6 +487,8 @@ jobs:
                      plugins/claude-code/universal-memory/bin/um-preview \
                      plugins/claude-code/universal-memory/bin/um-supersede \
                      plugins/claude-code/universal-memory/bin/um-tunnel \
+                     plugins/claude-code/universal-memory/bin/um-alert.sh \
+                     plugins/claude-code/universal-memory/bin/um-alert.test.sh \
                      plugins/claude-code/universal-memory/hooks/*.sh \
                      plugins/claude-code/universal-memory/hooks/lib/*.sh \
                      plugins/claude-code/universal-memory/skills/create-adr/create-adr.sh \
@@ -523,6 +534,11 @@ jobs:
       # via stubbed curl/cloudflared/tailscale). Was shellchecked but never
       # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
       - run: bash plugins/claude-code/universal-memory/bin/um-tunnel.test.sh
+      # um-alert.test.sh covers the #171 Stage-A capture-freshness check's
+      # exit taxonomy (0 fresh / 1 stale / 2 check-couldn't-run) against a
+      # stubbed curl — pure local MOCK_BIN, no network. Wired explicitly:
+      # nothing here is glob-covered (plan U3 audit).
+      - run: bash plugins/claude-code/universal-memory/bin/um-alert.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |

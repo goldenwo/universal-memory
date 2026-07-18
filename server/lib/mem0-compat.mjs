@@ -39,6 +39,7 @@ import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { isRecallable } from './recallable.mjs';
+import { noteRecallSearch } from './recall-telemetry.mjs';
 import { withRetry } from './retry.mjs';
 import { filterSystemDocs } from './system-docs.mjs';
 import { SERVER_VERSION } from './version.mjs';
@@ -535,7 +536,7 @@ function resolveScopedRead(ctx, body) {
  *  must not drive unbounded over-fetch: fetchLimit stays ≤ 3×500). */
 const MAX_TOP_K = 500;
 
-async function handleSearch({ body, ctx }) {
+async function handleSearch({ req, body, ctx }) {
   const scope = resolveScopedRead(ctx, body);
   if (scope.error) return scope.error;
   const { operatorId, memory, b, descriptor } = scope;
@@ -548,10 +549,16 @@ async function handleSearch({ body, ctx }) {
   // Facade-side filters can only shrink the result set → over-fetch, then
   // filter, then truncate (spec §3 "Application point").
   const fetchLimit = Math.max(topK * 3, 30);
+  // U2 (#171): recall telemetry at HANDLER level (NOT scanAll — shared with
+  // bulk-delete; deletes are not recalls). The compat facade reads via raw
+  // memory.search, never doSearch, so this is production read path 2 (plan
+  // U2 R6). Duration measured around the underlying engine call.
+  const recallStartedAt = Date.now();
   const raw = await withRetry(
     () => memory.search(b.query, { userId: operatorId, limit: fetchLimit }),
     { op: 'compat-search' },
   );
+  const engineMs = Date.now() - recallStartedAt;
   let items = raw?.results ?? raw ?? [];
   // Read-path parity with doSearch: superseded/system records never surface.
   items = filterSystemDocs(items).filter(isRecallable);
@@ -560,18 +567,31 @@ async function handleSearch({ body, ctx }) {
   records = applyMem0Filters(records, descriptor);
   const threshold = typeof b.threshold === 'number' ? b.threshold : 0.3;
   records = records.filter((r) => typeof r.score !== 'number' || r.score >= threshold);
+  // Emit-after-success (U2 review nit): duration covers the ENGINE call only,
+  // but the emit waits until post-processing succeeds — a throw above becomes
+  // a 500 that was never counted as a served recall (doSearch parity).
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: engineMs,
+  });
   return { status: 200, body: { results: records.slice(0, topK) } };
 }
 
 // --- R4 ---------------------------------------------------------------------
 
-async function handleList({ url, body, ctx }) {
+async function handleList({ req, url, body, ctx }) {
   const scope = resolveScopedRead(ctx, body);
   if (scope.error) return scope.error;
   const { operatorId, memory, descriptor } = scope;
 
   // Read-path parity with R3/doSearch: superseded records never surface.
-  const items = (await scanAll(memory, operatorId)).filter(isRecallable);
+  // U2 (#171): the R4 list is a production read too — same handler-level
+  // telemetry as R3 (emitting here, not inside scanAll, keeps the R8/R9
+  // bulk-delete scans OUT of the recall counters — plan U2 audit).
+  const recallStartedAt = Date.now();
+  const scanned = await scanAll(memory, operatorId);
+  const engineMs = Date.now() - recallStartedAt;
+  const items = scanned.filter(isRecallable);
   const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
 
   const pageRaw = Number.parseInt(url.searchParams.get('page') ?? '', 10);
@@ -581,6 +601,12 @@ async function handleList({ url, body, ctx }) {
   // per-row projection (spec §3 R4).
   const pageSize = Math.min(Number.isInteger(sizeRaw) && sizeRaw >= 1 ? sizeRaw : 100, 500);
   const start = (page - 1) * pageSize;
+  // Emit-after-success (U2 review nit) — see the R3 note: engine-call
+  // duration, but only counted once post-processing/paging succeeded.
+  noteRecallSearch({
+    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
+    durationMs: engineMs,
+  });
   return { status: 200, body: { results: records.slice(start, start + pageSize) } };
 }
 
@@ -776,7 +802,7 @@ const COMPAT_ROUTES = [
  * pattern: routes own their body reads) and writes the returned
  * {status, body} as the JSON response.
  *
- * @param {import('node:http').IncomingMessage|{method: string}} req — only `method` is read here
+ * @param {import('node:http').IncomingMessage|{method: string, headers?: object}} req — `method` for dispatch; `headers` read by the search/list handlers for X-UM-Source recall-surface attribution (#171)
  * @param {URL} url — parsed request URL (pathname + searchParams)
  * @param {object|undefined} body — parsed JSON body (undefined for body-less methods)
  * @param {object} ctx — DI context (memory etc.), forwarded to handlers for Batch 3

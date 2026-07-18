@@ -20,7 +20,9 @@
  *
  * Normal-path rows MAY additionally carry marker fields consumed by the
  * middleware chain — currently `compat: true` on the mem0-compat row
- * (Step-4 extractor selection + loopback no-bypass, compat spec §6).
+ * (Step-4 extractor selection + loopback no-bypass, compat spec §6) and
+ * `noLoopbackBypass: true` on the /api/stats row (loopback no-bypass
+ * ONLY — standard Bearer + {error} envelope, #171 Stage-A spec §3).
  */
 
 import { configuredProviders } from './oauth/idp/config.mjs';
@@ -87,6 +89,16 @@ const ROWS = [
   // the loopback no-auth bypass (spec §6: a mem0 client always sends its
   // key; docker-bridge peers make loopback semantics misleading here).
   { match: (p, s) => p.startsWith('/v1/') || p.startsWith('/v2/'),   pol: (e) => mem0CompatPolicy(e) },
+
+  // /api/stats: operational stats (#171 Stage A, spec §3). Auth + rate-limit
+  // always on PLUS the DECOUPLED noLoopbackBypass marker: stats aggregate
+  // operational metadata, so the loopback no-auth bypass is vetoed at BOTH
+  // middleware veto sites (Step-4 auth + Step-5 limiter) — same posture as
+  // the compat rows but via its OWN flag, because compat:true additionally
+  // switches the token scheme (Token|Bearer) and the error dialect
+  // ({detail}), both wrong here (spec §3 R1 finding). MUST precede the
+  // /api/* catch-all (first-match-wins).
+  { match: (p, s) => p === '/api/stats',                             pol: () => ({ bypassAuth: false, bypassRateLimit: false, noLoopbackBypass: true }) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
