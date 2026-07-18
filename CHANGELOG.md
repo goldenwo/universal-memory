@@ -4,6 +4,15 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-07-18
+
+### Fixed — the image build could not fail (shipped a broken arm64 v1.8.0)
+
+- **`server/Dockerfile`'s dependency stage ended in a bare `|| true`**, which shell precedence applies to the *entire* `&&` chain — so `npm ci`, the mem0ai sha256 source pin's `exit 1`, `patch-package`, and `npm prune` could all fail while the build still reported success. The comment above that chain claimed the hash pin "fails LOUDLY"; it could not. **v1.8.0's arm64 image shipped with `node_modules/mem0ai` removed** (a partial `npm prune` under QEMU emulation during the multi-arch build), and the server crash-looped on `ERR_MODULE_NOT_FOUND: mem0ai/oss` in production. The amd64 image of the same tag was fine, which is why CI — which builds and boots amd64 only — stayed green.
+- Each cleanup `find` is now individually fault-tolerant; **nothing else in the chain is**. A new **post-prune integrity gate** re-verifies nine critical runtime dependencies and resolves `mem0ai/oss` through its export map *after* the destructive prune/rm/find steps — the pre-prune hash check by construction cannot see damage that prune does afterward. Verified by building `linux/arm64` under QEMU locally: the gate prints `post-prune integrity OK` and the resulting image imports `mem0ai/oss` cleanly.
+
+**Operators on v1.8.0: upgrade.** The arm64 v1.8.0 image does not boot. There is no data risk — the container never reached the vault.
+
 ## [1.8.0] — 2026-07-18
 
 ### Added — UM Control Stage A: stats layer + capture-freshness alerting (#171)

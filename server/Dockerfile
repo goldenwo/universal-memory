@@ -34,6 +34,16 @@ COPY patches ./patches
 # Reconciliation when mem0ai is bumped: see server/patches/README.md.
 # CHANGELOG.md `### W6.2 — Image size reduction` is the durable reference
 # for the post-upgrade boot-log change operators will see.
+#
+# ⚠ FAIL-LOUD (v1.8.1). This chain previously ended in a bare `|| true`, which
+# shell precedence applies to the WHOLE `&&` chain — so npm ci, the sha256
+# pin's `exit 1`, patch-package and npm prune could all fail and still produce
+# a "successful" image. v1.8.0 shipped an arm64 image whose node_modules/mem0ai
+# had been removed during prune under QEMU emulation; the build went green and
+# the server crash-looped on ERR_MODULE_NOT_FOUND in production. Each cleanup
+# `find` is now individually tolerant, nothing else is, and a post-prune
+# integrity gate re-verifies the runtime deps AFTER the destructive steps —
+# the pre-prune hash check cannot see damage that prune does later.
 RUN npm ci --no-audit --no-fund \
  && computed=$(sha256sum node_modules/mem0ai/dist/oss/index.mjs | awk '{print $1}') \
  && expected=$(cat patches/mem0ai+2.4.6.source.sha256) \
@@ -57,9 +67,17 @@ RUN npm ci --no-audit --no-fund \
            node_modules/js-tiktoken \
            node_modules/rxjs \
            node_modules/.cache \
- && find node_modules -name "*.d.ts" -delete 2>/dev/null \
- && find node_modules -name "*.map" -delete 2>/dev/null \
- && find node_modules -type d -empty -delete 2>/dev/null || true
+ && { find node_modules -name "*.d.ts" -delete 2>/dev/null || true; } \
+ && { find node_modules -name "*.map" -delete 2>/dev/null || true; } \
+ && { find node_modules -type d -empty -delete 2>/dev/null || true; } \
+ && node --input-type=module -e "\
+import fs from 'node:fs'; \
+const need = ['mem0ai','openai','zod','@anthropic-ai/sdk','@google/genai','@qdrant/js-client-rest','ollama','better-sqlite3','pino']; \
+const missing = need.filter(p => !fs.existsSync('node_modules/' + p + '/package.json')); \
+if (missing.length) { console.error('FAIL post-prune integrity: missing runtime deps -> ' + missing.join(', ')); process.exit(1); } \
+if (!fs.existsSync('node_modules/mem0ai/dist/oss/index.mjs')) { console.error('FAIL post-prune integrity: mem0ai/dist/oss/index.mjs is gone'); process.exit(1); } \
+try { import.meta.resolve('mem0ai/oss'); } catch (e) { console.error('FAIL post-prune integrity: mem0ai/oss does not resolve -> ' + e.message); process.exit(1); } \
+console.log('post-prune integrity OK (' + need.length + ' runtime deps present, mem0ai/oss resolves)');"
 
 FROM node:20-alpine
 WORKDIR /app
