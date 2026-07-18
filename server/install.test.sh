@@ -891,12 +891,38 @@ if [[ "$args" == *"config"* ]]; then
   echo "    restart: unless-stopped"
   exit 0
 fi
+if [[ "$args" == *"image inspect"* ]]; then
+  # Resolving the TARGET image's ID for the post-swap identity check.
+  echo "${FAKE_TARGET_ID:-sha256:newimage}"
+  exit 0
+fi
 if [[ "$args" == *"inspect"* ]]; then
+  if [[ "$args" == *".State.Restarting"* ]]; then
+    echo "${FAKE_RESTARTING:-false}"
+    exit 0
+  fi
   if [[ "$args" == *".Config.Image"* ]]; then
     echo "${FAKE_OLD_TAG:-ghcr.io/goldenwo/universal-memory-server:1.8.0}"
-  else
-    echo "${FAKE_OLD_ID:-sha256:0ldc0ffee}"
+    exit 0
   fi
+  # `inspect -f {{.Image}} <cid>` is asked twice with identical argv: once
+  # before the swap (the rollback target) and once after (what is actually
+  # serving). Model the timeline by call count so the post-swap identity check
+  # has something real to compare.
+  _n_file="${FAKE_DOCKER_LOG:-/tmp/fake-docker}.imgcalls"
+  _n=$(cat "$_n_file" 2>/dev/null || echo 0)
+  _n=$((_n + 1))
+  echo "$_n" > "$_n_file"
+  if [ "$_n" -le 1 ]; then
+    echo "${FAKE_OLD_ID:-sha256:0ldc0ffee}"
+  else
+    echo "${FAKE_RUNNING_ID:-${FAKE_TARGET_ID:-sha256:newimage}}"
+  fi
+  exit 0
+fi
+if [[ "$args" == *" port memory-server"* ]]; then
+  [ "${FAKE_NO_PORT:-0}" = "1" ] && exit 1
+  echo "${FAKE_PORT_OUT:-127.0.0.1:6335}"
   exit 0
 fi
 if [[ "$args" == *"ps -q"* ]]; then
@@ -967,7 +993,11 @@ assert_contains "T20: resolves the memory-server image" "$T20_OUT" "Target image
 assert_not_contains "T20: does not mistake qdrant for the target" "$T20_OUT" "Target image: qdrant"
 assert_contains "T20: pre-flight ran and passed" "$T20_OUT" "Pre-flight passed"
 assert_contains "T20: reports completion" "$T20_OUT" "Upgrade complete"
-assert_contains "T20: prints the manual revert command" "$T20_OUT" "UM_IMAGE=sha256:0ldc0ffee"
+assert_contains "T20: prints the manual revert command" "$T20_OUT" "UM_IMAGE=um-rollback:previous"
+# The revert command must be copy-pasteable into the same file set _compose
+# uses — a bare `docker compose` scoped to server/, not an explicit -f that
+# would suppress the host's docker-compose.override.yml.
+assert_not_contains "T20: revert command carries no -f" "$T20_OUT" "docker compose -f"
 assert_contains "T20: points at CHANGELOG" "$T20_OUT" "CHANGELOG.md"
 T20_LOGTXT=$(cat "$T20_LOG")
 assert_contains "T20: pulled the image" "$T20_LOGTXT" "pull memory-server"
@@ -1022,14 +1052,27 @@ assert_contains "T22: announces the auto-rollback" "$T22_OUT" "AUTO-ROLLBACK"
 assert_contains "T22: dumps container logs for diagnosis" "$T22_OUT" "ERR_MODULE_NOT_FOUND"
 assert_contains "T22: reports the rollback outcome" "$T22_OUT" "ROLLBACK SUCCEEDED"
 assert_contains "T22: names the image it restored" "$T22_OUT" "sha256:deadbeef"
-# THE load-bearing assertion: the rollback `up -d` carried the ORIGINAL image
-# ID — not the tag, which on a latest→latest upgrade now points at the bad image.
-if grep -- "up -d" "$T22_LOG" | grep -q "UM_IMAGE=sha256:deadbeef"; then
-  pass "T22: rollback up -d used the ORIGINAL recorded image ID"
+# LOAD-BEARING 1: the protective tag is applied to the ORIGINAL image ID, not
+# to its tag — on a latest→latest upgrade the tag now points at the bad image.
+if grep -q "ARGS=tag sha256:deadbeef um-rollback:previous" "$T22_LOG"; then
+  pass "T22: protective tag applied to the ORIGINAL recorded image ID"
 else
-  fail_test "T22: rollback up -d used the ORIGINAL recorded image ID" \
+  fail_test "T22: protective tag applied to the ORIGINAL recorded image ID" \
     "docker log: $(cat "$T22_LOG")"
 fi
+# LOAD-BEARING 2: the rollback recreate goes through that durable tag, not the
+# raw ID — under UM_BUILD_LOCAL the ID can be destroyed by step 2's rebuild
+# (containerd image store), and `UM_IMAGE=sha256:<id>` would then be parsed as
+# repo "sha256" / tag "<id>" and sent to a registry that never had it.
+if grep -- "up -d" "$T22_LOG" | grep -q "UM_IMAGE=um-rollback:previous"; then
+  pass "T22: rollback up -d used the durable rollback tag"
+else
+  fail_test "T22: rollback up -d used the durable rollback tag" \
+    "docker log: $(cat "$T22_LOG")"
+fi
+# The printed manual recovery must also be durable and override-safe.
+assert_contains "T22: manual recovery uses the durable tag" "$T22_OUT" "UM_IMAGE=um-rollback:previous"
+assert_contains "T22: rollback durability is called out" "$T22_OUT" "Rollback is NOT durable yet"
 
 # ─── T23: --upgrade refuses to be combined with --yes (either order) ─────────
 echo ""
@@ -1105,6 +1148,170 @@ T25_OUT=$(run_upgrade "$T25/bin" "$T25_SH" "$T25_LOG" FAKE_NO_CONTAINER=1 -- --u
 assert_exit_nonzero "T25: exits non-zero with no running container" "$T25_EXIT"
 assert_contains "T25: explains there is no rollback target" "$T25_OUT" "no image to roll back to"
 assert_not_contains "T25: pulled nothing" "$(cat "$T25_LOG")" "pull memory-server"
+
+# ─── T29: crash-loop is detected by STATE, not by waiting out the clock ──────
+# A clock-only check cannot tell "dead" from "booting slowly", so it has to
+# pick one and be wrong half the time. Watching container state lets the
+# ceiling stay generous (180s, matching the install path's ARM-Pi rationale)
+# while a container docker reports as restarting rolls back immediately.
+echo ""
+echo "=== T29: --upgrade rolls back immediately on a crash-looping container ==="
+T29="$TMPROOT/t29"
+mkdir -p "$T29/server"
+make_fakebin "$T29/bin" 200
+make_fake_docker_upgrade "$T29/bin"
+make_fake_curl_unhealthy_until_rollback "$T29/bin"
+T29_SH=$(make_isolated_server "$T29/server")
+T29_LOG="$T29/docker.log"
+
+T29_EXIT=0
+# Poll ceiling left at the REAL default: if state were not consulted, this
+# test would hang for 180s instead of failing fast.
+T29_OUT=$(env -i PATH="$T29/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$REPO_ROOT" HOME="$T29/server" \
+  FAKE_DOCKER_LOG="$T29_LOG" FAKE_RESTARTING=true \
+  MEM0_MCP_PORT=6335 \
+  bash "$T29_SH" --upgrade 2>&1) || T29_EXIT=$?
+
+assert_exit_nonzero "T29: exits non-zero on a crash-looping container" "$T29_EXIT"
+assert_contains "T29: names the crash-loop" "$T29_OUT" "CRASH-LOOPING"
+assert_contains "T29: says it is not waiting out the clock" "$T29_OUT" "Not waiting out the clock"
+assert_contains "T29: still rolled back" "$T29_OUT" "ROLLBACK SUCCEEDED"
+
+# ─── T30: health URL comes from compose, not from MEM0_MCP_PORT ──────────────
+# A host override can REPLACE the published ports, so a URL derived from
+# MEM0_MCP_PORT alone can point at an unbound port — every poll then fails and
+# a healthy upgrade gets reported as "the server is DOWN" and rolled back.
+echo ""
+echo "=== T30: --upgrade resolves the health port from compose ==="
+T30="$TMPROOT/t30"
+mkdir -p "$T30/server"
+make_fakebin "$T30/bin" 200
+make_fake_docker_upgrade "$T30/bin"
+T30_SH=$(make_isolated_server "$T30/server")
+T30_LOG="$T30/docker.log"
+
+T30_EXIT=0
+# MEM0_MCP_PORT says 6335; compose reports the container published on 6337.
+T30_OUT=$(run_upgrade "$T30/bin" "$T30_SH" "$T30_LOG" FAKE_PORT_OUT=0.0.0.0:6337 -- --upgrade) || T30_EXIT=$?
+
+assert_exit_zero "T30: --upgrade exits 0" "$T30_EXIT"
+assert_contains "T30: health URL uses the published port" "$T30_OUT" "http://localhost:6337/health"
+assert_not_contains "T30: does not use the .env port" "$T30_OUT" "http://localhost:6335/health"
+# A 0.0.0.0 bind is probed over loopback, which is reachable everywhere.
+assert_not_contains "T30: never dials 0.0.0.0" "$T30_OUT" "http://0.0.0.0"
+
+# Falls back to MEM0_MCP_PORT when compose cannot answer.
+T30B_LOG="$T30/nofallback.log"
+T30B_EXIT=0
+T30B_OUT=$(run_upgrade "$T30/bin" "$T30_SH" "$T30B_LOG" FAKE_NO_PORT=1 -- --upgrade) || T30B_EXIT=$?
+assert_exit_zero "T30: still succeeds when compose cannot report a port" "$T30B_EXIT"
+assert_contains "T30: falls back to MEM0_MCP_PORT" "$T30B_OUT" "http://localhost:6335/health"
+
+# ─── T31: a 200 from the port is not proof the new image is serving ──────────
+# Anything bound to that port satisfies the poll. On a half-migrated host a
+# stale container answers, and a failed swap would report "Upgrade complete".
+echo ""
+echo "=== T31: --upgrade rejects a healthy port served by the wrong image ==="
+T31="$TMPROOT/t31"
+mkdir -p "$T31/server"
+make_fakebin "$T31/bin" 200
+make_fake_docker_upgrade "$T31/bin"
+T31_SH=$(make_isolated_server "$T31/server")
+T31_LOG="$T31/docker.log"
+
+T31_EXIT=0
+# /health answers 200 throughout, but the container serving it is not the
+# image we just pre-flighted and swapped in.
+T31_OUT=$(run_upgrade "$T31/bin" "$T31_SH" "$T31_LOG" \
+  FAKE_RUNNING_ID=sha256:stalecontainer FAKE_TARGET_ID=sha256:newimage -- --upgrade) || T31_EXIT=$?
+
+assert_exit_nonzero "T31: exits non-zero when the wrong image is serving" "$T31_EXIT"
+assert_not_contains "T31: does NOT claim success" "$T31_OUT" "Upgrade complete"
+assert_contains "T31: says the swap did not take" "$T31_OUT" "the swap did not take"
+assert_contains "T31: names the image actually running" "$T31_OUT" "sha256:stalecontainer"
+assert_contains "T31: rolled back" "$T31_OUT" "AUTO-ROLLBACK"
+
+# ─── T27: _compose() file selection — override is appended LAST ──────────────
+# _compose() is the single point that decides which compose files every docker
+# invocation in this script sees. An explicit -f suppresses compose's own
+# auto-load of docker-compose.override.yml, so _compose MUST re-add it by hand
+# — and LAST, or the host's overrides lose to the base file they exist to
+# correct. Asserted through a real run: the fake docker records the argv.
+echo ""
+echo "=== T27: _compose() appends docker-compose.override.yml last when present ==="
+T27="$TMPROOT/t27"
+mkdir -p "$T27/server"
+make_fakebin "$T27/bin" 200
+make_fake_docker_upgrade "$T27/bin"
+T27_SH=$(make_isolated_server "$T27/server")
+
+# (a) no override file present ⇒ never referenced
+T27A_LOG="$T27/no-override.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27A_LOG" -- --upgrade >/dev/null 2>&1 || true
+assert_not_contains "T27: override not referenced when absent" "$(cat "$T27A_LOG")" "docker-compose.override.yml"
+assert_contains "T27: base compose file always passed" "$(cat "$T27A_LOG")" "docker-compose.yml"
+
+# (b) override file present ⇒ appended, and LAST
+printf 'services:\n  memory-server:\n    ports: !override\n      - "127.0.0.1:6399:6335"\n' \
+  > "$T27/server/docker-compose.override.yml"
+T27B_LOG="$T27/with-override.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27B_LOG" -- --upgrade >/dev/null 2>&1 || true
+T27B_UP=$(grep -- "up -d" "$T27B_LOG" | head -1)
+assert_contains "T27: override passed when present" "$T27B_UP" "docker-compose.override.yml"
+# Order check: the override's -f must come after the base file's.
+T27_BASE_POS=$(awk '{print index($0, "docker-compose.yml")}' <<< "$T27B_UP")
+T27_OVR_POS=$(awk '{print index($0, "docker-compose.override.yml")}' <<< "$T27B_UP")
+if [ "$T27_OVR_POS" -gt "$T27_BASE_POS" ] && [ "$T27_OVR_POS" -gt 0 ]; then
+  pass "T27: override -f appears AFTER the base -f"
+else
+  fail_test "T27: override -f appears AFTER the base -f" "argv: $T27B_UP"
+fi
+
+# (c) build mode ⇒ base, build override, then host override last
+T27C_LOG="$T27/build-mode.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27C_LOG" UM_BUILD_LOCAL=1 -- --upgrade >/dev/null 2>&1 || true
+T27C_UP=$(grep -- "up -d" "$T27C_LOG" | head -1)
+T27C_BUILD_POS=$(awk '{print index($0, "docker-compose.build.yml")}' <<< "$T27C_UP")
+T27C_OVR_POS=$(awk '{print index($0, "docker-compose.override.yml")}' <<< "$T27C_UP")
+if [ "$T27C_BUILD_POS" -gt 0 ] && [ "$T27C_OVR_POS" -gt "$T27C_BUILD_POS" ]; then
+  pass "T27: host override still wins over the build override"
+else
+  fail_test "T27: host override still wins over the build override" "argv: $T27C_UP"
+fi
+rm -f "$T27/server/docker-compose.override.yml"
+
+# ─── T28: .env values are normalized the way compose's parser does ───────────
+# A quoted MEM0_MCP_PORT used to reach the health URL verbatim
+# (http://localhost:"6335"/health), which can never answer — and --upgrade
+# reads that as "the server is DOWN" and rolls back a healthy upgrade.
+echo ""
+echo "=== T28: --verify tolerates quoted / commented / CRLF .env values ==="
+T28="$TMPROOT/t28"
+mkdir -p "$T28/vault" "$T28/plugins" "$T28/home"
+make_fakebin "$T28/bin" 200
+T28_SH=$(make_isolated_server "$T28/server")
+cp -r "$PLUGIN_SRC" "$T28/plugins/universal-memory"
+{
+  printf 'MEM0_MCP_PORT="6335"\r\n'
+  printf 'UM_VAULT_DIR=%s   # inline comment\n' "$T28/vault"
+  printf "UM_OPENAI_API_KEY='sk-testkey12345'\n"
+} > "$T28/server/.env"
+
+T28_EXIT=0
+T28_OUT=$(env PATH="$T28/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  CLAUDE_PLUGINS_DIR="$T28/plugins" \
+  HOME="$T28/home" \
+  bash "$T28_SH" --verify 2>&1) || T28_EXIT=$?
+
+assert_exit_zero "T28: --verify exits 0 with quoted/commented/CRLF values" "$T28_EXIT"
+# The health line proves the port was unquoted before the URL was built.
+assert_contains "T28: port unquoted in health URL" "$T28_OUT" "http://localhost:6335/health"
+assert_not_contains "T28: no quote leaked into the URL" "$T28_OUT" 'localhost:"6335"'
+# The vault check proves the inline comment was stripped from the path.
+assert_contains "T28: inline comment stripped from vault path" "$T28_OUT" "vault-dir"
+assert_not_contains "T28: vault path has no comment residue" "$T28_OUT" "# inline comment"
 
 # ─── T26: drift gate — --upgrade's fallback image ref tracks the compose file ─
 # --upgrade resolves the target image from `docker compose config`, but falls

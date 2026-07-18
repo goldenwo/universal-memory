@@ -40,6 +40,20 @@ Exit codes are deliberately three-valued: `0` fresh, `1` STALE, `2` the check co
 
 `server/package.json` → `1.8.0` (`1.8.1` for the image fix). The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` report it — single source `server/lib/version.mjs`. No operator action; noted so a connected client seeing the version change knows it is expected.
 
+### `MEM0_MCP_PORT` is now unambiguously the HOST port
+
+`MEM0_MCP_PORT` was read two ways at once: compose used it as the host side of the `ports:` mapping, but `env_file: .env` also handed it to the container, where the server `parseInt()`s it to choose its listen port. So `MEM0_MCP_PORT=6337` published host 6337 → container 6335 while the server listened on 6337 *inside* (nothing on 6335), and the documented binding form `127.0.0.1:6337` parsed to `127` → listen on a privileged port → `EACCES`. Only the default `6335` ever worked.
+
+The compose file now pins `MEM0_MCP_PORT: "6335"` in memory-server's `environment:` block, which takes precedence over `env_file`. **The container always listens on 6335; `MEM0_MCP_PORT` is purely the host binding.** Setting `MEM0_MCP_PORT=6337` (or `127.0.0.1:6337`) now does what it always looked like it did.
+
+- **Action:** none, unless you previously worked around this by hand. If you set a non-6335 port *inside* the container some other way, drop that workaround.
+
+### Host-specific compose overrides
+
+Put anything the shipped compose file cannot know — an alternate qdrant image for your CPU, extra port bindings, bind paths outside the repo — in `server/docker-compose.override.yml`. It is gitignored, auto-loaded by a bare `docker compose` run from `server/`, and applied last so it wins. `install.sh` passes it explicitly on every call.
+
+**Run compose from `server/` without `-f`.** An explicit `-f docker-compose.yml` suppresses the auto-load, so a copy-pasted `-f` command rebuilds the stack from the base file alone — which on a host whose override exists *because* the base config does not work there is a new outage, not a recovery.
+
 ### Action for operators
 
 - **Pull `1.8.1`.** No `.env` changes, no config, no reindex.

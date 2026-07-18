@@ -232,7 +232,13 @@ UM_VERSION=1.8.1 docker compose pull && UM_VERSION=1.8.1 docker compose up -d
 curl http://localhost:6335/health   # or your MEM0_MCP_PORT
 ```
 
+Run compose commands from `server/` and without `-f`, so a host-specific `server/docker-compose.override.yml` is picked up (compose auto-loads that name; an explicit `-f` suppresses it). If `UM_IMAGE` is set in your `.env` it overrides `UM_VERSION` entirely — unset it, or edit `UM_IMAGE` instead of passing a version. (`--upgrade` refuses that combination rather than upgrading to something you did not ask for.)
+
 Set `UM_VERSION` in `server/.env` to make a pin durable across plain `docker compose up -d`.
+
+### Host-specific overrides
+
+Anything the shipped compose file cannot know — an alternate qdrant image for your CPU, an extra port binding on a tailnet IP, bind paths outside the repo — goes in `server/docker-compose.override.yml`. It is gitignored, auto-loaded by a bare `docker compose`, and applied last so it wins. `install.sh` passes it explicitly on every call, so `--upgrade` and `--verify` see the same stack you do.
 
 universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult [MIGRATION.md](MIGRATION.md) for per-version upgrade steps and [CHANGELOG.md](CHANGELOG.md) for full release notes. Pin a release tag rather than tracking `latest` in production.
 

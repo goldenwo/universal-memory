@@ -79,5 +79,8 @@ docs/decisions/
 
 # Visual-companion brainstorm sessions
 .superpowers/
-docker-compose.local.yml
-server/docker-compose.local.yml
+
+# Host-specific compose overrides (compose auto-loads this name for a bare
+# `docker compose`). Never shipped — each host pins its own qdrant image,
+# port bindings, or bind paths here. Unanchored, so it matches at any depth.
+docker-compose.override.yml
