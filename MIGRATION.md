@@ -1,5 +1,128 @@
 # Migration guide
 
+## v1.7 → v1.8
+
+v1.8 is **additive**: a read-only stats layer (`GET /api/stats`) and the `um-alert` capture-freshness check. No env-var renames, no API contract changes, no behavior change on any existing route. The server version bumps to `1.8.0`.
+
+### Upgrade to `1.8.1`, not `1.8.0`
+
+The published **arm64** v1.8.0 image does not boot. Its `node_modules/mem0ai` was emptied by a partial `npm prune` during the multi-arch build, and the server crash-loops on `ERR_MODULE_NOT_FOUND: mem0ai/oss`. The amd64 image of the same tag is fine — which is why CI, which builds and boots amd64 only, stayed green. v1.8.1 fixes the Dockerfile fault that let a failing build report success (a trailing `|| true` that shell precedence applied to the whole `&&` chain) and adds a post-prune integrity gate that re-verifies critical runtime dependencies after the destructive prune steps.
+
+**There is no data risk from the bad image** — the container never reached the vault. If you are on v1.8.0 and running, you are on amd64; upgrade at your convenience. If you pulled it on arm64, `server/install.sh --upgrade 1.8.1`.
+
+`install.sh --upgrade` (new in this arc) pre-flights the image in a throwaway container before swapping the running one, and auto-rolls-back if the new container never reports healthy — precisely so a broken image cannot repeat this.
+
+### New: `GET /api/stats` (no action required)
+
+One authed endpoint answering "is memory alive": per-surface capture freshness, corpus size + per-project split + 7-day growth, recall volume, since-boot serving-latency percentiles, and server version/uptime/writes-flag/mount-mode. It aggregates read-only from the v1.7 counters DB — no new write-path instrumentation, no new service.
+
+- **Bearer required, and the loopback no-auth bypass does not apply to this route.** Unlike `/api/*`, a request from `127.0.0.1` still needs `Authorization: Bearer <UM_AUTH_TOKEN>`.
+- **It degrades rather than fails.** An unreadable counters DB yields `capture: null` + `degraded: ["counters-unavailable"]` at HTTP 200, with the qdrant-sourced fields still live.
+- To keep counters across container restarts, mount the history dir (see the commented `./data/mem0-history:/var/lib/mem0` volume in `docker-compose.yml`); `UM_COUNTERS_DB_PATH` defaults next to `MEM0_HISTORY_DB_PATH`, so one bind mount persists both.
+
+### New: `um-alert` — capture-freshness check (opt-in)
+
+`um-alert.sh` pages you when no surface has captured recently — the fix for silent capture death. Cron it:
+
+```bash
+26 6 * * * $HOME/.local/share/um/cli/um-alert.sh || <your-notify-command>
+```
+
+Exit codes are deliberately three-valued: `0` fresh, `1` STALE, `2` the check could not run (unreachable / auth / server-too-old / degraded counters). "I can't see" is never reported as "your memory is dead". Tune the window with `--max-age-hours` (default 26) or scope to one surface with `--surface`.
+
+### The `/health` memory count may JUMP — that is a fix, not growth
+
+`GET /health`'s `memories` count inherited mem0ai's default `limit=100` on its underlying `getAll`, so on any deployment past 100 points it silently reported `100`. v1.8 passes an explicit scan limit at both `/health` and the new stats corpus read.
+
+**If your `/health` has been reporting a suspiciously round `100`, the number will jump on upgrade — to the count you already had.** Nothing was created, migrated, or recovered; the old number was wrong. Do not read the jump as data growth, and do not read it as a dedup regression.
+
+### Server version string
+
+`server/package.json` → `1.8.0` (`1.8.1` for the image fix). The MCP `serverInfo` banner and `GET /openapi.yaml` `info.version` report it — single source `server/lib/version.mjs`. No operator action; noted so a connected client seeing the version change knows it is expected.
+
+### `MEM0_MCP_PORT` is now unambiguously the HOST port
+
+`MEM0_MCP_PORT` was read two ways at once: compose used it as the host side of the `ports:` mapping, but `env_file: .env` also handed it to the container, where the server `parseInt()`s it to choose its listen port. So `MEM0_MCP_PORT=6337` published host 6337 → container 6335 while the server listened on 6337 *inside* (nothing on 6335), and the documented binding form `127.0.0.1:6337` parsed to `127` → listen on a privileged port → `EACCES`. Only the default `6335` ever worked.
+
+The compose file now pins `MEM0_MCP_PORT: "6335"` in memory-server's `environment:` block, which takes precedence over `env_file`. **The container always listens on 6335; `MEM0_MCP_PORT` is purely the host binding.** Setting `MEM0_MCP_PORT=6337` (or `127.0.0.1:6337`) now does what it always looked like it did.
+
+- **Action:** none, unless you previously worked around this by hand. If you set a non-6335 port *inside* the container some other way, drop that workaround.
+
+### Host-specific compose overrides
+
+Put anything the shipped compose file cannot know — an alternate qdrant image for your CPU, extra port bindings, bind paths outside the repo — in `server/docker-compose.override.yml`. It is gitignored, auto-loaded by a bare `docker compose` run from `server/`, and applied last so it wins. `install.sh` passes it explicitly on every call.
+
+**Run compose from `server/` without `-f`.** An explicit `-f docker-compose.yml` suppresses the auto-load, so a copy-pasted `-f` command rebuilds the stack from the base file alone — which on a host whose override exists *because* the base config does not work there is a new outage, not a recovery.
+
+### Action for operators
+
+- **Pull `1.8.1`.** No `.env` changes, no config, no reindex.
+- Optionally cron `um-alert` and mount the counters DB for durable stats.
+- Expect the `/health` count to correct itself upward if your corpus is over 100.
+
+## v1.6 → v1.7
+
+v1.7 rebuilds the Claude Code plugin's hooks as thin HTTP clients that speak to any UM server, local or remote. It carries **the one breaking change in the 1.x line so far**, and it bites exactly one upgrade path: an in-place upgrade of an existing **local** install. The server version bumps to `1.7.0`.
+
+### Breaking: capture requires two server flags
+
+**If you upgrade an existing local install in place (`git pull` + restart, no installer run), plugin capture goes dark until you edit `server/.env`:**
+
+```bash
+UM_MCP_WRITE_ENABLED=true   # shipped default: false — the server 403s every capture
+UM_MOUNT_MODE=rw            # shipped default: ro — flag-true + ro mount fails 5xx (EROFS)
+```
+
+then `docker compose up -d`.
+
+The hooks are now **API-always**: every capture goes through `POST /api/append-turn` / `POST /api/checkpoint`, and those routes hard-gate on `UM_MCP_WRITE_ENABLED`. Flip **both** flags together — `install.sh` refuses a `rw` mount without writes enabled (a rw mount with the write surface gated off is attack surface with no feature benefit), and writes-enabled against a `ro` mount fails with EROFS.
+
+**This is not silent.** Every skipped capture logs `skip=writes-disabled` to `~/.um/hook.log`, and the next session start injects a visible "⚠ UM: captures are OFF" banner. Your existing `captures/` files remain server-side inputs — nothing is lost while the flags are off.
+
+### Retired: the client-side summarizer
+
+`session-end.sh` no longer calls an LLM. Synthesis always runs server-side with the server's key, so **client installs no longer need an OpenAI/LLM API key**. The plugin's bespoke local-file capture path (lockdirs, `UM_VAULT_DIR` on the client) is replaced by the server API; local same-box installs keep working via the loopback default.
+
+### If you repoint a LOCAL install at a REMOTE endpoint
+
+**Un-checkpointed local raw captures are stranded** — a remote server cannot read your filesystem. Run one checkpoint against the local server first (`/um-checkpoint`, or just finish a session), *then* repoint.
+
+### Minimum server version
+
+**The v1.7 plugin requires server ≥ v1.7.0** — the pinned `/api` capture contract. Probes and hooks report an older server as a distinct `skip=server-too-old` condition, never conflated with writes-disabled. If you run the plugin and the server on different boxes, upgrade the server first.
+
+### Also new (no action required)
+
+- **Marketplace install**: `claude plugin marketplace add goldenwo/universal-memory`, then `claude plugin install universal-memory@universal-memory`.
+- **`/um-setup`** — first-run setup for marketplace installs (which ship no config): endpoint + token prompt, health check and an authed write probe that distinguishes 403 writes-disabled / 401 auth / 404 server-too-old / 5xx mount-or-server / 000 unreachable, writing `~/.um/endpoint` + `~/.um/auth-token` (600) only on success.
+- **Server-side capture counters** in a UM-owned SQLite file (`UM_COUNTERS_DB_PATH`, defaulting next to the mem0 history DB). Fire-and-forget — never fails a capture. This is what v1.8's stats layer reads.
+
+### Action for operators
+
+- **Fresh installs / installer runs: none.** The installer writes both flags correctly.
+- **In-place local upgraders: set `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`, then `docker compose up -d`.** Verify with `bash server/install.sh --verify` — its `hook-smoke` check fails with exactly this prescription if the flags are wrong.
+- Operator + client guide: [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md).
+
+## v1.5 → v1.6
+
+v1.6 adds one **default-off** capability and two boot/compat fixes. It changes **no existing behavior** — the upgrade is transparent. The server version bumps to `1.6.0`.
+
+### New (off by default): mem0 Platform-compat facade
+
+The server can speak the mem0 Platform HTTP dialect behind `UM_MEM0_COMPAT_ENABLED` (default **OFF** — ships inert). Any existing mem0 Platform client adopts UM by pointing its `baseUrl` at the server and swapping the API key for `UM_AUTH_TOKEN`; no client changes, no plugin fork. It is a dialect adapter over the same internals the REST/MCP surfaces call — not a second write path. **Flag-off requests hard-404 before auth, byte-identical to a server without the feature.** Contract and adoption steps: [`docs/mem0-compat.md`](docs/mem0-compat.md).
+
+### Fixed: boots against legacy qdrant (≤ 1.7) with an existing collection
+
+qdrant ≤ 1.7 returns HTTP **400** — not the 409 newer versions emit — for a duplicate `createCollection`, and mem0ai 2.4.6 caught only 409/401/403, so init threw and the HTTP server never bound. Relevant if you run a qdrant older than the pinned v1.13 (e.g. a Raspberry Pi stuck on an unofficial arm build). Genuine 400s still throw.
+
+### Fixed: OAuth connector rejected claude.ai's client metadata
+
+`grant_types` in a client-metadata document are now intersected with the server's supported set instead of subset-validated. claude.ai added a `jwt-bearer` grant, and the strict subset rule rejected the whole document (`invalid_client` at connect). Only relevant with `UM_OAUTH_ENABLED=true`.
+
+### Action for operators
+
+- **None required.** Pull the image and `docker compose up -d`. The facade stays inert unless you set `UM_MEM0_COMPAT_ENABLED`.
+
 ## v1.4 → v1.5
 
 v1.5 has **one operator-visible behavior change**: the write-time supersession judge window is **wider**, so more phrasing-similar contradictions are caught and supersede the older fact instead of being kept as duplicates. The server version bumps to `1.5.0`. If you run with auto-supersession on (the default since v1.2) and lane classification on (the default since v1.3), this takes effect automatically — and that is the intended improvement: fewer stale facts survive an update.

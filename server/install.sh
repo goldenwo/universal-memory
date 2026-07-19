@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # install.sh — universal-memory server interactive installer.
-# Usage: ./install.sh          (interactive)
-#        ./install.sh --verify (post-install sanity check only)
-#        ./install.sh --yes    (non-interactive, accept all defaults)
-#        ./install.sh -y       (alias for --yes)
+# Usage: ./install.sh                 (interactive)
+#        ./install.sh --verify        (post-install sanity check only)
+#        ./install.sh --upgrade       (upgrade to the version compose resolves)
+#        ./install.sh --upgrade 1.8.1 (upgrade to a specific published version)
+#        ./install.sh --yes           (non-interactive, accept all defaults)
+#        ./install.sh -y              (alias for --yes)
 #        UM_NONINTERACTIVE=1 ./install.sh  (read all values from env, no prompts)
+#
+# --verify and --upgrade are sole-argument modes: each exits early and refuses
+# to be combined with --yes. --upgrade pre-flights the new image in a throwaway
+# container BEFORE swapping the running one, and auto-rolls-back to the exact
+# image that was running if the new container never reports healthy.
 #
 # Exits non-zero on any error. Prints what it does. Never installs Docker
 # for you — if Docker is missing it points at the upstream install docs
@@ -19,6 +26,32 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
+# Host-specific overrides (gitignored, never shipped). Self-hosters need to
+# pin things the base file cannot know: an alternate qdrant image for their
+# CPU, extra port bindings (e.g. a tailnet IP alongside loopback), bind-mount
+# paths outside the repo. Without this seam operators fall back to hand-rolled
+# `docker run`, which is how a v1.8.0 upgrade lost its port bindings and left
+# a server running-but-unreachable. Applied LAST so host config wins.
+#
+# The name is load-bearing: `docker-compose.override.yml` is compose's OWN
+# auto-load convention, so a BARE `docker compose ...` run from this directory
+# picks it up with no flags. That is what makes every recovery command this
+# script prints safe to copy-paste — on a host whose override exists precisely
+# because the base config does not work there (the Pi's crash-looping qdrant
+# image), a printed `-f docker-compose.yml` command would rebuild the stack
+# from the base file alone and take the host down in a new way.
+#
+# An explicit -f SUPPRESSES compose's auto-load, so _compose() — which always
+# passes -f — must keep appending it by hand.
+LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.override.yml"
+# Pre-rename name, kept only to warn that a leftover file is now inert.
+LEGACY_LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
+
+# Human-facing command prefix. Recovery instructions must reproduce the SAME
+# file set _compose() uses; the reliable way to do that in a copy-pasteable
+# one-liner is a bare `docker compose` scoped to this directory, letting the
+# auto-load convention above do the work.
+_compose_hint() { printf 'cd %s && docker compose %s' "$SCRIPT_DIR" "$*"; }
 
 # v1.0 W1.4 — image-mode detection. Default is pull-from-GHCR (fast, ~20s
 # first-run). Set UM_BUILD_LOCAL=1 in the calling environment to build
@@ -31,17 +64,27 @@ BUILD_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.build.yml"
 # This wrapper centralizes the file selection so every `docker compose`
 # call below honors the same mode without each site repeating the logic.
 _compose() {
-	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
-		docker compose -f "$COMPOSE_FILE" -f "$BUILD_OVERRIDE_FILE" "$@"
-	else
-		docker compose -f "$COMPOSE_FILE" "$@"
-	fi
+	local _files=(-f "$COMPOSE_FILE")
+	[ "${UM_BUILD_LOCAL:-0}" = "1" ] && _files+=(-f "$BUILD_OVERRIDE_FILE")
+	[ -f "$LOCAL_OVERRIDE_FILE" ] && _files+=(-f "$LOCAL_OVERRIDE_FILE")
+	docker compose "${_files[@]}" "$@"
 }
 
 info()  { printf '\033[1;34m[install]\033[0m %s\n' "$*"; }
 ok()    { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[install]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# The host-override seam was briefly named docker-compose.local.yml. Compose
+# does not auto-load that name and _compose() no longer passes it, so a
+# leftover file is silently ignored — which is precisely the failure mode this
+# seam exists to prevent, and it would only be discovered when the stack came
+# back up wrong. Say so on every run until it is renamed.
+if [ -f "$LEGACY_LOCAL_OVERRIDE_FILE" ] && [ ! -f "$LOCAL_OVERRIDE_FILE" ]; then
+	warn "$LEGACY_LOCAL_OVERRIDE_FILE is NO LONGER APPLIED (renamed seam)."
+	warn "  Rename it so docker compose auto-loads it:"
+	warn "    mv '$LEGACY_LOCAL_OVERRIDE_FILE' '$LOCAL_OVERRIDE_FILE'"
+fi
 
 # ─── Temp file cleanup ───────────────────────────────────────────────────────
 # Script-level cleanup guarantees we never leak secrets (API keys) in /tmp,
@@ -58,10 +101,136 @@ _um_cleanup() {
 }
 trap _um_cleanup EXIT INT TERM
 
+# ─── Shared helpers for the sole-argument modes (--verify / --upgrade) ───────
+# Both modes probe an already-running install, so both need the same two
+# things first: the values the operator put in server/.env (which they may
+# never have exported into their shell), and the port those values resolve to.
+# Factored here so the two modes can never drift apart on either — a --upgrade
+# that health-checked a different port than --verify would be its own outage.
+
+# Load .env WITHOUT clobbering vars the caller explicitly exported (tests pass
+# UM_VAULT_DIR / MEM0_MCP_PORT directly, and an explicit export must win over
+# the file). Malformed lines are skipped with a warning rather than aborting.
+_um_load_env_file() {
+	[ -f "$ENV_FILE" ] || return 0
+	while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+		# Skip comments and blank lines
+		[[ "$_k" =~ ^[[:space:]]*# ]] && continue
+		[ -z "$_k" ] && continue
+		# C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
+		if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+			warn "Skipping malformed .env line: '$_k' is not a valid variable name"
+			continue
+		fi
+		# Normalize the value the way compose's own .env parser does. Without
+		# this, shapes compose accepts happily break callers: MEM0_MCP_PORT="6335"
+		# yields the literal `"6335"` and a health URL that can never answer,
+		# which then reads as "the server is down".
+		_v="${_v%$'\r'}"                      # CRLF-authored .env
+		case "$_v" in
+			'"'*'"')  _v="${_v#\"}"; _v="${_v%\"}" ;;   # quoted: content is verbatim
+			"'"*"'")  _v="${_v#\'}"; _v="${_v%\'}" ;;   # (a # inside quotes is data)
+			*)
+				# Unquoted: an inline comment must be whitespace-separated.
+				_v="${_v%%[[:space:]]#*}"
+				# ...then drop any trailing whitespace it left behind.
+				_v="${_v%"${_v##*[![:space:]]}"}"
+				;;
+		esac
+		# Only export if not already set in environment
+		if [ -z "${!_k+x}" ]; then
+			export "$_k=$_v"
+		fi
+	done < "$ENV_FILE"
+}
+
+# The HOST-side port the server is published on. MEM0_MCP_PORT is the host half
+# of docker-compose.yml's `ports:` mapping (the container always listens on
+# 6335 — pinned in the compose `environment:` block). It is a bare number in
+# every install.sh-written .env, but compose also accepts a full host binding
+# in that same variable (e.g. "127.0.0.1:6335", or "0.0.0.0:6337" as
+# self-hosted deployments run it), so take the last colon-separated field to
+# get the port out of either shape. Never hardcode a port at a call site.
+#
+# This is a best-effort derivation from config. When a container is actually
+# running, `docker compose port` is authoritative — a host override file can
+# REPLACE the published ports entirely, and this function cannot see that.
+_um_port() {
+	local _p="${MEM0_MCP_PORT:-6335}"
+	printf '%s' "${_p##*:}"
+}
+
+# ─── Version reporting across the three updatable surfaces ───────────────────
+# The server container, the `um` CLI, and the Claude Code plugin update through
+# three different mechanisms with no shared release trigger, so they drift
+# independently. A host once ran a current server while its CLI sat a full
+# release behind — which silently made that release's capture-freshness cron
+# uninstallable, because the script it needed did not exist in that tree.
+# Nothing surfaced the gap. These helpers let --verify surface it.
+
+# Extract a top-level "version" from a JSON file. Empty when absent/unreadable.
+# grep+sed rather than jq: jq is not a dependency anywhere else in this script.
+_um_json_version() {
+	[ -f "$1" ] || return 0
+	grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' "$1" 2>/dev/null \
+		| head -1 \
+		| sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+		|| true
+}
+
+# Version of the server the running container was built from. Prefers the OCI
+# label the release workflow stamps, which stays accurate even when the image
+# is tagged `latest`; falls back to the image tag for locally-built images.
+_um_server_version() {
+	local _cid _img _ver
+	_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+	[ -n "$_cid" ] || return 0
+	_ver=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$_cid" 2>/dev/null || true)
+	if [ -z "$_ver" ] || [ "$_ver" = "<no value>" ]; then
+		_img=$(docker inspect -f '{{.Config.Image}}' "$_cid" 2>/dev/null || true)
+		_ver="${_img##*:}"
+		# A bare repo with no tag leaves the whole ref behind — not a version.
+		case "$_ver" in */*) _ver="" ;; esac
+	fi
+	printf '%s' "$_ver"
+}
+
+# True when $1 is a strictly lower dotted-numeric version than $2. Anything
+# non-numeric (`latest`, a digest, empty) returns false — an unknown version is
+# never reported as skew, because a false skew warning trains operators to
+# ignore the real one.
+_um_ver_lt() {
+	local _a="$1" _b="$2" _i _x _y
+	[[ "$_a" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+	[[ "$_b" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+	local IFS=.
+	local _A=() _B=()
+	read -ra _A <<< "$_a"
+	read -ra _B <<< "$_b"
+	for _i in 0 1 2; do
+		_x="${_A[$_i]:-0}"
+		_y="${_B[$_i]:-0}"
+		[ "$_x" -lt "$_y" ] && return 0
+		[ "$_x" -gt "$_y" ] && return 1
+	done
+	return 1
+}
+
+# I3: `timeout` (GNU coreutils / BSD) is optional. Probe once; call sites use
+# ${_TIMEOUT_CMD:+$_TIMEOUT_CMD <secs>} so its absence degrades to no timeout
+# rather than a hard failure. (`A && B` never trips errexit when A fails.)
+_TIMEOUT_CMD=""
+command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
+
 # ─── --verify mode ───────────────────────────────────────────────────────────
 if [ "${1:-}" = "--verify" ]; then
   _vpass() { printf '\033[1;32m[verify]\033[0m %-30s \xe2\x9c\x85  %s\n' "$1" "${2:-}"; }
   _vfail() { printf '\033[1;31m[verify]\033[0m %-30s \xe2\x9d\x8c  %s\n' "$1" "${2:-}" >&2; }
+  # Informational / advisory lines. Deliberately distinct glyphs: a version
+  # readout is not a passed check, and version skew is a warning an operator
+  # should act on without it failing an otherwise-healthy server verify.
+  _vinfo() { printf '\033[1;34m[verify]\033[0m %-30s \xe2\x84\xb9   %s\n' "$1" "${2:-}"; }
+  _vwarn() { printf '\033[1;33m[verify]\033[0m %-30s \xe2\x9a\xa0   %s\n' "$1" "${2:-}"; }
   _verify_fail=0
 
   # M2: Guard against unset HOME when neither HOME nor CLAUDE_PLUGINS_DIR is available.
@@ -70,32 +239,11 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # Load .env so UM_VAULT_DIR etc. are available even if not already set in env.
-  # We read the file manually to avoid clobbering vars the caller has explicitly
-  # exported (e.g. when tests pass UM_VAULT_DIR directly).
-  if [ -f "$ENV_FILE" ]; then
-    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
-      # Skip comments and blank lines
-      [[ "$_k" =~ ^[[:space:]]*# ]] && continue
-      [ -z "$_k" ] && continue
-      # C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
-      if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-        warn "Skipping malformed .env line: '$_k' is not a valid variable name"
-        continue
-      fi
-      # Only export if not already set in environment
-      if [ -z "${!_k+x}" ]; then
-        export "$_k=$_v"
-      fi
-    done < "$ENV_FILE"
-  fi
+  _um_load_env_file
 
-  _PORT="${MEM0_MCP_PORT:-6335}"
+  _PORT="$(_um_port)"
   _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
-
-  # I3: Determine whether `timeout` is available (GNU coreutils / BSD).
-  _TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && _TIMEOUT_CMD="timeout"
 
   echo ""
   echo "[verify] Running post-install checks..."
@@ -108,7 +256,7 @@ if [ "${1:-}" = "--verify" ]; then
   if echo "$_docker_ps_out" | grep -qiE 'memory-server.*(Up|running)'; then
     _vpass "docker-up" "containers are Up"
   else
-    _vfail "docker-up" "memory-server container not Up. Run: docker compose -f $COMPOSE_FILE up -d"
+    _vfail "docker-up" "memory-server container not Up. Run: $(_compose_hint 'up -d')"
     _verify_fail=1
   fi
 
@@ -249,6 +397,47 @@ print(json.dumps({
   rm -rf "$_VAULT/captures/install-verify" 2>/dev/null || true
   _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
 
+  # ── versions ──────────────────────────────────────────────────────────────
+  # Three surfaces update through three different mechanisms — the server
+  # container (install.sh --upgrade / compose pull), the `um` CLI (re-run
+  # installer/install-cli.sh), and the Claude Code plugin (claude plugin
+  # update). Nothing keeps them in step, and until now nothing reported the
+  # drift either. Informational by default: an out-of-date CLI is a real
+  # problem but not a reason to fail a server verify.
+  echo ""
+  _SERVER_VER=$(_um_server_version)
+  _CLI_VER=$(_um_json_version "$HOME/.local/.claude-plugin/plugin.json")
+  _PLUGIN_SRC_VER=$(_um_json_version "$REPO_ROOT/plugins/claude-code/universal-memory/.claude-plugin/plugin.json")
+  _PLUGIN_INST_VER=$(_um_json_version "$_PLUGIN_DIR/.claude-plugin/plugin.json")
+
+  _vinfo "version-server"      "${_SERVER_VER:-unknown (is the container running?)}"
+  _vinfo "version-cli"         "${_CLI_VER:-not installed}${_CLI_VER:+   (um --version)}"
+  _vinfo "version-plugin"      "${_PLUGIN_INST_VER:-not installed}${_PLUGIN_INST_VER:+   (installed)}"
+  _vinfo "version-source-tree" "${_PLUGIN_SRC_VER:-unknown}"
+
+  # Skew 1: the client half is NEWER than the server. This is the shape that
+  # produces silent capture death — the plugin's routes 404 against a server
+  # that predates them, which surfaces only as skip=server-too-old in
+  # ~/.um/hook.log and a session-start banner.
+  if [ -n "$_SERVER_VER" ]; then
+    if [ -n "$_PLUGIN_INST_VER" ] && _um_ver_lt "$_SERVER_VER" "$_PLUGIN_INST_VER"; then
+      _vwarn "version-skew" "plugin $_PLUGIN_INST_VER is NEWER than server $_SERVER_VER — upgrade the server first: bash server/install.sh --upgrade"
+    fi
+    # Skew 2: the server predates the API-always capture contract. The plugin
+    # genuinely cannot capture against it, so this one fails the verify.
+    if [ -n "$_PLUGIN_INST_VER" ] && _um_ver_lt "$_SERVER_VER" "1.7.0"; then
+      _vfail "version-floor" "server $_SERVER_VER predates the /api capture contract (needs >= 1.7.0). The plugin cannot capture against it."
+      _verify_fail=1
+    fi
+  fi
+
+  # Skew 3: the CLI is behind the source tree it was installed from. This is
+  # the case that hid for a full release cycle: the server was current, the
+  # CLI was not, and the newer release's scripts simply were not on disk.
+  if [ -n "$_CLI_VER" ] && [ -n "$_PLUGIN_SRC_VER" ] && _um_ver_lt "$_CLI_VER" "$_PLUGIN_SRC_VER"; then
+    _vwarn "version-skew" "um CLI $_CLI_VER is BEHIND this source tree ($_PLUGIN_SRC_VER) — scripts added since $_CLI_VER are missing. Refresh: bash installer/install-cli.sh --no-path"
+  fi
+
   echo ""
   if [ "$_verify_fail" -eq 0 ]; then
     echo "All checks passed. Restart Claude Code to activate hooks."
@@ -257,6 +446,410 @@ print(json.dumps({
     echo "One or more checks failed. See diagnostics above." >&2
     exit 1
   fi
+fi
+
+# ─── --upgrade mode ──────────────────────────────────────────────────────────
+# Upgrade a running install, with a net. The v1.8.0 incident is the design
+# brief: a published arm64 image whose node_modules/mem0ai had been emptied by
+# a partial `npm prune` was pulled, swapped into the running stack, and
+# crash-looped in production. Recovery took a hand-written rollback script,
+# which itself had a bug — it rebuilt the container's `-p` port bindings from
+# `docker inspect` of a container already in `Restarting` state, which reports
+# none, so the server came back UNREACHABLE. Both bugs are fixed elsewhere; the
+# lesson that the upgrade procedure belongs in the product is fixed here.
+#
+# The ORDER is the whole feature:
+#   record → pull → PRE-FLIGHT → swap → health-verify → auto-rollback
+#
+#   • Pre-flight runs the NEW image in a throwaway container while the OLD one
+#     is still serving, so a broken image is caught before it can cause an
+#     outage rather than after.
+#   • Every container operation goes through `_compose` — compose owns ports,
+#     mounts, network and env. Hand-rolling `docker run` is precisely what
+#     turned the incident's recovery into a second outage.
+if [ "${1:-}" = "--upgrade" ]; then
+	_uinfo() { printf '\033[1;34m[upgrade]\033[0m %s\n' "$*"; }
+	_uok()   { printf '\033[1;32m[upgrade]\033[0m %s\n' "$*"; }
+	_uwarn() { printf '\033[1;33m[upgrade]\033[0m %s\n' "$*"; }
+	_ufail() { printf '\033[1;31m[upgrade]\033[0m %s\n' "$*" >&2; exit 1; }
+
+	# ── Argument contract ─────────────────────────────────────────────────────
+	# Sole-argument mode, optionally carrying a version: `--upgrade` or
+	# `--upgrade 1.8.1`. Anything else is rejected rather than silently
+	# ignored — same precedent as --verify.
+	_UPG_VERSION="${2:-}"
+	[ "$#" -le 2 ] || _ufail "--upgrade takes at most one argument (a version). Got: $*"
+	case "$_UPG_VERSION" in
+		-*) _ufail "--upgrade must be the sole argument; do not combine with $_UPG_VERSION." ;;
+	esac
+	if [ -n "$_UPG_VERSION" ] && ! [[ "$_UPG_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+		_ufail "Invalid version '$_UPG_VERSION'. Expected a published image tag, e.g. 1.8.1 or latest."
+	fi
+	# Operators reach for the git tag (v1.8.1); GHCR publishes bare semver
+	# (1.8.1). Translate rather than let the registry answer "manifest unknown".
+	if [[ "$_UPG_VERSION" =~ ^v[0-9] ]]; then
+		_UPG_VERSION="${_UPG_VERSION#v}"
+		_uinfo "Reading that as version '$_UPG_VERSION' (published tags are bare semver)."
+	fi
+
+	_um_load_env_file
+	# Provisional; step 1 replaces it with what compose reports for the
+	# actually-running container (a host override can republish the port).
+	_UPG_HEALTH="http://localhost:$(_um_port)/health"
+	# Test seam (same convention as _UM_REPO_ROOT): number of 2s health-poll
+	# attempts. Not an operator knob — the default is the contract. 90 × 2s
+	# matches the install path's 180s ceiling, which exists because a cold
+	# start on slow hardware (ARM Pi, constrained CI) can exceed 90s. A
+	# crash-loop is detected by container STATE, not by this clock, so a
+	# generous ceiling costs nothing on the failure path.
+	_UPG_POLL_ATTEMPTS="${_UM_UPGRADE_POLL_ATTEMPTS:-90}"
+	# Protective tag for the rollback image (BLOCKER-1). See step 1.
+	_UPG_ROLLBACK_TAG_NAME="um-rollback:previous"
+
+	# UM_IMAGE beats UM_VERSION in docker-compose.yml's `image:` line, so a
+	# pinned UM_IMAGE would silently ignore the version that was asked for.
+	# Upgrading to something other than what the operator typed is the exact
+	# class of surprise this mode exists to prevent.
+	if [ -n "$_UPG_VERSION" ] && [ -n "${UM_IMAGE:-}" ]; then
+		_ufail "UM_IMAGE is set ($UM_IMAGE) and takes precedence over the version you asked for ($_UPG_VERSION).
+  Unset UM_IMAGE (or edit it in $ENV_FILE) and re-run, or point UM_IMAGE at the image you want."
+	fi
+	[ -n "$_UPG_VERSION" ] && export UM_VERSION="$_UPG_VERSION"
+
+	command -v docker >/dev/null 2>&1 || _ufail "Docker not found. Install Docker Engine first: https://docs.docker.com/engine/install/"
+	docker compose version >/dev/null 2>&1 || _ufail "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
+	docker info >/dev/null 2>&1 || _ufail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
+	[ -f "$COMPOSE_FILE" ] || _ufail "Not finding $COMPOSE_FILE — run this from the repo's server/ directory or via ./install.sh."
+
+	# Bounded health poll, $1 = number of attempts 2s apart. No sleep after the
+	# last attempt. Exit: 0 healthy, 1 exhausted, 2 crash-looping.
+	#
+	# It watches container STATE as well as the clock, because the two failure
+	# modes want opposite treatment and a timer alone cannot tell them apart:
+	#   • Repeatedly dying ⇒ waiting out the ceiling changes nothing. Say so
+	#     and roll back now.
+	#   • Running but not answering ⇒ possibly just a slow boot on slow
+	#     hardware. Keep waiting; a clock-only check would call this a failure
+	#     and trigger a needless rollback of a perfectly good upgrade.
+	#
+	# The signal is RestartCount, not the instantaneous Restarting flag, and it
+	# tolerates the first two deaths. `depends_on` does not wait for readiness,
+	# so a memory-server that starts before qdrant is accepting connections can
+	# legitimately die once and come up fine on the retry — treating that first
+	# exit as a crash-loop would roll back an upgrade that was about to
+	# succeed. `up -d` recreates the container, so the count starts at 0 here.
+	# Docker's restart backoff is short early on, so a genuine crash-loop still
+	# trips this within seconds.
+	_upg_poll_health() {
+		local _attempts="$1" _i _cid _restarts
+		for _i in $(seq 1 "$_attempts"); do
+			if curl -sf --max-time 3 "$_UPG_HEALTH" >/dev/null 2>&1; then
+				return 0
+			fi
+			_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+			if [ -n "$_cid" ]; then
+				_restarts=$(docker inspect -f '{{.RestartCount}}' "$_cid" 2>/dev/null || true)
+				if [[ "$_restarts" =~ ^[0-9]+$ ]] && [ "$_restarts" -ge 3 ]; then
+					return 2
+				fi
+			fi
+			if [ "$_i" -lt "$_attempts" ]; then sleep 2; fi
+		done
+		return 1
+	}
+
+	echo ""
+	echo "[upgrade] Upgrading the universal-memory server."
+
+	# ── Step 1/5: record the rollback target ─────────────────────────────────
+	echo ""
+	echo "[upgrade] Step 1/5 — recording the running image (rollback target)..."
+	_UPG_CID=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+	if [ -z "$_UPG_CID" ]; then
+		_ufail "No running memory-server container found — nothing to upgrade, and no image to roll back to.
+  If the stack is stopped:  $(_compose_hint 'up -d')
+  If this is a new install: bash server/install.sh"
+	fi
+	# Record the image ID (sha256), NOT .Config.Image (the tag). On the common
+	# latest→latest upgrade the tag is byte-identical before and after the
+	# pull, so "roll back to the tag" would restore the very image being rolled
+	# back FROM. The ID pins the exact bits now serving.
+	_UPG_ROLLBACK_ID=$(docker inspect -f '{{.Image}}' "$_UPG_CID" 2>/dev/null || true)
+	_UPG_ROLLBACK_TAG=$(docker inspect -f '{{.Config.Image}}' "$_UPG_CID" 2>/dev/null || true)
+	if [ -z "$_UPG_ROLLBACK_ID" ]; then
+		_ufail "Could not determine the image behind container $_UPG_CID — refusing to upgrade with no rollback target.
+  Check: docker inspect $_UPG_CID"
+	fi
+
+	# ...but an ID alone is not a durable handle. On the containerd image store
+	# (the default since Docker Engine 29) `docker build -t <tag>` DELETES the
+	# image the tag used to point at — even while a container is running from
+	# it. Under UM_BUILD_LOCAL, step 2 rebuilds exactly the tag this container
+	# came from, so by rollback time the recorded ID would no longer exist and
+	# `UM_IMAGE=sha256:<id>` would be read as repo "sha256" / tag "<id>",
+	# sending compose to a registry for an image that was never pushed.
+	# A tag of our own is a reference that keeps the image alive, and it makes
+	# the recovery commands printed below durable and readable.
+	_UPG_ROLLBACK_REF="$_UPG_ROLLBACK_ID"
+	if docker tag "$_UPG_ROLLBACK_ID" "$_UPG_ROLLBACK_TAG_NAME" >/dev/null 2>&1; then
+		_UPG_ROLLBACK_REF="$_UPG_ROLLBACK_TAG_NAME"
+	else
+		_uwarn "Could not tag the running image as $_UPG_ROLLBACK_TAG_NAME — rolling back by ID instead."
+		_uwarn "  If step 2 rebuilds this tag locally, that ID may not survive; consider upgrading with the stack stopped."
+	fi
+	_uok "Rollback target: ${_UPG_ROLLBACK_TAG:-<untagged>} ($_UPG_ROLLBACK_ID)"
+	[ "$_UPG_ROLLBACK_REF" = "$_UPG_ROLLBACK_TAG_NAME" ] && _uinfo "Pinned as $_UPG_ROLLBACK_TAG_NAME so a local rebuild cannot destroy it."
+
+	# Ask compose where the running service is actually published. A host
+	# override file can REPLACE the `ports:` list (`!override`), which config
+	# alone cannot be assumed to reflect at every call site — and a health URL
+	# pointing at an unbound port fails every poll, which this script would
+	# otherwise report as "the server is DOWN" and roll back a healthy upgrade.
+	# The container listens on 6335 by contract (compose `environment:` pin).
+	_UPG_PORT_OUT=$(_compose port memory-server 6335 2>/dev/null | head -1 || true)
+	_UPG_PORT="${_UPG_PORT_OUT##*:}"
+	if [[ "$_UPG_PORT" =~ ^[0-9]+$ ]]; then
+		# Connect over loopback regardless of the reported bind address: a
+		# 0.0.0.0 binding is reachable there, and 0.0.0.0 is not a valid
+		# destination on every platform.
+		_UPG_HEALTH="http://localhost:$_UPG_PORT/health"
+	else
+		_uwarn "compose could not report a published port; falling back to MEM0_MCP_PORT."
+	fi
+	_uinfo "Health endpoint: $_UPG_HEALTH"
+
+	# Ctrl-C after the swap has started but before the verdict leaves the stack
+	# on an unverified image with no rollback having run. Exiting silently
+	# there is the one path that can strand an operator without instructions.
+	_UPG_SWAPPED=0
+	# shellcheck disable=SC2329  # invoked indirectly by the trap below
+	_upg_on_interrupt() {
+		echo "" >&2
+		if [ "${_UPG_SWAPPED:-0}" = "1" ]; then
+			printf '\033[1;31m[upgrade]\033[0m %s\n' "Interrupted AFTER the swap started — the stack may be running the new, unverified image." >&2
+			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Roll back:  cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d" >&2
+			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Or verify:  curl $_UPG_HEALTH" >&2
+		else
+			printf '\033[1;32m[upgrade]\033[0m %s\n' "Interrupted before the swap — your running server is untouched." >&2
+		fi
+		_um_cleanup
+		exit 130
+	}
+	trap _upg_on_interrupt INT TERM
+
+	# ── Step 2/5: resolve + fetch the target image ───────────────────────────
+	echo ""
+	echo "[upgrade] Step 2/5 — resolving and fetching the target image..."
+	# Resolve the target from compose's OWN normalized config, so a customized
+	# compose file — or the UM_BUILD_LOCAL override stack — is honored.
+	# Pre-flighting a different image than the one compose goes on to deploy
+	# would defeat the entire point of pre-flighting.
+	#
+	# Deliberately NOT `config --images memory-server`: that also emits the
+	# images of everything the service `depends_on` (qdrant), in unspecified
+	# order, so taking the first line can hand back qdrant's image instead.
+	# Match the service by NAME and take its `image:` key.
+	_UPG_IMAGE=$(_compose config 2>/dev/null | awk '
+		/^  memory-server:/ { f = 1; next }
+		/^  [a-zA-Z]/       { f = 0 }
+		f && /^    image:/  { gsub(/^"|"$/, "", $2); print $2; exit }
+	' || true)
+	if [ -z "$_UPG_IMAGE" ]; then
+		# Fallback: mirror the default in docker-compose.yml's memory-server
+		# `image:` line. Pinned against drift by install.test.sh (T26).
+		_UPG_IMAGE="${UM_IMAGE:-ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}}"
+	fi
+	_uinfo "Target image: $_UPG_IMAGE"
+	if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
+		_uinfo "UM_BUILD_LOCAL=1 — building from local source instead of pulling."
+		_compose build memory-server 2>&1 | sed 's/^/[compose] /' \
+			|| _ufail "Build failed. The running server was NOT touched and is still serving."
+	else
+		_compose pull memory-server 2>&1 | sed 's/^/[compose] /' \
+			|| _ufail "Pull failed. The running server was NOT touched and is still serving.
+  Confirm the tag exists: $_UPG_IMAGE"
+	fi
+
+	# ── Step 3/5: PRE-FLIGHT (the load-bearing step) ─────────────────────────
+	echo ""
+	echo "[upgrade] Step 3/5 — pre-flighting the new image (running server still up)..."
+	# Import the two things whose absence produced the v1.8.0 crash-loop:
+	# mem0ai/oss (the dependency the partial prune deleted) and the server's own
+	# lib/stats.mjs, which transitively pulls in logger + obs-fallback +
+	# capture-events, so a broader slice of the app is proven loadable than a
+	# single dependency probe would. Throwaway container: --rm, no ports, no
+	# volumes, no env — it cannot reach the running stack or the vault.
+	_UPG_PREFLIGHT_RC=0
+	_UPG_PREFLIGHT_OUT=$(${_TIMEOUT_CMD:+$_TIMEOUT_CMD 120} docker run --rm --entrypoint node "$_UPG_IMAGE" \
+		--input-type=module -e "await import('mem0ai/oss'); await import('./lib/stats.mjs');" 2>&1) || _UPG_PREFLIGHT_RC=$?
+	if [ "$_UPG_PREFLIGHT_RC" -ne 0 ]; then
+		printf '%s\n' "$_UPG_PREFLIGHT_OUT" | sed 's/^/[preflight] /' >&2
+		_ufail "Pre-flight FAILED (exit $_UPG_PREFLIGHT_RC) — $_UPG_IMAGE cannot load its own dependencies.
+
+  NOTHING WAS SWAPPED. Your running server is untouched and still serving.
+
+  Do not deploy this tag. Upgrade to a known-good version instead:
+    bash server/install.sh --upgrade <version>
+  If this tag is a fresh release, its image build is broken — please report it."
+	fi
+	_uok "Pre-flight passed — the new image loads mem0ai/oss and lib/stats.mjs."
+
+	# ── Step 4/5: swap ───────────────────────────────────────────────────────
+	echo ""
+	echo "[upgrade] Step 4/5 — swapping the container (compose owns ports/mounts/network)..."
+	_UPG_SWAPPED=1
+	_UPG_SWAP_RC=0
+	_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_SWAP_RC=$?
+
+	# ── Step 5/5: health-verify, else auto-rollback ──────────────────────────
+	echo ""
+	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UPG_POLL_ATTEMPTS * 2))s)..."
+	_UPG_HEALTHY=0
+	_UPG_WHY=""
+	if [ "$_UPG_SWAP_RC" -ne 0 ]; then
+		_UPG_WHY="compose up -d failed (exit $_UPG_SWAP_RC)."
+	else
+		_UPG_POLL_RC=0
+		_upg_poll_health "$_UPG_POLL_ATTEMPTS" || _UPG_POLL_RC=$?
+		case "$_UPG_POLL_RC" in
+			0)
+				# A 200 on the port only proves SOMETHING is listening there —
+				# a stale container from a half-finished migration answers just
+				# as well, and would let a failed swap report success. Confirm
+				# the container compose is running is built from the image we
+				# actually pre-flighted.
+				_UPG_NEW_CID=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+				_UPG_RUNNING_ID=$(docker inspect -f '{{.Image}}' "$_UPG_NEW_CID" 2>/dev/null || true)
+				_UPG_TARGET_ID=$(docker image inspect -f '{{.Id}}' "$_UPG_IMAGE" 2>/dev/null || true)
+				if [ -z "$_UPG_TARGET_ID" ] || [ -z "$_UPG_RUNNING_ID" ]; then
+					_uwarn "Could not confirm which image is serving; treating health as authoritative."
+					_UPG_HEALTHY=1
+				elif [ "$_UPG_RUNNING_ID" = "$_UPG_TARGET_ID" ]; then
+					_UPG_HEALTHY=1
+				else
+					_UPG_WHY="$_UPG_HEALTH answered, but the running container is $_UPG_RUNNING_ID, not the upgraded image ($_UPG_TARGET_ID) — the swap did not take."
+				fi
+				;;
+			2)  _UPG_WHY="The new container is CRASH-LOOPING (docker reports it restarting). Not waiting out the clock." ;;
+			*)  _UPG_WHY="The new container never reported healthy at $_UPG_HEALTH within $((_UPG_POLL_ATTEMPTS * 2))s." ;;
+		esac
+	fi
+
+	if [ "$_UPG_HEALTHY" != "1" ]; then
+		_uwarn "$_UPG_WHY"
+		echo ""
+		echo "[upgrade] --- memory-server logs (last 50 lines) ---"
+		_compose logs --tail 50 memory-server 2>&1 | sed 's/^/[logs] /' || true
+		echo ""
+		echo "[upgrade] AUTO-ROLLBACK — restoring the image that was running..."
+		_uwarn "Restoring ${_UPG_ROLLBACK_TAG:-previous image} as $_UPG_ROLLBACK_REF"
+		# Shell env beats .env for compose interpolation, so exporting UM_IMAGE
+		# overrides the `image:` line for this recreate. Exported (not an
+		# inline VAR=x prefix) because assignment-prefixes on shell FUNCTIONS
+		# have shell/mode-dependent persistence — not something a rollback path
+		# should be betting on.
+		export UM_IMAGE="$_UPG_ROLLBACK_REF"
+		_UPG_RB_RC=0
+		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
+		_UPG_RB_POLL_RC=0
+		if [ "$_UPG_RB_RC" -eq 0 ]; then
+			_upg_poll_health "$_UPG_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
+		else
+			_UPG_RB_POLL_RC=1
+		fi
+		if [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
+			echo ""
+			_uok "ROLLBACK SUCCEEDED — ${_UPG_ROLLBACK_TAG:-the previous image} is running and healthy at $_UPG_HEALTH."
+			_uwarn "The upgrade to $_UPG_IMAGE did NOT take. Check the logs above before retrying."
+			# The rollback is only in effect for THIS container. .env still
+			# resolves to the version that just failed, and on a moving tag the
+			# bad image is still what `latest` points at locally — so the next
+			# plain `up -d` would quietly re-apply it.
+			_uwarn "Rollback is NOT durable yet. To keep it across the next '$(_compose_hint 'up -d')':"
+			_uwarn "  add UM_IMAGE=$_UPG_ROLLBACK_REF (or a known-good UM_VERSION) to $ENV_FILE"
+			exit 1
+		fi
+		echo ""
+		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
+  Recover manually:
+    cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
+    curl $_UPG_HEALTH
+  Then check: $(_compose_hint 'logs memory-server')"
+	fi
+
+	# ── Post-success: refresh the um CLI ─────────────────────────────────────
+	# The `um` CLI (um-alert, um-search, um-state, ...) is a COPY of this repo's
+	# scripts under ~/.local/share/um. It has no self-update path, so it stays
+	# at whatever version was installed until someone re-runs the installer by
+	# hand. That is how a host came to run a current server with a CLI a full
+	# release behind — and why that release's capture-freshness cron could not
+	# be installed: um-alert.sh did not exist in that tree, with nothing
+	# anywhere reporting the gap.
+	#
+	# --upgrade already has the source tree and has just verified the server, so
+	# it is the one moment where refreshing the CLI is both safe and obvious.
+	# STRICTLY best-effort: the server upgrade has ALREADY SUCCEEDED here, and
+	# nothing below may fail it, roll it back, or change its exit code.
+	_UPG_CLI_DIR="${UM_CLI_DIR:-$HOME/.local/share/um/cli}"
+	_UPG_CLI_INSTALLER="$REPO_ROOT/installer/install-cli.sh"
+	if [ -d "$_UPG_CLI_DIR" ]; then
+		echo ""
+		echo "[upgrade] Refreshing the um CLI so it matches the server..."
+		if [ ! -f "$_UPG_CLI_INSTALLER" ]; then
+			# Tarball or partial tree: the CLI is installed but its installer is
+			# not here to re-run. Say so loudly — a silently stale CLI is the
+			# exact failure this step exists to end.
+			_uwarn "CLI is installed at $_UPG_CLI_DIR, but $_UPG_CLI_INSTALLER is missing."
+			_uwarn "  Your CLI is now OLDER than your server. From a full source tree, run:"
+			_uwarn "    bash installer/install-cli.sh --no-path"
+		# --no-path is load-bearing. install-cli.sh rewrites the shell rc marker
+		# block from the CURRENT environment, and --upgrade never collects an
+		# API key — so refreshing without it would blank UM_OPENAI_API_KEY in
+		# the operator's profile. An upgrade must not touch shell profiles.
+		elif bash "$_UPG_CLI_INSTALLER" --yes --no-path 2>&1 | sed 's/^/[cli] /'; then
+			_UPG_CLI_VER=$(_um_json_version "$HOME/.local/.claude-plugin/plugin.json")
+			_uok "um CLI refreshed${_UPG_CLI_VER:+ to $_UPG_CLI_VER}."
+		else
+			_uwarn "CLI refresh FAILED. The server upgrade is fine and still healthy — only the CLI is stale."
+			_uwarn "  Re-run it yourself:  bash $_UPG_CLI_INSTALLER --no-path"
+		fi
+	fi
+
+	# ── Success ──────────────────────────────────────────────────────────────
+	_UPG_HEALTH_BODY=$(curl -sf --max-time 5 "$_UPG_HEALTH" 2>/dev/null || true)
+	echo ""
+	# Quoted delimiter + printf for the dynamic lines: the health body is a
+	# server-controlled string, and an unquoted heredoc would run any `$(...)`
+	# or backticks inside it as shell.
+	cat <<'EOF'
+╔═════════════════════════════════════════════════════════════════════╗
+EOF
+	printf '║ Upgrade complete — server healthy at %s\n' "$_UPG_HEALTH"
+	printf '║\n'
+	printf '║   now:    %s\n' "$_UPG_IMAGE"
+	printf '║   was:    %s (%s)\n' "${_UPG_ROLLBACK_TAG:-<untagged>}" "$_UPG_ROLLBACK_ID"
+	printf '║   health: %s\n' "${_UPG_HEALTH_BODY:-<no body>}"
+	cat <<'EOF'
+║
+║ What changed: CHANGELOG.md (release notes)
+║               MIGRATION.md (per-version upgrade steps)
+║
+║ The server is only one of three surfaces. If you use the Claude Code
+║ plugin, update it too:  claude plugin update universal-memory
+║ Full order + failure signatures: docs/upgrading.md
+║
+EOF
+	printf '║ To revert to the previous image:\n'
+	printf '║   cd %s && UM_IMAGE=%s docker compose up -d\n' "$SCRIPT_DIR" "$_UPG_ROLLBACK_REF"
+	cat <<'EOF'
+╚═════════════════════════════════════════════════════════════════════╝
+EOF
+	if [ -n "$_UPG_VERSION" ]; then
+		echo ""
+		info "This version was pinned for this run only. To make it stick across"
+		info "a plain '$(_compose_hint 'up -d')', add UM_VERSION=$_UPG_VERSION to $ENV_FILE."
+	fi
+	exit 0
 fi
 
 # ─── CLI arg parsing (--yes / -y) ────────────────────────────────────────────
@@ -281,6 +874,11 @@ for _arg in "$@"; do
 			# Handled above; reaching here means the user combined flags.
 			# Honor the --verify early-exit behavior by rejecting the combo.
 			fail "--verify must be the sole argument; do not combine with --yes."
+			;;
+		--upgrade)
+			# Same as --verify: handled above as a sole-argument early-exit
+			# mode, so reaching here means it was passed after another flag.
+			fail "--upgrade must be the sole argument; do not combine with --yes."
 			;;
 	esac
 done
@@ -917,7 +1515,9 @@ else
 	# ─── Poll /health until ready ─────────────────────────────────────────────────
 	# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
 	# take >90s end-to-end before the server binds. Allow 180s to cover that.
-	ENDPOINT="http://localhost:$MEM0_MCP_PORT/health"
+	# _um_port(), not raw $MEM0_MCP_PORT: the variable is the HOST side of the
+	# compose mapping and may carry a full binding (127.0.0.1:6337).
+	ENDPOINT="http://localhost:$(_um_port)/health"
 	info "Waiting for $ENDPOINT (up to 180s)..."
 
 	READY=0
@@ -931,11 +1531,7 @@ else
 
 	if [ "$READY" != "1" ]; then
 		warn "Server did not become healthy within 180s."
-		if [ "${UM_BUILD_LOCAL:-0}" = "1" ]; then
-			warn "Check logs with: docker compose -f $COMPOSE_FILE -f $BUILD_OVERRIDE_FILE logs memory-server"
-		else
-			warn "Check logs with: docker compose -f $COMPOSE_FILE logs memory-server"
-		fi
+		warn "Check logs with: $(_compose_hint 'logs memory-server')"
 		exit 1
 	fi
 fi
@@ -995,13 +1591,14 @@ fi
 cat <<EOF
 
 ╔═════════════════════════════════════════════════════════════════════╗
-║ universal-memory server is running at http://localhost:$MEM0_MCP_PORT
+║ universal-memory server is running at http://localhost:$(_um_port)
 ║
 ║ Next steps:
 ║   1. Verify the install:    bash server/install.sh --verify
 ║   2. Restart Claude Code to load the plugin and activate hooks.
-║   3. Stop the stack:        docker compose down
-║   4. Restart later:         docker compose up -d
+║   3. Upgrade later:         bash server/install.sh --upgrade
+║   4. Stop the stack:        cd $SCRIPT_DIR && docker compose down
+║   5. Restart later:         cd $SCRIPT_DIR && docker compose up -d
 ║
 ║ Data persists at: server/data/qdrant/
 ║ Edit configuration: server/.env
