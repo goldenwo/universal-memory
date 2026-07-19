@@ -834,6 +834,794 @@ else
   fail_test "T12b: .bashrc missing UM_SUMMARIZER=openai" ".bashrc content: $(cat "$T12B/home/.bashrc" 2>/dev/null)"
 fi
 
+# ─── --upgrade harness ────────────────────────────────────────────────────────
+# The upgrade tests assert on what install.sh ACTUALLY DID to the stack, not
+# just on what it printed — "pre-flight failed but it swapped anyway" and
+# "rolled back to the wrong image ref" are both silent-in-stdout failures.
+# So this fake docker records every invocation, plus the UM_IMAGE / UM_VERSION
+# it saw, to $FAKE_DOCKER_LOG. No real container is ever touched.
+#
+# Knobs (env, read at invocation time):
+#   FAKE_DOCKER_LOG    file to append invocations to
+#   FAKE_PREFLIGHT_RC  non-zero ⇒ `docker run` (the pre-flight) fails
+#   FAKE_NO_CONTAINER  1 ⇒ `compose ps -q` returns nothing (stack is down)
+#   FAKE_OLD_ID        image ID reported for the running container
+#   FAKE_OLD_TAG       image tag reported for the running container
+make_fake_docker_upgrade() {
+  local dest="$1"
+  mkdir -p "$dest"
+  cat > "$dest/docker" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
+  printf 'ARGS=%s UM_IMAGE=%s UM_VERSION=%s\n' \
+    "$args" "${UM_IMAGE:-}" "${UM_VERSION:-}" >> "$FAKE_DOCKER_LOG"
+fi
+case "$args" in
+  *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
+  info|*" info"*)      echo "{}"; exit 0 ;;
+esac
+# Pre-flight: `docker run --rm --entrypoint node <image> ...`
+if [[ "$args" == run* ]]; then
+  if [ "${FAKE_PREFLIGHT_RC:-0}" != "0" ]; then
+    echo "node:internal/modules/esm/resolve:283" >&2
+    echo "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'mem0ai' imported from /app/" >&2
+    exit "${FAKE_PREFLIGHT_RC}"
+  fi
+  exit 0
+fi
+if [[ "$args" == *"config"* ]]; then
+  # Mimic `docker compose config` normalized YAML. qdrant is emitted FIRST on
+  # purpose: memory-server `depends_on` it, and a resolver that just takes the
+  # first image it sees picks up qdrant instead of the server. That is a real
+  # trap — `config --images memory-server` emits dependency images too, in
+  # unspecified order, which is how the first implementation of this resolver
+  # was caught pre-flighting qdrant.
+  echo "name: universal-memory"
+  echo "services:"
+  echo "  qdrant:"
+  echo "    image: qdrant/qdrant:v1.13.0"
+  echo "    restart: unless-stopped"
+  echo "  memory-server:"
+  if [ -n "${UM_IMAGE:-}" ]; then
+    echo "    image: $UM_IMAGE"
+  else
+    echo "    image: ghcr.io/goldenwo/universal-memory-server:${UM_VERSION:-latest}"
+  fi
+  echo "    restart: unless-stopped"
+  exit 0
+fi
+if [[ "$args" == *"image inspect"* ]]; then
+  # Resolving the TARGET image's ID for the post-swap identity check.
+  echo "${FAKE_TARGET_ID:-sha256:newimage}"
+  exit 0
+fi
+if [[ "$args" == *"inspect"* ]]; then
+  if [[ "$args" == *".RestartCount"* ]]; then
+    echo "${FAKE_RESTART_COUNT:-0}"
+    exit 0
+  fi
+  if [[ "$args" == *".Config.Image"* ]]; then
+    echo "${FAKE_OLD_TAG:-ghcr.io/goldenwo/universal-memory-server:1.8.0}"
+    exit 0
+  fi
+  # `inspect -f {{.Image}} <cid>` is asked twice with identical argv: once
+  # before the swap (the rollback target) and once after (what is actually
+  # serving). Model the timeline by call count so the post-swap identity check
+  # has something real to compare.
+  _n_file="${FAKE_DOCKER_LOG:-/tmp/fake-docker}.imgcalls"
+  _n=$(cat "$_n_file" 2>/dev/null || echo 0)
+  _n=$((_n + 1))
+  echo "$_n" > "$_n_file"
+  if [ "$_n" -le 1 ]; then
+    echo "${FAKE_OLD_ID:-sha256:0ldc0ffee}"
+  else
+    echo "${FAKE_RUNNING_ID:-${FAKE_TARGET_ID:-sha256:newimage}}"
+  fi
+  exit 0
+fi
+if [[ "$args" == *" port memory-server"* ]]; then
+  [ "${FAKE_NO_PORT:-0}" = "1" ] && exit 1
+  echo "${FAKE_PORT_OUT:-127.0.0.1:6335}"
+  exit 0
+fi
+if [[ "$args" == *"ps -q"* ]]; then
+  [ "${FAKE_NO_CONTAINER:-0}" = "1" ] && exit 0
+  echo "c0ffee1234ab"
+  exit 0
+fi
+if [[ "$args" == *"logs"* ]]; then
+  echo "memory-server | Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'mem0ai'"
+  exit 0
+fi
+exit 0
+FAKE
+  chmod +x "$dest/docker"
+}
+
+# Fake curl whose /health answer is conditioned on UM_IMAGE being exported.
+# That models the incident exactly: the NEW image is unhealthy, and the health
+# check only starts passing once install.sh has exported the recorded rollback
+# image and recreated the container.
+make_fake_curl_unhealthy_until_rollback() {
+  cat > "$1/curl" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"/health"* ]]; then
+  # UM_IMAGE is only exported by install.sh's rollback path.
+  if [ -n "${UM_IMAGE:-}" ]; then printf '{"ok":true,"memories":42}'; exit 0; fi
+  exit 7
+fi
+exit 0
+FAKE
+  chmod +x "$1/curl"
+}
+
+# run_upgrade <fakebin> <isolated_sh> <log> [extra env...] -- [args...]
+# Scrubs the environment (env -i) so a host UM_IMAGE/UM_VERSION can't leak in.
+run_upgrade() {
+  local fakebin="$1" isolated_sh="$2" log="$3"; shift 3
+  local envs=() ; while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  env -i PATH="$fakebin:/usr/bin:/bin" \
+    _UM_REPO_ROOT="$REPO_ROOT" \
+    HOME="$(dirname "$isolated_sh")" \
+    FAKE_DOCKER_LOG="$log" \
+    _UM_UPGRADE_POLL_ATTEMPTS=1 \
+    MEM0_MCP_PORT=6335 \
+    ${envs[@]+"${envs[@]}"} \
+    bash "$isolated_sh" "$@" 2>&1
+}
+
+# ─── T20: --upgrade happy path — pull → preflight → up -d → health ───────────
+echo ""
+echo "=== T20: --upgrade happy path (pull, pre-flight, swap, health OK) ==="
+T20="$TMPROOT/t20"
+mkdir -p "$T20/server"
+make_fakebin "$T20/bin" 200
+make_fake_docker_upgrade "$T20/bin"
+T20_SH=$(make_isolated_server "$T20/server")
+T20_LOG="$T20/docker.log"
+
+T20_EXIT=0
+T20_OUT=$(run_upgrade "$T20/bin" "$T20_SH" "$T20_LOG" -- --upgrade) || T20_EXIT=$?
+
+assert_exit_zero "T20: --upgrade exits 0 on a healthy upgrade" "$T20_EXIT"
+assert_contains "T20: records the rollback target first" "$T20_OUT" "Rollback target:"
+# Resolve the SERVER's image, not the image of a service it depends_on.
+assert_contains "T20: resolves the memory-server image" "$T20_OUT" "Target image: ghcr.io/goldenwo/universal-memory-server:latest"
+assert_not_contains "T20: does not mistake qdrant for the target" "$T20_OUT" "Target image: qdrant"
+assert_contains "T20: pre-flight ran and passed" "$T20_OUT" "Pre-flight passed"
+assert_contains "T20: reports completion" "$T20_OUT" "Upgrade complete"
+assert_contains "T20: prints the manual revert command" "$T20_OUT" "UM_IMAGE=um-rollback:previous"
+# The revert command must be copy-pasteable into the same file set _compose
+# uses — a bare `docker compose` scoped to server/, not an explicit -f that
+# would suppress the host's docker-compose.override.yml.
+assert_not_contains "T20: revert command carries no -f" "$T20_OUT" "docker compose -f"
+assert_contains "T20: points at CHANGELOG" "$T20_OUT" "CHANGELOG.md"
+T20_LOGTXT=$(cat "$T20_LOG")
+assert_contains "T20: pulled the image" "$T20_LOGTXT" "pull memory-server"
+assert_contains "T20: pre-flighted via docker run" "$T20_LOGTXT" "--entrypoint node"
+assert_contains "T20: swapped via compose up -d" "$T20_LOGTXT" "up -d"
+# Order is the contract: the pre-flight must precede the swap.
+T20_PREFLIGHT_LINE=$(grep -n -- "--entrypoint node" "$T20_LOG" | head -1 | cut -d: -f1)
+T20_UP_LINE=$(grep -n -- "up -d" "$T20_LOG" | head -1 | cut -d: -f1)
+if [ "$T20_PREFLIGHT_LINE" -lt "$T20_UP_LINE" ]; then
+  pass "T20: pre-flight runs BEFORE the swap"
+else
+  fail_test "T20: pre-flight runs BEFORE the swap" "preflight@$T20_PREFLIGHT_LINE up@$T20_UP_LINE"
+fi
+
+# ─── T21: pre-flight failure ⇒ no swap, non-zero, running server untouched ───
+echo ""
+echo "=== T21: --upgrade aborts on pre-flight failure without swapping ==="
+T21="$TMPROOT/t21"
+mkdir -p "$T21/server"
+make_fakebin "$T21/bin" 200
+make_fake_docker_upgrade "$T21/bin"
+T21_SH=$(make_isolated_server "$T21/server")
+T21_LOG="$T21/docker.log"
+
+T21_EXIT=0
+T21_OUT=$(run_upgrade "$T21/bin" "$T21_SH" "$T21_LOG" FAKE_PREFLIGHT_RC=1 -- --upgrade) || T21_EXIT=$?
+
+assert_exit_nonzero "T21: exits non-zero when pre-flight fails" "$T21_EXIT"
+assert_contains "T21: says pre-flight failed" "$T21_OUT" "Pre-flight FAILED"
+assert_contains "T21: states nothing was swapped" "$T21_OUT" "NOTHING WAS SWAPPED"
+assert_contains "T21: surfaces the underlying node error" "$T21_OUT" "ERR_MODULE_NOT_FOUND"
+T21_LOGTXT=$(cat "$T21_LOG")
+# THE load-bearing assertion: the running container was never touched.
+assert_not_contains "T21: never ran compose up -d" "$T21_LOGTXT" "up -d"
+
+# ─── T22: unhealthy after swap ⇒ auto-rollback to the ORIGINAL image ─────────
+echo ""
+echo "=== T22: --upgrade auto-rolls-back when the new container is unhealthy ==="
+T22="$TMPROOT/t22"
+mkdir -p "$T22/server"
+make_fakebin "$T22/bin" 200
+make_fake_docker_upgrade "$T22/bin"
+make_fake_curl_unhealthy_until_rollback "$T22/bin"
+T22_SH=$(make_isolated_server "$T22/server")
+T22_LOG="$T22/docker.log"
+
+T22_EXIT=0
+T22_OUT=$(run_upgrade "$T22/bin" "$T22_SH" "$T22_LOG" FAKE_OLD_ID=sha256:deadbeef -- --upgrade) || T22_EXIT=$?
+
+assert_exit_nonzero "T22: exits non-zero when the upgrade did not take" "$T22_EXIT"
+assert_contains "T22: announces the auto-rollback" "$T22_OUT" "AUTO-ROLLBACK"
+assert_contains "T22: dumps container logs for diagnosis" "$T22_OUT" "ERR_MODULE_NOT_FOUND"
+assert_contains "T22: reports the rollback outcome" "$T22_OUT" "ROLLBACK SUCCEEDED"
+assert_contains "T22: names the image it restored" "$T22_OUT" "sha256:deadbeef"
+# LOAD-BEARING 1: the protective tag is applied to the ORIGINAL image ID, not
+# to its tag — on a latest→latest upgrade the tag now points at the bad image.
+if grep -q "ARGS=tag sha256:deadbeef um-rollback:previous" "$T22_LOG"; then
+  pass "T22: protective tag applied to the ORIGINAL recorded image ID"
+else
+  fail_test "T22: protective tag applied to the ORIGINAL recorded image ID" \
+    "docker log: $(cat "$T22_LOG")"
+fi
+# LOAD-BEARING 2: the rollback recreate goes through that durable tag, not the
+# raw ID — under UM_BUILD_LOCAL the ID can be destroyed by step 2's rebuild
+# (containerd image store), and `UM_IMAGE=sha256:<id>` would then be parsed as
+# repo "sha256" / tag "<id>" and sent to a registry that never had it.
+if grep -- "up -d" "$T22_LOG" | grep -q "UM_IMAGE=um-rollback:previous"; then
+  pass "T22: rollback up -d used the durable rollback tag"
+else
+  fail_test "T22: rollback up -d used the durable rollback tag" \
+    "docker log: $(cat "$T22_LOG")"
+fi
+# The printed manual recovery must also be durable and override-safe.
+assert_contains "T22: manual recovery uses the durable tag" "$T22_OUT" "UM_IMAGE=um-rollback:previous"
+assert_contains "T22: rollback durability is called out" "$T22_OUT" "Rollback is NOT durable yet"
+
+# ─── T23: --upgrade refuses to be combined with --yes (either order) ─────────
+echo ""
+echo "=== T23: --upgrade rejects being combined with --yes ==="
+T23="$TMPROOT/t23"
+mkdir -p "$T23/server"
+make_fakebin "$T23/bin" 200
+make_fake_docker_upgrade "$T23/bin"
+T23_SH=$(make_isolated_server "$T23/server")
+T23_LOG="$T23/docker.log"
+
+T23A_EXIT=0
+T23A_OUT=$(run_upgrade "$T23/bin" "$T23_SH" "$T23_LOG" -- --upgrade --yes) || T23A_EXIT=$?
+assert_exit_nonzero "T23: '--upgrade --yes' exits non-zero" "$T23A_EXIT"
+assert_contains "T23: '--upgrade --yes' names the sole-argument rule" "$T23A_OUT" "sole argument"
+
+T23B_EXIT=0
+T23B_OUT=$(run_upgrade "$T23/bin" "$T23_SH" "$T23_LOG" -- --yes --upgrade) || T23B_EXIT=$?
+assert_exit_nonzero "T23: '--yes --upgrade' exits non-zero" "$T23B_EXIT"
+assert_contains "T23: '--yes --upgrade' names the sole-argument rule" "$T23B_OUT" "sole argument"
+
+# Extra args are rejected too, rather than silently ignored.
+T23C_EXIT=0
+T23C_OUT=$(run_upgrade "$T23/bin" "$T23_SH" "$T23_LOG" -- --upgrade 1.8.1 extra) || T23C_EXIT=$?
+assert_exit_nonzero "T23: trailing junk argument is rejected" "$T23C_EXIT"
+assert_contains "T23: names the at-most-one-argument rule" "$T23C_OUT" "at most one argument"
+
+# ─── T24: --upgrade <version> passes UM_VERSION through to compose ──────────
+echo ""
+echo "=== T24: --upgrade 1.8.1 resolves the pinned version ==="
+T24="$TMPROOT/t24"
+mkdir -p "$T24/server"
+make_fakebin "$T24/bin" 200
+make_fake_docker_upgrade "$T24/bin"
+T24_SH=$(make_isolated_server "$T24/server")
+T24_LOG="$T24/docker.log"
+
+T24_EXIT=0
+T24_OUT=$(run_upgrade "$T24/bin" "$T24_SH" "$T24_LOG" -- --upgrade 1.8.1) || T24_EXIT=$?
+
+assert_exit_zero "T24: --upgrade 1.8.1 exits 0" "$T24_EXIT"
+assert_contains "T24: resolves the pinned tag" "$T24_OUT" "Target image: ghcr.io/goldenwo/universal-memory-server:1.8.1"
+assert_contains "T24: hints how to make the pin durable" "$T24_OUT" "UM_VERSION=1.8.1"
+assert_contains "T24: UM_VERSION reached the docker invocations" "$(cat "$T24_LOG")" "UM_VERSION=1.8.1"
+
+# Operators type the git tag (v1.8.1); published image tags are bare semver.
+T24B_LOG="$T24/docker-v.log"
+T24B_EXIT=0
+T24B_OUT=$(run_upgrade "$T24/bin" "$T24_SH" "$T24B_LOG" -- --upgrade v1.8.1) || T24B_EXIT=$?
+assert_exit_zero "T24: --upgrade v1.8.1 exits 0" "$T24B_EXIT"
+assert_contains "T24: strips the leading v from a git-style tag" "$T24B_OUT" "Target image: ghcr.io/goldenwo/universal-memory-server:1.8.1"
+
+# A pinned UM_IMAGE would silently win over the requested version — refuse.
+T24C_LOG="$T24/docker-img.log"
+T24C_EXIT=0
+T24C_OUT=$(run_upgrade "$T24/bin" "$T24_SH" "$T24C_LOG" UM_IMAGE=ghcr.io/other/img:9 -- --upgrade 1.8.1) || T24C_EXIT=$?
+assert_exit_nonzero "T24: refuses --upgrade <version> when UM_IMAGE is pinned" "$T24C_EXIT"
+assert_contains "T24: explains the UM_IMAGE precedence" "$T24C_OUT" "takes precedence"
+
+# ─── T25: --upgrade with no running container aborts (no rollback target) ────
+echo ""
+echo "=== T25: --upgrade refuses when nothing is running ==="
+T25="$TMPROOT/t25"
+mkdir -p "$T25/server"
+make_fakebin "$T25/bin" 200
+make_fake_docker_upgrade "$T25/bin"
+T25_SH=$(make_isolated_server "$T25/server")
+T25_LOG="$T25/docker.log"
+
+T25_EXIT=0
+T25_OUT=$(run_upgrade "$T25/bin" "$T25_SH" "$T25_LOG" FAKE_NO_CONTAINER=1 -- --upgrade) || T25_EXIT=$?
+
+assert_exit_nonzero "T25: exits non-zero with no running container" "$T25_EXIT"
+assert_contains "T25: explains there is no rollback target" "$T25_OUT" "no image to roll back to"
+assert_not_contains "T25: pulled nothing" "$(cat "$T25_LOG")" "pull memory-server"
+
+# ─── T29: crash-loop is detected by STATE, not by waiting out the clock ──────
+# A clock-only check cannot tell "dead" from "booting slowly", so it has to
+# pick one and be wrong half the time. Watching container state lets the
+# ceiling stay generous (180s, matching the install path's ARM-Pi rationale)
+# while a container docker reports as restarting rolls back immediately.
+echo ""
+echo "=== T29: --upgrade rolls back immediately on a crash-looping container ==="
+T29="$TMPROOT/t29"
+mkdir -p "$T29/server"
+make_fakebin "$T29/bin" 200
+make_fake_docker_upgrade "$T29/bin"
+make_fake_curl_unhealthy_until_rollback "$T29/bin"
+T29_SH=$(make_isolated_server "$T29/server")
+T29_LOG="$T29/docker.log"
+
+T29_EXIT=0
+# Poll ceiling left at the REAL default: if state were not consulted, this
+# test would hang for 180s instead of failing fast.
+T29_OUT=$(env -i PATH="$T29/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$REPO_ROOT" HOME="$T29/server" \
+  FAKE_DOCKER_LOG="$T29_LOG" FAKE_RESTART_COUNT=5 \
+  MEM0_MCP_PORT=6335 \
+  bash "$T29_SH" --upgrade 2>&1) || T29_EXIT=$?
+
+assert_exit_nonzero "T29: exits non-zero on a crash-looping container" "$T29_EXIT"
+assert_contains "T29: names the crash-loop" "$T29_OUT" "CRASH-LOOPING"
+assert_contains "T29: says it is not waiting out the clock" "$T29_OUT" "Not waiting out the clock"
+assert_contains "T29: still rolled back" "$T29_OUT" "ROLLBACK SUCCEEDED"
+
+# ─── T29b: ONE transient death is not a crash-loop ───────────────────────────
+# `depends_on` does not wait for readiness, so a server that starts before
+# qdrant is accepting connections can die once and come up fine. Rolling that
+# back would abort an upgrade that was about to succeed — the false-failure
+# this whole state check exists to avoid, just with a different trigger.
+echo ""
+echo "=== T29b: a single restart is tolerated, not treated as a crash-loop ==="
+T29B="$TMPROOT/t29b"
+mkdir -p "$T29B/server"
+make_fakebin "$T29B/bin" 200
+make_fake_docker_upgrade "$T29B/bin"
+T29B_SH=$(make_isolated_server "$T29B/server")
+T29B_LOG="$T29B/docker.log"
+
+T29B_EXIT=0
+# Model the real timeline: the first probe finds nothing listening (the server
+# died once on a not-yet-ready qdrant), and a later probe succeeds. If the
+# tolerance were absent, the RestartCount=1 seen on that first failed probe
+# would end the upgrade before the second probe ever ran.
+cat > "$T29B/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"/health"* ]]; then
+  n_file="${TMPDIR:-/tmp}/t29b-health-calls"
+  n=$(cat "$n_file" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$n_file"
+  if [ "$n" -le 1 ]; then exit 7; fi
+  printf '{"ok":true,"memories":42}'
+  exit 0
+fi
+exit 0
+FAKE
+chmod +x "$T29B/bin/curl"
+rm -f "${TMPDIR:-/tmp}/t29b-health-calls"
+T29B_OUT=$(run_upgrade "$T29B/bin" "$T29B_SH" "$T29B_LOG" \
+  FAKE_RESTART_COUNT=1 _UM_UPGRADE_POLL_ATTEMPTS=3 -- --upgrade) || T29B_EXIT=$?
+assert_exit_zero "T29b: one restart + healthy ⇒ upgrade succeeds" "$T29B_EXIT"
+assert_contains "T29b: reports completion" "$T29B_OUT" "Upgrade complete"
+assert_not_contains "T29b: no crash-loop verdict" "$T29B_OUT" "CRASH-LOOPING"
+assert_not_contains "T29b: no rollback" "$T29B_OUT" "AUTO-ROLLBACK"
+
+# ─── T29c: legacy override filename is called out, never silently ignored ────
+echo ""
+echo "=== T29c: leftover docker-compose.local.yml warns that it is inert ==="
+T29C="$TMPROOT/t29c"
+mkdir -p "$T29C/server"
+make_fakebin "$T29C/bin" 200
+make_fake_docker_upgrade "$T29C/bin"
+T29C_SH=$(make_isolated_server "$T29C/server")
+printf 'services:\n  memory-server:\n    ports: !override\n      - "127.0.0.1:6399:6335"\n' \
+  > "$T29C/server/docker-compose.local.yml"
+T29C_LOG="$T29C/docker.log"
+
+T29C_EXIT=0
+T29C_OUT=$(run_upgrade "$T29C/bin" "$T29C_SH" "$T29C_LOG" -- --upgrade) || T29C_EXIT=$?
+assert_exit_zero "T29c: still runs" "$T29C_EXIT"
+assert_contains "T29c: warns the legacy file is inert" "$T29C_OUT" "NO LONGER APPLIED"
+assert_contains "T29c: gives the rename command" "$T29C_OUT" "docker-compose.override.yml"
+rm -f "$T29C/server/docker-compose.local.yml"
+
+# ─── T30: health URL comes from compose, not from MEM0_MCP_PORT ──────────────
+# A host override can REPLACE the published ports, so a URL derived from
+# MEM0_MCP_PORT alone can point at an unbound port — every poll then fails and
+# a healthy upgrade gets reported as "the server is DOWN" and rolled back.
+echo ""
+echo "=== T30: --upgrade resolves the health port from compose ==="
+T30="$TMPROOT/t30"
+mkdir -p "$T30/server"
+make_fakebin "$T30/bin" 200
+make_fake_docker_upgrade "$T30/bin"
+T30_SH=$(make_isolated_server "$T30/server")
+T30_LOG="$T30/docker.log"
+
+T30_EXIT=0
+# MEM0_MCP_PORT says 6335; compose reports the container published on 6337.
+T30_OUT=$(run_upgrade "$T30/bin" "$T30_SH" "$T30_LOG" FAKE_PORT_OUT=0.0.0.0:6337 -- --upgrade) || T30_EXIT=$?
+
+assert_exit_zero "T30: --upgrade exits 0" "$T30_EXIT"
+assert_contains "T30: health URL uses the published port" "$T30_OUT" "http://localhost:6337/health"
+assert_not_contains "T30: does not use the .env port" "$T30_OUT" "http://localhost:6335/health"
+# A 0.0.0.0 bind is probed over loopback, which is reachable everywhere.
+assert_not_contains "T30: never dials 0.0.0.0" "$T30_OUT" "http://0.0.0.0"
+
+# Falls back to MEM0_MCP_PORT when compose cannot answer.
+T30B_LOG="$T30/nofallback.log"
+T30B_EXIT=0
+T30B_OUT=$(run_upgrade "$T30/bin" "$T30_SH" "$T30B_LOG" FAKE_NO_PORT=1 -- --upgrade) || T30B_EXIT=$?
+assert_exit_zero "T30: still succeeds when compose cannot report a port" "$T30B_EXIT"
+assert_contains "T30: falls back to MEM0_MCP_PORT" "$T30B_OUT" "http://localhost:6335/health"
+
+# ─── T31: a 200 from the port is not proof the new image is serving ──────────
+# Anything bound to that port satisfies the poll. On a half-migrated host a
+# stale container answers, and a failed swap would report "Upgrade complete".
+echo ""
+echo "=== T31: --upgrade rejects a healthy port served by the wrong image ==="
+T31="$TMPROOT/t31"
+mkdir -p "$T31/server"
+make_fakebin "$T31/bin" 200
+make_fake_docker_upgrade "$T31/bin"
+T31_SH=$(make_isolated_server "$T31/server")
+T31_LOG="$T31/docker.log"
+
+T31_EXIT=0
+# /health answers 200 throughout, but the container serving it is not the
+# image we just pre-flighted and swapped in.
+T31_OUT=$(run_upgrade "$T31/bin" "$T31_SH" "$T31_LOG" \
+  FAKE_RUNNING_ID=sha256:stalecontainer FAKE_TARGET_ID=sha256:newimage -- --upgrade) || T31_EXIT=$?
+
+assert_exit_nonzero "T31: exits non-zero when the wrong image is serving" "$T31_EXIT"
+assert_not_contains "T31: does NOT claim success" "$T31_OUT" "Upgrade complete"
+assert_contains "T31: says the swap did not take" "$T31_OUT" "the swap did not take"
+assert_contains "T31: names the image actually running" "$T31_OUT" "sha256:stalecontainer"
+assert_contains "T31: rolled back" "$T31_OUT" "AUTO-ROLLBACK"
+
+# ─── T27: _compose() file selection — override is appended LAST ──────────────
+# _compose() is the single point that decides which compose files every docker
+# invocation in this script sees. An explicit -f suppresses compose's own
+# auto-load of docker-compose.override.yml, so _compose MUST re-add it by hand
+# — and LAST, or the host's overrides lose to the base file they exist to
+# correct. Asserted through a real run: the fake docker records the argv.
+echo ""
+echo "=== T27: _compose() appends docker-compose.override.yml last when present ==="
+T27="$TMPROOT/t27"
+mkdir -p "$T27/server"
+make_fakebin "$T27/bin" 200
+make_fake_docker_upgrade "$T27/bin"
+T27_SH=$(make_isolated_server "$T27/server")
+
+# (a) no override file present ⇒ never referenced
+T27A_LOG="$T27/no-override.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27A_LOG" -- --upgrade >/dev/null 2>&1 || true
+assert_not_contains "T27: override not referenced when absent" "$(cat "$T27A_LOG")" "docker-compose.override.yml"
+assert_contains "T27: base compose file always passed" "$(cat "$T27A_LOG")" "docker-compose.yml"
+
+# (b) override file present ⇒ appended, and LAST
+printf 'services:\n  memory-server:\n    ports: !override\n      - "127.0.0.1:6399:6335"\n' \
+  > "$T27/server/docker-compose.override.yml"
+T27B_LOG="$T27/with-override.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27B_LOG" -- --upgrade >/dev/null 2>&1 || true
+T27B_UP=$(grep -- "up -d" "$T27B_LOG" | head -1)
+assert_contains "T27: override passed when present" "$T27B_UP" "docker-compose.override.yml"
+# Order check: the override's -f must come after the base file's.
+T27_BASE_POS=$(awk '{print index($0, "docker-compose.yml")}' <<< "$T27B_UP")
+T27_OVR_POS=$(awk '{print index($0, "docker-compose.override.yml")}' <<< "$T27B_UP")
+if [ "$T27_OVR_POS" -gt "$T27_BASE_POS" ] && [ "$T27_OVR_POS" -gt 0 ]; then
+  pass "T27: override -f appears AFTER the base -f"
+else
+  fail_test "T27: override -f appears AFTER the base -f" "argv: $T27B_UP"
+fi
+
+# (c) build mode ⇒ base, build override, then host override last
+T27C_LOG="$T27/build-mode.log"
+run_upgrade "$T27/bin" "$T27_SH" "$T27C_LOG" UM_BUILD_LOCAL=1 -- --upgrade >/dev/null 2>&1 || true
+T27C_UP=$(grep -- "up -d" "$T27C_LOG" | head -1)
+T27C_BUILD_POS=$(awk '{print index($0, "docker-compose.build.yml")}' <<< "$T27C_UP")
+T27C_OVR_POS=$(awk '{print index($0, "docker-compose.override.yml")}' <<< "$T27C_UP")
+if [ "$T27C_BUILD_POS" -gt 0 ] && [ "$T27C_OVR_POS" -gt "$T27C_BUILD_POS" ]; then
+  pass "T27: host override still wins over the build override"
+else
+  fail_test "T27: host override still wins over the build override" "argv: $T27C_UP"
+fi
+rm -f "$T27/server/docker-compose.override.yml"
+
+# ─── T28: .env values are normalized the way compose's parser does ───────────
+# A quoted MEM0_MCP_PORT used to reach the health URL verbatim
+# (http://localhost:"6335"/health), which can never answer — and --upgrade
+# reads that as "the server is DOWN" and rolls back a healthy upgrade.
+echo ""
+echo "=== T28: --verify tolerates quoted / commented / CRLF .env values ==="
+T28="$TMPROOT/t28"
+mkdir -p "$T28/vault" "$T28/plugins" "$T28/home"
+make_fakebin "$T28/bin" 200
+T28_SH=$(make_isolated_server "$T28/server")
+cp -r "$PLUGIN_SRC" "$T28/plugins/universal-memory"
+{
+  printf 'MEM0_MCP_PORT="6335"\r\n'
+  printf 'UM_VAULT_DIR=%s   # inline comment\n' "$T28/vault"
+  printf "UM_OPENAI_API_KEY='sk-testkey12345'\n"
+} > "$T28/server/.env"
+
+T28_EXIT=0
+T28_OUT=$(env PATH="$T28/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  CLAUDE_PLUGINS_DIR="$T28/plugins" \
+  HOME="$T28/home" \
+  bash "$T28_SH" --verify 2>&1) || T28_EXIT=$?
+
+assert_exit_zero "T28: --verify exits 0 with quoted/commented/CRLF values" "$T28_EXIT"
+# The health line proves the port was unquoted before the URL was built.
+assert_contains "T28: port unquoted in health URL" "$T28_OUT" "http://localhost:6335/health"
+assert_not_contains "T28: no quote leaked into the URL" "$T28_OUT" 'localhost:"6335"'
+# The vault check proves the inline comment was stripped from the path.
+assert_contains "T28: inline comment stripped from vault path" "$T28_OUT" "vault-dir"
+assert_not_contains "T28: vault path has no comment residue" "$T28_OUT" "# inline comment"
+
+# ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
+# The CLI is a copy of the repo's scripts with no self-update path, so it stays
+# at whatever version was installed until someone re-runs the installer. That
+# is how a host ran a current server with a CLI a full release behind, making
+# that release's capture-freshness cron uninstallable.
+echo ""
+echo "=== T32: --upgrade refreshes the um CLI ==="
+T32="$TMPROOT/t32"
+mkdir -p "$T32/server" "$T32/home/.local/share/um/cli" "$T32/repo/installer"
+make_fakebin "$T32/bin" 200
+make_fake_docker_upgrade "$T32/bin"
+T32_SH=$(make_isolated_server "$T32/server")
+# Fake source tree whose install-cli.sh records how it was invoked.
+cat > "$T32/repo/installer/install-cli.sh" <<'FAKE'
+#!/usr/bin/env bash
+printf 'CLI-INSTALLER-RAN args=%s\n' "$*" >> "$UM_CLI_INSTALL_LOG"
+echo "um installed"
+exit 0
+FAKE
+chmod +x "$T32/repo/installer/install-cli.sh"
+T32_LOG="$T32/docker.log"
+T32_CLI_LOG="$T32/cli-installer.log"
+
+T32_EXIT=0
+T32_OUT=$(env -i PATH="$T32/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32/repo" HOME="$T32/home" \
+  FAKE_DOCKER_LOG="$T32_LOG" UM_CLI_INSTALL_LOG="$T32_CLI_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32_SH" --upgrade 2>&1) || T32_EXIT=$?
+
+assert_exit_zero "T32: upgrade exits 0" "$T32_EXIT"
+assert_contains "T32: announces the CLI refresh" "$T32_OUT" "Refreshing the um CLI"
+assert_file_exists "T32: CLI installer was invoked" "$T32_CLI_LOG"
+# --no-path is load-bearing: install-cli.sh rewrites the shell rc marker block
+# from the CURRENT environment, and --upgrade never collects an API key — so a
+# refresh without it would blank UM_OPENAI_API_KEY in the operator's profile.
+assert_contains "T32: refresh passes --no-path (never touches shell profiles)" \
+  "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--no-path"
+assert_contains "T32: refresh is non-interactive" \
+  "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--yes"
+assert_contains "T32: points at the three-surface doc" "$T32_OUT" "docs/upgrading.md"
+
+# ─── T32b: CLI not installed on this host ⇒ refresh is skipped silently ──────
+echo ""
+echo "=== T32b: no CLI installed ⇒ no refresh attempted ==="
+T32B="$TMPROOT/t32b"
+mkdir -p "$T32B/server" "$T32B/home" "$T32B/repo/installer"
+make_fakebin "$T32B/bin" 200
+make_fake_docker_upgrade "$T32B/bin"
+T32B_SH=$(make_isolated_server "$T32B/server")
+cp "$T32/repo/installer/install-cli.sh" "$T32B/repo/installer/install-cli.sh"
+T32B_CLI_LOG="$T32B/cli-installer.log"
+
+T32B_EXIT=0
+T32B_OUT=$(env -i PATH="$T32B/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32B/repo" HOME="$T32B/home" \
+  FAKE_DOCKER_LOG="$T32B/docker.log" UM_CLI_INSTALL_LOG="$T32B_CLI_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32B_SH" --upgrade 2>&1) || T32B_EXIT=$?
+
+assert_exit_zero "T32b: upgrade still exits 0" "$T32B_EXIT"
+assert_not_contains "T32b: no refresh announced" "$T32B_OUT" "Refreshing the um CLI"
+if [ -f "$T32B_CLI_LOG" ]; then
+  fail_test "T32b: CLI installer not invoked when CLI absent" "installer ran anyway"
+else
+  pass "T32b: CLI installer not invoked when CLI absent"
+fi
+
+# ─── T32c: a failing/missing CLI refresh never fails the server upgrade ──────
+# The server upgrade has already succeeded and been health-verified by this
+# point. A stale CLI is a real problem, but turning it into a failed exit code
+# would invite an operator to roll back a perfectly good server.
+echo ""
+echo "=== T32c: CLI refresh failure does not fail or roll back the upgrade ==="
+T32C="$TMPROOT/t32c"
+mkdir -p "$T32C/server" "$T32C/home/.local/share/um/cli" "$T32C/repo/installer"
+make_fakebin "$T32C/bin" 200
+make_fake_docker_upgrade "$T32C/bin"
+T32C_SH=$(make_isolated_server "$T32C/server")
+cat > "$T32C/repo/installer/install-cli.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "install-cli: python3 not found" >&2
+exit 1
+FAKE
+chmod +x "$T32C/repo/installer/install-cli.sh"
+T32C_LOG="$T32C/docker.log"
+
+T32C_EXIT=0
+T32C_OUT=$(env -i PATH="$T32C/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32C/repo" HOME="$T32C/home" \
+  FAKE_DOCKER_LOG="$T32C_LOG" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32C_SH" --upgrade 2>&1) || T32C_EXIT=$?
+
+assert_exit_zero "T32c: failing CLI refresh still exits 0" "$T32C_EXIT"
+assert_contains "T32c: reports the refresh failure" "$T32C_OUT" "CLI refresh FAILED"
+assert_contains "T32c: gives the manual command" "$T32C_OUT" "install-cli.sh --no-path"
+assert_contains "T32c: server upgrade still reported complete" "$T32C_OUT" "Upgrade complete"
+assert_not_contains "T32c: no rollback triggered" "$T32C_OUT" "AUTO-ROLLBACK"
+
+# ─── T32d: installer missing entirely (tarball / partial tree) ───────────────
+echo ""
+echo "=== T32d: CLI installed but installer absent ⇒ actionable warning ==="
+T32D="$TMPROOT/t32d"
+mkdir -p "$T32D/server" "$T32D/home/.local/share/um/cli" "$T32D/repo"
+make_fakebin "$T32D/bin" 200
+make_fake_docker_upgrade "$T32D/bin"
+T32D_SH=$(make_isolated_server "$T32D/server")
+
+T32D_EXIT=0
+T32D_OUT=$(env -i PATH="$T32D/bin:/usr/bin:/bin" \
+  _UM_REPO_ROOT="$T32D/repo" HOME="$T32D/home" \
+  FAKE_DOCKER_LOG="$T32D/docker.log" \
+  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  bash "$T32D_SH" --upgrade 2>&1) || T32D_EXIT=$?
+
+assert_exit_zero "T32d: still exits 0 on a partial tree" "$T32D_EXIT"
+assert_contains "T32d: names the missing installer" "$T32D_OUT" "install-cli.sh is missing"
+assert_contains "T32d: warns the CLI is now older" "$T32D_OUT" "OLDER than your server"
+
+# ─── T33: --verify reports all three versions and flags skew ────────────────
+echo ""
+echo "=== T33: --verify reports server / CLI / plugin versions ==="
+T33="$TMPROOT/t33"
+mkdir -p "$T33/vault" "$T33/plugins" "$T33/home/.local/.claude-plugin" "$T33/repo/plugins/claude-code"
+make_fakebin "$T33/bin" 200
+T33_SH=$(make_isolated_server "$T33/server")
+cp -r "$PLUGIN_SRC" "$T33/plugins/universal-memory"
+# The fake repo carries the REAL plugin tree (hooks and all) so the other
+# verify checks behave normally and any exit code is attributable to versions.
+cp -r "$PLUGIN_SRC" "$T33/repo/plugins/claude-code/universal-memory"
+# Installed CLI marker: a full release behind the source tree — the exact skew
+# that hid for a release cycle.
+printf '{"name":"universal-memory","version":"1.6.0"}\n' > "$T33/home/.local/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+# Installed plugin: NEWER than the server we will report (1.7.0).
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/plugins/universal-memory/.claude-plugin/plugin.json"
+# Fake docker that reports a running server carrying an OCI version label.
+cat > "$T33/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"compose version"* ]]; then echo "Docker Compose version v2.27.0"; exit 0; fi
+if [[ "$args" == info* ]] || [[ "$args" == *" info"* ]]; then echo "{}"; exit 0; fi
+if [[ "$args" == *"ps -q"* ]]; then echo "c0ffee1234ab"; exit 0; fi
+if [[ "$args" == *"org.opencontainers.image.version"* ]]; then echo "${FAKE_SERVER_VER:-1.7.0}"; exit 0; fi
+if [[ "$args" == *"ps"* ]]; then echo "NAME            STATUS"; echo "memory-server   Up 2 hours"; exit 0; fi
+exit 0
+FAKE
+chmod +x "$T33/bin/docker"
+
+T33_EXIT=0
+T33_OUT=$(env PATH="$T33/bin:$PATH" \
+  _UM_REPO_ROOT="$T33/repo" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33/plugins" \
+  HOME="$T33/home" \
+  bash "$T33_SH" --verify 2>&1) || T33_EXIT=$?
+
+# Both skews here are ADVISORY. A stale CLI or a newer plugin is worth saying
+# out loud, but failing an otherwise-healthy server verify over it would train
+# operators to ignore the exit code. Only the hard floor (T33c) fails.
+assert_exit_zero "T33: advisory skew does NOT fail verify" "$T33_EXIT"
+assert_contains "T33: reports server version"      "$T33_OUT" "version-server"
+assert_contains "T33: server version value"        "$T33_OUT" "1.7.0"
+assert_contains "T33: reports CLI version"         "$T33_OUT" "version-cli"
+assert_contains "T33: CLI version value"           "$T33_OUT" "1.6.0"
+assert_contains "T33: reports plugin version"      "$T33_OUT" "version-plugin"
+assert_contains "T33: reports source tree version" "$T33_OUT" "version-source-tree"
+# Skew A: installed plugin (1.8.1) newer than server (1.7.0).
+assert_contains "T33: flags plugin-newer-than-server skew" "$T33_OUT" "is NEWER than server"
+# Skew B: CLI (1.6.0) behind the source tree (1.8.1) — the release-cycle gap.
+assert_contains "T33: flags CLI-behind-source skew" "$T33_OUT" "BEHIND this source tree"
+assert_contains "T33: gives the CLI refresh command" "$T33_OUT" "install-cli.sh --no-path"
+
+# ─── T33b: matched versions produce no skew warnings ────────────────────────
+echo ""
+echo "=== T33b: no skew warnings when all three match ==="
+T33B="$TMPROOT/t33b"
+mkdir -p "$T33B/vault" "$T33B/plugins" "$T33B/home/.local/.claude-plugin" "$T33B/repo/plugins/claude-code"
+cp -r "$T33/bin" "$T33B/bin"
+T33B_SH=$(make_isolated_server "$T33B/server")
+cp -r "$PLUGIN_SRC" "$T33B/plugins/universal-memory"
+cp -r "$PLUGIN_SRC" "$T33B/repo/plugins/claude-code/universal-memory"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/home/.local/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/plugins/universal-memory/.claude-plugin/plugin.json"
+
+T33B_EXIT=0
+T33B_OUT=$(env PATH="$T33B/bin:$PATH" \
+  _UM_REPO_ROOT="$T33B/repo" \
+  FAKE_SERVER_VER=1.8.1 \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33B/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33B/plugins" \
+  HOME="$T33B/home" \
+  bash "$T33B_SH" --verify 2>&1) || T33B_EXIT=$?
+
+assert_exit_zero "T33b: --verify passes with matched versions" "$T33B_EXIT"
+assert_not_contains "T33b: no skew warning" "$T33B_OUT" "version-skew"
+assert_contains "T33b: all checks still pass" "$T33B_OUT" "All checks passed"
+
+# ─── T33c: a server below the capture-contract floor FAILS verify ───────────
+# Unlike the advisory skews, the plugin genuinely cannot capture against a
+# pre-1.7 server — every capture 404s. That is worth a non-zero exit.
+echo ""
+echo "=== T33c: server below the 1.7.0 capture floor fails verify ==="
+T33C="$TMPROOT/t33c"
+mkdir -p "$T33C/vault" "$T33C/plugins" "$T33C/home/.local/.claude-plugin" "$T33C/repo/plugins/claude-code"
+cp -r "$T33/bin" "$T33C/bin"
+T33C_SH=$(make_isolated_server "$T33C/server")
+cp -r "$PLUGIN_SRC" "$T33C/plugins/universal-memory"
+cp -r "$PLUGIN_SRC" "$T33C/repo/plugins/claude-code/universal-memory"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/plugins/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
+
+T33C_EXIT=0
+T33C_OUT=$(env PATH="$T33C/bin:$PATH" \
+  _UM_REPO_ROOT="$T33C/repo" \
+  FAKE_SERVER_VER=1.6.0 \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T33C/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T33C/plugins" \
+  HOME="$T33C/home" \
+  bash "$T33C_SH" --verify 2>&1) || T33C_EXIT=$?
+
+assert_exit_nonzero "T33c: --verify fails below the capture floor" "$T33C_EXIT"
+assert_contains "T33c: names the floor" "$T33C_OUT" "version-floor"
+assert_contains "T33c: explains the consequence" "$T33C_OUT" "cannot capture against it"
+
+# ─── T26: drift gate — --upgrade's fallback image ref tracks the compose file ─
+# --upgrade resolves the target image from `docker compose config`, but falls
+# back to a hardcoded mirror of docker-compose.yml's memory-server `image:`
+# line when compose can't answer. If that line is ever edited (new registry,
+# renamed image) the mirror silently goes stale and the fallback would
+# pre-flight — and name in its error messages — an image nobody deploys.
+echo ""
+echo "=== T26: --upgrade fallback image ref matches docker-compose.yml ==="
+T26_COMPOSE_REF=$(grep -E '^\s+image:\s+\$\{UM_IMAGE' "$SCRIPT_DIR/docker-compose.yml" | sed 's/^[[:space:]]*image:[[:space:]]*//')
+T26_INSTALL_REF=$(grep -oE '\$\{UM_IMAGE:-ghcr\.io[^}]*\}[^"]*' "$INSTALL_SH" | head -1)
+if [ -n "$T26_COMPOSE_REF" ] && [ "$T26_INSTALL_REF" = "$T26_COMPOSE_REF" ]; then
+  pass "T26: install.sh fallback ref matches docker-compose.yml image line"
+else
+  fail_test "T26: install.sh fallback ref matches docker-compose.yml image line" \
+    "compose='$T26_COMPOSE_REF' install.sh='$T26_INSTALL_REF'"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

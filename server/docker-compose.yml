@@ -41,6 +41,17 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
       UM_VAULT_DIR: /vault
+      # MEM0_MCP_PORT means the HOST side of the `ports:` mapping below — but
+      # `env_file: .env` would ALSO hand that value to the container, where
+      # mem0-mcp-http.mjs does parseInt(MEM0_MCP_PORT) to pick its listen port.
+      # The two readings conflict: MEM0_MCP_PORT=6337 bound host 6337 -> target
+      # 6335 while the server listened on 6337 inside (nothing on 6335), and
+      # the documented binding form "127.0.0.1:6337" parseInt'd to 127, so the
+      # server tried to listen on a privileged port and died with EACCES.
+      # A literal `environment:` entry beats `env_file`, so pinning it here
+      # makes the container ALWAYS listen on 6335 and leaves MEM0_MCP_PORT
+      # purely host-side. Pinned by test/compose-contract.test.mjs.
+      MEM0_MCP_PORT: "6335"
     # UM_CONTAINER_USER lets CI / automated setups pin the container UID:GID
     # to match the host user so files written into the rw-mounted vault are
     # owned by the host user (avoids cross-user cleanup EACCES). Defaults to
