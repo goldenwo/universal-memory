@@ -140,7 +140,11 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       GROUP BY day
     `).all(windowStart, today);
 
-    const capture = {};
+    // Null-prototype map: `surface` is caller-controlled (X-UM-Source has no
+    // charset restriction) — on a plain literal, a surface named '__proto__'
+    // hits the prototype setter instead of creating an own key and vanishes
+    // from Object.keys / JSON.stringify / the API (v1.8.1 shipped bug).
+    const capture = Object.create(null);
     for (const { surface, last_day_seen } of lastSeenRows) {
       capture[surface] = {
         last_day_seen,

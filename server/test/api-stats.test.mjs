@@ -229,6 +229,44 @@ test('A1: 200 with token — full spec-§3 shape', async () => {
   } finally { await close(); }
 });
 
+// v1.8.1 shipped-bug fix: both /api/stats record builders were plain object
+// literals keyed by attacker-controlled strings (surface ← X-UM-Source,
+// project ← stored metadata). A key named '__proto__' hits the prototype
+// setter — the entry vanishes from JSON — and a project named after any
+// Object.prototype member (e.g. 'constructor') reads the inherited value
+// through `?? 0` and serves a garbage concatenated string as its count.
+test('hostile keys: __proto__ surface and __proto__/constructor projects served as data', async () => {
+  const dbPath = await tempDbPath();
+  seedDb(dbPath, [
+    { day: TODAY, surface: '__proto__', event: 'capture.turn', outcome: 'stored', count: 3 },
+  ]);
+  const items = [
+    { id: 'u1', memory: 'm1', metadata: { id: 'd1', project: '__proto__' } },
+    { id: 'u2', memory: 'm2', metadata: { id: 'd2', project: '__proto__' } },
+    { id: 'u3', memory: 'm3', metadata: { id: 'd3', project: 'constructor' } },
+    { id: 'u4', memory: 'm4', metadata: { id: 'd4', project: 'um' } },
+  ];
+  const memory = {
+    getAll: async ({ limit } = {}) => ({ results: items.slice(0, limit ?? 100) }),
+    search: async () => ({ results: [] }),
+  };
+  const { close, url } = await startServer({ memory, env: { UM_COUNTERS_DB_PATH: dbPath } });
+  try {
+    const r = await fetch(url('/api/stats'), authed);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+
+    const byProject = body.corpus.points_by_project;
+    assert.ok(Object.hasOwn(byProject, '__proto__'), '__proto__ project must be an own key in the JSON');
+    assert.equal(byProject['__proto__'], 2);
+    assert.equal(byProject['constructor'], 1, 'constructor count must be a number, not inherited-value garbage');
+    assert.equal(byProject.um, 1);
+
+    assert.ok(Object.hasOwn(body.capture, '__proto__'), '__proto__ surface must survive to the served JSON');
+    assert.equal(body.capture['__proto__'].events_today, 3);
+  } finally { await close(); }
+});
+
 test('second veto site: loopback caller IS rate-limited on /api/stats; /api/* bypass intact', async () => {
   const { close, url } = await startServer({
     memory: makeFakeMemory(2),
