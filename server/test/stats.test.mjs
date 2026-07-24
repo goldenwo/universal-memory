@@ -276,7 +276,9 @@ test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
   seedDb(dbPath, []);
   const stats = readCounterStats({ now: NOW, dbPath });
   assert.equal(stats.available, true);
-  assert.deepEqual(stats.capture, {}, 'no surfaces yet — empty object, not null');
+  // { __proto__: null }: capture is a null-prototype map (hostile-key fix) and
+  // strict deepEqual compares prototypes.
+  assert.deepEqual(stats.capture, { __proto__: null }, 'no surfaces yet — empty object, not null');
   const expectedGrowth = {};
   for (let i = 6; i >= 0; i--) expectedGrowth[daysAgo(i)] = 0;
   assert.deepEqual(stats.growth_7d, expectedGrowth);
@@ -287,6 +289,34 @@ test('readCounterStats requires an explicit now (clock seam — no implicit Date
   const dbPath = await tempDbPath();
   seedDb(dbPath, []);
   assert.throws(() => readCounterStats({ dbPath }), TypeError);
+});
+
+// ---------- hostile surface names (v1.8.1 shipped-bug fix) ----------
+// `surface` is attacker-controlled (X-UM-Source has no charset restriction).
+// On a plain object literal, assigning key '__proto__' hits the prototype
+// setter instead of creating an own property — the surface vanished from
+// Object.keys / JSON.stringify / the API, so a capture surface could never
+// appear on a freshness view (exactly what the §4 alert exists to show).
+
+test('capture: a surface named __proto__ is reported as data, not swallowed by the prototype setter', async () => {
+  const dbPath = await tempDbPath();
+  seedDb(dbPath, [
+    { day: TODAY, surface: '__proto__', event: 'capture.checkpoint', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'claude-code', event: 'capture.checkpoint', outcome: 'stored' },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.ok(Object.hasOwn(stats.capture, '__proto__'), '__proto__ must be an own, enumerable surface key');
+  // The route serves JSON.stringify(capture) — the surface must survive the round trip.
+  const served = JSON.parse(JSON.stringify(stats.capture));
+  assert.deepEqual(served['__proto__'], {
+    last_day_seen: TODAY,
+    freshness_hours: 0,
+    events_today: 2,
+    errors_today: 0,
+    outcomes_7d: { ...EMPTY_OUTCOMES, stored: 2 },
+  });
+  // Neighbouring surface unpoisoned by the hostile key.
+  assert.equal(served['claude-code'].events_today, 1);
 });
 
 // ---------- writer-compat: T5 recordCaptureEvent rows are readable ----------

@@ -2869,7 +2869,12 @@ export function createRequestHandler(ctx = {}) {
 				const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
 				const items = filterSystemDocs(Array.isArray(raw) ? raw : (raw?.results ?? []));
 				points = items.length;
-				pointsByProject = {};
+				// Null-prototype map: `project` comes from stored, writer-controlled
+				// metadata — on a plain literal, '__proto__' vanishes via the
+				// prototype setter and any Object.prototype member name (e.g.
+				// 'constructor') reads the inherited value through `?? 0` and
+				// serves a garbage concatenated string (v1.8.1 shipped bug).
+				pointsByProject = Object.create(null);
 				for (const r of items) {
 					const project = r?.metadata?.project;
 					// Fallback bucket: metadata.project is not guaranteed (plan U2).

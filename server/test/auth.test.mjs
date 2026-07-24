@@ -79,6 +79,27 @@ test('compareTokens — null/undefined received does not crash (W6.4)', () => {
   assert.equal(compareTokens('', 'real-token'), false);
 });
 
+// v1.8.1 shipped-bug fix: compareTokens('', undefined) returned TRUE — the
+// `?? ''` coercion hashed two empty strings to equal digests. The bearer path
+// was contained only by its own `if (!expected)` guard; the comparator itself
+// must fail closed so new call sites (consent form, Stage B unlock) cannot
+// inherit the empty-token bypass.
+test('compareTokens fails closed when expected is empty/absent (empty-token bypass)', () => {
+  assert.equal(compareTokens('', undefined), false);
+  assert.equal(compareTokens('', null), false);
+  assert.equal(compareTokens('', ''), false);
+  assert.equal(compareTokens(undefined, undefined), false);
+  assert.equal(compareTokens(null, null), false);
+  assert.equal(compareTokens('some-token', ''), false);
+  assert.equal(compareTokens('some-token', undefined), false);
+});
+test('compareTokens rejects non-string operands (no coercion surprises)', () => {
+  assert.equal(compareTokens(42, 42), false);
+  assert.equal(compareTokens(Buffer.from('tok'), 'tok'), false);
+  assert.equal(compareTokens(['tok'], 'tok'), false);
+  assert.equal(compareTokens({ toString: () => 'tok' }, 'tok'), false);
+});
+
 test('compareTokens — first-byte-wrong vs last-byte-wrong timing within noise (median-of-7, 4 KiB tokens)', () => {
   // Token length 4096 (not 64): with short tokens, Buffer.from() allocation
   // cost dominates the byte-comparison cost, so a buggy byte-by-byte

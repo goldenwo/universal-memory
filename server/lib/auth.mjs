@@ -32,6 +32,14 @@ export function extractCompatToken(req) {
 }
 
 export function compareTokens(received, expected) {
+  // Fail closed before comparing: absent/empty/non-string operands are never
+  // a match. The earlier `?? ''` coercion made compareTokens('', undefined)
+  // TRUE — an empty-token bypass at any call site that does not pre-guard
+  // `expected` (v1.8.1 shipped bug). The early return leaks nothing: it keys
+  // on operand presence/type, which the caller and attacker already know,
+  // never on secret content.
+  if (typeof received !== 'string' || received === '') return false;
+  if (typeof expected !== 'string' || expected === '') return false;
   // W6.4 hardening: hash both inputs to fixed-size SHA-256 digests before
   // timing-safe compare. This eliminates any length-dependent timing channel
   // — both digests are always 32 bytes regardless of input length. The
@@ -39,8 +47,8 @@ export function compareTokens(received, expected) {
   // intent but used the wrong operand (expected vs expected, not received-
   // padded), which a sufficiently-precise timing observer could distinguish.
   // SHA-256 is fast (~µs for short inputs) and removes the issue entirely.
-  const rHash = createHash('sha256').update(Buffer.from(received ?? '', 'utf8')).digest();
-  const eHash = createHash('sha256').update(Buffer.from(expected ?? '', 'utf8')).digest();
+  const rHash = createHash('sha256').update(Buffer.from(received, 'utf8')).digest();
+  const eHash = createHash('sha256').update(Buffer.from(expected, 'utf8')).digest();
   return timingSafeEqual(rHash, eHash);
 }
 
