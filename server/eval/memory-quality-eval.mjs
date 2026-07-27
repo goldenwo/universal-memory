@@ -234,11 +234,14 @@ export function crossSessionRecall(perQuery, ks) {
  * Each judged row carries COUNTS from the judge: goldTotal/goldMatched (recall — gold facts
  * present in the extracted set) and extractedTotal/extractedSupported (precision — extracted
  * facts supported by the input, i.e. not hallucinated). Parse-fail rows (ok!==true) are
- * EXCLUDED from denominators (never silently bias a rate). Noise rows (goldTotal===0) are
- * neutral in both micro-averages and tracked separately: noiseAbstained = noise rows that
- * also extracted nothing (correctly produced no fact). Empty/zero-denominator → null.
+ * EXCLUDED from denominators (never silently bias a rate). Noise rows (noiseRow flag or
+ * goldTotal===0) are EXCLUDED from the precision/recall sums entirely (spec R2-G4:
+ * empty-gold rows excluded from precision sums — metric-definition change, 40-row baseline
+ * re-pinned) and tracked separately: noiseAbstained = noise rows that extracted nothing
+ * (correctly produced no fact). Empty/zero-denominator → null.
  *
- * @param {Array<{id:string, ok:boolean, goldTotal:number, goldMatched:number,
+ * @param {Array<{id:string, ok:boolean, noiseRow?:boolean, stratum?:string,
+ *                goldTotal:number, goldMatched:number,
  *                extractedTotal:number, extractedSupported:number}>} judgedRows
  * @returns {{ rows:number, graded:number, parseFails:number, precision:number|null,
  *            recall:number|null, f1:number|null, noiseAbstained:number, noiseTotal:number,
@@ -252,6 +255,12 @@ export function extractionFidelity(judgedRows) {
   for (const r of rows) {
     if (r.ok !== true) { parseFails++; perRow.push({ id: r.id, ok: false }); continue; }
     graded++;
+    if (r.noiseRow === true || (r.goldTotal ?? 0) === 0) {
+      noiseTotal++;
+      if ((r.extractedTotal ?? 0) === 0) noiseAbstained++;
+      perRow.push({ id: r.id, ok: true, noiseRow: true, extractedTotal: r.extractedTotal ?? 0 });
+      continue; // contributes ONLY to noise counters — never precision/recall sums
+    }
     const goldTotal = r.goldTotal ?? 0;
     const extractedTotal = r.extractedTotal ?? 0;
     const goldMatched = r.goldMatched ?? 0;
@@ -260,10 +269,6 @@ export function extractionFidelity(judgedRows) {
     sumMatched += goldMatched;
     sumExtracted += extractedTotal;
     sumSupported += extractedSupported;
-    if (goldTotal === 0) {
-      noiseTotal++;
-      if (extractedTotal === 0) noiseAbstained++;
-    }
     perRow.push({ id: r.id, ok: true, goldTotal, goldMatched, extractedTotal, extractedSupported });
   }
   const precision = sumExtracted === 0 ? null : +(sumSupported / sumExtracted).toFixed(3);
@@ -272,6 +277,86 @@ export function extractionFidelity(judgedRows) {
     ? null
     : +((2 * precision * recall) / (precision + recall)).toFixed(3);
   return { rows: rows.length, graded, parseFails, precision, recall, f1, noiseAbstained, noiseTotal, perRow };
+}
+
+/**
+ * Stratified extraction metrics: groups judged rows by their `stratum` field (fixture-carried;
+ * absent → 'unknown') and reports per-stratum micro counts + rates, mirroring
+ * recallByParaphraseLevel's grouping shape. Parse-fail rows are counted per stratum and
+ * excluded from every rate; noise rows (noiseRow flag or empty gold) feed abstention only;
+ * fact-bearing rows feed recall only. 3dp, null-on-empty (house convention).
+ *
+ * @param {Array<{id:string, ok:boolean, stratum?:string, noiseRow?:boolean,
+ *                goldTotal?:number, goldMatched?:number, extractedTotal?:number}>} judgedRows
+ * @returns {Object<string, { rows:number, parseFails:number, noiseTotal:number,
+ *           noiseAbstained:number, abstentionRate:number|null,
+ *           goldTotal:number, goldMatched:number, recall:number|null }>}
+ */
+export function extractionByStratum(judgedRows) {
+  const out = {};
+  for (const r of judgedRows ?? []) {
+    const stratum = r.stratum ?? 'unknown';
+    const s = (out[stratum] ??= {
+      rows: 0, parseFails: 0, noiseTotal: 0, noiseAbstained: 0, abstentionRate: null,
+      goldTotal: 0, goldMatched: 0, recall: null,
+    });
+    s.rows++;
+    if (r.ok !== true) { s.parseFails++; continue; }
+    if (r.noiseRow === true || (r.goldTotal ?? 0) === 0) {
+      s.noiseTotal++;
+      if ((r.extractedTotal ?? 0) === 0) s.noiseAbstained++;
+      continue;
+    }
+    s.goldTotal += r.goldTotal ?? 0;
+    s.goldMatched += r.goldMatched ?? 0;
+  }
+  for (const s of Object.values(out)) {
+    s.abstentionRate = s.noiseTotal === 0 ? null : +(s.noiseAbstained / s.noiseTotal).toFixed(3);
+    s.recall = s.goldTotal === 0 ? null : +(s.goldMatched / s.goldTotal).toFixed(3);
+  }
+  return out;
+}
+
+/**
+ * Expected verdict for the judge-free CI guard: an explicit `expected_verdict` wins;
+ * otherwise derived from the gold shape (non-empty expected_facts → 'extract', else
+ * 'abstain') — the derivation lets legacy fixtures join the guard with zero edits.
+ */
+export function deriveExpectedVerdict(row) {
+  return row?.expected_verdict ?? ((row?.expected_facts ?? []).length ? 'extract' : 'abstain');
+}
+
+/**
+ * Judge-free verdict-gate aggregation over per-row {expected, observed} verdicts.
+ * Rows flagged `unstable: true` are excluded from both pool denominators and counted
+ * (A4b — the CI gate denominators hold only verdict-stable rows). matchRate is 3dp,
+ * null-on-empty.
+ *
+ * @param {Array<{id:string, expected:'abstain'|'extract', observed:'abstain'|'extract',
+ *                unstable?:boolean}>} rows
+ * @returns {{ abstain:{total:number, matched:number, matchRate:number|null},
+ *            extract:{total:number, matched:number, matchRate:number|null},
+ *            excludedUnstable:number, mismatches:string[] }}
+ */
+export function computeVerdictGate(rows) {
+  const pools = {
+    abstain: { total: 0, matched: 0, matchRate: null },
+    extract: { total: 0, matched: 0, matchRate: null },
+  };
+  let excludedUnstable = 0;
+  const mismatches = [];
+  for (const r of rows ?? []) {
+    if (r.unstable === true) { excludedUnstable++; continue; }
+    const pool = pools[r.expected];
+    if (!pool) continue;
+    pool.total++;
+    if (r.observed === r.expected) pool.matched++;
+    else mismatches.push(r.id);
+  }
+  for (const pool of Object.values(pools)) {
+    pool.matchRate = pool.total === 0 ? null : +(pool.matched / pool.total).toFixed(3);
+  }
+  return { ...pools, excludedUnstable, mismatches };
 }
 
 /** Fraction of true flags in a boolean array; null when empty. */

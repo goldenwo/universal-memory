@@ -38,6 +38,9 @@ import {
   recallByParaphraseLevel,
   crossSessionRecall,
   extractionFidelity,
+  extractionByStratum,
+  computeVerdictGate,
+  deriveExpectedVerdict,
   staleReturnRate,
   noAnswerPrecision,
   answerCorrectnessRate,
@@ -663,7 +666,10 @@ test('extractionFidelity: parse-fail rows excluded from denominators', () => {
   assert.equal(r.parseFails, 1);
 });
 
-test('extractionFidelity: noise rows (gold empty) tracked as abstentions, neutral in micro-averages', () => {
+// Spec R2-G4: empty-gold rows excluded from precision sums — metric-definition
+// change, 40-row baseline re-pinned. The old contract let a noise row's leaked
+// extractions feed the precision denominator (this fixture used to assert 0.333).
+test('extractionFidelity: noise rows (gold empty) excluded from precision sums, tracked as abstentions', () => {
   const judged = [
     { id: 'a', ok: true, goldTotal: 1, goldMatched: 1, extractedTotal: 1, extractedSupported: 1 },
     { id: 'noise-ok', ok: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
@@ -673,7 +679,53 @@ test('extractionFidelity: noise rows (gold empty) tracked as abstentions, neutra
   assert.equal(r.noiseTotal, 2);
   assert.equal(r.noiseAbstained, 1);
   assert.equal(r.recall, 1);
-  assert.equal(r.precision, 0.333);
+  assert.equal(r.precision, 1);
+  assert.equal(r.graded, 3);
+});
+
+test('extractionFidelity: a leaked fact on a noiseRow-flagged row moves noise counters only', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 2, goldMatched: 2, extractedTotal: 2, extractedSupported: 2 },
+    { id: 'n1', ok: true, noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 3, extractedSupported: 0 },
+  ];
+  const r = extractionFidelity(judged);
+  assert.equal(r.precision, 1);
+  assert.equal(r.recall, 1);
+  assert.equal(r.noiseTotal, 1);
+  assert.equal(r.noiseAbstained, 0);
+  const noisePer = r.perRow.find((p) => p.id === 'n1');
+  assert.equal(noisePer.noiseRow, true);
+  assert.equal(noisePer.extractedTotal, 3);
+});
+
+test('extractionFidelity: all-noise fixture → precision null, abstentions counted', () => {
+  const judged = [
+    { id: 'n1', ok: true, noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
+    { id: 'n2', ok: true, goldTotal: 0, goldMatched: 0, extractedTotal: 1, extractedSupported: 0 },
+  ];
+  const r = extractionFidelity(judged);
+  assert.equal(r.precision, null);
+  assert.equal(r.recall, null);
+  assert.equal(r.noiseTotal, 2);
+  assert.equal(r.noiseAbstained, 1);
+});
+
+test('extractionFidelity: mixed fixture matches hand-computed sums over fact-bearing rows only', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 2, goldMatched: 1, extractedTotal: 3, extractedSupported: 2 },
+    { id: 'b', ok: true, goldTotal: 3, goldMatched: 3, extractedTotal: 3, extractedSupported: 3 },
+    { id: 'n1', ok: true, noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 5, extractedSupported: 0 },
+    { id: 'fail', ok: false },
+  ];
+  const r = extractionFidelity(judged);
+  // precision = (2+3)/(3+3) — n1's 5 leaked extractions never enter the denominator
+  assert.equal(r.precision, 0.833);
+  // recall = (1+3)/(2+3)
+  assert.equal(r.recall, 0.8);
+  assert.equal(r.graded, 3);
+  assert.equal(r.parseFails, 1);
+  assert.equal(r.noiseTotal, 1);
+  assert.equal(r.noiseAbstained, 0);
 });
 
 test('extractionFidelity: empty input → null precision/recall', () => {
@@ -682,6 +734,97 @@ test('extractionFidelity: empty input → null precision/recall', () => {
   assert.equal(r.recall, null);
   assert.equal(r.f1, null);
   assert.equal(r.graded, 0);
+});
+
+// --- extractionByStratum ---------------------------------------------------
+
+test('extractionByStratum: groups by stratum, micro recall + abstention per group', () => {
+  const judged = [
+    { id: 'd1', ok: true, stratum: 'durable', goldTotal: 2, goldMatched: 2, extractedTotal: 2, extractedSupported: 2 },
+    { id: 'd2', ok: true, stratum: 'durable', goldTotal: 2, goldMatched: 1, extractedTotal: 2, extractedSupported: 2 },
+    { id: 'e1', ok: true, stratum: 'ephemeral', noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
+    { id: 'e2', ok: true, stratum: 'ephemeral', noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 1, extractedSupported: 0 },
+    { id: 'e3', ok: true, stratum: 'ephemeral', noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
+  ];
+  const r = extractionByStratum(judged);
+  assert.equal(r.durable.rows, 2);
+  assert.equal(r.durable.recall, 0.75);
+  assert.equal(r.durable.abstentionRate, null);
+  assert.equal(r.durable.noiseTotal, 0);
+  assert.equal(r.ephemeral.rows, 3);
+  assert.equal(r.ephemeral.noiseTotal, 3);
+  assert.equal(r.ephemeral.noiseAbstained, 2);
+  assert.equal(r.ephemeral.abstentionRate, 0.667);
+  assert.equal(r.ephemeral.recall, null);
+});
+
+test('extractionByStratum: missing stratum falls back to unknown; parse fails counted, excluded from rates', () => {
+  const judged = [
+    { id: 'a', ok: true, goldTotal: 1, goldMatched: 1, extractedTotal: 1, extractedSupported: 1 },
+    { id: 'b', ok: false, stratum: 'telemetry' },
+    { id: 'c', ok: true, stratum: 'telemetry', noiseRow: true, goldTotal: 0, goldMatched: 0, extractedTotal: 0, extractedSupported: 0 },
+  ];
+  const r = extractionByStratum(judged);
+  assert.equal(r.unknown.rows, 1);
+  assert.equal(r.unknown.recall, 1);
+  assert.equal(r.telemetry.rows, 2);
+  assert.equal(r.telemetry.parseFails, 1);
+  assert.equal(r.telemetry.noiseTotal, 1);
+  assert.equal(r.telemetry.noiseAbstained, 1);
+  assert.equal(r.telemetry.abstentionRate, 1);
+});
+
+test('extractionByStratum: empty input → empty object', () => {
+  assert.deepEqual(extractionByStratum([]), {});
+});
+
+// --- computeVerdictGate / deriveExpectedVerdict (verdict-only CI guard) ----
+
+test('deriveExpectedVerdict: explicit expected_verdict wins over gold shape', () => {
+  assert.equal(deriveExpectedVerdict({ expected_verdict: 'abstain', expected_facts: ['x'] }), 'abstain');
+  assert.equal(deriveExpectedVerdict({ expected_verdict: 'extract', expected_facts: [] }), 'extract');
+});
+
+test('deriveExpectedVerdict: derives from expected_facts when unset (legacy fixtures join with zero edits)', () => {
+  assert.equal(deriveExpectedVerdict({ expected_facts: ['a fact'] }), 'extract');
+  assert.equal(deriveExpectedVerdict({ expected_facts: [] }), 'abstain');
+  assert.equal(deriveExpectedVerdict({}), 'abstain');
+});
+
+test('computeVerdictGate: pools by expected verdict, counts matches + mismatch ids', () => {
+  const rows = [
+    { id: 'n1', expected: 'abstain', observed: 'abstain' },
+    { id: 'n2', expected: 'abstain', observed: 'extract' },
+    { id: 'f1', expected: 'extract', observed: 'extract' },
+    { id: 'f2', expected: 'extract', observed: 'extract' },
+  ];
+  const g = computeVerdictGate(rows);
+  assert.deepEqual(g.abstain, { total: 2, matched: 1, matchRate: 0.5 });
+  assert.deepEqual(g.extract, { total: 2, matched: 2, matchRate: 1 });
+  assert.equal(g.excludedUnstable, 0);
+  assert.deepEqual(g.mismatches, ['n2']);
+});
+
+test('computeVerdictGate: unstable rows excluded from denominators and counted (A4b)', () => {
+  const rows = [
+    { id: 'n1', expected: 'abstain', observed: 'abstain' },
+    { id: 'n2', expected: 'abstain', observed: 'extract', unstable: true },
+    { id: 'f1', expected: 'extract', observed: 'abstain', unstable: true },
+  ];
+  const g = computeVerdictGate(rows);
+  assert.deepEqual(g.abstain, { total: 1, matched: 1, matchRate: 1 });
+  assert.equal(g.extract.total, 0);
+  assert.equal(g.extract.matchRate, null);
+  assert.equal(g.excludedUnstable, 2);
+  assert.deepEqual(g.mismatches, []);
+});
+
+test('computeVerdictGate: empty input → null matchRates, empty mismatches', () => {
+  const g = computeVerdictGate([]);
+  assert.deepEqual(g.abstain, { total: 0, matched: 0, matchRate: null });
+  assert.deepEqual(g.extract, { total: 0, matched: 0, matchRate: null });
+  assert.equal(g.excludedUnstable, 0);
+  assert.deepEqual(g.mismatches, []);
 });
 
 // ===========================================================================
