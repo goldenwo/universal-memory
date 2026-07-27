@@ -1,22 +1,45 @@
 /**
  * extraction-fidelity-eval.mjs — Tier-2 #10. Runs the REAL facts() extraction over a labelled
  * fixture, judges extracted↔gold both directions (lib/extraction-grader.mjs), and scores
- * micro-averaged precision/recall (pure extractionFidelity). Sibling of answer-grader-eval.mjs.
- * One invocation = one run (run twice for stability). Live deps lazy-imported inside cliMain.
+ * micro-averaged precision/recall (pure extractionFidelity) + per-stratum metrics
+ * (extractionByStratum). Sibling of answer-grader-eval.mjs. One invocation = one run (run
+ * twice for stability). Live deps lazy-imported inside cliMain.
+ *
+ * Empty-gold (noise) rows short-circuit: the judge is never called for them and they feed
+ * abstention counters only (spec R2-G4 — noise rows are excluded from precision sums).
+ *
+ * Modes:
+ *   default        — judge-scored precision/recall + per-stratum + noise abstention.
+ *   --verdict-only — NO judge calls for ANY row; per-row verdict (abstain/extract) vs the
+ *                    designed/derived expected verdict; used by the CI guard + the 982 pass.
+ *                    The result JSON carries verdictGate and extraction: null — no unjudged
+ *                    pseudo-recall/precision may appear in a CI artifact of record.
  *
  * Run (from server/):
  *   node --env-file=.env eval/extraction-fidelity-eval.mjs --fixture eval/extraction-set.jsonl --out eval/results/<date>-tier2-extraction-run1.json
+ *   --fixture may repeat (rows concatenate in argument order);
+ *   --gate eval/mq-gate-thresholds.json evaluates extractionThresholds fail-closed (exit 1 on breach OR unconfigured gate).
  */
 import { fileURLToPath } from 'node:url';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { extractionFidelity, loadFixtureJsonl } from './memory-quality-eval.mjs';
+import {
+  extractionFidelity,
+  extractionByStratum,
+  computeVerdictGate,
+  deriveExpectedVerdict,
+  evaluateGate,
+  formatGateReport,
+  loadFixtureJsonl,
+} from './memory-quality-eval.mjs';
 
 function parseArgs(argv) {
-  const args = {};
+  const args = { fixtures: [] };
   for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === '--fixture') args.fixture = argv[++i];
+    if (argv[i] === '--fixture') args.fixtures.push(argv[++i]);
     else if (argv[i] === '--out') args.out = argv[++i];
+    else if (argv[i] === '--verdict-only') args.verdictOnly = true;
+    else if (argv[i] === '--gate') args.gate = argv[++i];
   }
   return args;
 }
@@ -30,7 +53,10 @@ function normalizeExtracted(factsResult) {
 
 async function cliMain() {
   const args = parseArgs(process.argv);
-  if (!args.fixture) { console.error('Usage: extraction-fidelity-eval.mjs --fixture <path> [--out <path>]'); process.exit(2); }
+  if (args.fixtures.length === 0) {
+    console.error('Usage: extraction-fidelity-eval.mjs --fixture <path> [--fixture <path> ...] [--out <path>] [--verdict-only] [--gate <thresholds.json>]');
+    process.exit(2);
+  }
   if (!process.env.OPENAI_API_KEY) { try { process.loadEnvFile?.(); } catch { /* no ./.env */ } }
   if (!process.env.OPENAI_API_KEY) {
     console.error('[extraction-eval] OPENAI_API_KEY not set — run: node --env-file=.env eval/extraction-fidelity-eval.mjs --fixture eval/extraction-set.jsonl');
@@ -38,38 +64,96 @@ async function cliMain() {
   }
 
   const { facts } = await import('../lib/facts.mjs');
-  const { judgeExtraction } = await import('../lib/extraction-grader.mjs');
   const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? 'gpt-4o-mini';
-  const rows = await loadFixtureJsonl(args.fixture);
+  const rows = [];
+  for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
 
-  const judgedRows = [];
-  for (const row of rows) {
-    const gold = row.expected_facts ?? [];
-    const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
-    const v = await judgeExtraction(row.input_text, gold, extracted, { model });
-    judgedRows.push({
-      id: row.id, ok: v.ok,
-      goldTotal: gold.length,
-      goldMatched: v.goldMatched.filter(Boolean).length,
-      extractedTotal: extracted.length,
-      extractedSupported: v.extractedSupported.filter(Boolean).length,
-    });
+  let result;
+  if (args.verdictOnly) {
+    // Judge-free: verdict = did the extractor produce anything at all.
+    const verdictRows = [];
+    for (const row of rows) {
+      const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
+      verdictRows.push({
+        id: row.id,
+        expected: deriveExpectedVerdict(row),
+        observed: extracted.length === 0 ? 'abstain' : 'extract',
+        unstable: row.unstable === true,
+      });
+    }
+    const verdictGate = computeVerdictGate(verdictRows);
+    result = {
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'verdict-only',
+      judgeModel: null,
+      factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
+      extraction: null,
+      verdictGate,
+    };
+  } else {
+    const { judgeExtraction } = await import('../lib/extraction-grader.mjs');
+    const judgedRows = [];
+    for (const row of rows) {
+      const gold = row.expected_facts ?? [];
+      const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
+      if (gold.length === 0) {
+        // Noise row: nothing to judge — the only signal is whether extraction abstained.
+        judgedRows.push({
+          id: row.id, ok: true, noiseRow: true, stratum: row.stratum,
+          goldTotal: 0, goldMatched: 0,
+          extractedTotal: extracted.length, extractedSupported: 0,
+        });
+        continue;
+      }
+      const v = await judgeExtraction(row.input_text, gold, extracted, { model });
+      judgedRows.push({
+        id: row.id, ok: v.ok, stratum: row.stratum,
+        goldTotal: gold.length,
+        goldMatched: v.goldMatched.filter(Boolean).length,
+        extractedTotal: extracted.length,
+        extractedSupported: v.extractedSupported.filter(Boolean).length,
+      });
+    }
+    const extraction = { ...extractionFidelity(judgedRows), byStratum: extractionByStratum(judgedRows) };
+    result = {
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'judged', judgeModel: model,
+      factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
+      pinnable: extraction.parseFails === 0,
+      extraction,
+    };
   }
 
-  const extraction = extractionFidelity(judgedRows);
-  const result = {
-    timestamp: new Date().toISOString(), fixture: args.fixture, judgeModel: model,
-    factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
-    pinnable: extraction.parseFails === 0,
-    extraction,
-  };
   const out = args.out ?? fileURLToPath(new URL(`./results/${result.timestamp.slice(0, 10)}-extraction-run1.json`, import.meta.url));
   await mkdir(dirname(out), { recursive: true });
   await writeFile(out, JSON.stringify(result, null, 2) + '\n', 'utf8');
-  const e = result.extraction;
-  console.log(`[extraction-eval] judge=${model} graded=${e.graded} parseFails=${e.parseFails} precision=${e.precision} recall=${e.recall} f1=${e.f1} noiseAbstained=${e.noiseAbstained}/${e.noiseTotal}`);
+
+  if (args.verdictOnly) {
+    const g = result.verdictGate;
+    console.log(`[extraction-eval] mode=verdict-only abstain=${g.abstain.matched}/${g.abstain.total} (${g.abstain.matchRate}) extract=${g.extract.matched}/${g.extract.total} (${g.extract.matchRate}) excludedUnstable=${g.excludedUnstable} mismatches=[${g.mismatches.join(',')}]`);
+  } else {
+    const e = result.extraction;
+    console.log(`[extraction-eval] judge=${model} graded=${e.graded} parseFails=${e.parseFails} precision=${e.precision} recall=${e.recall} f1=${e.f1} noiseAbstained=${e.noiseAbstained}/${e.noiseTotal}`);
+    if (!result.pinnable) console.error(`[extraction-eval] WARNING: parseFails=${e.parseFails} > 0 — result NOT pinnable (treat as unmeasured); fix judge truncation/format before pinning targets.`);
+  }
   console.log(`[extraction-eval] written to ${out}`);
-  if (!result.pinnable) console.error(`[extraction-eval] WARNING: parseFails=${e.parseFails} > 0 — result NOT pinnable (treat as unmeasured); fix judge truncation/format before pinning targets.`);
+
+  if (args.gate) {
+    // Fail-closed: an absent/empty extractionThresholds key must never read as green
+    // (mirrors the nightly's missing-key stance). evaluateGate reads config.thresholds,
+    // so the namespaced key is re-wrapped — the mq `thresholds` array stays untouched.
+    const config = JSON.parse(await readFile(args.gate, 'utf8'));
+    const thresholds = config.extractionThresholds;
+    if (!Array.isArray(thresholds) || thresholds.length === 0) {
+      console.error(`[extraction-eval] GATE FAIL: no extractionThresholds in ${args.gate} — gate unconfigured, not a pass.`);
+      process.exit(1);
+    }
+    const gate = evaluateGate(result, { thresholds });
+    console.log(formatGateReport(gate));
+    if (gate.checked === 0) {
+      console.error('[extraction-eval] GATE FAIL: 0 floors checked — gate unconfigured, not a pass.');
+      process.exit(1);
+    }
+    if (!gate.pass) process.exit(1);
+  }
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
