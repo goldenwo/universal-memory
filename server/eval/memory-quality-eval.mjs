@@ -344,11 +344,14 @@ export function computeVerdictGate(rows) {
     extract: { total: 0, matched: 0, matchRate: null },
   };
   let excludedUnstable = 0;
+  let excludedUnknown = 0;
   const mismatches = [];
   for (const r of rows ?? []) {
     if (r.unstable === true) { excludedUnstable++; continue; }
     const pool = pools[r.expected];
-    if (!pool) continue;
+    // Out-of-enum expected verdict (fixture typo): counted, never silently dropped —
+    // the pool-size floors in the CI gate turn attrition into a breach.
+    if (!pool) { excludedUnknown++; continue; }
     pool.total++;
     if (r.observed === r.expected) pool.matched++;
     else mismatches.push(r.id);
@@ -356,7 +359,7 @@ export function computeVerdictGate(rows) {
   for (const pool of Object.values(pools)) {
     pool.matchRate = pool.total === 0 ? null : +(pool.matched / pool.total).toFixed(3);
   }
-  return { ...pools, excludedUnstable, mismatches };
+  return { ...pools, excludedUnstable, excludedUnknown, mismatches };
 }
 
 /** Fraction of true flags in a boolean array; null when empty. */
