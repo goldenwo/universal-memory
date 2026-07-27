@@ -4,6 +4,25 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-07-27
+
+No migration steps: no flag, schema, or extraction-behavior changes. In-place `git pull` + restart or `install.sh --upgrade` both work as-is.
+
+### Added — a real upgrade path (#176)
+
+- **`install.sh --upgrade [version]`**: pull → pre-flight the target image in a throwaway container → `compose up -d` → health poll → **auto-rollback** to a durable `um-rollback:previous` tag on failure. Also refreshes the local `um` CLI. `--verify` reports server/CLI/plugin/source versions and flags skew.
+- **`docker-compose.override.yml` host seam** (auto-loading name) so recovery commands can't silently drop host-specific bindings; [`docs/upgrading.md`](docs/upgrading.md) documents the three update surfaces in order with per-surface failure signatures.
+
+### Added — extraction-calibration measurement + nightly regression guard (#179, #180)
+
+- **The write-path noise gap is now measured, not anecdotal.** A production-derived 80-row fixture ([`server/eval/production-noise-set.jsonl`](server/eval/production-noise-set.jsonl) — sanitized 1:1 twins of real captured rows; blind double-labeled, provenance-asserted) shows the shipping extraction prompt re-admits ~97% of ephemeral-status / session-telemetry / referent-stripped noise while holding durable-fact recall at 1.000. A prompt tightening was measured against a pre-registered accept rule and **rejected** — the best of four drafts closed 8/54 gated misses, below the fixture's own label-noise floor — so the prompt ships **unchanged** and the evidence is committed instead ([`server/eval/results/2026-07-27-salience-baseline.md`](server/eval/results/2026-07-27-salience-baseline.md)). Closing the gap needs a capability step (tracked in #181), not wording.
+- **Two-sided nightly verdict gate** (`extraction-calibration-gate` job): judge-free floors on both noise-abstention and should-extract match rates, plus pool-size floors so fixture attrition breaches instead of silently re-scaling. A regression tripwire around today's measured behavior — explicitly **not** a calibration-fidelity claim (see the fixture header). Eval runner gains per-stratum metrics, repeatable `--fixture`, `--verdict-only`, and a fail-closed `--gate`; the non-OpenAI providers' 4-line prompts are golden-string-pinned pending the cross-provider sync arc (#181).
+
+### Fixed (#177)
+
+- **`/api/stats` maps are `__proto__`-safe**: per-surface and per-project rollups keyed by caller-controlled strings now use null-prototype objects — a surface named `__proto__` could previously vanish from the stats API, and prototype-member names could read garbage values.
+- **`compareTokens` fails closed on absent/empty/non-string operands** — `compareTokens('', undefined)` previously returned true via empty-string hashing; contained at the bearer path by an upstream guard, now closed at the comparator itself.
+
 ## [1.8.1] — 2026-07-18
 
 ### Fixed — the image build could not fail (shipped a broken arm64 v1.8.0)
