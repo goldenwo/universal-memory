@@ -63,6 +63,19 @@ async function cliMain() {
     process.exit(2);
   }
 
+  // Fail-fast on an unconfigured gate BEFORE any extraction spend: no result file is
+  // written, so the CI breach-vs-infra classify step correctly reads this as a config
+  // error, never as a metric breach (an absent gate must never read as green either way).
+  let gateThresholds = null;
+  if (args.gate) {
+    const config = JSON.parse(await readFile(args.gate, 'utf8'));
+    gateThresholds = config.extractionThresholds;
+    if (!Array.isArray(gateThresholds) || gateThresholds.length === 0) {
+      console.error(`[extraction-eval] GATE FAIL: no extractionThresholds in ${args.gate} — gate unconfigured, not a pass (no result written).`);
+      process.exit(1);
+    }
+  }
+
   const { facts } = await import('../lib/facts.mjs');
   const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? 'gpt-4o-mini';
   const rows = [];
@@ -136,17 +149,12 @@ async function cliMain() {
   }
   console.log(`[extraction-eval] written to ${out}`);
 
-  if (args.gate) {
-    // Fail-closed: an absent/empty extractionThresholds key must never read as green
-    // (mirrors the nightly's missing-key stance). evaluateGate reads config.thresholds,
-    // so the namespaced key is re-wrapped — the mq `thresholds` array stays untouched.
-    const config = JSON.parse(await readFile(args.gate, 'utf8'));
-    const thresholds = config.extractionThresholds;
-    if (!Array.isArray(thresholds) || thresholds.length === 0) {
-      console.error(`[extraction-eval] GATE FAIL: no extractionThresholds in ${args.gate} — gate unconfigured, not a pass.`);
-      process.exit(1);
-    }
-    const gate = evaluateGate(result, { thresholds });
+  if (gateThresholds) {
+    // Fail-closed breach path: the result JSON is already written above, so an exit 1
+    // here IS a real metric breach (the CI classify step keys on file presence).
+    // evaluateGate reads config.thresholds, so the namespaced key is re-wrapped — the
+    // mq `thresholds` array stays untouched.
+    const gate = evaluateGate(result, { thresholds: gateThresholds });
     console.log(formatGateReport(gate));
     if (gate.checked === 0) {
       console.error('[extraction-eval] GATE FAIL: 0 floors checked — gate unconfigured, not a pass.');
