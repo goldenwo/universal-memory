@@ -1,0 +1,1129 @@
+{
+  "timestamp": "2026-07-27T16:44:18.842Z",
+  "rows": 80,
+  "static": {
+    "gramLeakCount": 0,
+    "tokenLeakCount": 0,
+    "gramLeaks": [],
+    "tokenLeaks": []
+  },
+  "live": {
+    "parityFails": [],
+    "unstableCount": 1,
+    "unstable": [
+      "n59"
+    ],
+    "knownMissCount": 65,
+    "knownMisses": [
+      "n01",
+      "n02",
+      "n03",
+      "n04",
+      "n05",
+      "n06",
+      "n07",
+      "n08",
+      "n09",
+      "n10",
+      "n11",
+      "n12",
+      "n13",
+      "n14",
+      "n15",
+      "n16",
+      "n18",
+      "n19",
+      "n20",
+      "n21",
+      "n22",
+      "n23",
+      "n24",
+      "n25",
+      "n26",
+      "n27",
+      "n28",
+      "n29",
+      "n30",
+      "n31",
+      "n32",
+      "n33",
+      "n34",
+      "n35",
+      "n36",
+      "n37",
+      "n38",
+      "n39",
+      "n40",
+      "n41",
+      "n42",
+      "n43",
+      "n44",
+      "n45",
+      "n46",
+      "n47",
+      "n48",
+      "n49",
+      "n50",
+      "n51",
+      "n52",
+      "n53",
+      "n54",
+      "n55",
+      "n56",
+      "n57",
+      "n58",
+      "n60",
+      "n61",
+      "n62",
+      "n63",
+      "n65",
+      "n66",
+      "n67",
+      "n68"
+    ],
+    "clauseFailCount": 0,
+    "clauseFails": [],
+    "parity": [
+      {
+        "id": "n01",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n02",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n03",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n04",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n05",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n06",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n07",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n08",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n09",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n10",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n11",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n12",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n13",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n14",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n15",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n16",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n17",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "abstain",
+          "abstain"
+        ],
+        "twin": [
+          "abstain",
+          "abstain"
+        ]
+      },
+      {
+        "id": "n18",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n19",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n20",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n21",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n22",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n23",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n24",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n25",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n26",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n27",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n28",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n29",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n30",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n31",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n32",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n33",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n34",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n35",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n36",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n37",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n38",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n39",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n40",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n41",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n42",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n43",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n44",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n45",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n46",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n47",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n48",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n49",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n50",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n51",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n52",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n53",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n54",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n55",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n56",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n57",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n58",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n59",
+        "stable": false,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "abstain",
+          "extract"
+        ]
+      },
+      {
+        "id": "n60",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n61",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n62",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n63",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n64",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "abstain",
+          "abstain"
+        ],
+        "twin": [
+          "abstain",
+          "abstain"
+        ]
+      },
+      {
+        "id": "n65",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n66",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n67",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n68",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n69",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n70",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n71",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n72",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n73",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n74",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n75",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n76",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n77",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n78",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n79",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      },
+      {
+        "id": "n80",
+        "stable": true,
+        "parityOk": true,
+        "raw": [
+          "extract",
+          "extract"
+        ],
+        "twin": [
+          "extract",
+          "extract"
+        ]
+      }
+    ]
+  }
+}

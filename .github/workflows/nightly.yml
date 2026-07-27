@@ -158,3 +158,66 @@ jobs:
           name: mq-gate-result
           path: server/eval/results/ci-mq-gate.json
           if-no-files-found: ignore
+
+  # Extraction-calibration verdict gate (salience arc T7). Two-sided regression
+  # tripwire around OBSERVED extraction verdicts on the sanitized production-noise
+  # twins + collision slice + 40-row set: the abstain floor catches a future prompt
+  # edit that re-admits more noise; the extract floor catches one that over-abstains
+  # on real facts. Judge-free (--verdict-only): gpt-4.1-nano extraction calls only,
+  # no gpt-4o-mini judge — the judge's documented wobble cannot red this job.
+  # Scope: canonical-repo nightly only; fork PRs are NOT guarded (G5 honesty).
+  # NOT proof of calibration fidelity — see eval/production-noise-set.header.md (A4b).
+  extraction-calibration-gate:
+    name: extraction calibration gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.repository == 'goldenwo/universal-memory'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # NO qdrant service and NO patch-package: the eval imports only facts()
+      # (+ the pure scorers) and never builds a mem0 Memory — it structurally
+      # cannot touch any live store.
+      - name: Install server deps
+        working-directory: server
+        run: npm ci
+
+      - name: Run extraction verdict gate
+        working-directory: server
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          UM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY absent on the canonical repo — the guard cannot measure."
+            exit 1
+          fi
+          node eval/extraction-fidelity-eval.mjs \
+            --fixture eval/production-noise-set.jsonl \
+            --fixture eval/collision-slice.jsonl \
+            --fixture eval/extraction-set.jsonl \
+            --verdict-only --gate eval/mq-gate-thresholds.json \
+            --out eval/results/ci-extraction-gate.json
+
+      - name: Classify failure (breach vs infra)
+        if: failure()
+        working-directory: server
+        run: |
+          if [ -f eval/results/ci-extraction-gate.json ]; then
+            echo "::error::extraction gate FAILED with a result written — treat as a real verdict-floor breach. Inspect the artifact + step summary."
+          else
+            echo "::warning::extraction gate failed WITHOUT a result file — likely infra (OpenAI/fixture/transient), not a calibration regression. Re-run before treating as drift."
+          fi
+
+      - name: Upload result JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extraction-gate-result
+          path: server/eval/results/ci-extraction-gate.json
+          if-no-files-found: ignore
