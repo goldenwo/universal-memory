@@ -824,7 +824,21 @@ test('computeVerdictGate: empty input → null matchRates, empty mismatches', ()
   assert.deepEqual(g.abstain, { total: 0, matched: 0, matchRate: null });
   assert.deepEqual(g.extract, { total: 0, matched: 0, matchRate: null });
   assert.equal(g.excludedUnstable, 0);
+  assert.equal(g.excludedUnknown, 0);
   assert.deepEqual(g.mismatches, []);
+});
+
+// PR-180 review finding: a row with an out-of-enum expected verdict must not vanish
+// silently — it is counted so pool-size floors can catch fixture attrition.
+test('computeVerdictGate: unknown expected verdict counted, never silently dropped', () => {
+  const rows = [
+    { id: 'a', expected: 'abstain', observed: 'abstain' },
+    { id: 'typo', expected: 'Extract', observed: 'extract' },
+  ];
+  const g = computeVerdictGate(rows);
+  assert.equal(g.excludedUnknown, 1);
+  assert.deepEqual(g.abstain, { total: 1, matched: 1, matchRate: 1 });
+  assert.equal(g.extract.total, 0);
 });
 
 // ===========================================================================
