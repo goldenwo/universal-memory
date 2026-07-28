@@ -39,3 +39,33 @@ test('judgeExtraction: strips ```json fences before parsing', async () => {
   assert.deepEqual(r.goldMatched, [true]);
   assert.deepEqual(r.extractedSupported, [false]);
 });
+
+// --- #181: failCause distinguishes WHY ok:false (infra-flake carve-out signal) ---
+
+test('judgeExtraction failCause: throwing invoke → invoke-error (the re-run candidate class)', async () => {
+  const r = await judgeExtraction('in', ['g1'], ['e1'], {
+    _providerOverride: { answerGradeInvoke: async () => { throw new Error('429 simulated'); } },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.failCause, 'invoke-error');
+});
+
+test('judgeExtraction failCause: malformed JSON → parse-fail', async () => {
+  const r = await judgeExtraction('in', ['g1'], ['e1'], { _providerOverride: fake('not json') });
+  assert.equal(r.ok, false);
+  assert.equal(r.failCause, 'parse-fail');
+});
+
+test('judgeExtraction failCause: length mismatch → misaligned', async () => {
+  const r = await judgeExtraction('in', ['g1', 'g2'], ['e1'], {
+    _providerOverride: fake(JSON.stringify({ goldMatched: [true], extractedSupported: [true], reasoning: 'x' })),
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.failCause, 'misaligned');
+});
+
+test('judgeExtraction failCause: override without answerGradeInvoke → no-invoke', async () => {
+  const r = await judgeExtraction('in', ['g1'], ['e1'], { _providerOverride: {}, provider: 'not-a-provider' });
+  assert.equal(r.ok, false);
+  assert.equal(r.failCause, 'no-invoke');
+});

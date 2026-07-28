@@ -11,10 +11,11 @@
 //     extraction-fidelity eval for every provider you can key (runbook:
 //     eval/results/2026-07-28-provider-prompt-sync.md).
 //   • Per-provider variant (measurement forced a different text for ONE provider):
-//     give that provider a local `const FACTS_SYSTEM_PROMPT = \`...\`;` literal and
-//     flip its PROVIDER_EXPECTATIONS entry from 'shared' to { golden: '<the new
-//     text>' } — in the same commit as the provider edit. Everything else stays
-//     'shared'.
+//     in that provider file, REMOVE the `import { FACTS_SYSTEM_PROMPT }` (a local
+//     declaration alongside the import is an ESM redeclaration SyntaxError),
+//     add a local `const FACTS_SYSTEM_PROMPT = \`...\`;` literal, and flip its
+//     PROVIDER_EXPECTATIONS entry from 'shared' to { golden: '<the new text>' }
+//     — all in the same commit. Everything else stays 'shared'.
 // Editing a provider's prompt without updating this file is exactly the silent
 // drift this pin exists to catch.
 import { test } from 'node:test';
@@ -60,6 +61,15 @@ const PROVIDER_EXPECTATIONS = {
 
 const norm = (s) => s.replace(/\r\n/g, '\n');
 
+test('PROVIDER_EXPECTATIONS covers every facts-supporting provider (a 5th provider cannot escape the sync pin)', async () => {
+  const { supportingProviders } = await import('../lib/provider/registry.mjs');
+  assert.deepEqual(
+    supportingProviders('facts').map((n) => `${n}.mjs`).sort(),
+    Object.keys(PROVIDER_EXPECTATIONS).sort(),
+    'a new facts provider must get a PROVIDER_EXPECTATIONS entry (usually \'shared\') in the same commit',
+  );
+});
+
 function providerSource(providerFile) {
   const path = fileURLToPath(new URL(`../lib/provider/${providerFile}`, import.meta.url));
   // CRLF-normalize — a Windows checkout (core.autocrlf) must not fail a
@@ -81,23 +91,35 @@ for (const [providerFile, expectation] of Object.entries(PROVIDER_EXPECTATIONS))
   if (expectation === 'shared') {
     test(`provider prompt sync: ${providerFile} uses the shared facts-prompt module`, () => {
       const source = providerSource(providerFile);
+      // Tolerates multi-line/prettier-wrapped import forms.
       assert.match(
         source,
-        /import \{ FACTS_SYSTEM_PROMPT \} from '\.\/facts-prompt\.mjs';/,
+        /import\s*\{[^}]*\bFACTS_SYSTEM_PROMPT\b[^}]*\}\s*from\s*'\.\/facts-prompt\.mjs';/,
         `${providerFile}: expected an import of FACTS_SYSTEM_PROMPT from ./facts-prompt.mjs — `
         + 'a provider on the shared policy must source the prompt from the shared module',
       );
+      // Anchored to a DECLARATION at line start (a comment mentioning the token
+      // must not trip this) and covering let/var/export forms.
       assert.doesNotMatch(
         source,
-        /const FACTS_SYSTEM_PROMPT\s*=/,
-        `${providerFile}: found a local FACTS_SYSTEM_PROMPT literal shadowing the shared module — `
+        /^\s*(?:export\s+)?(?:const|let|var)\s+FACTS_SYSTEM_PROMPT\s*=/m,
+        `${providerFile}: found a local FACTS_SYSTEM_PROMPT declaration shadowing the shared module — `
         + 'either remove it (shared policy) or flip this provider\'s PROVIDER_EXPECTATIONS entry '
         + 'to { golden } in the same commit (deliberate per-provider variant; see header)',
       );
     });
   } else {
     test(`provider prompt snapshot: ${providerFile} local variant matches its golden`, () => {
-      const m = providerSource(providerFile).match(/const FACTS_SYSTEM_PROMPT = `([^`]+)`;/);
+      const source = providerSource(providerFile);
+      // A variant file must NOT also import the shared symbol — in ESM the
+      // local declaration + import is a redeclaration SyntaxError that every
+      // OTHER test importing this provider would hit as an opaque parse error.
+      assert.doesNotMatch(
+        source,
+        /import\s*\{[^}]*\bFACTS_SYSTEM_PROMPT\b/,
+        `${providerFile}: a variant provider must not also import FACTS_SYSTEM_PROMPT from the shared module (ESM redeclaration)`,
+      );
+      const m = source.match(/const FACTS_SYSTEM_PROMPT = `([^`]+)`;/);
       assert.ok(m, `${providerFile}: FACTS_SYSTEM_PROMPT local literal not found — a variant entry requires one`);
       assert.equal(
         m[1],

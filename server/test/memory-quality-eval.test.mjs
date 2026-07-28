@@ -1129,3 +1129,14 @@ test('parseArgs: --storage-sizes empty/garbage → undefined (runner default)', 
   const a = parseArgs(['node', 'x', '--storage-sweep', '--storage-sizes', 'abc,,']);
   assert.equal(a.storageSizes, undefined);
 });
+
+test('extractionFidelity: perRow propagates judgeError:true on ok:false rows (infra-flake carve-out observable)', async () => {
+  const { extractionFidelity } = await import('../eval/memory-quality-eval.mjs');
+  const out = extractionFidelity([
+    { id: 'flake', ok: false, judgeError: true },
+    { id: 'misaligned', ok: false },
+  ]);
+  assert.equal(out.parseFails, 2);
+  assert.deepEqual(out.perRow[0], { id: 'flake', ok: false, judgeError: true });
+  assert.deepEqual(out.perRow[1], { id: 'misaligned', ok: false });
+});
