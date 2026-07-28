@@ -40,7 +40,7 @@ const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'supersede
 
 /** Degraded shape (A5): counters unavailable ⇒ nulls, never a throw. */
 function nullShaped() {
-  return { available: false, capture: null, growth_7d: null, recall: null };
+  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null };
 }
 
 function utcDayString(epochMs) {
@@ -133,6 +133,21 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       GROUP BY day
     `).all(windowStart, today);
 
+    // #185: doc-tier growth — session-summary writes were invisible in
+    // growth_7d (extraction-only), which is how 121+ fabricated summaries
+    // accrued unseen. outcome IN ('stored','error') is deliberate: the
+    // checkpoint 'error' emit fires only AFTER the summary + state.md are
+    // durably written (retry-exhausted reindex = doc written, index stale),
+    // so both outcomes are "a doc landed on disk". 'abstained' wrote nothing.
+    const growthDocsRows = db.prepare(`
+      SELECT day, SUM(count) AS n
+      FROM counters
+      WHERE event = 'capture.checkpoint'
+        AND outcome IN ('stored', 'error')
+        AND day >= ? AND day <= ?
+      GROUP BY day
+    `).all(windowStart, today);
+
     const recallRows = db.prepare(`
       SELECT day, SUM(count) AS n
       FROM counters
@@ -168,10 +183,13 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     // Zero-filled 7-day map (oldest → today) — Stage B's sparkline consumes
     // this directly; gap days must read as 0, not be absent.
     const growth_7d = {};
+    const growth_docs_7d = {};
     for (let i = WINDOW_DAYS - 1; i >= 0; i--) {
       growth_7d[utcDayString(now - i * MS_PER_DAY)] = 0;
+      growth_docs_7d[utcDayString(now - i * MS_PER_DAY)] = 0;
     }
     for (const { day, n } of growthRows) growth_7d[day] = n;
+    for (const { day, n } of growthDocsRows) growth_docs_7d[day] = n;
 
     let searches_today = 0;
     let searches_7d = 0;
@@ -180,7 +198,7 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       if (day === today) searches_today = n;
     }
 
-    return { available: true, capture, growth_7d, recall: { searches_today, searches_7d } };
+    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d } };
   } catch (err) {
     // Unreadable (corrupt/locked-exotic) db ⇒ same degraded shape as missing
     // (spec §3 errors clause: stats must not 500 over the counters file).

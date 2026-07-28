@@ -80,6 +80,11 @@ const BASE_CONFIG = {
   summary_model: 'gpt-4o-mini',
   state_cap_chars: 3000,
   lockdir_stale_timeout_ms: 600000,
+  // #185: gate OFF for the mechanics tests — they seed intentionally tiny
+  // fixtures to exercise orchestration, not admission semantics. The gate's
+  // own tests (GATED_CONFIG below) set real floors explicitly.
+  min_transcript_bytes: 0,
+  min_transcript_turns: 0,
 };
 
 // ---- tests ------------------------------------------------------------------
@@ -505,7 +510,10 @@ test('checkpoint: invalid project slug returns {ok:false, error} without filesys
 // A successfully wired run (with valid API key) would also pass — this test handles both scenarios.
 test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not stub)', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'dispatchproj', '2026-01-01T00.md', '# Session\nDispatcher wiring test.');
+  // This path uses the SHIPPED config (no ctx.config override), so the #185
+  // gate is armed — seed substantive multi-turn content that clears the
+  // floors; the concern here is dispatch wiring, not admission semantics.
+  await seedCapture(vaultDir, 'dispatchproj', '2026-01-01T00.md', SUBSTANTIVE_RAW);
 
   const origWriteEnabled = process.env.UM_MCP_WRITE_ENABLED;
   const origVaultDir = process.env.UM_VAULT_DIR;
@@ -1406,6 +1414,225 @@ test('D3.2: invalid persona slug returns INPUT_INVALID', async () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, 'INPUT_INVALID');
     assert.match(result.error, /persona/i);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #185: thin-transcript abstention gate — a deterministic pre-filter ahead of
+// the summarizer call. Abstain iff transcript_bytes < min AND turns < min
+// (AND-composed: either signal alone clears the gate — recall-safe direction).
+// The observed fabrication class is transcript_bytes == 0 (empty captures dir).
+// ---------------------------------------------------------------------------
+
+// Gate-enabled config used by the #185 tests. Existing tests run with the gate
+// disabled via BASE_CONFIG floors of 0 — they exercise checkpoint mechanics,
+// not admission semantics.
+const GATED_CONFIG = {
+  ...BASE_CONFIG,
+  min_transcript_bytes: 500,
+  min_transcript_turns: 2,
+};
+
+// Representative append-turn raw content (the format doAppendTurn writes):
+// `## <ISO> <role>` headers + content. Two turns, > 500 bytes.
+const SUBSTANTIVE_RAW = [
+  '## 2026-07-27T18:00:00.000Z user',
+  'Investigating the phantom-summary bleed: thin desktop-app sessions mint',
+  'checkpoints under the home-directory slug with no raw captures at all.',
+  '',
+  '## 2026-07-27T18:00:10.000Z assistant',
+  'Confirmed: vault/captures/<project> is absent so the assembled transcript',
+  'is the empty string; the summarizer template-fills a fabricated narrative',
+  'with tokens_in equal to the system prompt alone. Fix: deterministic gate.',
+  '',
+].join('\n');
+
+test('#185: empty transcript (no captures dir) abstains — no summarize, no writes, no reindex', async () => {
+  const vaultDir = await makeVault();
+  const captured = _attachLogCapture();
+  let summarizeCalls = 0;
+  let reindexCalls = 0;
+  try {
+    const result = await doCheckpoint(
+      { project: 'phantomproj' },
+      {
+        config: GATED_CONFIG,
+        vaultDir,
+        summarizeFn: async () => { summarizeCalls += 1; return { summary: 'x', costUsd: 0, tokensIn: 0, tokensOut: 0 }; },
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => { reindexCalls += 1; },
+      },
+    );
+
+    assert.equal(result.ok, true, 'abstention is a success, not an error');
+    assert.equal(result.skipped, 'thin_transcript');
+    assert.equal(result.transcript_bytes, 0);
+    assert.equal(result.transcript_turns, 0);
+    assert.equal(typeof result.duration_ms, 'number');
+    assert.equal(result.summary_id, undefined, 'no summary_id on abstention');
+    assert.equal(summarizeCalls, 0, 'summarizer must never see a thin transcript');
+    assert.equal(reindexCalls, 0, 'nothing to index on abstention');
+
+    // No summary file, no state.md.
+    const sessions = await fs.readdir(path.join(vaultDir, 'sessions', 'phantomproj')).catch(() => []);
+    assert.deepEqual(sessions, [], 'no summary file may be written');
+    const state = await fs.readFile(path.join(vaultDir, 'state', 'phantomproj', 'state.md'), 'utf8').catch(() => null);
+    assert.equal(state, null, 'state.md must not be created');
+
+    // capture.checkpoint outcome=abstained emitted (pino side of recordCaptureEvent).
+    const evt = captured.find((l) => l.event === 'capture.checkpoint' && l.project === 'phantomproj');
+    assert.ok(evt, 'capture.checkpoint event must be emitted');
+    assert.equal(evt.outcome, 'abstained');
+  } finally {
+    _detachLogCapture();
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('#185: below both floors abstains; either floor alone clears the gate (AND rule)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    // (a) tiny header-less blob: bytes < 500 AND turns < 2 → abstain.
+    await seedCapture(vaultDir, 'tinyproj', '2026-01-01.md', 'quick note');
+    const a = await doCheckpoint(
+      { project: 'tinyproj' },
+      { config: GATED_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(), reindexFn: async () => {} },
+    );
+    assert.equal(a.ok, true);
+    assert.equal(a.skipped, 'thin_transcript');
+    assert.ok(a.transcript_bytes > 0 && a.transcript_bytes < 500);
+
+    // (b) two real turn headers but < 500 bytes → turns floor clears it → stored.
+    const twoTurnsTiny = '## 2026-01-01T00:00:00.000Z user\nhi\n\n## 2026-01-01T00:00:05.000Z assistant\nhello\n\n';
+    await seedCapture(vaultDir, 'tinyturns', '2026-01-01.md', twoTurnsTiny);
+    const b = await doCheckpoint(
+      { project: 'tinyturns' },
+      { config: GATED_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(), reindexFn: async () => {} },
+    );
+    assert.equal(b.ok, true);
+    assert.equal(b.skipped, undefined, 'turn floor cleared — must store');
+    assert.ok(b.summary_id, 'summary must be written');
+
+    // (c) legacy header-less content >= 500 bytes → bytes floor clears it → stored.
+    await seedCapture(vaultDir, 'legacyproj', '2026-01-01.md', `# Legacy raw capture\n${'real content line\n'.repeat(40)}`);
+    const c = await doCheckpoint(
+      { project: 'legacyproj' },
+      { config: GATED_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(), reindexFn: async () => {} },
+    );
+    assert.equal(c.ok, true);
+    assert.equal(c.skipped, undefined, 'byte floor cleared — must store');
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('#185: turn counting matches append-turn headers (incl. conversation_id), whitespace-only counts as empty', async () => {
+  const vaultDir = await makeVault();
+  try {
+    // conversation_id suffix form must count; whitespace-only transcript must
+    // read as 0 bytes (trimmed) so a stray blank raw file cannot clear the gate.
+    const cidTurns = [
+      '## 2026-01-01T00:00:00.000Z user (conversation_id: abc-123)',
+      'short',
+      '',
+      '## 2026-01-01T00:00:05.000Z assistant (conversation_id: abc-123)',
+      'reply',
+      '',
+    ].join('\n');
+    await seedCapture(vaultDir, 'cidproj', '2026-01-01.md', cidTurns);
+    const a = await doCheckpoint(
+      { project: 'cidproj' },
+      { config: GATED_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(), reindexFn: async () => {} },
+    );
+    assert.equal(a.skipped, undefined, 'conversation_id headers must count as turns');
+
+    await seedCapture(vaultDir, 'blankproj', '2026-01-01.md', '   \n\n  \n');
+    const b = await doCheckpoint(
+      { project: 'blankproj' },
+      { config: GATED_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(), reindexFn: async () => {} },
+    );
+    assert.equal(b.skipped, 'thin_transcript');
+    assert.equal(b.transcript_bytes, 0, 'whitespace-only must trim to 0 bytes');
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('#185: floor of 0 disables the gate (config opt-out preserves old behavior)', async () => {
+  const vaultDir = await makeVault();
+  try {
+    // BASE_CONFIG carries no floors → explicit 0s here; empty transcript stores
+    // (the pre-#185 behavior, now an operator choice instead of the default).
+    const result = await doCheckpoint(
+      { project: 'optoutproj' },
+      {
+        config: { ...BASE_CONFIG, min_transcript_bytes: 0, min_transcript_turns: 0 },
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, undefined, 'gate disabled — must store');
+    assert.ok(result.summary_id);
+  } finally {
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('#185: env overrides beat config floors (UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES/TURNS)', async () => {
+  const vaultDir = await makeVault();
+  const savedBytes = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES;
+  const savedTurns = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS;
+  try {
+    // Config disables the gate; env re-arms it → empty transcript must abstain.
+    process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES = '500';
+    process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS = '2';
+    const result = await doCheckpoint(
+      { project: 'envproj' },
+      {
+        config: { ...BASE_CONFIG, min_transcript_bytes: 0, min_transcript_turns: 0 },
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+    assert.equal(result.skipped, 'thin_transcript', 'env floors must win over config');
+  } finally {
+    if (savedBytes === undefined) delete process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES;
+    else process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES = savedBytes;
+    if (savedTurns === undefined) delete process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS;
+    else process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS = savedTurns;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+
+test('#185: REST /api/checkpoint returns 200 with skipped envelope on abstention', async () => {
+  const vaultDir = await makeVault();
+  try {
+    const res = mockRes();
+    await handleCheckpointRequest(
+      { body: { project: 'restthinproj' }, headers: {} },
+      res,
+      {
+        writesEnabled: true,
+        vaultDir,
+        _doCheckpoint: (args, ctx) => doCheckpoint(args, {
+          ...ctx,
+          config: GATED_CONFIG,
+          summarizeFn: makeSummarizeFn(),
+          updateStateFn: makeUpdateStateFn(),
+          reindexFn: async () => {},
+        }),
+      },
+    );
+    assert.equal(res.statusCode, 200, 'abstention must be 200, not an error status');
+    assert.equal(res.jsonBody.ok, true);
+    assert.equal(res.jsonBody.skipped, 'thin_transcript');
   } finally {
     await fs.rm(vaultDir, { recursive: true, force: true });
   }

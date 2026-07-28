@@ -4,7 +4,18 @@ All notable changes to universal-memory are documented here. Format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); this project
 adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.0] — 2026-07-27
+## [1.10.0] — 2026-07-28
+
+No migration steps for typical deployments: the checkpoint abstention gate is **on by default** (deliberate — it only suppresses summaries no transcript can support); opt out with `UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES=0` or config `min_transcript_bytes: 0`. In-place `git pull` + restart or `install.sh --upgrade` both work as-is. Claude Code plugin users should update the plugin to 1.10.0 to get the non-project cwd guard.
+
+### Fixed — checkpoint summarizer fabrication (#185)
+
+- **Thin-transcript abstention gate**: `POST /api/checkpoint` now runs a deterministic pre-filter ahead of the summarizer — abstain iff transcript bytes < 500 **AND** append-turn headers < 2 (AND-composed: either signal alone clears the gate; floors via `min_transcript_bytes`/`min_transcript_turns` in `config/checkpoint.json` or `UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES`/`_TURNS` env; 0 disables). A near-empty transcript previously produced a fully fabricated `session_summary` (live incident 2026-07-27: 134 phantom points, all `tokens_in≈182` = prompt-only). Abstention stores nothing, returns `200 {ok:true, skipped:'thin_transcript', transcript_bytes, transcript_turns}` (new `CheckpointAbstained` OpenAPI branch; Custom-GPT actions regenerated), and emits `capture.checkpoint outcome=abstained`. Raw captures stay on disk and roll into the next checkpoint — abstention defers, it does not lose. Threshold semantics were spec'd and adversarially reviewed (AND-composition is the recall-safe direction; details in #185).
+- **Doc-tier growth visibility**: `/api/stats` gains `corpus.growth_docs_7d` — per-day `capture.checkpoint` writes (`stored` + `error`, since an UPSTREAM_FAILURE checkpoint did durably write the doc). The phantom writer accrued 121+ points while `growth_7d` (extraction-only) read ~0 — a runaway doc-tier writer is now a visible spike.
+
+### Fixed — desktop-app sessions minting a home-directory project (#186)
+
+- **Non-project cwd guard** in the Claude Code plugin hooks (`session-end.sh`, `stop.sh`, shared `hooks/lib/project_guard.py`): the desktop app spawns auxiliary sessions with `cwd=$HOME` (verified live — `meta.cwd` itself carries the home dir), which minted every such checkpoint/turn into one giant `<home-basename>` project. The hooks now resolve the full cwd (`meta.cwd` → `$CLAUDE_CWD` → `pwd`), skip when it equals `$HOME` (any spelling: MSYS-normalized `$HOME`/`$USERPROFILE`/`$HOMEDRIVE$HOMEPATH`), and skip when no project marker (`.git`, `.claude`, `package.json`, … — override via `UM_PROJECT_MARKERS`) is found walking up from the cwd, stopping exclusive at `$HOME` and terminating at filesystem fixed points (Windows drive/UNC roots). Fail closed: every non-project outcome is an explicit `skip=` log line, and the old unguarded basename fallback is deleted. Non-project sessions (`$HOME`, scratch dirs) are deliberately not captured at all.
 
 No migration steps: no flag, schema, or extraction-behavior changes. In-place `git pull` + restart or `install.sh --upgrade` both work as-is.
 

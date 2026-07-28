@@ -120,6 +120,21 @@ Every hook fire logs one line to `~/.um/hook.log`
 Silent capture death is the enemy: a misconfigured server shows up both there
 and in the next session's ⚠ banner.
 
+**Non-project sessions are not captured** (v1.10.0, #186). Stop/SessionEnd
+derive the project from the session's working directory; a cwd that is your
+home directory, or that has no project marker (`.git`, `.claude`,
+`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `.hg`, `.svn` —
+searched walking up to, but not including, `$HOME`) is skipped with
+`skip=home-cwd` / `skip=non-project-cwd` in `hook.log`. This stops desktop-app
+auxiliary sessions (which run at `$HOME`) from minting a giant home-basename
+project out of thin sessions. Override the marker list with
+`UM_PROJECT_MARKERS` (comma-separated) if your projects use something else.
+Relatedly, the server abstains from summarizing transcripts below a
+substantive-content floor (#185) — `skipped: thin_transcript` in the
+checkpoint response; tune with `min_transcript_bytes` / `min_transcript_turns`
+in `config/checkpoint.json` or the matching `UM_CHECKPOINT_MIN_TRANSCRIPT_*`
+env vars (0 disables).
+
 ## Operator side — server flags for capture
 
 Plugin captures write through the server, and the server's **shipped defaults

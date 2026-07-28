@@ -51,9 +51,18 @@ PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
 # ---------------------------------------------------------------------------
 # Pass 1: extract metadata fields. One field per line (session_id is
 # regex-validated IN python so a newline-smuggling value can't shift fields).
+# #186: the project slug now runs through the non-project guard
+# (lib/project_guard.py — home-check + marker walk-up on the FULL cwd, with
+# the $CLAUDE_CWD/pwd fallback guarded too). A skip prints the SKIP sentinel
+# as the ONLY output line, preserving the `case "$META" in SKIP:*)` contract.
 # ---------------------------------------------------------------------------
-META=$(printf '%s' "$HOOK_INPUT" | "$PY" -c '
+UM_GUARD_LIB="$SCRIPT_DIR/lib"
+if command -v cygpath >/dev/null 2>&1; then UM_GUARD_LIB=$(cygpath -w "$UM_GUARD_LIB"); fi
+META=$(printf '%s' "$HOOK_INPUT" | \
+  UM_GUARD_LIB="$UM_GUARD_LIB" UM_GUARD_FALLBACK="${CLAUDE_CWD:-$(pwd)}" "$PY" -c '
 import json, os, re, sys
+sys.path.insert(0, os.environ["UM_GUARD_LIB"])
+from project_guard import guard
 try:
     meta = json.load(sys.stdin)
 except Exception:
@@ -62,10 +71,15 @@ sid = meta.get("session_id") or ""
 if not re.fullmatch(r"[A-Za-z0-9._-]+", sid):
     print("SKIP:bad-session-id"); sys.exit(0)
 cwd = meta.get("cwd") or ""
+fallback = os.environ.get("UM_GUARD_FALLBACK", "")
+res = guard(cwd, fallback)
+if res.startswith("SKIP:"):
+    shown = cwd or fallback or "<none>"
+    print(f"{res} cwd={shown}"); sys.exit(0)
 print(sid)
 print("true" if meta.get("stop_hook_active") else "false")
 print(meta.get("transcript_path") or "")
-print(os.path.basename(cwd.replace("\\", "/").rstrip("/")) if cwd else "")
+print(res)
 ' 2>/dev/null)
 
 case "$META" in
@@ -87,7 +101,10 @@ if ! [[ "$SESSION_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
   um_log "skip=bad-session-id"; exit 0
 fi
 if [ -z "$TRANSCRIPT_PATH" ]; then um_log "skip=no-transcript"; exit 0; fi
-if [ -z "$PROJECT" ]; then PROJECT=$(basename "${CLAUDE_CWD:-$(pwd)}"); fi
+# #186: no unguarded fallback — the guard already resolved meta.cwd →
+# $CLAUDE_CWD → pwd and emits a SKIP sentinel for every non-project outcome.
+# An empty slug here means the guard step itself broke: fail closed.
+if [ -z "$PROJECT" ]; then um_log "skip=guard-failed"; exit 0; fi
 # Sanitize the derived project slug client-side — the server hard-fails
 # non-[A-Za-z0-9._-] projects (400), which would otherwise loop as permanent
 # per-fire errors (T3 review IMPORTANT-2 / spec §5 amendment).
