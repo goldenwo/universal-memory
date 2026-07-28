@@ -48,9 +48,13 @@ Capture-freshness check against GET /api/stats. Cron-able: silent-ish on
 success, one actionable line + non-zero exit otherwise.
 
 Options:
-  --max-age-hours N   Freshness threshold in hours (default 26 — day-granular
-                      counters make <24h thresholds lie; 26 gives a daily-use
-                      box some slack)
+  --max-age-hours N   Freshness threshold in hours. Default: the server's
+                      own /api/stats capture_freshness_threshold_hours field
+                      (the same value the /control page compares against —
+                      day-granular counters make <24h thresholds lie, so it
+                      defaults to 26 there too). Falls back to a literal 26
+                      only if the server predates that field. Passing this
+                      flag always overrides the payload value.
   --surface S         Require surface S specifically to be fresh
                       (default: any surface passing the threshold is enough)
   --server URL        Override server URL (default: \$UM_SERVER_URL, else
@@ -66,7 +70,14 @@ Exit codes:
 EOF
 }
 
-MAX_AGE_HOURS=26
+# Empty MAX_AGE_HOURS is the "not explicitly set" sentinel — it lets the
+# python verdict block tell "use the payload's threshold" apart from "an
+# operator typed --max-age-hours", which a pre-filled default (e.g. 26)
+# could never distinguish from a literal `--max-age-hours 26` (U2.6). The
+# literal 26 fallback lives ONLY in the python block now, for the old-server
+# case where the payload lacks capture_freshness_threshold_hours entirely.
+MAX_AGE_HOURS=""
+MAX_AGE_EXPLICIT=""
 SURFACE=""
 
 # A missing/empty option value is a CHECK-FAILED (exit 2), never exit 1: in the
@@ -83,7 +94,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h) _usage; exit 0 ;;
     --max-age-hours)
-      _require_value "$1" "$#" "${2:-}"; MAX_AGE_HOURS="$2"; shift 2 ;;
+      _require_value "$1" "$#" "${2:-}"; MAX_AGE_HOURS="$2"; MAX_AGE_EXPLICIT=1; shift 2 ;;
     --surface)
       _require_value "$1" "$#" "${2:-}"; SURFACE="$2"; shift 2 ;;
     --server)
@@ -95,13 +106,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Reject empty, non-numeric chars, 2+ dots, AND a bare "." (which passes the
-# other guards but makes float(".") throw an uncaught error downstream).
-case "$MAX_AGE_HOURS" in
-  ''|.|*[!0-9.]*|*.*.*)
-    echo "um-alert: CHECK FAILED — --max-age-hours must be a number (got '$MAX_AGE_HOURS')" >&2
-    exit 2 ;;
-esac
+# Reject non-numeric chars, 2+ dots, AND a bare "." (which passes the other
+# guards but makes float(".") throw an uncaught error downstream). Scoped to
+# the explicit branch only (U2.6): when --max-age-hours was NOT passed,
+# MAX_AGE_HOURS is the empty not-set sentinel by design (see above) and must
+# reach python untouched so it can fall back to the payload's threshold —
+# this guard would otherwise reject that legitimate empty value as if it
+# were a malformed CLI arg (an empty explicit value is already caught
+# earlier, by _require_value, so it never reaches this point).
+if [ -n "$MAX_AGE_EXPLICIT" ]; then
+  case "$MAX_AGE_HOURS" in
+    ''|.|*[!0-9.]*|*.*.*)
+      echo "um-alert: CHECK FAILED — --max-age-hours must be a number (got '$MAX_AGE_HOURS')" >&2
+      exit 2 ;;
+  esac
+fi
 
 PY=$(um_find_python) || {
   echo "um-alert: CHECK FAILED — no working python interpreter (py/python3/python) to parse the stats response" >&2
@@ -141,8 +160,9 @@ esac
 VERDICT=$("$PY" -c '
 import json, sys
 
-max_age = float(sys.argv[1])
+max_age_arg = sys.argv[1]
 want = sys.argv[2]
+explicit = sys.argv[3] == "1"
 
 def emit(status, msg):
     print(status + "|" + msg)
@@ -154,6 +174,23 @@ try:
         raise ValueError("not an object")
 except Exception:
     emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+# Precedence (U2.6, spec R2-C-B1/R2-S-I4): CLI --max-age-hours (explicit,
+# already numeric-validated in bash) beats the payload threshold beats the
+# old-server literal fallback. `is None` — NEVER `or` / truthiness — so a
+# deliberate payload 0 (UM_FRESHNESS_MAX_AGE_HOURS=0 on the server) survives
+# instead of being coerced back to 26.
+if explicit:
+    max_age = float(max_age_arg)
+else:
+    threshold = stats.get("capture_freshness_threshold_hours")
+    if threshold is None:
+        max_age = 26.0  # old server predating this field
+    else:
+        try:
+            max_age = float(threshold)
+        except (TypeError, ValueError):
+            max_age = 26.0  # defensive: malformed payload value, not a crash
 
 capture = stats.get("capture")
 if capture is None:
@@ -187,7 +224,7 @@ try:
     emit("STALE", "no surface captured within %gh — freshest: %s" % (max_age, listing))
 except (KeyError, TypeError, ValueError):
     emit("ERROR", "unexpected /api/stats shape (bad freshness_hours field)")
-' "$MAX_AGE_HOURS" "$SURFACE" < "$BODY_FILE" 2>/dev/null) || VERDICT=""
+' "$MAX_AGE_HOURS" "$SURFACE" "$MAX_AGE_EXPLICIT" < "$BODY_FILE" 2>/dev/null) || VERDICT=""
 
 STATUS="${VERDICT%%|*}"
 MESSAGE="${VERDICT#*|}"

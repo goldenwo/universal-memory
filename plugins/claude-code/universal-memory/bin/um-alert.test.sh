@@ -75,6 +75,16 @@ DEGRADED='{"schema_version":1,"capture":null,"degraded":["counters-unavailable"]
 BOUNDARY_EXACT='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-16","freshness_hours":26,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'
 BOUNDARY_OVER='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-16","freshness_hours":26.1,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'
 
+# U2.6 fixtures — payload carries capture_freshness_threshold_hours (the
+# field U2.5 added to /api/stats). PAYLOAD_THRESH_1 uses a non-26 value (1)
+# on a surface that's stale-under-1h-but-fresh-under-26h (2h), so the verdict
+# only flips to STALE if the payload threshold is actually being read (the
+# old hardcoded-26 default would have called this FRESH). PAYLOAD_THRESH_0
+# uses a deliberate 0 on a 0.5h-stale surface — a `field or 26` bug would
+# coerce 0 to 26 and misreport FRESH.
+PAYLOAD_THRESH_1='{"schema_version":1,"capture_freshness_threshold_hours":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":2,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'
+PAYLOAD_THRESH_0='{"schema_version":1,"capture_freshness_threshold_hours":0,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0.5,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'
+
 # ─── T1: fresh-any — one fresh + one stale surface ⇒ exit 0 ─────────────────
 echo "=== T1: any-mode, one surface fresh ⇒ exit 0 ==="
 mock="$TMPDIR_ROOT/t1"; _make_mock_curl "$mock" 200 "$FRESH_AND_STALE"
@@ -347,6 +357,80 @@ if [ "$rc" -eq 2 ]; then
   pass "T15-empty-value-exit-2"
 else
   fail "T15-empty-value-exit-2: rc=$rc, out=$output"
+fi
+
+# ─── T17: payload threshold used when no --max-age-hours is given (U2.6) ────
+# PAYLOAD_THRESH_1's surface is 2h stale — FRESH under the old hardcoded 26,
+# but the payload's own capture_freshness_threshold_hours is 1, so a correct
+# read of the field flips the verdict to STALE. This is the single-source-of-
+# truth regression guard: it fails if the script ever goes back to ignoring
+# the field.
+echo ""
+echo "=== T17: no CLI flag ⇒ payload's capture_freshness_threshold_hours(1) used, not 26 ==="
+mock="$TMPDIR_ROOT/t17"; _make_mock_curl "$mock" 200 "$PAYLOAD_THRESH_1"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T17-payload-threshold-honored"
+else
+  fail "T17-payload-threshold-honored (rc=$rc, out=$output) — old-26 default would wrongly give rc=0"
+fi
+if echo "$output" | grep -q "within 1h"; then
+  pass "T17-message-shows-threshold"
+else
+  fail "T17-message-shows-threshold: $output"
+fi
+
+# ─── T18: CLI --max-age-hours beats a differing payload threshold ──────────
+# Same PAYLOAD_THRESH_1 (payload says 1) but the operator explicitly passes
+# 26 — CLI must win per the precedence contract, flipping back to FRESH.
+echo ""
+echo "=== T18: --max-age-hours 26 beats payload's 1 ⇒ exit 0 (CLI wins) ==="
+mock="$TMPDIR_ROOT/t18"; _make_mock_curl "$mock" 200 "$PAYLOAD_THRESH_1"
+run_alert "$mock" --max-age-hours 26
+if [ "$rc" -eq 0 ]; then
+  pass "T18-cli-overrides-payload"
+else
+  fail "T18-cli-overrides-payload (rc=$rc, out=$output)"
+fi
+
+# ─── T19: payload threshold 0 is honored as 0, not coerced to 26 ───────────
+# The `is None` vs falsy subtlety (R3-C-N2 #2): a naive `field or 26` would
+# turn a deliberate payload 0 into 26, making a 0.5h-stale surface read FRESH.
+echo ""
+echo "=== T19: payload threshold 0 ⇒ 0.5h surface is STALE, not coerced to 26 ==="
+mock="$TMPDIR_ROOT/t19"; _make_mock_curl "$mock" 200 "$PAYLOAD_THRESH_0"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T19-payload-zero-honored"
+else
+  fail "T19-payload-zero-honored (rc=$rc, out=$output) — 'field or 26' bug would wrongly give rc=0"
+fi
+if echo "$output" | grep -q "within 0h"; then
+  pass "T19-message-shows-zero"
+else
+  fail "T19-message-shows-zero: $output"
+fi
+
+# ─── T20: field absent (old server) ⇒ falls back to 26, no CLI flag needed ──
+# BOUNDARY_EXACT/BOUNDARY_OVER predate capture_freshness_threshold_hours (no
+# such key in the fixture) — same behavior as T11's explicit --max-age-hours
+# 26 must hold via the fallback alone, proving "absent field → 26" without
+# relying on the operator passing anything.
+echo ""
+echo "=== T20: no threshold field + no CLI flag ⇒ 26 fallback (old-server case) ==="
+mock="$TMPDIR_ROOT/t20a"; _make_mock_curl "$mock" 200 "$BOUNDARY_EXACT"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T20-exact-fresh-fallback"
+else
+  fail "T20-exact-fresh-fallback (rc=$rc, out=$output)"
+fi
+mock="$TMPDIR_ROOT/t20b"; _make_mock_curl "$mock" 200 "$BOUNDARY_OVER"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T20-over-stale-fallback"
+else
+  fail "T20-over-stale-fallback (rc=$rc, out=$output)"
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
