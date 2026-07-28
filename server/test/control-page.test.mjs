@@ -209,6 +209,62 @@ test('A17 (unit): captureVerdict mirrors the cron parser on shape/threshold edge
   assert.equal(captureVerdict({ a: surface({ freshness_hours: 26 }) }, 'nonsense').verdict, 'FRESH');
 });
 
+// Every row is a MEASURED python `float()` result (see the pyFloat table in
+// control-page.mjs); the same inputs also go through A12, where the real script
+// adjudicates rather than this table asserting what python "probably" does.
+test('captureVerdict coerces freshness the way python float() does, not the way Number() does', () => {
+  const v = (freshness, threshold = 26) => captureVerdict({ a: surface({ freshness_hours: freshness }) }, threshold).verdict;
+
+  // Number('') === 0 would have read a blank field as perfectly fresh.
+  assert.equal(v(''), 'ERROR');
+  assert.equal(v('   '), 'ERROR');
+  // Radix-prefixed strings: python raises, Number() happily returns 16/5/15.
+  assert.equal(v('0x10'), 'ERROR');
+  assert.equal(v('0b101'), 'ERROR');
+  assert.equal(v('0o17'), 'ERROR');
+  // …and a bare '.' has no digits at all.
+  assert.equal(v('.'), 'ERROR');
+  // inf/nan are VALUES to python, not failures — the old isFinite guard called
+  // them ERROR while cron called them STALE.
+  assert.equal(v('inf'), 'STALE');
+  assert.equal(v('Infinity'), 'STALE');
+  assert.equal(v('+Infinity'), 'STALE');
+  assert.equal(v('nan'), 'STALE', 'every NaN comparison is false, so nan > threshold ⇒ STALE on both sides');
+  assert.equal(v('NaN'), 'STALE');
+  assert.equal(v('-inf'), 'FRESH', '-inf is trivially within any threshold');
+  // PEP 515 underscores parse in python and are NaN to Number().
+  assert.equal(v('1_0'), 'FRESH');
+  assert.equal(v('1_000.5'), 'STALE');
+  // Ordinary forms python and JS already agree on stay agreeing.
+  for (const [input, expected] of [['26', 'FRESH'], ['26.1', 'STALE'], ['  26  ', 'FRESH'],
+    ['1e3', 'STALE'], ['+1', 'FRESH'], ['.5', 'FRESH'], ['5.', 'FRESH']]) {
+    assert.equal(v(input), expected, `freshness_hours ${JSON.stringify(input)}`);
+  }
+  // A NaN threshold makes every comparison false ⇒ STALE, on both sides.
+  assert.equal(v(0, 'nan'), 'STALE');
+  assert.equal(v(999, 'inf'), 'FRESH');
+});
+
+test('a non-finite freshness is grey per-surface, never allowed to slide into green', () => {
+  // NaN fails EVERY comparison, so `hours > threshold` is false — without an
+  // explicit guard the row would fall through to the fresh branch while cron
+  // calls the same payload STALE.
+  const nan = render(makeStats({ capture: { a: surface({ freshness_hours: 'nan' }) } }));
+  assert.match(nan, /<td class="s-grey">cannot assess — no usable freshness value<\/td>/);
+  assert.doesNotMatch(nan, /<td class="s-green">/);
+  assert.match(nan, /<td>nan<\/td>/, 'the raw value renders WITHOUT an hours unit');
+
+  const inf = render(makeStats({ capture: { a: surface({ freshness_hours: 'inf' }) } }));
+  assert.match(inf, /<td class="s-red">stale — no capture within 26h<\/td>/);
+  assert.match(inf, /<td>inf<\/td>/);
+
+  // …and an unparseable uptime never becomes "Infinityd Infinityh".
+  const badUptime = render(makeStats({
+    server: { version: '1.0', uptime_s: 'inf', writes_enabled: true, mount_mode: 'rw' },
+  }));
+  assert.doesNotMatch(badUptime, /Infinity/);
+});
+
 test('captureVerdict treats an own __proto__ surface as an ordinary row', () => {
   const capture = JSON.parse('{"__proto__":{"last_day_seen":"2026-07-28","freshness_hours":1},'
     + '"constructor":{"last_day_seen":"2026-07-28","freshness_hours":2}}');
@@ -239,6 +295,34 @@ test('A17: the tile renders BOTH the per-surface colours AND the aggregate cron 
   assert.match(html, /discord-bot/);
   assert.match(html, /150\.5h/);
   assert.match(html, /2026-07-21/);
+});
+
+test('an ERROR verdict names WHICH failure it is, in the line and the banner', () => {
+  // All three are ERROR/grey, but they call for different operator actions —
+  // "the counters are unavailable" is a false diagnosis when the counters are
+  // live and one surface reports garbage.
+  const countersDown = render(makeStats({ capture: null, degraded: ['counters-unavailable'] }));
+  assert.match(countersDown, /Cron verdict: cannot assess — the capture counters are unavailable/);
+  assert.match(countersDown, /Cannot assess: the capture counters are unavailable, so no surface can be checked/);
+
+  const badShape = render(makeStats({ capture: [] }));
+  assert.match(badShape, /Cron verdict: cannot assess — the capture section is malformed/);
+  assert.match(badShape, /Cannot assess: the capture section is malformed/);
+  assert.doesNotMatch(badShape, /counters are unavailable/, 'a malformed section is not a dark counters db');
+
+  // A LIVE table with one unusable value: the rows still render, and the line
+  // points at them instead of blaming the counters.
+  const badFreshness = render(makeStats({
+    capture: {
+      good: surface({ freshness_hours: 0 }),
+      broken: surface({ freshness_hours: 'not-a-number' }),
+    },
+  }));
+  assert.match(badFreshness, /Cron verdict: cannot assess — a surface reports an unusable freshness value — see the rows below/);
+  assert.doesNotMatch(badFreshness, /counters are unavailable/);
+  assert.doesNotMatch(badFreshness, /class="banner/, 'the table renders; there is no dead-end banner');
+  assert.match(badFreshness, /<td class="s-grey">cannot assess — no usable freshness value<\/td>/);
+  assert.match(badFreshness, /<td class="s-green">fresh<\/td>/, 'the healthy sibling row is unaffected');
 });
 
 test('A17: capture:null renders grey "cannot assess"; capture:{} renders red "never written"', () => {
@@ -484,6 +568,35 @@ test('the ops row names every degraded flag, including corpus-unavailable', () =
   assert.doesNotMatch(html, /undefined/);
 });
 
+test('a malformed degraded field is "cannot assess", never announced as healthy', () => {
+  // Announcing health on the strength of a field it failed to parse is the one
+  // thing this row must never do.
+  for (const bad of ['counters-unavailable', 42, {}, true]) {
+    const html = render(makeStats({ degraded: bad }));
+    assert.match(html, /cannot assess — the degraded field is malformed/, `degraded: ${JSON.stringify(bad)}`);
+    assert.doesNotMatch(html, /healthy/, `degraded: ${JSON.stringify(bad)} must not read healthy`);
+  }
+  // Absent and empty-array both mean healthy — those ARE understood.
+  assert.match(render(makeStats()), /healthy — every source reporting/);
+  assert.match(render(makeStats({ degraded: [] })), /healthy — every source reporting/);
+});
+
+test('a wholly MISSING recall section reads the same "cannot assess" as recall:null', () => {
+  // `{}.searches_today` is undefined, not null — a null-only check rendered
+  // nothing at all here, i.e. silence where the payload had no answer.
+  const explicitNull = render(makeStats({
+    recall: { searches_today: null, searches_7d: null, latency_since_boot: { p50_ms: null, p95_ms: null, n: 0, label: 'x' } },
+  }));
+  const missing = render(makeStats({ recall: undefined }));
+  const absentKey = render({ schema_version: 1, capture: {} });
+  for (const [label, html] of [['explicit null', explicitNull], ['missing', missing], ['no section', absentKey]]) {
+    assert.match(html, /Recall counters/, `${label}: the row is present`);
+    assert.match(html, /cannot assess — search counters unavailable/, `${label}: and says so`);
+  }
+  // A healthy recall section renders no such row.
+  assert.doesNotMatch(render(makeStats()), /Recall counters/);
+});
+
 test('missing/blank payload sections degrade to em dashes, never "undefined" or a bare 0', () => {
   const html = render({ schema_version: 1, capture: null });
   assert.doesNotMatch(html, /undefined/);
@@ -601,6 +714,35 @@ const A12_FIXTURES = [
     '{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"<img src=x onerror=alert(1)>":{"last_day_seen":"2026-07-28","freshness_hours":0,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}},"__proto__":{"last_day_seen":"2026-07-20","freshness_hours":190,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'],
   ['abstained-only surface — page reds it, cron still calls it FRESH',
     '{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"a":{"last_day_seen":"2026-07-28","freshness_hours":0,"events_today":41,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":41,"deduped":0,"superseded":0,"error":0}}}}'],
+  // ---- float() coercion: every one of these is a place bare Number() and
+  // python float() DISAGREE, so the real script — not a hand-written
+  // expectation — decides what the page must do.
+  ...[
+    ['blank freshness string (Number("") is 0 — would read FRESH)', '""'],
+    ['numeric-string freshness at the threshold', '"26"'],
+    ['numeric-string freshness over the threshold', '"26.1"'],
+    ['hex-prefixed freshness (Number("0x10") is 16)', '"0x10"'],
+    ['binary-prefixed freshness (Number("0b101") is 5)', '"0b101"'],
+    ['octal-prefixed freshness (Number("0o17") is 15)', '"0o17"'],
+    ['bare "." freshness — no digits at all', '"."'],
+    ['inf freshness (Number("inf") is NaN, float("inf") is inf)', '"inf"'],
+    ['Infinity freshness', '"Infinity"'],
+    ['-inf freshness — trivially within any threshold', '"-inf"'],
+    ['nan freshness (all comparisons false)', '"nan"'],
+    ['PEP 515 underscored freshness (Number("1_0") is NaN)', '"1_0"'],
+    ['whitespace-padded numeric-string freshness', '"  26  "'],
+  ].map(([label, freshness]) => [label,
+    `{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"a":{"last_day_seen":"2026-07-28","freshness_hours":${freshness},"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}`]),
+  // …and the same coercion on the THRESHOLD side, which has its own
+  // raise-to-fallback path in the cron python.
+  ['inf threshold — everything is within it',
+    '{"schema_version":1,"capture_freshness_threshold_hours":"inf","capture":{"a":{"last_day_seen":"2026-06-01","freshness_hours":999,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'],
+  ['nan threshold — nothing is within it',
+    '{"schema_version":1,"capture_freshness_threshold_hours":"nan","capture":{"a":{"last_day_seen":"2026-07-28","freshness_hours":0,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'],
+  ['malformed threshold string — falls back to 26 on both sides',
+    '{"schema_version":1,"capture_freshness_threshold_hours":"0x10","capture":{"a":{"last_day_seen":"2026-07-27","freshness_hours":26,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'],
+  ['numeric-string threshold',
+    '{"schema_version":1,"capture_freshness_threshold_hours":"1","capture":{"a":{"last_day_seen":"2026-07-28","freshness_hours":2,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":1,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'],
 ];
 
 // Invoke the SHIPPED um-alert.sh under an isolated HOME with a MOCK_BIN curl
@@ -649,8 +791,12 @@ test('A12: captureVerdict and the shipped um-alert.sh agree on every fixture', (
         cron.code, EXIT_FOR_VERDICT[page.verdict],
         `${label}: page says ${page.verdict} (${page.state}) but um-alert.sh exited ${cron.code} — ${cron.out.trim()}`,
       );
-      // …and the page's colour is the taxonomy's, so "green while cron pages
-      // the operator" is impossible by construction, not by convention.
+      // …and the page's colour is the taxonomy's. NOT "impossible by
+      // construction": the guarantee is exactly this fixture table plus the
+      // ONE documented residual in pyFloat (non-ASCII Unicode decimal digits,
+      // which python parses and JS does not) — and that residual resolves to
+      // page-ERROR/grey where cron may say FRESH, i.e. the page can be more
+      // alarming than cron, never less. It is also unreachable in-process.
       assert.equal(page.state, { FRESH: 'green', STALE: 'red', ERROR: 'grey' }[page.verdict], label);
     }
     // A guard on the HARNESS: if the mock ever stopped reaching the real python
