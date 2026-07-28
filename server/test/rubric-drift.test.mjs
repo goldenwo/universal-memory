@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const CANONICAL_PATH = path.join(REPO, 'plugins/claude-code/universal-memory/rubric.md');
+// The two docs/ mirrors were removed with the 2026-07-28 public-docs strip;
+// the surviving mirrors are all plugin-local.
 const MIRROR_PATHS = [
   'plugins/codex/universal-memory/README.md',
   'plugins/chatgpt-custom-gpt/universal-memory/README.md',
   'plugins/chatgpt-custom-gpt/universal-memory/system-prompt.md',
-  'docs/connecting-chatgpt-desktop.md',
-  'docs/connecting-claude-ai.md',
 ].map((p) => path.join(REPO, p));
 
 function extractRubric(absPath) {
@@ -22,7 +22,7 @@ function extractRubric(absPath) {
   return m[1].trim();
 }
 
-test('rubric drift-gate: all 5 mirrors byte-match canonical', () => {
+test('rubric drift-gate: all mirrors byte-match canonical', () => {
   const canonical = extractRubric(CANONICAL_PATH);
   for (const p of MIRROR_PATHS) {
     const mirror = extractRubric(p);
