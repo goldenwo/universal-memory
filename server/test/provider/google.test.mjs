@@ -160,3 +160,31 @@ test('factsInvoke handles malformed JSON by returning empty facts', async () => 
   const result = await google.factsInvoke('text', { client: fakeClient });
   assert.deepEqual(result.facts, []);
 });
+
+// --- #181 cross-provider prompt sync: call-site + temperature contract ---------
+
+test('factsInvoke sends the shared policy prompt as systemInstruction and pins temperature 0 by default (#181 sync)', async () => {
+  const { FACTS_SYSTEM_PROMPT } = await import('../../lib/provider/facts-prompt.mjs');
+  let seen = null;
+  const fakeClient = {
+    models: { generateContent: async (args) => {
+      seen = args;
+      return { text: '{"facts": []}', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } };
+    } },
+  };
+  await google.factsInvoke('any text', { client: fakeClient });
+  assert.equal(seen.config.systemInstruction, FACTS_SYSTEM_PROMPT);
+  assert.equal(seen.config.temperature, 0); // prod passes no temperature → deterministic default
+});
+
+test('factsInvoke honors an explicit temperature override (overridable default, not a hardcoded literal)', async () => {
+  let seen = null;
+  const fakeClient = {
+    models: { generateContent: async (args) => {
+      seen = args;
+      return { text: '{"facts": []}', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } };
+    } },
+  };
+  await google.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
+  assert.equal(seen.config.temperature, 0.7);
+});

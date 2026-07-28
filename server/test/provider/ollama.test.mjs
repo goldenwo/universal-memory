@@ -169,3 +169,28 @@ test('factsInvoke handles malformed JSON by returning empty facts', async () => 
   const result = await ollama.factsInvoke('text', { fetch: fakeFetch });
   assert.deepEqual(result.facts, []);
 });
+
+// --- #181 cross-provider prompt sync: call-site + temperature contract ---------
+
+test('factsInvoke inlines the shared policy prompt before the text and pins temperature 0 by default (#181 sync)', async () => {
+  const { FACTS_SYSTEM_PROMPT } = await import('../../lib/provider/facts-prompt.mjs');
+  let seenBody = null;
+  const fakeFetch = async (url, init) => {
+    seenBody = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ response: '{"facts": []}', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  await ollama.factsInvoke('the user text', { fetch: fakeFetch });
+  assert.ok(seenBody.prompt.startsWith(`${FACTS_SYSTEM_PROMPT}\n\n---\n\n`)); // system inlined (ollama `system` field inconsistent across versions)
+  assert.equal(seenBody.system, undefined);
+  assert.equal(seenBody.options.temperature, 0); // prod passes no temperature → deterministic default
+});
+
+test('factsInvoke honors an explicit temperature override (overridable default, not a hardcoded literal)', async () => {
+  let seenBody = null;
+  const fakeFetch = async (url, init) => {
+    seenBody = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ response: '{"facts": []}', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  await ollama.factsInvoke('any text', { fetch: fakeFetch, temperature: 0.7 });
+  assert.equal(seenBody.options.temperature, 0.7);
+});

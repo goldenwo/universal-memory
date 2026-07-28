@@ -150,3 +150,31 @@ test('factsInvoke handles malformed JSON by returning empty facts', async () => 
 test('anthropic does NOT export embed (per spec §4.2)', () => {
   assert.equal(anthropic.embed, undefined, 'anthropic must not export embed — it has no embeddings API');
 });
+
+// --- #181 cross-provider prompt sync: call-site + temperature contract ---------
+
+test('factsInvoke sends the shared policy prompt as system and pins temperature 0 by default (#181 sync)', async () => {
+  const { FACTS_SYSTEM_PROMPT } = await import('../../lib/provider/facts-prompt.mjs');
+  let seen = null;
+  const fakeClient = {
+    messages: { create: async (args) => {
+      seen = args;
+      return { content: [{ type: 'text', text: '{"facts": []}' }], usage: { input_tokens: 1, output_tokens: 1 } };
+    } },
+  };
+  await anthropic.factsInvoke('any text', { client: fakeClient });
+  assert.equal(seen.system, FACTS_SYSTEM_PROMPT);
+  assert.equal(seen.temperature, 0); // prod passes no temperature → deterministic default
+});
+
+test('factsInvoke honors an explicit temperature override (overridable default, not a hardcoded literal)', async () => {
+  let seen = null;
+  const fakeClient = {
+    messages: { create: async (args) => {
+      seen = args;
+      return { content: [{ type: 'text', text: '{"facts": []}' }], usage: { input_tokens: 1, output_tokens: 1 } };
+    } },
+  };
+  await anthropic.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
+  assert.equal(seen.temperature, 0.7);
+});

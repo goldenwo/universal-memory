@@ -15,6 +15,7 @@
  */
 
 import { ProviderError } from './errors.mjs';
+import { FACTS_SYSTEM_PROMPT } from './facts-prompt.mjs';
 
 export const providerName = 'google';
 
@@ -246,10 +247,8 @@ export async function embed(text, opts = {}) {
   };
 }
 
-const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
-Extract atomic, declarative facts useful for personalization or recall.
-Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
-If no facts can be extracted, output {"facts": []}.`;
+// Facts prompt: shared v1.5.2 policy from facts-prompt.mjs since the #181 sync
+// (pinned by test/provider-prompts-snapshot.test.mjs).
 
 function parseFactsJson(content) {
   const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
@@ -261,7 +260,9 @@ function parseFactsJson(content) {
 }
 
 export async function factsInvoke(text, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.factsModel } = opts;
+  // temperature 0 by default, overridable — mirrors openai's facts pin (#181 sync;
+  // determinism for dedup/supersession + run-to-run eval comparability).
+  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0 } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] google fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -285,7 +286,10 @@ export async function factsInvoke(text, opts = {}) {
     raw = await client.models.generateContent({
       model,
       contents: [{ role: 'user', parts: [{ text }] }],
-      config: { systemInstruction: FACTS_SYSTEM_PROMPT },
+      config: {
+        systemInstruction: FACTS_SYSTEM_PROMPT,
+        ...(temperature !== undefined ? { temperature } : {}),
+      },
     });
   } catch (cause) {
     const norm = normalizeError(cause);

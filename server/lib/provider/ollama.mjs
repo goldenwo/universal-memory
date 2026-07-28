@@ -15,6 +15,7 @@
  */
 
 import { ProviderError } from './errors.mjs';
+import { FACTS_SYSTEM_PROMPT } from './facts-prompt.mjs';
 
 export const providerName = 'ollama';
 
@@ -264,10 +265,8 @@ export async function probeModel(host, model, { fetch: customFetch = globalThis.
   return Array.isArray(data?.models) && data.models.some((m) => m.name === model);
 }
 
-const FACTS_SYSTEM_PROMPT = `You are a fact extractor. The user message contains text from a memory store.
-Extract atomic, declarative facts useful for personalization or recall.
-Output ONLY a JSON object: {"facts": ["fact 1", "fact 2"]}. No preamble, no markdown fences.
-If no facts can be extracted, output {"facts": []}.`;
+// Facts prompt: shared v1.5.2 policy from facts-prompt.mjs since the #181 sync
+// (pinned by test/provider-prompts-snapshot.test.mjs).
 
 function parseFactsJson(content) {
   const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
@@ -278,7 +277,9 @@ function parseFactsJson(content) {
   return [];
 }
 
-export async function factsInvoke(text, { fetch = globalThis.fetch, host = process.env.OLLAMA_HOST || 'http://localhost:11434', model = defaults.factsModel } = {}) {
+// temperature 0 by default, overridable — mirrors openai's facts pin (#181 sync;
+// determinism for dedup/supersession + run-to-run eval comparability).
+export async function factsInvoke(text, { fetch = globalThis.fetch, host = process.env.OLLAMA_HOST || 'http://localhost:11434', model = defaults.factsModel, temperature = 0 } = {}) {
   if (process.env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] ollama fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -291,7 +292,7 @@ export async function factsInvoke(text, { fetch = globalThis.fetch, host = proce
     res = await fetch(`${host}/api/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt: composed, stream: false }),
+      body: JSON.stringify({ model, prompt: composed, stream: false, options: { temperature } }),
     });
   } catch (cause) {
     throw new ProviderError({
