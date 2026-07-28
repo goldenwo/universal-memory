@@ -58,18 +58,6 @@ _read_plugin_version() {
   grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
 }
 
-_copy_rubric_to_target() {
-  local target="$1"
-  local src_rubric="$REPO_ROOT/docs/memory-routing-rubric.md"
-  if [ ! -r "$src_rubric" ]; then
-    warn "Rubric source missing at $src_rubric — session-start will use inline fallback."
-    return
-  fi
-  if ! cp "$src_rubric" "$target/rubric.md" 2>/dev/null; then
-    warn "Could not copy rubric.md to $target — session-start will use inline fallback."
-  fi
-}
-
 # ─── Install ─────────────────────────────────────────────────────────────────
 _install_plugin() {
   local src="$_PLUGIN_SRC"
@@ -170,7 +158,6 @@ _install_plugin() {
         warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
         if cp -r "$src" "$target"; then
           ok "Plugin copied to $target (copy fallback)."
-          _copy_rubric_to_target "$target"
         fi
       fi
       ;;
@@ -183,7 +170,6 @@ _install_plugin() {
       elif [ -d "$target" ]; then _backup_target_if_modified "$src" "$target"; rm -rf "$target" 2>/dev/null || true; fi
       if cp -r "$src" "$target"; then
         ok "Plugin copied to $target"
-        _copy_rubric_to_target "$target"
       fi
       ;;
   esac

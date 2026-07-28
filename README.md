@@ -39,15 +39,15 @@ You finish a Claude Code session mid-refactor. The next morning you open a fresh
 
 ### By the numbers
 
-Every figure is measured by UM's own evals and regenerable by a documented command — sources, environments, and caveats in [docs/benchmarks.md](docs/benchmarks.md). (Numbers for the engines UM builds on live in [their repos](#built-on-proven-foundations), not here.)
+Every figure is measured by UM's own evals and regenerable by a documented command. (Numbers for the engines UM builds on live in [their repos](#built-on-proven-foundations), not here.)
 
 | | Measured |
 |---|---|
-| **Recall latency** | p50 **211 ms** end-to-end against UM's API — on a Raspberry Pi 5 running the production instance ([details](docs/benchmarks.md#recall-latency--end-to-end-labeled)) |
-| **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention 7/8 — on UM's 40-row benchmark ([details](docs/benchmarks.md#fact-extraction-fidelity)) |
-| **Duplicate writes** | **100%** of identical re-writes merged, **0** false merges, **0** store growth on full rewrite ([details](docs/benchmarks.md#duplicate-write-handling)) |
-| **Checkpoint cost** | **$0.000155** median per session state-of-play synthesis ([details](docs/benchmarks.md#session-checkpoint-cost)) |
-| **Rigor** | 1,651 tests, 0 failures, on every PR ([details](docs/benchmarks.md#test--eval-rigor)) |
+| **Recall latency** | p50 **211 ms** end-to-end against UM's API — on a Raspberry Pi 5 running the production instance |
+| **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention 7/8 — on UM's 40-row benchmark |
+| **Duplicate writes** | **100%** of identical re-writes merged, **0** false merges, **0** store growth on full rewrite |
+| **Checkpoint cost** | **$0.000155** median per session state-of-play synthesis |
+| **Rigor** | 1,651 tests, 0 failures, on every PR |
 
 ---
 
@@ -65,8 +65,8 @@ Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the 
 ### Built on proven foundations
 
 - **mem0 inside, by default** — every UM server embeds [mem0 OSS](https://github.com/mem0ai/mem0) as its vector-memory engine (version-pinned and contract-tested, so upgrades are deliberate, never silent). UM layers session continuity, lanes, dedup + supersession, and its own evaluated extraction pipeline on top of it.
-- **mem0 API-compatible** — any existing mem0 Platform client adopts UM without code changes: set `UM_MEM0_COMPAT_ENABLED=true`, point the client's `baseUrl` at your server, use your `UM_AUTH_TOKEN` as the API key. See [docs/mem0-compat.md](docs/mem0-compat.md).
-- **claude-mem friendly** — already running [claude-mem](https://github.com/thedotmack/claude-mem)? The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault so cross-surface queries see it too. See [docs/bridges.md](docs/bridges.md).
+- **mem0 API-compatible** — any existing mem0 Platform client adopts UM without code changes: set `UM_MEM0_COMPAT_ENABLED=true`, point the client's `baseUrl` at your server, use your `UM_AUTH_TOKEN` as the API key.
+- **claude-mem friendly** — already running [claude-mem](https://github.com/thedotmack/claude-mem)? The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault so cross-surface queries see it too.
 
 ---
 
@@ -97,7 +97,6 @@ curl http://localhost:6335/health
 # {"ok":true,"memories":0}
 ```
 
-Full walkthrough: [docs/quickstart.md](docs/quickstart.md).
 
 ### 2. First Claude Code session
 
@@ -110,7 +109,7 @@ claude plugin install universal-memory@universal-memory
 
 then `/um-setup` inside Claude Code (endpoint + token prompt; it verifies the server with a health check and an authed write probe before writing any config). Open a session — the Stop hook streams turns to the server, the SessionEnd hook triggers a server-side summary. Nothing else is required.
 
-**Pointing at a remote server?** Same two commands plus `/um-setup` with your server's URL — the hooks are thin HTTP clients, local and remote alike. On the **server**, capture requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (both default off). Server must be ≥ v1.7.0. Full guide: [docs/claude-code-plugin.md](docs/claude-code-plugin.md).
+**Pointing at a remote server?** Same two commands plus `/um-setup` with your server's URL — the hooks are thin HTTP clients, local and remote alike. On the **server**, capture requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (both default off). Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 
@@ -125,13 +124,13 @@ cd universal-memory
 bash installer/install-cli.sh
 ```
 
-See [installer/install-cli.md](installer/install-cli.md) and the [subcommand reference](docs/um-cli.md).
+See [installer/install-cli.md](installer/install-cli.md) for the subcommand reference.
 
 ---
 
 ## Surfaces
 
-The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write. The full parity matrix — setup steps, project-signal, tier ladder — lives in [docs/surfaces.md](docs/surfaces.md).
+The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write.
 
 | Surface | Capture | Recall | Setup |
 |---|---|---|---|
@@ -142,7 +141,7 @@ The same vault is reachable from every surface below. Capture is automatic where
 | **`um` CLI** | `um capture` | `um state` / `um search` | One command |
 | **mem0-compatible clients** (e.g. Discord bots) | Automatic (client-driven) | Automatic | Point `baseUrl` at UM — opt-in flag `UM_MEM0_COMPAT_ENABLED=true` |
 
-Any request reaching UM through a tunnel or reverse proxy must carry `Authorization: Bearer <UM_AUTH_TOKEN>`; loopback installs skip auth by default. Connector guides: [claude.ai](docs/connecting-claude-ai.md) · [ChatGPT Desktop](docs/connecting-chatgpt-desktop.md) · [mem0-compat](docs/mem0-compat.md).
+Any request reaching UM through a tunnel or reverse proxy must carry `Authorization: Bearer <UM_AUTH_TOKEN>`; loopback installs skip auth by default.
 
 ---
 
@@ -154,7 +153,7 @@ Any request reaching UM through a tunnel or reverse proxy must carry `Authorizat
 - **Command-line toolkit** — a 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.
 - **Markdown as source of truth** — no vendor lock-in. Swap the vector store, LLM provider, or plugin format and your knowledge survives as readable files under git.
-- **Upstream bridges** — one-way ingest from external memory stores. `um-bridge-claude-mem` mirrors your claude-mem history into the UM vault as searchable markdown. See [docs/bridges.md](docs/bridges.md).
+- **Upstream bridges** — one-way ingest from external memory stores. `um-bridge-claude-mem` mirrors your claude-mem history into the UM vault as searchable markdown.
 
 ## Who this is for
 
@@ -180,7 +179,7 @@ Anyone who uses AI across multiple sessions and wants continuity — not a coder
 
 ## MCP tool surface
 
-11 tools total — 4 read tools visible to any MCP client by default; 7 write tools visible only when `UM_MCP_WRITE_ENABLED=true`. Read tools return compact snippets by default; pass `full: true` for full bodies. Full schemas and examples in [docs/mcp-tools.md](docs/mcp-tools.md).
+11 tools total — 4 read tools visible to any MCP client by default; 7 write tools visible only when `UM_MCP_WRITE_ENABLED=true`. Read tools return compact snippets by default; pass `full: true` for full bodies.
 
 | Tool | Type | What it does |
 |---|---|---|
@@ -206,15 +205,14 @@ universal-memory/
 ├── installer/    Install wizards (server, CLI, plugins)
 ├── cli/          `um` command-line toolkit source
 ├── plugins/      Per-surface connectors (Claude Code, Codex, ChatGPT Custom GPT)
-├── examples/     Integration examples (OpenAI Assistants, …)
-└── docs/         Architecture, surfaces matrix, connector guides, references
+└── examples/     Integration examples (OpenAI Assistants, …)
 ```
 
 ---
 
 ## Upgrading
 
-universal-memory is three separately-updated surfaces — the **server**, the **Claude Code plugin**, and the **`um` CLI** — and they update through three different mechanisms. **[docs/upgrading.md](docs/upgrading.md) covers all three in order**, with the failure signature each one produces when it falls behind. The server is below; do it first, because the plugin will not talk to a server older than itself.
+universal-memory is three separately-updated surfaces — the **server**, the **Claude Code plugin**, and the **`um` CLI** — and they update through three different mechanisms. The server is below; do it first, because the plugin will not talk to a server older than itself.
 
 ```bash
 cd server
@@ -244,7 +242,7 @@ The other two surfaces: `claude plugin update universal-memory` (then restart Cl
 
 Anything the shipped compose file cannot know — an alternate qdrant image for your CPU, an extra port binding on a tailnet IP, bind paths outside the repo — goes in `server/docker-compose.override.yml`. It is gitignored, auto-loaded by a bare `docker compose`, and applied last so it wins. `install.sh` passes it explicitly on every call, so `--upgrade` and `--verify` see the same stack you do.
 
-universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, consult [MIGRATION.md](MIGRATION.md) for per-version upgrade steps and [CHANGELOG.md](CHANGELOG.md) for full release notes. Pin a release tag rather than tracking `latest` in production.
+universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing. Pin a release tag rather than tracking `latest` in production.
 
 Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
 
@@ -256,8 +254,7 @@ The server makes outbound calls only to the OpenAI API (embeddings + fact extrac
 
 ---
 
-## Security, contributing, license
+## Security & license
 
-- Found a vulnerability? See [SECURITY.md](SECURITY.md).
-- Want to contribute? Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+- Found a vulnerability? Report it privately via [GitHub security advisories](https://github.com/goldenwo/universal-memory/security/advisories/new) — please do not open a public issue.
 - License: MIT — see [LICENSE](LICENSE).

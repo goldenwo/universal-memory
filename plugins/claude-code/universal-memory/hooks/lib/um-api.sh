@@ -29,7 +29,7 @@ source "$_UM_API_LIB_DIR/endpoint.sh"
 
 # Docs link carried by the G7 banner. The plugin docs page ships later in this
 # arc (spec §7); keep this constant in sync when that page lands.
-UM_DOCS_LINK="${UM_DOCS_LINK:-https://github.com/goldenwo/universal-memory/blob/main/docs/claude-code-plugin.md}"
+UM_DOCS_LINK="${UM_DOCS_LINK:-https://github.com/goldenwo/universal-memory#readme}"
 
 # um_api_endpoint
 # Prints the resolved endpoint URL on stdout (spec §4 order):

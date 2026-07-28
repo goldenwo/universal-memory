@@ -27,8 +27,7 @@ See the [Limitations](#5-limitations) section below for the full can / can't-do 
 
 Before starting, you should have:
 
-- UM server running + reachable at a tunnel URL (Tailscale Funnel, Cloudflare Tunnel, or ngrok).
-  See [`docs/connecting-chatgpt-desktop.md#2-tunnel-options`](../../../docs/connecting-chatgpt-desktop.md#2-tunnel-options) for tunnel walkthroughs — the same tunnel works for Custom GPT Actions. Confirm the tunnel resolves (tunnel-fronted installs require `Authorization: Bearer $UM_AUTH_TOKEN`):
+- UM server running + reachable at a tunnel URL (Tailscale Funnel, Cloudflare Tunnel, or ngrok). Confirm the tunnel resolves (tunnel-fronted installs require `Authorization: Bearer $UM_AUTH_TOKEN`):
   ```bash
   curl -sf -H "Authorization: Bearer $UM_AUTH_TOKEN" https://<your-tunnel-host>/health
   # expected: {"ok":true,"memories":<count>}
@@ -36,7 +35,7 @@ Before starting, you should have:
 - A ChatGPT account on a plan that can create Custom GPTs. `<TBD: confirm current plan tier during D3 — likely Plus / Pro / Team / Enterprise as of 2026>`.
 - (Optional, for write tests) `UM_MCP_WRITE_ENABLED=true` in `server/.env`. `memory_add` itself does not require MCP writes to be enabled — it uses the HTTP `/api/add` path, which is gated only by the server being reachable. But if you also want to experiment with vault writes later, turn it on now.
 
-Security note: the same tunnel-exposure caveats from [`docs/connecting-chatgpt-desktop.md`](../../../docs/connecting-chatgpt-desktop.md) apply here. Anyone who can reach the tunnel URL can hit these endpoints, so prefer an auth-aware tunnel (Tailscale Funnel or Cloudflare Access) over raw ngrok when your vault contains anything sensitive.
+Security note: anything exposed through a tunnel must carry the bearer token; treat the tunnel URL as a secret. Anyone who can reach the tunnel URL can hit these endpoints, so prefer an auth-aware tunnel (Tailscale Funnel or Cloudflare Access) over raw ngrok when your vault contains anything sensitive.
 
 ### Compact-shape default (new in v0.4)
 
@@ -52,11 +51,11 @@ As of v0.4, `memory_search` responses ship in a **compact shape** by default: ea
 
 2. In the **Configure** tab, give the GPT a name (e.g. "Memory GPT") and a short description (e.g. "Access to my universal-memory vault").
 
-3. Paste the content of [`system-prompt.md`](system-prompt.md) into the **Instructions** field. This is the routing rubric mirrored from [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md). If the canonical rubric ever changes, re-paste this whole block.
+3. Paste the content of [`system-prompt.md`](system-prompt.md) into the **Instructions** field. This is the routing rubric mirrored from [`plugins/claude-code/universal-memory/rubric.md`](../../../plugins/claude-code/universal-memory/rubric.md). If the canonical rubric ever changes, re-paste this whole block.
 
    ![TBD: screenshot of Instructions field populated](screenshots/custom-gpt-instructions.png)
 
-<!-- Do not edit inline — mirror of docs/memory-routing-rubric.md. If the canonical file changes, re-paste this whole block. -->
+<!-- Do not edit inline — mirror of plugins/claude-code/universal-memory/rubric.md. If the canonical file changes, re-paste this whole block. -->
 <!-- CANONICAL-RUBRIC-START -->
 ## Memory routing (universal-memory)
 
@@ -162,7 +161,7 @@ If all four pass, the Custom GPT is wired correctly.
 - **Rich structured capture.** `memory_add` goes through mem0's fact-extractor; you don't get to specify the full frontmatter (type, id, title, project) the way `memory_capture` does over MCP. For ADRs, canonical docs, or anything that needs a stable filename + versioning, use Claude Code (the native plugin exposes `memory_capture` directly) or a Claude.ai / ChatGPT Desktop MCP connector instead.
 - **Supersede / forget.** These are MCP-only write tools (`memory_supersede`, `memory_forget`). Not exposed to Custom GPT Actions.
 - **State regeneration via checkpoint.** `memory_checkpoint` is now a real tool (v0.5) but it is MCP-only — not exposed to Custom GPT Actions. Use it from a ChatGPT Desktop MCP connector or Claude Code's `/um-checkpoint` command.
-- **Rubric drift.** The Instructions block is a static paste. If the canonical rubric in [`docs/memory-routing-rubric.md`](../../../docs/memory-routing-rubric.md) changes, re-paste `system-prompt.md` into the GPT's Instructions field.
+- **Rubric drift.** The Instructions block is a static paste. If the canonical rubric in [`plugins/claude-code/universal-memory/rubric.md`](../../../plugins/claude-code/universal-memory/rubric.md) changes, re-paste `system-prompt.md` into the GPT's Instructions field.
 
 ### Out-of-scope failure modes to expect
 - **Spec too large for the Actions import.** The Custom GPT Actions size limit `<TBD: verify current limit during D3 — the plan mentioned a 700-byte figure which is almost certainly a typo; ~100KB is the historically-documented cap but re-confirm before citing>`. The trimmed spec is ~10KB, so it's well under any plausible cap, but double-check if you hit "schema too large" errors.

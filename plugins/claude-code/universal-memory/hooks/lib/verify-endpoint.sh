@@ -30,7 +30,7 @@
 
 # Same default as um-api.sh's UM_DOCS_LINK (env-overridable; kept literal here
 # so this file stays sourceable with no siblings).
-UM_VERIFY_DOCS_LINK="${UM_DOCS_LINK:-https://github.com/goldenwo/universal-memory/blob/main/docs/claude-code-plugin.md}"
+UM_VERIFY_DOCS_LINK="${UM_DOCS_LINK:-https://github.com/goldenwo/universal-memory#readme}"
 
 # _um_verify_http_code <method> <url> <token> [body]
 # Prints the HTTP status code ('000' on transport failure). Never fails.

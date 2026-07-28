@@ -74,26 +74,21 @@ source "$LIB_DIR/um-api.sh"
 # least leave a hook.log line.
 PY=$(um_find_python) || { um_log "skip=no-python"; printf '{}\n'; exit 0; }
 
-# Memory routing rubric — sourced from docs/memory-routing-rubric.md
-# (canonical location; all platforms reference it).
-# As of v0.5 the canonical and mirror rubrics are delimited by
-# CANONICAL-RUBRIC-START/END marker comments. Extract just the content between
-# those markers so injection is clean regardless of other HTML comments in the
-# file (header comments, mirror-drift notes, etc.).
-RUBRIC_PATH="$SCRIPT_DIR/../../../../docs/memory-routing-rubric.md"
+# Memory routing rubric — canonical location is the sibling rubric.md at the
+# plugin root (plugins/claude-code/universal-memory/rubric.md), which ships
+# inside every install mode (repo checkout, marketplace copy, symlink) at the
+# same relative path. Delimited by CANONICAL-RUBRIC-START/END marker comments;
+# extract just the content between those markers so injection is clean
+# regardless of other HTML comments in the file.
+RUBRIC_PATH="$SCRIPT_DIR/../rubric.md"
 _extract_rubric() {
   awk '/CANONICAL-RUBRIC-START/{p=1;next} /CANONICAL-RUBRIC-END/{p=0} p' "$1"
 }
 if [ -r "$RUBRIC_PATH" ]; then
   UM_ROUTING_RUBRIC=$(_extract_rubric "$RUBRIC_PATH")
 else
-  # Plugin-installed copy (not repo-relative) — look at sibling rubric.md
-  RUBRIC_PATH="$SCRIPT_DIR/../rubric.md"
-  if [ -r "$RUBRIC_PATH" ]; then
-    UM_ROUTING_RUBRIC=$(_extract_rubric "$RUBRIC_PATH")
-  else
-    # Fallback: full inline rubric if BOTH canonical file and sibling copy missing.
-    # (Keep in sync with docs/memory-routing-rubric.md — this is the safety net.)
+    # Fallback: full inline rubric if the sibling rubric.md is missing.
+    # (Keep in sync with plugins/claude-code/universal-memory/rubric.md — this is the safety net.)
     # shellcheck disable=SC2089,SC2016  # single-quoted literal content
     # (backticks, $vars) is deliberately not re-evaluated; variable is
     # env-exported below and read as-is by python3 via os.environ.get —
@@ -112,7 +107,6 @@ When the user says "remember", "note that", or similar:
 - **Conversational context worth preserving across surfaces** (e.g. "track this conversation", a significant exchange you'\''ll revisit from Claude Code later, the current turn on its own): call `memory_append_turn` with `role` (user/assistant/system) + `content` + `project`. Unlike `memory_capture` (which writes a stable authored doc with structured frontmatter), `memory_append_turn` appends a raw turn that the NEXT session-end summary will consume. Use both when appropriate — a durable decision gets `memory_capture`; the context around the decision gets `memory_append_turn`.
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.'
-  fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-# Copy into your Custom GPT's "Instructions" field
+<!-- canonical memory-routing rubric for universal-memory.
+     Sourced by plugins/<platform>/*/hooks/session-start.sh and referenced
+     by ChatGPT Custom GPT / other integrations. Update here; all integrations
+     pick up changes on next session. -->
 
-You are a memory-enhanced assistant backed by a universal-memory (UM) server. UM is the user's cross-session memory vault. Before responding to a new topic, consider calling `memory_state(project: <inferred>)` to load the current state-of-play, then `memory_search(query: <topic>)` for relevant prior facts. When the user says "remember" or shares a durable fact, call `memory_add`.
-
-<!-- Do not edit inline — mirror of plugins/claude-code/universal-memory/rubric.md. If the canonical file changes, re-paste this whole block. -->
 <!-- CANONICAL-RUBRIC-START -->
 ## Memory routing (universal-memory)
 
@@ -17,15 +17,3 @@ When the user says "remember", "note that", or similar:
 
 When uncertain, prefer a capture call over trusting session-end — durable docs are easier to search than buried state.md entries.
 <!-- CANONICAL-RUBRIC-END -->
-
----
-
-Tool mapping (Custom GPT Actions → UM endpoints):
-- `memory_search` → POST /api/search
-- `memory_state` → GET /api/state/{project}
-- `memory_add` → POST /api/add
-- `memory_delete` → POST /api/delete
-
-**Response shape (v0.4+):** `memory_search` and `memory_list` return compact results by default — each item has `id`, `title`, `score`, and `snippet` (first ~240 chars of body). Use the snippet to answer most questions. To retrieve the full body of a specific document, append `?full=1` to the search or list request. Prefer compact (default) unless the snippet clearly lacks the needed detail.
-
-For every new conversation, call `memory_state` early to load the current snapshot.

@@ -473,7 +473,7 @@ printf '\nTest 12: Return time < 1500ms\n'
 # missing) will get stale routing guidance.
 printf '\nTest 13: inline fallback matches canonical rubric\n'
 {
-  CANONICAL="$REPO_ROOT/docs/memory-routing-rubric.md"
+  CANONICAL="$REPO_ROOT/plugins/claude-code/universal-memory/rubric.md"
   if [ ! -r "$CANONICAL" ]; then
     printf '  SKIP: canonical file not found at %s\n' "$CANONICAL"
   else

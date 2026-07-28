@@ -538,13 +538,11 @@ assert_exit_zero "T10: --verify exits 0 despite malformed .env line" "$T10_EXIT"
 assert_contains "T10: malformed key warning shown" "$T10_OUT" "malformed .env line"
 assert_contains "T10: all checks still pass" "$T10_OUT" "All checks passed"
 
-# ─── T15: symlink mode must not pollute repo source tree with rubric.md ──────
-# Review fix: previously _install_plugin called _copy_rubric_to_target after
-# a successful ln -s, which resolved through the symlink and wrote
-# rubric.md into the repo source tree (appearing as untracked in git status
-# for every dev running install.sh --link). The fix skips that copy in the
-# symlink success branch because session-start.sh's canonical-path lookup
-# resolves correctly through the symlink anyway.
+# ─── T15: --link install must not modify the plugin source tree ──────────────
+# Historical bug: an install-time rubric copy resolved through the symlink and
+# wrote into the repo source tree. The copy mechanism is retired (rubric.md
+# ships in-plugin), but the invariant stays: link-mode installs leave the
+# source tree's file set untouched.
 echo ""
 echo "=== T15: symlink mode does not create rubric.md in the repo source tree ==="
 T15="$TMPROOT/t15"
@@ -555,13 +553,15 @@ make_fakebin "$T15/bin" 200
 # We must NOT modify the real repo, so copy the plugin source into an
 # isolated location and point _UM_REPO_ROOT at a fake repo root whose
 # plugins/claude-code/universal-memory mirrors the real one. We also need
-# a docs/ dir with the rubric so _copy_rubric_to_target would find source.
+# rubric.md rides along inside the plugin tree copy below.
 T15_REPO="$T15/repo"
-mkdir -p "$T15_REPO/docs" "$T15_REPO/plugins/claude-code" "$T15_REPO/installer/lib"
-cp "$REPO_ROOT/docs/memory-routing-rubric.md" "$T15_REPO/docs/memory-routing-rubric.md"
+mkdir -p "$T15_REPO/plugins/claude-code" "$T15_REPO/installer/lib"
 cp -r "$PLUGIN_SRC" "$T15_REPO/plugins/claude-code/universal-memory"
 cp "$REPO_ROOT/installer/lib/marker-block.sh" "$T15_REPO/installer/lib/marker-block.sh"
 T15_SRC_PLUGIN="$T15_REPO/plugins/claude-code/universal-memory"
+# Snapshot the source-tree file set BEFORE install — the assertion below is
+# that a --link install leaves it byte-for-byte identical in membership.
+T15_TREE_BEFORE=$(cd "$T15_SRC_PLUGIN" && find . -type f | sort)
 
 # Copy install.sh + helpers into isolated server dir, but REPO_ROOT points
 # at the fake repo so symlink resolution ends up at $T15_SRC_PLUGIN.
@@ -593,13 +593,18 @@ assert_exit_zero "T15: install exits 0 in link mode" "$T15_EXIT"
 # (Windows Git Bash emulates ln -s differently on different versions).
 # Before the fix, the symlink-success branch wrote rubric.md into $target,
 # which resolved through the symlink into $T15_SRC_PLUGIN. After the fix,
-# only the cp -r fallback branch copies — and that branch writes into the
-# real directory at $target, never into the source tree.
-if [ -f "$T15_SRC_PLUGIN/rubric.md" ]; then
-  fail_test "T15: repo source tree clean after --link install" \
-    "$T15_SRC_PLUGIN/rubric.md exists — symlink mode polluted the repo"
+# The rubric now SHIPS at plugins/claude-code/universal-memory/rubric.md
+# (canonical in-plugin location; the _copy_rubric_to_target mechanism is
+# retired), so its presence in the source tree is correct. The invariant this
+# test guards is unchanged in spirit: a --link install must not CREATE or
+# REMOVE anything in the plugin source tree (the original bug wrote through
+# the symlink into the repo). Assert by file-set snapshot diff.
+T15_TREE_AFTER=$(cd "$T15_SRC_PLUGIN" && find . -type f | sort)
+if [ "$T15_TREE_BEFORE" = "$T15_TREE_AFTER" ]; then
+  pass "T15: plugin source tree file set unchanged after --link"
 else
-  pass "T15: repo source tree has no stray rubric.md after --link"
+  fail_test "T15: plugin source tree file set unchanged after --link" \
+    "file-set diff: $(diff <(echo "$T15_TREE_BEFORE") <(echo "$T15_TREE_AFTER") | head -5 | tr '\n' ' ')"
 fi
 
 # ─── T16: UM_SUMMARIZER auto-detect — claude absent → openai ────────────────
@@ -998,7 +1003,7 @@ assert_contains "T20: prints the manual revert command" "$T20_OUT" "UM_IMAGE=um-
 # uses — a bare `docker compose` scoped to server/, not an explicit -f that
 # would suppress the host's docker-compose.override.yml.
 assert_not_contains "T20: revert command carries no -f" "$T20_OUT" "docker compose -f"
-assert_contains "T20: points at CHANGELOG" "$T20_OUT" "CHANGELOG.md"
+assert_contains "T20: points at the release notes" "$T20_OUT" "GitHub release notes"
 T20_LOGTXT=$(cat "$T20_LOG")
 assert_contains "T20: pulled the image" "$T20_LOGTXT" "pull memory-server"
 assert_contains "T20: pre-flighted via docker run" "$T20_LOGTXT" "--entrypoint node"
@@ -1412,7 +1417,7 @@ assert_contains "T32: refresh passes --no-path (never touches shell profiles)" \
   "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--no-path"
 assert_contains "T32: refresh is non-interactive" \
   "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--yes"
-assert_contains "T32: points at the three-surface doc" "$T32_OUT" "docs/upgrading.md"
+assert_contains "T32: states the three-surface update order" "$T32_OUT" "Update order: server first"
 
 # ─── T32b: CLI not installed on this host ⇒ refresh is skipped silently ──────
 echo ""

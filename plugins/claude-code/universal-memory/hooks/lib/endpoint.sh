@@ -49,7 +49,7 @@ um_resolve_endpoint() {
   fi
 
   if [ -n "$endpoint" ]; then
-    printf 'warning: UM_ENDPOINT is deprecated; rename to UM_SERVER_URL. Will be removed in a future release (see MIGRATION.md).\n' >&2
+    printf 'warning: UM_ENDPOINT is deprecated; rename it to UM_SERVER_URL (same value). Will be removed in a future release.\n' >&2
     printf '%s\n' "$endpoint"
     return 0
   fi
