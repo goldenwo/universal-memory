@@ -16,7 +16,16 @@ pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 TMPDIR_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_ROOT"' EXIT
+trap 'cd / && rm -rf "$TMPDIR_ROOT"' EXIT
+
+# Run every um-alert.sh spawn from a throwaway cwd, never the repo: the script
+# resolves its inputs from absolute paths, and a child that writes anything
+# relative (a Windows `py` bootstrap drops a whole runtime into CWD on first
+# probe) must not litter the working tree. Mirrors control-page.test.mjs's
+# runUmAlert. Everything below uses absolute paths, so one cd covers all cases.
+WORK_DIR="$TMPDIR_ROOT/cwd"
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR" || exit 1
 
 # Isolated HOME (no ~/.um endpoint/token leakage) shared by every case.
 HOME_DIR="$TMPDIR_ROOT/home"
