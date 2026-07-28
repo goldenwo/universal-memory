@@ -1,0 +1,134 @@
+{
+  "issue": 188,
+  "timestamp": "2026-07-28T23:42:59.061Z",
+  "accept_rule_sha256": "f2dba8db519a69f2346034a5f415e75b88c6f1ee343a98172acd6311f3b9f419",
+  "corpus": "clone of live memories collection, 279 points, 2026-07-28",
+  "qdrant": "1.7.3 (matches production)",
+  "runs": {
+    "run1": {
+      "metrics": {
+        "vecExact": 0.3669724770642202,
+        "vecSemantic": 0.3577981651376147,
+        "idealExact": 0.5412844036697247,
+        "depExact": 0.8623853211009175,
+        "depSemantic": 0.4036697247706422,
+        "lexExact": 0.7889908256880734,
+        "kwExact": 1,
+        "p95Delta": 0.03350000000500586
+      },
+      "n": {
+        "total": 109,
+        "fact": 32,
+        "doc": 77
+      },
+      "strata": {
+        "fact": {
+          "n": 32,
+          "vecExact": 1,
+          "vecSemantic": 1,
+          "depExact": 1,
+          "idealExact": 0.875
+        },
+        "doc": {
+          "n": 77,
+          "vecExact": 0.1038961038961039,
+          "vecSemantic": 0.09090909090909091,
+          "depExact": 0.8051948051948052,
+          "idealExact": 0.4025974025974026
+        }
+      },
+      "discordant": {
+        "gained": 54,
+        "lost": 0
+      },
+      "controls": {
+        "weight0EqualsVector": true,
+        "lexicalEmptyOnSemantic": "94/109"
+      },
+      "gates": {
+        "G1a": false,
+        "G1b": true,
+        "G2": true,
+        "G3": true,
+        "G5": true
+      },
+      "decision": "PARK",
+      "pipelineHealth": {
+        "vecSemantic": 0.3577981651376147,
+        "floor": 0.5,
+        "ok": false
+      },
+      "hashes": {
+        "corpus": "3875f73e7022b7ae",
+        "queries": "707573c7c83e0336"
+      },
+      "textIndex": {
+        "created": true,
+        "probeOk": true
+      }
+    },
+    "run2": {
+      "metrics": {
+        "vecExact": 0.3669724770642202,
+        "vecSemantic": 0.3486238532110092,
+        "idealExact": 0.5412844036697247,
+        "depExact": 0.8623853211009175,
+        "depSemantic": 0.41284403669724773,
+        "lexExact": 0.7889908256880734,
+        "kwExact": 1,
+        "p95Delta": 0.05069999999250285
+      },
+      "n": {
+        "total": 109,
+        "fact": 32,
+        "doc": 77
+      },
+      "strata": {
+        "fact": {
+          "n": 32,
+          "vecExact": 1,
+          "vecSemantic": 1,
+          "depExact": 1,
+          "idealExact": 0.875
+        },
+        "doc": {
+          "n": 77,
+          "vecExact": 0.1038961038961039,
+          "vecSemantic": 0.07792207792207792,
+          "depExact": 0.8051948051948052,
+          "idealExact": 0.4025974025974026
+        }
+      },
+      "discordant": {
+        "gained": 54,
+        "lost": 0
+      },
+      "controls": {
+        "weight0EqualsVector": true,
+        "lexicalEmptyOnSemantic": "95/109"
+      },
+      "gates": {
+        "G1a": false,
+        "G1b": true,
+        "G2": true,
+        "G3": true,
+        "G5": true
+      },
+      "decision": "PARK",
+      "pipelineHealth": {
+        "vecSemantic": 0.3486238532110092,
+        "floor": 0.5,
+        "ok": false
+      },
+      "hashes": {
+        "corpus": "3875f73e7022b7ae",
+        "queries": "0cca5de45fe4fe05"
+      },
+      "textIndex": {
+        "created": true,
+        "probeOk": true
+      }
+    }
+  },
+  "decision": "PARK — G1a fails in both runs; premise P1 is false"
+}
