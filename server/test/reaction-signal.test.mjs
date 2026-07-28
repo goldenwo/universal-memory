@@ -68,3 +68,11 @@ test('normalizeReactionMetadata: never throws on hostile shapes', () => {
     assert.doesNotThrow(() => normalizeReactionMetadata(hostile));
   }
 });
+
+test('normalizeReactionMetadata: types-without-count drops both (missing-count is its own warn class, distinct from invalid-count)', () => {
+  _resetReactionSignalForTest();
+  const out = normalizeReactionMetadata({ reaction_types: ['👍'], note: 'kept' });
+  assert.ok(!('reaction_count' in out));
+  assert.ok(!('reaction_types' in out));
+  assert.equal(out.note, 'kept');
+});

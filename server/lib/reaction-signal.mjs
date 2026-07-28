@@ -24,6 +24,13 @@
 //   the mem0-compat R2 verbatim path calls umAdd once PER MESSAGE, which would
 //   mint N rows for one reacted exchange), never on _systemMigration, and only
 //   when normalized metadata carries a valid reaction_count.
+//   DELIBERATE v1 LIMIT (dedup-merge): when every extracted fact dedup-merges
+//   into existing points, the signal row still records the admission verdict
+//   ('stored' — the exchange WAS admitted) but the surviving points' payloads
+//   are NOT patched with the reaction fields. A bot re-sending the same text
+//   after reactions accumulate is the LATE-ARRIVING case, which is out of
+//   contract v1 (needs point-id addressing) — the counter row is the record,
+//   same posture as the abstained path.
 //
 // • NORMALIZER CONTRACT: normalizeReactionMetadata never throws and never fails
 //   a capture/update; invalid values are dropped (with a once-per-process,
@@ -88,7 +95,10 @@ export function normalizeReactionMetadata(metadata) {
   if (!Number.isInteger(count) || count < 1) {
     delete md.reaction_count;
     delete md.reaction_types;
-    warnDropOnce('invalid-count', { got: typeof count });
+    // Distinct reason classes: types-without-count (a plausible partial-update
+    // shape) must not burn the process-lifetime warn slot for a genuinely
+    // malformed count later.
+    warnDropOnce(hasCount ? 'invalid-count' : 'missing-count', { got: typeof count });
     return md;
   }
   if (count > REACTION_COUNT_MAX) {
@@ -101,12 +111,16 @@ export function normalizeReactionMetadata(metadata) {
       delete md.reaction_types;
       warnDropOnce('invalid-types', { got: typeof md.reaction_types });
     } else {
+      let truncated = false;
       const cleaned = md.reaction_types
         .filter((t) => typeof t === 'string')
-        .map((t) => t.slice(0, REACTION_TYPE_MAX_CHARS))
+        .map((t) => {
+          if (t.length > REACTION_TYPE_MAX_CHARS) truncated = true;
+          return t.slice(0, REACTION_TYPE_MAX_CHARS);
+        })
         .slice(0, REACTION_TYPES_MAX_ENTRIES);
-      if (cleaned.length !== md.reaction_types.length) {
-        warnDropOnce('types-trimmed', { got: md.reaction_types.length, kept: cleaned.length });
+      if (truncated || cleaned.length !== md.reaction_types.length) {
+        warnDropOnce('types-trimmed', { got: md.reaction_types.length, kept: cleaned.length, truncated });
       }
       md.reaction_types = cleaned;
     }

@@ -356,9 +356,14 @@ test('reactions_7d: absent when a surface has no reaction rows (omit-when-zero)'
 });
 
 test('NAMESPACE ISOLATION (spec R3 pin): signal.reaction rows leave the WHOLE readCounterStats output byte-identical modulo reactions_7d', async () => {
+  // Capture rows deliberately OFF today: with last_day_seen at daysAgo(2) and
+  // events_today at 0, the TODAY reaction rows below would visibly advance
+  // freshness AND events_today if the namespace filter ever regressed —
+  // keeping them on TODAY made the freshness half vacuous (mutation-verified
+  // in review).
   const baseRows = [
-    { day: TODAY, surface: 'discord', event: 'capture.extraction', outcome: 'stored', count: 4 },
-    { day: TODAY, surface: 'discord', event: 'capture.checkpoint', outcome: 'stored', count: 1 },
+    { day: daysAgo(2), surface: 'discord', event: 'capture.extraction', outcome: 'stored', count: 4 },
+    { day: daysAgo(2), surface: 'discord', event: 'capture.checkpoint', outcome: 'stored', count: 1 },
     { day: daysAgo(1), surface: 'discord', event: 'recall.search', outcome: '', count: 6 },
   ];
   const cleanPath = await tempDbPath('um-stats-clean-');
@@ -368,9 +373,11 @@ test('NAMESPACE ISOLATION (spec R3 pin): signal.reaction rows leave the WHOLE re
   const reactedPath = await tempDbPath('um-stats-reacted-');
   seedCountersDb(reactedPath, [
     ...baseRows,
+    // TODAY reaction rows on a surface last captured daysAgo(2): a regressed
+    // capture.% filter would advance last_day_seen 2 days AND lift events_today
+    // from 0 — both diffs the strip-compare below would catch.
     { day: TODAY, surface: 'discord', event: 'signal.reaction', outcome: 'stored', count: 3 },
-    // A reaction-only DAY on the same surface must not advance freshness either.
-    { day: daysAgo(0), surface: 'discord', event: 'signal.reaction', outcome: 'abstained', count: 1 },
+    { day: TODAY, surface: 'discord', event: 'signal.reaction', outcome: 'abstained', count: 1 },
   ]);
   const reacted = readCounterStats({ now: NOW, dbPath: reactedPath });
 

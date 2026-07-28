@@ -791,7 +791,9 @@ test('umAdd _systemMigration:true emits no signal.reaction even when reacted (re
     text: 'migrated doc',
     userId: 'u-1',
     metadata: { project: 'um-proj', reaction_count: 2 },
-    infer: false,
+    // infer:true so the _systemMigration guard ALONE blocks the emit — with
+    // infer:false this test passes vacuously (mutation-verified in review).
+    infer: true,
     surface: 'reindex',
     _systemMigration: true,
     _factsProviderOverride: factsPassthrough(['unused']),
@@ -802,4 +804,64 @@ test('umAdd _systemMigration:true emits no signal.reaction even when reacted (re
   let rows = [];
   try { rows = readRows(dbPath); } catch { /* db never created — equally a pass */ }
   assert.equal(rows.length, 0);
+});
+
+test('umAdd reacted infer:true ADD path persists reaction fields in the payload (positive persistence pin)', async () => {
+  await freshCountersDb();
+  const upserts = [];
+  await umAdd({
+    memory: mockMemory,
+    text: 'a fact',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 4, reaction_types: ['👍', '❤️'] },
+    infer: true,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough(['a fact']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async (collection, body) => { upserts.push(body); return {}; } },
+  });
+  const payload = upserts[0].points[0].payload;
+  assert.equal(payload.reaction_count, 4);
+  assert.deepEqual(payload.reaction_types, ['👍', '❤️']);
+});
+
+test('umAdd reacted dedup-hit: signal row still records the admission verdict; surviving point is NOT patched (deliberate v1 limit — late-arrival is out of contract)', async () => {
+  const dbPath = await freshCountersDb();
+  const prevDedup = process.env.UM_DEDUP_ENABLED;
+  delete process.env.UM_DEDUP_ENABLED; // default ON
+  try {
+    const setPayloadCalls = [];
+    const existing = {
+      id: 'existing-point',
+      payload: { data: 'fact one', userId: 'u-1', surfaces: ['claude-code'], projects: ['um-proj'], dedupCount: 1, dedupVersion: 1 },
+    };
+    await umAdd({
+      memory: mockMemory,
+      text: 'fact one',
+      userId: 'u-1',
+      metadata: { project: 'um-proj', reaction_count: 6 },
+      infer: true,
+      surface: 'discord',
+      _factsProviderOverride: factsPassthrough(['fact one']),
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: {
+        scroll: async () => ({ points: [existing] }),   // Layer-1 hash hit
+        search: async () => [],
+        setPayload: async (collection, args) => { setPayloadCalls.push(args); return {}; },
+        upsert: async () => { throw new Error('dedup hit must not upsert'); },
+      },
+    });
+    const rows = readRows(dbPath);
+    const signal = rows.filter((r) => r.event === 'signal.reaction');
+    assert.equal(signal.length, 1, 'admission verdict recorded even on a full dedup-merge');
+    assert.equal(signal[0].outcome, 'stored');
+    // The merge patch stays the fixed dedup set — reaction fields are NOT
+    // threaded into the surviving point (reaction-signal.mjs header: the
+    // re-send-after-reactions shape IS the late-arriving case, out of v1).
+    for (const call of setPayloadCalls) {
+      assert.ok(!('reaction_count' in (call.payload ?? {})), 'no reaction patch on the surviving point');
+    }
+  } finally {
+    if (prevDedup !== undefined) process.env.UM_DEDUP_ENABLED = prevDedup;
+  }
 });

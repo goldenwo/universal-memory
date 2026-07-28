@@ -198,8 +198,12 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     for (const { surface, outcome, n } of reactionRows) {
       const s = capture[surface];
       if (!s) continue; // reaction-only surface — skip (see comment above)
-      if (!s.reactions_7d) s.reactions_7d = Object.fromEntries(REACTION_OUTCOME_KEYS.map((k) => [k, 0]));
-      if (Object.hasOwn(s.reactions_7d, outcome)) s.reactions_7d[outcome] += n;
+      // Vocabulary check BEFORE minting the map: an out-of-vocabulary outcome
+      // (e.g. a newer writer's third outcome read by this older server) must
+      // not manufacture an all-zero reactions_7d — omit-when-inapplicable.
+      if (!REACTION_OUTCOME_KEYS.includes(outcome)) continue;
+      s.reactions_7d ??= Object.fromEntries(REACTION_OUTCOME_KEYS.map((k) => [k, 0]));
+      s.reactions_7d[outcome] += n;
     }
 
     // Zero-filled 7-day map (oldest → today) — Stage B's sparkline consumes
