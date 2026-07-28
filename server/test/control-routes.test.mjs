@@ -23,14 +23,11 @@ import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import { endpointClassRoute } from '../lib/endpoint-class.mjs';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { createSession, expire, CONTROL_SESSION_TTL_MS } from '../lib/control-session.mjs';
 import { MAX_FORM_BYTES } from '../lib/http-form.mjs';
-
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
+import { seedCountersDb } from './helpers/counters-db.mjs';
 
 const TOKEN = 'control-master-token-abc123';
 
@@ -63,37 +60,6 @@ const AUTHENTICATED_MARKER = /Sign out/;
 // UTC day string, same convention as stats-payload.test.mjs — used by the A8
 // wire tests below that seed a real counters db.
 const TODAY = new Date().toISOString().slice(0, 10);
-
-// Direct-SQL seeding, same T5 schema as stats-payload.test.mjs — used only by
-// the A8/A6 wire tests below that need a REAL, readable counters db.
-function seedCountersDb(dbPath, rows = []) {
-  const db = new Database(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS counters (
-        day     TEXT    NOT NULL,
-        surface TEXT    NOT NULL,
-        project TEXT    NOT NULL,
-        event   TEXT    NOT NULL,
-        outcome TEXT    NOT NULL,
-        count   INTEGER NOT NULL,
-        PRIMARY KEY (day, surface, project, event, outcome)
-      )
-    `);
-    db.pragma('user_version = 1');
-    const stmt = db.prepare(`
-      INSERT INTO counters (day, surface, project, event, outcome, count)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (day, surface, project, event, outcome)
-      DO UPDATE SET count = count + excluded.count
-    `);
-    for (const r of rows) {
-      stmt.run(r.day, r.surface ?? 'claude-code', r.project ?? '', r.event, r.outcome ?? '', r.count ?? 1);
-    }
-  } finally {
-    db.close();
-  }
-}
 
 async function tempCountersDbPath(prefix) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), `um-control-routes-${prefix}-`));

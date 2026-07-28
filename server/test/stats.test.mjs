@@ -24,16 +24,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import { readCounterStats, freshnessHours } from '../lib/stats.mjs';
 import {
   recordCaptureEvent,
   CAPTURE_EVENTS,
   _resetCaptureEventsForTest,
 } from '../lib/capture-events.mjs';
-
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
+import { seedCountersDb } from './helpers/counters-db.mjs';
 
 // ---------- helpers ----------
 
@@ -54,37 +51,6 @@ function daysAgo(n) {
 async function tempDbPath(prefix = 'um-stats-') {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   return path.join(dir, 'um-counters.db');
-}
-
-// Direct-SQL seeding (audit correction: recordCaptureEvent hardcodes day=today,
-// so historical rows are seeded with the pinned T5 schema/UPSERT shape).
-function seedDb(dbPath, rows = []) {
-  const db = new Database(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS counters (
-        day     TEXT    NOT NULL,
-        surface TEXT    NOT NULL,
-        project TEXT    NOT NULL,
-        event   TEXT    NOT NULL,
-        outcome TEXT    NOT NULL,
-        count   INTEGER NOT NULL,
-        PRIMARY KEY (day, surface, project, event, outcome)
-      )
-    `);
-    db.pragma('user_version = 1');
-    const stmt = db.prepare(`
-      INSERT INTO counters (day, surface, project, event, outcome, count)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (day, surface, project, event, outcome)
-      DO UPDATE SET count = count + excluded.count
-    `);
-    for (const r of rows) {
-      stmt.run(r.day, r.surface ?? 'claude-code', r.project ?? '', r.event, r.outcome ?? '', r.count ?? 1);
-    }
-  } finally {
-    db.close();
-  }
 }
 
 const EMPTY_OUTCOMES = { stored: 0, abstained: 0, deduped: 0, superseded: 0, error: 0 };
@@ -117,7 +83,7 @@ test('freshnessHours rounds to 1 decimal', () => {
 
 test('rows today ⇒ freshness_hours 0, last_day_seen today, events_today counted', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 4 },
     { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'stored', count: 2 },
   ]);
@@ -133,7 +99,7 @@ test('rows today ⇒ freshness_hours 0, last_day_seen today, events_today counte
 
 test('A2: last capture row 3 days ago ⇒ freshness_hours exactly 57.5 at the frozen clock', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: daysAgo(3), surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 5 },
   ]);
   const stats = readCounterStats({ now: NOW, dbPath });
@@ -146,7 +112,7 @@ test('A2: last capture row 3 days ago ⇒ freshness_hours exactly 57.5 at the fr
 
 test('G2 incident case: only recall.search today + capture.* 3 days ago ⇒ 3-day freshness', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: daysAgo(3), surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 2 },
     { day: TODAY, surface: 'claude-code', event: 'recall.search', outcome: '', count: 9 },
   ]);
@@ -160,7 +126,7 @@ test('G2 incident case: only recall.search today + capture.* 3 days ago ⇒ 3-da
 
 test('scope filter: recall.search rows excluded from every capture aggregate, included in recall', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'discord', event: 'capture.turn', outcome: 'stored', count: 3 },
     { day: TODAY, surface: 'discord', event: 'recall.search', outcome: '', count: 7 },
     { day: daysAgo(2), surface: 'discord', event: 'recall.search', outcome: '', count: 4 },
@@ -175,7 +141,7 @@ test('scope filter: recall.search rows excluded from every capture aggregate, in
 
 test('errors_today is today-scoped: an error row yesterday does not count', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: daysAgo(1), surface: 'claude-code', event: 'capture.checkpoint', outcome: 'error', count: 3 },
     { day: TODAY, surface: 'claude-code', event: 'capture.checkpoint', outcome: 'error', count: 1 },
     { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 2 },
@@ -189,7 +155,7 @@ test('errors_today is today-scoped: an error row yesterday does not count', asyn
 
 test('outcomes_7d window edge: day 8 excluded, day 7 (oldest in-window) included', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: daysAgo(7), surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 100 },
     { day: daysAgo(6), surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 1 },
   ]);
@@ -201,7 +167,7 @@ test('outcomes_7d window edge: day 8 excluded, day 7 (oldest in-window) included
 
 test('a surface stale beyond the 7-day window still reports last_day_seen + freshness (alert case)', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: daysAgo(30), surface: 'openclaw', event: 'capture.turn', outcome: 'stored', count: 5 },
   ]);
   const stats = readCounterStats({ now: NOW, dbPath });
@@ -215,7 +181,7 @@ test('a surface stale beyond the 7-day window still reports last_day_seen + fres
 
 test('per-surface independence: two surfaces do not cross-contaminate', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 3 },
     { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'error', count: 1 },
     { day: daysAgo(3), surface: 'discord', event: 'capture.turn', outcome: 'stored', count: 8 },
@@ -236,7 +202,7 @@ test('per-surface independence: two surfaces do not cross-contaminate', async ()
 
 test('growth_7d counts capture.extraction stored + superseded per day; excludes deduped/abstained/error', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'stored', count: 3 },
     { day: TODAY, surface: 'discord', event: 'capture.extraction', outcome: 'superseded', count: 2 },
     { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'deduped', count: 50 },
@@ -260,7 +226,7 @@ test('growth_7d counts capture.extraction stored + superseded per day; excludes 
 
 test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes abstained and extraction rows', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'stored', count: 43 },
     // UPSTREAM_FAILURE checkpoints DID write the summary doc (only the index
     // is stale) — they count as doc-tier writes (#185 review finding).
@@ -298,7 +264,7 @@ test('unreadable (corrupt) db ⇒ null-shaped result, no throw', async () => {
 
 test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, []);
+  seedCountersDb(dbPath, []);
   const stats = readCounterStats({ now: NOW, dbPath });
   assert.equal(stats.available, true);
   // { __proto__: null }: capture is a null-prototype map (hostile-key fix) and
@@ -312,7 +278,7 @@ test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
 
 test('readCounterStats requires an explicit now (clock seam — no implicit Date.now())', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, []);
+  seedCountersDb(dbPath, []);
   assert.throws(() => readCounterStats({ dbPath }), TypeError);
 });
 
@@ -325,7 +291,7 @@ test('readCounterStats requires an explicit now (clock seam — no implicit Date
 
 test('capture: a surface named __proto__ is reported as data, not swallowed by the prototype setter', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: '__proto__', event: 'capture.checkpoint', outcome: 'stored', count: 2 },
     { day: TODAY, surface: 'claude-code', event: 'capture.checkpoint', outcome: 'stored' },
   ]);
