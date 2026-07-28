@@ -409,6 +409,13 @@ test('A13: cross-origin / cross-site / both-headers-absent unlocks are rejected 
       { name: 'Sec-Fetch-Site: cross-site', opts: { origin: null, secFetchSite: 'cross-site' } },
       { name: 'Sec-Fetch-Site: same-site', opts: { origin: null, secFetchSite: 'same-site' } },
       { name: 'BOTH absent ⇒ default DENY', opts: { origin: null } },
+      // F2: X-Forwarded-Host must NOT rescue a mismatched Origin — an
+      // attacker-settable header cannot be allowed to nominate the host its own
+      // Origin is compared against.
+      {
+        name: 'Origin mismatch + matching X-Forwarded-Host',
+        opts: { origin: 'https://evil.example', headers: { 'X-Forwarded-Host': 'evil.example' } },
+      },
     ];
     for (const { name, opts } of cases) {
       // The CORRECT token is submitted every time: if the origin gate ran
@@ -444,15 +451,68 @@ test('A13: missing / mismatched double-submit CSRF is rejected BEFORE the compar
 // A18 — method / content-type / body cap
 // ---------------------------------------------------------------------------
 
-test('A18: non-POST to /control/unlock ⇒ 405 with Allow: POST', async () => {
+test('A18: non-POST to /control/unlock ⇒ 405 with Allow: POST and NO Set-Cookie', async () => {
   const ctx = await startControl();
   try {
-    for (const method of ['GET', 'PUT', 'DELETE']) {
+    for (const method of ['GET', 'PUT', 'DELETE', 'HEAD']) {
       const r = await fetch(ctx.url('/control/unlock'), { method, redirect: 'manual' });
       assert.equal(r.status, 405, method);
       assert.equal(r.headers.get('allow'), 'POST');
-      assert.equal(cookieNamed(r, 'um_control'), undefined);
+      // F7/C3: a wrong-method request is never a browser following this page's
+      // forms, so it must not be handed (or charged for) a CSRF pair.
+      assert.deepEqual(setCookies(r), [], `${method}: the 405 branch sets no cookie at all`);
     }
+  } finally { await ctx.close(); }
+});
+
+test('F6/C4: HEAD /control is served wherever GET is — 200 with the same headers', async () => {
+  const ctx = await startControl();
+  try {
+    const head = await fetch(ctx.url('/control'), { method: 'HEAD' });
+    assert.equal(head.status, 200, 'HEAD must not 405 on a resource GET serves');
+    const get = await fetch(ctx.url('/control'));
+    for (const h of ['content-type', 'cache-control', 'referrer-policy', 'x-content-type-options']) {
+      assert.equal(head.headers.get(h), get.headers.get(h), `HEAD/GET disagree on ${h}`);
+    }
+    assert.ok(head.headers.get('content-security-policy'), 'HEAD carries the CSP too');
+    assert.equal(await head.text(), '', 'HEAD carries no body');
+    // …and a genuinely wrong method on the same route still 405s.
+    const put = await fetch(ctx.url('/control'), { method: 'PUT', redirect: 'manual' });
+    assert.equal(put.status, 405);
+    assert.equal(put.headers.get('allow'), 'GET, HEAD');
+    assert.deepEqual(setCookies(put), []);
+  } finally { await ctx.close(); }
+});
+
+test('F7/C3: the CSRF cookie is mint-if-absent — two sequential GETs reuse one value', async () => {
+  const ctx = await startControl();
+  try {
+    const first = await fetch(ctx.url('/control'));
+    const minted = cookieNamed(first, 'um_control_csrf');
+    assert.ok(minted, 'the first render mints');
+    const value = minted.split(';')[0].slice('um_control_csrf='.length);
+    assert.equal(csrfFieldOf(await first.text()), value);
+
+    const second = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control_csrf=${value}` } });
+    assert.deepEqual(setCookies(second), [], 'a usable pair is REUSED, never rotated per render');
+    assert.equal(csrfFieldOf(await second.text()), value, 'the same value is echoed into the form');
+
+    // A malformed/unusable cookie IS replaced (that is the "if-absent" half).
+    const bad = await fetch(ctx.url('/control'), { headers: { Cookie: 'um_control_csrf=%%%' } });
+    assert.ok(cookieNamed(bad, 'um_control_csrf'), 'a malformed pair is re-minted');
+  } finally { await ctx.close(); }
+});
+
+test('F7/C3: the authenticated page also reuses an existing CSRF pair', async () => {
+  const ctx = await startControl();
+  try {
+    const { id } = createSession(Date.now());
+    const cookie = `um_control=${id}; um_control_csrf=${FIXED_CSRF}`;
+    const r = await fetch(ctx.url('/control'), { headers: { Cookie: cookie } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(setCookies(r), [], 'the page does not rotate a working pair either');
+    assert.equal(csrfFieldOf(await r.text()), FIXED_CSRF, 'the logout form carries the existing pair');
+    expire(id);
   } finally { await ctx.close(); }
 });
 
@@ -577,14 +637,36 @@ test('A21: the CSRF cookie is NOT Secure, so a plain-HTTP unlock reaches the 303
   } finally { await ctx.close(); }
 });
 
-test('A21: u=1 WITH a valid session renders the page, not the panel', async () => {
+test('C1: u=1 is a ONE-SHOT marker — the authenticated branch 303s it away', async () => {
   const ctx = await startControl();
   try {
-    const { id } = createSession(Date.now());
-    const r = await fetch(ctx.url('/control?u=1'), { headers: { Cookie: `um_control=${id}` } });
-    const html = await r.text();
-    assert.match(html, /unlocked/i);
-    assert.doesNotMatch(html, /neither HTTPS nor localhost/i);
+    // Unlock, then follow the redirect WITH the session the browser accepted.
+    const unlocked = await postForm(ctx, '/control/unlock', { token: TOKEN });
+    assert.equal(unlocked.headers.get('location'), '/control?u=1');
+    const id = cookieNamed(unlocked, 'um_control').split(';')[0].slice('um_control='.length);
+
+    const landed = await fetch(ctx.url('/control?u=1'), {
+      headers: { Cookie: `um_control=${id}` },
+      redirect: 'manual',
+    });
+    assert.equal(landed.status, 303, 'a valid session strips the marker instead of rendering');
+    assert.equal(landed.headers.get('location'), '/control');
+    assert.deepEqual(setCookies(landed), [], 'the strip touches no cookie');
+    // The bookmark-safe URL renders the page.
+    const page = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.match(await page.text(), /unlocked/i);
+
+    // …and once that session expires normally, the SAME bookmarked /control
+    // renders the plain form — never the cookie-rejection panel, which would be
+    // a false diagnosis of a healthy deployment.
     expire(id);
+    const after = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    const html = await after.text();
+    assert.match(html, /name="operator_token"/);
+    assert.doesNotMatch(html, /neither HTTPS nor localhost/i);
+
+    // The genuine-rejection path is unchanged: u=1 with NO session still panels.
+    const panel = await fetch(ctx.url('/control?u=1'));
+    assert.match(await panel.text(), /neither HTTPS nor localhost/i);
   } finally { await ctx.close(); }
 });

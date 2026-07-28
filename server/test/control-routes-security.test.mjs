@@ -21,7 +21,8 @@ import { Writable } from 'node:stream';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { createSession, expire } from '../lib/control-session.mjs';
-import { cookieOccurrences } from '../lib/control-routes.mjs';
+import { cookieOccurrences, verifyControlOrigin, isTrustedLoopback } from '../lib/control-routes.mjs';
+import { readCookie } from '../lib/http-form.mjs';
 
 const TOKEN = 'control-master-token-abc123';
 const FIXED_CSRF = 'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
@@ -180,12 +181,20 @@ test('A11 (U3 slice): the auth-surface templates carry no active content', async
   const ctx = await startControl();
   try {
     const { id } = createSession(Date.now());
+    // All FIVE rendered shapes, plus the 405 notice — the sweep must cover
+    // every template, not the four that were easiest to reach (C7).
     const pages = {
       form: await (await fetch(ctx.url('/control'))).text(),
       page: await (await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } })).text(),
       failed: await (await postForm(ctx, '/control/unlock', { token: 'wrong' })).text(),
       panel: await (await fetch(ctx.url('/control?u=1'))).text(),
+      duplicate: await (await fetch(ctx.url('/control'), {
+        headers: { Cookie: `um_control=${id}; um_control=${id}` },
+      })).text(),
+      notice405: await (await fetch(ctx.url('/control'), { method: 'PUT', redirect: 'manual' })).text(),
     };
+    assert.match(pages.duplicate, /duplicate control cookie/i, 'the duplicate-cookie panel really rendered');
+    assert.match(pages.notice405, /not allowed/i, 'the 405 notice really rendered');
     for (const [label, html] of Object.entries(pages)) {
       assert.doesNotMatch(html, /<script/i, `${label}: no <script>`);
       assert.doesNotMatch(html, /\son[a-z]+\s*=/i, `${label}: no inline on* handler`);
@@ -238,6 +247,101 @@ test('A22 (unit): cookieOccurrences tokenizes identically to readCookie and coun
   assert.deepEqual(cookieOccurrences('um_control; um_control=v', 'um_control'), { count: 1, value: 'v' });
   // An EMPTY value is still an occurrence.
   assert.deepEqual(cookieOccurrences('um_control=', 'um_control'), { count: 1, value: '' });
+});
+
+// C2: tokenizer identity is ENFORCED, not asserted in prose. Both parsers are
+// built on the same `cookiePairs` generator in http-form.mjs; this differential
+// test is the regression net for anyone who "optimizes" one of them apart. The
+// corpus is deliberately adversarial: quoted values carrying a cookie-looking
+// payload, names that are substrings/superstrings of each other, empty names,
+// and whitespace variants.
+test('C2 differential: cookieOccurrences agrees with readCookie on first-match, over an adversarial corpus', () => {
+  const corpus = [
+    '',
+    'um_control=a',
+    'um_control=a; um_control=b',
+    ' um_control = a ; um_control=b',
+    'um_control="value; with=quotes"',
+    'decoy="um_control=injected"; um_control=real',
+    'decoy=um_control=injected',
+    'um_control_csrf=c; um_control=s',
+    'um_controlx=1; um_control=2; xum_control=3',
+    'um_control',
+    'um_control=',
+    '=orphan; um_control=v',
+    ';;; um_control=v ;;;',
+    'UM_CONTROL=upper; um_control=lower',
+    'um_control=a=b=c',
+  ];
+  for (const raw of corpus) {
+    for (const name of ['um_control', 'um_control_csrf', '', 'decoy']) {
+      const viaReadCookie = readCookie({ headers: { cookie: raw } }, name);
+      const { value } = cookieOccurrences(raw, name);
+      assert.equal(
+        value, viaReadCookie,
+        `divergence on name=${JSON.stringify(name)} raw=${JSON.stringify(raw)}`,
+      );
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C6 — pure-function units for the two hand-written predicates
+// ---------------------------------------------------------------------------
+
+const reqWith = (headers) => ({ headers });
+
+test('C6 unit: verifyControlOrigin', () => {
+  const host = 'pi-openclaw:6337';
+  // Host match passes — scheme deliberately ignored (Serve terminates TLS).
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: `https://${host}` })), null);
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: `http://${host}` })), null);
+  // Port is part of the host — a mismatch is a different origin.
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: 'https://pi-openclaw:9999' })), 'cross-origin');
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: 'https://pi-openclaw' })), 'cross-origin');
+  // Sec-Fetch-Site alone is enough when Origin is absent.
+  assert.equal(verifyControlOrigin(reqWith({ host, 'sec-fetch-site': 'same-origin' })), null);
+  assert.equal(verifyControlOrigin(reqWith({ host, 'sec-fetch-site': 'none' })), null);
+  assert.equal(verifyControlOrigin(reqWith({ host, 'sec-fetch-site': 'cross-site' })), 'cross-site');
+  assert.equal(verifyControlOrigin(reqWith({ host, 'sec-fetch-site': 'same-site' })), 'cross-site');
+  // …but it does NOT rescue a mismatched Origin: both signals must be clean.
+  assert.equal(
+    verifyControlOrigin(reqWith({ host, origin: 'https://evil.example', 'sec-fetch-site': 'none' })),
+    'cross-origin',
+    'Sec-Fetch-Site: none must not launder a cross-origin Origin',
+  );
+  // Both absent ⇒ default DENY (stricter than the oauth consent helper).
+  assert.equal(verifyControlOrigin(reqWith({ host })), 'no-origin-signal');
+  // Opaque / malformed Origin is denied, never treated as absent.
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: 'null' })), 'cross-origin');
+  assert.equal(verifyControlOrigin(reqWith({ host, origin: 'not a url' })), 'cross-origin');
+  // F2: X-Forwarded-Host is NOT a comparison candidate.
+  assert.equal(
+    verifyControlOrigin(reqWith({ host, origin: 'https://evil.example', 'x-forwarded-host': 'evil.example' })),
+    'cross-origin',
+    'an attacker-settable header must not nominate the host it is compared against',
+  );
+  // No Host header at all ⇒ nothing to match against ⇒ deny.
+  assert.equal(verifyControlOrigin(reqWith({ origin: 'https://anything' })), 'cross-origin');
+});
+
+test('C6 unit: isTrustedLoopback', () => {
+  const loopback = (headers = {}) => ({ socket: { remoteAddress: '127.0.0.1' }, headers });
+  assert.equal(isTrustedLoopback(loopback()), true);
+  assert.equal(isTrustedLoopback({ socket: { remoteAddress: '::1' }, headers: {} }), true);
+  // F3: the IPv4-mapped-in-IPv6 form a dual-stack listener reports.
+  assert.equal(isTrustedLoopback({ socket: { remoteAddress: '::ffff:127.0.0.1' }, headers: {} }), true);
+  // Non-loopback peers are never trusted.
+  assert.equal(isTrustedLoopback({ socket: { remoteAddress: '100.123.173.116' }, headers: {} }), false);
+  assert.equal(isTrustedLoopback({ socket: {}, headers: {} }), false);
+  assert.equal(isTrustedLoopback({ headers: {} }), false);
+  // A forwarded marker disqualifies loopback — that is a proxied peer wearing
+  // the loopback address, not the operator's console.
+  assert.equal(isTrustedLoopback(loopback({ 'x-forwarded-for': '9.9.9.9' })), false);
+  assert.equal(isTrustedLoopback(loopback({ via: '1.1 proxy' })), false);
+  assert.equal(isTrustedLoopback(loopback({ 'tailscale-user-login': 'op@example.com' })), false);
+  // …even when the header is present but empty (presence, not truthiness).
+  assert.equal(isTrustedLoopback(loopback({ 'x-real-ip': '' })), false);
 });
 
 test('A22 (wire): a duplicate um_control or um_control_csrf is rejected to the unlock form', async () => {

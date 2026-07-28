@@ -21,12 +21,13 @@
 //     Stage-B deployment — AND it is LOOSER than this surface requires: it
 //     ACCEPTS a request with neither `Origin` nor `Sec-Fetch-Site`, whereas
 //     /control/unlock must DENY that (spec §3 step 4, R1 S-B3).
-//   * The cookie read is an OCCURRENCE COUNTER, not `readCookie`
-//     (oauth/endpoints.mjs:134-143), which returns the FIRST match and
-//     structurally cannot see a shadowing duplicate (spec §3, R2-S-I5). ONE
-//     tokenizer (`cookieOccurrences`) both reads and counts, so the value the
-//     auth path trusts and the count the duplicate guard trusts can never be
-//     produced by two divergent parsers (R3-S-N1).
+//   * The cookie read is an OCCURRENCE COUNTER, because `readCookie` returns
+//     the FIRST match and structurally cannot see a shadowing duplicate (spec
+//     §3, R2-S-I5). Both are built on the SAME `cookiePairs` tokenizer in
+//     ../http-form.mjs, so the value the auth path trusts and the count the
+//     duplicate guard trusts cannot be produced by two divergent parsers
+//     (R3-S-N1) — enforced by construction and by a differential test, not by
+//     a comment claiming the two agree.
 //   * `isFormContentType` / `MAX_FORM_BYTES` / `readForm` ARE reused — lifted
 //     into the shared ../http-form.mjs rather than re-implemented (R2-C-N3).
 //   * `compareTokens` is the same hardened timing-safe comparator the bearer
@@ -44,14 +45,14 @@ import {
   controlSessionCookieHeader, mintControlCsrf, verifyControlCsrf,
 } from './control-session.mjs';
 import { createConsentThrottle } from './oauth/throttle.mjs';
-import { MAX_FORM_BYTES, isFormContentType, readForm } from './http-form.mjs';
+import { isFormContentType, readForm, cookiePairs } from './http-form.mjs';
 import { esc } from './escape-html.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 
-export const CONTROL_SESSION_COOKIE = 'um_control';
-export const CONTROL_CSRF_COOKIE = 'um_control_csrf';
+const CONTROL_SESSION_COOKIE = 'um_control';
+const CONTROL_CSRF_COOKIE = 'um_control_csrf';
 
 // The CSRF cookie is deliberately NOT `Secure` (spec §3 step 5 / R2-S-I1): on a
 // plain-HTTP non-loopback deployment a Secure CSRF cookie would be discarded
@@ -75,25 +76,22 @@ const CLEARED_SESSION_COOKIE =
 
 /**
  * Count how many times `name` appears in a raw `Cookie` header, and return the
- * FIRST occurrence's value (the one `readCookie` would have returned).
+ * FIRST occurrence's value — i.e. exactly what `readCookie` would have
+ * returned, plus the multiplicity `readCookie` structurally cannot report.
  *
- * Tokenizes IDENTICALLY to oauth/endpoints.mjs:readCookie — split on `;`, take
- * the substring before the FIRST `=`, trim it, exact-compare the name — so a
- * cookie VALUE containing `um_control=` cannot inflate the count and
- * `um_control_csrf` can never be miscounted as `um_control` (spec §3, R3-S-N1).
+ * Shares `cookiePairs` (http-form.mjs) with `readCookie`, so the two cannot
+ * tokenize differently (spec §3 R3-S-N1); a differential test over an
+ * adversarial corpus pins the agreement.
  *
  * @returns {{count: number, value: string|undefined}}
  */
 export function cookieOccurrences(raw, name) {
-  if (typeof raw !== 'string' || raw === '') return { count: 0, value: undefined };
   let count = 0;
   let value;
-  for (const part of raw.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;                       // valueless segment — readCookie skips it too
-    if (part.slice(0, eq).trim() !== name) continue;
+  for (const [n, v] of cookiePairs(raw)) {
+    if (n !== name) continue;
     count += 1;
-    if (count === 1) value = part.slice(eq + 1).trim();
+    if (count === 1) value = v;
   }
   return { count, value };
 }
@@ -111,10 +109,14 @@ export function cookieOccurrences(raw, name) {
  * Only the HOST is compared, never the scheme: behind Tailscale Serve (the
  * supported deployment) TLS is terminated at the proxy, so the browser's Origin
  * is `https://…` while this process sees plain HTTP — a scheme comparison would
- * reject every legitimate unlock. `X-Forwarded-Host` is accepted alongside
- * `Host` for the same reason; neither is forgeable by the browser-driven
- * cross-site POST this check exists to stop, and the double-submit CSRF token
- * is the independent second control.
+ * reject every legitimate unlock. The double-submit CSRF token is the
+ * independent second control.
+ *
+ * The comparison target is the `Host` header ONLY. `X-Forwarded-Host` is
+ * deliberately NOT consulted (spec §3 step 4): Tailscale Serve preserves `Host`,
+ * so it buys nothing, while accepting it would let any client that can set an
+ * arbitrary header nominate the host its own `Origin` is compared against —
+ * turning the check into a self-signed assertion.
  */
 export function verifyControlOrigin(req) {
   const origin = req.headers?.origin;
@@ -133,8 +135,8 @@ function originMatchesHost(origin, req) {
   // value throw here and are therefore DENIED — never treated as "absent".
   try { originHost = new URL(origin).host; } catch { return false; }
   if (!originHost) return false;
-  const candidates = [req.headers?.host, req.headers?.['x-forwarded-host']];
-  return candidates.some((h) => typeof h === 'string' && h !== '' && h === originHost);
+  const host = req.headers?.host;
+  return typeof host === 'string' && host !== '' && host === originHost;
 }
 
 /**
@@ -147,10 +149,17 @@ function originMatchesHost(origin, req) {
  * so the header list cannot drift — but NOT the function: that one is
  * additionally gated on `UM_ALLOW_LOOPBACK_NOAUTH`, an unrelated bearer-auth
  * knob whose value must not decide whether the operator has a recovery path.
+ *
+ * All THREE shapes Node's remoteAddress reports are accepted, including the
+ * IPv4-mapped-in-IPv6 form a dual-stack socket produces (see the isLoopbackIp
+ * note in endpoint-class.mjs:32-34). shouldBypassLoopback covers only two;
+ * inheriting that gap here would silently deny the operator their recovery
+ * path on a dual-stack listener — a fail-CLOSED bug, invisible until the day
+ * it matters.
  */
 export function isTrustedLoopback(req) {
   const ip = req.socket?.remoteAddress;
-  if (ip !== '127.0.0.1' && ip !== '::1') return false;
+  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') return false;
   for (const h of FORWARDED_HEADERS) {
     if (req.headers && req.headers[h] !== undefined) return false;
   }
@@ -195,7 +204,7 @@ function cspFor(nonce) {
  * already rendered `<style nonce=…>` with it — this function cannot mint one
  * after the fact (R3-C-N1).
  */
-export function sendControlHtml(res, status, html, nonce) {
+function sendControlHtml(res, status, html, nonce) {
   dropCors(res);
   res.statusCode = status;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -227,6 +236,7 @@ const COOKIE_REJECTED_NOTICE =
 const DUPLICATE_COOKIE_NOTICE =
   'A duplicate control cookie was sent with this request, so it was ignored. '
   + 'Clear cookies for this host and unlock again.';
+const METHOD_NOT_ALLOWED_NOTICE = 'That method is not allowed on this route.';
 
 const STYLE = `
     body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; color: #1f2328; }
@@ -276,11 +286,28 @@ function renderUnlockForm({ nonce, csrf, error = null, notice = null }) {
 ${banner}    <form method="post" action="/control/unlock">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
       <label>Operator token
-        <input type="password" name="operator_token" autocomplete="current-password" required>
+        <input type="password" name="operator_token" required>
       </label>
       <button type="submit">Unlock</button>
     </form>
-    <p class="muted">Read-only operational telemetry. The token is never stored in the browser.</p>`,
+    <p class="muted">Read-only operational telemetry. This page stores only an opaque session cookie — the token itself is not kept by this page.</p>`,
+  });
+}
+
+/**
+ * A form-LESS message page. Used only by the 405 branch, which must set no
+ * cookie at all (F7/C3): with no CSRF pair to mint or reuse, rendering a form
+ * whose hidden field matches nothing would be a broken affordance. A 405 is
+ * never reached by a browser submitting this page's forms, so a link back to
+ * `/control` — which mints the pair — is the honest response.
+ */
+function renderNotice({ nonce, message }) {
+  return shell({
+    nonce,
+    title: 'universal-memory — control',
+    body: `    <h1>universal-memory control</h1>
+    <div class="error">${esc(message)}</div>
+    <p><a href="/control">Back to unlock</a></p>`,
   });
 }
 
@@ -311,6 +338,17 @@ function controlEnabled(env = process.env) {
 function sendNotFound(res) {
   dropCors(res);
   res.statusCode = 404;
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
+}
+
+// 303 See Other with no body. `setCookie` is optional (the unlock mints a
+// session, the logout clears one, the u=1 strip touches no cookie at all).
+function sendRedirect(res, location, setCookie = null) {
+  dropCors(res);
+  res.statusCode = 303;
+  res.setHeader('Location', location);
+  if (setCookie) res.setHeader('Set-Cookie', setCookie);
   res.setHeader('Cache-Control', 'no-store');
   res.end();
 }
@@ -356,7 +394,10 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
 
   // ---- GET /control ------------------------------------------------------
   function handleGet(req, res, url) {
-    if (req.method !== 'GET') return sendMethodNotAllowed(res, 'GET');
+    // HEAD is served wherever GET is: it is the same resource with the body
+    // suppressed by Node, so a monitor probing HEAD must not see a 405 that
+    // GET would not give.
+    if (req.method !== 'GET' && req.method !== 'HEAD') return sendMethodNotAllowed(res, 'GET, HEAD');
 
     const raw = req.headers.cookie;
     const session = cookieOccurrences(raw, CONTROL_SESSION_COOKIE);
@@ -367,7 +408,7 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
     // so this is DoS-only — but it must never be resolved by silently picking
     // one of the two.
     if (session.count > 1 || csrf.count > 1) {
-      return renderFormWithFreshCsrf(res, 200, { notice: DUPLICATE_COOKIE_NOTICE });
+      return renderForm(req, res, 200, { notice: DUPLICATE_COOKIE_NOTICE });
     }
 
     // Session validation strictly precedes anything else (A1/S-I7). Nothing on
@@ -375,19 +416,25 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
     // constant, and U4's data reads land INSIDE this authenticated branch.
     const live = session.value ? getSession(session.value, now()) : null;
     if (live) {
+      // `u=1` is a ONE-SHOT post-unlock marker, not a page mode: strip it as
+      // soon as a session proves the cookie was accepted. Otherwise the URL the
+      // operator bookmarks (or reloads) still carries it, and when that session
+      // later expires normally the reload would render the "your browser
+      // rejected the cookie" panel — a false diagnosis of a healthy deployment.
+      if (url.searchParams.get('u') === '1') return sendRedirect(res, '/control');
       const nonce = newNonce();
-      const token = mintControlCsrf();
-      res.setHeader('Set-Cookie', csrfCookieHeader(token));
+      const token = ensureCsrf(req, res);
       return sendControlHtml(res, 200, renderStubPage({ nonce, csrf: token }), nonce);
     }
 
     // `u=1` with no valid session = the browser silently discarded the Secure
     // session cookie (plain-HTTP non-loopback). Say so, instead of re-rendering
     // a bare form that is indistinguishable from a wrong token (spec §3 S-I2).
+    // Reachable ONLY straight off the unlock 303, thanks to the strip above.
     if (url.searchParams.get('u') === '1') {
-      return renderFormWithFreshCsrf(res, 200, { notice: COOKIE_REJECTED_NOTICE });
+      return renderForm(req, res, 200, { notice: COOKIE_REJECTED_NOTICE });
     }
-    return renderFormWithFreshCsrf(res, 200, {});
+    return renderForm(req, res, 200, {});
   }
 
   // ---- POST /control/unlock ---------------------------------------------
@@ -399,16 +446,16 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
     // 1. Kill switch — endpoint-class row (re-checked in `handle`).
     // 2. Method + content type.
     if (req.method !== 'POST') return sendMethodNotAllowed(res, 'POST');
-    if (!isFormContentType(req)) return renderFormWithFreshCsrf(res, 400, { error: GENERIC_ERROR });
+    if (!isFormContentType(req)) return renderForm(req, res, 400, { error: GENERIC_ERROR });
 
     // 3. Body cap — the over-cap body is rejected BEFORE any field, and in
     //    particular before the token, is read.
     const { params, tooLarge } = await readForm(req);
-    if (tooLarge) return renderFormWithFreshCsrf(res, 400, { error: GENERIC_ERROR });
+    if (tooLarge) return renderForm(req, res, 400, { error: GENERIC_ERROR });
 
     // 4. Origin / Sec-Fetch-Site (default-DENY when both are absent).
     if (verifyControlOrigin(req) !== null) {
-      return renderFormWithFreshCsrf(res, 403, { error: GENERIC_ERROR });
+      return renderForm(req, res, 403, { error: GENERIC_ERROR });
     }
 
     // 5. Double-submit CSRF. The duplicate-cookie guard is part of this step:
@@ -418,17 +465,15 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
     const csrfCookie = cookieOccurrences(raw, CONTROL_CSRF_COOKIE);
     const sessionCookie = cookieOccurrences(raw, CONTROL_SESSION_COOKIE);
     if (csrfCookie.count > 1 || sessionCookie.count > 1) {
-      return renderFormWithFreshCsrf(res, 403, { notice: DUPLICATE_COOKIE_NOTICE });
+      return renderForm(req, res, 403, { notice: DUPLICATE_COOKIE_NOTICE });
     }
-    const csrfField = params.get('csrf');
-    if (!verifyControlCsrf(csrfCookie.value, csrfField)) {
-      return renderFormWithFreshCsrf(res, 403, { error: GENERIC_ERROR });
+    if (!verifyControlCsrf(csrfCookie.value, params.get('csrf'))) {
+      return renderForm(req, res, 403, { error: GENERIC_ERROR });
     }
-    // From here the submitted pair is VERIFIED, so failure responses echo it
-    // instead of minting a new one: the client's cookie is unchanged and still
-    // valid, so the retry works without a Set-Cookie — which is what makes the
-    // A3 ↔ A3b responses byte-identical down to the header set.
-    const echoCsrf = isCsrfShaped(csrfField) ? csrfField : null;
+    // From here the submitted pair is VERIFIED — so `ensureCsrf` inside every
+    // failure re-render below finds a usable cookie, reuses it, and sets NO
+    // cookie. That is what makes the A3 ↔ A3b responses byte-identical down to
+    // the header set while still handing back a form that retries correctly.
 
     // 6. Dedicated GLOBAL throttle. A trusted-loopback request is never HARD
     //    blocked (operator recovery) but is still logged, and still counts a
@@ -442,7 +487,7 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
       }
       if (!trusted) {
         res.setHeader('Retry-After', String(throttle.retryAfterSec(t)));
-        return renderForm(res, 429, { error: GENERIC_ERROR, echoCsrf });
+        return renderForm(req, res, 429, { error: GENERIC_ERROR });
       }
     }
 
@@ -454,27 +499,23 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
     if (!expected) {
       noteFailure(t);
       logUnlock('unlock_failed', { trusted });
-      return renderForm(res, 401, { error: GENERIC_ERROR, echoCsrf });
+      return renderForm(req, res, 401, { error: GENERIC_ERROR });
     }
 
     // 8. Timing-safe compare — the same comparator the bearer path uses.
     if (!compareTokens(params.get('operator_token'), expected)) {
       noteFailure(t);
       logUnlock('unlock_failed', { trusted });
-      return renderForm(res, 401, { error: GENERIC_ERROR, echoCsrf });
+      return renderForm(req, res, 401, { error: GENERIC_ERROR });
     }
 
     throttle.success();
     const { id } = createSession(t);
     logUnlock('unlock_success', { trusted });
-    dropCors(res);
-    res.statusCode = 303;
-    // `?u=1` is the marker the GET branch reads to tell "the browser discarded
-    // the Secure cookie" apart from "no session yet" (spec §3 S-I2).
-    res.setHeader('Location', '/control?u=1');
-    res.setHeader('Set-Cookie', controlSessionCookieHeader(id));
-    res.setHeader('Cache-Control', 'no-store');
-    res.end();
+    // `?u=1` is the ONE-SHOT marker the GET branch reads to tell "the browser
+    // discarded the Secure cookie" apart from "no session yet" (spec §3 S-I2);
+    // the authenticated branch strips it immediately.
+    return sendRedirect(res, '/control?u=1', controlSessionCookieHeader(id));
   }
 
   // ---- POST /control/logout ---------------------------------------------
@@ -483,52 +524,58 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
   // force-log-out the operator (R2-S-N4). Not throttled — it guesses nothing.
   async function handleLogout(req, res) {
     if (req.method !== 'POST') return sendMethodNotAllowed(res, 'POST');
-    if (!isFormContentType(req)) return renderFormWithFreshCsrf(res, 400, { error: GENERIC_ERROR });
+    if (!isFormContentType(req)) return renderForm(req, res, 400, { error: GENERIC_ERROR });
     const { params, tooLarge } = await readForm(req);
-    if (tooLarge) return renderFormWithFreshCsrf(res, 400, { error: GENERIC_ERROR });
+    if (tooLarge) return renderForm(req, res, 400, { error: GENERIC_ERROR });
     if (verifyControlOrigin(req) !== null) {
-      return renderFormWithFreshCsrf(res, 403, { error: GENERIC_ERROR });
+      return renderForm(req, res, 403, { error: GENERIC_ERROR });
     }
     const raw = req.headers.cookie;
     const csrfCookie = cookieOccurrences(raw, CONTROL_CSRF_COOKIE);
     const sessionCookie = cookieOccurrences(raw, CONTROL_SESSION_COOKIE);
     if (csrfCookie.count > 1 || sessionCookie.count > 1) {
-      return renderFormWithFreshCsrf(res, 403, { notice: DUPLICATE_COOKIE_NOTICE });
+      return renderForm(req, res, 403, { notice: DUPLICATE_COOKIE_NOTICE });
     }
     if (!verifyControlCsrf(csrfCookie.value, params.get('csrf'))) {
-      return renderFormWithFreshCsrf(res, 403, { error: GENERIC_ERROR });
+      return renderForm(req, res, 403, { error: GENERIC_ERROR });
     }
     if (sessionCookie.value) expire(sessionCookie.value);
-    dropCors(res);
-    res.statusCode = 303;
-    res.setHeader('Location', '/control');
-    res.setHeader('Set-Cookie', CLEARED_SESSION_COOKIE);
-    res.setHeader('Cache-Control', 'no-store');
-    res.end();
+    return sendRedirect(res, '/control', CLEARED_SESSION_COOKIE);
   }
 
   // ---- shared response helpers ------------------------------------------
 
+  // 405 sets NO cookie (F7/C3) — a wrong-method request is never a browser
+  // following this page's forms, so it gets a form-less notice instead of an
+  // affordance that would need a CSRF pair minted for it.
   function sendMethodNotAllowed(res, allow) {
     res.setHeader('Allow', allow);
-    return renderFormWithFreshCsrf(res, 405, { error: GENERIC_ERROR });
-  }
-
-  // Render the form/panel. `echoCsrf` non-null ⇒ the caller already VERIFIED
-  // that pair, so it is echoed and NO cookie is set; null ⇒ mint a fresh pair
-  // and set the cookie, because the client has none that works.
-  function renderForm(res, status, { error = null, notice = null, echoCsrf = null }) {
     const nonce = newNonce();
-    let token = echoCsrf;
-    if (token === null) {
-      token = mintControlCsrf();
-      res.setHeader('Set-Cookie', csrfCookieHeader(token));
-    }
-    return sendControlHtml(res, status, renderUnlockForm({ nonce, csrf: token, error, notice }), nonce);
+    return sendControlHtml(res, 405, renderNotice({ nonce, message: METHOD_NOT_ALLOWED_NOTICE }), nonce);
   }
 
-  function renderFormWithFreshCsrf(res, status, opts) {
-    return renderForm(res, status, { ...opts, echoCsrf: null });
+  /**
+   * MINT-IF-ABSENT, never rotate-per-render (spec §3 step 5): a usable
+   * `um_control_csrf` cookie is REUSED and no `Set-Cookie` is emitted; only a
+   * missing, duplicated or malformed one is replaced.
+   *
+   * Rotating on every render is the shape that breaks a second tab and races a
+   * concurrent reload — the newest render's cookie invalidates the pair the
+   * older tab is still holding — and it is what would otherwise put a
+   * `Set-Cookie` on the A3 failure re-render.
+   */
+  function ensureCsrf(req, res) {
+    const existing = cookieOccurrences(req.headers?.cookie, CONTROL_CSRF_COOKIE);
+    if (existing.count === 1 && isCsrfShaped(existing.value)) return existing.value;
+    const token = mintControlCsrf();
+    res.setHeader('Set-Cookie', csrfCookieHeader(token));
+    return token;
+  }
+
+  function renderForm(req, res, status, { error = null, notice = null }) {
+    const nonce = newNonce();
+    const token = ensureCsrf(req, res);
+    return sendControlHtml(res, status, renderUnlockForm({ nonce, csrf: token, error, notice }), nonce);
   }
 
   /**
