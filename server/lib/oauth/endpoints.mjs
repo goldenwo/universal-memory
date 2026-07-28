@@ -35,8 +35,11 @@ import { isAllowedRegistrationRedirect, MAX_REDIRECT_URIS } from './redirects.mj
 import { compareTokens } from '../auth.mjs';
 import { makeOperatorPolicy } from './idp/policy.mjs';
 import { createConsentThrottle } from './throttle.mjs';
-
-const MAX_FORM_BYTES = 64 * 1024; // body-size cap shared by consent + token
+// Form-intake primitives (cap + content-type predicate + capped reader) live in
+// the shared ../http-form.mjs since Stage-B U3 — the /control routes need the
+// same cap and the same "is this a form?" answer, and a second definition of
+// either is a divergence waiting to happen. Lifted verbatim from this file.
+import { MAX_FORM_BYTES, isFormContentType, readForm } from '../http-form.mjs';
 
 // RFC 7591 DCR limits.
 const MAX_CLIENT_NAME = 120;        // display-only; TRUNCATE rather than reject
@@ -66,30 +69,6 @@ function redirect(res, location) {
   res.setHeader('Location', location);
   res.setHeader('Cache-Control', 'no-store');
   res.end();
-}
-
-// Collect a urlencoded body, capped at MAX_FORM_BYTES, into a URLSearchParams.
-// Resolves { params } on success, { tooLarge: true } if the cap is exceeded.
-function readForm(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0, tooLarge = false, settled = false;
-    req.on('data', (c) => {
-      if (tooLarge) return; // past the cap: drop further chunks, keep draining
-      size += c.length;
-      if (size > MAX_FORM_BYTES) { tooLarge = true; chunks.length = 0; return; }
-      chunks.push(c);
-    });
-    // Resolve on `end` whether or not the cap tripped — draining (rather than
-    // destroying) the socket lets the handler still deliver a clean 400 instead
-    // of resetting the connection; the cap already bounds buffered bytes.
-    req.on('end', () => {
-      if (settled) return; settled = true;
-      if (tooLarge) return resolve({ tooLarge: true });
-      resolve({ params: new URLSearchParams(Buffer.concat(chunks).toString('utf8')) });
-    });
-    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
-  });
 }
 
 // Collect a JSON body, capped at MAX_FORM_BYTES, and parse it. Mirrors readForm's
@@ -123,11 +102,6 @@ function readJson(req) {
 // upstream, so this is belt-and-suspenders).
 function hostOf(uri) {
   try { return new URL(uri).host; } catch { return uri; }
-}
-
-function isFormContentType(req) {
-  const ct = req.headers['content-type'] ?? '';
-  return ct.split(';')[0].trim().toLowerCase() === 'application/x-www-form-urlencoded';
 }
 
 // Parse one named cookie out of a raw Cookie header.
