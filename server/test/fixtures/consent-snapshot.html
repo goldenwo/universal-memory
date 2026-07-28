@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize access</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem; }
+    .card { border: 1px solid #ccc; border-radius: 8px; padding: 1.5rem; }
+    .host { font-weight: 600; }
+    .error { background: #fde8e8; color: #9b1c1c; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
+    label { display: block; margin: 1rem 0; }
+    input[type=password] { display: block; width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    button { padding: 0.6rem 1.2rem; border-radius: 6px; border: 1px solid #888; cursor: pointer; }
+    button.allow { background: #1c64f2; color: #fff; border-color: #1c64f2; }
+    .providers { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+    .provider { background: #fff; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+    .brand-name { font-weight: 650; font-size: 1.15rem; letter-spacing: -0.02em; }
+    .brand-sub { color: #656d76; font-weight: 400; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <svg data-brand="um-lockup" width="34" height="34" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path d="M16 12 v22 a15 15 0 0 0 30 0 v-8 a8 8 0 0 0 -13 -6" stroke="#5b5bd6" stroke-width="6" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">um<span class="brand-sub"> · universal memory</span></span>
+    </div>
+    <div class="error">Bad &lt;token&gt; &amp; &quot;quotes&quot; &#39;here&#39;</div>
+    <h1>Authorize <strong>Acme &amp; &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &#39;MCP&#39;</strong></h1>
+    <p><strong>Acme &amp; &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &#39;MCP&#39;</strong> is requesting access to your vault and will
+      redirect to <span class="host">evil&quot;host&#39;&lt;&gt;&amp;.example.com</span> after you decide.</p>
+    <form action="/oauth/consent" method="post">
+      <input type="hidden" name="authz_id" value="authz-&quot;123&#39;&amp;&lt;&gt;">
+      <input type="hidden" name="csrf" value="csrf-&#39;token&quot;&amp;&lt;&gt;xyz">
+      <div class="providers"><button class="provider" type="submit" formaction="/oauth/idp/git&quot;hub&#39;&amp;&lt;&gt;/login">Continue with Git&lt;Hub&gt;&amp;&quot;&#39;</button>
+        <button class="provider" type="submit" formaction="/oauth/idp/plain/login">Continue with Plain Provider</button></div>
+      <details class="token-fallback"><summary>Use an operator token instead</summary><label>Operator token
+        <input type="password" name="operator_token" autocomplete="current-password">
+      </label></details>
+      <div class="actions">
+        <button class="allow" type="submit" name="decision" value="allow">Allow</button>
+        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

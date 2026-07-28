@@ -65,11 +65,12 @@ htmlcov/
 secrets.json
 credentials.json
 
-# Internal working docs — not shipped to users
+# Internal working docs — not shipped to users (README.md is the only public prose).
 # Files are kept locally for maintainer reference but never tracked.
 # History of these was scrubbed via git filter-repo in the past.
-docs/plans/
-docs/decisions/
+# The whole tree is ignored: plans/, decisions/, research/, and anything added later —
+# a new docs subdir must never be one `git add` away from the public repo.
+docs/
 
 # Claude Code local state (session state, reviews, snapshots — never public)
 .claude/*
