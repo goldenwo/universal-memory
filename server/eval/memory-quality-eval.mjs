@@ -253,7 +253,13 @@ export function extractionFidelity(judgedRows) {
   let graded = 0, parseFails = 0, noiseTotal = 0, noiseAbstained = 0;
   const perRow = [];
   for (const r of rows) {
-    if (r.ok !== true) { parseFails++; perRow.push({ id: r.id, ok: false }); continue; }
+    if (r.ok !== true) {
+      parseFails++;
+      // judgeError marks an INVOKE-THREW failsafe (transient judge API error) so
+      // gate evaluation can distinguish infra flakes from judge misalignment.
+      perRow.push({ id: r.id, ok: false, ...(r.judgeError === true ? { judgeError: true } : {}) });
+      continue;
+    }
     graded++;
     if (r.noiseRow === true || (r.goldTotal ?? 0) === 0) {
       noiseTotal++;

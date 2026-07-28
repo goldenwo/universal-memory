@@ -19,6 +19,11 @@
  *   node --env-file=.env eval/extraction-fidelity-eval.mjs --fixture eval/extraction-set.jsonl --out eval/results/<date>-tier2-extraction-run1.json
  *   --fixture may repeat (rows concatenate in argument order);
  *   --gate eval/mq-gate-thresholds.json evaluates extractionThresholds fail-closed (exit 1 on breach OR unconfigured gate).
+ *   --gate is VALID ONLY with --verdict-only AND the openai provider (exit 2 otherwise):
+ *   the extractionThresholds paths live under verdictGate.* (a judged run leaves them
+ *   undefined → guaranteed 'unmeasured' breaches) and their pool floors are calibrated
+ *   to the CI's openai fixture set. Judged runs and non-openai providers are gated by
+ *   hand against pre-registered arc gates instead (#181 arc).
  */
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -63,6 +68,22 @@ async function cliMain() {
     process.exit(2);
   }
 
+  // Fail-fast on --gate misuse BEFORE any extraction spend (exit 2 = config error,
+  // no result file — the classify step must never read these as metric breaches):
+  // (a) --gate without --verdict-only: extractionThresholds are verdictGate-pathed,
+  //     so a judged run can only ever fail them as 'unmeasured' — never meaningful.
+  // (b) --gate with a non-openai provider: the thresholds are openai-calibrated.
+  //     The provider read deliberately mirrors facts.mjs:48's env+default terms
+  //     (`?? 'openai'`) — a one-line env read, kept in lockstep by construction.
+  if (args.gate && !args.verdictOnly) {
+    console.error('[extraction-eval] GATE FAIL: --gate requires --verdict-only (extractionThresholds are verdictGate-pathed; a judged run leaves them unmeasured — config error, not a breach).');
+    process.exit(2);
+  }
+  if (args.gate && (process.env.UM_FACTS_PROVIDER ?? 'openai') !== 'openai') {
+    console.error(`[extraction-eval] GATE FAIL: --gate thresholds are openai-calibrated; UM_FACTS_PROVIDER=${process.env.UM_FACTS_PROVIDER} runs are gated by hand (config error, not a breach).`);
+    process.exit(2);
+  }
+
   // Fail-fast on an unconfigured gate BEFORE any extraction spend: no result file is
   // written, so the CI breach-vs-infra classify step correctly reads this as a config
   // error, never as a metric breach (an absent gate must never read as green either way).
@@ -81,12 +102,24 @@ async function cliMain() {
   const rows = [];
   for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
 
+  // Truthful provider/model labels: captured from facts()'s own per-call return
+  // ({provider, model} — facts.mjs), NEVER re-derived from env/registry (the old
+  // env-only label reported 'gpt-4.1-nano (provider default)' on anthropic runs).
+  let factsProvider = null;
+  let factsModelSeen = null;
+  const runFacts = async (text) => {
+    const factsResult = await facts(text, { temperature: 0 });
+    factsProvider = factsResult.provider ?? factsProvider;
+    factsModelSeen = factsResult.model ?? factsModelSeen;
+    return factsResult;
+  };
+
   let result;
   if (args.verdictOnly) {
     // Judge-free: verdict = did the extractor produce anything at all.
     const verdictRows = [];
     for (const row of rows) {
-      const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
+      const extracted = normalizeExtracted(await runFacts(row.input_text));
       verdictRows.push({
         id: row.id,
         expected: deriveExpectedVerdict(row),
@@ -98,7 +131,8 @@ async function cliMain() {
     result = {
       timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'verdict-only',
       judgeModel: null,
-      factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
+      factsProvider,
+      factsModel: factsModelSeen,
       extraction: null,
       verdictGate,
     };
@@ -107,7 +141,7 @@ async function cliMain() {
     const judgedRows = [];
     for (const row of rows) {
       const gold = row.expected_facts ?? [];
-      const extracted = normalizeExtracted(await facts(row.input_text, { temperature: 0 }));
+      const extracted = normalizeExtracted(await runFacts(row.input_text));
       if (gold.length === 0) {
         // Noise row: nothing to judge — the only signal is whether extraction abstained.
         judgedRows.push({
@@ -124,12 +158,16 @@ async function cliMain() {
         goldMatched: v.goldMatched.filter(Boolean).length,
         extractedTotal: extracted.length,
         extractedSupported: v.extractedSupported.filter(Boolean).length,
+        // Infra-flake signal: the judge API call threw (vs answered unusably) —
+        // surfaces in perRow as judgeError for the arc-gate carve-out.
+        ...(v.failCause === 'invoke-error' ? { judgeError: true } : {}),
       });
     }
     const extraction = { ...extractionFidelity(judgedRows), byStratum: extractionByStratum(judgedRows) };
     result = {
       timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'judged', judgeModel: model,
-      factsModel: process.env.UM_FACTS_MODEL ?? 'gpt-4.1-nano (provider default)',
+      factsProvider,
+      factsModel: factsModelSeen,
       pinnable: extraction.parseFails === 0,
       extraction,
     };

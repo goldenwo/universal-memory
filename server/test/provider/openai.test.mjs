@@ -202,3 +202,19 @@ test('factsInvoke without client and without key throws ProviderError PROVIDER_C
     (err) => err instanceof ProviderError && err.class === 'PROVIDER_CONFIG',
   );
 });
+
+// --- #181 cross-provider prompt sync: call-site pin ----------------------------
+
+test('factsInvoke sends the shared policy prompt as the system message (#181 sync)', async () => {
+  const { FACTS_SYSTEM_PROMPT } = await import('../../lib/provider/facts-prompt.mjs');
+  let seen = null;
+  const fakeClient = {
+    chat: { completions: { create: async (args) => {
+      seen = args;
+      return { choices: [{ message: { content: '{"facts": []}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } },
+  };
+  await openai.factsInvoke('any text', { client: fakeClient });
+  assert.equal(seen.messages[0].role, 'system');
+  assert.equal(seen.messages[0].content, FACTS_SYSTEM_PROMPT);
+});
