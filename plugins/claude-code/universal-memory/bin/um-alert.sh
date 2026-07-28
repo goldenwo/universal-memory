@@ -177,7 +177,7 @@ except Exception:
 
 # Precedence (U2.6, spec R2-C-B1/R2-S-I4): CLI --max-age-hours (explicit,
 # already numeric-validated in bash) beats the payload threshold beats the
-# old-server literal fallback. `is None` — NEVER `or` / truthiness — so a
+# old-server literal fallback. "is None" - NEVER "or"/truthiness - so a
 # deliberate payload 0 (UM_FRESHNESS_MAX_AGE_HOURS=0 on the server) survives
 # instead of being coerced back to 26.
 if explicit:
