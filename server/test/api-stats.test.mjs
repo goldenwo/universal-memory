@@ -538,3 +538,34 @@ test('latencySinceBoot: nearest-rank percentiles over an explicit array (pure)',
   assert.equal(latencySinceBoot([42]).p50_ms, 42);
   assert.equal(latencySinceBoot([42]).p95_ms, 42);
 });
+
+// ---------------------------------------------------------------------------
+// #187 — reactions_7d rides the capture block (signal.reaction namespace)
+// ---------------------------------------------------------------------------
+
+test('#187: reactions_7d appears on a reacted surface with the fixed zero-filled shape; absent elsewhere; signal-only surfaces never mint a capture entry', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'mem0-compat', event: 'capture.extraction', outcome: 'stored', count: 3 },
+    { day: TODAY, surface: 'mem0-compat', event: 'signal.reaction', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'stored', count: 1 },
+    { day: TODAY, surface: 'ghost', event: 'signal.reaction', outcome: 'stored', count: 9 },
+  ]);
+  const { close, url } = await startServer({
+    memory: makeFakeMemory(9),
+    env: { UM_COUNTERS_DB_PATH: dbPath },
+  });
+  try {
+    const r = await fetch(url('/api/stats'), authed);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    // Fixed REACTION_OUTCOME_KEYS shape — both keys present, zero-filled.
+    assert.deepEqual(body.capture['mem0-compat'].reactions_7d, { stored: 2, abstained: 0 });
+    // events_today unaffected by the reaction row (namespace isolation).
+    assert.equal(body.capture['mem0-compat'].events_today, 3);
+    // Omit-when-zero on the unreacted surface.
+    assert.ok(!('reactions_7d' in body.capture['claude-code']));
+    // A signal-only surface has no capture entry and does not break the payload.
+    assert.ok(!('ghost' in body.capture));
+  } finally { await close(); }
+});

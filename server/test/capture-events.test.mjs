@@ -688,3 +688,180 @@ test('umAdd _systemMigration:true emits NO capture.* counters (spec §6 migratio
   const stat = await fs.stat(dbPath).catch(() => null);
   if (stat) assert.equal(readRows(dbPath).length, 0, 'a reindex of thousands of docs must not spike the freshness signal');
 });
+
+// ---------- #187: signal.reaction emission (reaction-signal.mjs) ----------
+// The emit contract (spec D6): once per umAdd call, infer:true only, outcome =
+// the admission verdict (stored | abstained), never on _systemMigration. The
+// event name lives OUTSIDE capture.* (namespace isolation — stats.test pins
+// the reader side; here we pin the writer side through REAL counters rows).
+
+test('umAdd with valid reaction_count emits EXACTLY ONE signal.reaction row, outcome=stored (admission verdict, not per-fact)', async () => {
+  const dbPath = await freshCountersDb();
+  await umAdd({
+    memory: mockMemory,
+    text: 'two facts here',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 3, reaction_types: ['👍'] },
+    infer: true,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough(['fact one', 'fact two']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async () => ({}) },
+  });
+  const rows = readRows(dbPath);
+  const signalRows = rows.filter((r) => r.event === 'signal.reaction');
+  assert.equal(signalRows.length, 1, 'one signal.reaction row per reacted call');
+  assert.deepEqual(
+    { surface: signalRows[0].surface, project: signalRows[0].project, outcome: signalRows[0].outcome, count: signalRows[0].count },
+    { surface: 'discord', project: 'um-proj', outcome: 'stored', count: 1 },
+  );
+  // The per-fact extraction rows are unchanged by the reaction (2 facts → count 2).
+  const extractionRows = rows.filter((r) => r.event === 'capture.extraction');
+  assert.equal(extractionRows[0].count, 2);
+});
+
+test('umAdd reacted + extractor abstains emits signal.reaction outcome=abstained (the future-gate question row)', async () => {
+  const dbPath = await freshCountersDb();
+  await umAdd({
+    memory: mockMemory,
+    text: 'nothing memorable',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 1 },
+    infer: true,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough([]),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async () => { throw new Error('must not upsert on abstain'); } },
+  });
+  const rows = readRows(dbPath);
+  assert.deepEqual(
+    rows.map((r) => ({ event: r.event, outcome: r.outcome })),
+    [
+      { event: 'capture.extraction', outcome: 'abstained' },
+      { event: 'signal.reaction', outcome: 'abstained' },
+    ],
+  );
+});
+
+test('umAdd infer:false persists reaction metadata but emits NO signal.reaction (no admission verdict; compat fans out per-message)', async () => {
+  const dbPath = await freshCountersDb();
+  const upserts = [];
+  await umAdd({
+    memory: mockMemory,
+    text: 'verbatim note',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 5 },
+    infer: false,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough(['unused']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async (collection, body) => { upserts.push(body); return {}; } },
+  });
+  const rows = readRows(dbPath);
+  assert.equal(rows.filter((r) => r.event === 'signal.reaction').length, 0);
+  // Persistence and telemetry are decoupled: the payload still carries the count.
+  assert.equal(upserts[0].points[0].payload.reaction_count, 5);
+});
+
+test('umAdd with INVALID reaction_count emits no signal row and strips the fields from the payload (normalizer contract)', async () => {
+  const dbPath = await freshCountersDb();
+  const upserts = [];
+  await umAdd({
+    memory: mockMemory,
+    text: 'a fact',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 'lots', reaction_types: ['👍'] },
+    infer: true,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough(['a fact']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async (collection, body) => { upserts.push(body); return {}; } },
+  });
+  const rows = readRows(dbPath);
+  assert.equal(rows.filter((r) => r.event === 'signal.reaction').length, 0);
+  const payload = upserts[0].points[0].payload;
+  assert.ok(!('reaction_count' in payload));
+  assert.ok(!('reaction_types' in payload));
+});
+
+test('umAdd _systemMigration:true emits no signal.reaction even when reacted (reindex silence rule)', async () => {
+  const dbPath = await freshCountersDb();
+  await umAdd({
+    memory: mockMemory,
+    text: 'migrated doc',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 2 },
+    // infer:true so the _systemMigration guard ALONE blocks the emit — with
+    // infer:false this test passes vacuously (mutation-verified in review).
+    infer: true,
+    surface: 'reindex',
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough(['unused']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async () => ({}) },
+  });
+  // No counters file at all — migration emits nothing (matches the T5 rule).
+  let rows = [];
+  try { rows = readRows(dbPath); } catch { /* db never created — equally a pass */ }
+  assert.equal(rows.length, 0);
+});
+
+test('umAdd reacted infer:true ADD path persists reaction fields in the payload (positive persistence pin)', async () => {
+  await freshCountersDb();
+  const upserts = [];
+  await umAdd({
+    memory: mockMemory,
+    text: 'a fact',
+    userId: 'u-1',
+    metadata: { project: 'um-proj', reaction_count: 4, reaction_types: ['👍', '❤️'] },
+    infer: true,
+    surface: 'discord',
+    _factsProviderOverride: factsPassthrough(['a fact']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async (collection, body) => { upserts.push(body); return {}; } },
+  });
+  const payload = upserts[0].points[0].payload;
+  assert.equal(payload.reaction_count, 4);
+  assert.deepEqual(payload.reaction_types, ['👍', '❤️']);
+});
+
+test('umAdd reacted dedup-hit: signal row still records the admission verdict; surviving point is NOT patched (deliberate v1 limit — late-arrival is out of contract)', async () => {
+  const dbPath = await freshCountersDb();
+  const prevDedup = process.env.UM_DEDUP_ENABLED;
+  delete process.env.UM_DEDUP_ENABLED; // default ON
+  try {
+    const setPayloadCalls = [];
+    const existing = {
+      id: 'existing-point',
+      payload: { data: 'fact one', userId: 'u-1', surfaces: ['claude-code'], projects: ['um-proj'], dedupCount: 1, dedupVersion: 1 },
+    };
+    await umAdd({
+      memory: mockMemory,
+      text: 'fact one',
+      userId: 'u-1',
+      metadata: { project: 'um-proj', reaction_count: 6 },
+      infer: true,
+      surface: 'discord',
+      _factsProviderOverride: factsPassthrough(['fact one']),
+      _embedProviderOverride: embedOverride,
+      _qdrantClient: {
+        scroll: async () => ({ points: [existing] }),   // Layer-1 hash hit
+        search: async () => [],
+        setPayload: async (collection, args) => { setPayloadCalls.push(args); return {}; },
+        upsert: async () => { throw new Error('dedup hit must not upsert'); },
+      },
+    });
+    const rows = readRows(dbPath);
+    const signal = rows.filter((r) => r.event === 'signal.reaction');
+    assert.equal(signal.length, 1, 'admission verdict recorded even on a full dedup-merge');
+    assert.equal(signal[0].outcome, 'stored');
+    // The merge patch stays the fixed dedup set — reaction fields are NOT
+    // threaded into the surviving point (reaction-signal.mjs header: the
+    // re-send-after-reactions shape IS the late-arriving case, out of v1).
+    for (const call of setPayloadCalls) {
+      assert.ok(!('reaction_count' in (call.payload ?? {})), 'no reaction patch on the surviving point');
+    }
+  } finally {
+    if (prevDedup !== undefined) process.env.UM_DEDUP_ENABLED = prevDedup;
+  }
+});

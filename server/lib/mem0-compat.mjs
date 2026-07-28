@@ -38,6 +38,7 @@ import { D3_SERVER_MANAGED_STATUS_FIELDS } from './dedup-constants.mjs';
 import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
+import { normalizeReactionMetadata } from './reaction-signal.mjs';
 import { isRecallable } from './recallable.mjs';
 import { noteRecallSearch } from './recall-telemetry.mjs';
 import { withRetry } from './retry.mjs';
@@ -441,7 +442,13 @@ function sanitizeUpdateMetadata(metadata) {
   for (const [k, v] of Object.entries(metadata ?? {})) {
     if (!R6_PROTECTED_KEYS.has(k)) out[k] = v;
   }
-  return out;
+  // #187: reaction fields obey the same normalization contract on the PUT path
+  // as on the add path (reaction-signal.mjs) — an update must not be a bypass
+  // that lands malformed/oversized reaction metadata in the payload. Never
+  // throws; invalid values are dropped, a valid count may be corrected to any
+  // value ≥ 1 (retraction/zeroing is out of contract v1 — the merge below
+  // cannot delete keys).
+  return normalizeReactionMetadata(out);
 }
 
 // Read-path status filter: shared isRecallable (lib/recallable.mjs) — the

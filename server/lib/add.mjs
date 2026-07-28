@@ -67,6 +67,7 @@ import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
 import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
 import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
+import { normalizeReactionMetadata, SIGNAL_EVENTS } from './reaction-signal.mjs';
 
 /**
  * T5 (#159 spec §6): map umAdd's per-fact result events onto the pinned
@@ -222,6 +223,15 @@ export async function umAdd({
   const lane = validateLanePersonaSlug({ value: _rawLane, fieldName: 'lane' });
   const persona = validateLanePersonaSlug({ value: _rawPersona, fieldName: 'persona' });
 
+  // #187: normalize client-supplied reaction metadata in the same staging step
+  // (never throws — invalid reaction fields are dropped/clamped, not rejected;
+  // see reaction-signal.mjs for the contract). Post-normalization, a present
+  // reaction_count is guaranteed valid — that presence is the signal.reaction
+  // emit condition below (infer:true only; the event records the extraction
+  // ADMISSION verdict, and the compat verbatim path calls umAdd per-message).
+  const stagedMetadata = normalizeReactionMetadata(metadataMinusLanePersona);
+  const hasReactionSignal = Number.isInteger(stagedMetadata.reaction_count);
+
   const collection = memory.config.vectorStore.config.collectionName;
   const factsCounter = _factsCounter ?? umFactsExtractedTotal;
   // Bind request_id (from outer ALS store) into the logger child so the
@@ -289,6 +299,17 @@ export async function umAdd({
           event: CAPTURE_EVENTS.EXTRACTION,
           outcome: 'abstained',
         });
+        // #187: a human-reacted exchange the extractor abstained away — the
+        // counter row IS the record (nothing persists to the payload on this
+        // path); this outcome is the future gate-change question's data.
+        if (hasReactionSignal) {
+          recordCaptureEvent({
+            surface,
+            project: metadata?.project,
+            event: SIGNAL_EVENTS.REACTION,
+            outcome: 'abstained',
+          });
+        }
       }
       return { results: [] };
     }
@@ -440,7 +461,7 @@ export async function umAdd({
         payload: buildPayload({
           userId,
           text: item,
-          metadata: metadataMinusLanePersona,
+          metadata: stagedMetadata,
           surface,
           lane: itemLane,
           persona,
@@ -489,6 +510,20 @@ export async function umAdd({
           project: metadata?.project,
           event: CAPTURE_EVENTS.EXTRACTION,
           outcome: extractionOutcomeFor(r.event ?? r.metadata?.event),
+        });
+      }
+      // #187: ONE signal.reaction row per reacted infer:true call — admission
+      // verdict 'stored' (the extractor admitted ≥1 fact; per-fact dedup/
+      // supersession detail stays on the capture.extraction rows above).
+      // infer:false emits nothing: no admission verdict exists there, and the
+      // compat R2 verbatim path calls umAdd once PER MESSAGE — emitting would
+      // mint N rows for one reacted exchange.
+      if (infer && hasReactionSignal) {
+        recordCaptureEvent({
+          surface,
+          project: metadata?.project,
+          event: SIGNAL_EVENTS.REACTION,
+          outcome: 'stored',
         });
       }
     }
