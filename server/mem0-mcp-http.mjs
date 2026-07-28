@@ -695,12 +695,6 @@ export const WRITE_TOOL_NAMES = new Set([
 	'memory_append_turn',
 ]);
 
-// isWriteEnabled lives in ./lib/write-enabled.mjs (#171 Stage B, U2.5) —
-// lifted out so stats-payload.mjs can import it without an entrypoint→lib→
-// entrypoint cycle. Re-exported here so existing importers of this module
-// (getVisibleTools below, every write-tool gate in this file) are unaffected.
-export { isWriteEnabled };
-
 /**
  * Returns the tools visible to MCP clients given the current write-enabled state.
  * When writeEnabled is true (or omitted and env var is true/1), all 11 tools are returned.
@@ -2315,8 +2309,9 @@ export function createRequestHandler(ctx = {}) {
 			// the contract that operators reading this endpoint see real-doc count.
 			// U2 (#171) audit fix: mem0ai's getAll defaults to limit=100 — without
 			// an explicit large limit this count silently capped at 100 once the
-			// corpus grew past it. Same ceiling as the stats corpus fetch below
-			// (FULL_SCAN_LIMIT, mirroring the compat facade's COMPAT_SCAN_LIMIT).
+			// corpus grew past it. Same ceiling as the stats corpus fetch
+			// (lib/stats-payload.mjs, FULL_SCAN_LIMIT, mirroring the compat
+			// facade's COMPAT_SCAN_LIMIT).
 			const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
 			const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
 			const memories = filterSystemDocs(items).length;
