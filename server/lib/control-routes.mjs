@@ -34,9 +34,13 @@
 //     path uses (lib/auth.mjs), and the session/CSRF primitives are U2's
 //     lib/control-session.mjs.
 //
-// The authenticated branch renders a FIXED stub until U4 ships the real page
-// (R1 I10 / R2-C-N7) — the routes and their auth are testable before the page
-// module exists, and this module performs ZERO data reads on any path (A1).
+// The authenticated branch renders the REAL /control document (U4a/U4b's
+// control-page.mjs, wired in by U5): buildStats() runs IN-PROCESS — no HTTP
+// self-call, no loopback request — strictly AFTER the session check passes
+// (spec §2 ordering / A1). Every OTHER path in this module (the unlock form,
+// its failure re-renders, the u=1 panel, the duplicate-cookie rejection, the
+// 405 notice) still performs ZERO data reads — buildStats() is called from
+// exactly one call site, inside the `live` branch of handleGet.
 
 import { randomBytes } from 'node:crypto';
 import { compareTokens, FORWARDED_HEADERS } from './auth.mjs';
@@ -50,6 +54,8 @@ import { esc } from './escape-html.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
+import { buildStats } from './stats-payload.mjs';
+import { renderControlPage } from './control-page.mjs';
 
 const CONTROL_SESSION_COOKIE = 'um_control';
 const CONTROL_CSRF_COOKIE = 'um_control_csrf';
@@ -314,22 +320,6 @@ function renderNotice({ nonce, message }) {
   });
 }
 
-// The authenticated branch until U4 lands the real page (R1 I10). It still
-// carries its own double-submit CSRF pair, because the logout POST is Origin +
-// CSRF protected exactly like unlock (R2-S-N4).
-function renderStubPage({ nonce, csrf }) {
-  return shell({
-    nonce,
-    title: 'universal-memory — control',
-    body: `    <h1>universal-memory control</h1>
-    <p>Session unlocked. The dashboard lands in PR 3 — this build ships the authentication surface only.</p>
-    <form method="post" action="/control/logout">
-      <input type="hidden" name="csrf" value="${esc(csrf)}">
-      <button type="submit">Sign out</button>
-    </form>`,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -396,7 +386,14 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
   }
 
   // ---- GET /control ------------------------------------------------------
-  function handleGet(req, res, url) {
+  //
+  // `requestCtx` carries the per-request data-source seam (U5): `memory`,
+  // `userId`, `endpoint` and (test-only) `readCounters` — threaded in from
+  // the caller (mem0-mcp-http.mjs's `control.handle(req, res, url, {...})`)
+  // rather than bound at `createControlHandlers()` construction time, so a
+  // test can vary them per server instance exactly like it already varies
+  // `ctx.memory` via `createRequestHandler`.
+  async function handleGet(req, res, url, requestCtx = {}) {
     // HEAD is served wherever GET is: it is the same resource with the body
     // suppressed by Node, so a monitor probing HEAD must not see a 405 that
     // GET would not give.
@@ -414,9 +411,9 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
       return renderForm(req, res, 200, { notice: DUPLICATE_COOKIE_NOTICE });
     }
 
-    // Session validation strictly precedes anything else (A1/S-I7). Nothing on
-    // any branch below reads the corpus or the counters db — the U3 page is a
-    // constant, and U4's data reads land INSIDE this authenticated branch.
+    // Session validation strictly precedes anything else (A1/S-I7). Nothing
+    // above this point reads the corpus or the counters db — buildStats() is
+    // called ONLY inside the `live` branch just below, never on the way here.
     const live = session.value ? getSession(session.value, now()) : null;
     if (live) {
       // `u=1` is a ONE-SHOT post-unlock marker, not a page mode: strip it as
@@ -425,9 +422,19 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
       // later expires normally the reload would render the "your browser
       // rejected the cookie" panel — a false diagnosis of a healthy deployment.
       if (url.searchParams.get('u') === '1') return sendRedirect(res, '/control');
+      // U5 / A1: the ONLY data reads this module ever performs, and they run
+      // strictly AFTER the session check above. `endpoint` defaults to
+      // '/control' so a direct unit call (no requestCtx) still labels the
+      // in-process build correctly rather than inheriting '/api/stats'.
+      const {
+        memory, userId, endpoint = '/control', readCounters,
+      } = requestCtx;
       const nonce = newNonce();
       const token = ensureCsrf(req, res);
-      return sendControlHtml(res, 200, renderStubPage({ nonce, csrf: token }), nonce);
+      const stats = await buildStats({
+        now: now(), memory, userId, endpoint, readCounters,
+      });
+      return sendControlHtml(res, 200, renderControlPage({ stats, nonce, csrf: token }), nonce);
     }
 
     // `u=1` with no valid session = the browser silently discarded the Secure
@@ -584,14 +591,18 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
   /**
    * Path+method dispatch for the whole surface. Returns a promise; the caller
    * (mem0-mcp-http.mjs) awaits it and returns.
+   *
+   * `requestCtx` (U5) is forwarded ONLY to the GET branch — it is the
+   * `{ memory, userId, endpoint, readCounters }` seam buildStats() needs, and
+   * the unlock/logout POSTs never read those sources at all.
    */
-  async function handle(req, res, url) {
+  async function handle(req, res, url, requestCtx = {}) {
     // Defense in depth: the endpoint-class rows already 404 every /control path
     // when the flag is off, but this module must not be unlockable if a future
     // dispatch edit reaches it another way.
     if (!controlEnabled()) return sendNotFound(res);
     switch (url.pathname) {
-      case '/control': return handleGet(req, res, url);
+      case '/control': return handleGet(req, res, url, requestCtx);
       case '/control/unlock': return handleUnlock(req, res);
       case '/control/logout': return handleLogout(req, res);
       default: return sendNotFound(res); // /control/ and unknown subpaths (row-level too)

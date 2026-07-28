@@ -69,10 +69,15 @@ function captureFreshnessThresholdHours() {
  *   corpus-fetch log (`endpoint` field) — the caller's identity, not a
  *   hardcoded '/api/stats': a future in-process /control caller passes its
  *   own label so logs/metrics attribute to the right surface.
+ * @param {Function} [opts.readCounters] - DI seam over the counters-db reader
+ *   (U5 / U3-gate finding F5: `readCounterStats` was a direct import with no
+ *   seam). Defaults to `readCounterStats` — a caller that omits it gets
+ *   IDENTICAL behavior to before this param existed. Tests inject a fake/
+ *   throwing reader the same way `memory` is already injectable.
  * @returns {Promise<object>} the full stats body, including `degraded` when
  *   one or more sources are unavailable.
  */
-export async function buildStats({ now, memory, userId, endpoint }) {
+export async function buildStats({ now, memory, userId, endpoint, readCounters = readCounterStats }) {
   const degraded = [];
 
   // Qdrant-sourced corpus fields. EXPLICIT large limit (FULL_SCAN_LIMIT) —
@@ -115,8 +120,11 @@ export async function buildStats({ now, memory, userId, endpoint }) {
   }
 
   // Counters-derived sections (readCounterStats never throws for
-  // db-state reasons — null-shaped when missing/unreadable, A5).
-  const counters = readCounterStats({ now });
+  // db-state reasons — null-shaped when missing/unreadable, A5). Goes
+  // through the `readCounters` seam so a caller (or a test) can supply its
+  // own reader; production never passes one, so this is exactly
+  // `readCounterStats({ now })` unless overridden.
+  const counters = readCounters({ now });
   if (!counters.available) degraded.push('counters-unavailable');
 
   const body = {

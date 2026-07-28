@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { Writable } from 'node:stream';
+import path from 'node:path';
+import os from 'node:os';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { createSession, expire } from '../lib/control-session.mjs';
@@ -29,6 +31,11 @@ import { readCookie } from '../lib/http-form.mjs';
 
 const TOKEN = 'control-master-token-abc123';
 const FIXED_CSRF = 'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
+
+// The authenticated page's unique marker (U5) — see control-routes.test.mjs's
+// identical constant for why "operational telemetry" collides with the
+// unlock form's own blurb and "Sign out" does not.
+const AUTHENTICATED_MARKER = /Sign out/;
 
 const EXPECTED_CSP_PARTS = [
   "default-src 'none'",
@@ -53,6 +60,12 @@ async function startControl({ env = {}, sink } = {}) {
     UM_CONTROL_ENABLED: 'true',
     UM_RATE_LIMIT_RPM: '6000',
     UM_RATE_LIMIT_BURST: '1000',
+    // U5: the authenticated GET now calls the real buildStats(), which reads
+    // the counters db unless a test injects its own readCounters. Default to
+    // a guaranteed-missing path so these tests stay hermetic and don't read
+    // whatever REAL counters db happens to exist on the machine running them
+    // (see control-routes.test.mjs's missingDbPath for the full story).
+    UM_COUNTERS_DB_PATH: path.join(os.tmpdir(), `um-control-security-nodb-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`),
     ...env,
   };
   const prev = {};
@@ -365,7 +378,7 @@ test('A22 (wire): a duplicate um_control or um_control_csrf is rejected to the u
     assert.equal(dupSession.status, 200);
     const html = await dupSession.text();
     assert.match(html, /name="operator_token"/, 'a shadowed session cookie falls back to the unlock form');
-    assert.doesNotMatch(html, /unlocked/i, 'the shadow must NOT unlock the page');
+    assert.doesNotMatch(html, AUTHENTICATED_MARKER, 'the shadow must NOT unlock the page');
 
     const dupCsrf = await fetch(ctx.url('/control'), {
       headers: { Cookie: `um_control=${id}; um_control_csrf=a; um_control_csrf=b` },
@@ -397,7 +410,7 @@ test('A22 (wire): a cookie VALUE containing um_control= does not trip the duplic
     const r = await fetch(ctx.url('/control'), {
       headers: { Cookie: `decoy=um_control=zzz; um_control=${id}` },
     });
-    assert.match(await r.text(), /unlocked/i, 'the decoy value must not inflate the occurrence count');
+    assert.match(await r.text(), AUTHENTICATED_MARKER, 'the decoy value must not inflate the occurrence count');
     expire(id);
   } finally { await ctx.close(); }
 });
