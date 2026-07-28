@@ -2,9 +2,12 @@
 // security invariants of the /control auth surface.
 //
 // Covers (spec §3 + §6 + §8 acceptance):
-//   • A14 — the exact security-header set on ALL FIVE HTML paths (unlock form,
-//     stub page, failure re-render, u=1 panel, duplicate-cookie rejection),
-//     asserted through the single sendControlHtml choke point; per-request nonce.
+//   • A14 — the exact security-header set on EVERY HTML response the surface
+//     can emit, asserted one-by-one through the single sendControlHtml choke
+//     point (six shapes today: unlock form, stub page, failure re-render, u=1
+//     panel, duplicate-cookie rejection, 405 notice) plus a per-response nonce.
+//     The enumeration is the point — a shape added without a row here is
+//     exactly the uncovered response the choke point exists to prevent.
 //   • A11 (U3 slice) — no active content on the auth-surface templates.
 //   • A22 — duplicate um_control / um_control_csrf rejection via an
 //     OCCURRENCE-COUNTING parse that tokenizes identically to readCookie.
@@ -110,7 +113,7 @@ function makeCaptureSink(captured) {
 }
 
 // ---------------------------------------------------------------------------
-// A14 — the header set on ALL FIVE HTML paths
+// A14 — the header set on EVERY HTML response (six shapes today)
 // ---------------------------------------------------------------------------
 
 function assertControlHeaders(res, label) {
@@ -133,7 +136,7 @@ function assertControlHeaders(res, label) {
   return nonce[1];
 }
 
-test('A14: the exact header set is present on ALL FIVE HTML paths, each with its own nonce', async () => {
+test('A14: the exact header set is present on EVERY HTML response, each with its own nonce', async () => {
   const ctx = await startControl();
   const nonces = new Set();
   const bodies = {};
@@ -165,7 +168,15 @@ test('A14: the exact header set is present on ALL FIVE HTML paths, each with its
     nonces.add(assertControlHeaders(dup, 'duplicate-cookie rejection'));
     bodies.dup = await dup.text();
 
-    assert.equal(nonces.size, 5, 'every response mints its OWN nonce (fresh per response, R3-S-N2)');
+    // (6) the 405 notice — the shape fix round 1 added (F7/C3). It renders no
+    // form, so it is easy to forget; it is HTML all the same and must not be
+    // the one uncovered response the choke point exists to prevent.
+    const notice = await fetch(ctx.url('/control'), { method: 'PUT', redirect: 'manual' });
+    assert.equal(notice.status, 405);
+    nonces.add(assertControlHeaders(notice, '405 notice'));
+    bodies.notice = await notice.text();
+
+    assert.equal(nonces.size, 6, 'every response mints its OWN nonce (fresh per response, R3-S-N2)');
 
     // The nonce in the CSP header must be the one actually on the <style> block.
     for (const [label, html] of Object.entries(bodies)) {
