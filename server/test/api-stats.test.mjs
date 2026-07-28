@@ -209,6 +209,9 @@ test('A1: 200 with token — full spec-§3 shape', async () => {
     assert.deepEqual(body.corpus.points_by_project, { '(unknown)': 3, um: 3, edge: 3 });
     assert.equal(Object.keys(body.corpus.growth_7d).length, 7, 'zero-filled 7-day map');
     assert.equal(body.corpus.growth_7d[TODAY], 2, 'capture.extraction stored counts as growth');
+    // U2.5 (#171 Stage B) additive pin: growth_docs_7d (#185 doc-tier growth)
+    // was load-bearing but had no key-count assertion before this extraction.
+    assert.equal(Object.keys(body.corpus.growth_docs_7d).length, 7, 'zero-filled 7-day doc-tier map');
 
     const cc = body.capture['claude-code'];
     assert.equal(cc.last_day_seen, TODAY);

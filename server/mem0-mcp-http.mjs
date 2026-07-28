@@ -83,10 +83,11 @@ import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-doc
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 import { umAdd } from './lib/add.mjs';
-import { readCounterStats } from './lib/stats.mjs';
-import { noteRecallSearch, latencySinceBoot, LATENCY_LABEL } from './lib/recall-telemetry.mjs';
+import { noteRecallSearch } from './lib/recall-telemetry.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
+import { isWriteEnabled } from './lib/write-enabled.mjs';
+import { buildStats, FULL_SCAN_LIMIT } from './lib/stats-payload.mjs';
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -158,11 +159,13 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
 
-// Full-corpus getAll ceiling for /health + /api/stats (#171 Stage A, plan U2
-// audit): mem0ai's getAll defaults to limit=100, which silently truncated the
-// /health count. Mirrors the compat facade's COMPAT_SCAN_LIMIT (mem0-compat.mjs)
-// — generous for single-operator scale (hundreds–low-thousands of points).
-const FULL_SCAN_LIMIT = 10000;
+// FULL_SCAN_LIMIT (full-corpus getAll ceiling for /health + /api/stats, #171
+// Stage A plan U2 audit: mem0ai's getAll defaults to limit=100, which
+// silently truncated the /health count) now lives in ./lib/stats-payload.mjs
+// (U2.5 extraction) — buildStats() owns it and needs it internally, so it is
+// imported back here rather than duplicated. Mirrors the compat facade's
+// COMPAT_SCAN_LIMIT (mem0-compat.mjs) — generous for single-operator scale
+// (hundreds–low-thousands of points).
 
 // ---------------------------------------------------------------------------
 // Favicon assets — boot-loaded once as raw bytes (spec 2026-07-09
@@ -699,14 +702,11 @@ export const WRITE_TOOL_NAMES = new Set([
 	'memory_append_turn',
 ]);
 
-/**
- * Returns true if UM_MCP_WRITE_ENABLED is set to 'true' or '1'.
- * Unset, 'false', '0', or any other value → false (writes disabled).
- */
-export function isWriteEnabled() {
-	const v = process.env.UM_MCP_WRITE_ENABLED;
-	return v === 'true' || v === '1';
-}
+// isWriteEnabled lives in ./lib/write-enabled.mjs (#171 Stage B, U2.5) —
+// lifted out so stats-payload.mjs can import it without an entrypoint→lib→
+// entrypoint cycle. Re-exported here so existing importers of this module
+// (getVisibleTools below, every write-tool gate in this file) are unaffected.
+export { isWriteEnabled };
 
 /**
  * Returns the tools visible to MCP clients given the current write-enabled state.
@@ -2849,85 +2849,14 @@ export function createRequestHandler(ctx = {}) {
 		}
 		// GET /api/stats — deployment-health stats (#171 Stage A, spec §3).
 		// Auth is fail-closed with the loopback bypass VETOED (endpoint-class
-		// noLoopbackBypass row + both middleware veto sites above). Sources:
-		// um-counters.db (read-only via readCounterStats — capture freshness,
-		// growth, recall counts), qdrant via getAll (corpus size/split), the
-		// in-process ring buffer (serving latency), process/env facts.
-		// Degraded-mode per §5 A5: a missing/unreadable counters db or a
-		// throwing memory client each null their OWN sections + append a
-		// `degraded` marker — HTTP 200 either way (fresh installs have no
-		// counters db; stats must not 500 over one dark source).
+		// noLoopbackBypass row + both middleware veto sites above). Payload
+		// assembly (counters db, qdrant getAll, in-process ring buffer,
+		// process/env facts; degraded-mode per §5 A5) now lives in
+		// ./lib/stats-payload.mjs's buildStats() (U2.5, #171 Stage B) — this
+		// route is a thin caller so a later in-process /control page can call
+		// buildStats() directly without an HTTP round-trip.
 		if (url.pathname === '/api/stats' && req.method === 'GET') {
-			const now = Date.now();
-			const degraded = [];
-
-			// Qdrant-sourced corpus fields. EXPLICIT large limit (FULL_SCAN_LIMIT)
-			// — mem0ai getAll defaults to limit=100 (the /health silent-cap bug).
-			let points = null;
-			let pointsByProject = null;
-			try {
-				const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
-				const items = filterSystemDocs(Array.isArray(raw) ? raw : (raw?.results ?? []));
-				points = items.length;
-				// Null-prototype map: `project` comes from stored, writer-controlled
-				// metadata — on a plain literal, '__proto__' vanishes via the
-				// prototype setter and any Object.prototype member name (e.g.
-				// 'constructor') reads the inherited value through `?? 0` and
-				// serves a garbage concatenated string (v1.8.1 shipped bug).
-				pointsByProject = Object.create(null);
-				for (const r of items) {
-					const project = r?.metadata?.project;
-					// Fallback bucket: metadata.project is not guaranteed (plan U2).
-					const key = typeof project === 'string' && project.length > 0 ? project : '(unknown)';
-					pointsByProject[key] = (pointsByProject[key] ?? 0) + 1;
-				}
-			} catch (err) {
-				safeLog(() => getLogger().warn({
-					request_id: currentRequestId(),
-					endpoint: '/api/stats',
-					err_class: err?.code ?? err?.name ?? 'Error',
-					err_message: err?.message,
-				}, 'stats corpus fetch failed — serving degraded'), 'log:stats:corpus-unavailable');
-				degraded.push('corpus-unavailable');
-			}
-
-			// Counters-derived sections (readCounterStats never throws for
-			// db-state reasons — null-shaped when missing/unreadable, A5).
-			const counters = readCounterStats({ now });
-			if (!counters.available) degraded.push('counters-unavailable');
-
-			const body = {
-				schema_version: 1,
-				generated_at: new Date(now).toISOString(),
-				server: {
-					version: SERVER_VERSION,
-					uptime_s: Math.round(process.uptime()),
-					writes_enabled: isWriteEnabled(),
-					// CONFIGURED-value semantics (spec §3): the container cannot
-					// introspect the actual mount; actual writability failures
-					// surface via capture error counters instead.
-					mount_mode: process.env.UM_MOUNT_MODE || 'unknown',
-				},
-				corpus: {
-					points,
-					points_by_project: pointsByProject,
-					growth_7d: counters.growth_7d,
-					// #185: doc-tier writes (capture.checkpoint stored+error/day) —
-					// session summaries bypass extraction, so growth_7d alone left a
-					// runaway doc-tier writer invisible (the phantom-summary incident).
-					growth_docs_7d: counters.growth_docs_7d,
-					// Spec §3: growth is counters-derived (capture.extraction
-					// stored+superseded/day), NOT a qdrant time-series — labeled.
-					derived_from: 'extraction-counters',
-				},
-				capture: counters.capture,
-				recall: {
-					searches_today: counters.recall?.searches_today ?? null,
-					searches_7d: counters.recall?.searches_7d ?? null,
-					latency_since_boot: { ...latencySinceBoot(), label: LATENCY_LABEL },
-				},
-			};
-			if (degraded.length > 0) body.degraded = degraded;
+			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats' });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(body));
 			return;
