@@ -363,11 +363,15 @@ test('A17: writes_enabled:false explains the tile instead of leaving an unexplai
     capture: { 'claude-code-plugin': surface({ freshness_hours: 150.5 }) },
   }));
   assert.match(html, /capture disabled \(writes off\)/);
-  // Page-wide, restored in fix round 1: the pipeline tile's `error` cell is
-  // now gated on the count itself (finite AND > 0, MED-1) — this fixture's
-  // surface() default is `error: 0`, so the pipeline tile renders no red
-  // either, and the page-wide invariant holds without scoping.
-  assert.doesNotMatch(html, /<td class="s-red">/, 'no unexplained red row while writes are off');
+  // NOT a general "writes-off implies the whole page is red-free" invariant —
+  // a fixture with a non-zero pipeline `error` count (MED-1's own s-red gate)
+  // would legitimately still render red regardless of writes_enabled; this
+  // page-wide regex would simply be fixture-true by accident of ALSO having
+  // error:0. This fixture's surface() default IS `error: 0` (no other red
+  // source exists for it), so what this assertion actually proves is
+  // narrower: the freshness tile's own writes-off branch contributes no red
+  // row of its own — not that writes-off makes red impossible elsewhere.
+  assert.doesNotMatch(html, /<td class="s-red">/, 'the freshness tile adds no red row while writes are off (fixture has error:0, so no red renders anywhere)');
   // The cron verdict is what um-alert would compute — writes_enabled is not an
   // input to it, so the aggregate line still says STALE.
   assert.match(html, /Cron verdict: STALE/);
@@ -852,6 +856,21 @@ test('degraded:["corpus-unavailable"] blanks points/points_by_project/scan_satur
   assert.doesNotMatch(section, /999/, 'the stale non-null value never leaks past the flag');
 });
 
+test('M2: a malformed (non-array) degraded field blanks the corpus tile too, not "no flags"', () => {
+  // A string/number/bare-object `degraded` is UNKNOWN, not an empty flag
+  // list — `Array.isArray(degraded) ? degraded : []` would read it as "no
+  // outage" and render the (possibly stale) corpus figures as truth. The ops
+  // row already treats this shape as "cannot assess" (degradedPresentation);
+  // corpusTile must agree, via the same degradedFlags() helper.
+  const html = render(makeStats({
+    degraded: 'corpus-unavailable', // malformed: a bare string, not the expected list
+    corpus: corpus({ points: 999, points_by_project: { x: 999 } }),
+  }));
+  const section = sectionByHeading(html, 'Corpus');
+  assert.match(section, /cannot assess/i);
+  assert.doesNotMatch(section, /999/, 'the stale value never renders as truth just because degraded was unparseable');
+});
+
 test('MIN-3 (fix round 1): a flag-driven corpus outage and a shape-driven one get DIFFERENT '
   + 'diagnoses — a malformed corpus section without the flag is not blamed on qdrant', () => {
   const flagDriven = sectionByHeading(
@@ -966,6 +985,26 @@ test('MIN-2 (fix round 1): a non-finite MEMBER value in a growth series reads "c
   assert.match(html, extractionBlock);
   assert.doesNotMatch(html, /0 extractions in 7d/, 'a garbage day count must never render the confident zero-text');
   assert.equal((html.match(/<polyline/g) ?? []).length, 1, 'the doc series is unaffected — the states are independent');
+});
+
+test('M1: a null/\'\'/false/[] MEMBER in a growth series reads "cannot assess", never the '
+  + 'confident-false-zero a bare Number() coercion would produce', () => {
+  // Number(null) === 0, Number('') === 0, Number(false) === 0, Number([]) === 0
+  // — all FINITE, so the MIN-2 non-finite guard alone would miss every one of
+  // these and silently render "0 extractions in 7d" for a garbage day. pyFloat
+  // (which returns null, not 0, for each) is what classifySeries must use.
+  for (const [label, badMember] of [['null', null], ["''", ''], ['[]', []], ['false', false]]) {
+    const html = render(makeStats({
+      corpus: corpus({
+        points: 50,
+        growth_7d: { '2026-07-28': badMember, '2026-07-27': 3 },
+        growth_docs_7d: { '2026-07-26': 1 },
+      }),
+    }));
+    const extractionBlock = /<h3>Extraction growth \(7d\)<\/h3>\s*<p class="s-grey">cannot assess<\/p>/;
+    assert.match(html, extractionBlock, `member ${label}: the whole series reads cannot-assess`);
+    assert.doesNotMatch(html, /0 extractions in 7d/, `member ${label}: never the confident zero-text`);
+  }
 });
 
 test('NIT-6 (fix round 1): a single-day (non-array) growth series draws no sparkline — '

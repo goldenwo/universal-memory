@@ -34,6 +34,7 @@
 // the pipeline, corpus, growth and recall tiles, in the §4 priority order.
 
 import { esc, stripBidiControls } from './escape-html.mjs';
+import { FULL_SCAN_LIMIT } from './stats-payload.mjs';
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -349,6 +350,22 @@ function asPlainObject(v) {
   return (v !== null && typeof v === 'object' && !Array.isArray(v)) ? v : null;
 }
 
+/**
+ * `stats.degraded`'s own shape guard, shared by corpusTile and opsRow (M2):
+ * absent/null ⇒ no flags (healthy — nothing to report); an array ⇒ its own
+ * (null/undefined-filtered) flags; anything else is UNKNOWN, not healthy — a
+ * `!Array.isArray(d) ? [] : d` at either call site would silently read a
+ * malformed field (a string, a number, a bare object) as "no flags", which
+ * is a confident-wrong "healthy"/"no outage" exactly where corpusTile and
+ * opsRow must instead say "cannot assess". One owner so the two call sites
+ * cannot drift apart on what counts as malformed.
+ */
+function degradedFlags(degraded) {
+  if (degraded === null || degraded === undefined) return { flags: [], malformed: false };
+  if (!Array.isArray(degraded)) return { flags: [], malformed: true };
+  return { flags: degraded.filter((d) => d !== null && d !== undefined), malformed: false };
+}
+
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
@@ -476,7 +493,13 @@ function freshnessTile(stats) {
   // capture: null (or any non-object) — grey, "cannot assess". Distinct from
   // {} on purpose: "we cannot see" is not "nothing is landing". The banner
   // names WHICH failure it is (counters dark vs. a malformed section).
-  if (capture === null || capture === undefined || typeof capture !== 'object' || Array.isArray(capture)) {
+  //
+  // Same predicate captureShapeReason() applies for pipelineTile below —
+  // retrofit-called here (not re-inlined) so the two tiles cannot drift on
+  // what "malformed capture" means (M4); `v.reason` (from captureVerdict,
+  // computed above over the SAME `capture`) already names the identical
+  // failure in this branch, so the diagnosis lookup is unchanged.
+  if (captureShapeReason(capture) !== null) {
     return `    <section class="tile">
 ${head}
       <p class="banner s-grey">Cannot assess: ${errorDiagnosis(v.reason).banner}.</p>
@@ -652,7 +675,16 @@ function corpusBanner(reason) {
  * already applies to `capture`).
  */
 function corpusTile(stats) {
-  const flags = Array.isArray(stats.degraded) ? stats.degraded : [];
+  const { flags, malformed } = degradedFlags(stats.degraded);
+  // A malformed `degraded` (not a list) means this tile cannot tell whether
+  // corpus-unavailable applies — the SAME "cannot assess", never "no flags",
+  // the ops row's degradedPresentation already applies to the identical
+  // field (M2). Checked before `corpus.points` is ever read, so a stale
+  // non-null corpus payload never renders as truth just because the flag
+  // field was unparseable.
+  if (malformed) {
+    return corpusBanner('the degraded field is malformed (expected a list), so corpus figures cannot be read.');
+  }
   const unavailable = flags.includes('corpus-unavailable');
   const corpus = asPlainObject(stats.corpus);
 
@@ -663,12 +695,14 @@ function corpusTile(stats) {
     return corpusBanner('the corpus section is malformed (it is not an object), so corpus figures cannot be read.');
   }
 
-  // `points` is NOT raw/unbounded: it saturates at FULL_SCAN_LIMIT. Whether
-  // it is showing the true count or a silently-capped one can only be told
-  // by the `scan_saturated` FLAG — `points === 10000` is not proof of
-  // saturation (a single filtered system doc at the cap yields 9999) and the
-  // cap literal is not itself in the payload, so it is never inferred here.
-  const pointsCell = corpus.scan_saturated === true ? '≥ 10000 (scan cap)' : cell(corpus.points);
+  // `points` is NOT raw/unbounded: it saturates at FULL_SCAN_LIMIT (imported
+  // from stats-payload.mjs, not re-hardcoded — a second literal here could
+  // silently drift from the real cap). Whether it is showing the true count
+  // or a silently-capped one can only be told by the `scan_saturated` FLAG —
+  // `points === FULL_SCAN_LIMIT` is not proof of saturation (a single
+  // filtered system doc at the cap yields FULL_SCAN_LIMIT - 1) and the cap
+  // value is never inferred from `points` here.
+  const pointsCell = corpus.scan_saturated === true ? `≥ ${FULL_SCAN_LIMIT} (scan cap)` : cell(corpus.points);
 
   const projectMap = asPlainObject(corpus.points_by_project);
   const byProject = projectMap === null ? null : Object.keys(projectMap);
@@ -737,8 +771,20 @@ function classifySeries(raw) {
   const days = Object.keys(raw);
   const values = [];
   for (const d of days) {
-    const n = Number(raw[d]);
-    if (!Number.isFinite(n)) return { state: 'unavailable', days: [], values: [] };
+    const member = raw[d];
+    // pyFloat, NOT bare Number(): Number(null)/Number('')/Number([]) all
+    // coerce to a FINITE 0 — indistinguishable from a genuine "0 extractions
+    // today" and exactly the confident-false-zero this tile's docstring
+    // (above) warns against. pyFloat returns null (unusable) for all three
+    // instead of guessing a value. A boolean member is rejected here too,
+    // ahead of pyFloat: pyFloat's bool-is-an-int-subclass mirroring exists
+    // for the cron-agreeing threshold/freshness fields elsewhere in this
+    // module (A12), which have a real python float(bool) counterpart to
+    // agree with; a growth-series day count has no such counterpart, so a
+    // `true`/`false` member is exactly as unusable as `null`/''/`[]`, not a
+    // legitimate 1/0.
+    const n = typeof member === 'boolean' ? null : pyFloat(member);
+    if (n === null || !Number.isFinite(n)) return { state: 'unavailable', days: [], values: [] };
     values.push(n);
   }
   const sum = values.reduce((a, b) => a + b, 0);
@@ -881,13 +927,10 @@ ${labelLine}
 }
 
 function degradedPresentation(degraded) {
-  if (degraded === null || degraded === undefined) {
-    return '<span class="s-green">healthy — every source reporting</span>';
-  }
-  if (!Array.isArray(degraded)) {
+  const { flags, malformed } = degradedFlags(degraded);
+  if (malformed) {
     return '<span class="s-grey">cannot assess — the degraded field is malformed (expected a list)</span>';
   }
-  const flags = degraded.filter((d) => d !== null && d !== undefined);
   return flags.length === 0
     ? '<span class="s-green">healthy — every source reporting</span>'
     : `<span class="s-grey">${flags.map((d) => t(d)).join(', ')}</span>`;
@@ -972,9 +1015,10 @@ const STYLE = `
 /**
  * Render the authenticated `/control` document.
  *
- * Signature deliberately mirrors U3's `renderStubPage({ nonce, csrf })` with
- * the payload added, so U5's swap is one call-site line:
- *   `sendControlHtml(res, 200, renderControlPage({ stats, nonce, csrf }), nonce)`
+ * The real, wired-in authenticated document (U5): control-routes.mjs's
+ * authenticated GET branch resolves `stats`/`nonce`/`csrf` and renders it in
+ * one call-site line:
+ *   `sendControlHtml(res, 200, renderControlPage({ stats, nonce, csrf: token }), nonce)`
  *
  * @param {object} opts
  * @param {object} opts.stats - a buildStats() payload (any degraded shape).

@@ -4,8 +4,9 @@
 // Covers (spec §3 + §6 + §8 acceptance):
 //   • A14 — the exact security-header set on EVERY HTML response the surface
 //     can emit, asserted one-by-one through the single sendControlHtml choke
-//     point (six shapes today: unlock form, stub page, failure re-render, u=1
-//     panel, duplicate-cookie rejection, 405 notice) plus a per-response nonce.
+//     point (six shapes today: unlock form, the authenticated control page,
+//     failure re-render, u=1 panel, duplicate-cookie rejection, 405 notice)
+//     plus a per-response nonce.
 //     The enumeration is the point — a shape added without a row here is
 //     exactly the uncovered response the choke point exists to prevent.
 //   • A11 (U3 slice) — no active content on the auth-surface templates.
@@ -159,7 +160,9 @@ test('A14: the exact header set is present on EVERY HTML response, each with its
     nonces.add(assertControlHeaders(form, 'unlock form'));
     bodies.form = await form.text();
 
-    // (2) the authenticated (stub) page
+    // (2) the authenticated control page (U5: the real renderControlPage(),
+    // not a stub — this suite only checks its headers/nonce; control-page.
+    // test.mjs is the tile-content authority)
     const { id } = createSession(Date.now());
     const page = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
     nonces.add(assertControlHeaders(page, 'page'));
@@ -201,6 +204,23 @@ test('A14: the exact header set is present on EVERY HTML response, each with its
   } finally { await ctx.close(); }
 });
 
+// U3-era whole-document regex sweep (not a parse-based scanner like
+// control-page.test.mjs's assertNoActiveContent/scanTags). That is safe ONLY
+// because this suite's payload carries no untrusted strings by construction:
+// the six shapes below (unlock form, the authenticated control page, failure
+// re-render, u=1 panel, duplicate-cookie panel, 405 notice) are all driven by
+// startControl()'s makeExplodingMemory() + a deliberately-missing counters db
+// — no test in this file ever seeds a capture surface name, project name, or
+// any other payload-derived string, hostile or otherwise, so the authenticated
+// page renders only literal degraded-state text, never attacker data.
+// Do NOT seed hostile fixtures (surface names, project names, etc.) into
+// THIS suite to test escaping — a hostile string rendered as inert escaped
+// TEXT (e.g. the literal characters `onerror=` inside `&lt;img
+// src=x onerror=alert(1)&gt;`) would false-positive these regexes, which
+// scan the raw string rather than parsing tags/attributes. Hostile-fixture
+// coverage belongs in control-page.test.mjs's parse-based sweep
+// (assertNoActiveContent), which is exactly why it exists as a second,
+// stricter scanner rather than reusing this one.
 test('A11 (U3 slice): the auth-surface templates carry no active content', async () => {
   const ctx = await startControl();
   try {
