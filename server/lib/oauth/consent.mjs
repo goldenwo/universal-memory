@@ -31,6 +31,13 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { OAUTH_TTLS } from './state-store.mjs';
 import { esc } from '../escape-html.mjs';
+// The brand lockup SVG and the .brand/.brand-name/.brand-sub CSS are SHARED,
+// not a second copy (Stage B spec §6 / R1 N5): the /control page renders the
+// same lockup and calls the same brandCss() helper for its own tighter
+// 0.5rem gap — this page passes its OWN 1rem margin as the one parameter
+// that legitimately differs between the two. Byte-identity of this page's
+// output across the repoint is pinned by test/consent-snapshot.test.mjs.
+import { BRAND_LOCKUP_SVG, brandCss } from '../control-page.mjs';
 
 const COOKIE_NAME = 'um_consent';
 const COOKIE_PURPOSE = 'consent';
@@ -153,17 +160,13 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
     button.allow { background: #1c64f2; color: #fff; border-color: #1c64f2; }
     .providers { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
     .provider { background: #fff; }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
-    .brand-name { font-weight: 650; font-size: 1.15rem; letter-spacing: -0.02em; }
-    .brand-sub { color: #656d76; font-weight: 400; }
+    ${brandCss('1rem')}
   </style>
 </head>
 <body>
   <div class="card">
     <div class="brand">
-      <svg data-brand="um-lockup" width="34" height="34" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-        <path d="M16 12 v22 a15 15 0 0 0 30 0 v-8 a8 8 0 0 0 -13 -6" stroke="#5b5bd6" stroke-width="6" stroke-linecap="round"/>
-      </svg>
+      ${BRAND_LOCKUP_SVG}
       <span class="brand-name">um<span class="brand-sub"> · universal memory</span></span>
     </div>
     ${errorBlock}

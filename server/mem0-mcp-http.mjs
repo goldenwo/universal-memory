@@ -2780,8 +2780,22 @@ export function createRequestHandler(ctx = {}) {
 		// middleware must not run) with bypassRateLimit:false + noLoopbackBypass
 		// (the shared limiter above still applies, even on loopback). Everything
 		// else — session, CSRF, Origin, throttle, headers — lives in the module.
+		//
+		// U5: the authenticated GET calls buildStats() IN-PROCESS (no HTTP
+		// self-call). `memory`/`userId` mirror the /api/stats route's own
+		// resolution (resolvedMemory() at request time, the same USER_ID); a
+		// distinct `endpoint` label ('/control') keeps degraded-corpus logs/
+		// metrics from mislabeling an in-process build as '/api/stats'.
+		// `readCounters` is undefined in production (buildStats defaults it to
+		// readCounterStats) — it exists on ctx only so tests can inject a
+		// throwing/fake reader the same way ctx.memory already works.
 		if (url.pathname === '/control' || url.pathname.startsWith('/control/')) {
-			await control.handle(req, res, url);
+			await control.handle(req, res, url, {
+				memory: resolvedMemory(),
+				userId: USER_ID,
+				endpoint: '/control',
+				readCounters: ctx.readCounters,
+			});
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {

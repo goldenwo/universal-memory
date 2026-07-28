@@ -20,10 +20,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { createRequire } from 'node:module';
 import { endpointClassRoute } from '../lib/endpoint-class.mjs';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { createSession, expire, CONTROL_SESSION_TTL_MS } from '../lib/control-session.mjs';
 import { MAX_FORM_BYTES } from '../lib/http-form.mjs';
+
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3');
 
 const TOKEN = 'control-master-token-abc123';
 
@@ -32,12 +39,76 @@ const TOKEN = 'control-master-token-abc123';
 // byte-comparable responses out of two different servers (A3 ↔ A3b).
 const FIXED_CSRF = 'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
 
+// U5: the authenticated GET now calls the REAL buildStats(), which reads the
+// counters db via readCounterStats() when a test doesn't inject its own
+// `readCounters`. Without a per-test override, readCounterStats() falls back
+// to countersDbPath()'s resolution — which, on a developer machine that runs
+// its own UM instance, can be a REAL, non-empty db (verified while wiring this
+// up: it rendered actual production surface names/counts). Every test in this
+// file gets a guaranteed-missing db path by default so results stay hermetic
+// and machine-independent; the few tests that need a REAL counters db seed
+// their OWN tmp one and pass it via `env`.
+function missingDbPath(label) {
+  return path.join(os.tmpdir(), `um-control-routes-nodb-${label}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+}
+
+// The authenticated page's unique marker (U5): the real control-page.mjs
+// document's "Sign out" button. NOT "operational telemetry" — the unlock
+// form's own muted blurb ("Read-only operational telemetry...") contains that
+// exact phrase too, so it collided across both pages; "Sign out" appears only
+// on the authenticated page's logout form (the unlock form's button says
+// "Unlock").
+const AUTHENTICATED_MARKER = /Sign out/;
+
+// UTC day string, same convention as stats-payload.test.mjs — used by the A8
+// wire tests below that seed a real counters db.
+const TODAY = new Date().toISOString().slice(0, 10);
+
+// Direct-SQL seeding, same T5 schema as stats-payload.test.mjs — used only by
+// the A8/A6 wire tests below that need a REAL, readable counters db.
+function seedCountersDb(dbPath, rows = []) {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS counters (
+        day     TEXT    NOT NULL,
+        surface TEXT    NOT NULL,
+        project TEXT    NOT NULL,
+        event   TEXT    NOT NULL,
+        outcome TEXT    NOT NULL,
+        count   INTEGER NOT NULL,
+        PRIMARY KEY (day, surface, project, event, outcome)
+      )
+    `);
+    db.pragma('user_version = 1');
+    const stmt = db.prepare(`
+      INSERT INTO counters (day, surface, project, event, outcome, count)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (day, surface, project, event, outcome)
+      DO UPDATE SET count = count + excluded.count
+    `);
+    for (const r of rows) {
+      stmt.run(r.day, r.surface ?? 'claude-code', r.project ?? '', r.event, r.outcome ?? '', r.count ?? 1);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+async function tempCountersDbPath(prefix) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `um-control-routes-${prefix}-`));
+  return path.join(dir, 'um-counters.db');
+}
+
 // ---------- helpers ----------
 
 // Memory client that DETONATES on any read. Injected into every /control test:
-// the unlock form, the failure re-render, the u=1 panel and the U3 stub page
-// are constants-only, so a single stats read anywhere on those paths fails the
-// test loudly (A1 / R1 B4).
+// the unlock form, the failure re-render, the u=1 panel and the authenticated
+// page's OWN template are constants-only outside the one buildStats() call
+// (A1/A5) — buildStats() itself catches a throwing memory.getAll() and turns
+// it into a corpus-unavailable degraded render (see stats-payload.mjs), so
+// this fixture still proves "untouched" on every path that must never call it
+// at all, while remaining SAFE (non-crashing) on the one path that does.
 function makeExplodingMemory() {
   return {
     getAll: async () => { throw new Error('A1 violation: /control read the corpus'); },
@@ -45,7 +116,7 @@ function makeExplodingMemory() {
   };
 }
 
-async function startControl({ env = {}, memory = makeExplodingMemory() } = {}) {
+async function startControl({ env = {}, memory = makeExplodingMemory(), readCounters } = {}) {
   const overrides = {
     UM_AUTH_TOKEN: TOKEN,
     UM_CONTROL_ENABLED: 'true',
@@ -54,6 +125,10 @@ async function startControl({ env = {}, memory = makeExplodingMemory() } = {}) {
     // test that pins A10a observes it.
     UM_RATE_LIMIT_RPM: '6000',
     UM_RATE_LIMIT_BURST: '1000',
+    // Hermetic by default (see missingDbPath's note above) — a test that wants
+    // a real counters db passes its own UM_COUNTERS_DB_PATH via `env`, which
+    // overrides this because it is spread AFTER.
+    UM_COUNTERS_DB_PATH: missingDbPath('default'),
     ...env,
   };
   const prev = {};
@@ -62,7 +137,7 @@ async function startControl({ env = {}, memory = makeExplodingMemory() } = {}) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, readCounters }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -260,7 +335,7 @@ test('A5 case (iv): a valid Authorization: Bearer <master> with no cookie STILL 
     assert.equal(r.status, 200);
     const html = await r.text();
     assert.match(html, /name="operator_token"/, '/control never accepts a bearer — the browser holds no credential');
-    assert.doesNotMatch(html, /unlocked/i);
+    assert.doesNotMatch(html, AUTHENTICATED_MARKER);
     assert.equal(cookieNamed(r, 'um_control'), undefined);
   } finally { await ctx.close(); }
 });
@@ -281,16 +356,16 @@ test('A4b: forged / unknown / expired session cookie ⇒ the unlock form', async
   } finally { await ctx.close(); }
 });
 
-test('A4b: a live session cookie renders the U3 stub page (not the form)', async () => {
+test('A4b: a live session cookie renders the real control page (not the form)', async () => {
   const ctx = await startControl();
   try {
     const { id } = createSession(Date.now());
     const r = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
     assert.equal(r.status, 200);
     const html = await r.text();
-    assert.match(html, /unlocked/i, 'the authenticated branch renders the PR-3 stub');
-    assert.doesNotMatch(html, /name="operator_token"/, 'the stub is not the unlock form');
-    assert.match(html, /action="\/control\/logout"/, 'the stub carries its own logout form');
+    assert.match(html, AUTHENTICATED_MARKER, 'the authenticated branch renders the real control page');
+    assert.doesNotMatch(html, /name="operator_token"/, 'the real page is not the unlock form');
+    assert.match(html, /action="\/control\/logout"/, 'the page carries its own logout form');
     assert.ok(csrfFieldOf(html), 'the logout form carries its own CSRF pair');
     expire(id);
   } finally { await ctx.close(); }
@@ -318,7 +393,7 @@ test('A2b: correct token + valid CSRF + same-origin ⇒ 303 /control?u=1 with th
     // The minted session actually works.
     const id = cookie.split(';')[0].slice('um_control='.length);
     const page = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
-    assert.match(await page.text(), /unlocked/i);
+    assert.match(await page.text(), AUTHENTICATED_MARKER);
     expire(id);
   } finally { await ctx.close(); }
 });
@@ -588,7 +663,7 @@ test('A15: a cross-origin or CSRF-invalid logout is rejected WITHOUT expiring th
       const r = await postForm(ctx, '/control/logout', { cookie: `um_control=${id}`, ...opts });
       assert.equal(r.status, 403, name);
       const page = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
-      assert.match(await page.text(), /unlocked/i, `${name}: the session must SURVIVE a rejected logout`);
+      assert.match(await page.text(), AUTHENTICATED_MARKER, `${name}: the session must SURVIVE a rejected logout`);
     }
     expire(id);
   } finally { await ctx.close(); }
@@ -654,7 +729,7 @@ test('C1: u=1 is a ONE-SHOT marker — the authenticated branch 303s it away', a
     assert.deepEqual(setCookies(landed), [], 'the strip touches no cookie');
     // The bookmark-safe URL renders the page.
     const page = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
-    assert.match(await page.text(), /unlocked/i);
+    assert.match(await page.text(), AUTHENTICATED_MARKER);
 
     // …and once that session expires normally, the SAME bookmarked /control
     // renders the plain form — never the cookie-rejection panel, which would be
@@ -668,5 +743,185 @@ test('C1: u=1 is a ONE-SHOT marker — the authenticated branch 303s it away', a
     // The genuine-rejection path is unchanged: u=1 with NO session still panels.
     const panel = await fetch(ctx.url('/control?u=1'));
     assert.match(await panel.text(), /neither HTTPS nor localhost/i);
+  } finally { await ctx.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// U5 — the in-process stats wire: A1 (seam ordering, both halves armed), A8
+// (degraded rendering over the wire, incl. the total-blackout render deferred
+// from U4b's review), A6 (route-level points_by_project COUNTS, not just
+// presence — the other deferral).
+// ---------------------------------------------------------------------------
+
+// Call-counting fixtures, distinct from makeExplodingMemory above: these
+// prove INVOCATION, which is what the authenticated-branch half of A1 needs
+// (a throwing counters reader is NOT caught anywhere in buildStats — unlike
+// memory.getAll — so it would turn "touched" into an opaque 500 instead of a
+// clean, checkable signal; a spy proves the same fact without that noise).
+function makeSpyMemory() {
+  const state = { called: false };
+  return {
+    state,
+    getAll: async () => { state.called = true; return { results: [] }; },
+  };
+}
+
+function makeSpyReadCounters() {
+  function fn() {
+    fn.called = true;
+    return {
+      available: true, capture: {}, growth_7d: {}, growth_docs_7d: {},
+      recall: { searches_today: 0, searches_7d: 0 },
+    };
+  }
+  fn.called = false;
+  return fn;
+}
+
+test('A1: memory + counters reads are wired to the AUTHENTICATED branch only — every earlier path touches neither', async () => {
+  const memory = makeSpyMemory();
+  const readCounters = makeSpyReadCounters();
+  const ctx = await startControl({ memory, readCounters });
+  try {
+    // Unlock-form path — no cookie at all.
+    const form = await fetch(ctx.url('/control'));
+    assert.equal(form.status, 200);
+    assert.equal(memory.state.called, false, 'the unlock-form path must not read the corpus');
+    assert.equal(readCounters.called, false, 'the unlock-form path must not read the counters');
+
+    // u=1 with no session ⇒ the cookie-rejection panel.
+    const panel = await fetch(ctx.url('/control?u=1'));
+    assert.equal(panel.status, 200);
+    assert.equal(memory.state.called, false, 'the u=1 panel path must not read the corpus');
+    assert.equal(readCounters.called, false, 'the u=1 panel path must not read the counters');
+
+    // Duplicate session cookie ⇒ the rejection notice.
+    const dup = await fetch(ctx.url('/control'), { headers: { Cookie: 'um_control=a; um_control=b' } });
+    assert.equal(dup.status, 200);
+    assert.equal(memory.state.called, false, 'the duplicate-cookie path must not read the corpus');
+    assert.equal(readCounters.called, false, 'the duplicate-cookie path must not read the counters');
+
+    // An unlock POST reject path (wrong token) — the whole spec-§3 sequence
+    // runs and still touches neither source.
+    const reject = await postForm(ctx, '/control/unlock', { token: 'nope' });
+    assert.equal(reject.status, 401);
+    assert.equal(memory.state.called, false, 'a rejected unlock must not read the corpus');
+    assert.equal(readCounters.called, false, 'a rejected unlock must not read the counters');
+
+    // NOW the authenticated branch — buildStats() must read BOTH sources.
+    const { id } = createSession(Date.now());
+    const authed = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.equal(authed.status, 200);
+    assert.match(await authed.text(), AUTHENTICATED_MARKER);
+    assert.equal(memory.state.called, true, 'the authenticated branch must read the corpus');
+    assert.equal(readCounters.called, true, 'the authenticated branch must read the counters');
+    expire(id);
+  } finally { await ctx.close(); }
+});
+
+test('A5 regression: /api/stats keeps working after the readCounters seam lands (no override — the default)', async () => {
+  const ctx = await startControl({ memory: { getAll: async () => ({ results: [] }) } });
+  try {
+    const r = await fetch(ctx.url('/api/stats'), { headers: { Authorization: `Bearer ${TOKEN}` } });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.schema_version, 1);
+  } finally { await ctx.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// A8 — degraded rendering over the wire (route-level; deferred from U4b)
+// ---------------------------------------------------------------------------
+
+test('A8: counters-db absent ⇒ 200 with capture/growth/recall degraded, corpus stays live', async () => {
+  const items = [
+    { id: 'a', memory: 'm1', metadata: { project: 'um' } },
+    { id: 'b', memory: 'm2', metadata: { project: 'edge' } },
+  ];
+  // Default env already routes UM_COUNTERS_DB_PATH at a guaranteed-missing
+  // file (see missingDbPath's note) — no override needed for "counters absent".
+  const ctx = await startControl({ memory: { getAll: async () => ({ results: items }) } });
+  try {
+    const { id } = createSession(Date.now());
+    const r = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    assert.match(html, AUTHENTICATED_MARKER);
+    assert.match(html, /counters-unavailable/, 'the degraded flag names the dark source');
+    assert.doesNotMatch(html, /corpus-unavailable/, 'qdrant is healthy — only counters are dark');
+    assert.match(html, /cannot assess/i, 'the capture/growth/recall tiles show an empty/cannot-assess state');
+    // Corpus itself stays live — the qdrant read did not fail.
+    assert.match(html, /<th scope="row">Points<\/th><td>2<\/td>/);
+    expire(id);
+  } finally { await ctx.close(); }
+});
+
+test('A8: qdrant down (getAll throws) ⇒ corpus-unavailable, growth stays live off the counters db', async () => {
+  const dbPath = await tempCountersDbPath('a8-corpus-down');
+  seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 4 }]);
+  const ctx = await startControl({
+    env: { UM_COUNTERS_DB_PATH: dbPath },
+    memory: { getAll: async () => { throw new Error('qdrant down'); } },
+  });
+  try {
+    const { id } = createSession(Date.now());
+    const r = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    assert.match(html, AUTHENTICATED_MARKER);
+    assert.match(html, /corpus-unavailable/);
+    assert.doesNotMatch(html, /counters-unavailable/, 'the counters db is healthy here');
+    assert.match(html, /Cannot assess: the corpus is unavailable \(qdrant could not be read\)\./);
+    // Growth is counters-derived (spec §5 C2) and stays live despite qdrant
+    // being down — the opposite governance from the corpus tile.
+    assert.match(html, new RegExp(`${TODAY}: 4`));
+    expire(id);
+  } finally { await ctx.close(); }
+});
+
+test('A8: both sources dark ⇒ a coherent ALL-GREY page — 200, no s-green/s-red, no polylines, no misleading zero figures', async () => {
+  // Default env already routes UM_COUNTERS_DB_PATH at a missing file.
+  const ctx = await startControl({ memory: { getAll: async () => { throw new Error('qdrant down'); } } });
+  try {
+    const { id } = createSession(Date.now());
+    const r = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.equal(r.status, 200, 'a total blackout of both sources must still be a clean 200, never a crash');
+    const html = await r.text();
+    assert.match(html, AUTHENTICATED_MARKER);
+    assert.match(html, /corpus-unavailable/);
+    assert.match(html, /counters-unavailable/);
+    assert.doesNotMatch(html, /class="s-green"/, 'no cell may read healthy while both sources are dark');
+    assert.doesNotMatch(html, /class="s-red"/, 'no cell may read alarmed either — there is nothing left to measure');
+    assert.doesNotMatch(html, /<polyline/, 'no sparkline draws over an unavailable series');
+    assert.doesNotMatch(html, /0 extractions in 7d/, 'a dark counters db must not present as a confident zero');
+    assert.doesNotMatch(html, /0 doc writes in 7d/, 'ditto for the doc-tier series');
+    expire(id);
+  } finally { await ctx.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// A6 (route-level) — points_by_project renders correct COUNTS through the
+// real wire. U4b's control-page.test.mjs already covers hostile-key rendering
+// at the page-unit level (presence-only); this pins the same guarantee
+// end-to-end through the real route (deferred from U4b's review).
+// ---------------------------------------------------------------------------
+
+test('A6 (route-level): points_by_project renders correct COUNTS through the real wire, not just presence', async () => {
+  const items = [
+    ...Array.from({ length: 3 }, (_, i) => ({ id: `um-${i}`, memory: `m${i}`, metadata: { project: 'universal-memory' } })),
+    ...Array.from({ length: 2 }, (_, i) => ({ id: `edge-${i}`, memory: `m${i}`, metadata: { project: 'edge-catcher' } })),
+    { id: 'no-project', memory: 'no metadata.project' },
+  ];
+  const ctx = await startControl({ memory: { getAll: async () => ({ results: items }) } });
+  try {
+    const { id } = createSession(Date.now());
+    const r = await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } });
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    assert.match(html, /<th scope="row">universal-memory<\/th><td>3<\/td>/);
+    assert.match(html, /<th scope="row">edge-catcher<\/th><td>2<\/td>/);
+    assert.match(html, /<th scope="row" class="unattributed">unattributed<\/th><td>1<\/td>/);
+    assert.match(html, /<th scope="row">Points<\/th><td>6<\/td>/, 'the total is the SUM across all three buckets');
+    expire(id);
   } finally { await ctx.close(); }
 });

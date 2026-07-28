@@ -341,3 +341,60 @@ test('endpoint param is threaded into the degraded corpus-fetch log, not hardcod
     _setLogStreamForTest(null);
   }
 });
+
+// ---------------------------------------------------------------------------
+// `readCounters` DI seam (U5 / U3-gate finding F5): readCounterStats was a
+// direct import inside this module with no seam. buildStats({..., readCounters
+// = readCounterStats}) is a DEFAULTED param — a caller that omits it (every
+// existing call site above, and the /api/stats route) gets IDENTICAL behavior
+// to before this param existed. The /control route (server/lib/control-routes.mjs,
+// U5) threads an injectable reader through so its own A1 ordering test can
+// prove the authenticated branch — and ONLY the authenticated branch — reads
+// the counters db, exactly like it already does for `memory`.
+// ---------------------------------------------------------------------------
+
+test('readCounters: an injected reader supersedes readCounterStats — the seam actually replaces the read', async () => {
+  const fakeShape = {
+    available: true,
+    capture: {
+      'synthetic-surface': {
+        last_day_seen: TODAY,
+        freshness_hours: 0,
+        events_today: 3,
+        errors_today: 0,
+        outcomes_7d: { stored: 3, abstained: 0, deduped: 0, superseded: 0, error: 0 },
+      },
+    },
+    growth_7d: { [TODAY]: 3 },
+    growth_docs_7d: { [TODAY]: 0 },
+    recall: { searches_today: 1, searches_7d: 2 },
+  };
+  let calledWithNow;
+  const readCounters = ({ now: n }) => { calledWithNow = n; return fakeShape; };
+  // A nonsense UM_COUNTERS_DB_PATH proves the override REPLACES the read
+  // rather than merely running alongside the real one — if buildStats still
+  // consulted readCounterStats under the hood, this path would degrade to
+  // counters-unavailable instead of reflecting fakeShape.
+  await withEnv({ UM_COUNTERS_DB_PATH: path.join(os.tmpdir(), 'um-stats-payload-seam-does-not-exist.db') }, async () => {
+    const body = await buildStats({
+      now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', readCounters,
+    });
+    assert.equal(calledWithNow, NOW, 'buildStats forwards its own `now` seam to the injected reader');
+    assert.deepEqual(body.capture, fakeShape.capture);
+    assert.deepEqual(body.corpus.growth_7d, fakeShape.growth_7d);
+    assert.deepEqual(body.corpus.growth_docs_7d, fakeShape.growth_docs_7d);
+    assert.equal(body.recall.searches_today, 1);
+    assert.equal(body.recall.searches_7d, 2);
+    assert.equal(body.degraded, undefined, 'the injected reader reports available:true — no degraded marker');
+  });
+});
+
+test('readCounters: omitting the param falls back to readCounterStats — zero behavior change', async () => {
+  const dbPath = await tempDbPath();
+  seedDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 2 }]);
+  await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
+    assert.equal(body.corpus.growth_7d[TODAY], 2, 'no readCounters param ⇒ the real readCounterStats reads the seeded db');
+    assert.equal(body.degraded, undefined);
+  });
+});
