@@ -997,8 +997,11 @@ print(f'OK T10-D: memory_recent returns {{results:[...]}} shape ({len(result[\"r
 echo "[smoke]     T10-E: memory_checkpoint"
 if [ "${UM_MCP_WRITE_ENABLED:-}" = "true" ] && [ -n "${UM_VAULT_DIR:-}" ]; then
     # Writes enabled — assert full pipeline runs
-    # Seed a raw capture for a test project
-    mcp_call 99 memory_append_turn '{"project":"t10e","content":"Seed turn for checkpoint","role":"user"}' >/dev/null
+    # Seed raw captures for a test project. Two turns: the #185 thin-transcript
+    # gate abstains below 2 append-turn headers AND 500 bytes — a real exchange
+    # (>= 2 turns) clears it; a single seed line would correctly abstain.
+    mcp_call 99 memory_append_turn '{"project":"t10e","content":"Investigating the checkpoint pipeline end to end for the smoke run; this user turn seeds the raw capture tier.","role":"user"}' >/dev/null
+    mcp_call 98 memory_append_turn '{"project":"t10e","content":"Confirmed: the raw capture landed and the summarizer path is next; this assistant turn completes the seeded exchange.","role":"assistant"}' >/dev/null
     # Now checkpoint — expect summary + state.md written
     T10E_RESP=$(mcp_call 105 memory_checkpoint '{"project":"t10e"}')
     echo "$T10E_RESP" | python3 -c "
@@ -1026,6 +1029,24 @@ print(json.loads(result_text).get('summary_id', ''))
             -d "{\"metadata\":{\"id\":\"$T10E_SUMMARY_ID\"}}" >/dev/null 2>&1 || true
     fi
     rm -rf "$UM_VAULT_DIR/sessions/t10e" "$UM_VAULT_DIR/state/t10e" "$UM_VAULT_DIR/captures/t10e" 2>/dev/null || true
+
+    # T10-E2 (#185): thin-transcript abstention — a project with NO raw
+    # captures must abstain (store nothing), not fabricate a summary.
+    echo "[smoke]     T10-E2: memory_checkpoint abstains on empty transcript (#185)"
+    T10E2_RESP=$(mcp_call 106 memory_checkpoint '{"project":"t10e2-empty"}')
+    echo "$T10E2_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+result_text = data.get('result', {}).get('content', [{}])[0].get('text', '{}')
+result = json.loads(result_text)
+assert result.get('ok') is True, 'expected ok:true: ' + result_text
+assert result.get('skipped') == 'thin_transcript', 'expected skipped=thin_transcript: ' + result_text
+assert 'summary_id' not in result, 'abstention must not mint a summary: ' + result_text
+print('OK T10-E2: empty transcript abstained (skipped=thin_transcript, nothing stored)')
+" || { echo "FAIL: T10-E2 abstention failed"; exit 1; }
+    if compgen -G "$UM_VAULT_DIR/sessions/t10e2-empty/"*.md >/dev/null 2>&1; then
+        echo "FAIL: T10-E2 abstention wrote a summary file"; exit 1
+    fi
 else
     # Writes disabled — keep post-v0.4 behavior: accept structured gate error
     # (matches current smoke.sh T10-E post-fix state)
