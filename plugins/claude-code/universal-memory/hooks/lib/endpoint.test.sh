@@ -97,11 +97,11 @@ echo "=== T5: neither set (default fallback) ==="
 UM_SERVER_URL="" UM_ENDPOINT="" \
   call_resolve "T5" "http://localhost:6335" ""
 
-# ─── T6: T2 warn message references MIGRATION.md (operator-actionable) ───────
+# ─── T6: T2 warn message carries the rename instruction (operator-actionable) ─
 echo ""
-echo "=== T6: T2 warn includes MIGRATION.md pointer ==="
+echo "=== T6: T2 warn tells the operator to rename to UM_SERVER_URL ==="
 UM_SERVER_URL="" UM_ENDPOINT="http://legacy.example:6335" \
-  call_resolve "T6" "http://legacy.example:6335" "MIGRATION.md"
+  call_resolve "T6" "http://legacy.example:6335" "rename it to UM_SERVER_URL"
 
 # ─── T7: T4 warn message names the value being used (audit trail) ────────────
 echo ""

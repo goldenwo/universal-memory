@@ -348,7 +348,7 @@ if [[ $ASSUME_YES -eq 1 && $INSTALL_SERVER -eq 1 ]]; then
     for _msg in "${_missing_keys[@]}"; do echo "  - $_msg" >&2; done
     echo "" >&2
     echo "Either set the env var(s) above and re-run, or run interactively without --yes." >&2
-    echo "See MIGRATION.md (v0.6 → v0.7) for the contract change." >&2
+    echo "Since v0.7, keys are provider-prefixed: UM_<PROVIDER>_API_KEY, falling back to <PROVIDER>_API_KEY (google also accepts GEMINI_API_KEY)." >&2
     exit 1
   fi
 fi

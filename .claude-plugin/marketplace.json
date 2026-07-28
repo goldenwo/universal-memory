@@ -11,12 +11,12 @@
       "name": "universal-memory",
       "source": "./plugins/claude-code/universal-memory",
       "description": "Cross-session, cross-device memory for Claude Code. Session hooks capture every conversation to a universal-memory server (local Docker or remote self-hosted) and inject the synthesized state-of-play at the start of the next session. First run: /um-setup.",
-      "version": "1.10.0",
+      "version": "1.10.1",
       "author": {
         "name": "goldenwo",
         "url": "https://github.com/goldenwo"
       },
-      "homepage": "https://github.com/goldenwo/universal-memory/blob/main/docs/claude-code-plugin.md",
+      "homepage": "https://github.com/goldenwo/universal-memory",
       "repository": "https://github.com/goldenwo/universal-memory",
       "license": "MIT",
       "keywords": [

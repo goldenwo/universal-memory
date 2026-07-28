@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
-const CANONICAL_PATH = path.join(REPO, 'docs/memory-routing-rubric.md');
+const CANONICAL_PATH = path.join(REPO, 'plugins/claude-code/universal-memory/rubric.md');
 const MIRROR_PATHS = [
   'plugins/codex/universal-memory/README.md',
   'plugins/chatgpt-custom-gpt/universal-memory/README.md',

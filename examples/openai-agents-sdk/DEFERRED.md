@@ -18,4 +18,4 @@ Probably *not* an Agent SDK example. The realistic next OpenAI-side example is a
 ## See also
 
 - [`../openai-assistants/README.md`](../openai-assistants/README.md) §Known issues — the Assistants API deprecation that triggered this deferral.
-- `docs/codex-integration-notes.md` — parallel research discipline (E1 deferred Codex hooks to v0.4 for different upstream-stability reasons).
+- Codex-integration research notes (internal) — parallel research discipline (E1 deferred Codex hooks to v0.4 for different upstream-stability reasons).

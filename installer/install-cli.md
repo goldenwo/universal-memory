@@ -105,7 +105,7 @@ Usage: um <subcommand> [args]
 Subcommands:
   search, state, recent, list, capture, tail, forget, supersede
 
-See docs/um-cli.md for full contract.
+Full flag/output contract is in the subcommand help (`um <cmd> --help`).
 ```
 
 `um --help` exits 0. Running `um` without arguments prints a more detailed subcommand list to stderr and exits 2.
@@ -221,6 +221,4 @@ Open a new shell to pick up the PATH change.
 
 ## See also
 
-- `docs/um-cli.md` — CLI subcommand reference, config format, JSON output contracts
 - `server/install.sh` — full server + CLI installer
-- `ROADMAP.md` — release history

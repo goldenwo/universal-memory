@@ -831,12 +831,11 @@ EOF
 	printf '║   health: %s\n' "${_UPG_HEALTH_BODY:-<no body>}"
 	cat <<'EOF'
 ║
-║ What changed: CHANGELOG.md (release notes)
-║               MIGRATION.md (per-version upgrade steps)
+║ What changed: see the GitHub release notes for this version
 ║
 ║ The server is only one of three surfaces. If you use the Claude Code
 ║ plugin, update it too:  claude plugin update universal-memory
-║ Full order + failure signatures: docs/upgrading.md
+║ Update order: server first, then `claude plugin update universal-memory`, then the CLI
 ║
 EOF
 	printf '║ To revert to the previous image:\n'
@@ -1361,7 +1360,7 @@ preserved_keys=()
 }
 
 if [ "${#added_keys[@]}" -gt 0 ]; then
-	info "[install] added ${#added_keys[@]} new env keys to .env (defaulted; see MIGRATION.md)"
+	info "[install] added ${#added_keys[@]} new env keys to .env (safe defaults applied)"
 fi
 if [ "${#preserved_keys[@]}" -gt 0 ]; then
 	info "[install] preserved ${#preserved_keys[@]} user-tuned v0.6 env keys from prior .env"
@@ -1556,7 +1555,7 @@ if [ "${UM_WAS_EXISTING_INSTALL:-0}" = "1" ] && [ -z "${UM_QUIET:-}" ]; then
 
 [install] v0.5 → v0.6 changes applied:
   • Bearer auth enabled — token written to ~/.um/auth-token (chmod 600)
-  • ${_added_count} new env keys added to .env (defaulted; see MIGRATION.md)
+  • ${_added_count} new env keys added to .env (safe defaults applied)
   • Loopback bypass active by default; tunnel-fronted clients require token
   -> Tunnel users: rotate token in Claude.ai/Custom GPT connector settings
   -> Manual token rotation: see server/README.md "Advanced: writes-enabled install"

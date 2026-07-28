@@ -375,7 +375,7 @@ TF19_OUT=$(env -i PATH="$TF19/bin:/usr/bin:/bin" HOME="$TF19/fakehome" \
   bash "$INSTALLER" --server --yes 2>&1) && TF19_EXIT=0 || TF19_EXIT=$?
 if [ "$TF19_EXIT" -ne 0 ]; then pass "T-FLAGS-19: non-zero exit (refuses on missing key)"; else fail "T-FLAGS-19: expected non-zero exit, got 0 (out: $TF19_OUT)"; fi
 if echo "$TF19_OUT" | grep -qi "OPENAI_API_KEY"; then pass "T-FLAGS-19: error names the missing var"; else fail "T-FLAGS-19: error didn't name OPENAI_API_KEY (got: $TF19_OUT)"; fi
-if echo "$TF19_OUT" | grep -q "MIGRATION.md"; then pass "T-FLAGS-19: error points at MIGRATION.md"; else fail "T-FLAGS-19: error didn't reference MIGRATION.md (got: $TF19_OUT)"; fi
+if echo "$TF19_OUT" | grep -q "provider-prefixed"; then pass "T-FLAGS-19: error explains the provider-prefixed key contract"; else fail "T-FLAGS-19: error didn't explain the key contract (got: $TF19_OUT)"; fi
 rm -rf "$TF19"
 
 # ─── T-FLAGS-20 (v0.7 G2.3): --yes + --cli alone (no server) does NOT require key ─

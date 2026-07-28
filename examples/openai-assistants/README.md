@@ -24,7 +24,6 @@ pieces into your own code.
    docker compose up -d
    curl http://localhost:6335/health   # -> {"ok":true,"memories":N}
    ```
-   Full install walkthrough: [docs/quickstart.md](../../docs/quickstart.md).
 
 2. **OpenAI API key** in the environment. Both examples read `OPENAI_API_KEY`
    directly — no hardcoded secrets.
@@ -100,8 +99,7 @@ your OpenAI account and do **not** appear in UM's cost-log; check them via the
 - **These tools are read-only.** `memory_search` and `memory_state` query the
   vault but never write to it. For full capture during an Assistants session
   (session summaries, state.md updates, etc.), use UM's MCP surface directly
-  or the Claude Code session-end hook. Workflow reference:
-  [docs/workflow.md](../../docs/workflow.md).
+  or the Claude Code session-end hook. Workflow reference:.
 
 - **One-shot Assistant.** Each invocation creates and deletes its own
   Assistant. If you want to reuse an Assistant across runs, store the id
@@ -137,7 +135,4 @@ your OpenAI account and do **not** appear in UM's cost-log; check them via the
 
 ## See also
 
-- [docs/workflow.md](../../docs/workflow.md) — runtime reference for the full UM stack.
-- [docs/mcp-tools.md](../../docs/mcp-tools.md) — full MCP tool surface (for write access).
-- [docs/architecture.md](../../docs/architecture.md) — two-tier design and three pillars.
 - [`examples/openai-agents-sdk/`](../openai-agents-sdk/) — same flow using the OpenAI Agents SDK.
