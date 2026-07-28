@@ -1,4 +1,4 @@
-// server/lib/control-page.mjs — U4a (#171 Stage B, spec §4/§5/§6): the
+// server/lib/control-page.mjs — U4a+U4b (#171 Stage B, spec §4/§5/§6): the
 // authenticated `/control` document.
 //
 // A PURE function: a buildStats() payload object in, an HTML string out. No
@@ -30,8 +30,8 @@
 // "zero" look alike, erasing exactly the distinction this page exists to show.
 // Absent renders as an em dash; "cannot assess" is grey; a real zero is a zero.
 //
-// U4b extends this module with the corpus / growth / pipeline / recall tiles;
-// the shell, the shared helpers and the freshness tile land here.
+// U4a landed the shell, the shared helpers and the freshness tile. U4b adds
+// the pipeline, corpus, growth and recall tiles, in the §4 priority order.
 
 import { esc, stripBidiControls } from './escape-html.mjs';
 
@@ -48,6 +48,25 @@ import { esc, stripBidiControls } from './escape-html.mjs';
 export const BRAND_LOCKUP_SVG = `<svg data-brand="um-lockup" width="34" height="34" viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <path d="M16 12 v22 a15 15 0 0 0 30 0 v-8 a8 8 0 0 0 -13 -6" stroke="#5b5bd6" stroke-width="6" stroke-linecap="round"/>
       </svg>`;
+
+/**
+ * The `.brand`/`.brand-name`/`.brand-sub` trio, defined ONCE for THIS page
+ * (spec §6 / R1 N5 — same one-helper-many-callers posture as the lockup
+ * above). `oauth/consent.mjs` renders the identical lockup markup but keeps
+ * its OWN copy of these three rules rather than importing this export: its
+ * `.brand` rule differs by exactly one property (`margin-bottom: 1rem` vs
+ * this page's `0.5rem` — tiles need the tighter gap), and
+ * test/consent-snapshot.test.mjs pins consent's rendered output BYTE-FOR-BYTE
+ * against a pre-extraction golden fixture. Repointing consent at this export
+ * would have to pick one margin, which either changes consent's snapshotted
+ * bytes (failing A7) or forces this page to adopt consent's wider spacing (an
+ * unrelated visual regression) — so the repoint stops here, single-sourcing
+ * control-page.mjs's own copy only. See task-u4b-report.md for the full
+ * reasoning.
+ */
+export const BRAND_CSS = `.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem; }
+    .brand-name { font-weight: 650; font-size: 1.15rem; letter-spacing: -0.02em; }
+    .brand-sub { color: #656d76; font-weight: 400; }`;
 
 /**
  * The freshness threshold used when the payload carries none — the SAME
@@ -300,10 +319,34 @@ function surfaceStatus(info, thresholdHours, writesEnabled) {
   if (hours === null || Number.isNaN(hours)) {
     return { state: 'grey', words: 'cannot assess — no usable freshness value' };
   }
+  // A non-finite threshold (NaN, or +-Infinity) makes the per-surface `>`
+  // comparison below just as unreliable as it makes the aggregate's `<=`:
+  // `hours > NaN` is ALWAYS false, so without this guard a NaN-thresholded
+  // surface would slide straight into "fresh" while captureVerdict's `<=`
+  // (also always false against NaN) calls the SAME payload STALE — a green
+  // row under a red aggregate banner. Treat any non-finite threshold as
+  // cannot-assess instead of guessing a colour the aggregate does not agree
+  // with (carried in from U4a's re-review).
+  if (!Number.isFinite(thresholdHours)) {
+    return { state: 'grey', words: 'cannot assess — the freshness threshold is unusable' };
+  }
   if (hours > thresholdHours) return { state: 'red', words: `stale — no capture within ${t(thresholdHours)}h` };
   const landed = landedCount(info.outcomes_7d);
   if (landed === 0) return { state: 'red', words: 'active but landing nothing' };
   return { state: 'green', words: 'fresh' };
+}
+
+// ---------------------------------------------------------------------------
+// Shape guards — U4b's tiles repeat "is this a plain, non-array object" often
+// enough (corpus, points_by_project, recall, latency_since_boot, a surface's
+// outcomes_7d…) that a shared helper beats five slightly-different inline
+// checks drifting apart. `null`/`undefined`/an array/a primitive all fall to
+// `null` — every caller below already treats "malformed" the same as
+// "absent" (C4: a defined empty state, never a crash on the wrong shape).
+// ---------------------------------------------------------------------------
+
+function asPlainObject(v) {
+  return (v !== null && typeof v === 'object' && !Array.isArray(v)) ? v : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +517,328 @@ ${freshnessRows(capture, thresholdHours, writesEnabled, stats.generated_at)}
     </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline tile — "classified outcomes (7d)" (spec §4 Pipeline / A20)
+// ---------------------------------------------------------------------------
+
+// Fixed order + the five-outcome vocabulary `stats.mjs` always emits (see
+// control-page.mjs's freshnessTile header note). NOT the same thing as
+// A24's surface-name ban: these are OUTCOME names, module literals, never
+// attacker-controlled — no branch here is keyed on a SURFACE name.
+const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'superseded', 'error']);
+
+// Colour never the sole carrier (spec §6): every cell spells out its outcome
+// NAME as text, so `error` is still legible without the red. `error` is the
+// ONLY outcome that gets the error colour — `abstained` is a routine gate
+// outcome (the #185 thin-transcript gate, #190's zero-turn skips), never a
+// failure, and renders in the SAME plain/neutral style as stored/deduped/
+// superseded. There is deliberately no "good" colour either: this tile has
+// no residual to compare counts against (R2-C-I5), so nothing here claims a
+// count is healthy, only that it is (or is not) an error.
+function outcomeCell(name, value) {
+  const text = `${name}: ${cell(value)}`;
+  return name === 'error' ? `<td class="s-red">${text}</td>` : `<td>${text}</td>`;
+}
+
+function pipelineRows(capture) {
+  return Object.keys(capture).map((name) => {
+    const info = asPlainObject(capture[name]);
+    const outcomes = info === null ? null : asPlainObject(info.outcomes_7d);
+    const cells = OUTCOME_KEYS.map((k) => outcomeCell(k, outcomes === null ? undefined : outcomes[k])).join('\n          ');
+    return `        <tr>
+          <th scope="row">${t(name)}</th>
+          ${cells}
+        </tr>`;
+  }).join('\n');
+}
+
+// The same two shape failures captureVerdict distinguishes (null/undefined
+// vs. present-but-not-an-object) — deliberately reusing its `reason` values
+// and errorDiagnosis() banners rather than a fresh "counters are unavailable"
+// string that would be a WRONG diagnosis for a malformed (e.g. array) shape,
+// exactly the class of bug fix-round-1 already fixed once for the freshness
+// tile's own banner. Returns `null` when the shape is fine to iterate.
+function captureShapeReason(capture) {
+  if (capture === null || capture === undefined) return 'counters-unavailable';
+  if (typeof capture !== 'object' || Array.isArray(capture)) return 'bad-shape';
+  return null;
+}
+
+/**
+ * `outcomes_7d` per surface, labelled "classified outcomes (7d)" — NOT
+ * "events (7d)": there is no `events_7d` in the payload (a surface object
+ * carries only the 1-day `events_today` scalar and the 7-day `outcomes_7d`
+ * sum), so an "unlabelled residual" column would subtract across two
+ * different windows and can go negative. No residual is rendered (A20).
+ *
+ * Shares its `capture` guard shape with freshnessTile (null/malformed ⇒
+ * cannot-assess, `{}` ⇒ never-written) because it reads the SAME `capture`
+ * section — just a second projection of it, not a second data source.
+ */
+function pipelineTile(stats) {
+  const capture = stats.capture;
+  const shapeReason = captureShapeReason(capture);
+  if (shapeReason !== null) {
+    return `    <section class="tile">
+      <h2>Classified outcomes (7d)</h2>
+      <p class="banner s-grey">Cannot assess: ${errorDiagnosis(shapeReason).banner}.</p>
+    </section>`;
+  }
+  const names = Object.keys(capture);
+  if (names.length === 0) {
+    return `    <section class="tile">
+      <h2>Classified outcomes (7d)</h2>
+      <p class="banner s-red">Capture has never written: there is nothing to classify yet.</p>
+    </section>`;
+  }
+  return `    <section class="tile">
+      <h2>Classified outcomes (7d)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Surface</th>
+            <th scope="col">Stored</th>
+            <th scope="col">Abstained</th>
+            <th scope="col">Deduped</th>
+            <th scope="col">Superseded</th>
+            <th scope="col">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+${pipelineRows(capture)}
+        </tbody>
+      </table>
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Corpus tile (spec §4 Corpus / §5 C3)
+// ---------------------------------------------------------------------------
+
+/**
+ * `degraded` includes `corpus-unavailable` ⇒ points / points_by_project /
+ * scan_saturated render "cannot assess" REGARDLESS of their values — a
+ * mid-loop throw in buildStats() leaves `points` a non-null number and
+ * `points_by_project` a partial map, byte-shape-identical to a complete one,
+ * so the FLAG (not a null-check) is the only authoritative signal here
+ * (spec §5 C3, mirroring the same "flag over value" posture freshnessTile
+ * already applies to `capture`).
+ */
+function corpusTile(stats) {
+  const flags = Array.isArray(stats.degraded) ? stats.degraded : [];
+  const unavailable = flags.includes('corpus-unavailable');
+  const corpus = asPlainObject(stats.corpus);
+
+  if (unavailable || corpus === null) {
+    return `    <section class="tile">
+      <h2>Corpus</h2>
+      <p class="banner s-grey">Cannot assess: the corpus is unavailable (qdrant could not be read).</p>
+    </section>`;
+  }
+
+  // `points` is NOT raw/unbounded: it saturates at FULL_SCAN_LIMIT. Whether
+  // it is showing the true count or a silently-capped one can only be told
+  // by the `scan_saturated` FLAG — `points === 10000` is not proof of
+  // saturation (a single filtered system doc at the cap yields 9999) and the
+  // cap literal is not itself in the payload, so it is never inferred here.
+  const pointsCell = corpus.scan_saturated === true ? '≥ 10000 (scan cap)' : cell(corpus.points);
+
+  const projectMap = asPlainObject(corpus.points_by_project);
+  const byProject = projectMap === null ? null : Object.keys(projectMap);
+
+  // The `(unknown)` fallback bucket (buildStats' catch-all for a point with
+  // no readable `metadata.project`) renders as "unattributed" and visually
+  // distinct — every OTHER bucket, including the operator-named `$HOME`
+  // catch-all bucket (UM_HOME_PROJECT-configurable — its default value is
+  // deliberately not spelled out here, A24), is a REAL project and needs no
+  // branch of its own.
+  const projectRows = byProject === null
+    ? '        <tr><td colspan="2"><span class="s-grey">cannot assess — points_by_project is malformed</span></td></tr>'
+    : (byProject.length === 0
+      ? '        <tr><td colspan="2">no projects yet</td></tr>'
+      : byProject.map((name) => {
+        const isUnknown = name === '(unknown)';
+        const label = isUnknown ? 'unattributed' : t(name);
+        const cls = isUnknown ? ' class="unattributed"' : '';
+        return `        <tr><th scope="row"${cls}>${label}</th><td>${cell(projectMap[name])}</td></tr>`;
+      }).join('\n'));
+
+  return `    <section class="tile">
+      <h2>Corpus</h2>
+      <table>
+        <tbody>
+          <tr><th scope="row">Points</th><td>${pointsCell}</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr><th scope="col">Project</th><th scope="col">Points</th></tr>
+        </thead>
+        <tbody>
+${projectRows}
+        </tbody>
+      </table>
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Growth tile — TWO independent 7-day series (spec §4 Growth / §5 C2 / A9)
+// ---------------------------------------------------------------------------
+
+const GROWTH_EXTRACTION_ZERO_TEXT = '0 extractions in 7d';
+const GROWTH_DOCS_ZERO_TEXT = '0 doc writes in 7d';
+
+/**
+ * Both series are zero-filled 7-day maps whenever the counters db is
+ * readable, so `null`-only special-casing is NOT enough (a present, all-zero
+ * series drew the exact flat line that produced the 2026-07-18 false
+ * "nothing is landing" read). Three states, each with its own presentation:
+ * `unavailable` (null/malformed ⇒ "cannot assess"), `zero` (present, sums to
+ * 0 ⇒ its zero-text, sparkline suppressed), `live` (draws).
+ */
+function classifySeries(raw) {
+  if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { state: 'unavailable', days: [], values: [] };
+  }
+  const days = Object.keys(raw);
+  const values = days.map((d) => {
+    const n = Number(raw[d]);
+    return Number.isFinite(n) ? n : 0;
+  });
+  const sum = values.reduce((a, b) => a + b, 0);
+  return { state: sum === 0 ? 'zero' : 'live', days, values };
+}
+
+// Server-side inline <svg>, NUMBERS ONLY reach it (spec §5 C1 / §6): every
+// coordinate is computed here from the series' own numeric values via
+// toFixed, never from an untrusted string — day KEYS never enter this
+// function at all, only the values classifySeries already coerced to
+// numbers. No charting library.
+function sparklineSvg(values) {
+  if (values.length === 0) return '';
+  const w = 180;
+  const h = 36;
+  const max = Math.max(1, ...values);
+  const denom = values.length > 1 ? values.length - 1 : 1;
+  const points = values.map((v, i) => {
+    const x = values.length > 1 ? (i / denom) * w : w / 2;
+    const y = h - (Math.max(0, v) / max) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true" focusable="false">
+        <polyline points="${points}" fill="none" stroke="#5b5bd6" stroke-width="2"/>
+      </svg>`;
+}
+
+// Day KEYS render ONLY as escaped text labels here, outside the <svg> above —
+// they never reach the sparkline's numeric-only points attribute.
+function dayList(days, values) {
+  return days.map((d, i) => `<li>${t(d)}: ${t(values[i])}</li>`).join('');
+}
+
+function seriesBlock({ title, zeroText, seriesState, provenance }) {
+  const heading = `      <h3>${t(title)}</h3>`;
+  if (seriesState.state === 'unavailable') {
+    return `${heading}
+        <p class="s-grey">cannot assess</p>`;
+  }
+  if (seriesState.state === 'zero') {
+    return `${heading}
+        <p>${t(zeroText)}</p>`;
+  }
+  // `derived_from` is rendered verbatim ATTACHED TO THE EXTRACTION SERIES
+  // ONLY (`provenance` is only ever passed for that call) — the payload
+  // carries ONE provenance string; beside the doc series it would assert
+  // false provenance for a checkpoint-derived series, which has its own
+  // page label instead.
+  const prov = provenance !== undefined ? `\n        <p class="muted">source: ${cell(provenance)}</p>` : '';
+  return `${heading}
+        ${sparklineSvg(seriesState.values)}
+        <ul class="spark-days">${dayList(seriesState.days, seriesState.values)}</ul>${prov}`;
+}
+
+/**
+ * `growth_7d`/`growth_docs_7d` sit under `corpus` in the payload but this
+ * tile is governed by `counters-unavailable`, NOT by corpusTile's
+ * `corpus-unavailable` blanking (spec §5 C2/§4 Δ07-28 Δ1): qdrant down with
+ * counters healthy must leave both series live, so — unlike corpusTile —
+ * nothing here consults `stats.degraded` at all; each series' own
+ * null/zero/live state is read straight off the payload.
+ */
+function growthTile(stats) {
+  const corpus = asPlainObject(stats.corpus) ?? {};
+  const extraction = classifySeries(corpus.growth_7d);
+  const docs = classifySeries(corpus.growth_docs_7d);
+
+  return `    <section class="tile">
+      <h2>Growth (7d)</h2>
+      <div class="growth-grid">
+        <div class="series">
+${seriesBlock({
+    title: 'Extraction growth (7d)',
+    zeroText: GROWTH_EXTRACTION_ZERO_TEXT,
+    seriesState: extraction,
+    provenance: corpus.derived_from,
+  })}
+        </div>
+        <div class="series">
+${seriesBlock({
+    title: 'Doc growth (7d) — session summaries/checkpoints',
+    zeroText: GROWTH_DOCS_ZERO_TEXT,
+    seriesState: docs,
+  })}
+        </div>
+      </div>
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Recall tile (spec §4 Recall)
+// ---------------------------------------------------------------------------
+
+/**
+ * `searches_today`/`searches_7d`, `p50_ms`/`p95_ms`/`n`, and the `label`
+ * string verbatim. `searches_today`/`searches_7d` are `== null` (not
+ * `!== 0`-guessed) in counters-degraded mode — rendered as "cannot assess",
+ * never a bare 0, while `latency_since_boot` (the in-process ring) stays
+ * live and independent of that degraded state.
+ */
+function recallTile(stats) {
+  const recall = asPlainObject(stats.recall) ?? {};
+  const latency = asPlainObject(recall.latency_since_boot) ?? {};
+
+  const cannotAssess = '<span class="s-grey">cannot assess</span>';
+  const searchesToday = recall.searches_today == null ? cannotAssess : t(recall.searches_today);
+  const searches7d = recall.searches_7d == null ? cannotAssess : t(recall.searches_7d);
+
+  // `p50_ms: null` with `n: 0` ⇒ "no searches since boot", never "0ms" — the
+  // empty-state branch precedes the escaper, same as everywhere else in this
+  // module (R1 S-N3).
+  const noSearchesYet = (latency.p50_ms === null || latency.p50_ms === undefined) && latency.n === 0;
+  const latencyBlock = noSearchesYet
+    ? '      <p>no searches since boot</p>'
+    : `      <table>
+        <tbody>
+          <tr><th scope="row">p50</th><td>${cell(latency.p50_ms)}</td></tr>
+          <tr><th scope="row">p95</th><td>${cell(latency.p95_ms)}</td></tr>
+          <tr><th scope="row">n</th><td>${cell(latency.n)}</td></tr>
+        </tbody>
+      </table>`;
+  const labelLine = latency.label !== undefined ? `      <p class="muted">${cell(latency.label)}</p>` : '';
+
+  return `    <section class="tile">
+      <h2>Recall</h2>
+      <table>
+        <tbody>
+          <tr><th scope="row">Searches today</th><td>${searchesToday}</td></tr>
+          <tr><th scope="row">Searches (7d)</th><td>${searches7d}</td></tr>
+        </tbody>
+      </table>
+${latencyBlock}
+${labelLine}
+    </section>`;
+}
+
 function degradedPresentation(degraded) {
   if (degraded === null || degraded === undefined) {
     return '<span class="s-green">healthy — every source reporting</span>';
@@ -538,9 +903,7 @@ ${recallRow}        </tbody>
 // Wider than the 34rem unlock card: tiles need room.
 const STYLE = `
     body { font-family: system-ui, sans-serif; max-width: 62rem; margin: 3rem auto; padding: 0 1rem; color: #1f2328; background: #ffffff; }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem; }
-    .brand-name { font-weight: 650; font-size: 1.15rem; letter-spacing: -0.02em; }
-    .brand-sub { color: #656d76; font-weight: 400; }
+    ${BRAND_CSS}
     h1 { font-size: 1.3rem; margin: 0 0 1.5rem; }
     h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
     .tile { border: 1px solid #d0d7de; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.25rem; }
@@ -558,7 +921,12 @@ const STYLE = `
     .note { color: #9a6700; font-weight: 500; }
     .legend { color: #656d76; font-size: 0.9rem; margin: 0.75rem 0 0; }
     .foot { display: flex; gap: 1rem; align-items: center; margin-top: 1.5rem; }
-    button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; }`;
+    button { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; }
+    .unattributed { color: #656d76; font-style: italic; }
+    .growth-grid { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .series { flex: 1 1 220px; }
+    .spark-days { list-style: none; margin: 0.4rem 0 0; padding: 0; font-size: 0.85rem; color: #656d76; }
+    .spark-days li { display: inline-block; margin-right: 0.6rem; }`;
 
 /**
  * Render the authenticated `/control` document.
@@ -595,6 +963,10 @@ export function renderControlPage({ stats, nonce, csrf }) {
     </div>
     <h1>Control — operational telemetry</h1>
 ${freshnessTile(s)}
+${pipelineTile(s)}
+${corpusTile(s)}
+${growthTile(s)}
+${recallTile(s)}
 ${opsRow(s)}
     <div class="foot">
       <a href="/control">Refresh</a>

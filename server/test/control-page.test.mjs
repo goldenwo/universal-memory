@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { renderControlPage, captureVerdict, BRAND_LOCKUP_SVG } from '../lib/control-page.mjs';
+import { renderControlPage, captureVerdict, BRAND_LOCKUP_SVG, BRAND_CSS } from '../lib/control-page.mjs';
 import { renderConsentPage } from '../lib/oauth/consent.mjs';
 
 const NONCE = 'AAAAAAAAAAAAAAAAAAAAAA==';
@@ -121,6 +121,26 @@ function attrPairs(attrs) {
 
 function styleBlocks(html) {
   return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]);
+}
+
+// U4b: scopes an assertion to one <h2>-headed <section class="tile"> so a
+// hostile-string test can check "this tile" without accidentally matching
+// escaped text a NEIGHBOURING tile happens to render.
+function sectionByHeading(html, heading) {
+  const re = new RegExp(`<h2>${heading}</h2>([\\s\\S]*?)</section>`);
+  const m = re.exec(html);
+  assert.ok(m, `section "${heading}" found`);
+  return m[1];
+}
+
+// U4b: a null-prototype map built via bracket assignment, exactly like the
+// real `points_by_project`/`capture` buildStats() emits (Object.create(null)
+// — PR #177) — so `__proto__`/`constructor` land as ordinary OWN properties
+// instead of hitting an inherited accessor or value.
+function hostileMap(pairs) {
+  const m = Object.create(null);
+  for (const [k, v] of pairs) m[k] = v;
+  return m;
 }
 
 // The shared A11 sweep — U4b extends the fixtures it runs over, not this body.
@@ -343,7 +363,11 @@ test('A17: writes_enabled:false explains the tile instead of leaving an unexplai
     capture: { 'claude-code-plugin': surface({ freshness_hours: 150.5 }) },
   }));
   assert.match(html, /capture disabled \(writes off\)/);
-  assert.doesNotMatch(html, /<td class="s-red">/, 'no unexplained red row while writes are off');
+  // Scoped to the freshness tile (U4b added a pipeline tile that legitimately
+  // renders its OWN, unrelated `<td class="s-red">` for a non-zero `error`
+  // outcome count — a page-wide regex would conflate the two meanings of red).
+  const freshnessSection = sectionByHeading(html, 'Capture freshness');
+  assert.doesNotMatch(freshnessSection, /<td class="s-red">/, 'no unexplained red row while writes are off');
   // The cron verdict is what um-alert would compute — writes_enabled is not an
   // input to it, so the aggregate line still says STALE.
   assert.match(html, /Cron verdict: STALE/);
@@ -660,6 +684,342 @@ test('the page carries the logout form U5 wires the CSRF token into', () => {
   assert.match(html, new RegExp(`<input type="hidden" name="csrf" value="${CSRF}">`));
   assert.match(html, /<a href="\/control">Refresh<\/a>/);
   assert.doesNotMatch(html, /http-equiv/i, 'no meta refresh — reloading is a navigation (spec §4)');
+});
+
+// ---------------------------------------------------------------------------
+// U4a re-review carry-ins
+// ---------------------------------------------------------------------------
+
+test('carry-in 1: a NaN threshold reads cannot-assess per-surface, matching the STALE aggregate '
+  + '(never a green row under a red banner)', () => {
+  // The exact "nan threshold — nothing is within it" A12 fixture payload,
+  // rendered through the page rather than just checked against um-alert.sh's
+  // exit code: before the fix, `hours > NaN` was false, so this surface fell
+  // through to green while captureVerdict's `<=` (also always false against
+  // NaN) called the SAME payload STALE.
+  const html = render(makeStats({
+    capture_freshness_threshold_hours: 'nan',
+    capture: { a: surface({ freshness_hours: 0, stored: 1 }) },
+  }));
+  assert.match(html, /Cron verdict: STALE/);
+  assert.match(html, /<td class="s-grey">cannot assess — the freshness threshold is unusable<\/td>/);
+  assert.doesNotMatch(html, /<td class="s-green">/);
+});
+
+test('carry-in 1: an Infinity threshold is ALSO cannot-assess per-surface, not guessed at', () => {
+  const html = render(makeStats({
+    capture_freshness_threshold_hours: 'inf',
+    capture: { a: surface({ freshness_hours: 999, stored: 1 }) },
+  }));
+  assert.match(html, /Cron verdict: FRESH/, 'aggregate: everything is within an infinite threshold');
+  assert.match(html, /<td class="s-grey">cannot assess — the freshness threshold is unusable<\/td>/);
+});
+
+test('carry-in 2: the brand CSS trio is single-sourced on the control page; '
+  + 'consent keeps its own margin (documented, not drift)', () => {
+  assert.match(BRAND_CSS, /\.brand \{/);
+  assert.match(BRAND_CSS, /\.brand-name \{/);
+  assert.match(BRAND_CSS, /\.brand-sub \{/);
+  const style = styleBlocks(render(makeStats()))[0];
+  assert.ok(style.includes(BRAND_CSS), 'control-page STYLE interpolates the shared export, not a second literal copy');
+  // consent.mjs deliberately keeps its OWN copy (margin-bottom: 1rem, vs this
+  // page's 0.5rem) so its pre-extraction snapshot stays byte-identical — see
+  // task-u4b-report.md for why the repoint stops at control-page.mjs.
+  const consentSrc = readFileSync(
+    fileURLToPath(new URL('../lib/oauth/consent.mjs', import.meta.url)), 'utf8',
+  );
+  assert.match(consentSrc, /margin-bottom: 1rem/, 'consent.mjs still carries its own .brand rule');
+});
+
+// ---------------------------------------------------------------------------
+// U4b — Pipeline tile: "classified outcomes (7d)" (A20)
+// ---------------------------------------------------------------------------
+
+test('A20: the pipeline tile is labelled "classified outcomes (7d)", has no residual, '
+  + 'and colours only the error outcome', () => {
+  const html = render(makeStats({
+    capture: { a: surface({ stored: 3, abstained: 41, deduped: 1, superseded: 0, error: 2 }) },
+  }));
+  const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
+  assert.match(section, /stored: 3/);
+  assert.match(section, /abstained: 41/);
+  assert.match(section, /deduped: 1/);
+  assert.match(section, /superseded: 0/);
+  assert.match(section, /error: 2/);
+  // error is the ONLY outcome coloured; each count is named as text, so
+  // colour is never the sole carrier (spec §6).
+  assert.match(section, /<td class="s-red">error: 2<\/td>/);
+  assert.doesNotMatch(section, /<td class="s-red">abstained/);
+  assert.doesNotMatch(section, /<td class="s-green">/, 'no outcome renders in the success-green colour');
+  assert.doesNotMatch(html, /events_7d/i, 'no residual — there is no events_7d in the payload');
+});
+
+test('pipeline tile: capture:null/malformed is cannot-assess; capture:{} is never-written — same '
+  + 'guard shape as the freshness tile, because it is the SAME capture section', () => {
+  const grey = sectionByHeading(
+    render(makeStats({ capture: null, degraded: ['counters-unavailable'] })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(grey, /cannot assess/i);
+
+  const red = sectionByHeading(render(makeStats({ capture: {} })), 'Classified outcomes \\(7d\\)');
+  assert.match(red, /never written/i);
+});
+
+test('pipeline tile: a surface with malformed/missing outcomes_7d renders em dashes, '
+  + 'never a crash or a false zero', () => {
+  const html = render(makeStats({
+    capture: { a: { last_day_seen: '2026-07-28', freshness_hours: 0, events_today: 1, errors_today: 0 } },
+  }));
+  const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
+  assert.match(section, /stored: —/);
+  assert.match(section, /error: —/);
+});
+
+// ---------------------------------------------------------------------------
+// U4b — Corpus tile (A9's counters-governance half, scan saturation)
+// ---------------------------------------------------------------------------
+
+function corpus(overrides = {}) {
+  return {
+    points: 0,
+    points_by_project: {},
+    scan_saturated: false,
+    growth_7d: {},
+    growth_docs_7d: {},
+    derived_from: 'extraction-counters',
+    ...overrides,
+  };
+}
+
+test('scan saturation: scan_saturated:true renders the cap literal; it is never inferred from points', () => {
+  const saturated = render(makeStats({ corpus: corpus({ points: 10000, scan_saturated: true }) }));
+  const satSection = sectionByHeading(saturated, 'Corpus');
+  assert.match(satSection, /≥ 10000 \(scan cap\)/);
+
+  const notSaturated = render(makeStats({ corpus: corpus({ points: 10000, scan_saturated: false }) }));
+  const plainSection = sectionByHeading(notSaturated, 'Corpus');
+  assert.doesNotMatch(plainSection, /scan cap/);
+  assert.match(plainSection, /<td>10000<\/td>/);
+});
+
+test('a zero-point corpus renders a real zero, distinct from "cannot assess"', () => {
+  const section = sectionByHeading(render(makeStats({ corpus: corpus({ points: 0 }) })), 'Corpus');
+  assert.match(section, /Points<\/th><td>0<\/td>/);
+  assert.doesNotMatch(section, /cannot assess/);
+});
+
+test('degraded:["corpus-unavailable"] blanks points/points_by_project/scan_saturated '
+  + 'REGARDLESS of their values', () => {
+  const html = render(makeStats({
+    degraded: ['corpus-unavailable'],
+    corpus: corpus({ points: 999, points_by_project: { x: 999 } }),
+  }));
+  const section = sectionByHeading(html, 'Corpus');
+  assert.match(section, /cannot assess/i);
+  assert.doesNotMatch(section, /999/, 'the stale non-null value never leaks past the flag');
+});
+
+test('points_by_project: the (unknown) bucket renders as "unattributed", visually distinct; '
+  + 'every other bucket (including the $HOME catch-all "desktop") is a normal row', () => {
+  const html = render(makeStats({
+    corpus: corpus({
+      points: 130,
+      points_by_project: { 'universal-memory': 100, desktop: 20, '(unknown)': 10 },
+    }),
+  }));
+  const section = sectionByHeading(html, 'Corpus');
+  assert.match(section, /<th scope="row" class="unattributed">unattributed<\/th><td>10<\/td>/);
+  assert.match(section, /<th scope="row">desktop<\/th><td>20<\/td>/, 'no special-casing for the desktop bucket');
+  assert.match(section, /<th scope="row">universal-memory<\/th><td>100<\/td>/);
+  assert.doesNotMatch(section, /\(unknown\)/, 'the raw bucket name never leaks — only its friendly label');
+});
+
+test('A6 (extended): hostile project names render inert as points_by_project map KEYS', () => {
+  const points_by_project = hostileMap([
+    ['<img src=x onerror=alert(1)>', 3],
+    ['" onmouseover="alert(1)', 2],
+    ['__proto__', 5],
+    ['constructor', 1],
+  ]);
+  const html = render(makeStats({ corpus: corpus({ points: 11, points_by_project }) }));
+  assertNoActiveContent(html, 'hostile project-name page');
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /&quot; onmouseover=&quot;alert\(1\)/);
+  const section = sectionByHeading(html, 'Corpus');
+  assert.match(section, /__proto__/);
+  assert.match(section, /constructor/);
+});
+
+// ---------------------------------------------------------------------------
+// U4b — Growth tile: TWO independent series (A9)
+// ---------------------------------------------------------------------------
+
+test('A9: both growth series render with distinct labels; derived_from is attached to the '
+  + 'extraction series only; independent empty states — one suppressed while the other draws', () => {
+  const html = render(makeStats({
+    corpus: corpus({
+      points: 50,
+      points_by_project: { p: 50 },
+      growth_7d: { '2026-07-22': 2, '2026-07-23': 4 },
+      growth_docs_7d: {}, // all-zero, non-null
+    }),
+  }));
+  assert.match(html, /Extraction growth \(7d\)/);
+  assert.match(html, /Doc growth \(7d\) — session summaries\/checkpoints/);
+  assert.match(html, /source: extraction-counters/);
+  assert.match(html, /0 doc writes in 7d/);
+  assert.doesNotMatch(html, /0 extractions in 7d/);
+  assert.equal((html.match(/<polyline/g) ?? []).length, 1, 'the zero-suppressed doc series draws no polyline');
+});
+
+test('A9: a null growth series reads "cannot assess" independently of its live sibling', () => {
+  const html = render(makeStats({
+    corpus: corpus({
+      points: 50,
+      growth_7d: null,
+      growth_docs_7d: { '2026-07-27': 3 },
+    }),
+  }));
+  const extractionBlock = /<h3>Extraction growth \(7d\)<\/h3>\s*<p class="s-grey">cannot assess<\/p>/;
+  assert.match(html, extractionBlock);
+  assert.doesNotMatch(html, /0 extractions in 7d/);
+  assert.equal((html.match(/<polyline/g) ?? []).length, 1, 'the doc series still draws');
+});
+
+test('A9: growth is governed by counters-unavailable, NOT corpus-unavailable — qdrant-down with '
+  + 'healthy counters still draws both series live while the corpus figures read cannot-assess', () => {
+  const html = render(makeStats({
+    degraded: ['corpus-unavailable'],
+    corpus: corpus({
+      points: 999,
+      points_by_project: { x: 999 },
+      growth_7d: { '2026-07-27': 5 },
+      growth_docs_7d: { '2026-07-27': 2 },
+    }),
+  }));
+  const corpusSection = sectionByHeading(html, 'Corpus');
+  assert.match(corpusSection, /cannot assess/i);
+  assert.doesNotMatch(corpusSection, /999/);
+  assert.match(html, /source: extraction-counters/, 'growth still renders — not blanked by corpus-unavailable');
+  assert.equal((html.match(/<polyline/g) ?? []).length, 2, 'both series draw live');
+});
+
+test('sparkline construction: only VALUES reach the <svg>; hostile day KEYS render as escaped '
+  + 'text labels outside it', () => {
+  const hostileDay = '<img src=x onerror=alert(1)>" onmouseover="alert(2)';
+  const html = render(makeStats({
+    corpus: corpus({
+      points: 5,
+      points_by_project: { p: 5 },
+      growth_7d: { [hostileDay]: 7, '2026-07-27': 3 },
+    }),
+  }));
+  assertNoActiveContent(html, 'hostile growth day-key page');
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;&quot; onmouseover=&quot;alert\(2\)/);
+  const svgMatches = [...html.matchAll(/<polyline points="([^"]*)"/g)];
+  assert.ok(svgMatches.length >= 1, 'at least one sparkline drew');
+  for (const m of svgMatches) {
+    assert.doesNotMatch(m[1], /[^0-9.,\s-]/, 'polyline points are numeric-only — no day key leaked into it');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// U4b — Recall tile
+// ---------------------------------------------------------------------------
+
+test('recall tile renders searches_today/7d, p50/p95/n, and the label verbatim', () => {
+  const html = render(makeStats({
+    recall: {
+      searches_today: 7,
+      searches_7d: 55,
+      latency_since_boot: { p50_ms: 42, p95_ms: 130, n: 9, label: 'serving latency' },
+    },
+  }));
+  const section = sectionByHeading(html, 'Recall');
+  assert.match(section, /Searches today<\/th><td>7<\/td>/);
+  assert.match(section, /Searches \(7d\)<\/th><td>55<\/td>/);
+  assert.match(section, /p50<\/th><td>42<\/td>/);
+  assert.match(section, /p95<\/th><td>130<\/td>/);
+  assert.match(section, /n<\/th><td>9<\/td>/);
+  assert.match(section, /serving latency/);
+});
+
+test('recall tile: searches_today\\/7d null render "cannot assess", never a bare 0', () => {
+  const html = render(makeStats({
+    recall: {
+      searches_today: null,
+      searches_7d: null,
+      latency_since_boot: { p50_ms: 10, p95_ms: 20, n: 4, label: 'x' },
+    },
+  }));
+  const section = sectionByHeading(html, 'Recall');
+  assert.match(section, /Searches today<\/th><td><span class="s-grey">cannot assess<\/span><\/td>/);
+  assert.match(section, /Searches \(7d\)<\/th><td><span class="s-grey">cannot assess<\/span><\/td>/);
+});
+
+test('recall tile: p50_ms null with n:0 reads "no searches since boot", never "0ms" — and a real '
+  + 'zero search count still renders as 0', () => {
+  const html = render(makeStats({
+    recall: {
+      searches_today: 0,
+      searches_7d: 0,
+      latency_since_boot: { p50_ms: null, p95_ms: null, n: 0, label: 'serving latency' },
+    },
+  }));
+  const section = sectionByHeading(html, 'Recall');
+  assert.match(section, /no searches since boot/);
+  assert.doesNotMatch(section, /0ms/);
+  assert.match(section, /Searches today<\/th><td>0<\/td>/);
+});
+
+// ---------------------------------------------------------------------------
+// U4b — A11 extended to the full page (every new untrusted slot)
+// ---------------------------------------------------------------------------
+
+test('A11 (extended): the full page — hostile project names, label, and derived_from — carries '
+  + 'no active content and escapes every new untrusted slot', () => {
+  const capture = Object.create(null);
+  HOSTILE_KEYS.forEach((k, i) => { capture[k] = surface({ freshness_hours: i }); });
+  const pointsByProject = hostileMap([
+    ['<img src=x onerror=alert(1)>', 3],
+    ['" onmouseover="alert(1)', 2],
+    ['__proto__', 5],
+    ['constructor', 1],
+    ['(unknown)', 4],
+  ]);
+  const html = render(makeStats({
+    capture,
+    corpus: corpus({
+      points: 15,
+      points_by_project: pointsByProject,
+      growth_7d: { '2026-07-27': 3 },
+      growth_docs_7d: { '2026-07-26': 1 },
+      derived_from: `<script>alert(1)</script> & "quote" 'apo'`,
+    }),
+    recall: {
+      searches_today: 1,
+      searches_7d: 2,
+      latency_since_boot: {
+        p50_ms: 10, p95_ms: 20, n: 3,
+        label: `<img src=x onerror=alert(1)> label & "q"`,
+      },
+    },
+  }));
+
+  assertNoActiveContent(html, 'U4b hostile kitchen-sink page');
+
+  // derived_from and the recall label both render as escaped TEXT.
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;quote&quot; &#39;apo&#39;/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; label &amp; &quot;q&quot;/);
+  // project-name keys render escaped too, and never leak into an attribute.
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  for (const { attrs } of scanTags(html)) {
+    for (const [, value] of attrPairs(attrs)) {
+      assert.ok(!value.includes('onerror'), `attribute value carries a handler payload: ${value}`);
+      assert.ok(!value.includes('onmouseover'), `attribute value carries a handler payload: ${value}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
