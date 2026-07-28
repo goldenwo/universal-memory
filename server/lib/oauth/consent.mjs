@@ -21,14 +21,16 @@
 // buffers, with a required length pre-check — timingSafeEqual throws on a
 // length mismatch, and the length here is a public constant, not a secret).
 //
-// renderConsentPage routes EVERY interpolation through esc(): clientName is
-// attacker-controlled (it arrives via DCR / CIMD client registration), so a
-// `<script>` name must render inert. The page also displays redirectHost
-// prominently — a spec-mandated mitigation against a CIMD client impersonating
-// a localhost redirect.
+// renderConsentPage routes EVERY interpolation through esc() (imported from
+// ../escape-html.mjs — the one shared HTML escaper, see its header for the
+// sink allowlist): clientName is attacker-controlled (it arrives via DCR /
+// CIMD client registration), so a `<script>` name must render inert. The page
+// also displays redirectHost prominently — a spec-mandated mitigation against
+// a CIMD client impersonating a localhost redirect.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { OAUTH_TTLS } from './state-store.mjs';
+import { esc } from '../escape-html.mjs';
 
 const COOKIE_NAME = 'um_consent';
 const COOKIE_PURPOSE = 'consent';
@@ -102,15 +104,10 @@ export function verifyCsrf(hmacKeyHex, authzId, token) {
 
 // ---- consent page --------------------------------------------------------
 
-// HTML-entity escape for ALL interpolated, attacker-influenced text. & first.
-function esc(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// HTML-entity escaping for ALL interpolated, attacker-influenced text below is
+// esc() from ../escape-html.mjs (see that module's header for the sink
+// allowlist this relies on — element text + fully double-quoted attributes
+// only, which is exactly how esc() is used throughout renderConsentPage).
 
 export function renderConsentPage({ clientName, redirectHost, authzId, csrf, needsToken, error, providers = [] }) {
   const errorBlock = error
