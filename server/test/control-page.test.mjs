@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { renderControlPage, captureVerdict, BRAND_LOCKUP_SVG, BRAND_CSS } from '../lib/control-page.mjs';
+import { renderControlPage, captureVerdict, BRAND_LOCKUP_SVG, brandCss } from '../lib/control-page.mjs';
 import { renderConsentPage } from '../lib/oauth/consent.mjs';
 
 const NONCE = 'AAAAAAAAAAAAAAAAAAAAAA==';
@@ -363,11 +363,11 @@ test('A17: writes_enabled:false explains the tile instead of leaving an unexplai
     capture: { 'claude-code-plugin': surface({ freshness_hours: 150.5 }) },
   }));
   assert.match(html, /capture disabled \(writes off\)/);
-  // Scoped to the freshness tile (U4b added a pipeline tile that legitimately
-  // renders its OWN, unrelated `<td class="s-red">` for a non-zero `error`
-  // outcome count — a page-wide regex would conflate the two meanings of red).
-  const freshnessSection = sectionByHeading(html, 'Capture freshness');
-  assert.doesNotMatch(freshnessSection, /<td class="s-red">/, 'no unexplained red row while writes are off');
+  // Page-wide, restored in fix round 1: the pipeline tile's `error` cell is
+  // now gated on the count itself (finite AND > 0, MED-1) — this fixture's
+  // surface() default is `error: 0`, so the pipeline tile renders no red
+  // either, and the page-wide invariant holds without scoping.
+  assert.doesNotMatch(html, /<td class="s-red">/, 'no unexplained red row while writes are off');
   // The cron verdict is what um-alert would compute — writes_enabled is not an
   // input to it, so the aggregate line still says STALE.
   assert.match(html, /Cron verdict: STALE/);
@@ -715,20 +715,25 @@ test('carry-in 1: an Infinity threshold is ALSO cannot-assess per-surface, not g
   assert.match(html, /<td class="s-grey">cannot assess — the freshness threshold is unusable<\/td>/);
 });
 
-test('carry-in 2: the brand CSS trio is single-sourced on the control page; '
-  + 'consent keeps its own margin (documented, not drift)', () => {
-  assert.match(BRAND_CSS, /\.brand \{/);
-  assert.match(BRAND_CSS, /\.brand-name \{/);
-  assert.match(BRAND_CSS, /\.brand-sub \{/);
-  const style = styleBlocks(render(makeStats()))[0];
-  assert.ok(style.includes(BRAND_CSS), 'control-page STYLE interpolates the shared export, not a second literal copy');
-  // consent.mjs deliberately keeps its OWN copy (margin-bottom: 1rem, vs this
-  // page's 0.5rem) so its pre-extraction snapshot stays byte-identical — see
-  // task-u4b-report.md for why the repoint stops at control-page.mjs.
-  const consentSrc = readFileSync(
-    fileURLToPath(new URL('../lib/oauth/consent.mjs', import.meta.url)), 'utf8',
-  );
-  assert.match(consentSrc, /margin-bottom: 1rem/, 'consent.mjs still carries its own .brand rule');
+test('carry-in 2 (fix round 1): brandCss() is a REAL single source — both pages call it, '
+  + 'only margin-bottom parameterized, .brand-name/.brand-sub pinned identical', () => {
+  const controlStyle = styleBlocks(render(makeStats()))[0];
+  const consentStyle = styleBlocks(
+    renderConsentPage({ clientName: 'c', redirectHost: 'h', authzId: 'a', csrf: 'x', needsToken: true }),
+  )[0];
+
+  // Each page actually calls brandCss() with its OWN margin — not a hand
+  // copy that happens to match right now.
+  assert.ok(controlStyle.includes(brandCss('0.5rem')), 'control-page STYLE calls brandCss(\'0.5rem\')');
+  assert.ok(consentStyle.includes(brandCss('1rem')), 'consent calls brandCss(\'1rem\')');
+
+  // .brand-name/.brand-sub never vary with the margin argument — pinned
+  // identical across BOTH pages, derived from the LIVE function (not a
+  // second hardcoded string here), so a future edit to brandCss() that only
+  // lands in one page's call site is caught rather than silently diverging.
+  const sharedTail = brandCss('irrelevant-to-this-slice').split('\n').slice(1).join('\n');
+  assert.ok(controlStyle.includes(sharedTail), 'control-page renders the shared .brand-name/.brand-sub verbatim');
+  assert.ok(consentStyle.includes(sharedTail), 'consent renders the shared .brand-name/.brand-sub verbatim');
 });
 
 // ---------------------------------------------------------------------------
@@ -774,6 +779,33 @@ test('pipeline tile: a surface with malformed/missing outcomes_7d renders em das
   const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
   assert.match(section, /stored: —/);
   assert.match(section, /error: —/);
+  // MED-1 (fix round 1): an unusable count is never error-coloured either —
+  // this module's contract is absent ⇒ em dash, unusable ⇒ grey elsewhere,
+  // never a false red.
+  assert.doesNotMatch(section, /<td class="s-red">error/);
+});
+
+test('MED-1 (fix round 1): a healthy zero-error surface renders plain, not a red "error: 0" '
+  + 'block; a hostile non-numeric error count is never coloured either', () => {
+  const healthy = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, error: 0 }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(healthy, /error: 0/);
+  assert.doesNotMatch(healthy, /<td class="s-red">error/, 'a real ZERO error count must not read as an alarm');
+
+  const hostile = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, error: 'not-a-number' }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(hostile, /error: not-a-number/);
+  assert.doesNotMatch(hostile, /<td class="s-red">error/, 'an unparseable count is not coloured red either');
+
+  const real = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, error: 3 }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(real, /<td class="s-red">error: 3<\/td>/, 'a genuine positive error count IS still coloured');
 });
 
 // ---------------------------------------------------------------------------
@@ -818,6 +850,22 @@ test('degraded:["corpus-unavailable"] blanks points/points_by_project/scan_satur
   const section = sectionByHeading(html, 'Corpus');
   assert.match(section, /cannot assess/i);
   assert.doesNotMatch(section, /999/, 'the stale non-null value never leaks past the flag');
+});
+
+test('MIN-3 (fix round 1): a flag-driven corpus outage and a shape-driven one get DIFFERENT '
+  + 'diagnoses — a malformed corpus section without the flag is not blamed on qdrant', () => {
+  const flagDriven = sectionByHeading(
+    render(makeStats({ degraded: ['corpus-unavailable'] })),
+    'Corpus',
+  );
+  assert.match(flagDriven, /qdrant could not be read/);
+
+  const shapeDriven = sectionByHeading(render(makeStats({ corpus: [] })), 'Corpus');
+  assert.match(shapeDriven, /the corpus section is malformed/);
+  assert.doesNotMatch(shapeDriven, /qdrant could not be read/, 'a malformed shape is not a qdrant outage');
+
+  const missing = sectionByHeading(render({ schema_version: 1, capture: {} }), 'Corpus');
+  assert.match(missing, /the corpus section is malformed/, 'a wholly absent corpus section is the same shape problem');
 });
 
 test('points_by_project: the (unknown) bucket renders as "unattributed", visually distinct; '
@@ -878,7 +926,7 @@ test('A9: a null growth series reads "cannot assess" independently of its live s
     corpus: corpus({
       points: 50,
       growth_7d: null,
-      growth_docs_7d: { '2026-07-27': 3 },
+      growth_docs_7d: { '2026-07-26': 1, '2026-07-27': 3 },
     }),
   }));
   const extractionBlock = /<h3>Extraction growth \(7d\)<\/h3>\s*<p class="s-grey">cannot assess<\/p>/;
@@ -894,8 +942,8 @@ test('A9: growth is governed by counters-unavailable, NOT corpus-unavailable —
     corpus: corpus({
       points: 999,
       points_by_project: { x: 999 },
-      growth_7d: { '2026-07-27': 5 },
-      growth_docs_7d: { '2026-07-27': 2 },
+      growth_7d: { '2026-07-26': 5, '2026-07-27': 5 },
+      growth_docs_7d: { '2026-07-26': 2, '2026-07-27': 2 },
     }),
   }));
   const corpusSection = sectionByHeading(html, 'Corpus');
@@ -903,6 +951,32 @@ test('A9: growth is governed by counters-unavailable, NOT corpus-unavailable —
   assert.doesNotMatch(corpusSection, /999/);
   assert.match(html, /source: extraction-counters/, 'growth still renders — not blanked by corpus-unavailable');
   assert.equal((html.match(/<polyline/g) ?? []).length, 2, 'both series draw live');
+});
+
+test('MIN-2 (fix round 1): a non-finite MEMBER value in a growth series reads "cannot assess", '
+  + 'never coerced to a false zero', () => {
+  const html = render(makeStats({
+    corpus: corpus({
+      points: 50,
+      growth_7d: { '2026-07-28': 'abc' },
+      growth_docs_7d: { '2026-07-26': 1, '2026-07-27': 2 },
+    }),
+  }));
+  const extractionBlock = /<h3>Extraction growth \(7d\)<\/h3>\s*<p class="s-grey">cannot assess<\/p>/;
+  assert.match(html, extractionBlock);
+  assert.doesNotMatch(html, /0 extractions in 7d/, 'a garbage day count must never render the confident zero-text');
+  assert.equal((html.match(/<polyline/g) ?? []).length, 1, 'the doc series is unaffected — the states are independent');
+});
+
+test('NIT-6 (fix round 1): a single-day (non-array) growth series draws no sparkline — '
+  + 'a one-vertex polyline would draw nothing while claiming a live series', () => {
+  const html = render(makeStats({
+    corpus: corpus({ points: 5, growth_7d: { '2026-07-28': 5 } }),
+  }));
+  const extractionSection = /<h3>Extraction growth \(7d\)<\/h3>[\s\S]*?<\/div>/.exec(html)[0];
+  assert.doesNotMatch(extractionSection, /<polyline/, 'a single point suppresses the sparkline');
+  assert.doesNotMatch(extractionSection, /0 extractions in 7d/, 'it is still a LIVE, non-zero series, not the zero-state');
+  assert.match(extractionSection, /2026-07-28: 5/, 'the day/value is still listed as text');
 });
 
 test('sparkline construction: only VALUES reach the <svg>; hostile day KEYS render as escaped '

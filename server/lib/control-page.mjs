@@ -50,23 +50,23 @@ export const BRAND_LOCKUP_SVG = `<svg data-brand="um-lockup" width="34" height="
       </svg>`;
 
 /**
- * The `.brand`/`.brand-name`/`.brand-sub` trio, defined ONCE for THIS page
- * (spec §6 / R1 N5 — same one-helper-many-callers posture as the lockup
- * above). `oauth/consent.mjs` renders the identical lockup markup but keeps
- * its OWN copy of these three rules rather than importing this export: its
- * `.brand` rule differs by exactly one property (`margin-bottom: 1rem` vs
- * this page's `0.5rem` — tiles need the tighter gap), and
- * test/consent-snapshot.test.mjs pins consent's rendered output BYTE-FOR-BYTE
- * against a pre-extraction golden fixture. Repointing consent at this export
- * would have to pick one margin, which either changes consent's snapshotted
- * bytes (failing A7) or forces this page to adopt consent's wider spacing (an
- * unrelated visual regression) — so the repoint stops here, single-sourcing
- * control-page.mjs's own copy only. See task-u4b-report.md for the full
- * reasoning.
+ * The `.brand`/`.brand-name`/`.brand-sub` trio, single-sourced as a FUNCTION
+ * rather than a fixed string (spec §6 / R1 N5 — same one-helper-many-callers
+ * posture as the lockup above) because `.brand`'s `margin-bottom` is the one
+ * property that legitimately differs between this page (`0.5rem` — tiles
+ * need a tighter gap) and `oauth/consent.mjs` (`1rem` — a single-form card).
+ * Parameterizing that one value is what lets BOTH pages import the SAME rule
+ * text instead of one of them keeping a hand-pasted fork that can silently
+ * drift; `.brand-name`/`.brand-sub` never vary and are pinned identical
+ * across both pages by a test. `test/consent-snapshot.test.mjs`'s
+ * byte-for-byte pin against a pre-extraction golden fixture keeps
+ * `brandCss('1rem')`'s call site honest.
  */
-export const BRAND_CSS = `.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem; }
+export function brandCss(marginBottom = '0.5rem') {
+  return `.brand { display: flex; align-items: center; gap: 10px; margin-bottom: ${marginBottom}; }
     .brand-name { font-weight: 650; font-size: 1.15rem; letter-spacing: -0.02em; }
     .brand-sub { color: #656d76; font-weight: 400; }`;
+}
 
 /**
  * The freshness threshold used when the payload carries none — the SAME
@@ -529,15 +529,27 @@ const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'supersede
 
 // Colour never the sole carrier (spec §6): every cell spells out its outcome
 // NAME as text, so `error` is still legible without the red. `error` is the
-// ONLY outcome that gets the error colour — `abstained` is a routine gate
+// ONLY outcome that CAN get the error colour — `abstained` is a routine gate
 // outcome (the #185 thin-transcript gate, #190's zero-turn skips), never a
 // failure, and renders in the SAME plain/neutral style as stored/deduped/
 // superseded. There is deliberately no "good" colour either: this tile has
 // no residual to compare counts against (R2-C-I5), so nothing here claims a
 // count is healthy, only that it is (or is not) an error.
+//
+// The red is further gated on the count itself: a HEALTHY deployment (0
+// errors) must not render a red "error: 0" block — that would be color
+// crying wolf on every render of a fine surface — and a malformed count
+// (non-numeric, rendering as the raw text or an em dash) must not be
+// error-coloured either, per this module's own empty-state contract
+// (absent ⇒ em dash, unusable ⇒ grey "cannot assess" elsewhere, never a false
+// red). `pyFloat` (not bare `Number`) so a string count from a hostile or
+// out-of-band producer is judged by the SAME coercion rules as every other
+// cron-adjacent number in this module.
 function outcomeCell(name, value) {
   const text = `${name}: ${cell(value)}`;
-  return name === 'error' ? `<td class="s-red">${text}</td>` : `<td>${text}</td>`;
+  const n = pyFloat(value);
+  const isRealError = name === 'error' && Number.isFinite(n) && n > 0;
+  return isRealError ? `<td class="s-red">${text}</td>` : `<td>${text}</td>`;
 }
 
 function pipelineRows(capture) {
@@ -615,6 +627,21 @@ ${pipelineRows(capture)}
 // Corpus tile (spec §4 Corpus / §5 C3)
 // ---------------------------------------------------------------------------
 
+// Two DIFFERENT ways a corpus tile can end up with nothing to render, and —
+// mirroring pipelineTile's captureShapeReason — they get DIFFERENT banners so
+// the operator is told the right thing: `corpus-unavailable` means qdrant
+// itself could not be read (buildStats' own diagnosis); a null/malformed
+// `corpus` section WITHOUT that flag is a shape problem in the payload
+// itself (a hand-built or out-of-band producer), not a qdrant outage, and
+// blaming qdrant for it would be as wrong as pipelineTile's old single
+// "counters are unavailable" banner was for a merely-malformed `capture`.
+function corpusBanner(reason) {
+  return `    <section class="tile">
+      <h2>Corpus</h2>
+      <p class="banner s-grey">Cannot assess: ${reason}</p>
+    </section>`;
+}
+
 /**
  * `degraded` includes `corpus-unavailable` ⇒ points / points_by_project /
  * scan_saturated render "cannot assess" REGARDLESS of their values — a
@@ -629,11 +656,11 @@ function corpusTile(stats) {
   const unavailable = flags.includes('corpus-unavailable');
   const corpus = asPlainObject(stats.corpus);
 
-  if (unavailable || corpus === null) {
-    return `    <section class="tile">
-      <h2>Corpus</h2>
-      <p class="banner s-grey">Cannot assess: the corpus is unavailable (qdrant could not be read).</p>
-    </section>`;
+  if (unavailable) {
+    return corpusBanner('the corpus is unavailable (qdrant could not be read).');
+  }
+  if (corpus === null) {
+    return corpusBanner('the corpus section is malformed (it is not an object), so corpus figures cannot be read.');
   }
 
   // `points` is NOT raw/unbounded: it saturates at FULL_SCAN_LIMIT. Whether
@@ -695,16 +722,25 @@ const GROWTH_DOCS_ZERO_TEXT = '0 doc writes in 7d';
  * "nothing is landing" read). Three states, each with its own presentation:
  * `unavailable` (null/malformed ⇒ "cannot assess"), `zero` (present, sums to
  * 0 ⇒ its zero-text, sparkline suppressed), `live` (draws).
+ *
+ * A non-finite MEMBER value (a garbage day count from a malformed producer)
+ * is treated the same as a malformed series as a WHOLE — 'unavailable', never
+ * silently coerced to 0. Coercing it to 0 would let one bad day masquerade as
+ * a legitimate "0 extractions in 7d" zero-text, which is exactly the
+ * confident-false-zero this tile exists to prevent (same principle as the
+ * freshness tile's own hours/threshold non-finite guards).
  */
 function classifySeries(raw) {
   if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) {
     return { state: 'unavailable', days: [], values: [] };
   }
   const days = Object.keys(raw);
-  const values = days.map((d) => {
+  const values = [];
+  for (const d of days) {
     const n = Number(raw[d]);
-    return Number.isFinite(n) ? n : 0;
-  });
+    if (!Number.isFinite(n)) return { state: 'unavailable', days: [], values: [] };
+    values.push(n);
+  }
   const sum = values.reduce((a, b) => a + b, 0);
   return { state: sum === 0 ? 'zero' : 'live', days, values };
 }
@@ -714,14 +750,19 @@ function classifySeries(raw) {
 // toFixed, never from an untrusted string — day KEYS never enter this
 // function at all, only the values classifySeries already coerced to
 // numbers. No charting library.
+//
+// Fewer than 2 points is suppressed, same reasoning as the zero-suppression
+// above: a single-vertex "polyline" draws nothing visible while the markup
+// still claims a live sparkline was rendered — a quieter false-zero cousin,
+// not the honest "cannot assess"/zero-text this tile owes the reader.
 function sparklineSvg(values) {
-  if (values.length === 0) return '';
+  if (values.length < 2) return '';
   const w = 180;
   const h = 36;
   const max = Math.max(1, ...values);
-  const denom = values.length > 1 ? values.length - 1 : 1;
+  const denom = values.length - 1;
   const points = values.map((v, i) => {
-    const x = values.length > 1 ? (i / denom) * w : w / 2;
+    const x = (i / denom) * w;
     const y = h - (Math.max(0, v) / max) * h;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
@@ -903,7 +944,7 @@ ${recallRow}        </tbody>
 // Wider than the 34rem unlock card: tiles need room.
 const STYLE = `
     body { font-family: system-ui, sans-serif; max-width: 62rem; margin: 3rem auto; padding: 0 1rem; color: #1f2328; background: #ffffff; }
-    ${BRAND_CSS}
+    ${brandCss('0.5rem')}
     h1 { font-size: 1.3rem; margin: 0 0 1.5rem; }
     h2 { font-size: 1.05rem; margin: 0 0 0.75rem; }
     .tile { border: 1px solid #d0d7de; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.25rem; }
