@@ -944,6 +944,74 @@ FAKE
   chmod +x "$dest/docker"
 }
 
+# make_fake_docker_portmap <dest_dir>
+# Same baseline behavior as make_fakebin's docker fake (compose version, info,
+# a memory-server container reported Up) plus an answer for
+# `compose port memory-server 6335`, so --verify's port resolution (#184) can
+# be exercised directly:
+#   - FAKE_PORT_OUT="<host>:<port>" models compose reporting a (possibly
+#     remapped) published port, e.g. "0.0.0.0:6337".
+#   - FAKE_NO_PORT=1 models the command itself failing (compose plugin
+#     absent, or not runnable) — distinct from it succeeding with nothing to
+#     report.
+#   - Neither set models compose succeeding with empty output (service
+#     defined but not currently up).
+# All three "can't answer" shapes must fall back to MEM0_MCP_PORT.
+make_fake_docker_portmap() {
+  local dest="$1"
+  mkdir -p "$dest"
+  cat > "$dest/docker" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"compose version"* ]]; then echo "Docker Compose version v2.27.0"; exit 0; fi
+if [[ "$args" == "info"* ]] || [[ "$args" == *" info"* ]]; then echo "{}"; exit 0; fi
+if [[ "$args" == *"port memory-server"* ]]; then
+  [ "${FAKE_NO_PORT:-0}" = "1" ] && exit 1
+  echo "${FAKE_PORT_OUT:-}"
+  exit 0
+fi
+if [[ "$args" == *"ps"* ]]; then
+  echo "NAME            STATUS"
+  echo "memory-server   Up 2 hours"
+  exit 0
+fi
+exit 0
+FAKE
+  chmod +x "$dest/docker"
+}
+
+# make_fake_curl_portcheck <dest_dir> <good_port>
+# Like make_fakebin's curl, except /health answers 200 ONLY when the probed
+# URL carries <good_port> — every other port fails exactly like nothing is
+# bound there. Proves --verify (and hook-smoke, which shares the same
+# resolved port) actually dials the port compose reports rather than merely
+# printing text that mentions it (#184).
+make_fake_curl_portcheck() {
+  local dest="$1" good_port="$2"
+  mkdir -p "$dest"
+  cat > "$dest/curl" <<FAKE
+#!/usr/bin/env bash
+args="\$*"
+if [[ "\$args" == *"openai.com"* ]]; then
+  if [[ "\$args" == *"-w"* ]]; then printf '200'; fi
+  exit 0
+fi
+if [[ "\$args" == *"/health"* ]]; then
+  if [[ "\$args" == *":${good_port}/health"* ]]; then
+    printf '{"status":"ok"}'
+    exit 0
+  fi
+  exit 7
+fi
+if [[ "\$args" == *"/api/"* ]]; then
+  printf '{"ok":true}\n__UM_HTTP_CODE__200'
+  exit 0
+fi
+exit 0
+FAKE
+  chmod +x "$dest/curl"
+}
+
 # Fake curl whose /health answer is conditioned on UM_IMAGE being exported.
 # That models the incident exactly: the NEW image is unhealthy, and the health
 # check only starts passing once install.sh has exported the recorded rollback
@@ -1626,6 +1694,121 @@ else
   fail_test "T26: install.sh fallback ref matches docker-compose.yml image line" \
     "compose='$T26_COMPOSE_REF' install.sh='$T26_INSTALL_REF'"
 fi
+
+# ─── T34: --verify resolves the remapped host port from compose (#184) ──────
+# A compose host override can remap the published port away from
+# MEM0_MCP_PORT (the seam docs recommend e.g. 127.0.0.1:6337:6335). Before
+# this fix, --verify probed MEM0_MCP_PORT raw (via _um_port()) and never
+# consulted compose, so a remapped-but-healthy server was reported down —
+# server-health AND hook-smoke both false-negative, since hook-smoke shares
+# the same resolved port. Nothing is bound on 6335 here; only the
+# compose-reported 6337 answers, recreating the remap incident exactly.
+echo ""
+echo "=== T34: --verify resolves the remapped host port from compose ==="
+T34="$TMPROOT/t34"
+mkdir -p "$T34/vault" "$T34/plugins" "$T34/home"
+touch "$T34/home/.bashrc"
+make_fakebin "$T34/bin" 200
+make_fake_docker_portmap "$T34/bin"
+make_fake_curl_portcheck "$T34/bin" 6337
+T34_SH=$(make_isolated_server "$T34/server")
+cp -r "$PLUGIN_SRC" "$T34/plugins/universal-memory"
+
+T34_EXIT=0
+T34_OUT=$(env PATH="$T34/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  FAKE_PORT_OUT=0.0.0.0:6337 \
+  UM_VAULT_DIR="$T34/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T34/plugins" \
+  HOME="$T34/home" \
+  bash "$T34_SH" --verify 2>&1) || T34_EXIT=$?
+
+assert_exit_zero "T34: --verify exits 0 against the remapped port" "$T34_EXIT"
+assert_contains "T34: server-health probes the compose-reported port" "$T34_OUT" "http://localhost:6337/health"
+assert_not_contains "T34: server-health does not probe the .env port" "$T34_OUT" "http://localhost:6335/health"
+assert_contains "T34: hook-smoke passes too (shares the resolved port)" "$T34_OUT" "posted a smoke turn"
+assert_contains "T34: all checks passed" "$T34_OUT" "All checks passed"
+
+# ─── T35: --verify falls back to MEM0_MCP_PORT when compose can't answer ────
+# Two distinct "can't answer" shapes, both of which must fall back:
+#   T35  — the compose call itself fails outright (plugin absent / not
+#          runnable), modeled here as a non-zero exit.
+#   T35b — compose runs fine but reports nothing (service defined, not
+#          currently up): success exit, empty stdout.
+echo ""
+echo "=== T35: --verify falls back to MEM0_MCP_PORT when compose exits non-zero ==="
+T35="$TMPROOT/t35"
+mkdir -p "$T35/vault" "$T35/plugins" "$T35/home"
+touch "$T35/home/.bashrc"
+make_fakebin "$T35/bin" 200
+make_fake_docker_portmap "$T35/bin"
+make_fake_curl_portcheck "$T35/bin" 6335
+T35_SH=$(make_isolated_server "$T35/server")
+cp -r "$PLUGIN_SRC" "$T35/plugins/universal-memory"
+
+T35_EXIT=0
+T35_OUT=$(env PATH="$T35/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  FAKE_NO_PORT=1 \
+  UM_VAULT_DIR="$T35/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T35/plugins" \
+  HOME="$T35/home" \
+  bash "$T35_SH" --verify 2>&1) || T35_EXIT=$?
+
+assert_exit_zero "T35: --verify exits 0 via the MEM0_MCP_PORT fallback" "$T35_EXIT"
+assert_contains "T35: server-health falls back to the .env port" "$T35_OUT" "http://localhost:6335/health"
+assert_contains "T35: all checks passed" "$T35_OUT" "All checks passed"
+
+echo ""
+echo "=== T35b: --verify falls back to MEM0_MCP_PORT when compose reports nothing ==="
+T35B_EXIT=0
+T35B_OUT=$(env PATH="$T35/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  FAKE_PORT_OUT="" \
+  UM_VAULT_DIR="$T35/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T35/plugins" \
+  HOME="$T35/home" \
+  bash "$T35_SH" --verify 2>&1) || T35B_EXIT=$?
+
+assert_exit_zero "T35b: --verify exits 0 when compose reports empty" "$T35B_EXIT"
+assert_contains "T35b: server-health falls back to the .env port" "$T35B_OUT" "http://localhost:6335/health"
+
+# ─── T36: --verify keeps the pre-existing default-port behavior unchanged ───
+# No compose port-mapping support at all (make_fakebin's stock docker fake,
+# same shape every other pre-#184 --verify test already used) — this is the
+# ordinary case of an install with no host-port override. Paired with the
+# strict port-checking curl fake (rather than make_fakebin's port-agnostic
+# one) so this genuinely pins the resolved port at 6335, not merely that
+# "verify passed".
+echo ""
+echo "=== T36: --verify keeps resolving the plain default port when compose is silent ==="
+T36="$TMPROOT/t36"
+mkdir -p "$T36/vault" "$T36/plugins" "$T36/home"
+touch "$T36/home/.bashrc"
+make_fakebin "$T36/bin" 200
+make_fake_curl_portcheck "$T36/bin" 6335
+T36_SH=$(make_isolated_server "$T36/server")
+cp -r "$PLUGIN_SRC" "$T36/plugins/universal-memory"
+
+T36_EXIT=0
+T36_OUT=$(env PATH="$T36/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T36/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T36/plugins" \
+  HOME="$T36/home" \
+  bash "$T36_SH" --verify 2>&1) || T36_EXIT=$?
+
+assert_exit_zero "T36: --verify still exits 0 on the default port" "$T36_EXIT"
+assert_contains "T36: server-health still probes the default port" "$T36_OUT" "http://localhost:6335/health"
+assert_contains "T36: all checks passed" "$T36_OUT" "All checks passed"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

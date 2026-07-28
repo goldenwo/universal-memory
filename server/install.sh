@@ -160,6 +160,40 @@ _um_port() {
 	printf '%s' "${_p##*:}"
 }
 
+# Ask compose where memory-server is ACTUALLY published on the host right
+# now. Output shapes seen in the wild: `0.0.0.0:6337`, `127.0.0.1:6337` — take
+# the field after the LAST colon so this stays correct even against an IPv6
+# bind address (which carries colons of its own; a first-colon split would
+# slice into the address, not the port). Empty when compose can't answer:
+# not installed, the service isn't running, or nothing parseable came back.
+# Always returns 0 (empty stdout on the not-found path) — callers assign its
+# stdout directly, and a non-zero return here would trip `set -e` at the call
+# site even though "compose has no answer" is an expected, handled case.
+_um_compose_port() {
+	local _out
+	_out=$(_compose port memory-server 6335 2>/dev/null | head -1 || true)
+	_out="${_out##*:}"
+	[[ "$_out" =~ ^[0-9]+$ ]] && printf '%s' "$_out"
+	return 0
+}
+
+# The port to actually probe. The live compose mapping is authoritative and
+# _um_port() is config-derived guesswork — a host override file can REPLACE
+# the `ports:` list entirely (the seam docs recommend e.g.
+# `127.0.0.1:6337:6335`), remapping the host side away from whatever
+# MEM0_MCP_PORT says. Falls back to _um_port() when compose can't answer
+# (plugin-only installs, compose not running, service down).
+#
+# #184: --verify used to call _um_port() directly and never consult compose,
+# so a remapped install probed the wrong port and reported a healthy server
+# as down. --upgrade's health poll already resolved the port this way; this
+# is the shared helper both now call, so they can never drift back apart.
+_resolved_host_port() {
+	local _p
+	_p="$(_um_compose_port)"
+	[ -n "$_p" ] && printf '%s' "$_p" || _um_port
+}
+
 # ─── Version reporting across the three updatable surfaces ───────────────────
 # The server container, the `um` CLI, and the Claude Code plugin update through
 # three different mechanisms with no shared release trigger, so they drift
@@ -241,7 +275,7 @@ if [ "${1:-}" = "--verify" ]; then
   # Load .env so UM_VAULT_DIR etc. are available even if not already set in env.
   _um_load_env_file
 
-  _PORT="$(_um_port)"
+  _PORT="$(_resolved_host_port)"
   _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
 
@@ -606,9 +640,10 @@ if [ "${1:-}" = "--upgrade" ]; then
 	# pointing at an unbound port fails every poll, which this script would
 	# otherwise report as "the server is DOWN" and roll back a healthy upgrade.
 	# The container listens on 6335 by contract (compose `environment:` pin).
-	_UPG_PORT_OUT=$(_compose port memory-server 6335 2>/dev/null | head -1 || true)
-	_UPG_PORT="${_UPG_PORT_OUT##*:}"
-	if [[ "$_UPG_PORT" =~ ^[0-9]+$ ]]; then
+	# Shared with --verify (#184) via _um_compose_port so the two modes can
+	# never resolve this differently.
+	_UPG_PORT="$(_um_compose_port)"
+	if [ -n "$_UPG_PORT" ]; then
 		# Connect over loopback regardless of the reported bind address: a
 		# 0.0.0.0 binding is reachable there, and 0.0.0.0 is not a valid
 		# destination on every platform.
