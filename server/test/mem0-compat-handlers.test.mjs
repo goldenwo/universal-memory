@@ -760,3 +760,21 @@ test('dispatcher: INPUT_INVALID from umAdd (reserved metadata) → 400 {detail: 
   assert.equal(out.status, 400);
   assert.match(out.body.detail, /metadata\.surfaces is reserved/);
 });
+
+test('R6 update: reaction metadata obeys the #187 normalizer (malformed dropped, valid clamped) — the PUT path is not a bypass', async () => {
+  const qdrant = makeQdrant([point('p1')]);
+  const embedProvider = makeEmbedProvider();
+  // Malformed count → both fields stripped from the merge.
+  const bad = await call('PUT', '/v1/memories/p1/', { metadata: { reaction_count: 'lots', reaction_types: ['👍'], note: 'kept' } }, ctxOf({ qdrant, embedProvider }));
+  assert.equal(bad.status, 200);
+  const badPayload = qdrant.calls.setPayload[0].args.payload;
+  assert.ok(!('reaction_count' in badPayload));
+  assert.ok(!('reaction_types' in badPayload));
+  assert.equal(badPayload.note, 'kept');
+  // Valid count clamped to the contract max (1000); types cleaned.
+  const ok = await call('PUT', '/v1/memories/p1/', { metadata: { reaction_count: 5000, reaction_types: ['👍', 42] } }, ctxOf({ qdrant, embedProvider }));
+  assert.equal(ok.status, 200);
+  const okPayload = qdrant.calls.setPayload[1].args.payload;
+  assert.equal(okPayload.reaction_count, 1000);
+  assert.deepEqual(okPayload.reaction_types, ['👍']);
+});

@@ -28,6 +28,7 @@ import { createRequire } from 'node:module';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { countersDbPath } from './capture-events.mjs';
+import { REACTION_OUTCOME_KEYS, SIGNAL_EVENTS } from './reaction-signal.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -178,6 +179,27 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       // Outcome '' (inapplicable, spec §6) counts toward events_today but has
       // no outcomes_7d bucket by design.
       if (Object.hasOwn(s.outcomes_7d, outcome)) s.outcomes_7d[outcome] += n;
+    }
+
+    // #187 reactions_7d: signal.reaction lives OUTSIDE the capture.* namespace
+    // (reaction-signal.mjs invariants), so the queries above never see it —
+    // events_today/freshness are isolated by construction and this is the ONLY
+    // reaction-aware query. Reader-doesn't-trust-writer: a reaction row whose
+    // surface has no capture entry (unreachable from our own writer, which
+    // co-emits capture.extraction in the same umAdd call — but the DB is data,
+    // not a promise) is SKIPPED, never thrown on: /api/stats must not degrade
+    // to counters-unavailable over a stray row.
+    const reactionRows = db.prepare(`
+      SELECT surface, outcome, SUM(count) AS n
+      FROM counters
+      WHERE event = ? AND day >= ? AND day <= ?
+      GROUP BY surface, outcome
+    `).all(SIGNAL_EVENTS.REACTION, windowStart, today);
+    for (const { surface, outcome, n } of reactionRows) {
+      const s = capture[surface];
+      if (!s) continue; // reaction-only surface — skip (see comment above)
+      if (!s.reactions_7d) s.reactions_7d = Object.fromEntries(REACTION_OUTCOME_KEYS.map((k) => [k, 0]));
+      if (Object.hasOwn(s.reactions_7d, outcome)) s.reactions_7d[outcome] += n;
     }
 
     // Zero-filled 7-day map (oldest → today) — Stage B's sparkline consumes
