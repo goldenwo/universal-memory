@@ -2255,6 +2255,12 @@ sys.exit(0 if {'$D32_ID_A', '$D32_ID_B'} <= ids else 1)
 	# (qdrant only, never the transcript), so B's claim is seeded here as a turn —
 	# otherwise the detector has no new fact to contradict the older stored A.
 	mcp_call 200 memory_append_turn "{\"project\":\"d32-smoke\",\"content\":\"$D32_B_TEXT\",\"role\":\"user\"}" >/dev/null
+	# Second (fact-free) turn: the #185 thin-transcript gate abstains below
+	# 2 append-turn headers AND 500 bytes — a one-turn transcript would skip
+	# the summarize+detect pipeline entirely and S5 would time out waiting for
+	# a supersession that never ran. The ack adds no extractable claim, so the
+	# detector still judges exactly B-vs-A.
+	mcp_call 199 memory_append_turn "{\"project\":\"d32-smoke\",\"content\":\"Acknowledged - I have recorded that update for the work lane and will use it going forward.\",\"role\":\"assistant\"}" >/dev/null
 	D32_CP_RESP=$(mcp_call 201 memory_checkpoint "{\"project\":\"d32-smoke\",\"lane\":\"work\"}")
 	echo "[smoke]     checkpoint lane:work response: $D32_CP_RESP"
 	echo "$D32_CP_RESP" | python3 -c "
@@ -2390,6 +2396,10 @@ print('OK: ctrl1 lane:other fact is current (lane:work checkpoint did not touch 
 	# would extract D, find C, and wrongly supersede C — failing this control.
 	# With the gate intact it returns [] before even reading the transcript.
 	mcp_call 203 memory_append_turn "{\"project\":\"d32-smoke-nolane\",\"content\":\"$D32_D_TEXT\",\"role\":\"user\"}" >/dev/null
+	# Fact-free second turn: without it the #185 thin-transcript gate abstains
+	# and the pipeline never runs — which would hollow out this control (it
+	# must be the ABSENCE-gate returning [], not the thin-gate pre-empting it).
+	mcp_call 202 memory_append_turn "{\"project\":\"d32-smoke-nolane\",\"content\":\"Acknowledged - I have recorded that update and will use it going forward.\",\"role\":\"assistant\"}" >/dev/null
 	D32_CP2_RESP=$(mcp_call 204 memory_checkpoint '{"project":"d32-smoke-nolane"}')
 	echo "[smoke]     checkpoint (no lane/persona) response: $D32_CP2_RESP"
 	echo "$D32_CP2_RESP" | python3 -c "
