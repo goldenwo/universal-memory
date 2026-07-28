@@ -55,6 +55,7 @@ import { withRetry } from './lib/retry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
 import { listEnvelope } from './lib/envelope.mjs';
 import { endpointClassRoute } from './lib/endpoint-class.mjs';
+import { createControlHandlers } from './lib/control-routes.mjs';
 import { extractBearer, extractCompatToken, compareTokens, shouldBypassLoopback } from './lib/auth.mjs';
 import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { isRecallable } from './lib/recallable.mjs';
@@ -107,6 +108,11 @@ function resolveRouteTemplate(pathname, method) {
   if (pathname === '/metrics') return '/metrics';
   if (pathname === '/mcp') return '/mcp';
   if (pathname === '/api/stats') return '/api/stats';
+  // /control surface (#171 Stage B): three exact templates so the operator page
+  // buckets under its own labels instead of '/__unknown__'.
+  if (pathname === '/control') return '/control';
+  if (pathname === '/control/unlock') return '/control/unlock';
+  if (pathname === '/control/logout') return '/control/logout';
   if (pathname === '/api/search') return '/api/search';
   if (pathname === '/api/add') return '/api/add';
   if (pathname === '/api/list') return '/api/list';
@@ -2198,6 +2204,13 @@ export function createRequestHandler(ctx = {}) {
 	// /mcp or /api/* traffic and vice versa. Fixed at rpm:30/burst:10;
 	// future /oauth/* handlers (PR 2) use this same instance.
 	const oauthAdmit = createRateLimiter({ rpm: 30, burst: 10 });
+	// #171 Stage B: the /control operator page's handlers. Built once per handler
+	// instance so its DEDICATED unlock throttle (global, exponential — NOT the
+	// shared per-IP limiter, spec §3 step 6) is shared across every request this
+	// server serves. Constructed unconditionally and cheap: the kill switch is
+	// read per request (endpoint-class row + a re-check inside), so no flag
+	// state is frozen at construction time.
+	const control = createControlHandlers();
 	// OAuth on/off is a construction-time decision; env validated at boot.
 	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
 	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
@@ -2758,6 +2771,17 @@ export function createRequestHandler(ctx = {}) {
 				'Cache-Control': 'public, max-age=86400',
 			});
 			res.end(isSvg ? _FAVICON_SVG : _FAVICON_ICO);
+			return;
+		}
+		// /control operator page (#171 Stage B, spec §3). The endpoint-class rows
+		// already hard-404 every /control path when UM_CONTROL_ENABLED != 'true'
+		// AND 404 unknown subpaths, and they carry bypassAuth:true (these routes
+		// authenticate themselves with a session cookie / form token — the bearer
+		// middleware must not run) with bypassRateLimit:false + noLoopbackBypass
+		// (the shared limiter above still applies, even on loopback). Everything
+		// else — session, CSRF, Origin, throttle, headers — lives in the module.
+		if (url.pathname === '/control' || url.pathname.startsWith('/control/')) {
+			await control.handle(req, res, url);
 			return;
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {

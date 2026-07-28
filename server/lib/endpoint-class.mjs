@@ -22,7 +22,9 @@
  * middleware chain — currently `compat: true` on the mem0-compat row
  * (Step-4 extractor selection + loopback no-bypass, compat spec §6) and
  * `noLoopbackBypass: true` on the /api/stats row (loopback no-bypass
- * ONLY — standard Bearer + {error} envelope, #171 Stage-A spec §3).
+ * ONLY — standard Bearer + {error} envelope, #171 Stage-A spec §3) and
+ * on the three /control rows (#171 Stage-B spec §3, where it pairs with
+ * bypassAuth:true — those routes authenticate themselves).
  */
 
 import { configuredProviders } from './oauth/idp/config.mjs';
@@ -99,6 +101,35 @@ const ROWS = [
   // ({detail}), both wrong here (spec §3 R1 finding). MUST precede the
   // /api/* catch-all (first-match-wins).
   { match: (p, s) => p === '/api/stats',                             pol: () => ({ bypassAuth: false, bypassRateLimit: false, noLoopbackBypass: true }) },
+
+  // /control surface (#171 Stage B, spec §3): the operator dashboard's three
+  // routes, matched EXACTLY — a `startsWith('/control')` prefix row would also
+  // swallow `/control-panel` (S-N1). All three are gated by UM_CONTROL_ENABLED
+  // (default false ⇒ hard-404, mirroring the oauthEnabled / mem0-compat rows):
+  // this is the endpoint table's only edge-unauthenticated HTML surface, so it
+  // ships with a kill switch and defaults off.
+  //   bypassAuth:true      — bearer auth MUST NOT run; these routes authenticate
+  //                          themselves via session cookie / form token, and the
+  //                          master token is deliberately NOT a bearer here.
+  //   bypassRateLimit:false + noLoopbackBypass:true — without the marker the
+  //                          whole shared-limiter block is skipped for a
+  //                          loopback request with no forwarded headers, which
+  //                          is exactly what an SSH -L / `tailscale serve`
+  //                          tunnel produces (S-B2a). The dedicated unlock
+  //                          throttle in the handler is the real brute-force
+  //                          control; the row must not advertise a bypass.
+  // ORDER: these three EXACT rows MUST precede the /control/* 404 catch below,
+  // or the catch shadows /control/unlock (R2-S-N10).
+  { match: (p, s) => p === '/control',                               pol: (e) => controlPolicy(e) },
+  { match: (p, s) => p === '/control/unlock',                        pol: (e) => controlPolicy(e) },
+  { match: (p, s) => p === '/control/logout',                        pol: (e) => controlPolicy(e) },
+
+  // /control/ and every unknown /control/* subpath: explicit 404. Without this
+  // row they fall through to the default-close tail and answer a BEARER
+  // challenge (401) on a surface that has no bearer — the operator would see an
+  // auth error for a typo'd path (N3/N4). Flag-independent: a 404 here leaks
+  // nothing about whether the surface is enabled.
+  { match: (p, s) => p.startsWith('/control/'),                      pol: () => ({ returnStatus: 404 }) },
 
   // /api/*: all REST endpoints — auth + rate-limit always on.
   { match: (p, s) => p.startsWith('/api/'),                          pol: () => ({ bypassAuth: false, bypassRateLimit: false }) },
@@ -181,6 +212,14 @@ function oauthRevokePolicy(env, sourceIp) {
 function mem0CompatPolicy(env) {
   if ((env.UM_MEM0_COMPAT_ENABLED ?? 'false') !== 'true') return { returnStatus: 404 };
   return { bypassAuth: false, bypassRateLimit: false, compat: true };
+}
+
+// /control operator page (#171 Stage B, spec §3). Default-closed exactly like
+// the OAuth rows: the flag unset or anything but 'true' hard-404s, so no
+// half-enabled state exists for an unauthenticated HTML surface.
+function controlPolicy(env) {
+  if ((env.UM_CONTROL_ENABLED ?? 'false') !== 'true') return { returnStatus: 404 };
+  return { bypassAuth: true, bypassRateLimit: false, noLoopbackBypass: true };
 }
 
 function oauthIdpPolicy(env) {
