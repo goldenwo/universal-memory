@@ -39,7 +39,7 @@ import { createConsentThrottle } from './throttle.mjs';
 // the shared ../http-form.mjs since Stage-B U3 — the /control routes need the
 // same cap and the same "is this a form?" answer, and a second definition of
 // either is a divergence waiting to happen. Lifted verbatim from this file.
-import { MAX_FORM_BYTES, isFormContentType, readForm } from '../http-form.mjs';
+import { MAX_FORM_BYTES, isFormContentType, readForm, readCookie } from '../http-form.mjs';
 
 // RFC 7591 DCR limits.
 const MAX_CLIENT_NAME = 120;        // display-only; TRUNCATE rather than reject
@@ -102,18 +102,6 @@ function readJson(req) {
 // upstream, so this is belt-and-suspenders).
 function hostOf(uri) {
   try { return new URL(uri).host; } catch { return uri; }
-}
-
-// Parse one named cookie out of a raw Cookie header.
-function readCookie(req, name) {
-  const raw = req.headers.cookie;
-  if (!raw) return undefined;
-  for (const part of raw.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return undefined;
 }
 
 // A request is a NON-NAVIGATION programmatic fetch when Sec-Fetch-Mode is

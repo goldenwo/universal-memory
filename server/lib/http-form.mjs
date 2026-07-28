@@ -1,12 +1,13 @@
 // server/lib/http-form.mjs
 //
-// The shared urlencoded-form intake primitives for every HTML/form surface the
-// server exposes: the body-size cap, the content-type predicate, and the
-// capped, drain-don't-destroy body reader.
+// The shared request-intake primitives for every HTML/form surface the server
+// exposes: the body-size cap, the content-type predicate, the capped
+// drain-don't-destroy body reader, and the Cookie-header tokenizer.
 //
 // Lifted VERBATIM (behaviour-identical) out of server/lib/oauth/endpoints.mjs
-// (`MAX_FORM_BYTES` :39, `isFormContentType` :128-131, `readForm` :73-93) in
-// Stage-B task U3. They were module-PRIVATE there, so the /control routes had
+// (`MAX_FORM_BYTES` :39, `isFormContentType` :128-131, `readForm` :73-93,
+// `readCookie` :134-143) in Stage-B task U3. They were module-PRIVATE there, so
+// the /control routes had
 // exactly two options: re-implement the cap + parser (a second, divergable
 // definition of "how big is too big" and "what counts as a form"), or lift.
 // The spec pins reuse (plan U3 / R2-C-N3), and a shared module is the better
@@ -56,4 +57,36 @@ export function readForm(req) {
     });
     req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
   });
+}
+
+// ---- Cookie header tokenizer ---------------------------------------------
+//
+// THE tokenizer. Every cookie reader in the codebase goes through it, so a
+// "reads the value" parser and a "counts the occurrences" parser cannot
+// disagree by construction (spec §3 R3-S-N1 — the /control duplicate-cookie
+// guard must tokenize identically to the parser that reads the auth cookies,
+// and naming that requirement is not the same as enforcing it).
+//
+// Tokenization, unchanged from the original readCookie: split on `;`, take the
+// substring before the FIRST `=` as the name, trim both halves, and skip any
+// valueless segment. Deliberately NOT RFC 6265 quoted-string aware — a
+// DQUOTE-wrapped value is returned with its quotes, exactly as before, so a
+// value containing `um_control=` is a value and never a second cookie.
+
+/** Yield [name, value] for every well-formed segment of a raw Cookie header. */
+export function* cookiePairs(raw) {
+  if (typeof raw !== 'string' || raw === '') return;
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    yield [part.slice(0, eq).trim(), part.slice(eq + 1).trim()];
+  }
+}
+
+/** Parse one named cookie out of a request's Cookie header (FIRST match). */
+export function readCookie(req, name) {
+  for (const [n, v] of cookiePairs(req.headers?.cookie)) {
+    if (n === name) return v;
+  }
+  return undefined;
 }
