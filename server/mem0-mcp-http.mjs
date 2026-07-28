@@ -87,6 +87,7 @@ import { noteRecallSearch } from './lib/recall-telemetry.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
 import { isWriteEnabled } from './lib/write-enabled.mjs';
+// FULL_SCAN_LIMIT: owned by stats-payload.mjs (U2.5); imported back here for /health's own getAll call.
 import { buildStats, FULL_SCAN_LIMIT } from './lib/stats-payload.mjs';
 
 // ---------------------------------------------------------------------------
@@ -158,14 +159,6 @@ const _SNIPPET_DESIGN = JSON.parse(readFileSync(
 ));
 const SNIPPET_N = _SNIPPET_DESIGN.snippet.N;      // 240
 const SNIPPET_ELLIPSIS = _SNIPPET_DESIGN.snippet.ellipsis;  // "…"
-
-// FULL_SCAN_LIMIT (full-corpus getAll ceiling for /health + /api/stats, #171
-// Stage A plan U2 audit: mem0ai's getAll defaults to limit=100, which
-// silently truncated the /health count) now lives in ./lib/stats-payload.mjs
-// (U2.5 extraction) — buildStats() owns it and needs it internally, so it is
-// imported back here rather than duplicated. Mirrors the compat facade's
-// COMPAT_SCAN_LIMIT (mem0-compat.mjs) — generous for single-operator scale
-// (hundreds–low-thousands of points).
 
 // ---------------------------------------------------------------------------
 // Favicon assets — boot-loaded once as raw bytes (spec 2026-07-09

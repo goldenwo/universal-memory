@@ -199,6 +199,24 @@ test('capture_freshness_threshold_hours: non-numeric env value (NaN) falls back 
   });
 });
 
+// Round-1 review fix (Minor): a set-but-blank env var (`UM_FRESHNESS_MAX_AGE_HOURS=`, the
+// common docker/.env shape) must NOT read as `Number('') === 0` — that would silently mark
+// every surface permanently stale. Blank/whitespace-only reclassifies as UNSET (→ 26);
+// a deliberate '0' (tested above) must still survive as 0.
+test('capture_freshness_threshold_hours: empty-string env value ("" — set but blank) falls back to 26, NOT 0', async () => {
+  await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '' }, async () => {
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    assert.equal(body.capture_freshness_threshold_hours, 26);
+  });
+});
+
+test('capture_freshness_threshold_hours: whitespace-only env value falls back to 26, NOT 0', async () => {
+  await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '   ' }, async () => {
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    assert.equal(body.capture_freshness_threshold_hours, 26);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // corpus.scan_saturated (R2-C-I3)
 // ---------------------------------------------------------------------------

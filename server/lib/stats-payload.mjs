@@ -48,7 +48,13 @@ export const FULL_SCAN_LIMIT = 10000;
 const DEFAULT_FRESHNESS_MAX_AGE_HOURS = 26;
 
 function captureFreshnessThresholdHours() {
-  const n = Number(process.env.UM_FRESHNESS_MAX_AGE_HOURS);
+  const raw = process.env.UM_FRESHNESS_MAX_AGE_HOURS;
+  // A set-but-blank env var (`UM_FRESHNESS_MAX_AGE_HOURS=`, a common
+  // docker/.env shape) must read as UNSET, not as `Number('') === 0` — that
+  // would silently mark every surface permanently stale. Reclassify
+  // null/undefined/whitespace-only as NaN so it falls through to the
+  // default below; a deliberate '0' still parses to 0 and survives.
+  const n = (raw == null || raw.trim() === '') ? NaN : Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FRESHNESS_MAX_AGE_HOURS;
 }
 
