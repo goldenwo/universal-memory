@@ -77,7 +77,16 @@ def guard(cwd_raw, fallback_raw=""):
         return "SKIP:non-project-cwd"
     homes = _home_candidates()
     if cwd in homes:
-        return "SKIP:home-cwd"
+        # #186 follow-up (operator decision 2026-07-28): a session running AT
+        # $HOME is a general desktop-app chat — real content the operator
+        # wants captured — so it routes to a CATCH-ALL project instead of a
+        # home-basename slug. The zero-turn auxiliary sessions that motivated
+        # #186 die independently at the server's thin-transcript gate (#185).
+        # UM_HOME_PROJECT overrides the bucket name; set EMPTY to revert to
+        # skipping home sessions entirely. Home SUBDIRS (~/Downloads etc.)
+        # are not chats — they stay under the marker walk-up below.
+        home_project = os.environ.get("UM_HOME_PROJECT", "desktop").strip()
+        return home_project if home_project else "SKIP:home-cwd"
 
     markers = [m.strip() for m in
                (os.environ.get("UM_PROJECT_MARKERS") or DEFAULT_MARKERS).split(",")

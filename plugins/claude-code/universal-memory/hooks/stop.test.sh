@@ -637,9 +637,11 @@ assert_eq "S19: zero POSTs" "$(call_count)" "0"
 assert_contains "S19: skip=no-transcript logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-transcript"
 
 # ===========================================================================
-# G1 (#186): cwd == $HOME ⇒ skip=home-cwd, ZERO POSTs, no cursor writes.
+# G1 (#186 follow-up): cwd == $HOME ⇒ turns captured under the catch-all
+# 'desktop' project (general chats carry real content); UM_HOME_PROJECT=
+# (explicit empty) reverts to skipping.
 # ===========================================================================
-echo "=== G1 (#186): home cwd skips ==="
+echo "=== G1 (#186): home cwd routes turns to the desktop catch-all ==="
 H=$(fresh_home g1)
 TP="$TMPDIR_ROOT/g1.jsonl"; write_transcript "$TP" 4
 STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$H")")
@@ -647,8 +649,20 @@ STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$H")")
 reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "G1: exit 0" "$RUN_EXIT" "0"
-assert_eq "G1: zero POSTs" "$(call_count)" "0"
-assert_contains "G1: skip=home-cwd logged" \
+assert_eq "G1: four POSTs (one per message)" "$(call_count)" "4"
+assert_eq "G1: turns land under the desktop catch-all" "$(body_field 1 project)" "desktop"
+
+H=$(fresh_home g1b)
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$H")")
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_TOKEN_FILE="$H/.um/auth-token" \
+  UM_HOME_PROJECT="" \
+  bash "$STOP" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+assert_eq "G1b: zero POSTs with UM_HOME_PROJECT= (opt-out)" "$(call_count)" "0"
+assert_contains "G1b: skip=home-cwd logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
 
 # ===========================================================================

@@ -379,19 +379,55 @@ else
 fi
 
 # ===========================================================================
-# G1 (#186): cwd == $HOME ⇒ skip=home-cwd, ZERO POSTs — the desktop app spawns
-# auxiliary sessions at $HOME; they must never mint a home-basename project.
+# G1 (#186 follow-up): cwd == $HOME ⇒ routed to the catch-all 'desktop'
+# project — general desktop-app chats carry real content; the server's
+# thin-transcript gate independently kills the zero-turn auxiliary sessions.
+# Never a home-basename slug.
 # ===========================================================================
-echo "=== G1 (#186): home cwd skips ==="
+echo "=== G1 (#186): home cwd routes to the desktop catch-all ==="
 H=$(fresh_home g1)
 STDIN=$(make_stdin "$SID" "$(native_path "$H")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
 assert_eq "G1: parent exits 0" "$RUN_EXIT" "0"
-assert_eq "G1: zero POSTs" "$(call_count)" "0"
-assert_contains "G1: skip=home-cwd logged" \
+if wait_for_log "$H" "posted http=200"; then
+  pass "G1: child posted"
+else
+  fail "G1: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G1: slug is the desktop catch-all, not the home basename" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop"}'
+
+# G1b: UM_HOME_PROJECT= (explicit empty) reverts to skipping home sessions.
+H=$(fresh_home g1b)
+STDIN=$(make_stdin "$SID" "$(native_path "$H")")
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_HOME_PROJECT="" \
+  bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+assert_eq "G1b: zero POSTs with UM_HOME_PROJECT= (opt-out)" "$(call_count)" "0"
+assert_contains "G1b: skip=home-cwd logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
+
+# G1c: UM_HOME_PROJECT=chats overrides the catch-all name (sanitized slug).
+H=$(fresh_home g1c)
+STDIN=$(make_stdin "$SID" "$(native_path "$H")")
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_HOME_PROJECT="chats" \
+  bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+if wait_for_log "$H" "posted http=200"; then
+  pass "G1c: child posted under the override name"
+else
+  fail "G1c: child posted under the override name" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G1c: slug honors UM_HOME_PROJECT" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"chats"}'
 
 # ===========================================================================
 # G2 (#186): marker-less cwd ⇒ skip=non-project-cwd, ZERO POSTs
@@ -428,10 +464,10 @@ assert_eq "G3: slug is the cwd basename (not the project root)" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"deep"}'
 
 # ===========================================================================
-# G4 (#186): MSYS-form home cwd (/c/Users/<u>) must ALSO skip — the guard
-# normalizes MSYS drive paths before comparison (Windows only; skipped on CI).
+# G4 (#186): MSYS-form home cwd (/c/Users/<u>) must normalize and route to
+# the desktop catch-all like the native form (Windows only; skipped on CI).
 # ===========================================================================
-echo "=== G4 (#186): MSYS-form home cwd skips (Windows only) ==="
+echo "=== G4 (#186): MSYS-form home cwd routes to desktop (Windows only) ==="
 if command -v cygpath >/dev/null 2>&1; then
   H=$(fresh_home g4)
   MSYS_HOME=$(cygpath -u "$H")
@@ -439,9 +475,13 @@ if command -v cygpath >/dev/null 2>&1; then
 
   reset_calls
   run_session_end "$H" "$STDIN"
-  assert_eq "G4: zero POSTs" "$(call_count)" "0"
-  assert_contains "G4: skip=home-cwd logged for MSYS form" \
-    "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
+  if wait_for_log "$H" "posted http=200"; then
+    pass "G4: MSYS-form home posted"
+  else
+    fail "G4: MSYS-form home posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fi
+  assert_eq "G4: MSYS-form home routes to the desktop catch-all" \
+    "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop"}'
 else
   pass "G4: skipped (no cygpath — POSIX platform has no MSYS forms)"
 fi
