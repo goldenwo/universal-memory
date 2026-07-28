@@ -83,6 +83,10 @@ const CHECKPOINT_CONFIG = {
   summary_model: 'gpt-4o-mini',
   state_cap_chars: 3000,
   lockdir_stale_timeout_ms: 600000,
+  // #185: gate OFF — these tests assert counter emission mechanics on tiny
+  // seeded fixtures; abstention semantics are covered in checkpoint.test.mjs.
+  min_transcript_bytes: 0,
+  min_transcript_turns: 0,
 };
 
 const summarizeFn = async () => ({ summary: 'Mock summary.', costUsd: 0.001, tokensIn: 10, tokensOut: 5 });

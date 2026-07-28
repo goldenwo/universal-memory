@@ -256,19 +256,44 @@ test('growth_7d counts capture.extraction stored + superseded per day; excludes 
   assert.deepEqual(stats.growth_7d, expected, 'zero-filled 7-day map');
 });
 
+// ---------- readCounterStats: growth_docs_7d (#185 doc-tier visibility) ----------
+
+test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes abstained and extraction rows', async () => {
+  const dbPath = await tempDbPath();
+  seedDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'stored', count: 43 },
+    // UPSTREAM_FAILURE checkpoints DID write the summary doc (only the index
+    // is stale) — they count as doc-tier writes (#185 review finding).
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'error', count: 2 },
+    // Abstained checkpoints wrote nothing — excluded by design.
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'abstained', count: 50 },
+    // Fact-tier extraction rows must not leak into the docs counter.
+    { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'stored', count: 50 },
+    { day: daysAgo(3), surface: 'mem0-compat', event: 'capture.checkpoint', outcome: 'stored', count: 7 },
+    // Day 8: outside the window.
+    { day: daysAgo(7), surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'stored', count: 50 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const expected = {};
+  for (let i = 6; i >= 0; i--) expected[daysAgo(i)] = 0;
+  expected[TODAY] = 45;      // 43 stored + 2 error
+  expected[daysAgo(3)] = 7;  // cross-surface sum
+  assert.deepEqual(stats.growth_docs_7d, expected, 'zero-filled 7-day map of doc-tier writes');
+});
+
 // ---------- readCounterStats: degraded / empty shapes (A5) ----------
 
 test('missing db file ⇒ null-shaped result, no throw', async () => {
   const dbPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-missing-')), 'nope.db');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, recall: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null });
 });
 
 test('unreadable (corrupt) db ⇒ null-shaped result, no throw', async () => {
   const dbPath = await tempDbPath();
   await fs.writeFile(dbPath, 'not a sqlite database — garbage bytes');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, recall: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null });
 });
 
 test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {

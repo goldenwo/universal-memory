@@ -2912,6 +2912,10 @@ export function createRequestHandler(ctx = {}) {
 					points,
 					points_by_project: pointsByProject,
 					growth_7d: counters.growth_7d,
+					// #185: doc-tier writes (capture.checkpoint stored+error/day) —
+					// session summaries bypass extraction, so growth_7d alone left a
+					// runaway doc-tier writer invisible (the phantom-summary incident).
+					growth_docs_7d: counters.growth_docs_7d,
 					// Spec §3: growth is counters-derived (capture.extraction
 					// stored+superseded/day), NOT a qdrant time-series — labeled.
 					derived_from: 'extraction-counters',

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: universal-memory
-  version: 1.9.0
+  version: 1.10.0
   description: ChatGPT Custom GPT Actions surface for universal-memory. Trimmed
     subset of the full spec — only the 7 routes a Custom GPT needs (search,
     state, add, delete, recent, append-turn, checkpoint). Full spec at
@@ -528,8 +528,47 @@ components:
           default: false
           description: When true, produce a summary but skip the state.md merge step.
     CheckpointResponse:
-      description: Result of a successful checkpoint (ok:true) or soft failure (ok:false).
+      description: Result of a successful checkpoint (ok:true), a thin-transcript
+        abstention (ok:true, skipped), or soft failure (ok:false).
       oneOf:
+        - type: object
+          title: CheckpointAbstained
+          description: "#185 thin-transcript abstention: the assembled transcript fell
+            below both admission floors (bytes AND turns), so no summary was
+            generated and nothing was written. Raw captures remain on disk and
+            roll into the next checkpoint."
+          required:
+            - schema_version
+            - ok
+            - skipped
+            - transcript_bytes
+            - transcript_turns
+            - duration_ms
+          properties:
+            schema_version:
+              type: integer
+              enum:
+                - 1
+            ok:
+              type: boolean
+              enum:
+                - true
+            skipped:
+              type: string
+              enum:
+                - thin_transcript
+            transcript_bytes:
+              type: integer
+              minimum: 0
+              description: Byte length of the trimmed assembled transcript
+            transcript_turns:
+              type: integer
+              minimum: 0
+              description: Count of append-turn headers found in the transcript
+            duration_ms:
+              type: integer
+              minimum: 0
+              description: Wall-clock duration in milliseconds
         - type: object
           title: CheckpointSuccess
           required:

@@ -147,7 +147,12 @@ unset _UM_CONT_TOKEN
 # ---------------------------------------------------------------------------
 SESSION_ID="continuity-test-0001"
 PROJECT="continuity-test"
-FAKE_CWD="/fake/path/$PROJECT"
+# #186: the cwd must be a REAL directory carrying a project marker — the
+# hooks' non-project guard (project_guard.py) skips nonexistent/marker-less
+# paths by design, which is exactly what the old /fake/path value would hit.
+FAKE_CWD_DIR="$TMP_ROOT/$PROJECT"
+mkdir -p "$FAKE_CWD_DIR/.git"
+FAKE_CWD=$(native_path "$FAKE_CWD_DIR")
 TRANSCRIPT="$TMP_ROOT/transcript.jsonl"
 cp "$HOOK_FIXTURES/transcript-sample.jsonl" "$TRANSCRIPT"
 TRANSCRIPT_NATIVE=$(native_path "$TRANSCRIPT")

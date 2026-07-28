@@ -91,6 +91,29 @@ const DEFAULT_RETRY_JITTER_MAX_MS = 50;
 const LOCK_TIMEOUT_MS = 10_000;
 const RAW_LOCK_TIMEOUT_MS = 5_000;
 
+// #185: thin-transcript abstention gate defaults. Abstain iff BOTH floors trip
+// (bytes AND turns) — AND-composition is the recall-safe direction: a legacy
+// header-less raw file clears on bytes, a tiny-but-real multi-turn session
+// clears on turns. The observed fabrication class is transcript_bytes == 0.
+// Either floor at 0 disables the gate. Env beats config beats these defaults.
+const DEFAULT_MIN_TRANSCRIPT_BYTES = 500;
+const DEFAULT_MIN_TRANSCRIPT_TURNS = 2;
+// Matches doAppendTurn's raw header: `## <ISO> <role>[ (conversation_id: …)]`
+// (append-turn.mjs ROLES = user|assistant|system). Anchored to line start; a
+// quoted header pasted at column 0 inside content would count — acceptable
+// noise for a floor check, never a fabrication vector.
+const TURN_HEADER_RE = /^## \d{4}-\d{2}-\d{2}T\S* (user|assistant|system)\b/gm;
+
+// Floor resolution: env override (operator, no config rebuild) → config
+// (checkpoint.json) → shipped default. Number('') is 0 — an explicitly empty
+// env var reads as "disable this floor", which is fine; NaN (unset/garbage)
+// falls through.
+function resolveFloor(envName, configValue, fallback) {
+  const envNum = Number(process.env[envName]);
+  if (process.env[envName] !== undefined && Number.isFinite(envNum)) return envNum;
+  return configValue ?? fallback;
+}
+
 /**
  * Rewrite a .tmp summary file to set `status: orphan_summary` in its frontmatter.
  * Best-effort: failures here are logged but not propagated — the original phase-2
@@ -359,6 +382,45 @@ export async function doCheckpoint(args, ctx = {}) {
     }
     if (transcriptTruncated) {
       transcript += `\n\n[transcript truncated at ${MAX_TRANSCRIPT_BYTES} bytes; use since=<date> to window the checkpoint]\n`;
+    }
+
+    // ----- #185: thin-transcript abstention gate -----
+    // Deterministic pre-filter BEFORE any LLM spend: a transcript that cannot
+    // support a summary must never reach the summarizer (it template-fills a
+    // fabricated narrative from ~nothing — the 2026-07-27 phantom-summary
+    // incident: 134 points, all tokens_in ≈ prompt-only). Abstention stores
+    // nothing and loses nothing: raw captures stay on disk and the next
+    // checkpoint's default window (no lower date bound) re-reads them.
+    const minTranscriptBytes = resolveFloor(
+      'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', config.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES);
+    const minTranscriptTurns = resolveFloor(
+      'UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS', config.min_transcript_turns, DEFAULT_MIN_TRANSCRIPT_TURNS);
+    const transcriptBytes = Buffer.byteLength(transcript.trim(), 'utf8');
+    const transcriptTurns = (transcript.match(TURN_HEADER_RE) ?? []).length;
+    if (transcriptBytes < minTranscriptBytes && transcriptTurns < minTranscriptTurns) {
+      safeLog(() => getLogger().info({
+        request_id: currentRequestId(),
+        component: 'checkpoint',
+        project,
+        transcript_bytes: transcriptBytes,
+        transcript_turns: transcriptTurns,
+        min_bytes: minTranscriptBytes,
+        min_turns: minTranscriptTurns,
+      }, 'thin transcript — abstaining from summary'), 'log:checkpoint:thin-abstain');
+      recordCaptureEvent({
+        surface: ctx.surface,
+        project,
+        event: CAPTURE_EVENTS.CHECKPOINT,
+        outcome: 'abstained',
+      });
+      return {
+        schema_version: 1,
+        ok: true,
+        skipped: 'thin_transcript',
+        transcript_bytes: transcriptBytes,
+        transcript_turns: transcriptTurns,
+        duration_ms: Date.now() - t0,
+      };
     }
 
     // Summarize (pass systemPrompt so the curated UM format is used, not generic output)

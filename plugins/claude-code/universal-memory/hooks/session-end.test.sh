@@ -187,7 +187,9 @@ wait_for_log() {
 }
 
 SID="e5f1a2b3-0000-4000-8000-000000000001"
-CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N"
+# #186: project dirs in fixtures carry a .git marker — the non-project guard
+# skips marker-less cwds by design; these fixtures test POSTing mechanics.
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N/.git"
 
 # Sanity: the checked-in stdin fixture stays in the shape make_stdin mirrors.
 if [ -f "$FIXTURES/session-end-stdin.json" ]; then
@@ -323,7 +325,7 @@ fi
 # ===========================================================================
 echo "=== E6: project sanitization ==="
 H=$(fresh_home e6)
-CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE"
+CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SPACE")")
 
 reset_calls
@@ -375,6 +377,148 @@ else
   fail "E8: partial-success note (state written, index stale)" \
     "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
+
+# ===========================================================================
+# G1 (#186): cwd == $HOME ⇒ skip=home-cwd, ZERO POSTs — the desktop app spawns
+# auxiliary sessions at $HOME; they must never mint a home-basename project.
+# ===========================================================================
+echo "=== G1 (#186): home cwd skips ==="
+H=$(fresh_home g1)
+STDIN=$(make_stdin "$SID" "$(native_path "$H")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+assert_eq "G1: parent exits 0" "$RUN_EXIT" "0"
+assert_eq "G1: zero POSTs" "$(call_count)" "0"
+assert_contains "G1: skip=home-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
+
+# ===========================================================================
+# G2 (#186): marker-less cwd ⇒ skip=non-project-cwd, ZERO POSTs
+# ===========================================================================
+echo "=== G2 (#186): marker-less cwd skips ==="
+H=$(fresh_home g2)
+CWD_BARE="$TMPDIR_ROOT/scratch-no-markers"; mkdir -p "$CWD_BARE"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_BARE")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+assert_eq "G2: parent exits 0" "$RUN_EXIT" "0"
+assert_eq "G2: zero POSTs" "$(call_count)" "0"
+assert_contains "G2: skip=non-project-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=non-project-cwd"
+
+# ===========================================================================
+# G3 (#186): subdir of a project (marker at the root) ⇒ walk-up finds it,
+# POSTs with the SUBDIR basename (slug behavior unchanged from pre-guard).
+# ===========================================================================
+echo "=== G3 (#186): project subdir posts via marker walk-up ==="
+H=$(fresh_home g3)
+CWD_SUB="$CWD_N/src/deep"; mkdir -p "$CWD_SUB"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SUB")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G3: child posted"
+else
+  fail "G3: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G3: slug is the cwd basename (not the project root)" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"deep"}'
+
+# ===========================================================================
+# G4 (#186): MSYS-form home cwd (/c/Users/<u>) must ALSO skip — the guard
+# normalizes MSYS drive paths before comparison (Windows only; skipped on CI).
+# ===========================================================================
+echo "=== G4 (#186): MSYS-form home cwd skips (Windows only) ==="
+if command -v cygpath >/dev/null 2>&1; then
+  H=$(fresh_home g4)
+  MSYS_HOME=$(cygpath -u "$H")
+  STDIN=$(make_stdin "$SID" "$MSYS_HOME")
+
+  reset_calls
+  run_session_end "$H" "$STDIN"
+  assert_eq "G4: zero POSTs" "$(call_count)" "0"
+  assert_contains "G4: skip=home-cwd logged for MSYS form" \
+    "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
+else
+  pass "G4: skipped (no cygpath — POSIX platform has no MSYS forms)"
+fi
+
+# ===========================================================================
+# G5 (#186): UM_PROJECT_MARKERS override — custom marker qualifies, and the
+# default list no longer applies when overridden.
+# ===========================================================================
+echo "=== G5 (#186): UM_PROJECT_MARKERS override ==="
+H=$(fresh_home g5)
+CWD_CUSTOM="$TMPDIR_ROOT/custom-marker-proj"; mkdir -p "$CWD_CUSTOM"
+touch "$CWD_CUSTOM/.myproj"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_CUSTOM")")
+
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_TOKEN_FILE="$H/.um/auth-token" \
+  UM_PROJECT_MARKERS=".myproj" \
+  bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+if wait_for_log "$H" "posted http=200"; then
+  pass "G5: custom marker qualifies the dir"
+else
+  fail "G5: custom marker qualifies the dir" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# Same override, .git-only dir: default markers must NOT apply when overridden.
+H=$(fresh_home g5b)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_TOKEN_FILE="$H/.um/auth-token" \
+  UM_PROJECT_MARKERS=".myproj" \
+  bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+assert_eq "G5b: .git dir skips under an override that excludes it" "$(call_count)" "0"
+
+# ===========================================================================
+# G6 (#186): empty meta.cwd ⇒ fallback leg is guarded too. Fallback resolves
+# to the hook process pwd: marker-less pwd skips, project pwd posts.
+# ===========================================================================
+echo "=== G6 (#186): guarded fallback leg (empty meta.cwd) ==="
+H=$(fresh_home g6)
+STDIN_NOCWD=$("$PYBIN" -c '
+import json
+print(json.dumps({
+    "session_id": "e5f1a2b3-0000-4000-8000-000000000001",
+    "transcript_path": "C:\\Users\\x\\.claude\\projects\\p\\t.jsonl",
+    "cwd": "",
+    "hook_event_name": "SessionEnd",
+    "reason": "other",
+}))')
+
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(cd "$CWD_BARE" && HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  bash "$SESSION_END" <<< "$STDIN_NOCWD" 2>&1) || RUN_EXIT=$?
+assert_eq "G6: marker-less pwd fallback skips (fail closed)" "$(call_count)" "0"
+assert_contains "G6: skip=non-project-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=non-project-cwd"
+
+H=$(fresh_home g6b)
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(cd "$CWD_N" && HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  bash "$SESSION_END" <<< "$STDIN_NOCWD" 2>&1) || RUN_EXIT=$?
+if wait_for_log "$H" "posted http=200"; then
+  pass "G6b: project pwd fallback still posts"
+else
+  fail "G6b: project pwd fallback still posts" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G6b: slug from fallback pwd" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
 
 # ===========================================================================
 # Summary

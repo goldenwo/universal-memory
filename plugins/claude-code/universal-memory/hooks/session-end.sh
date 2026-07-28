@@ -41,20 +41,21 @@ if [ -z "$HOOK_INPUT" ]; then um_log "skip=empty-stdin"; exit 0; fi
 
 PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
 
-PROJECT=$(printf '%s' "$HOOK_INPUT" | "$PY" -c '
-import json, os, sys
-try:
-    meta = json.load(sys.stdin)
-except Exception:
-    print("SKIP:bad-stdin"); sys.exit(0)
-cwd = meta.get("cwd") or ""
-print(os.path.basename(cwd.replace("\\", "/").rstrip("/")) if cwd else "")
-' 2>/dev/null)
+# #186: slug derivation now runs through the non-project guard
+# (lib/project_guard.py): meta.cwd → $CLAUDE_CWD → pwd resolved as a FULL
+# path, then home-check + marker walk-up. Every non-project outcome is an
+# explicit SKIP sentinel — there is deliberately NO unguarded bash fallback
+# (the old `[ -z "$PROJECT" ]` leg re-minted the exact home-basename slug the
+# guard suppresses). Fail closed: guard failure ⇒ skip, never a bad slug.
+GUARD_PY="$SCRIPT_DIR/lib/project_guard.py"
+if command -v cygpath >/dev/null 2>&1; then GUARD_PY=$(cygpath -w "$GUARD_PY"); fi
+PROJECT=$(printf '%s' "$HOOK_INPUT" | \
+  UM_GUARD_FALLBACK="${CLAUDE_CWD:-$(pwd)}" "$PY" "$GUARD_PY" 2>/dev/null)
 
 case "$PROJECT" in
   SKIP:*) um_log "skip=${PROJECT#SKIP:}"; exit 0 ;;
+  '')     um_log "skip=guard-failed";     exit 0 ;;
 esac
-if [ -z "$PROJECT" ]; then PROJECT=$(basename "${CLAUDE_CWD:-$(pwd)}"); fi
 # Sanitize client-side — the server hard-fails non-[A-Za-z0-9._-] projects
 # (400), same guard as stop.sh (spec §5 amendment).
 PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
