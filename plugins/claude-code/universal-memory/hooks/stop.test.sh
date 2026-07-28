@@ -238,7 +238,7 @@ echo "=== S1: happy path (fixture transcript) ==="
 H=$(fresh_home s1)
 TP="$TMPDIR_ROOT/s1-transcript.jsonl"
 cp "$FIXTURE_TRANSCRIPT" "$TP"
-CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N"
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
 
 reset_calls
@@ -487,7 +487,7 @@ echo "=== S13: project sanitization ==="
 H=$(fresh_home s13)
 TP="$TMPDIR_ROOT/s13-transcript.jsonl"
 write_transcript "$TP" 1 "s13"
-CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE"
+CWD_SPACE="$TMPDIR_ROOT/my project"; mkdir -p "$CWD_SPACE/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_SPACE")")
 
 reset_calls
@@ -635,6 +635,53 @@ run_stop "$H" "$STDIN"
 assert_eq "S19: exit 0" "$RUN_EXIT" "0"
 assert_eq "S19: zero POSTs" "$(call_count)" "0"
 assert_contains "S19: skip=no-transcript logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-transcript"
+
+# ===========================================================================
+# G1 (#186): cwd == $HOME ⇒ skip=home-cwd, ZERO POSTs, no cursor writes.
+# ===========================================================================
+echo "=== G1 (#186): home cwd skips ==="
+H=$(fresh_home g1)
+TP="$TMPDIR_ROOT/g1.jsonl"; write_transcript "$TP" 4
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$H")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "G1: exit 0" "$RUN_EXIT" "0"
+assert_eq "G1: zero POSTs" "$(call_count)" "0"
+assert_contains "G1: skip=home-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=home-cwd"
+
+# ===========================================================================
+# G2 (#186): marker-less cwd ⇒ skip=non-project-cwd, ZERO POSTs.
+# ===========================================================================
+echo "=== G2 (#186): marker-less cwd skips ==="
+H=$(fresh_home g2)
+CWD_BARE="$TMPDIR_ROOT/scratch-bare"; mkdir -p "$CWD_BARE"
+TP="$TMPDIR_ROOT/g2.jsonl"; write_transcript "$TP" 4
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_BARE")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "G2: exit 0" "$RUN_EXIT" "0"
+assert_eq "G2: zero POSTs" "$(call_count)" "0"
+assert_contains "G2: skip=non-project-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=non-project-cwd"
+
+# ===========================================================================
+# G3 (#186): subdir of a project ⇒ marker walk-up qualifies it; POSTs with
+# the subdir basename (slug behavior unchanged).
+# ===========================================================================
+echo "=== G3 (#186): project subdir posts ==="
+H=$(fresh_home g3)
+CWD_SUB="$CWD_N/nested/dir"; mkdir -p "$CWD_SUB"
+TP="$TMPDIR_ROOT/g3.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_SUB")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "G3: exit 0" "$RUN_EXIT" "0"
+assert_eq "G3: two POSTs (one per message)" "$(call_count)" "2"
+assert_eq "G3: slug is the cwd basename" "$(body_field 1 project)" "dir"
 
 # ===========================================================================
 # Summary

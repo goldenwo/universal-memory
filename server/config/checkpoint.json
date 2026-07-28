@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
-  "cost_cap_usd_per_day_per_project": 0.50,
+  "cost_cap_usd_per_day_per_project": 0.5,
   "summary_model": "gpt-4o-mini",
   "state_cap_chars": 3000,
-  "lockdir_stale_timeout_ms": 600000
+  "lockdir_stale_timeout_ms": 600000,
+  "min_transcript_bytes": 500,
+  "min_transcript_turns": 2
 }
