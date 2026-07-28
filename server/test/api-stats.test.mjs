@@ -44,6 +44,7 @@ import {
 } from '../lib/recall-telemetry.mjs';
 import { registry } from '../lib/metrics.mjs';
 import { SERVER_VERSION } from '../lib/version.mjs';
+import { seedCountersDb } from './helpers/counters-db.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -56,37 +57,6 @@ const TODAY = new Date().toISOString().slice(0, 10);
 async function tempDbPath(prefix = 'um-api-stats-') {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   return path.join(dir, 'um-counters.db');
-}
-
-// Direct-SQL seeding with the pinned T5 schema (same helper shape as
-// stats.test.mjs — recordCaptureEvent hardcodes day=today).
-function seedDb(dbPath, rows = []) {
-  const db = new Database(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS counters (
-        day     TEXT    NOT NULL,
-        surface TEXT    NOT NULL,
-        project TEXT    NOT NULL,
-        event   TEXT    NOT NULL,
-        outcome TEXT    NOT NULL,
-        count   INTEGER NOT NULL,
-        PRIMARY KEY (day, surface, project, event, outcome)
-      )
-    `);
-    db.pragma('user_version = 1');
-    const stmt = db.prepare(`
-      INSERT INTO counters (day, surface, project, event, outcome, count)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (day, surface, project, event, outcome)
-      DO UPDATE SET count = count + excluded.count
-    `);
-    for (const r of rows) {
-      stmt.run(r.day ?? TODAY, r.surface ?? 'claude-code', r.project ?? '', r.event, r.outcome ?? '', r.count ?? 1);
-    }
-  } finally {
-    db.close();
-  }
 }
 
 // Fake memory client. getAll mimics mem0ai's DEFAULT limit=100 when the
@@ -182,7 +152,7 @@ test('A1 veto: pure loopback WITHOUT token → 401 (loopback bypass denied on /a
 
 test('A1: 200 with token — full spec-§3 shape', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 4 },
     { day: TODAY, surface: 'claude-code', event: 'capture.extraction', outcome: 'stored', count: 2 },
     { day: TODAY, surface: 'claude-code', event: 'recall.search', outcome: '', count: 7 },
@@ -242,7 +212,7 @@ test('A1: 200 with token — full spec-§3 shape', async () => {
 // through `?? 0` and serves a garbage concatenated string as its count.
 test('hostile keys: __proto__ surface and __proto__/constructor projects served as data', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, surface: '__proto__', event: 'capture.turn', outcome: 'stored', count: 3 },
   ]);
   const items = [
@@ -498,7 +468,7 @@ test('A5: counters db absent ⇒ capture:null + growth_7d:null + degraded flag; 
 
 test('A5: memory client throws ⇒ degraded:["corpus-unavailable"], HTTP 200, counters fields live', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [{ day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 1 }]);
+  seedCountersDb(dbPath, [{ day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 1 }]);
   const { close, url } = await startServer({
     memory: makeFakeMemory(4, { getAllThrows: true }),
     env: { UM_COUNTERS_DB_PATH: dbPath },

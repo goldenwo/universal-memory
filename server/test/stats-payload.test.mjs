@@ -16,12 +16,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { Writable } from 'node:stream';
-import { createRequire } from 'node:module';
 import { buildStats, FULL_SCAN_LIMIT } from '../lib/stats-payload.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
-
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
+import { seedCountersDb } from './helpers/counters-db.mjs';
 
 // ---------- helpers ----------
 
@@ -31,38 +28,6 @@ const NOW = Date.now();
 async function tempDbPath(prefix = 'um-stats-payload-') {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
   return path.join(dir, 'um-counters.db');
-}
-
-// Direct-SQL seeding with the pinned T5 schema (same shape as
-// api-stats.test.mjs / stats.test.mjs — recordCaptureEvent hardcodes
-// day=today, so tests that need "today" rows write it explicitly).
-function seedDb(dbPath, rows = []) {
-  const db = new Database(dbPath);
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS counters (
-        day     TEXT    NOT NULL,
-        surface TEXT    NOT NULL,
-        project TEXT    NOT NULL,
-        event   TEXT    NOT NULL,
-        outcome TEXT    NOT NULL,
-        count   INTEGER NOT NULL,
-        PRIMARY KEY (day, surface, project, event, outcome)
-      )
-    `);
-    db.pragma('user_version = 1');
-    const stmt = db.prepare(`
-      INSERT INTO counters (day, surface, project, event, outcome, count)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (day, surface, project, event, outcome)
-      DO UPDATE SET count = count + excluded.count
-    `);
-    for (const r of rows) {
-      stmt.run(r.day ?? TODAY, r.surface ?? 'claude-code', r.project ?? '', r.event, r.outcome ?? '', r.count ?? 1);
-    }
-  } finally {
-    db.close();
-  }
 }
 
 // Fake memory client: getAll returns exactly `pointCount` items regardless
@@ -119,7 +84,7 @@ function makeCaptureSink(captured) {
 
 test('buildStats: documented body shape — every §3 field present and correctly typed', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [
+  seedCountersDb(dbPath, [
     { day: TODAY, event: 'capture.turn', outcome: 'stored', count: 4 },
     { day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 2 },
     { day: TODAY, event: 'recall.search', outcome: '', count: 7 },
@@ -245,7 +210,7 @@ test('scan_saturated: false one point under the cap (boundary is >=, not >)', as
 
 test('growth_docs_7d: present + zero-filled 7-key map when no capture.checkpoint rows exist', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 3 }]);
+  seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 3 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
     assert.equal(Object.keys(body.corpus.growth_docs_7d).length, 7);
@@ -255,7 +220,7 @@ test('growth_docs_7d: present + zero-filled 7-key map when no capture.checkpoint
 
 test('growth_docs_7d: a capture.checkpoint stored row today is counted', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [{ day: TODAY, event: 'capture.checkpoint', outcome: 'stored', count: 5 }]);
+  seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.checkpoint', outcome: 'stored', count: 5 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
     assert.equal(body.corpus.growth_docs_7d[TODAY], 5);
@@ -293,7 +258,7 @@ test('degraded: counters-unavailable only — corpus fields stay live', async ()
 
 test('degraded: corpus-unavailable only — counters fields stay live, scan_saturated stays false (nothing scanned)', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [{ day: TODAY, event: 'capture.turn', outcome: 'stored', count: 1 }]);
+  seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.turn', outcome: 'stored', count: 1 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({
       now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x',
@@ -391,7 +356,7 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
 
 test('readCounters: omitting the param falls back to readCounterStats — zero behavior change', async () => {
   const dbPath = await tempDbPath();
-  seedDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 2 }]);
+  seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 2 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
     assert.equal(body.corpus.growth_7d[TODAY], 2, 'no readCounters param ⇒ the real readCounterStats reads the seeded db');
