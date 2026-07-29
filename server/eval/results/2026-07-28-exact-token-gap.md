@@ -103,13 +103,33 @@ evidential weight.
 Both were found by the pipeline-health probe and the negative controls, neither of which reads a
 gate.
 
-## 6. The pipeline-health floor fired — and its premise was wrong
+**The frozen §5 was NOT edited to match.** Doing so would forge the pre-registration. §5 remains
+byte-identical to what was hashed and committed at `3da11fa`; the deviations are recorded in spec
+**§11**, deliberately placed after §6 so it falls outside the hashed byte range. The anchor still
+verifies: sha256 of the §5 range = `f2dba8db519a69f2…`, unchanged.
 
-The a-priori floor (semantic vector `recall@5 ≥ 0.50`) failed at 0.358/0.349. It was **not**
-overridden. Investigation showed the floor's own assumption was wrong, on two independent pieces
-of evidence: verbatim text retrieves at rank 1 (20/20), and the fact stratum scores a clean
-1.000. The corpus-wide semantic figure is dragged below 0.50 by the doc stratum's genuine 0.091 —
-which is the finding, not a fault. A future version of this floor should be **per-stratum**.
+## 6. The pipeline-health floor fired — its premise was wrong, and the instrument is now fixed
+
+The original a-priori floor (semantic vector `recall@5 ≥ 0.50`, corpus-wide) failed at
+0.358/0.349. It was **not** overridden. Investigation showed the floor's own assumption was wrong,
+on two independent pieces of evidence: verbatim text retrieves at rank 1 (20/20), and the fact
+stratum scores a clean 1.000. The corpus-wide average is dragged below 0.50 by the doc stratum's
+genuine 0.091 — the finding, not a fault.
+
+A recall floor was simply the wrong instrument: it encodes an assumption about *blind-query
+quality* and is dragged down by whichever stratum genuinely retrieves worst. **The harness now
+uses:**
+
+1. **A direct verbatim probe** — a document's own text must retrieve that document at rank 1
+   (floor 0.90). It uses no generated query, so it separates "retrieval is broken" from "these
+   queries are vague", which is exactly the confusion the old floor could not resolve.
+2. **Per-stratum floors** — `fact ≥ 0.50`; `doc` reported with **no floor asserted**, so a
+   genuinely-hard stratum can neither mask nor manufacture a fault.
+
+Both runs below were produced with the corrected instrument: **verbatim probe 20/20 (1.000)
+HEALTHY**, `health[fact] 1.000 ≥ 0.50`, `health[doc] 0.091 / 0.078` reported, overall
+`pipelineHealth.ok = true`. The verdict is unchanged — G1a fails identically — so the fix altered
+the instrument's honesty, not the result.
 
 ## 7. Negative controls (asserted every row, both runs)
 

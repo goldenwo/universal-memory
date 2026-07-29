@@ -1,9 +1,13 @@
 {
   "issue": 188,
-  "timestamp": "2026-07-28T23:42:59.061Z",
+  "timestamp": "2026-07-29T00:14:51.531Z",
   "accept_rule_sha256": "f2dba8db519a69f2346034a5f415e75b88c6f1ee343a98172acd6311f3b9f419",
   "corpus": "clone of live memories collection, 279 points, 2026-07-28",
   "qdrant": "1.7.3 (matches production)",
+  "protocol_deviations": [
+    "D1 exact-token arm re-operationalized to identifier-centric",
+    "D2 MatchText narrows on rare tokens"
+  ],
   "runs": {
     "run1": {
       "metrics": {
@@ -14,7 +18,7 @@
         "depSemantic": 0.4036697247706422,
         "lexExact": 0.7889908256880734,
         "kwExact": 1,
-        "p95Delta": 0.03350000000500586
+        "p95Delta": 0.04959999999846332
       },
       "n": {
         "total": 109,
@@ -43,7 +47,7 @@
       },
       "controls": {
         "weight0EqualsVector": true,
-        "lexicalEmptyOnSemantic": "94/109"
+        "lexicalEmptyOnSemantic": "93/109"
       },
       "gates": {
         "G1a": false,
@@ -54,13 +58,32 @@
       },
       "decision": "PARK",
       "pipelineHealth": {
-        "vecSemantic": 0.3577981651376147,
-        "floor": 0.5,
-        "ok": false
+        "verbatimProbe": {
+          "n": 20,
+          "rank1": 20,
+          "rate": 1,
+          "floor": 0.9,
+          "ok": true
+        },
+        "strata": [
+          {
+            "stratum": "fact",
+            "vecSemantic": 1,
+            "floor": 0.5,
+            "ok": true
+          },
+          {
+            "stratum": "doc",
+            "vecSemantic": 0.09090909090909091,
+            "floor": null,
+            "ok": true
+          }
+        ],
+        "ok": true
       },
       "hashes": {
         "corpus": "3875f73e7022b7ae",
-        "queries": "707573c7c83e0336"
+        "queries": "e634168ae8a30b03"
       },
       "textIndex": {
         "created": true,
@@ -73,10 +96,10 @@
         "vecSemantic": 0.3486238532110092,
         "idealExact": 0.5412844036697247,
         "depExact": 0.8623853211009175,
-        "depSemantic": 0.41284403669724773,
+        "depSemantic": 0.4036697247706422,
         "lexExact": 0.7889908256880734,
         "kwExact": 1,
-        "p95Delta": 0.05069999999250285
+        "p95Delta": 0.0371000000013737
       },
       "n": {
         "total": 109,
@@ -105,7 +128,7 @@
       },
       "controls": {
         "weight0EqualsVector": true,
-        "lexicalEmptyOnSemantic": "95/109"
+        "lexicalEmptyOnSemantic": "93/109"
       },
       "gates": {
         "G1a": false,
@@ -116,13 +139,32 @@
       },
       "decision": "PARK",
       "pipelineHealth": {
-        "vecSemantic": 0.3486238532110092,
-        "floor": 0.5,
-        "ok": false
+        "verbatimProbe": {
+          "n": 20,
+          "rank1": 20,
+          "rate": 1,
+          "floor": 0.9,
+          "ok": true
+        },
+        "strata": [
+          {
+            "stratum": "fact",
+            "vecSemantic": 1,
+            "floor": 0.5,
+            "ok": true
+          },
+          {
+            "stratum": "doc",
+            "vecSemantic": 0.07792207792207792,
+            "floor": null,
+            "ok": true
+          }
+        ],
+        "ok": true
       },
       "hashes": {
         "corpus": "3875f73e7022b7ae",
-        "queries": "0cca5de45fe4fe05"
+        "queries": "f7515b2efef2e55d"
       },
       "textIndex": {
         "created": true,

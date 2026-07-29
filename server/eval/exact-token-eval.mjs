@@ -7,13 +7,15 @@
  * evaluates every gate mechanically against those thresholds and refuses to emit a
  * verdict if the accept-rule hash does not match the committed anchor.
  *
- * Design (spec §5.1) — PAIRED MINIMAL PAIRS over a CLONE of the real corpus:
+ * Design (spec §5.1) — PAIRED QUERY CLASSES over a CLONE of the real corpus:
  *   • Corpus is a bit-identical clone of the live `memories` collection (vectors copied,
  *     nothing re-embedded), into a LOCAL scratch qdrant. Not authored, not synthesized.
  *   • Population is every regex-matched identifier, with SET-VALUED relevance (all docs
  *     containing it). No uniqueness filter — that was a directional selection instrument.
- *   • Each identifier yields ONE blind-generated semantic query; the exact-token form is
- *     derived MECHANICALLY by appending the identifier, so the pair differs only by it.
+ *   • Each identifier yields TWO queries over the same target: a blind-generated semantic
+ *     paraphrase (identifier absent) and the identifier-centric `what is <identifier>`.
+ *     See PROTOCOL DEVIATION D1 below / spec §11 — the frozen rule appended the identifier
+ *     to the paraphrase, which measured the wrong query class.
  *
  * Arms: vector (real doSearch) | lexical_idealized | fusion_idealized |
  *       fusion_deployable (real qdrant MatchText + word tokenizer) | keyword_exact (descriptive)
@@ -43,7 +45,18 @@ const GATES = {
   G3: { desc: 'recall-safe on semantic', test: (m) => m.depSemantic >= m.vecSemantic - 0.02, fmt: (m) => `${m.depSemantic.toFixed(3)} >= ${(m.vecSemantic - 0.02).toFixed(3)}` },
   G5: { desc: 'local overhead screen', test: (m) => m.p95Delta <= 150, fmt: (m) => `${m.p95Delta.toFixed(1)}ms <= 150ms` },
 };
-const PIPELINE_HEALTH_FLOOR = 0.50; // a-priori broken-pipeline detector, NOT derived from the run
+// ─── pipeline health ──────────────────────────────────────────────────────────
+// A corpus-wide semantic-recall floor was the WRONG instrument (run 1 fired it at 0.358 on a
+// provably healthy pipeline): it encodes an assumption about blind-query QUALITY, and it is
+// dragged under by whichever stratum genuinely retrieves worst — here the doc stratum's real
+// 0.091, which is the finding, not a fault.
+//
+// Replaced by (a) a DIRECT probe — a document's own verbatim text must retrieve that document
+// at rank 1, which tests the pipeline itself and depends on no query generator — and (b)
+// PER-STRATUM advisory floors, so a genuinely-hard stratum cannot mask or manufacture a fault.
+const VERBATIM_PROBE_N = 20;
+const VERBATIM_RANK1_FLOOR = 0.90;
+const STRATUM_SEMANTIC_FLOOR = { fact: 0.50, doc: null }; // null = reported, no floor asserted
 const K_PRIMARY = 5;
 const FETCH_DEPTH = 50;
 const EXT = 'mjs|js|json|sh|ya?ml|md|ts|py|db|sql|toml|ini|env|lock';
@@ -58,7 +71,7 @@ const IDENTIFIER_RX = new RegExp([
   String.raw`[a-z][\w-]*:\d{2,5}`,
 ].join('|'), 'g');
 const MIN_IDENT_LEN = 4;
-// PROTOCOL DEVIATION 1 (recorded, spec §5.5) — the exact-token arm is the IDENTIFIER-CENTRIC
+// PROTOCOL DEVIATION D1 (recorded, spec §11) — the exact-token arm is the IDENTIFIER-CENTRIC
 // query, not `semantic + identifier`.
 //
 // The frozen v3 rule appended the identifier to the blind semantic query to make a strict
@@ -73,7 +86,7 @@ const MIN_IDENT_LEN = 4;
 // instrument repair, not threshold tuning.
 const deriveExact = (_semantic, identifier) => `what is ${identifier}`;
 
-// PROTOCOL DEVIATION 2 (recorded, spec §5.5) — MatchText narrows on RARE tokens, not all tokens.
+// PROTOCOL DEVIATION D2 (recorded, spec §11) — MatchText narrows on RARE tokens, not all tokens.
 // qdrant MatchText is AND-over-tokens, so requiring every token of a 7-word natural query is
 // unsatisfiable: the deployable arm returned empty on 218/218 queries in run 1, making
 // fusion_deployable identical to vector by construction. §7.2 always said "the query's RARE
@@ -181,6 +194,22 @@ const recallAtK = (ranked, relevant, k = K_PRIMARY) =>
   ranked.slice(0, k).some((id) => relevant.includes(id)) ? 1 : 0;
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 
+/**
+ * Direct pipeline probe: a document's own verbatim text must retrieve that document at rank 1.
+ * Reads NO gate and uses NO generated query, so it can distinguish "retrieval is broken" from
+ * "these queries are vague" — the exact confusion that made the old corpus-wide floor useless.
+ */
+async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N) {
+  const sample = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length < 200).slice(0, n);
+  let rank1 = 0;
+  for (const p of sample) {
+    const sr = await doSearch(p.payload.data, 10, false, true, { memory });
+    if (String((sr.results ?? [])[0]?.id) === String(p.id)) rank1++;
+  }
+  const rate = sample.length ? rank1 / sample.length : 0;
+  return { n: sample.length, rank1, rate, floor: VERBATIM_RANK1_FLOOR, ok: rate >= VERBATIM_RANK1_FLOOR };
+}
+
 async function main() {
   const log = (m) => console.log(m);
   const apiKey = process.env.OPENAI_API_KEY;
@@ -260,6 +289,11 @@ async function main() {
       vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
     });
 
+    // Pipeline health BEFORE scoring — a broken pipeline must fail loudly, not read as "no gap".
+    const probe = await verbatimProbe(doSearch, memory, points);
+    log(`pipeline probe: verbatim rank1 ${probe.rank1}/${probe.n} (${probe.rate.toFixed(3)}) — ${probe.ok ? 'HEALTHY' : 'SUSPECT'}`);
+    if (!probe.ok) log(`  !! PIPELINE SUSPECT: rank1 ${probe.rate.toFixed(3)} < ${VERBATIM_RANK1_FLOOR} — deltas below are NOT trustworthy`);
+
     const per = [];
     const latVec = [], latDep = [];
     for (const [i, r] of rows.entries()) {
@@ -328,7 +362,12 @@ async function main() {
     }));
     results.discordant = { gained, lost };
     results.controls = { weight0EqualsVector: true, lexicalEmptyOnSemantic: `${lexEmptySemantic}/${per.length}` };
-    results.pipelineHealth = { vecSemantic: m.vecSemantic, floor: PIPELINE_HEALTH_FLOOR, ok: m.vecSemantic >= PIPELINE_HEALTH_FLOOR };
+    // Per-stratum floors — a stratum with a null floor is reported, never asserted.
+    const strataHealth = Object.entries(results.strata).map(([s, v]) => {
+      const floor = STRATUM_SEMANTIC_FLOOR[s];
+      return { stratum: s, vecSemantic: v?.vecSemantic ?? null, floor, ok: floor == null || (v?.vecSemantic ?? 0) >= floor };
+    });
+    results.pipelineHealth = { verbatimProbe: probe, strata: strataHealth, ok: probe.ok && strataHealth.every((x) => x.ok) };
     results.hashes = { corpus: corpusHash, queries: queryHash };
     results.textIndex = { created: textIndexOk, probeOk };
 
@@ -339,7 +378,10 @@ async function main() {
     log(`  fusion_ideal  exact ${m.idealExact.toFixed(3)}  |  lexical_ideal ${m.lexExact.toFixed(3)}  |  keyword_exact ${m.kwExact.toFixed(3)}`);
     log(`  paired discordant: +${gained} / -${lost}`);
     log(`  lexical arm empty on semantic queries: ${lexEmptySemantic}/${per.length}`);
-    if (!results.pipelineHealth.ok) log(`  !! PIPELINE HEALTH FAILED: semantic vector ${m.vecSemantic.toFixed(3)} < ${PIPELINE_HEALTH_FLOOR}`);
+    for (const h of strataHealth) {
+      const verdict = h.floor == null ? 'reported (no floor)' : h.ok ? `>= ${h.floor}` : `!! BELOW FLOOR ${h.floor}`;
+      log(`  health[${h.stratum}] semantic ${h.vecSemantic?.toFixed(3) ?? 'n/a'} — ${verdict}`);
+    }
 
     log('\n--- pre-registered gates ---');
     const verdicts = {};
