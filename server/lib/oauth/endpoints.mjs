@@ -262,6 +262,13 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     const loc = new URL(rec.redirectUri);
     loc.searchParams.set('code', code);
     if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
+    // RFC 9207 (#172 / 2026-07-28 MCP auth spec revision): identify the issuer on
+    // every authorization response. `base` is byte-identical to the RFC 8414
+    // metadata `issuer` (both strip trailing slashes from baseUrl) — clients that
+    // validate iss compare it against that document. NB the 8414 ADVERTISEMENT
+    // (authorization_response_iss_parameter_supported) is deliberately withheld in
+    // metadata.mjs — see the note there.
+    loc.searchParams.set('iss', base);
     if (setCookie) res.setHeader('Set-Cookie', setCookie);
     return redirect(res, loc.toString());
   }
@@ -368,6 +375,8 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       const loc = new URL(rec.redirectUri);
       loc.searchParams.set('error', 'access_denied');
       if (rec.state !== undefined) loc.searchParams.set('state', rec.state);
+      // RFC 9207 §2 covers error responses too (#172).
+      loc.searchParams.set('iss', base);
       if (setCookie) res.setHeader('Set-Cookie', setCookie);
       return redirect(res, loc.toString());
     }
@@ -613,6 +622,14 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       grantTypes = value.grant_types;
     }
 
+    // application_type (RFC 7591 §2, #172 / 2026-07-28 MCP auth spec revision):
+    // optional; when present must be 'web' or 'native'. Stored + echoed verbatim;
+    // absent stays absent (no defaulting — mirrors the lane/persona convention).
+    const applicationType = value.application_type;
+    if (applicationType !== undefined && applicationType !== 'web' && applicationType !== 'native') {
+      return reject('rejected_metadata', 'invalid_client_metadata', 'application_type must be "web" or "native"');
+    }
+
     // client_name: optional; TRUNCATE (display-only, HTML-escaped at render).
     const clientName = typeof value.client_name === 'string' && value.client_name.length > 0
       ? value.client_name.slice(0, MAX_CLIENT_NAME)
@@ -631,6 +648,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
     store.putClient({
       client_id: clientId, client_name: clientName, redirect_uris: redirectUris,
       grant_types: grantTypes, created: t, lastUsed: t, source: 'dcr',
+      ...(applicationType !== undefined ? { application_type: applicationType } : {}),
     });
     onRegistration('accepted');
     return sendJson(res, 201, {
@@ -639,6 +657,7 @@ export function createOAuthHandlers({ store, baseUrl, operatorToken, throttle, n
       redirect_uris: redirectUris,
       grant_types: grantTypes,
       token_endpoint_auth_method: 'none',
+      ...(applicationType !== undefined ? { application_type: applicationType } : {}),
     });
   }
 
