@@ -47,7 +47,6 @@ Every figure is measured by UM's own evals and regenerable by a documented comma
 | **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention **7/8** openai · **8/8** anthropic — on UM's 40-row benchmark |
 | **Duplicate writes** | **100%** of identical re-writes merged, **0** false merges, **0** store growth on full rewrite |
 | **Checkpoint cost** | **$0.000155** median per session state-of-play synthesis |
-| **Rigor** | 1,970 tests, 0 failures, on every PR |
 
 ---
 
@@ -64,9 +63,7 @@ Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the 
 
 ### Built on proven foundations
 
-- **mem0 inside, by default** — every UM server embeds [mem0 OSS](https://github.com/mem0ai/mem0) as its vector-memory engine (version-pinned and contract-tested, so upgrades are deliberate, never silent). UM layers session continuity, lanes, dedup + supersession, and its own evaluated extraction pipeline on top of it.
-- **mem0 API-compatible** — any existing mem0 Platform client adopts UM without code changes: set `UM_MEM0_COMPAT_ENABLED=true`, point the client's `baseUrl` at your server, use your `UM_AUTH_TOKEN` as the API key.
-- **claude-mem friendly** — already running [claude-mem](https://github.com/thedotmack/claude-mem)? The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault so cross-surface queries see it too.
+**mem0 inside, by default** — every UM server embeds [mem0 OSS](https://github.com/mem0ai/mem0) as its vector-memory engine (version-pinned and contract-tested, so upgrades are deliberate, never silent). UM layers session continuity, lanes, dedup + supersession, and its own evaluated extraction pipeline on top of it.
 
 ---
 
@@ -167,13 +164,14 @@ Anyone who uses AI across multiple sessions and wants continuity — not a coder
 
 ---
 
-## How it differs
+## Works with what you already use
 
-**vs mem0** — mem0 is the vector-search engine inside universal-memory. UM adds session continuity (`state.md` injection at every session start), structured authored knowledge with versioning, and a cross-surface MCP interface on top. mem0 alone has no session state, no catchup, no document versioning.
+No rip-and-replace. universal-memory is built to sit alongside — or underneath — the memory tools you already run, so adopting it adds a layer instead of forcing a migration:
 
-**vs claude-mem** — claude-mem is Claude Code-only; universal-memory is cross-surface, so claude.ai, Claude Desktop, and any MCP client read and write the same store. The two also compose: `um-bridge-claude-mem` ingests claude-mem history into the UM vault.
-
-**vs Obsidian** — Obsidian is a PKM tool for humans. universal-memory is agent-accessible: the same vault a human opens in any editor is also queryable by agents at conversation speed over the MCP surface.
+- **Already on mem0?** Any mem0 Platform client adopts UM without code changes: set `UM_MEM0_COMPAT_ENABLED=true`, point the client's `baseUrl` at your server, use your `UM_AUTH_TOKEN` as the API key. Your bot keeps its SDK; your memories move onto your hardware — and gain session continuity, dedup + supersession, and document versioning on the way.
+- **Already on [claude-mem](https://github.com/thedotmack/claude-mem)?** Keep running it. The `um-bridge-claude-mem` bridge mirrors its session history into the UM vault as searchable markdown, so claude.ai, Claude Desktop, and every other surface can see what claude-mem captured in Claude Code.
+- **Obsidian, or any markdown editor** — the vault is plain markdown with frontmatter. Open it as an Obsidian vault, edit files by hand, keep it under git: the same notes a human reads and edits are what agents query at conversation speed over MCP. Human edits and agent writes share one source of truth.
+- **Everything else** — REST, MCP, and the `um` CLI mean anything that speaks HTTP can read and write the vault: cron jobs, shell pipelines, your own bots.
 
 ---
 
