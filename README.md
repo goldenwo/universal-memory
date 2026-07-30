@@ -29,6 +29,8 @@ bash installer/install.sh
 
 One wizard, and you're capturing memories in minutes.
 
+**You'll need:** Docker (with Compose) · an OpenAI API key · Linux, macOS, or Windows via WSL2.
+
 ---
 
 ## See it work
@@ -222,7 +224,12 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-Prefer to drive compose yourself? The equivalent, minus the pre-flight and rollback net:
+The other two surfaces: `claude plugin update universal-memory` (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+
+<details>
+<summary><b>Driving compose yourself, and host-specific overrides</b></summary>
+
+The equivalent of `--upgrade`, minus the pre-flight and rollback net:
 
 ```bash
 cd server
@@ -234,15 +241,22 @@ Run compose commands from `server/` and without `-f`, so a host-specific `server
 
 Set `UM_VERSION` in `server/.env` to make a pin durable across plain `docker compose up -d`.
 
-The other two surfaces: `claude plugin update universal-memory` (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
-
-### Host-specific overrides
-
 Anything the shipped compose file cannot know — an alternate qdrant image for your CPU, an extra port binding on a tailnet IP, bind paths outside the repo — goes in `server/docker-compose.override.yml`. It is gitignored, auto-loaded by a bare `docker compose`, and applied last so it wins. `install.sh` passes it explicitly on every call, so `--upgrade` and `--verify` see the same stack you do.
 
-universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing. Pin a release tag rather than tracking `latest` in production.
+</details>
+
+universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing, and pin a release tag rather than tracking `latest`. Your data is two host directories — the vault (`UM_VAULT_DIR`) and the vector index (`server/data/qdrant`) — snapshot both before crossing versions; the vault is plain markdown, so keeping it under git is enough.
 
 Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
+
+---
+
+## If something breaks
+
+- `bash server/install.sh --verify` — reports all three surface versions and flags skew; the fastest first check.
+- `curl http://localhost:6335/health` — the server's liveness answer (`{"ok":true,...}`).
+- `docker compose logs -f` from `server/` — the server logs structured JSON; errors are self-describing.
+- Still stuck? [Open an issue](https://github.com/goldenwo/universal-memory/issues) with the log lines and your `--verify` output.
 
 ---
 
@@ -252,7 +266,8 @@ The server makes outbound calls only to the OpenAI API (embeddings + fact extrac
 
 ---
 
-## Security & license
+## Support, security & license
 
+- Questions and bug reports → [GitHub issues](https://github.com/goldenwo/universal-memory/issues).
 - Found a vulnerability? Report it privately via [GitHub security advisories](https://github.com/goldenwo/universal-memory/security/advisories/new) — please do not open a public issue.
 - License: MIT — see [LICENSE](LICENSE).
