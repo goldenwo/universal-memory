@@ -35,7 +35,7 @@ One wizard, and you're capturing memories in minutes.
 
 ## See it work
 
-![Two terminal panels: a session ends mid-refactor; the next session starts with the synthesized state-of-play already injected](assets/brand/proof-continuity.png)
+![Animated: session 1 ends mid-refactor at 6:14 PM; a state-of-play is synthesized; session 2 opens the next morning with the briefing — focus, in-flight work, next steps — injected before the user types anything](assets/brand/proof-continuity-animated.svg)
 
 You finish a Claude Code session mid-refactor. The next morning you open a fresh session in the same repo and — before you type anything — Claude already knows the current focus, what's in flight, and the decisions from yesterday. No re-briefing, no scrolling back. That's a synthesized `state.md`, written at the end of every session and injected at the start of the next one.
 
