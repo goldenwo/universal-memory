@@ -44,10 +44,10 @@ Every figure is measured by UM's own evals and regenerable by a documented comma
 | | Measured |
 |---|---|
 | **Recall latency** | p50 **211 ms** end-to-end against UM's API — on a Raspberry Pi 5 running the production instance |
-| **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention 7/8 — on UM's 40-row benchmark |
+| **Extraction fidelity** | precision **1.00**, recall **0.98–1.00** (audited: zero information loss), noise abstention **7/8** openai · **8/8** anthropic — on UM's 40-row benchmark |
 | **Duplicate writes** | **100%** of identical re-writes merged, **0** false merges, **0** store growth on full rewrite |
 | **Checkpoint cost** | **$0.000155** median per session state-of-play synthesis |
-| **Rigor** | 1,651 tests, 0 failures, on every PR |
+| **Rigor** | 1,970 tests, 0 failures, on every PR |
 
 ---
 
@@ -150,7 +150,7 @@ Any request reaching UM through a tunnel or reverse proxy must carry `Authorizat
 - **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
 - **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (4 read tools by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Read responses return compact snippets by default; opt into full bodies with `full: true`.
 - **Cross-environment capture** — capture is not Claude Code-only. claude.ai, ChatGPT Desktop, and Codex feed conversation turns into the same pipeline via `memory_append_turn`, and trigger summaries with `memory_checkpoint`.
-- **Command-line toolkit** — a 7-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `--version`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
+- **Command-line toolkit** — an 8-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `forget`, `supersede`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.
 - **Markdown as source of truth** — no vendor lock-in. Swap the vector store, LLM provider, or plugin format and your knowledge survives as readable files under git.
 - **Upstream bridges** — one-way ingest from external memory stores. `um-bridge-claude-mem` mirrors your claude-mem history into the UM vault as searchable markdown.
@@ -204,7 +204,7 @@ universal-memory/
 ├── server/       Self-hostable backend (Qdrant + mem0 + MCP/REST endpoints)
 ├── installer/    Install wizards (server, CLI, plugins)
 ├── cli/          `um` command-line toolkit source
-├── plugins/      Per-surface connectors (Claude Code, Codex, ChatGPT Custom GPT)
+├── plugins/      Per-surface connectors (Claude Code, Codex, OpenClaw, ChatGPT Custom GPT)
 └── examples/     Integration examples (OpenAI Assistants, …)
 ```
 
@@ -217,7 +217,7 @@ universal-memory is three separately-updated surfaces — the **server**, the **
 ```bash
 cd server
 ./install.sh --upgrade          # to whatever your compose config resolves
-./install.sh --upgrade 1.8.1    # to a specific published version
+./install.sh --upgrade 1.12.0   # to a specific published version
 ```
 
 `--upgrade` **pre-flights the new image in a throwaway container before it touches the running one**, and auto-rolls-back to the exact image that was running if the new container never reports healthy. That matters because a bad image can otherwise take down a working server: v1.8.0's arm64 image shipped with a dependency missing, and operators who pulled and swapped it got a crash-looping server in production. Pre-flighting catches that while the old container is still serving.
@@ -228,7 +228,7 @@ Prefer to drive compose yourself? The equivalent, minus the pre-flight and rollb
 
 ```bash
 cd server
-UM_VERSION=1.8.1 docker compose pull && UM_VERSION=1.8.1 docker compose up -d
+UM_VERSION=1.12.0 docker compose pull && UM_VERSION=1.12.0 docker compose up -d
 curl http://localhost:6335/health   # or your MEM0_MCP_PORT
 ```
 
