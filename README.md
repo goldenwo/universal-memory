@@ -54,12 +54,7 @@ Every figure is measured by UM's own evals and regenerable by a documented comma
 
 ## How it works
 
-```mermaid
-flowchart LR
-  A["Capture sources<br/>Claude Code hooks · bots · CLI"] --> B["Extract · dedup<br/>route to lanes"]
-  B --> C[("One vault<br/>markdown + Qdrant")]
-  C --> D["Recall on any surface<br/>Claude Code · claude.ai · ChatGPT · Desktop"]
-```
+![Animated: a fact captured at the end of a Claude Code session travels into the vault — a markdown file tree — and is recalled moments later by a question asked on a phone](assets/brand/one-vault-animated.svg)
 
 Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the `um` CLI. The server extracts facts, dedups them, and routes them into lanes — facts land in a local Qdrant index, while authored knowledge (ADRs, session summaries, documents) lives as markdown files you can keep under git. Any surface — MCP, REST, or an OAuth connector — reads and writes that one vault.
 
