@@ -1,0 +1,94 @@
+{
+  "timestamp": "2026-07-29T03:59:10.440Z",
+  "metrics": {
+    "vecExact": 0.6727272727272727,
+    "vecSemantic": 0.8363636363636363,
+    "idealExact": 0.7909090909090909,
+    "depExact": 0.9363636363636364,
+    "depSemantic": 0.8272727272727273,
+    "lexExact": 0.7909090909090909,
+    "kwExact": 1,
+    "p95Delta": 0.02920000000449363
+  },
+  "n": {
+    "total": 110,
+    "fact": 32,
+    "doc": 78
+  },
+  "strata": {
+    "fact": {
+      "n": 32,
+      "vecExact": 1,
+      "vecSemantic": 1,
+      "depExact": 1,
+      "idealExact": 0.84375
+    },
+    "doc": {
+      "n": 78,
+      "vecExact": 0.5384615384615384,
+      "vecSemantic": 0.7692307692307693,
+      "depExact": 0.9102564102564102,
+      "idealExact": 0.7692307692307693
+    }
+  },
+  "discordant": {
+    "gained": 30,
+    "lost": 1
+  },
+  "controls": {
+    "weight0EqualsVector": true,
+    "lexicalEmptyOnSemantic": "97/110"
+  },
+  "pipelineHealth": {
+    "verbatimProbe": {
+      "per": {
+        "fact": {
+          "n": 20,
+          "rank1": 20,
+          "rate": 1,
+          "ok": true
+        },
+        "doc": {
+          "n": 20,
+          "rank1": 20,
+          "rate": 1,
+          "ok": true
+        }
+      },
+      "floor": 0.9,
+      "ok": true
+    },
+    "strata": [
+      {
+        "stratum": "fact",
+        "vecSemantic": 1,
+        "floor": 0.5,
+        "ok": true
+      },
+      {
+        "stratum": "doc",
+        "vecSemantic": 0.7692307692307693,
+        "floor": null,
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "hashes": {
+    "corpus": "51e32aaa26b83dc6",
+    "queries": "e4c5704670fb262e"
+  },
+  "textIndex": {
+    "created": true,
+    "probeOk": true
+  },
+  "gates": {
+    "G1a": true,
+    "G1b": true,
+    "G2": true,
+    "G3": true,
+    "G5": true
+  },
+  "decision": "SHIP-CANDIDATE (pending G4 second run)",
+  "note": "Aggregates and hashes only — the 110 per-row records (identifiers, generated queries, relevant-id sets) are corpus content and stay local per the standing data-handling rule. Row-level detail reproduces via eval/exact-token-eval.mjs on this machine."
+}

@@ -1,5 +1,16 @@
 # #188 — lexical exact-token assist: MEASURED OUT (park)
 
+> ## ⚠️ ERRATUM 2026-07-29 — READ FIRST
+>
+> **The doc-stratum results below are RETRACTED, and the PARK verdict is not evidenced.**
+> An id-space defect made every doc-sized memory structurally unscoreable, so §4's
+> "long-document dilution" finding never measured retrieval at all. The fact-stratum
+> results stand. Full analysis in **§10**; the original text below is preserved unedited
+> for the audit trail.
+>
+> Corrected re-measurement (single run, regenerated query set, 280-point corpus):
+> **doc semantic `recall@5` = 0.769**, not 0.091.
+
 **Date**: 2026-07-28 · **Decision**: **PARK** · **Pre-registration**: spec v3 §5,
 sha256 `f2dba8db519a69f2…`, committed at `3da11fa` **before any number was observed**.
 
@@ -161,3 +172,100 @@ the instrument's honesty, not the result.
 Joins [`#130`](../../../docs) (no-answer floor) and `#133` (bouncer) as a measured negative that
 prevented a bad ship. In all three the eval-gate did its job; here it also surfaced a larger real
 problem than the one it was pointed at.
+
+---
+
+## 10. ERRATUM (2026-07-29) — the doc stratum was unscoreable; the verdict is unevidenced
+
+Everything above §10 is preserved as originally written. This section supersedes §4 entirely and
+qualifies §2, §3, §6 and §7.
+
+### 10.1 The defect
+
+The harness scored in a different id space than the read path returns.
+
+- `doSearch` projects `id = metadata.id ?? point.id` (`mem0-mcp-http.mjs:1849`).
+- The harness built relevant sets and BM25 indexes from `String(p.id)` — the qdrant point UUID —
+  and compared with a plain string `.includes()`.
+- **All 96 doc-sized points carry `metadata.id`** (a vault filename stem, `session-<date>-<hash8>`),
+  so they projected a stem that could never equal a UUID. **182 of 184 fact points carry none**, so
+  they fell back to the point UUID and scored correctly.
+
+That asymmetry — not retrieval behaviour — is the entire "10× long-document gap".
+
+**The arithmetic is exact.** Only **8 of 77** doc-stratum rows contained a point without
+`metadata.id`, i.e. only 8 rows could score at all. Ceiling under the defect: **0.104**. §2 reports
+**0.104** exact-token and **0.091** semantic — the exact arm sat precisely at the ceiling.
+
+### 10.2 What this voids
+
+| Claim | Status |
+|---|---|
+| fact stratum 1.000 / 1.000, phrasing delta 0.000 | **STANDS** — correctly scored |
+| doc stratum 0.104 / 0.091 (§2) | **VOID** — unscoreable by construction |
+| "34% of the corpus effectively invisible" (§4) | **VOID** — retracted in full |
+| dilution as the mechanism, chunking as the implied remedy (§4) | **VOID** — no gap to explain |
+| lexical arm "+0.701 in the doc stratum" (§4) | **VOID** — the lexical arms ranked in pure point-id space while the vector arm did not; lexical "won" by being the only arm whose ids could match |
+| "verbatim document text retrieves itself at rank 1, 20/20" (§3, §6) | **VOID** — the probe filtered to `data.length < 200`, so it sampled fact-sized points only and never tested a document |
+| G1a FAIL → PARK (§2, §9) | **UNEVIDENCED** — see §10.4 |
+
+### 10.3 Corrected re-measurement
+
+Instrument fixed at four sites (single `projectedId()` helper mirroring `doSearch`'s projection,
+applied to both `docs` arrays; stratified verbatim probe with asserted sample composition; a new
+`assertIdSpace()` guard that throws if any ranked id is outside the projected corpus universe).
+
+Single run, regenerated query set, 280-point corpus, population 110 (fact 32 / doc 78):
+
+| stratum | n | vector exact | vector semantic |
+|---|---|---|---|
+| fact | 32 | 1.000 | 1.000 |
+| doc | 78 | **0.538** | **0.769** |
+
+Verbatim probe, now stratified: **fact 20/20, doc 20/20**. Documents retrieve themselves perfectly.
+Artifact: `server/eval/results/2026-07-29-exact-token-corrected-run1.json`.
+
+**There is no long-document retrieval gap.** The follow-up arc opened on §4's finding is void; no
+chunking remedy is warranted, and none was built.
+
+### 10.4 Why the PARK verdict is unevidenced rather than reversed
+
+On the corrected instrument all five gates pass (G1a 0.164 ≥ 0.15) and the harness prints
+SHIP-CANDIDATE. **That does not license a ship.**
+
+The pass is carried entirely by the doc stratum — facts are pinned at 1.000/1.000, delta 0.000, so
+all of the 0.164 comes from docs at 0.538 vs 0.769. And that comparison is the confound the spec
+itself rejected: the semantic query is an LLM paraphrase **generated from the target document**, so
+it shares vocabulary with what it must retrieve, while protocol deviation D1 replaced the frozen
+minimal-pair rule with a three-word `what is <identifier>`. Inflation on one side, impoverishment on
+the other.
+
+D1's own justification does not survive the correction. It argued the change made the gates *harder*
+to pass — true only because the defect floored both arms at ~0.10, which is exactly why it looked
+safe. With docs scored correctly, D1 is what *creates* the gap.
+
+The frozen alternative cannot test P1 either: appending an identifier to a rich paraphrase yields a
+strictly more informative query, which is why run 1 under the frozen rule found results
+**byte-identical across both phrasings on 109/109 rows** (delta 0.000).
+
+So P1 has never been validly measured — once through a broken id space, once through a confounded
+query pair. The park outcome may still be the right call; the evidence for it is not. A valid test
+needs a query design that holds informativeness constant while varying phrasing.
+
+### 10.5 Process findings
+
+1. **Pre-registration and instrument validity are independent axes.** The freeze worked exactly as
+   designed and is irrelevant to this failure — it prevents moving thresholds after seeing data, not
+   measuring the wrong quantity. The surrounding rigor made the wrong number *more* credible.
+2. **A plausible artifact is more dangerous than an implausible one.** The defect produced a result
+   matching a well-documented phenomenon, so it read as a discovery.
+3. **A negative control that does not cross the suspect assumption cannot detect it.** "Weight-0
+   fusion equals the vector arm" compares an arm to itself.
+4. **A health probe that samples one stratum certifies nothing about another** — and an empty
+   stratum must be a failure, not a silent pass.
+5. **The mechanical enforcement claimed in the spec was never built.** §5.7 promised the harness
+   would embed the accept-rule hash and refuse to emit a verdict on mismatch; no such check existed,
+   and the committed result JSON was hand-assembled. Enforcement must be a deliverable with its own
+   test, not a claim.
+6. The defect was caught by adversarial review of the *follow-up* spec, before any remedy code was
+   written. Review of the thing built on top found what review of the thing itself missed.

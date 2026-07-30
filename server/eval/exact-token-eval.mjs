@@ -108,9 +108,22 @@ const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > -1 ? process.argv[i + 1] : dflt; };
 const isDoc = (t) => t.length > 400 || /^Session summary|^<summary>/.test(t);
 
+// ─── CORRECTION 2026-07-29: id-space alignment (see .claude/reviews/2026-07-28-long-document-dilution) ───
+// The original harness built relevant sets and BM25 indexes from the qdrant POINT id while doSearch
+// projects `metadata.id ?? point.id` (mem0-mcp-http.mjs:1849). All 96 doc points carry payload.id, so
+// they were STRUCTURALLY UNSCOREABLE (ceiling 0.104 == exactly the 8/77 doc rows that happened to
+// contain a payload.id-less point); 182/184 fact points carry none, so they scored correctly at 1.000.
+// That asymmetry — not retrieval — produced the reported "10x long-document dilution gap" and the
+// phantom +0.701 lexical lift (lexical arms ranked in pure point-id space while the vector arm did not).
+//
+// projectedId MUST mirror doSearch's projection exactly. Every id-producing site uses it, so the arms,
+// the relevant sets and the health probe all live in ONE id space. assertIdSpace() below makes a future
+// divergence fail loudly instead of reading as a finding.
+export const projectedId = (p) => String(p.payload?.id ?? p.id);
+
 // ─── population (spec §6.2) ───────────────────────────────────────────────────
 export function buildPopulation(points) {
-  const docs = points.map((p) => ({ id: String(p.id), text: p.payload?.data ?? '', payload: p.payload ?? {} }));
+  const docs = points.map((p) => ({ id: projectedId(p), text: p.payload?.data ?? '', payload: p.payload ?? {} }));
   // Serving-haystack parity: doSearch can never return these, so they cannot be TARGETS.
   // They stay in the haystack and in BM25 df/avgdl (prod-faithful).
   const targetable = docs.filter((d) => {
@@ -199,15 +212,46 @@ const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
  * Reads NO gate and uses NO generated query, so it can distinguish "retrieval is broken" from
  * "these queries are vague" — the exact confusion that made the old corpus-wide floor useless.
  */
+// CORRECTION 2026-07-29: this probe sampled `data.length < 200` — fact-sized points ONLY. #188's
+// headline "verbatim document text retrieves itself at rank 1, 20/20" therefore never touched a
+// single document, which is exactly where the claimed problem was. A probe that samples one stratum
+// certifies nothing about another. Now STRATIFIED, with sample composition asserted and reported so a
+// silently-empty half is visible rather than averaged away.
 async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N) {
-  const sample = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length < 200).slice(0, n);
-  let rank1 = 0;
-  for (const p of sample) {
-    const sr = await doSearch(p.payload.data, 10, false, true, { memory });
-    if (String((sr.results ?? [])[0]?.id) === String(p.id)) rank1++;
+  const eligible = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length > 0);
+  const strata = {
+    fact: eligible.filter((p) => !isDoc(p.payload.data)).slice(0, n),
+    doc: eligible.filter((p) => isDoc(p.payload.data)).slice(0, n),
+  };
+  const per = {};
+  for (const [stratum, sample] of Object.entries(strata)) {
+    let rank1 = 0;
+    for (const p of sample) {
+      const sr = await doSearch(p.payload.data, 10, false, true, { memory });
+      if (String((sr.results ?? [])[0]?.id) === projectedId(p)) rank1++;
+    }
+    const rate = sample.length ? rank1 / sample.length : 0;
+    // An EMPTY stratum is a fault, not a pass — that is how the original probe hid the doc stratum.
+    per[stratum] = { n: sample.length, rank1, rate, ok: sample.length > 0 && rate >= VERBATIM_RANK1_FLOOR };
   }
-  const rate = sample.length ? rank1 / sample.length : 0;
-  return { n: sample.length, rank1, rate, floor: VERBATIM_RANK1_FLOOR, ok: rate >= VERBATIM_RANK1_FLOOR };
+  return { per, floor: VERBATIM_RANK1_FLOOR, ok: Object.values(per).every((x) => x.ok) };
+}
+
+/**
+ * The guard that would have caught the #188 defect on run 1. Every id an arm ranks MUST be a
+ * projected corpus id — i.e. drawn from the same space the relevant sets are built in. A mismatch
+ * silently scores 0 for a whole stratum and reads as a retrieval finding; here it throws.
+ */
+function assertIdSpace(rankedIds, universe, label, identifier) {
+  for (const id of rankedIds) {
+    if (!universe.has(id)) {
+      throw new Error(
+        `ID-SPACE VIOLATION (${label}, identifier "${identifier}"): ranked id ${JSON.stringify(id)} ` +
+        `is not a projected corpus id. The arm and the relevant sets are in different id spaces — ` +
+        `this is the #188 defect. Refusing to emit numbers.`,
+      );
+    }
+  }
 }
 
 async function main() {
@@ -271,7 +315,7 @@ async function main() {
     if (rows.length < 60) log(`  ABORT-NOTE: combined n=${rows.length} < 60 — run is EXPLORATORY (spec §6.3)`);
 
     // ── BM25 indexes over the FULL corpus, per-arm tokenizer (spec §5.5/§7.3) ──
-    const docs = points.map((p) => ({ id: String(p.id), text: p.payload?.data ?? '' }));
+    const docs = points.map((p) => ({ id: projectedId(p), text: p.payload?.data ?? '' }));
     const idxIdeal = buildIndex(docs, tokenizeIdealized);
     const idxDeploy = buildIndex(docs, tokenizeDeployable);
 
@@ -291,8 +335,15 @@ async function main() {
 
     // Pipeline health BEFORE scoring — a broken pipeline must fail loudly, not read as "no gap".
     const probe = await verbatimProbe(doSearch, memory, points);
-    log(`pipeline probe: verbatim rank1 ${probe.rank1}/${probe.n} (${probe.rate.toFixed(3)}) — ${probe.ok ? 'HEALTHY' : 'SUSPECT'}`);
-    if (!probe.ok) log(`  !! PIPELINE SUSPECT: rank1 ${probe.rate.toFixed(3)} < ${VERBATIM_RANK1_FLOOR} — deltas below are NOT trustworthy`);
+    for (const [stratum, v] of Object.entries(probe.per)) {
+      log(`pipeline probe[${stratum}]: verbatim rank1 ${v.rank1}/${v.n} (${v.rate.toFixed(3)}) — ${v.ok ? 'HEALTHY' : 'SUSPECT'}`);
+    }
+    if (!probe.ok) log(`  !! PIPELINE SUSPECT: a stratum is below ${VERBATIM_RANK1_FLOOR} (or empty) — deltas below are NOT trustworthy`);
+
+    // Id-space universe for the guard. Built from the SAME projection the relevant sets use.
+    const idUniverse = new Set(points.map(projectedId));
+    log(`id space: ${idUniverse.size} distinct projected ids over ${points.length} points` +
+        (idUniverse.size !== points.length ? `  (${points.length - idUniverse.size} share a metadata.id)` : ''));
 
     const per = [];
     const latVec = [], latDep = [];
@@ -304,6 +355,8 @@ async function main() {
         const sr = await doSearch(q, FETCH_DEPTH, false, true, { memory });
         const vecRanked = (sr.results ?? []).map((x) => String(x.id));
         const tVec = performance.now() - t0;
+        // The #188 defect fails HERE on the first query rather than silently scoring a stratum 0.
+        assertIdSpace(vecRanked, idUniverse, `vector/${phrasing}`, r.identifier);
 
         const lexIdeal = bm25Score(idxIdeal, q, { limit: FETCH_DEPTH }).map((x) => x.id);
 
@@ -316,6 +369,11 @@ async function main() {
 
         const idealRanked = fuse([{ ranking: vecRanked, weight: 1 }, { ranking: lexIdeal, weight: 1 }], { limit: FETCH_DEPTH }).map((x) => x.id);
         const kwRanked = docs.filter((d) => d.text.includes(r.identifier)).map((d) => d.id);
+        // The lexical arms ranked in PURE point-id space while the vector arm did not — that
+        // divergence, not lexical matching, produced #188's phantom +0.701 doc-stratum lift.
+        assertIdSpace(lexIdeal, idUniverse, 'lexical_idealized', r.identifier);
+        assertIdSpace(lexDeploy, idUniverse, 'lexical_deployable', r.identifier);
+        assertIdSpace(kwRanked, idUniverse, 'keyword_exact', r.identifier);
         const kwFused = fuse([{ ranking: vecRanked, weight: 1 }, { ranking: kwRanked, weight: 1 }], { limit: FETCH_DEPTH }).map((x) => x.id);
         // Negative control 1: weight-0 lexical must reproduce vector exactly.
         const ctrl = fuse([{ ranking: vecRanked, weight: 1 }, { ranking: lexDeploy, weight: 0 }], { limit: FETCH_DEPTH }).map((x) => x.id);
