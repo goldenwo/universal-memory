@@ -560,7 +560,7 @@ test('#187: reactions_7d appears on a reacted surface with the fixed zero-filled
     assert.equal(r.status, 200);
     const body = await r.json();
     // Fixed REACTION_OUTCOME_KEYS shape — both keys present, zero-filled.
-    assert.deepEqual(body.capture['mem0-compat'].reactions_7d, { stored: 2, abstained: 0 });
+    assert.deepEqual(body.capture['mem0-compat'].reactions_7d, { stored: 2, abstained: 0, unaddressed: 0 });
     // events_today unaffected by the reaction row (namespace isolation).
     assert.equal(body.capture['mem0-compat'].events_today, 3);
     // Omit-when-zero on the unreacted surface.

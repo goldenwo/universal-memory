@@ -46,6 +46,7 @@ import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/v
 import { applyTemporalDecay } from './lib/ranking.mjs';
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
+import { handleReactionRequest } from './lib/reaction-attach.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { surfaceFromHeaders } from './lib/capture-events.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
@@ -118,6 +119,7 @@ function resolveRouteTemplate(pathname, method) {
   if (pathname === '/api/list') return '/api/list';
   if (pathname === '/api/reindex') return '/api/reindex';
   if (pathname === '/api/append-turn') return '/api/append-turn';
+  if (pathname === '/api/reaction') return '/api/reaction';
   if (pathname === '/api/checkpoint') return '/api/checkpoint';
   if (pathname === '/api/delete') return '/api/delete';
   if (pathname.startsWith('/api/recent/')) return '/api/recent/:project';
@@ -3311,6 +3313,44 @@ export function createRequestHandler(ctx = {}) {
 				httpRes,
 				// T5 (#159 spec §6): surface attribution from X-UM-Source / X-Mem0-Source.
 				{ vaultDir: process.env.UM_VAULT_DIR, writesEnabled: isWriteEnabled(), surface: surfaceFromHeaders(req.headers) },
+			);
+			return;
+		}
+		if (url.pathname === '/api/reaction' && req.method === 'POST') {
+			// #201 late-arrival reaction producer endpoint. Thin delegate — the
+			// wire contract (validation, ts_future posture, outcome→status
+			// mapping) lives in lib/reaction-attach.mjs handleReactionRequest
+			// and openapi.mjs pathReaction(). Bearer auth + rate limiting ride
+			// the /api/* endpoint-class catch-all like every sibling route.
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch (e) {
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleReactionRequest(
+				{ body: reqBody },
+				httpRes,
+				{
+					userId: USER_ID,
+					client: await getRealClient(resolvedMemory()),
+					collection: resolvedMemory().config.vectorStore.config.collectionName,
+					// The 'mem0-compat' fallback is deliberate (spec D-c): these
+					// reactions annotate bot-surface captures, and stats attaches
+					// reactions_7d only to surfaces that have ever captured.
+					surface: surfaceFromHeaders(req.headers, 'mem0-compat'),
+				},
 			);
 			return;
 		}

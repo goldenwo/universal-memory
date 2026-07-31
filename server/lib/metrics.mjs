@@ -283,6 +283,22 @@ export const umFactsExtractedTotal = new promClient.Counter({
   registers: [registry],
 });
 
+// #201 late-arrival reaction addressing. Ops note: this deployment has no
+// Prometheus scraper — the um-alert cron reads these via an in-container
+// /metrics curl (loopback; the host-cron path is not loopback and 404s).
+export const umCaptureLedgerErrorsTotal = new promClient.Counter({
+  name: 'um_capture_ledger_errors_total',
+  help: 'Capture-ledger operations that failed (fail-soft on the capture path; a growing count means exchanges are becoming unaddressable)',
+  labelNames: ['where'],
+  registers: [registry],
+});
+
+export const umReactionRefinerDisagreementTotal = new promClient.Counter({
+  name: 'um_reaction_refiner_disagreement_total',
+  help: 'Late-arrival resolutions where the message-hash refiner overrode the forward-earliest pick (resolution-quality calibration for the #187 measurement)',
+  registers: [registry],
+});
+
 // Provider-surface metrics (spec §8.3). The orchestrators (embed/facts/
 // summarize) call `metrics.counter(...)` / `metrics.histogram(...)` via an
 // injected adapter; production calls fall through to PROVIDER_METRICS_ADAPTER

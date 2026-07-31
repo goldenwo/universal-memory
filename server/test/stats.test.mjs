@@ -343,7 +343,7 @@ test('reactions_7d: zero-filled REACTION_OUTCOME_KEYS shape, attached to the sur
     { day: daysAgo(2), surface: 'mem0-compat', event: 'signal.reaction', outcome: 'abstained', count: 1 },
   ]);
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats.capture['mem0-compat'].reactions_7d, { stored: 2, abstained: 1 });
+  assert.deepEqual(stats.capture['mem0-compat'].reactions_7d, { stored: 2, abstained: 1, unaddressed: 0 });
 });
 
 test('reactions_7d: absent when a surface has no reaction rows (omit-when-zero)', async () => {
@@ -385,7 +385,7 @@ test('NAMESPACE ISOLATION (spec R3 pin): signal.reaction rows leave the WHOLE re
   // capture (events_today, freshness, outcomes_7d), growth_7d, growth_docs_7d, recall.
   const strip = (stats) => JSON.parse(JSON.stringify(stats, (k, v) => (k === 'reactions_7d' ? undefined : v)));
   assert.deepEqual(strip(reacted), strip(clean));
-  assert.deepEqual(reacted.capture.discord.reactions_7d, { stored: 3, abstained: 1 });
+  assert.deepEqual(reacted.capture.discord.reactions_7d, { stored: 3, abstained: 1, unaddressed: 0 });
 });
 
 test('reaction-only surface: rows are SKIPPED (no capture entry, no throw, stats stay available)', async () => {

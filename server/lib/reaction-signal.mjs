@@ -35,9 +35,13 @@
 // • NORMALIZER CONTRACT: normalizeReactionMetadata never throws and never fails
 //   a capture/update; invalid values are dropped (with a once-per-process,
 //   per-drop-reason warn — the operator's only signal for a wired-but-buggy
-//   bot). Called from BOTH write paths that accept client metadata: umAdd's
-//   staging step AND the mem0-compat R6 update sanitizer — the PUT path must
-//   not bypass the contract.
+//   bot). Called from ALL THREE write paths that put reaction fields into a
+//   payload: umAdd's staging step, the mem0-compat R6 update sanitizer, AND
+//   the #201 attach path's payload projection (reaction-attach.mjs) — no path
+//   bypasses the contract. NOTE the floor (count ≥ 1) is a PAYLOAD-projection
+//   rule only: the #201 ledger stores absolute counts including 0 (removal);
+//   its route validates count ≥ 0 itself and must NOT use this normalizer for
+//   wire validation.
 
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
@@ -48,11 +52,20 @@ export const SIGNAL_EVENTS = Object.freeze({
 });
 
 /**
- * Fixed outcome vocabulary for signal.reaction rows — the admission-verdict
- * subset. stats.mjs zero-fills reactions_7d from this list; a future arc adding
- * an outcome extends THIS constant and the stats shape follows.
+ * Fixed outcome vocabulary for signal.reaction rows. stats.mjs zero-fills
+ * reactions_7d from this list; adding an outcome extends THIS constant and the
+ * stats shape follows.
+ *
+ * HETEROGENEOUS SEMANTICS (#201) — the three keys are NOT one unit and must
+ * never be summed or ratio'd against each other:
+ *   • 'stored' / 'abstained' — admission verdicts of reacted exchanges,
+ *     emitted per TRANSITION (once per (capture, message) reaction_state
+ *     creation on the late-arrival path; once per reacted infer:true umAdd on
+ *     the capture-time path).
+ *   • 'unaddressed' — late-arrival resolution failures, emitted PER CALL and
+ *     therefore retry-inflatable (bounded by the producer's capped backoff).
  */
-export const REACTION_OUTCOME_KEYS = Object.freeze(['stored', 'abstained']);
+export const REACTION_OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'unaddressed']);
 
 /** Bounds (wire contract v1): count clamped, types capped — payload hygiene. */
 export const REACTION_COUNT_MAX = 1000;
