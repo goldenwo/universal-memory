@@ -20,9 +20,9 @@ test('SIGNAL_EVENTS is frozen and REACTION lives OUTSIDE the capture.* namespace
   assert.ok(!SIGNAL_EVENTS.REACTION.startsWith('capture.'));
 });
 
-test('REACTION_OUTCOME_KEYS is the frozen admission-verdict vocabulary', () => {
+test('REACTION_OUTCOME_KEYS is the frozen outcome vocabulary (heterogeneous: two admission verdicts + the per-call unaddressed)', () => {
   assert.ok(Object.isFrozen(REACTION_OUTCOME_KEYS));
-  assert.deepEqual([...REACTION_OUTCOME_KEYS], ['stored', 'abstained']);
+  assert.deepEqual([...REACTION_OUTCOME_KEYS], ['stored', 'abstained', 'unaddressed']);
 });
 
 test('normalizeReactionMetadata: no reaction fields → metadata unchanged (new object, not mutated)', () => {

@@ -33,11 +33,12 @@ import {
   umBouncerTotal,
 } from '../lib/metrics.mjs';
 
-test('registry exposes exactly 22 named metrics', () => {
+test('registry exposes exactly 24 named metrics', () => {
   const names = registry.getMetricsAsArray().map((m) => m.name).sort();
   assert.deepEqual(names, [
     'um_answer_graded_total',           // answer-correctness eval grader (2026-06-22)
     'um_bouncer_total',                 // read-path answer bouncer (2026-06-22)
+    'um_capture_ledger_errors_total',   // #201 late-arrival ledger write failures
     'um_dedup_check_duration_seconds',  // D1 §9
     'um_dedup_total',                   // D1 §9
     'um_facts_extracted_total',
@@ -58,6 +59,7 @@ test('registry exposes exactly 22 named metrics', () => {
     'um_provider_errors_total',
     'um_provider_request_duration_seconds',
     'um_provider_tokens_total',
+    'um_reaction_refiner_disagreement_total', // #201 resolution-quality calibration
   ]);
 });
 

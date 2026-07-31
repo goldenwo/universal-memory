@@ -34,6 +34,7 @@
 
 import { umAdd as defaultUmAdd, md5 } from './add.mjs';
 import { surfaceFromHeaders } from './capture-events.mjs';
+import { recordCapture } from './capture-ledger.mjs';
 import { D3_SERVER_MANAGED_STATUS_FIELDS } from './dedup-constants.mjs';
 import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
@@ -516,6 +517,27 @@ async function handleAdd({ req, body, ctx }) {
   // call preserves mem0's whole-conversation extraction semantics (spec §3 R2).
   const transcript = messages.map((m) => `${m.role ?? 'user'}: ${m.content}`).join('\n');
   const r = await add({ ...common, text: transcript, infer: true });
+  // #201 capture ledger — the late-arrival addressing record, written HERE
+  // because this is the one site where the POSTed messages, run_id, surface,
+  // and umAdd's surviving results are all in hand. Uses RAW r.results (not
+  // toMem0AddResults — it loses event detail): r.memory is the SURVIVING
+  // point's text on all three events (ADD/SUPERSEDED_INBAND carry the item;
+  // DEDUP_MERGED carries existing.data), so md5(r.memory) always equals the
+  // surviving point's payload hash. recordCapture is fail-soft — a ledger
+  // failure must never fail the capture (warn + counter inside the module).
+  const results = Array.isArray(r?.results) ? r.results : [];
+  recordCapture({
+    userId: operatorId,
+    runId: typeof metadata.run_id === 'string' ? metadata.run_id : undefined,
+    surface,
+    project: typeof metadata.project === 'string' ? metadata.project : undefined,
+    createdAt: new Date().toISOString(),
+    verdict: results.length > 0 ? 'stored' : 'abstained',
+    pointRefs: results
+      .filter((it) => it?.id !== undefined && typeof it?.memory === 'string')
+      .map((it) => ({ id: it.id, hash: md5(it.memory) })),
+    messageHashes: messages.map((m) => md5(m.content)),
+  });
   return { status: 200, body: toMem0AddResults(r) };
 }
 

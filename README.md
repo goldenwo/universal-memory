@@ -240,7 +240,7 @@ Anything the shipped compose file cannot know — an alternate qdrant image for 
 
 </details>
 
-universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing, and pin a release tag rather than tracking `latest`. Your data is two host directories — the vault (`UM_VAULT_DIR`) and the vector index (`server/data/qdrant`) — snapshot both before crossing versions; the vault is plain markdown, so keeping it under git is enough.
+universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing, and pin a release tag rather than tracking `latest`. Your data is two host directories — the vault (`UM_VAULT_DIR`) and the vector index (`server/data/qdrant`) — snapshot both before crossing versions; the vault is plain markdown, so keeping it under git is enough. The counters/ledger SQLite file (`um-counters.db`) runs in WAL mode, so copy it with the server stopped (or via sqlite's `.backup`) — a mid-write file copy of the `.db` alone misses the `-wal` sibling.
 
 Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
 

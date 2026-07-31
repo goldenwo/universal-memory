@@ -57,6 +57,7 @@ test('openapi spec includes all expected routes', () => {
     '/api/state/{project}',
     '/api/recent/{project}',
     '/api/append-turn',
+    '/api/reaction',
     '/api/checkpoint',
     '/api/delete',
     '/api/{id}',

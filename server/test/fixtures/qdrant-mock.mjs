@@ -139,6 +139,7 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
   const scrolls = [];
   const searches = [];
   const setPayloads = [];
+  const retrieves = [];
 
   // D3.1: internal point store — supports _get() read-back and additive
   // setPayload mutation, mirroring real qdrant's partial-merge behaviour.
@@ -151,6 +152,8 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
     scrolls,
     searches,
     setPayloads,
+    retrieves,
+    retrieveError: null,
     // Test pre-seeds — default _UNSET means "use _store path if seeded, else empty".
     // Assign explicitly (e.g. mock.scrollResult = { points: [...] }) to use the
     // legacy explicit-result path (all pre-D3 tests do this).
@@ -233,6 +236,15 @@ export function makeMockQdrant({ points: seedPoints = [] } = {}) {
           }
         }
         return { status: 'ok' };
+      },
+      // #201: batched by-id fetch, mirroring qdrant-js retrieve() (returns an
+      // ARRAY of found records; missing ids are silently absent — same as the
+      // real client). Reads _store so setPayload/upsert mutations are visible.
+      retrieve: async (collection, body) => {
+        retrieves.push({ collection, body });
+        if (mock.retrieveError) throw mock.retrieveError;
+        const ids = body?.ids ?? [];
+        return ids.map((id) => _store.get(id)).filter(Boolean);
       },
       // D3.1: read-back helper — returns the stored point object (with
       // current payload after any setPayload mutations) for a given id.

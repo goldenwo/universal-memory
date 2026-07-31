@@ -44,7 +44,9 @@ export async function ensurePayloadIndexes(client, collection, { logger } = {}) 
     );
     return;
   }
-  for (const fieldName of ['lane', 'persona']) {
+  // 'hash' (#201): backs the attach path's (userId, hash) reindex
+  // re-resolution filter AND speeds the pre-existing Layer-1 hash-dedup query.
+  for (const fieldName of ['lane', 'persona', 'hash']) {
     try {
       await client.createPayloadIndex(collection, {
         field_name: fieldName,

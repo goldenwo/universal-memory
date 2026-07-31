@@ -88,12 +88,24 @@ export function countersDbPath() {
   return path.join(path.dirname(historyDb), 'um-counters.db');
 }
 
-function openDb() {
+/**
+ * Shared lazy-singleton counters-DB handle (#201): capture-ledger.mjs rides
+ * this same connection (per-call statement prepares, no caches of its own) so
+ * the reset/factory test seams below stay authoritative for BOTH modules.
+ * PRAGMA user_version covers ONLY the `counters` table; the ledger tables
+ * evolve under their own additive-only contract documented in
+ * capture-ledger.mjs.
+ */
+export function openDb() {
   if (_db) return _db;
   // Negative cache (review IMPORTANT-1): a failed open poisons the singleton
   // for the rest of the process instead of re-opening (and, worse, re-LEAKING
-  // an fd) on every emit. Counters stay dark until restart — acceptable for a
-  // fire-and-forget observability path; warnOnce already surfaced the cause.
+  // an fd) on every emit. Counters stay dark until restart. Since #201 the
+  // blast radius is wider than observability: capture-ledger.mjs rides this
+  // handle, so a poisoned open also stops ledger-row recording (fail-soft —
+  // exchanges become unaddressable) and 502s /api/reaction until restart.
+  // Accepted: the alternative (per-emit reopen) is the fd leak this cache
+  // exists to prevent; warnOnce + um_capture_ledger_errors_total surface it.
   if (_openFailure) throw _openFailure;
   if (_dbFactory) {
     try {
@@ -116,6 +128,11 @@ function openDb() {
   }
   try {
     db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    // #201: WAL so the readonly stats reader and the ledger writer never block
+    // each other — the ledger INSERT sits inside the compat R2 response path.
+    // WAL is a persistent DB property; -wal/-shm siblings on the volume are
+    // expected.
+    db.pragma('journal_mode = WAL');
     db.exec(CREATE_TABLE_SQL);
     // Stamp user_version at create only — a later schema rev bumps it in its
     // own (additive-column-only) migration; never re-stamp an existing DB down.

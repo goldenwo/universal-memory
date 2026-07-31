@@ -227,6 +227,23 @@ test('POST /api/append-turn with malformed JSON → INPUT_INVALID envelope', asy
 });
 
 // ---------------------------------------------------------------------------
+// /api/reaction — INPUT_INVALID (#201)
+// ---------------------------------------------------------------------------
+
+test('POST /api/reaction with malformed JSON → INPUT_INVALID envelope', async () => {
+  const { close, url } = await startServer();
+  try {
+    const r = await fetch(url('/api/reaction'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...AUTH_HEADERS },
+      body: 'not json',
+    });
+    assert.equal(r.status, 400);
+    assertUnifiedErrorEnvelope(await r.json(), 'POST /api/reaction bad JSON');
+  } finally { await close(); }
+});
+
+// ---------------------------------------------------------------------------
 // /api/checkpoint — INPUT_INVALID
 // ---------------------------------------------------------------------------
 

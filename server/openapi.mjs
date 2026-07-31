@@ -376,6 +376,70 @@ const SCHEMAS = {
     },
   },
 
+  ReactionRequest: {
+    type: 'object',
+    required: ['run_id', 'message_id', 'message_ts', 'reaction_count'],
+    additionalProperties: false,
+    properties: {
+      run_id: {
+        type: 'string',
+        maxLength: 256,
+        description: 'Opaque channel/session key exactly as the capture surface sent it (e.g. an OpenClaw sessionKey). Matched by equality; never parsed.',
+      },
+      message_id: {
+        type: 'string',
+        maxLength: 128,
+        description: 'Opaque platform message id of the reacted message.',
+      },
+      message_ts: {
+        type: 'string',
+        format: 'date-time',
+        description: 'Platform timestamp of the reacted message (ISO 8601). Old timestamps are valid; a timestamp in the future beyond the server skew allowance yields outcome=unaddressed with reason=ts_future (retry — it self-heals after clock sync).',
+      },
+      message_hash: {
+        type: 'string',
+        maxLength: 64,
+        description: 'Optional md5 hex of the message content — a best-effort resolution refiner, never load-bearing.',
+      },
+      reaction_count: {
+        type: 'integer',
+        minimum: 0,
+        description: 'ABSOLUTE current reaction count on the message (not a delta). 0 = full removal. Repeats are idempotent.',
+      },
+      reaction_types: {
+        type: 'array',
+        items: { type: 'string', maxLength: 64 },
+        maxItems: 16,
+        description: 'Reaction type labels (e.g. emoji). Trimmed to bounds server-side.',
+      },
+    },
+  },
+
+  ReactionResponse: {
+    type: 'object',
+    required: ['ok', 'outcome', 'point_ids', 'annotated', 'failed'],
+    properties: {
+      ok: { type: 'boolean', enum: [true] },
+      outcome: {
+        type: 'string',
+        enum: ['stored', 'abstained', 'unaddressed'],
+        description: "The resolved capture's admission verdict ('stored'/'abstained'), or 'unaddressed' when no capture matched.",
+      },
+      reason: {
+        type: 'string',
+        enum: ['ts_future', 'no_capture', 'no_surviving_point'],
+        description: 'Present only for unaddressed outcomes: ts_future (clock ahead of server — retry), no_capture (no ledger row matched — retry with backoff; the capture may not have landed yet), no_surviving_point (resolved, but every recorded point is gone).',
+      },
+      point_ids: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Terminal point ids the reaction was attached to (after dedup/supersession resolution).',
+      },
+      annotated: { type: 'integer', minimum: 0, description: 'Points whose payload annotation succeeded this call.' },
+      failed: { type: 'integer', minimum: 0, description: 'Points whose payload annotation failed this call (self-heals on a later call).' },
+    },
+  },
+
   AppendTurnRequest: {
     type: 'object',
     required: ['project', 'content', 'role'],
@@ -919,6 +983,44 @@ function pathRecent() {
   };
 }
 
+function pathReaction() {
+  return {
+    post: {
+      operationId: 'attachReaction',
+      summary: 'Attach a late-arriving platform reaction to the memory its exchange produced',
+      description:
+        'Producer endpoint (#201): a reaction that lands minutes/hours after capture is resolved '
+        + 'against the capture ledger (channel key + timestamp, optional content-hash refiner) and '
+        + 'annotates the surviving qdrant point(s) with reaction_count/reaction_types. '
+        + 'RETRY CONTRACT: requests are idempotent (absolute counts) — retry on any 5xx AND on '
+        + 'outcome=unaddressed, with capped backoff (~10 min); a reaction can land seconds before '
+        + 'its capture is recorded. Machine-to-machine only (bearer auth); no MCP tool twin exists '
+        + 'by design.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': { schema: ref('ReactionRequest') },
+        },
+      },
+      responses: {
+        200: {
+          description: 'Reaction resolved (or cleanly unaddressed — see outcome/reason)',
+          content: { 'application/json': { schema: ref('ReactionResponse') } },
+        },
+        400: {
+          ...ERROR_RESPONSE,
+          description: 'Malformed input (bad field shapes, per-capture message cap exceeded). Not retryable.',
+        },
+        502: {
+          ...ERROR_RESPONSE,
+          description: 'Ledger or point-store failure; the request is safe to retry (idempotent).',
+        },
+        ...RESP_500,
+      },
+    },
+  };
+}
+
 function pathAppendTurn() {
   return {
     post: {
@@ -1126,6 +1228,7 @@ export function buildSpec() {
       '/api/state/{project}': pathState(),
       '/api/recent/{project}': pathRecent(),
       '/api/append-turn': pathAppendTurn(),
+      '/api/reaction': pathReaction(),
       '/api/checkpoint': pathCheckpoint(),
       '/api/delete': pathDelete(),
       '/api/{id}': pathDeleteById(),
