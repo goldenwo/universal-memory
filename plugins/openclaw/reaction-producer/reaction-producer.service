@@ -6,7 +6,8 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now reaction-producer
 #   loginctl enable-linger openclaw   # user units survive logout / start at boot
-# Logs: journalctl --user -u reaction-producer -f
+# Logs: ~/um-reaction-producer/producer.log (file-append — user journals are
+# often root-gated on stock Pi installs; the file needs no group membership)
 
 [Unit]
 Description=UM Discord reaction producer (late-arrival addressing, #201)
@@ -20,6 +21,8 @@ EnvironmentFile=%h/.openclaw/gateway.systemd.env
 Environment=UM_SERVER_URL=http://127.0.0.1:6337
 Environment=UM_TOKEN_FILE=%h/.um/auth-token
 ExecStart=/usr/bin/env node %h/um-reaction-producer/reaction-producer.mjs
+StandardOutput=append:%h/um-reaction-producer/producer.log
+StandardError=append:%h/um-reaction-producer/producer.log
 Restart=always
 RestartSec=10
 # Read-only listener: no state dir, no writes outside stdout.

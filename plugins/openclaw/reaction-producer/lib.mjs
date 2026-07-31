@@ -27,13 +27,20 @@ export function absoluteCount(message) {
   return total;
 }
 
-/** Emoji labels (unicode name or custom-emoji name), deduped, encounter order. */
+/**
+ * Emoji labels (unicode name or custom-emoji name), deduped, encounter order.
+ * Emoji where the bot is the ONLY reactor are excluded — OpenClaw uses
+ * reactions as thinking/status indicators on messages, and those must not
+ * pollute the human-signal labels (the count already excludes them via `me`;
+ * this keeps types consistent with it).
+ */
 export function reactionTypes(message) {
   const seen = new Set();
   const out = [];
   for (const r of message?.reactions ?? []) {
     const name = r.emoji?.name;
-    if (typeof name === 'string' && name.length > 0 && !seen.has(name)) {
+    const humanCount = (r.count ?? 0) - (r.me ? 1 : 0);
+    if (humanCount > 0 && typeof name === 'string' && name.length > 0 && !seen.has(name)) {
       seen.add(name);
       out.push(name);
     }

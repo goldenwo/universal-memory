@@ -34,6 +34,17 @@ test('absoluteCount of a message with no reactions (or removed-all) is 0', () =>
   assert.equal(absoluteCount({ reactions: [] }), 0);
 });
 
+test('reactionTypes excludes emoji where the bot is the ONLY reactor (status reactions must not pollute the labels)', () => {
+  const message = {
+    reactions: [
+      { emoji: { name: '👀' }, count: 1, me: true },   // the bot's thinking indicator
+      { emoji: { name: '❤️' }, count: 1, me: false },  // the human's actual reaction
+      { emoji: { name: '👍' }, count: 2, me: true },   // bot + a human — human keeps it in
+    ],
+  };
+  assert.deepEqual(reactionTypes(message), ['❤️', '👍']);
+});
+
 test('reactionTypes lists emoji names, custom emoji by name, deduped, in order', () => {
   const message = {
     reactions: [
