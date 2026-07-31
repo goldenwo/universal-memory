@@ -100,8 +100,12 @@ export function openDb() {
   if (_db) return _db;
   // Negative cache (review IMPORTANT-1): a failed open poisons the singleton
   // for the rest of the process instead of re-opening (and, worse, re-LEAKING
-  // an fd) on every emit. Counters stay dark until restart — acceptable for a
-  // fire-and-forget observability path; warnOnce already surfaced the cause.
+  // an fd) on every emit. Counters stay dark until restart. Since #201 the
+  // blast radius is wider than observability: capture-ledger.mjs rides this
+  // handle, so a poisoned open also stops ledger-row recording (fail-soft —
+  // exchanges become unaddressable) and 502s /api/reaction until restart.
+  // Accepted: the alternative (per-emit reopen) is the fd leak this cache
+  // exists to prevent; warnOnce + um_capture_ledger_errors_total surface it.
   if (_openFailure) throw _openFailure;
   if (_dbFactory) {
     try {

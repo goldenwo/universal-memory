@@ -27,10 +27,12 @@
 //   DELIBERATE v1 LIMIT (dedup-merge): when every extracted fact dedup-merges
 //   into existing points, the signal row still records the admission verdict
 //   ('stored' — the exchange WAS admitted) but the surviving points' payloads
-//   are NOT patched with the reaction fields. A bot re-sending the same text
-//   after reactions accumulate is the LATE-ARRIVING case, which is out of
-//   contract v1 (needs point-id addressing) — the counter row is the record,
-//   same posture as the abstained path.
+//   are NOT patched with the reaction fields ON THIS PATH. A bot re-sending
+//   the same text after reactions accumulate remains the wrong way to deliver
+//   a late reaction; since #201 the point-id-addressed path EXISTS —
+//   POST /api/reaction (capture-ledger.mjs + reaction-attach.mjs) resolves
+//   the late arrival and patches the surviving point. This capture-time emit
+//   path stays as-is for capture-time reaction metadata from generic clients.
 //
 // • NORMALIZER CONTRACT: normalizeReactionMetadata never throws and never fails
 //   a capture/update; invalid values are dropped (with a once-per-process,

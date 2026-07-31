@@ -151,7 +151,7 @@ export function recordCapture({ userId, runId, surface, project, createdAt, verd
   try {
     const d = db();
     const captureId = randomUUID();
-    d.prepare(`
+    const insert = () => d.prepare(`
       INSERT INTO capture_ledger
         (capture_id, user_id, run_id, surface, project, created_at, verdict, point_refs, message_hashes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -159,6 +159,15 @@ export function recordCapture({ userId, runId, surface, project, createdAt, verd
       captureId, userId, runId ?? null, surface, project ?? null,
       createdAt, verdict, JSON.stringify(pointRefs ?? []), JSON.stringify(messageHashes ?? []),
     );
+    try {
+      insert();
+    } catch (err) {
+      // Counters-writer parity (spec §6 pin in capture-events.mjs): busy_timeout
+      // pragma + a SINGLE retry on SQLITE_BUSY — a dropped ledger row makes the
+      // exchange permanently unaddressable, a worse loss than a dropped counter.
+      if (err?.code !== 'SQLITE_BUSY') throw err;
+      insert();
+    }
     maybePrune(d);
     return captureId;
   } catch (err) {
@@ -199,7 +208,12 @@ export function resolveCapture({ userId, runId, messageTs, messageHash } = {}) {
 
   const tsIso = new Date(tsMs).toISOString();
   const forward = rows.find((r) => r.created_at >= tsIso);
-  let pick = forward ?? rows[0]; // fallback: earliest reach-back row
+  // Fallback = clock-offset safety net: every remaining row is BEFORE the
+  // message ts, and the offset is small, so the causally-correct capture is
+  // the one CLOSEST to ts (the last ASC row) — never the oldest (review
+  // R#205: rows[0] here re-introduced the earliest-wins bias the forward
+  // phase exists to avoid).
+  let pick = forward ?? rows[rows.length - 1];
 
   let refinerDisagreed = false;
   if (typeof messageHash === 'string' && messageHash.length > 0) {

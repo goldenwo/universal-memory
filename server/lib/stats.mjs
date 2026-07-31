@@ -185,7 +185,9 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     // (reaction-signal.mjs invariants), so the queries above never see it —
     // events_today/freshness are isolated by construction and this is the ONLY
     // reaction-aware query. Reader-doesn't-trust-writer: a reaction row whose
-    // surface has no capture entry (unreachable from our own writer, which
+    // surface has no capture entry (REACHABLE since #201 — /api/reaction's
+    // unaddressed emits use a caller-supplied fallback surface not tied to any
+    // prior capture; before #201 it was unreachable from the one writer, which
     // co-emits capture.extraction in the same umAdd call — but the DB is data,
     // not a promise) is SKIPPED, never thrown on: /api/stats must not degrade
     // to counters-unavailable over a stray row.

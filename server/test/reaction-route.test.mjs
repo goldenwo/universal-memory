@@ -77,6 +77,7 @@ function ctxOf(mock, overrides = {}) {
     client: mock.client,
     collection: 'memories',
     surface: 'mem0-compat',
+    writesEnabled: true,
     ...overrides,
   };
 }
@@ -170,6 +171,23 @@ test('resolved but zero payload writes succeeded → 502 UPSTREAM_FAILURE (retry
   assert.equal(res.statusCode, 502);
   assert.equal(res.body.error.code, 'UPSTREAM_FAILURE');
   assert.equal(res.body.error.retryable, true);
+});
+
+test('writes-disabled kill switch: ctx.writesEnabled=false → 403, no ledger or qdrant mutation (review R#205)', async () => {
+  const dbPath = freshDb();
+  seedCapture();
+  const mock = makeMockQdrant({ points: [{ id: 'p1', payload: { userId: OP, hash: 'h1' } }] });
+  const res = await call(goodBody(), ctxOf(mock, { writesEnabled: false }));
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error.code, 'INPUT_INVALID');
+  assert.equal(mock.setPayloads.length, 0);
+  const db = new Database(dbPath);
+  try {
+    const n = db.prepare('SELECT COUNT(*) AS n FROM reaction_state').get().n;
+    assert.equal(n, 0);
+  } finally {
+    db.close();
+  }
 });
 
 test('ledger failure → 502 UPSTREAM_FAILURE (retryable)', async () => {

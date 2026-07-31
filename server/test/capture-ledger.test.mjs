@@ -83,6 +83,46 @@ test('recordCapture returns a capture id and persists the row', () => {
   assert.equal(row.project, 'proj');
 });
 
+test('recordCapture retries ONCE on SQLITE_BUSY (counters-writer parity), then lands the row', () => {
+  const dbPath = tempDbPath();
+  process.env.UM_COUNTERS_DB_PATH = dbPath;
+  _resetCaptureEventsForTest();
+  _resetCaptureLedgerForTest();
+  const real = new Database(dbPath);
+  let busyOnce = true;
+  _setDbFactoryForTest(() => ({
+    exec: (sql) => real.exec(sql),
+    pragma: (p, o) => real.pragma(p, o),
+    prepare: (sql) => {
+      const stmt = real.prepare(sql);
+      return {
+        run: (...a) => {
+          if (busyOnce && /INSERT INTO capture_ledger/.test(sql)) {
+            busyOnce = false;
+            const e = new Error('database is locked');
+            e.code = 'SQLITE_BUSY';
+            throw e;
+          }
+          return stmt.run(...a);
+        },
+        get: (...a) => stmt.get(...a),
+        all: (...a) => stmt.all(...a),
+      };
+    },
+    close: () => real.close(),
+  }));
+  _resetCaptureLedgerForTest();
+  try {
+    const id = makeCapture();
+    assert.ok(id, 'a single SQLITE_BUSY must be retried, not dropped');
+    const n = real.prepare('SELECT COUNT(*) AS n FROM capture_ledger').get().n;
+    assert.equal(n, 1);
+  } finally {
+    _resetCaptureEventsForTest();
+    try { real.close(); } catch { /* already closed by reset */ }
+  }
+});
+
 test('recordCapture is fail-soft: a poisoned DB returns null, never throws', () => {
   _setDbFactoryForTest(() => { throw new Error('simulated: disk on fire'); });
   _resetCaptureLedgerForTest();
@@ -128,6 +168,18 @@ test('interleaved exchanges: each message resolves to its OWN exchange capture, 
     messageTs: tPlus(-1),
   });
   assert.equal(rowA.captureId, capA);
+});
+
+test('skew fallback with MULTIPLE reach-back rows picks the row CLOSEST to the message ts, not the oldest (review R#205)', () => {
+  freshDb();
+  makeCapture({ createdAt: T0 });          // 40s before the message — the wrong pick
+  const near = makeCapture({ createdAt: tPlus(30) }); // 10s before — the causal capture
+  const row = resolveCapture({
+    userId: 'op',
+    runId: 'agent:main:discord:channel:123',
+    messageTs: tPlus(40), // after both; no forward row exists
+  });
+  assert.equal(row.captureId, near);
 });
 
 test('skew fallback: a reply-message ts slightly AFTER the capture (clock offset) still resolves when no forward row exists', () => {

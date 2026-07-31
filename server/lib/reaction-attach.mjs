@@ -215,8 +215,17 @@ export async function attachReaction({
   }
 
   if (refs.length > 0 && terminals.length === 0) {
-    // Resolution succeeded (the verdict emit above stands) but nothing
-    // survives to annotate — dead chains / deleted points.
+    // Resolution succeeded (the verdict emit above stands — heterogeneous
+    // keys) but nothing survives to annotate — dead chains / deleted points.
+    // 'unaddressed' is documented "emitted PER CALL": this site mints its row
+    // too (review R#205 — reactions_7d.unaddressed must not undercount this
+    // failure mode), attributed to the resolved row's surface.
+    recordCaptureEvent({
+      surface: row.surface,
+      project: row.project ?? undefined,
+      event: SIGNAL_EVENTS.REACTION,
+      outcome: 'unaddressed',
+    });
     return { outcome: 'unaddressed', reason: 'no_surviving_point', pointIds: [], annotated: 0, failed };
   }
 
@@ -292,6 +301,17 @@ function validateReactionBody(body) {
 }
 
 export async function handleReactionRequest(req, res, ctx) {
+  if (!ctx.writesEnabled) {
+    // Same kill-switch posture as the append-turn/checkpoint handlers
+    // (review R#205): a frozen deployment must not take ledger or payload
+    // writes through this route either. 403 + INPUT_INVALID mirrors
+    // handleAppendTurnRequest's wire contract.
+    res.status(403).json(errorResponse(
+      'INPUT_INVALID',
+      'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
+    ));
+    return;
+  }
   const b = req.body ?? {};
   const invalid = validateReactionBody(b);
   if (invalid) {

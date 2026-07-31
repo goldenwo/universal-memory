@@ -143,7 +143,7 @@ test('superseded chain: annotation follows supersededBy to the terminal current 
 });
 
 test('dead chain (supersededBy → missing point) → outcome unaddressed, no payload writes', async () => {
-  freshDb();
+  const dbPath = freshDb();
   seedCapture();
   const mock = makeMockQdrant({ points: [
     { id: 'p1', payload: { userId: OP, hash: 'h1', status: 'superseded', supersededBy: 'gone' } },
@@ -152,6 +152,11 @@ test('dead chain (supersededBy → missing point) → outcome unaddressed, no pa
   assert.equal(res.outcome, 'unaddressed');
   assert.equal(res.annotated, 0);
   assert.equal(mock.setPayloads.length, 0);
+  // Review R#205: 'unaddressed' is documented "emitted PER CALL" — the
+  // no_surviving_point site must mint its row too (heterogeneous keys: the
+  // 'stored' verdict row from the created-transition ALSO stands).
+  const outcomes = signalRows(dbPath).map((r) => r.outcome).sort();
+  assert.deepEqual(outcomes, ['stored', 'unaddressed']);
 });
 
 test('supersession cycle is guard-broken → unaddressed, no infinite loop', async () => {

@@ -3344,6 +3344,7 @@ export function createRequestHandler(ctx = {}) {
 				httpRes,
 				{
 					userId: USER_ID,
+					writesEnabled: isWriteEnabled(),
 					client: await getRealClient(resolvedMemory()),
 					collection: resolvedMemory().config.vectorStore.config.collectionName,
 					// The 'mem0-compat' fallback is deliberate (spec D-c): these
