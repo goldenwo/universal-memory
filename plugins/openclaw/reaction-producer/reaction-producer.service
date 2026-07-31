@@ -1,0 +1,27 @@
+# systemd user unit for the UM reaction producer (#201 PR 2).
+# Install (as the openclaw user on the Pi):
+#   mkdir -p ~/.config/systemd/user ~/um-reaction-producer
+#   cp reaction-producer.mjs lib.mjs ~/um-reaction-producer/
+#   cp reaction-producer.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now reaction-producer
+# Logs: journalctl --user -u reaction-producer -f
+
+[Unit]
+Description=UM Discord reaction producer (late-arrival addressing, #201)
+After=network-online.target
+
+[Service]
+Type=simple
+# Shares the gateway's env file for DISCORD_BOT_TOKEN — no token copies.
+EnvironmentFile=%h/.openclaw/gateway.systemd.env
+Environment=UM_SERVER_URL=http://127.0.0.1:6337
+Environment=UM_TOKEN_FILE=%h/.um/auth-token
+ExecStart=/usr/bin/env node %h/um-reaction-producer/reaction-producer.mjs
+Restart=always
+RestartSec=10
+# Read-only listener: no state dir, no writes outside stdout.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
