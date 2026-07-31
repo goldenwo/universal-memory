@@ -449,6 +449,8 @@ jobs:
             echo "::endgroup::"
           done
           exit "$rc"
+      - name: Reaction-producer pure-helper tests (#201 PR 2)
+        run: node --test plugins/openclaw/reaction-producer/lib.test.mjs
 
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})

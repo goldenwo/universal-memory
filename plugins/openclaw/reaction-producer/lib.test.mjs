@@ -1,5 +1,8 @@
 // plugins/openclaw/reaction-producer/lib.test.mjs — pure-helper tests for the
-// Discord reaction producer (#201 PR 2). Run: node --test plugins/openclaw/reaction-producer/
+// Discord reaction producer (#201 PR 2).
+// Run: node --test plugins/openclaw/reaction-producer/lib.test.mjs
+// (file form — the directory form fails module resolution on Windows).
+// CI: the "Plugin hook tests" job in .github/workflows/smoke.yml runs this.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

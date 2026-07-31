@@ -5,10 +5,12 @@
 #   cp reaction-producer.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now reaction-producer
+#   loginctl enable-linger openclaw   # user units survive logout / start at boot
 # Logs: journalctl --user -u reaction-producer -f
 
 [Unit]
 Description=UM Discord reaction producer (late-arrival addressing, #201)
+Wants=network-online.target
 After=network-online.target
 
 [Service]
