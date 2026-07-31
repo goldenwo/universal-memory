@@ -11,6 +11,8 @@
  *   - plugins/claude-code/.../.claude-plugin/plugin.json       → MUST track (user-installed; bumped at every prior tag)
  *   - .claude-plugin/marketplace.json (universal-memory entry)  → MUST track (what `claude plugin install` advertises — #159 T8)
  *   - plugins/codex/.../.codex-plugin/plugin.json              → intentionally EXCLUDED (tracks v0.7, config-only — issue #17)
+ *   - plugins/openclaw/reaction-producer/                       → intentionally EXCLUDED (#201 PR 2: bot-side sidecar,
+ *     no manifest; producer ↔ server compatibility rides the additive-only /api/reaction OpenAPI contract, no version pinning)
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
