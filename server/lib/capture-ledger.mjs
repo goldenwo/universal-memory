@@ -199,11 +199,29 @@ export function resolveCapture({ userId, runId, messageTs, messageHash } = {}) {
   if (!Number.isFinite(tsMs)) return null;
   const lowerIso = new Date(tsMs - reactionSkewMs()).toISOString();
   const upperIso = new Date(tsMs + reactionHorizonMs()).toISOString();
-  const rows = db().prepare(`
+  const d = db();
+  let rows = d.prepare(`
     SELECT * FROM capture_ledger
     WHERE user_id = ? AND run_id = ? AND created_at >= ? AND created_at <= ?
     ORDER BY created_at ASC
   `).all(userId, runId, lowerIso, upperIso);
+  if (rows.length === 0) {
+    // NULL-run_id fallback (2026-07-31, live finding): the vendored bot
+    // extension drops run_id on the wire (buildAddOptions writes snake_case
+    // opts.run_id; the provider reads camelCase opts.runId), so this
+    // deployment's ledger rows carry NULL. Channel-ambiguous rows are a
+    // legitimate SECOND tier: exact rows always win (query above), the same
+    // two-phase window + refiner applies, and this tier self-retires the
+    // moment upstream fixes the casing (null rows stop appearing). Precision
+    // trade: two channels capturing in one window could misattribute — the
+    // tight forward window + hash refiner bound it. Never falls back onto
+    // rows carrying a DIFFERENT explicit run_id.
+    rows = d.prepare(`
+      SELECT * FROM capture_ledger
+      WHERE user_id = ? AND run_id IS NULL AND created_at >= ? AND created_at <= ?
+      ORDER BY created_at ASC
+    `).all(userId, lowerIso, upperIso);
+  }
   if (rows.length === 0) return null;
 
   const tsIso = new Date(tsMs).toISOString();

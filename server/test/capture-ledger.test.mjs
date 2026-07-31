@@ -270,6 +270,45 @@ test('hash refiner agreeing with the earliest pick does not flag disagreement', 
 });
 
 // ---------------------------------------------------------------------------
+// null-run_id fallback (live 2026-07-31: the vendored bot extension drops
+// run_id on the wire — snake/camel mismatch — so ledger rows carry NULL)
+// ---------------------------------------------------------------------------
+
+test('null-run_id fallback: with NO exact-match rows, a same-window row with NULL run_id resolves', () => {
+  freshDb();
+  const nullRow = makeCapture({ runId: undefined, createdAt: tPlus(10) });
+  const row = resolveCapture({
+    userId: 'op',
+    runId: 'agent:main:discord:channel:123',
+    messageTs: T0,
+  });
+  assert.equal(row.captureId, nullRow);
+});
+
+test('null-run_id fallback: exact-match rows always win over null rows in the same window', () => {
+  freshDb();
+  makeCapture({ runId: undefined, createdAt: tPlus(5) });
+  const exact = makeCapture({ createdAt: tPlus(10) });
+  const row = resolveCapture({
+    userId: 'op',
+    runId: 'agent:main:discord:channel:123',
+    messageTs: T0,
+  });
+  assert.equal(row.captureId, exact);
+});
+
+test('null-run_id fallback: a DIFFERENT explicit run_id never falls back onto another channel exact rows', () => {
+  freshDb();
+  makeCapture({ runId: 'agent:main:discord:channel:999', createdAt: tPlus(10) });
+  const row = resolveCapture({
+    userId: 'op',
+    runId: 'agent:main:discord:channel:123',
+    messageTs: T0,
+  });
+  assert.equal(row, null);
+});
+
+// ---------------------------------------------------------------------------
 // reaction_state — absolute counts, transitions, cap
 // ---------------------------------------------------------------------------
 
