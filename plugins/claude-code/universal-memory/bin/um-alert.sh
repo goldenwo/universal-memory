@@ -229,8 +229,38 @@ except (KeyError, TypeError, ValueError):
 STATUS="${VERDICT%%|*}"
 MESSAGE="${VERDICT#*|}"
 
+# #201: capture-ledger error-growth check. um_capture_ledger_errors_total is
+# Prometheus-only and this deployment has no scraper, so the cron IS the alarm
+# surface. The curl runs IN-CONTAINER (docker exec … 127.0.0.1) because the
+# host-cron path arrives via the docker bridge and the default metrics policy
+# (loopback-only) 404s it. Fail-soft: docker/metric unavailable → skip, never
+# degrade the freshness verdict. Growth since the last run escalates a FRESH
+# verdict to exit 1 — a growing count means exchanges are silently becoming
+# unaddressable by late reactions.
+LEDGER_CONTAINER="${UM_LEDGER_ERRORS_CONTAINER:-um-server}"
+LEDGER_STATE="${UM_LEDGER_ERRORS_STATE:-$HOME/.um/ledger-errors.count}"
+LEDGER_ALERT=""
+if [ -n "$LEDGER_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
+  _LTOKEN=$(cat "${UM_TOKEN_FILE:-$HOME/.um/auth-token}" 2>/dev/null || true)
+  LEDGER_CURRENT=$(docker exec "$LEDGER_CONTAINER" wget -qO- \
+      --header "Authorization: Bearer ${_LTOKEN}" \
+      http://127.0.0.1:6335/metrics 2>/dev/null \
+    | awk '/^um_capture_ledger_errors_total/ {s+=$2} END {printf "%d", s}') || LEDGER_CURRENT=""
+  if [ -n "$LEDGER_CURRENT" ]; then
+    LEDGER_PREV=$(cat "$LEDGER_STATE" 2>/dev/null || echo 0)
+    echo "$LEDGER_CURRENT" > "$LEDGER_STATE" 2>/dev/null || true
+    if [ "$LEDGER_CURRENT" -gt "${LEDGER_PREV:-0}" ] 2>/dev/null; then
+      LEDGER_ALERT="capture-ledger errors grew ${LEDGER_PREV:-0} -> $LEDGER_CURRENT since the last check (exchanges may be unaddressable by late reactions)"
+    fi
+  fi
+fi
+
 case "$STATUS" in
   FRESH)
+    if [ -n "$LEDGER_ALERT" ]; then
+      echo "um-alert: LEDGER-ERRORS — $LEDGER_ALERT (capture freshness itself OK: $MESSAGE)" >&2
+      exit 1
+    fi
     echo "um-alert: OK — $MESSAGE"
     exit 0 ;;
   STALE)
