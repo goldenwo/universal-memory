@@ -90,8 +90,28 @@ test('R2 infer:true records one ledger row: stored verdict, pointRefs with md5(m
   assert.equal(row.surface, 'mem0-compat');
   assert.equal(row.project, 'proj-x');
   assert.equal(row.verdict, 'stored');
-  assert.deepEqual(JSON.parse(row.point_refs), [{ id: 'pt-1', hash: md5('fact one') }]);
+  assert.deepEqual(JSON.parse(row.point_refs), [{ id: 'pt-1', hash: md5('fact one'), event: 'ADD' }]);
   assert.deepEqual(JSON.parse(row.message_hashes), [md5('hello a'), md5('hello b')]);
+});
+
+test('point_refs carry the umAdd event verbatim for all three outcomes; eventless results stay valid (pre-v1.13.2 shape)', async () => {
+  const dbPath = freshDb();
+  const res = await call(addBody(), ctxOf(makeUmAdd({
+    results: [
+      { id: 'pt-add', memory: 'fresh fact', event: 'ADD' },
+      { id: 'pt-survivor', memory: 'existing fact', event: 'DEDUP_MERGED' },
+      { id: 'pt-newer', memory: 'newer fact', event: 'SUPERSEDED_INBAND', supersededId: 'pt-old' },
+      { id: 'pt-legacy', memory: 'no event field' },
+    ],
+  })));
+  assert.equal(res.status, 200);
+  const [row] = ledgerRows(dbPath);
+  assert.deepEqual(JSON.parse(row.point_refs), [
+    { id: 'pt-add', hash: md5('fresh fact'), event: 'ADD' },
+    { id: 'pt-survivor', hash: md5('existing fact'), event: 'DEDUP_MERGED' },
+    { id: 'pt-newer', hash: md5('newer fact'), event: 'SUPERSEDED_INBAND' },
+    { id: 'pt-legacy', hash: md5('no event field') },
+  ]);
 });
 
 test('R2 abstained: zero extracted facts → verdict abstained, empty pointRefs', async () => {
@@ -111,7 +131,7 @@ test('R2 DEDUP_MERGED: pointRefs hash derives from the SURVIVING point text (r.m
   })));
   const rows = ledgerRows(dbPath);
   assert.deepEqual(JSON.parse(rows[0].point_refs), [
-    { id: 'survivor', hash: md5('the existing surviving text') },
+    { id: 'survivor', hash: md5('the existing surviving text'), event: 'DEDUP_MERGED' },
   ]);
 });
 
