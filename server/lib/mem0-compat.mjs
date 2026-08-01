@@ -535,7 +535,10 @@ async function handleAdd({ req, body, ctx }) {
     verdict: results.length > 0 ? 'stored' : 'abstained',
     pointRefs: results
       .filter((it) => it?.id !== undefined && typeof it?.memory === 'string')
-      .map((it) => ({ id: it.id, hash: md5(it.memory) })),
+      // event (ADD | DEDUP_MERGED | SUPERSEDED_INBAND) is the exact
+      // authored-vs-inherited discriminator the #215 measurement joins on;
+      // additive — pre-v1.13.2 rows without it fall back to a heuristic there.
+      .map((it) => ({ id: it.id, hash: md5(it.memory), ...(typeof it.event === 'string' ? { event: it.event } : {}) })),
     messageHashes: messages.map((m) => md5(m.content)),
   });
   return { status: 200, body: toMem0AddResults(r) };
