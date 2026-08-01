@@ -26,6 +26,9 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# #215 pre-registration audit trail — must stay tracked despite *.log (tamper-evident
+# run/deviation ledger; hashes + counts only, no corpus content).
+!server/eval/reaction-gate-runs.log
 
 # Python
 __pycache__/
