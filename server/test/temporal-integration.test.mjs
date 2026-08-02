@@ -89,19 +89,38 @@ test('E1(b): relevance still orders inside the window (not a date sort)', async 
 
 // ── E1b — zero in-window (D-b1 / D-b0) ───────────────────────────────────────
 
-test('E1b: a resolved window with zero in-window candidates leaves order untouched', async () => {
-	// Distinct distances, nearest-to-window carrying the LOWEST cosine, so a
-	// missing D-b1 provably inverts the visible order.
-	const rows = [
-		point('far-strong', 0.90, OUT_WINDOW),
-		point('mid', 0.60, OUT_WINDOW + 20 * DAY),
-		point('near-weak', 0.20, OUT_WINDOW + 50 * DAY),
-	];
-	const off = await withFlag(false, () =>
-		doSearch(TEMPORAL_Q, 3, false, false, { memory: stubMemory(rows), now: NOW }));
-	const on = await withFlag(true, () =>
-		doSearch(TEMPORAL_Q, 3, false, false, { memory: stubMemory(rows), now: NOW }));
-	assert.deepEqual(ids(on), ids(off), 'zero in-window ⇒ ordering identical to flag-off');
+test('E1b: zero in-window is a no-op under BOTH UM_TEMPORAL_DECAY settings', async () => {
+	// The registered form. The earlier 3-row/limit-3 fixture could not fail:
+	// the widened fetch returned the same 3 rows either way, and the decay-on
+	// arm — the one that actually pins D-b0/D-b1 — was never exercised.
+	//
+	// 30 rows at limit 5 puts the widened fetch (25) strictly between the two,
+	// and cosine order is deliberately the REVERSE of recency order, so decay
+	// over 25 candidates and decay over 5 produce provably different top-5s.
+	const rows = [];
+	for (let i = 0; i < 30; i++) {
+		// Walk BACKWARD from OUT_WINDOW so every row is strictly outside the
+		// window — walking forward would cross into it around i=19 and make
+		// temporalActive true, which is not what this check is about.
+		// Descending cosine, ascending recency: the strongest match is the oldest,
+		// so decay-over-25 and decay-over-5 pick different top-5s if the pool is
+		// not narrowed.
+		rows.push(point(`d${i}`, 1 - i * 0.01, OUT_WINDOW - (29 - i) * 3 * DAY));
+	}
+	for (const decay of ['true', undefined]) {
+		const prev = process.env.UM_TEMPORAL_DECAY;
+		if (decay) process.env.UM_TEMPORAL_DECAY = decay; else delete process.env.UM_TEMPORAL_DECAY;
+		try {
+			const off = await withFlag(false, () =>
+				doSearch(TEMPORAL_Q, 5, false, false, { memory: stubMemory(rows), now: NOW }));
+			const on = await withFlag(true, () =>
+				doSearch(TEMPORAL_Q, 5, false, false, { memory: stubMemory(rows), now: NOW }));
+			assert.deepEqual(ids(on).slice(0, 5), ids(off).slice(0, 5),
+				`UM_TEMPORAL_DECAY=${decay ?? 'unset'}: zero in-window must equal flag-off`);
+		} finally {
+			if (prev === undefined) delete process.env.UM_TEMPORAL_DECAY; else process.env.UM_TEMPORAL_DECAY = prev;
+		}
+	}
 });
 
 // ── E1c — exact fetch width (D-a) ────────────────────────────────────────────

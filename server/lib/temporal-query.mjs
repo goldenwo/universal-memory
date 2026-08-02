@@ -231,8 +231,10 @@ export function isTemporalKind(kind) {
  * string, not filtering by time. Replaced with spaces rather than removed so
  * every surviving offset still lines up with the original text.
  */
+export const QUOTE_SPAN_PATTERN = /(?:"[^"\n]*"|`[^`\n]*`|(?<=^|\s)'[^'\n]*'(?=\s|$|[.,;:!?]))/g;
+
 function blankQuotedSpans(text) {
-	return text.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, (m) => ' '.repeat(m.length));
+	return text.replace(QUOTE_SPAN_PATTERN, (m) => ' '.repeat(m.length));
 }
 
 /**

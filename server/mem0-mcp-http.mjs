@@ -1831,7 +1831,8 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// Emission is surface-gated inside noteTemporalQuery (the ~25 eval/test
 	// callers thread none). A failed parse emits nothing — it is not evidence
 	// about operator phrasing.
-	if (!parseFailed) noteFn({ surface: ctx?.surface, kind: temporalWindow?.kind ?? null });
+	// Emission happens on the SUCCESS path below, beside noteRecallSearch —
+	// see the note there. Parsing stays here because the fetch width needs it.
 
 	// Fetch width (D-a). Widened whenever a window PARSED — the in-window count
 	// cannot be known before the fetch. The `Math.max` is a correctness guard,
@@ -1881,12 +1882,22 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	const temporalActive = windowFetch && countInWindow(items, temporalWindow) > 0;
 	if (temporalActive) {
 		items = applyTemporalWindow(items, temporalWindow);
-	} else if (process.env.UM_TEMPORAL_DECAY === 'true') {
-		// Unchanged from before this arc: UM_DECAY_HALF_LIFE_DAYS controls the
-		// rate (default 30d). Applied after the status filter so only allowed
-		// results are re-ranked.
-		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
-		items = applyTemporalDecay(items, halfLife);
+	} else {
+		// D-b1: a window resolved but nothing falls inside it. The fetch was
+		// already widened (that decision precedes the count), so the pool must be
+		// narrowed back to the caller's limit BEFORE decay runs — otherwise decay
+		// would re-rank 25 candidates where flag-off re-ranks 5 and return a
+		// different, recency-ordered set on exactly the queries D-b1 promises to
+		// no-op on. Narrowing here restores "zero in-window ⇒ output equals
+		// flag-off output" as an actual property rather than a claim.
+		if (windowFetch) items = items.slice(0, baseLimit);
+		if (process.env.UM_TEMPORAL_DECAY === 'true') {
+			// Unchanged from before this arc: UM_DECAY_HALF_LIFE_DAYS controls the
+			// rate (default 30d). Applied after the status filter so only allowed
+			// results are re-ranked.
+			const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
+			items = applyTemporalDecay(items, halfLife);
+		}
 	}
 	// DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
 	// AFTER ranking/decay (so scoring never wastes a slot on the stamp) and
@@ -1918,6 +1929,13 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// path; errors above propagate WITHOUT emitting (failed searches are not
 	// "recall volume" — they surface via um_mem0_ops_total{status="fail"}).
 	noteRecallSearch({ surface: ctx?.surface, durationMs: Date.now() - recallStartedAt });
+	// D-f: emit late, on the success path, beside noteRecallSearch — matching the
+	// compat facade. Emitting before the engine call would count searches that
+	// 500'd, which the recall counters deliberately exclude ("failed searches are
+	// not recall volume"), inflating E4 prevalence during a qdrant outage relative
+	// to a denominator that does not move. Emission is surface-gated inside
+	// noteTemporalQuery; a failed parse emits nothing.
+	if (!parseFailed) noteFn({ surface: ctx?.surface, kind: temporalWindow?.kind ?? null });
 	const envelope = listEnvelope(mapped, extras);
 	// D-a2: when the fetch was widened, doSearch returns MORE than the caller's
 	// limit and each handler slices as its final step, AFTER its metadata
@@ -1928,7 +1946,10 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// Non-enumerable on purpose: the §4.1 extensibility contract forwards every
 	// enumerable top-level key straight to the wire, and this is internal.
 	// Asserted by E1e.
-	if (windowFetch) {
+	// Gated on temporalActive, NOT windowFetch: when the window resolved empty the
+	// pool was already narrowed back above, so there is nothing left to truncate
+	// and the handlers must take their untouched path.
+	if (temporalActive) {
 		Object.defineProperty(envelope, '_temporalWidened', { value: true, enumerable: false });
 	}
 	return envelope;

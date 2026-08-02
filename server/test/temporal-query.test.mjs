@@ -260,3 +260,54 @@ test('TEMPORAL_KINDS is genuinely immutable and matches the pattern table', () =
 	assert.equal(isTemporalKind('last_week'), true);
 	assert.equal(isTemporalKind('in_month:2026-03'), false, 'interpolated kinds must be rejected');
 });
+
+// ── apostrophes are not quote delimiters ─────────────────────────────────────
+// A single-quote span requires whitespace/BOL before the opener and
+// whitespace/EOL/punctuation after the closer. Without that, ordinary English
+// possessives and contractions pair up and blank the phrase between them —
+// which would be a silent false negative in the feature AND a systematic
+// under-count in the flag-off prevalence measurement that justifies the arc.
+
+test('contractions and possessives do NOT suppress a temporal phrase', () => {
+	for (const q of [
+		"what's the plan we made last week for Bob's project",
+		"here's what we didn't decide last month about Ana's connector",
+		"the team's call yesterday — didn't it cover Bob's issue?",
+	]) {
+		assert.ok(parse(q), `apostrophes must not blank the phrase in: ${q}`);
+	}
+});
+
+test('genuinely quoted spans are still blanked', () => {
+	assert.equal(parse('"last week" as a literal string'), null);
+	assert.equal(parse('search for `last week` verbatim'), null);
+	assert.equal(parse("the phrase 'last week' in quotes"), null);
+});
+
+test('E3b covers the quote-blanking pattern too, not just the kind table', () => {
+	const N = TEMPORAL_PARSE_MAX_CHARS;
+	const inputs = ['"'.repeat(N), "'".repeat(N), '`'.repeat(N), '"' + 'a'.repeat(N)];
+	const t0 = process.hrtime.bigint();
+	for (const s of inputs) parseTemporalWindow(s.slice(0, N), { now: NOW });
+	const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+	assert.ok(ms < 50, `quote-blanking sweep took ${ms.toFixed(1)}ms`);
+});
+
+// ── E3 precision, registered form: the INDEPENDENT negative set ──────────────
+// The 8 rows above were authored alongside the pattern table, so they can only
+// contain failure modes already anticipated. recall-set.jsonl's 66 queries were
+// written for an unrelated eval by someone not looking at these regexes — that
+// independence is the whole point of the registered wording, and it is the half
+// that can actually falsify the patterns.
+
+test('E3 precision: zero false positives across the 66 independently-authored queries', async () => {
+	const { readFileSync } = await import('node:fs');
+	const { fileURLToPath } = await import('node:url');
+	const path = fileURLToPath(new URL('../eval/recall-set.jsonl', import.meta.url));
+	const rows = readFileSync(path, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+	assert.equal(rows.length, 66, 'a shrunk corpus must fail loudly, not silently weaken the gate');
+	const falsePositives = rows
+		.map((r) => ({ q: r.query, w: parse(r.query) }))
+		.filter((x) => x.w !== null);
+	assert.deepEqual(falsePositives, [], `false positives: ${falsePositives.map((x) => `"${x.q}" -> ${x.w?.kind}`).join('; ')}`);
+});
