@@ -15,6 +15,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import {
+  verifyReadPathEnv,
+  READ_PATH_ENV_GUARDS,
   verifyAnchor, mulberry32, seededShuffle, isoWeek, readSnapshot, classifyStrata,
   evaluateTrigger, denominators, retentionDetector, buildEarliestRefIndex,
   attributeRefs, drawControls, resolvePoints, h2Gate, h3aPrecondition, h3bProbes,
@@ -425,4 +427,25 @@ test('isoWeek: known boundaries (2026-01-01 is W01; 2026-08-03 Mon → W32)', ()
   assert.equal(isoWeek('2026-08-03T00:00:00.000Z'), '2026-W32');
   assert.equal(isoWeek('2026-08-09T23:59:59.000Z'), '2026-W32');
   assert.equal(isoWeek('2026-08-10T00:00:00.000Z'), '2026-W33');
+});
+
+// ─── D1 — read-path environment precondition (2026-08-02) ────────────────────
+// Mechanics guard logged as D1 in reaction-gate-runs.log. It must fail CLOSED:
+// the failure it prevents is silent perturbation of H3(b) probes.
+
+test('D1: verifyReadPathEnv refuses when UM_TEMPORAL_QUERY=true', () => {
+  const r = verifyReadPathEnv({ UM_TEMPORAL_QUERY: 'true' });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /UM_TEMPORAL_QUERY/);
+});
+
+test('D1: passes when the flag is unset, false, or any non-"true" value', () => {
+  for (const env of [{}, { UM_TEMPORAL_QUERY: 'false' }, { UM_TEMPORAL_QUERY: '' }, { UM_TEMPORAL_QUERY: '1' }]) {
+    assert.equal(verifyReadPathEnv(env).ok, true, `unexpected refusal for ${JSON.stringify(env)}`);
+  }
+});
+
+test('D1: the guard list is frozen and covers the temporal read-path flag', () => {
+  assert.ok(Object.isFrozen(READ_PATH_ENV_GUARDS));
+  assert.ok(READ_PATH_ENV_GUARDS.includes('UM_TEMPORAL_QUERY'));
 });

@@ -65,6 +65,34 @@ export function verifyAnchor({ rulePath, anchorPath }) {
   return { ok: true };
 }
 
+// ─── Read-path environment precondition (D1, 2026-08-02) ─────────────────────
+// Mechanics guard, logged as D1 in reaction-gate-runs.log BEFORE any in-frame
+// quantity was computed. It changes no threshold and moves no quantity — it can
+// only refuse to run.
+//
+// H3(b) probes call doSearch with the fact's own text and demand rank <= 3. That
+// hypothesis is stated in terms of doSearch's ranking as it existed at freeze,
+// when no read-path window feature existed. UM_TEMPORAL_QUERY (temporal v1)
+// widens the fetch and re-ranks when 'true', and work-context fact text routinely
+// contains "last week" / "in March" / "since <date>". The probes read the flag
+// from THIS process, not the server container, so deployment-side discipline does
+// not cover them: a local `node --env-file=.env` run would silently perturb H3.
+// Fail closed rather than measure under a condition the frozen rule cannot see.
+export const READ_PATH_ENV_GUARDS = Object.freeze(['UM_TEMPORAL_QUERY']);
+
+export function verifyReadPathEnv(env = process.env) {
+  for (const name of READ_PATH_ENV_GUARDS) {
+    if (env[name] === 'true') {
+      return {
+        ok: false,
+        reason: `${name}=true in the harness environment — it re-ranks doSearch, which H3(b) probes depend on. `
+          + `Unset it (or set 'false') and re-run; see D1 in reaction-gate-runs.log.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 // ─── Deterministic PRNG + helpers ────────────────────────────────────────────
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -476,6 +504,12 @@ async function main() {
     process.exit(2);
   }
   console.log('H1 ok — accept-rule hash matches the committed anchor.');
+  // D1: same fail-closed exit path as H1, immediately after it.
+  const envCheck = verifyReadPathEnv();
+  if (!envCheck.ok) {
+    console.error(`READ-PATH ENV REFUSE: ${envCheck.reason}`);
+    process.exit(2);
+  }
   console.log('Phase-2 wiring (snapshot/qdrant/probe handles) runs per the plan runbook; this CLI intentionally does nothing further in phase 1.');
 }
 
