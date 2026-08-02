@@ -18,12 +18,3 @@ server/test/fixtures/* text eol=lf
 server/test/token-cost-baseline.txt text eol=lf
 # Exception: SQLite DB fixtures are binary — LF-normalization would corrupt them.
 server/test/fixtures/*.db binary
-
-# Source files are LF in this repo. Windows editors and Python text-mode
-# writes silently convert whole files to CRLF, which turns a 100-line change
-# into a 7000-line diff and rewrites git blame.
-*.mjs   text eol=lf
-*.js    text eol=lf
-*.json  text eol=lf
-*.md    text eol=lf
-.env.example text eol=lf
