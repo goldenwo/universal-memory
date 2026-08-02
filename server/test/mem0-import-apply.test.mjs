@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { parseArgs, runDump, runJudge, runApplyPreflights, runApplyWrite, ensureImportCollection, isTransientQdrant, withQdrantRetry } from '../../cli/mem0-import.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // The live write-loop test runs only with UM_LIVE_TESTS=1 (mirrors cli/test/reindex-e2e),
 // needing a reachable qdrant + OPENAI_API_KEY + server deps resolvable. The heavy deps
@@ -21,7 +21,7 @@ test('parseArgs reads stage + workdir + manifest', () => {
 });
 
 test('runDump reads a hand-saved JSONL source into canonical records + counts', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0imp-'));
+  const dir = tempDir('mem0imp-');
   const src = path.join(dir, 'source.jsonl');
   await fs.writeFile(src, [
     JSON.stringify({ id: 'm1', memory: 'Golden uses EST' }),
@@ -35,7 +35,7 @@ test('runDump reads a hand-saved JSONL source into canonical records + counts', 
 });
 
 test('runDump refuses a workdir inside a git repo tree (privacy guard, spec §6/§2)', async () => {
-  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0repo-'));
+  const repo = tempDir('mem0repo-');
   await fs.mkdir(path.join(repo, '.git')); // fake repo-root marker
   const src = path.join(repo, 'source.jsonl');
   await fs.writeFile(src, JSON.stringify({ id: 'm1', memory: 'x' }) + '\n');
@@ -46,7 +46,7 @@ test('runDump refuses a workdir inside a git repo tree (privacy guard, spec §6/
 });
 
 test('runJudge writes manifest + review with an injected invoke', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0imp-'));
+  const dir = tempDir('mem0imp-');
   const records = [
     { mem0_id: 'm1', text: 'never read .env' },
     { mem0_id: 'm2', text: 'Current memory is empty' },
@@ -69,7 +69,7 @@ test('runJudge writes manifest + review with an injected invoke', async () => {
 });
 
 test('runJudge without --yes is a cost-gate no-op (no manifest written)', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mem0imp-'));
+  const dir = tempDir('mem0imp-');
   const res = await runJudge({ records: [{ mem0_id: 'm1', text: 'x' }], workdir: dir, invoke: async () => { throw new Error('should not be called'); }, yes: false });
   assert.equal(res.skipped, true);
   await assert.rejects(() => fs.readFile(path.join(dir, 'manifest.jsonl'), 'utf8'));

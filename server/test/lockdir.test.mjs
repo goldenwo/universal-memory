@@ -4,14 +4,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { utimes } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLockdir, releaseLockdir, _resetHeldForTest } from '../lib/lockdir.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 function mkWorkDir() {
-  return mkdtempSync(join(tmpdir(), 'lockdir-'));
+  return tempDir('lockdir-');
 }
 
 test('acquire then release', async () => {

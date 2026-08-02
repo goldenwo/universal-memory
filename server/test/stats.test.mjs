@@ -23,7 +23,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { readCounterStats, freshnessHours } from '../lib/stats.mjs';
 import {
   recordCaptureEvent,
@@ -31,6 +30,7 @@ import {
   _resetCaptureEventsForTest,
 } from '../lib/capture-events.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // ---------- helpers ----------
 
@@ -49,7 +49,7 @@ function daysAgo(n) {
 }
 
 async function tempDbPath(prefix = 'um-stats-') {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const dir = tempDir(prefix);
   return path.join(dir, 'um-counters.db');
 }
 
@@ -250,7 +250,7 @@ test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes 
 // ---------- readCounterStats: degraded / empty shapes (A5) ----------
 
 test('missing db file ⇒ null-shaped result, no throw', async () => {
-  const dbPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-missing-')), 'nope.db');
+  const dbPath = path.join(tempDir('um-stats-missing-'), 'nope.db');
   const stats = readCounterStats({ now: NOW, dbPath });
   assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null });
 });

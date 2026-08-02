@@ -3,14 +3,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readCursor, writeCursor, wrapExternal, twoPhaseWrite, withBridgeLock } from '../lib/bridge-contract.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 function mkWorkDir() {
-  return mkdtempSync(join(tmpdir(), 'bridge-contract-'));
+  return tempDir('bridge-contract-');
 }
 
 // ---------- readCursor ----------

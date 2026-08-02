@@ -25,11 +25,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { registry, httpRequestsTotal } from '../lib/metrics.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const fakeMemory = {
   getAll: async () => ({
@@ -200,7 +200,7 @@ test('endpoint label is route template — /api/recent/:project NOT raw slug', a
   // Hit /api/recent/some-project; the counter must label it as the
   // template ('/api/recent/:project'), never the expanded slug.
   // Cardinality cap N1.
-  const tmpVault = await mkdtemp(path.join(tmpdir(), 'um-c5-recent-'));
+  const tmpVault = tempDir('um-c5-recent-');
   await mkdir(path.join(tmpVault, 'authored', 'some-project'), { recursive: true });
   const prevVault = process.env.UM_VAULT_DIR;
   process.env.UM_VAULT_DIR = tmpVault;

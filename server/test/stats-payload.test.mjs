@@ -12,13 +12,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { Writable } from 'node:stream';
 import { buildStats, FULL_SCAN_LIMIT } from '../lib/stats-payload.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // ---------- helpers ----------
 
@@ -26,7 +26,7 @@ const TODAY = new Date().toISOString().slice(0, 10);
 const NOW = Date.now();
 
 async function tempDbPath(prefix = 'um-stats-payload-') {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const dir = tempDir(prefix);
   return path.join(dir, 'um-counters.db');
 }
 
@@ -228,7 +228,7 @@ test('growth_docs_7d: a capture.checkpoint stored row today is counted', async (
 });
 
 test('growth_docs_7d: null when counters are degraded (missing db)', async () => {
-  const missing = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-payload-miss-')), 'nope.db');
+  const missing = path.join(tempDir('um-stats-payload-miss-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
     const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
     assert.equal(body.corpus.growth_docs_7d, null);
@@ -242,7 +242,7 @@ test('growth_docs_7d: null when counters are degraded (missing db)', async () =>
 // ---------------------------------------------------------------------------
 
 test('degraded: counters-unavailable only — corpus fields stay live', async () => {
-  const missing = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-payload-miss2-')), 'nope.db');
+  const missing = path.join(tempDir('um-stats-payload-miss2-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
     const body = await buildStats({ now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x' });
     assert.deepEqual(body.degraded, ['counters-unavailable']);
@@ -272,7 +272,7 @@ test('degraded: corpus-unavailable only — counters fields stay live, scan_satu
 });
 
 test('degraded: both sources down at once — degraded lists both markers', async () => {
-  const missing = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-payload-miss3-')), 'nope.db');
+  const missing = path.join(tempDir('um-stats-payload-miss3-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
     const body = await buildStats({
       now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x',

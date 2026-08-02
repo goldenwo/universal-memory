@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
+import { rm } from 'node:fs/promises';
 import { runPhase2Snapshot, runPhase3Rebuild, installSigintHandler } from '../reindex.mjs';
 import { ProviderError } from '../../server/lib/provider/errors.mjs';
+import { tempDir } from '../../server/test/helpers/tmpdir.mjs';
 
 // T21: rebuildOne now calls umAdd instead of newMemory.add, so newMemory must
 // carry config.vectorStore.config.collectionName. Inject _qdrantClient and
@@ -172,7 +171,7 @@ test('Phase 2 snapshot + phase_completed=2 land in single atomic write', async (
   const state = { schema_version: 1, processed_ids: [] };
   const checkpoint = { write: async (s) => writes.push({ phase: s.phase_completed, snapshot: s.snapshot ? { ...s.snapshot } : undefined }) };
   // Empty temp dir → vault walk returns []. listFactIds stub returns two IDs.
-  const tmp = await mkdtemp(path.join(os.tmpdir(), 'reindex-phase2-'));
+  const tmp = tempDir('reindex-phase2-');
   try {
     await runPhase2Snapshot({
       vault: { dir: tmp },

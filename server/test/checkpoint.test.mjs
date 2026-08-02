@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { Writable } from 'node:stream';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
 import { handleToolCall, handleCheckpointRequest } from '../mem0-mcp-http.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // C.3 helper: capture pino-emitted log lines into an array via the test
 // sink. The structured logger replaced legacy console.warn/error in
@@ -44,7 +44,7 @@ function mockRes() {
 // ---- helpers ----------------------------------------------------------------
 
 async function makeVault() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-ck-test-'));
+  const dir = tempDir('um-ck-test-');
   return dir;
 }
 
@@ -1067,7 +1067,7 @@ test('checkpoint: O_NOFOLLOW rejects symlink at state.md.tmp path (kernel-level 
   const vaultDir = await makeVault();
   await seedCapture(vaultDir, 'symswap-proj', '2026-01-01T00.md', '# Session\nWork.');
 
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-ck-out-'));
+  const outside = tempDir('um-ck-out-');
   try {
     // Pre-existing file outside the vault — the attacker's redirection target.
     const outsideTarget = path.join(outside, 'outside.txt');

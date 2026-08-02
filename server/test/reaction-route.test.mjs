@@ -7,8 +7,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -22,6 +20,7 @@ import {
   _setDbFactoryForTest,
 } from '../lib/capture-events.mjs';
 import { makeMockQdrant } from './fixtures/qdrant-mock.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -31,7 +30,7 @@ const RUN = 'agent:main:discord:channel:42';
 const T0 = '2026-07-30T12:00:00.000Z';
 
 function freshDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-rroute-'));
+  const dir = tempDir('um-rroute-');
   const dbPath = path.join(dir, 'um-counters.db');
   process.env.UM_COUNTERS_DB_PATH = dbPath;
   _resetCaptureEventsForTest();

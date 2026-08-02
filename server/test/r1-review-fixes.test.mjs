@@ -28,7 +28,6 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import {
   registry,
   lockContentionsTotal,
@@ -38,6 +37,7 @@ import {
 import { doAppendTurn } from '../lib/append-turn.mjs';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
 import { withRetry } from '../lib/retry.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 import {
   createRequestHandler,
   handleToolCall,
@@ -99,7 +99,7 @@ async function getCounter(name, labels) {
 }
 
 async function makeTempVault() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-r1-'));
+  const dir = tempDir('um-r1-');
   await fs.mkdir(path.join(dir, 'captures'), { recursive: true });
   return dir;
 }

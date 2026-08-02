@@ -6,12 +6,20 @@
 // fold-to-tally contract, the reaction-state transition returns, and the
 // point-level aggregate — the #201 spec's D-a/D-c invariants.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { tempDir } from './helpers/tmpdir.mjs';
+
+// Release the singleton sqlite handles this file opens. Without it the LAST
+// test leaves a DB open, and on Windows that locks its temp dir so cleanup
+// cannot remove it (EPERM) — one abandoned dir per suite run, per file.
+after(() => {
+  _resetCaptureEventsForTest();
+  _resetCaptureLedgerForTest();
+});
+
 
 import {
   _resetCaptureEventsForTest,
@@ -31,7 +39,7 @@ const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
 
 function tempDbPath() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-ledger-'));
+  const dir = tempDir('um-ledger-');
   return path.join(dir, 'um-counters.db');
 }
 

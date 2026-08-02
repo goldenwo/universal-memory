@@ -3,7 +3,7 @@
  *
  * Run with: node --test server/test/vault.test.mjs
  *
- * Uses tmp directories (fs.mkdtemp) so tests are self-contained and never
+ * Uses tmp directories (helpers/tmpdir.mjs) so tests are self-contained and never
  * touch the real vault.  All tests pass on Windows (backslash paths).
  *
  * slugify unicode choice: NFD decomposition then strip non-ASCII, so
@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 import {
   vaultPath,
@@ -34,7 +35,7 @@ import {
 
 /** Create a temp directory, write some fixture files, return the dir path. */
 async function makeTmpVault() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-vault-test-'));
+  const dir = tempDir('um-vault-test-');
   return dir;
 }
 
@@ -423,7 +424,7 @@ test('slugify: only-hyphens edge case returns "untitled"', () => {
 // C1: forward-slash vault path is accepted (not rejected as traversal)
 test('C1: forward-slash UM_VAULT_DIR works on all platforms', async () => {
   // Create a real temp vault so readVaultFile can succeed
-  const nativeVault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-fwdslash-'));
+  const nativeVault = tempDir('um-fwdslash-');
   const original = process.env.UM_VAULT_DIR;
   try {
     await fs.mkdir(path.join(nativeVault, 'notes'), { recursive: true });
@@ -446,7 +447,7 @@ test('C1: forward-slash UM_VAULT_DIR works on all platforms', async () => {
 
 // C2: listVaultFiles rejects traversal via subdir argument
 test('C2: listVaultFiles("../outside") throws traversal error', async () => {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-traverse-'));
+  const vault = tempDir('um-traverse-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;
@@ -515,8 +516,8 @@ async function trySymlink(fileTarget, dirTarget, linkPath) {
 }
 
 test('security: listVaultFiles skips symlinks; findDocByIdInVault returns null for symlinked id', async (t) => {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-list-'));
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-out-'));
+  const vault = tempDir('um-symlink-list-');
+  const outside = tempDir('um-symlink-out-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;
@@ -561,8 +562,8 @@ test('security: listVaultFiles skips symlinks; findDocByIdInVault returns null f
 });
 
 test('security: writeVaultFile refuses to write when target is a symlink', async (t) => {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-write-'));
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-symlink-write-out-'));
+  const vault = tempDir('um-symlink-write-');
+  const outside = tempDir('um-symlink-write-out-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;

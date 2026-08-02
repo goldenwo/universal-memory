@@ -11,11 +11,10 @@
 //     outcome=error on UPSTREAM_FAILURE), umAdd facts-result site
 //     (capture.extraction: stored/deduped/abstained), MCP tool path,
 //     _systemMigration exclusion.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { createRequire } from 'node:module';
 import {
   recordCaptureEvent,
@@ -31,6 +30,15 @@ import { doAppendTurn } from '../lib/append-turn.mjs';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
 import { umAdd } from '../lib/add.mjs';
 import { handleToolCall, handleAppendTurnRequest, createRequestHandler } from '../mem0-mcp-http.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
+
+// Release the singleton sqlite handles this file opens. Without it the LAST
+// test leaves a DB open, and on Windows that locks its temp dir so cleanup
+// cannot remove it (EPERM) — one abandoned dir per suite run, per file.
+after(() => {
+  _resetCaptureEventsForTest();
+});
+
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -42,7 +50,7 @@ process.env.UM_LANE_CLASSIFIER_ENABLED = 'false';
 // ---------- helpers ----------
 
 async function freshCountersDb(prefix = 'um-counters-') {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const dir = tempDir(prefix);
   const dbPath = path.join(dir, 'um-counters.db');
   process.env.UM_COUNTERS_DB_PATH = dbPath;
   _resetCaptureEventsForTest();
@@ -68,7 +76,7 @@ function mockRes() {
 }
 
 async function makeTempVault() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'um-capture-vault-'));
+  return tempDir('um-capture-vault-');
 }
 
 async function seedCapture(vaultDir, project, filename, content) {
@@ -159,7 +167,7 @@ test('recordCaptureEvent without an event name is a no-op (no rows, no throw)', 
 });
 
 test('default path: UM_COUNTERS_DB_PATH unset ⇒ um-counters.db next to MEM0_HISTORY_DB_PATH', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-counters-default-'));
+  const dir = tempDir('um-counters-default-');
   const prevCounters = process.env.UM_COUNTERS_DB_PATH;
   const prevHistory = process.env.MEM0_HISTORY_DB_PATH;
   delete process.env.UM_COUNTERS_DB_PATH;

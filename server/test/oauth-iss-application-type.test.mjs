@@ -23,7 +23,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -32,6 +31,7 @@ import { createStateStore } from '../lib/oauth/state-store.mjs';
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
 import { authorizationServerMetadata } from '../lib/oauth/metadata.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -44,7 +44,7 @@ function pkcePair() {
 }
 
 function makeRig({ now } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-iss-'));
+  const dir = tempDir('um-oauth-iss-');
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });

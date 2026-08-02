@@ -21,13 +21,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { renderControlPage, captureVerdict, BRAND_LOCKUP_SVG, brandCss } from '../lib/control-page.mjs';
 import { renderConsentPage } from '../lib/oauth/consent.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const NONCE = 'AAAAAAAAAAAAAAAAAAAAAA==';
 const CSRF = 'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH';
@@ -1252,7 +1252,7 @@ function runUmAlert(root, label, body) {
 }
 
 test('A12: captureVerdict and the shipped um-alert.sh agree on every fixture', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'um-a12-'));
+  const root = tempDir('um-a12-');
   const seen = new Set();
   try {
     for (const [label, body] of A12_FIXTURES) {

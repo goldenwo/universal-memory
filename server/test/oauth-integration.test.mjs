@@ -28,7 +28,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -39,6 +38,7 @@ import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
 import { umMcpAuthBranchTotal } from '../lib/metrics.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const BASE = 'https://um.example.com';
 const OPERATOR = 'operator-secret-token';
@@ -57,7 +57,7 @@ function pkcePair() {
 // Build a tmpdir-rooted ctx.oauth (store + handlers + verify) exactly as the
 // production seam does, so tests can pre-seed the store and inspect it.
 function makeOAuthCtx() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-int-'));
+  const dir = tempDir('um-oauth-int-');
   const store = createStateStore(dir);
   const handlers = createOAuthHandlers({
     store, baseUrl: BASE, operatorToken: OPERATOR, throttle: createConsentThrottle(),
@@ -271,7 +271,7 @@ test('OAuth integration: UM_OAUTH_SEED_CLIENT seeds a manual client at construct
   // Exercise seeding through the LIVE construction seam (no ctx.oauth injected):
   // the handler builds its own store at UM_VAULT_DIR and runs seedManualClient.
   // Re-open that on-disk store afterward to assert the client landed.
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-vault-'));
+  const vaultDir = tempDir('um-vault-');
   const saved = {};
   const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
   set('UM_VAULT_DIR', vaultDir);
@@ -302,7 +302,7 @@ test('OAuth integration: UM_OAUTH_SEED_CLIENT seeds a manual client at construct
 // --------------------------------------------------------------------------
 
 test('OAuth integration: CIMD URL client_id renders the document client_name', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-cimd-'));
+  const dir = tempDir('um-oauth-cimd-');
   const store = createStateStore(dir);
   const cimdUrl = 'https://chatgpt.com/oauth/abc/client.json';
   const cimdRedirect = 'https://chatgpt.com/connector/oauth/abc123';
@@ -576,7 +576,7 @@ test('OAuth integration: a legacy-token /mcp request DOES increment branch="lega
 // UM_VAULT_DIR, no injected ctx.oauth. The server builds its own store +
 // handlers and wires onRegistration → umOauthRegistrationsTotal.inc.
 test('OAuth integration: POST /oauth/register increments um_oauth_registrations_total{accepted}', async () => {
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-dcr-int-'));
+  const vaultDir = tempDir('um-dcr-int-');
   const saved = {};
   const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
   set('UM_VAULT_DIR', vaultDir);
@@ -630,7 +630,7 @@ test('OAuth integration: POST /oauth/register increments um_oauth_registrations_
 // registrations metric test above.
 // --------------------------------------------------------------------------
 test('OAuth integration: consent allow + token issue increment um_oauth_consent_total + um_oauth_token_grants_total', async () => {
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-grant-int-'));
+  const vaultDir = tempDir('um-grant-int-');
   const saved = {};
   const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
   set('UM_VAULT_DIR', vaultDir);
@@ -712,7 +712,7 @@ test('OAuth integration: consent allow + token issue increment um_oauth_consent_
 //        incl. the real adapter's pure buildAuthorizeUrl.
 // --------------------------------------------------------------------------
 test('production bootstrap: real IdP env builds the registry and /oauth/idp routes via it', async () => {
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-idp-int-'));
+  const vaultDir = tempDir('um-idp-int-');
   const saved = {};
   const set = (k, v) => { saved[k] = process.env[k]; process.env[k] = v; };
   set('UM_VAULT_DIR', vaultDir);

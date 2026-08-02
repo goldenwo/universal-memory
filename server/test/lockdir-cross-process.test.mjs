@@ -16,12 +16,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 test('cross-process: node + bash race for same lockdir, exactly one winner per iteration (50 iters)', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'lockdir-xp-'));
+  const dir = tempDir('lockdir-xp-');
   let bothWin = 0, bothLose = 0;
   try {
     for (let i = 0; i < 50; i++) {

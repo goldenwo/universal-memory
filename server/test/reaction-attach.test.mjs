@@ -6,10 +6,8 @@
 // counter emit (ledger-first — a payload failure does not un-emit), and the
 // floor-1 payload projection.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -21,6 +19,16 @@ import {
 import { _resetCaptureEventsForTest } from '../lib/capture-events.mjs';
 import { registry } from '../lib/metrics.mjs';
 import { makeMockQdrant } from './fixtures/qdrant-mock.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
+
+// Release the singleton sqlite handles this file opens. Without it the LAST
+// test leaves a DB open, and on Windows that locks its temp dir so cleanup
+// cannot remove it (EPERM) — one abandoned dir per suite run, per file.
+after(() => {
+  _resetCaptureEventsForTest();
+  _resetCaptureLedgerForTest();
+});
+
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -31,7 +39,7 @@ const COLLECTION = 'memories';
 const T0 = '2026-07-30T12:00:00.000Z';
 
 function freshDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-attach-'));
+  const dir = tempDir('um-attach-');
   const dbPath = path.join(dir, 'um-counters.db');
   process.env.UM_COUNTERS_DB_PATH = dbPath;
   _resetCaptureEventsForTest();

@@ -27,7 +27,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -45,7 +44,7 @@ import { doRecent, doSearch, doList, TOOLS, handleToolCall } from '../mem0-mcp-h
 // ---------------------------------------------------------------------------
 
 async function withTempVault(fn) {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-recent-'));
+  const vault = tempDir('um-recent-');
   const prev = process.env.UM_VAULT_DIR;
   process.env.UM_VAULT_DIR = vault;
   try { await fn(vault); }
@@ -464,6 +463,7 @@ function buildFakeListMemory() {
 // Count tokens using tiktoken o200k_base — one encoder per call, freed in finally.
 // Uses get_encoding imported from tiktoken (already used in token-cost.test.mjs).
 import { get_encoding } from 'tiktoken';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 function countTiktoken(str) {
   const enc = get_encoding('o200k_base');

@@ -22,10 +22,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from '../../server/test/helpers/tmpdir.mjs';
 
 const SKIP = !process.env.UM_LIVE_TESTS;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -141,7 +141,7 @@ test('reindex e2e: openai → google flips embedding provider end-to-end', { ski
   if (!process.env.OPENAI_API_KEY || !process.env.GOOGLE_API_KEY) {
     assert.fail('OPENAI_API_KEY and GOOGLE_API_KEY are required for this test');
   }
-  const vaultDir = await mkdtemp(path.join(os.tmpdir(), 'reindex-e2e-flip-'));
+  const vaultDir = tempDir('reindex-e2e-flip-');
   const checkpointPath = path.join(vaultDir, 'reindex.checkpoint.json');
   const collection = `reindex_e2e_flip_${Date.now()}`;
   try {
@@ -192,7 +192,7 @@ test('reindex e2e: --resume continues after kill mid-phase-3', { skip: SKIP }, a
   if (!process.env.OPENAI_API_KEY || !process.env.GOOGLE_API_KEY) {
     assert.fail('OPENAI_API_KEY and GOOGLE_API_KEY are required for this test');
   }
-  const vaultDir = await mkdtemp(path.join(os.tmpdir(), 'reindex-e2e-resume3-'));
+  const vaultDir = tempDir('reindex-e2e-resume3-');
   const checkpointPath = path.join(vaultDir, 'reindex.checkpoint.json');
   const collection = `reindex_e2e_resume3_${Date.now()}`;
   try {
@@ -251,7 +251,7 @@ test('reindex e2e: --resume after kill between phase-4 and phase-5 is safe', { s
   if (!process.env.OPENAI_API_KEY || !process.env.GOOGLE_API_KEY) {
     assert.fail('OPENAI_API_KEY and GOOGLE_API_KEY are required for this test');
   }
-  const vaultDir = await mkdtemp(path.join(os.tmpdir(), 'reindex-e2e-resume45-'));
+  const vaultDir = tempDir('reindex-e2e-resume45-');
   const checkpointPath = path.join(vaultDir, 'reindex.checkpoint.json');
   const collection = `reindex_e2e_resume45_${Date.now()}`;
   try {

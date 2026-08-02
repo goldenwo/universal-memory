@@ -26,9 +26,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { createRequire } from 'node:module';
 import { endpointClassRoute } from '../lib/endpoint-class.mjs';
 import { createRequestHandler, doSearch } from '../mem0-mcp-http.mjs';
@@ -45,6 +43,7 @@ import {
 import { registry } from '../lib/metrics.mjs';
 import { SERVER_VERSION } from '../lib/version.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -55,7 +54,7 @@ const TOKEN = 'stats-secret-token';
 const TODAY = new Date().toISOString().slice(0, 10);
 
 async function tempDbPath(prefix = 'um-api-stats-') {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const dir = tempDir(prefix);
   return path.join(dir, 'um-counters.db');
 }
 
@@ -447,7 +446,7 @@ test('A4 REST: GET /api/search threads X-UM-Source into the recall.search surfac
 // ---------------------------------------------------------------------------
 
 test('A5: counters db absent ⇒ capture:null + growth_7d:null + degraded flag; qdrant fields live', async () => {
-  const missing = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'um-stats-miss-')), 'nope.db');
+  const missing = path.join(tempDir('um-stats-miss-'), 'nope.db');
   const { close, url } = await startServer({
     memory: makeFakeMemory(4),
     env: { UM_COUNTERS_DB_PATH: missing },
