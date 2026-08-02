@@ -41,7 +41,8 @@ import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { normalizeReactionMetadata } from './reaction-signal.mjs';
 import { isRecallable } from './recallable.mjs';
-import { noteRecallSearch } from './recall-telemetry.mjs';
+import { noteRecallSearch, noteTemporalQuery } from './recall-telemetry.mjs';
+import { parseTemporalWindow } from './temporal-query.mjs';
 import { withRetry } from './retry.mjs';
 import { filterSystemDocs } from './system-docs.mjs';
 import { SERVER_VERSION } from './version.mjs';
@@ -602,10 +603,27 @@ async function handleSearch({ req, body, ctx }) {
   // Emit-after-success (U2 review nit): duration covers the ENGINE call only,
   // but the emit waits until post-processing succeeds — a throw above becomes
   // a 500 that was never counted as a served recall (doSearch parity).
-  noteRecallSearch({
-    surface: surfaceFromHeaders(req?.headers, 'mem0-compat'),
-    durationMs: engineMs,
-  });
+  const compatSurface = surfaceFromHeaders(req?.headers, 'mem0-compat');
+  noteRecallSearch({ surface: compatSurface, durationMs: engineMs });
+  // Temporal v1 D-f: this facade is production read path 2 and bypasses
+  // doSearch entirely, so a parser placed only there would count a strict
+  // SUBSET of production recall while recall.search counts all of it — making
+  // any prevalence figure computed from the two malformed, on the one number
+  // the eventual flag-flip decision rests on.
+  //
+  // PARSER AND COUNTER ONLY. No fetch widening and no ranking change on this
+  // path in v1, so the #215 phase-gap constraint (no ranking change while the
+  // frame is open) is untouched. The asymmetry — compat is measured but not
+  // re-ranked — is a recorded v1 limitation, not an oversight: this path's
+  // fetch/limit semantics differ and deserve their own decision.
+  let compatWindow = null;
+  let compatParseOk = true;
+  try {
+    compatWindow = parseTemporalWindow(b.query, { now: Date.now() });
+  } catch {
+    compatParseOk = false;
+  }
+  if (compatParseOk) noteTemporalQuery({ surface: compatSurface, kind: compatWindow?.kind ?? null });
   return { status: 200, body: { results: records.slice(0, topK) } };
 }
 

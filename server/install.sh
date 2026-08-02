@@ -1249,6 +1249,11 @@ fi
 	printf 'UM_SUMMARY_ENABLED=%s\n'    "$UM_SUMMARY_ENABLED"
 	printf 'UM_OPENAI_API_KEY=%s\n'     "$UM_OPENAI_API_KEY"
 	printf 'UM_TEMPORAL_DECAY=%s\n'     "$UM_TEMPORAL_DECAY"
+	# UM_TEMPORAL_QUERY defaults to false (read-path temporal windows gated off).
+	# NOT prompted, so it uses the ${VAR:-default} form like UM_MOUNT_MODE above —
+	# a bare "$VAR" would be unbound under set -u in interactive mode and abort
+	# the install before .env is written.
+	printf 'UM_TEMPORAL_QUERY=%s\n'     "${UM_TEMPORAL_QUERY:-false}"
 	# UM_MCP_WRITE_ENABLED defaults to false (safe — MCP write tools gated off).
 	# Honor env override so CI / automated installs can enable the write-tool
 	# surface for end-to-end MCP coverage (smoke T10-G/H/I).

@@ -191,7 +191,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score (original * exp(-age/halfLife)).',
+          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score (original * exp(-age/halfLife)). When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
       },
       metadata: ref('MemoryMetadata'),
       hash: { type: 'string' },
@@ -216,7 +216,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score.',
+          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead.',
       },
     },
   },
