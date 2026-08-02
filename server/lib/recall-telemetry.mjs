@@ -19,9 +19,18 @@
 // own clock; percentile computation takes the stored array. No Date.now() here.
 
 import { recordCaptureEvent } from './capture-events.mjs';
+import { isTemporalKind } from './temporal-query.mjs';
 
-/** Spec §2 pinned recall event name (rides the capture-counters schema). */
-export const RECALL_EVENTS = Object.freeze({ SEARCH: 'recall.search' });
+/** Spec §2 pinned recall event names (ride the capture-counters schema). */
+export const RECALL_EVENTS = Object.freeze({
+  SEARCH: 'recall.search',
+  /** Temporal v1 spec D-f. Outside capture.% — an older server stays
+   *  downgrade-inert against it, same as recall.search. */
+  TEMPORAL_QUERY: 'recall.temporal_query',
+});
+
+/** Outcome written when a query carries no parseable temporal phrase. */
+export const TEMPORAL_OUTCOME_NONE = 'none';
 
 /** Spec §2: last 512 durations, since boot. */
 export const RING_CAPACITY = 512;
@@ -53,6 +62,51 @@ export function noteRecallSearch({ surface, durationMs } = {}) {
   } else {
     _durations[_writeIdx] = durationMs;
     _writeIdx = (_writeIdx + 1) % RING_CAPACITY;
+  }
+}
+
+/**
+ * Record one production recall's temporal-parse outcome (temporal v1 spec D-f).
+ *
+ * This is the prevalence evidence: it accumulates with the feature flag OFF, so
+ * the eventual decision to enable read-path temporal windows is made against
+ * measured operator behavior rather than an argument. Durable by design — a
+ * prom counter would reset on every container restart, and the question ("do
+ * operators phrase queries temporally?") is a weeks-to-months one.
+ *
+ * `outcome` carries either a kind from the frozen TEMPORAL_KINDS vocabulary or
+ * TEMPORAL_OUTCOME_NONE, which makes prevalence self-contained:
+ *   sum(kinds) / (sum(kinds) + none)
+ * computed inside one event family, with no dependence on which surfaces emit
+ * recall.search (the compat facade emits it from handleList too, and those
+ * query-less reads can never produce a parse).
+ *
+ * Two gates, both no-ops rather than errors:
+ *   • surface absent  ⇒ no emission (the ~25 eval/test doSearch callers)
+ *   • kind not in the frozen vocabulary ⇒ no emission. `outcome` is part of the
+ *     counters PRIMARY KEY and has no length cap, so an interpolated kind would
+ *     mint unbounded durable rows and the fire-and-forget writer would fail
+ *     silently doing it.
+ *
+ * @param {object} evt
+ * @param {string} [evt.surface] - Production surface; absent ⇒ no emission.
+ * @param {string|null} [evt.kind] - A TEMPORAL_KINDS member, or null/absent for
+ *   "no temporal phrase", which is recorded as TEMPORAL_OUTCOME_NONE.
+ * @param {object} [deps] - Test seam; defaults to the real counters writer.
+ */
+export function noteTemporalQuery(evt, deps) {
+  try {
+    // Destructured INSIDE the try, not in the signature: a default parameter
+    // only fires on `undefined`, so `noteTemporalQuery(null)` would throw before
+    // any guard ran — which defeats the fire-and-forget contract.
+    const { surface, kind } = evt ?? {};
+    const record = deps?.record ?? recordCaptureEvent;
+    if (typeof surface !== 'string' || surface.length === 0) return;
+    const outcome = kind == null ? TEMPORAL_OUTCOME_NONE : kind;
+    if (outcome !== TEMPORAL_OUTCOME_NONE && !isTemporalKind(outcome)) return;
+    record({ surface, project: '', event: RECALL_EVENTS.TEMPORAL_QUERY, outcome });
+  } catch {
+    // Fire-and-forget: telemetry must never fail a search.
   }
 }
 

@@ -43,7 +43,13 @@ import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
-import { applyTemporalDecay } from './lib/ranking.mjs';
+import { applyTemporalDecay, applyTemporalWindow, countInWindow } from './lib/ranking.mjs';
+import { parseTemporalWindow } from './lib/temporal-query.mjs';
+
+// Temporal over-fetch constants (spec D-a). The cap borrows
+// ONLY_SUPERSEDED_DEFAULT_LIMIT's value rather than inventing a number.
+const TEMPORAL_FETCH_FACTOR = 5;
+const TEMPORAL_FETCH_CAP = 50;
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { handleReactionRequest } from './lib/reaction-attach.mjs';
@@ -85,7 +91,7 @@ import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-doc
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 import { umAdd } from './lib/add.mjs';
-import { noteRecallSearch } from './lib/recall-telemetry.mjs';
+import { noteTemporalQuery, noteRecallSearch } from './lib/recall-telemetry.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
 import { isWriteEnabled } from './lib/write-enabled.mjs';
@@ -1037,6 +1043,9 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			// silently drops siblings and breaks parity with REST.
 			const { results: _prev, ...responseExtras } = response;
 			if (bounce.answered === false) responseExtras.answered = false;
+			// D-a2: apply the caller limit AFTER the post-filters above, so a
+			// widened temporal fetch feeds them instead of being discarded.
+			items = applyTemporalLimit(items, response, limit);
 			return JSON.stringify(listEnvelope(items, responseExtras));
 		}
 		case 'memory_add': {
@@ -1799,13 +1808,48 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// memoryClient if it exposes search (legacy positional pattern), else fall back
 	// to the module-level memory binding used by real requests.
 	const memoryClient = ctx?.memory ?? (typeof ctx?.search === 'function' ? ctx : memory);
+
+	// ── Temporal query resolution (spec D-d/D-e) ─────────────────────────────
+	// The parser runs on EVERY search regardless of the flag: it is pure and
+	// microseconds, and the counter it feeds is what makes the eventual decision
+	// to enable windowing evidence-based instead of an argument. With the flag
+	// off, ranking / fetch width / results are all unchanged; the only observable
+	// difference is a counters row.
+	//
+	// Both seams are DI-injected (mirroring ctx._bounceTopHit): the parser wraps
+	// its own throws, so without a seam the fail-open path could not be driven
+	// from a test at all — an ESM import binding cannot be monkey-patched.
+	const parseFn = ctx?._parseTemporalWindow ?? parseTemporalWindow;
+	const noteFn = ctx?._noteTemporalQuery ?? noteTemporalQuery;
+	let temporalWindow = null;
+	let parseFailed = false;
+	try {
+		temporalWindow = parseFn(query, { now: ctx?.now ?? Date.now() });
+	} catch {
+		parseFailed = true; // fail-open: treat as "no window", today's path
+	}
+	// Emission is surface-gated inside noteTemporalQuery (the ~25 eval/test
+	// callers thread none). A failed parse emits nothing — it is not evidence
+	// about operator phrasing.
+	// Emission happens on the SUCCESS path below, beside noteRecallSearch —
+	// see the note there. Parsing stays here because the fetch width needs it.
+
+	// Fetch width (D-a). Widened whenever a window PARSED — the in-window count
+	// cannot be known before the fetch. The `Math.max` is a correctness guard,
+	// not tuning: min(base*5, 50) is SMALLER than base above 50, which would
+	// silently halve recall at limit=100 on a path MCP leaves unclamped.
+	const windowFetch = process.env.UM_TEMPORAL_QUERY === 'true' && temporalWindow != null;
+	const baseLimit = limit || 5;
+	const fetchLimit = windowFetch
+		? Math.max(baseLimit, Math.min(baseLimit * TEMPORAL_FETCH_FACTOR, TEMPORAL_FETCH_CAP))
+		: baseLimit;
 	// C.11: wrap memoryClient.search — transient qdrant errors get up to 3 retries
 	// before surfacing UPSTREAM_FAILURE. /api/search is the hottest path (every
 	// session-start / chat turn), so a brief qdrant blip should not bubble a 502
 	// to the user when one retry would cover it.
 	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 	const raw = await withRetry(() =>
-		memoryClient.search(query, { userId: USER_ID, limit: limit || 5 })
+		memoryClient.search(query, { userId: USER_ID, limit: fetchLimit })
 			.catch((e) => { throw tagRetryable(e); })
 	, { op: 'search' });
 	let items = raw?.results || raw || [];
@@ -1826,13 +1870,37 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		// same set the mem0-compat facade applies, so the surfaces can't drift.
 		items = items.filter(isRecallable);
 	}
-	// Optional temporal decay re-ranking (off by default).
-	// Set UM_TEMPORAL_DECAY=true to enable; UM_DECAY_HALF_LIFE_DAYS controls
-	// the decay rate (default: 30 days). Applied after status filter so only
-	// allowed results are re-ranked.
-	if (process.env.UM_TEMPORAL_DECAY === 'true') {
-		const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
-		items = applyTemporalDecay(items, halfLife);
+	// Temporal re-ranking. The window SUBSTITUTES for decay rather than stacking
+	// with it (spec D-c): decay is anchored at `now`, so an "in March" query
+	// would have every correct answer crushed by the decay curve at the same
+	// moment the window promoted it — the two would actively fight.
+	//
+	// temporalActive requires a window AND at least one candidate inside it
+	// (D-b0). Gating on "a window parsed" alone would put D-b1's skip inside
+	// this arm, silently disabling decay for exactly the zero-in-window queries
+	// D-b1 predicts are common.
+	const inWindowCount = windowFetch ? countInWindow(items, temporalWindow) : 0;
+	const temporalActive = windowFetch && inWindowCount > 0;
+	if (temporalActive) {
+		// Pass the count we just computed so applyTemporalWindow does not repeat
+		// the scan (it resolves + parses a date per candidate, on the hottest path).
+		items = applyTemporalWindow(items, temporalWindow, { inWindowCount });
+	} else {
+		// D-b1: a window resolved but nothing falls inside it. The fetch was
+		// already widened (that decision precedes the count), so the pool must be
+		// narrowed back to the caller's limit BEFORE decay runs — otherwise decay
+		// would re-rank 25 candidates where flag-off re-ranks 5 and return a
+		// different, recency-ordered set on exactly the queries D-b1 promises to
+		// no-op on. Narrowing here restores "zero in-window ⇒ output equals
+		// flag-off output" as an actual property rather than a claim.
+		if (windowFetch) items = items.slice(0, baseLimit);
+		if (process.env.UM_TEMPORAL_DECAY === 'true') {
+			// Unchanged from before this arc: UM_DECAY_HALF_LIFE_DAYS controls the
+			// rate (default 30d). Applied after the status filter so only allowed
+			// results are re-ranked.
+			const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
+			items = applyTemporalDecay(items, halfLife);
+		}
 	}
 	// DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
 	// AFTER ranking/decay (so scoring never wastes a slot on the stamp) and
@@ -1864,7 +1932,43 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// path; errors above propagate WITHOUT emitting (failed searches are not
 	// "recall volume" — they surface via um_mem0_ops_total{status="fail"}).
 	noteRecallSearch({ surface: ctx?.surface, durationMs: Date.now() - recallStartedAt });
-	return listEnvelope(mapped, extras);
+	// D-f: emit late, on the success path, beside noteRecallSearch — matching the
+	// compat facade. Emitting before the engine call would count searches that
+	// 500'd, which the recall counters deliberately exclude ("failed searches are
+	// not recall volume"), inflating E4 prevalence during a qdrant outage relative
+	// to a denominator that does not move. Emission is surface-gated inside
+	// noteTemporalQuery; a failed parse emits nothing.
+	if (!parseFailed) noteFn({ surface: ctx?.surface, kind: temporalWindow?.kind ?? null });
+	const envelope = listEnvelope(mapped, extras);
+	// D-a2: when the fetch was widened, doSearch returns MORE than the caller's
+	// limit and each handler slices as its final step, AFTER its metadata
+	// post-filters — otherwise truncating here would discard the over-fetched
+	// candidates those filters are about to need (a filters.project query could
+	// go from 2 matches to 0 while matching candidates sat unused).
+	//
+	// Non-enumerable on purpose: the §4.1 extensibility contract forwards every
+	// enumerable top-level key straight to the wire, and this is internal.
+	// Asserted by E1e.
+	// Gated on temporalActive, NOT windowFetch: when the window resolved empty the
+	// pool was already narrowed back above, so there is nothing left to truncate
+	// and the handlers must take their untouched path.
+	if (temporalActive) {
+		Object.defineProperty(envelope, '_temporalWidened', { value: true, enumerable: false });
+	}
+	return envelope;
+}
+
+/**
+ * Apply the caller's limit after a handler's post-filters have run (spec D-a2).
+ *
+ * No-op unless doSearch widened the fetch, so the flag-off path is provably
+ * untouched — which matters because MCP leaves `limit` unclamped and untyped
+ * (F7), where an unconditional slice would change `limit: 0` from 5 results to 0.
+ */
+function applyTemporalLimit(items, response, callerLimit) {
+	if (!response?._temporalWidened) return items;
+	const n = Math.max(0, Math.trunc(Number(callerLimit) || 0)) || 5;
+	return items.slice(0, n);
 }
 
 // ---------------------------------------------------------------------------
@@ -2938,6 +3042,8 @@ export function createRequestHandler(ctx = {}) {
 			// U2 (#171) R1 fix: thread the surface (spread — never mutate the shared
 			// DI ctx) so REST recalls attribute like /mcp instead of emitting nothing.
 			let response = await doSearch(query, fetchLimitPost, onlySup ? true : includeSup, true, { ...ctx, surface: surfaceFromHeaders(req.headers) });
+			// D-a2: capture before any reassignment below drops the non-enumerable marker.
+			const widenedPost = response._temporalWidened === true;
 
 			// D3.1 only_superseded branch: delegate to shared helper.
 			if (onlySup) {
@@ -2994,6 +3100,13 @@ export function createRequestHandler(ctx = {}) {
 				const { results: _prev, ...responseExtras } = response;
 				response = listEnvelope(compact, responseExtras);
 			}
+			// D-a2: caller limit applied AFTER the post-filters, so the widened
+			// temporal pool feeds them instead of being discarded. No-op when the
+			// fetch was not widened, so the flag-off path is provably untouched.
+			if (widenedPost && response.results.length > clampedLimitPost) {
+				const { results: _sliced, ...sliceExtras } = response;
+				response = listEnvelope(response.results.slice(0, clampedLimitPost), sliceExtras);
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
 			return;
@@ -3023,6 +3136,8 @@ export function createRequestHandler(ctx = {}) {
 			// then project to compact shape at the end if the client did not request full.
 			// U2 (#171) R1 fix: thread the surface — same as the POST site above.
 			let response = await doSearch(q, fetchLimitGet, onlySupGet ? true : includeSuperseded, true, { ...ctx, surface: surfaceFromHeaders(req.headers) });
+			// D-a2: capture before any reassignment below drops the non-enumerable marker.
+			const widenedGet = response._temporalWidened === true;
 
 			// D3.1 only_superseded branch for GET: delegate to shared helper.
 			if (onlySupGet) {
@@ -3062,6 +3177,13 @@ export function createRequestHandler(ctx = {}) {
 				// extensibility contract as the typeFilter branch above.
 				const { results: _prev, ...responseExtras } = response;
 				response = listEnvelope(compact, responseExtras);
+			}
+			// D-a2: caller limit applied AFTER the post-filters, so the widened
+			// temporal pool feeds them instead of being discarded. No-op when the
+			// fetch was not widened, so the flag-off path is provably untouched.
+			if (widenedGet && response.results.length > fetchLimitGet) {
+				const { results: _sliced, ...sliceExtras } = response;
+				response = listEnvelope(response.results.slice(0, fetchLimitGet), sliceExtras);
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(response));
