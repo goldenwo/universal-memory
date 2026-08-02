@@ -59,20 +59,30 @@ test('applyTemporalDecay — missing valid_from and created_at returns item unch
 });
 
 // ---------------------------------------------------------------------------
-// 3. Falls back to created_at when valid_from is absent
+// 3. createdAt / created_at are NOT ranking dates — deliberately (spec D-h)
 // ---------------------------------------------------------------------------
+// This assertion was INVERTED on 2026-08-01, on measurement, and the inversion
+// changes no production behavior. The old test asserted a fall-back to
+// snake_case `created_at` — a path production never reached, because mem0ai
+// returns camelCase `createdAt` (so the fallback was dead: spec F13). It passed
+// only against this hand-made fixture.
+//
+// Activating it "correctly" would have been worse than leaving it dead. A live
+// cross-tab (spec F19) showed the 186 of 353 points lacking `valid_from` are
+// bulk-arrival artifacts — 86.5% of them on just two days, a migration and a
+// reindex — because `umAdd` stamps `createdAt` at write time and a reindex
+// rebuilds through `umAdd`. Grading on it would rank half the corpus by which
+// import a point arrived in. Undated-and-neutral is the correct treatment.
 
-test('applyTemporalDecay — falls back to created_at when valid_from absent', () => {
+test('applyTemporalDecay — does NOT grade on created_at/createdAt; item returned unchanged', () => {
   const originalNow = Date.now;
   Date.now = () => FIXED_NOW;
   try {
-    // created_at 7 days before FIXED_NOW
-    const item = { id: 'x', created_at: '2026-04-10T00:00:00Z', score: 1.0 };
-    const out = applyTemporalDecay([item], 30);
-    assert.ok(
-      Math.abs(out[0].score - Math.exp(-7 / 30)) < 1e-9,
-      `expected exp(-7/30), got ${out[0].score}`
-    );
+    for (const key of ['created_at', 'createdAt']) {
+      const item = { id: 'x', [key]: '2026-04-10T00:00:00Z', score: 1.0 };
+      const out = applyTemporalDecay([item], 30);
+      assert.equal(out[0].score, 1.0, `${key} must not be treated as a ranking date`);
+    }
   } finally {
     Date.now = originalNow;
   }
@@ -143,17 +153,15 @@ test('applyTemporalDecay — does not mutate input results array', () => {
 // 7. Missing metadata field (metadata is undefined)
 // ---------------------------------------------------------------------------
 
-test('applyTemporalDecay — missing metadata property falls back to created_at', () => {
+test('applyTemporalDecay — item with no metadata and only createdAt is left unchanged', () => {
   const originalNow = Date.now;
   Date.now = () => FIXED_NOW;
   try {
-    const item = { id: 'y', created_at: '2026-04-10T00:00:00Z', score: 1.0 };
-    // metadata is undefined (not present at all)
+    // metadata is undefined (not present at all); only an arrival stamp exists.
+    // Per spec D-h that is "no resolvable date" ⇒ neutral, not decayed.
+    const item = { id: 'y', createdAt: '2026-04-10T00:00:00Z', score: 1.0 };
     const out = applyTemporalDecay([item], 30);
-    assert.ok(
-      Math.abs(out[0].score - Math.exp(-7 / 30)) < 1e-9,
-      `expected exp(-7/30), got ${out[0].score}`
-    );
+    assert.equal(out[0].score, 1.0);
   } finally {
     Date.now = originalNow;
   }
