@@ -122,7 +122,7 @@ test('countInWindow drives the temporalActive decision (D-b0)', () => {
 
 test('clock skew: an item marginally past the end edge is still in-window', () => {
 	const now = T(19) + DAY - 1;
-	const w = { start: T(13), end: now, kind: 'this_week' };
+	const w = { start: T(13), end: now, kind: "this_week", nowAnchored: true };
 	const justAfter = item('just-after', 1, now + CLOCK_SKEW_TOLERANCE_MS - 1000);
 	const wellAfter = item('well-after', 1, now + CLOCK_SKEW_TOLERANCE_MS + 60 * 60 * 1000);
 	assert.equal(countInWindow([justAfter], w), 1, 'within tolerance ⇒ in-window');
@@ -196,4 +196,28 @@ test('items with no score are handled without producing NaN', () => {
 	];
 	const out = applyTemporalWindow(rows, WEEK);
 	assert.ok(Number.isFinite(out.find((r) => r.id === 'scoreless').score));
+});
+
+// ── clock-skew tolerance is scoped to now-anchored windows ───────────────────
+
+test('clock skew is NOT applied to fixed-calendar windows', () => {
+	// `yesterday` ends on a calendar boundary. An item three minutes into today
+	// is not clock drift — it is a different day — so widening the window would
+	// be a silent semantic change, and it can flip temporalActive on its own.
+	const yesterdayEnd = T(15) + DAY - 1;
+	const fixed = { start: T(15), end: yesterdayEnd, kind: 'yesterday', nowAnchored: false };
+	const justAfter = item('just-after', 1, yesterdayEnd + 3 * 60 * 1000);
+	assert.equal(countInWindow([justAfter], fixed), 0, 'calendar boundary must be exact');
+
+	// The same instant against a now-anchored window IS absorbed.
+	const anchored = { start: T(15), end: yesterdayEnd, kind: 'this_week', nowAnchored: true };
+	assert.equal(countInWindow([justAfter], anchored), 1, 'now-anchored ends absorb drift');
+});
+
+test('an unmarked window defaults to exact (no tolerance)', () => {
+	// Fail-safe: a caller that omits nowAnchored gets the strict boundary rather
+	// than a silently widened one.
+	const w = { start: T(15), end: T(15) + DAY - 1 };
+	const justAfter = item('x', 1, T(15) + DAY - 1 + 60 * 1000);
+	assert.equal(countInWindow([justAfter], w), 0);
 });

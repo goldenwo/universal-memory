@@ -2,15 +2,23 @@
  * ranking.mjs — scoring/re-ranking helpers for universal-memory search results.
  *
  * Exports:
- *   applyTemporalDecay(results, halfLifeDays) → sorted results[]
+ *   resolveItemDate(r)                          → epoch ms | null
+ *   applyTemporalDecay(results, halfLifeDays)   → sorted results[]
+ *   applyTemporalWindow(results, window, opts)  → sorted results[]
+ *   countInWindow(results, window)              → number
  *
- * Temporal decay formula: score = originalScore * exp(-ageDays / halfLifeDays)
- *   where ageDays = (Date.now() - dateOf(result)) / 86400000
- *   and dateOf prefers metadata.valid_from, falls back to created_at.
- *   Items with neither field are returned with their original score (unchanged).
+ * THE RANKING DATE IS `metadata.valid_from` AND NOTHING ELSE (spec D-h REVISED).
+ * `createdAt` / `created_at` are deliberately not consulted — see resolveItemDate
+ * for the measurement behind that. An item with no resolvable date keeps its
+ * original score in both re-rankers: undated means neutral, never penalised.
  *
- * Enabled via UM_TEMPORAL_DECAY=true (wired in mem0-mcp-http.mjs).
- * Half-life from UM_DECAY_HALF_LIFE_DAYS (default 30).
+ * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
+ *         Enabled via UM_TEMPORAL_DECAY=true; half-life UM_DECAY_HALF_LIFE_DAYS
+ *         (default 30).
+ * Window: score unchanged inside a resolved window, demoted with a floored
+ *         exponential outside it. Enabled via UM_TEMPORAL_QUERY=true. It
+ *         SUBSTITUTES for decay rather than stacking — both are wired in
+ *         mem0-mcp-http.mjs.
  */
 
 const DAY_MS = 86400000;
@@ -36,9 +44,10 @@ export const DEMOTION_FLOOR = 0.05;
  * corpus by which import it arrived in — strictly worse than leaving those
  * points neutral, which is what they get today.
  *
- * Note this means `ranking.mjs:29`'s old `|| r.created_at` fallback was dead
- * (mem0ai returns camelCase `createdAt`) and that deadness was accidentally the
- * safer behavior. The fix is to state the intent, not to switch the fallback on.
+ * Note the old `metadata.valid_from || r.created_at` expression was dead on the
+ * second operand: mem0ai's search maps results with camelCase `createdAt`, so
+ * the snake_case fallback never fired. That deadness was accidentally the safer
+ * behavior. The fix is to state the intent, not to switch the fallback on.
  *
  * @returns {number|null} epoch ms, or null when absent / empty / unparseable.
  */
@@ -49,11 +58,24 @@ export function resolveItemDate(r) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Is `r` inside `window`, allowing for clock skew at the end edge? */
+/**
+ * Is `r` inside `window`?
+ *
+ * The clock-skew tolerance applies ONLY when the end edge is `now`
+ * (`window.nowAnchored`). A fixed calendar boundary — `yesterday`, `last week`,
+ * `on 2026-07-14` — has no drift to absorb: an item three minutes into today is
+ * not a clock artifact, it is a different day. Widening those would silently
+ * change what the window means, and since one such item can flip
+ * `temporalActive`, it could trigger a full re-rank by itself.
+ *
+ * Unmarked windows default to exact, so a caller that omits the flag gets the
+ * strict boundary rather than a silently widened one.
+ */
 function isInWindow(r, window) {
   const ms = resolveItemDate(r);
   if (ms === null) return false;
-  return ms >= window.start && ms <= window.end + CLOCK_SKEW_TOLERANCE_MS;
+  const tolerance = window.nowAnchored === true ? CLOCK_SKEW_TOLERANCE_MS : 0;
+  return ms >= window.start && ms <= window.end + tolerance;
 }
 
 /**
@@ -139,12 +161,18 @@ export function applyTemporalDecay(results, halfLifeDays) {
  *   production call site passes two arguments and a bare destructure would
  *   throw, which the parser's fail-open wrapper does not cover.
  */
-export function applyTemporalWindow(results, window, { falloffDays } = {}) {
+export function applyTemporalWindow(results, window, { falloffDays, inWindowCount } = {}) {
   if (!isUsableWindow(window)) return [...results];
   // D-b1: nothing in the window ⇒ every item would be multiplied by a distance
   // term varying by orders of magnitude, so the exponential would dominate
   // cosine entirely and the result would silently become a date ordering.
-  if (countInWindow(results, window) === 0) return [...results];
+  //
+  // `inWindowCount` lets a caller that already computed the count (doSearch does,
+  // to decide temporalActive) skip a second pass over every candidate. Omitted ⇒
+  // computed here, so the guard holds for every other caller — this is an
+  // exported pure function and D-b3 makes self-validation its contract.
+  const inWindow = Number.isInteger(inWindowCount) ? inWindowCount : countInWindow(results, window);
+  if (inWindow === 0) return [...results];
 
   // D-b3: a degenerate override (0 ⇒ exp(-∞) = 0, a silent hard filter; NaN ⇒
   // NaN scores serialized as null on the wire) falls back to the derived value.

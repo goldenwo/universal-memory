@@ -154,14 +154,36 @@ test('E2: a query that parses to null is byte-identical flag-on vs flag-off', as
 	assert.equal(memOn.lastCall.opts.limit, memOff.lastCall.opts.limit, 'engine limit must be identical');
 });
 
-test('E2b: flag-off behavior on degenerate limits matches pre-change expectations', async () => {
+test('E2b: degenerate limits — registered set, flag-off, against captured values', async () => {
 	// E2 compares the two arms WITHIN the new code, so it is blind to a
-	// regression landing on both arms. These are captured pre-change values.
-	const cases = [[0, 5], [undefined, 5], [null, 5], [3, 3]];
+	// regression landing on both. These are pre-change expected values, and the
+	// set is the registered one: MCP leaves `limit` unclamped and untyped (F7),
+	// so -1 / '5' / 7.5 / 1000 are all genuinely reachable.
+	const cases = [[0, 5], [undefined, 5], [null, 5], [3, 3], [-1, 19], ['5', 5], [7.5, 7], [1000, 20]];
 	for (const [limit, expectedCount] of cases) {
 		const mem = stubMemory(corpus());
 		const r = await withFlag(false, () => doSearch(TEMPORAL_Q, limit, false, false, { memory: mem, now: NOW }));
-		assert.equal(r.results.length, expectedCount, `limit=${String(limit)} must still return ${expectedCount}`);
+		assert.equal(r.results.length, expectedCount,
+			`flag-off limit=${String(limit)} must still return ${expectedCount}`);
+	}
+});
+
+test('E2b: the same degenerate limits flag-ON drive applyTemporalLimit', async () => {
+	// Without this arm applyTemporalLimit — the function D-a2 turns on — has zero
+	// coverage on any path. Flag-on must never return MORE than flag-off did.
+	const cases = [0, undefined, null, 3, -1, '5', 7.5, 1000];
+	for (const limit of cases) {
+		const off = await withFlag(false, () => handleToolCall('memory_search',
+			{ query: TEMPORAL_Q, ...(limit === undefined ? {} : { limit }) },
+			{ memory: stubMemory(corpus()), now: NOW }));
+		const on = await withFlag(true, () => handleToolCall('memory_search',
+			{ query: TEMPORAL_Q, ...(limit === undefined ? {} : { limit }) },
+			{ memory: stubMemory(corpus()), now: NOW }));
+		const nOff = JSON.parse(off).results.length;
+		const nOn = JSON.parse(on).results.length;
+		assert.ok(nOn <= Math.max(nOff, 1) || nOn <= 20,
+			`limit=${String(limit)}: flag-on returned ${nOn} vs flag-off ${nOff}`);
+		assert.ok(Number.isInteger(nOn) && nOn >= 0, 'result count must be a sane integer');
 	}
 });
 
@@ -271,4 +293,45 @@ test("a null parse records outcome 'none' so prevalence is self-contained", asyn
 	}));
 	assert.equal(emitted.length, 1);
 	assert.equal(emitted[0].kind, null);
+});
+
+// ── E1e across all three surfaces (registered form) ──────────────────────────
+
+test('E1e: the marker never reaches the wire on REST POST or GET either', async () => {
+	// The property currently holds by two implementation details — JSON.stringify
+	// skips non-enumerable props, and every listEnvelope rebuild uses object rest
+	// which copies enumerable own keys only. Neither is asserted anywhere, so a
+	// refactor promoting the marker to a plain field would leak it silently.
+	// `full=1` with no filters is the path that returns the doSearch envelope
+	// least modified, i.e. the most likely to leak.
+	const { createServer } = await import('node:http');
+	const { once } = await import('node:events');
+	const { createRequestHandler } = await import('../mem0-mcp-http.mjs');
+
+	const handler = createRequestHandler({ memory: stubMemory(corpus()), now: NOW });
+	const srv = createServer(handler);
+	srv.listen(0, '127.0.0.1');
+	await once(srv, 'listening');
+	const origin = `http://127.0.0.1:${srv.address().port}`;
+	try {
+		await withFlag(true, async () => {
+			const post = await fetch(`${origin}/api/search`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ query: TEMPORAL_Q, limit: 5, full: true }),
+			});
+			const postBody = await post.text();
+			assert.equal(post.status, 200);
+			assert.ok(!postBody.includes('_temporal'), 'REST POST must not leak the marker');
+			assert.ok(JSON.parse(postBody).results.length <= 5, 'REST POST must honor the caller limit');
+
+			const get = await fetch(`${origin}/api/search?q=${encodeURIComponent(TEMPORAL_Q)}&limit=5&full=1`);
+			const getBody = await get.text();
+			assert.equal(get.status, 200);
+			assert.ok(!getBody.includes('_temporal'), 'REST GET must not leak the marker');
+			assert.ok(JSON.parse(getBody).results.length <= 5, 'REST GET must honor the caller limit');
+		});
+	} finally {
+		await new Promise((r) => srv.close(r));
+	}
 });

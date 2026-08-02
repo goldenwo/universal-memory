@@ -1879,9 +1879,12 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// (D-b0). Gating on "a window parsed" alone would put D-b1's skip inside
 	// this arm, silently disabling decay for exactly the zero-in-window queries
 	// D-b1 predicts are common.
-	const temporalActive = windowFetch && countInWindow(items, temporalWindow) > 0;
+	const inWindowCount = windowFetch ? countInWindow(items, temporalWindow) : 0;
+	const temporalActive = windowFetch && inWindowCount > 0;
 	if (temporalActive) {
-		items = applyTemporalWindow(items, temporalWindow);
+		// Pass the count we just computed so applyTemporalWindow does not repeat
+		// the scan (it resolves + parses a date per candidate, on the hottest path).
+		items = applyTemporalWindow(items, temporalWindow, { inWindowCount });
 	} else {
 		// D-b1: a window resolved but nothing falls inside it. The fetch was
 		// already widened (that decision precedes the count), so the pool must be

@@ -311,3 +311,23 @@ test('E3 precision: zero false positives across the 66 independently-authored qu
 		.filter((x) => x.w !== null);
 	assert.deepEqual(falsePositives, [], `false positives: ${falsePositives.map((x) => `"${x.q}" -> ${x.w?.kind}`).join('; ')}`);
 });
+
+// ── now-anchored vs fixed-calendar windows ───────────────────────────────────
+// Clock-skew tolerance may only apply where the end edge IS `now` (spec D-d).
+// A fixed calendar boundary has no drift to absorb, so widening it would be a
+// silent semantic change, not a robustness measure.
+
+test('now-anchored kinds are flagged; fixed-calendar kinds are not', () => {
+	for (const q of ['today', 'this week', 'this month', 'this year', 'since 2026-07-14', 'last 3 days']) {
+		assert.equal(parse(q).nowAnchored, true, `${q} ends at now`);
+	}
+	for (const q of ['yesterday', 'last week', 'last month', 'last year', 'on 2026-07-14', 'in March']) {
+		assert.equal(parse(q).nowAnchored, false, `${q} ends on a calendar boundary`);
+	}
+});
+
+test('every now-anchored window actually ends at the injected now', () => {
+	for (const q of ['today', 'this week', 'this month', 'this year', 'since 2026-07-14', 'last 3 days']) {
+		assert.equal(parse(q).end, NOW, `${q}: end edge must be exactly now`);
+	}
+});

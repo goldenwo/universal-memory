@@ -114,6 +114,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 	},
 	{
 		kind: 'since_date',
+		nowAnchored: true,
 		re: /\bsince (\d{4})-(\d{2})-(\d{2})\b/i,
 		resolve: (m, now) => {
 			const start = parseISODate(m[1], m[2], m[3]);
@@ -139,6 +140,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 	},
 	{
 		kind: 'last_n',
+		nowAnchored: true,
 		re: /\b(?:last|past) (\d{1,10}) (day|week|month)s?\b/i,
 		resolve: (m, now) => {
 			const n = Number(m[1]);
@@ -159,6 +161,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 	},
 	{
 		kind: 'today',
+		nowAnchored: true,
 		re: /\btoday\b/i,
 		resolve: (_m, now) => ({ start: startOfUTCDay(now), end: now }),
 	},
@@ -174,6 +177,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 		// End edge is `now`, never the end of the period — the window must not
 		// extend into the future, so a just-captured item is always inside it.
 		kind: 'this_week',
+		nowAnchored: true,
 		re: /\bthis week\b/i,
 		resolve: (_m, now) => ({ start: startOfISOWeek(now), end: now }),
 	},
@@ -187,6 +191,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 	},
 	{
 		kind: 'this_month',
+		nowAnchored: true,
 		re: /\bthis month\b/i,
 		resolve: (_m, now) => ({ start: startOfUTCMonth(now), end: now }),
 	},
@@ -200,6 +205,7 @@ export const TEMPORAL_PATTERNS = Object.freeze([
 	},
 	{
 		kind: 'this_year',
+		nowAnchored: true,
 		re: /\bthis year\b/i,
 		resolve: (_m, now) => ({ start: startOfUTCYear(now), end: now }),
 	},
@@ -251,7 +257,7 @@ export function parseTemporalWindow(query, { now = Date.now() } = {}) {
 		if (!Number.isFinite(now)) return null;
 		const text = blankQuotedSpans(query.slice(0, TEMPORAL_PARSE_MAX_CHARS));
 
-		for (const { kind, re, resolve } of TEMPORAL_PATTERNS) {
+		for (const { kind, re, resolve, nowAnchored } of TEMPORAL_PATTERNS) {
 			const m = re.exec(text);
 			if (!m) continue;
 			const span = resolve(m, now);
@@ -261,7 +267,7 @@ export function parseTemporalWindow(query, { now = Date.now() } = {}) {
 			if (!span) return null;
 			const [start, end] = Array.isArray(span) ? span : [span.start, span.end];
 			if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-			return { start, end, kind, matched: m[0] };
+			return { start, end, kind, matched: m[0], nowAnchored: nowAnchored === true };
 		}
 		return null;
 	} catch {
