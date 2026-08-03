@@ -20,7 +20,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { endpointClassRoute } from '../lib/endpoint-class.mjs';
@@ -28,6 +27,7 @@ import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { createSession, expire, CONTROL_SESSION_TTL_MS } from '../lib/control-session.mjs';
 import { MAX_FORM_BYTES } from '../lib/http-form.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const TOKEN = 'control-master-token-abc123';
 
@@ -62,7 +62,7 @@ const AUTHENTICATED_MARKER = /Sign out/;
 const TODAY = new Date().toISOString().slice(0, 10);
 
 async function tempCountersDbPath(prefix) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `um-control-routes-${prefix}-`));
+  const dir = tempDir(`um-control-routes-${prefix}-`);
   return path.join(dir, 'um-counters.db');
 }
 

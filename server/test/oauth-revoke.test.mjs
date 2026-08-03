@@ -17,20 +17,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import os from 'node:os';
-import fs from 'node:fs';
 import path from 'node:path';
 
 import { createStateStore, sha256hex } from '../lib/oauth/state-store.mjs';
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
 
 function makeStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-revoke-'));
+  const dir = tempDir('um-oauth-revoke-');
   return createStateStore(dir);
 }
 
@@ -88,7 +87,7 @@ test('store.revokeClient: unknown client → all-zero counts (no throw)', () => 
 // =========================================================================
 
 function makeRig() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-revoke-ep-'));
+  const dir = tempDir('um-oauth-revoke-ep-');
   const store = createStateStore(dir);
   const throttle = createConsentThrottle();
   const handlers = createOAuthHandlers({ store, baseUrl: BASE_URL, operatorToken: OPERATOR, throttle });

@@ -20,12 +20,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 
 import { doState } from '../mem0-mcp-http.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 async function withTempVault(fn) {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-state-shape-'));
+  const vault = tempDir('um-state-shape-');
   const prev = process.env.UM_VAULT_DIR;
   process.env.UM_VAULT_DIR = vault;
   try { await fn(vault); }

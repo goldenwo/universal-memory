@@ -10,7 +10,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -21,6 +20,7 @@ import { createOAuthVerifier } from '../lib/oauth/verifier.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
 import { makeOperatorPolicy } from '../lib/oauth/idp/policy.mjs';
 import { umOauthConsentTotal, umOauthIdpTotal } from '../lib/metrics.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -36,7 +36,7 @@ function pkcePair() {
 
 // ---- one disposable store + handlers + server per test --------------------
 function makeRig({ now, cimdResolver, operatorPolicy, registry, callbackThrottle, onConsent, onIdpOutcome } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-ep-'));
+  const dir = tempDir('um-oauth-ep-');
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });
@@ -863,7 +863,7 @@ test('CIMD: URL-shaped client_id with NO resolver configured → 400 invalid_cli
 
 // Build a rig whose handlers capture every onConsent / onTokenGrant call.
 function makeSpyRig({ now } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-spy-'));
+  const dir = tempDir('um-oauth-spy-');
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });
@@ -1070,7 +1070,7 @@ test('revoke: route is implemented (empty body → 400, not the old 501 stub)', 
 // =========================================================================
 
 test('pending-cap: oldest pending authz is evicted past the cap', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-cap-'));
+  const dir = tempDir('um-oauth-cap-');
   const store = createStateStore(dir);
   store.putClient({ client_id: CLIENT_ID, redirect_uris: [REDIRECT], client_name: 'Claude' });
   const handlers = createOAuthHandlers({

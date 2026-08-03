@@ -27,10 +27,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // ---------------------------------------------------------------------------
 // Test harness — spin up the request handler on an ephemeral port with an
@@ -130,7 +130,7 @@ test('GET /api/list?full=1 returns enveloped JSON over the wire (full shape)', a
 // ---------------------------------------------------------------------------
 
 test('GET /api/recent/:project returns enveloped JSON over the wire', async () => {
-  const tmpVault = await mkdtemp(path.join(tmpdir(), 'um-wire-recent-'));
+  const tmpVault = tempDir('um-wire-recent-');
   const authored = path.join(tmpVault, 'authored', 'wire-test-project');
   await mkdir(authored, { recursive: true });
   const docContent = `---

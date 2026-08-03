@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 // tests live in test/vector.test.mjs. classifyByPrototypes (below) exercises
 // cosineSimilarity transitively via the top-K-mean scorer.
 import { classifyByPrototypes, loadLaneTaxonomy, buildLanePrototypes, classifyLane, classifierEnabled, _resetPrototypesForTest, LANE_THRESHOLD_DEFAULT, LANE_MARGIN_DEFAULT, LANE_TOPK_DEFAULT } from '../lib/lane-classifier.mjs';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 // Lane prototypes: each lane carries its exemplar VECTORS (not a mean centroid).
 const LANE_PROTOS = [
@@ -72,7 +72,7 @@ test('classifyByPrototypes: a fact near ONE peripheral exemplar still routes (mu
 });
 
 test('loadLaneTaxonomy: reads {lanes:[{slug,exemplars}]} from UM_LANE_TAXONOMY_PATH', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'lanetax-'));
+  const dir = tempDir('lanetax-');
   const p = join(dir, 'tax.json');
   writeFileSync(p, JSON.stringify({ lanes: [{ slug: 'work', exemplars: ['sprint planning', 'PR review'] }] }));
   try {
@@ -90,7 +90,7 @@ test('loadLaneTaxonomy: nonexistent path → empty (classifier inert)', () => {
 });
 
 test('loadLaneTaxonomy: lane with no exemplars is dropped', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'lanetax-'));
+  const dir = tempDir('lanetax-');
   const p = join(dir, 'tax.json');
   writeFileSync(p, JSON.stringify({ lanes: [{ slug: 'empty', exemplars: [] }] }));
   try { assert.deepEqual(loadLaneTaxonomy({ UM_LANE_TAXONOMY_PATH: p }), []); }
@@ -101,7 +101,7 @@ test('loadLaneTaxonomy: lane with no exemplars is dropped', () => {
 // is "metadata.lane must match <regex>" (no "invalid" substring) — a message-regex would NOT match.
 // Assert on the real contract: err.code === 'INPUT_INVALID'.
 test('loadLaneTaxonomy: invalid slug throws INPUT_INVALID (no silent skip)', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'lanetax-'));
+  const dir = tempDir('lanetax-');
   const p = join(dir, 'tax.json');
   writeFileSync(p, JSON.stringify({ lanes: [{ slug: '../evil', exemplars: ['x'] }] }));
   try {
@@ -172,7 +172,7 @@ test('classifierEnabled: opt-out — enabled unless exactly "false" (P4 flip, wh
 });
 
 test('loadLaneTaxonomy: non-array lanes → empty (fail-safe, not a throw)', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'lanetax-'));
+  const dir = tempDir('lanetax-');
   const p = join(dir, 'tax.json');
   writeFileSync(p, JSON.stringify({ lanes: 'work' }));
   try { assert.deepEqual(loadLaneTaxonomy({ UM_LANE_TAXONOMY_PATH: p }), []); }

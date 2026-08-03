@@ -8,8 +8,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -21,6 +19,7 @@ import {
 } from '../lib/capture-events.mjs';
 import { _resetCaptureLedgerForTest } from '../lib/capture-ledger.mjs';
 import { registry } from '../lib/metrics.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -30,7 +29,7 @@ const COLLECTION = 'memories';
 const md5 = (s) => createHash('md5').update(s).digest('hex');
 
 function freshDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-r2ledger-'));
+  const dir = tempDir('um-r2ledger-');
   const dbPath = path.join(dir, 'um-counters.db');
   process.env.UM_COUNTERS_DB_PATH = dbPath;
   _resetCaptureEventsForTest();

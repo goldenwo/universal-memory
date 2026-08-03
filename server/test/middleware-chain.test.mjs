@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const fakeMemory = {
   getAll: async () => ({
@@ -285,10 +286,7 @@ test('B.6b: field-level content cap fires INPUT_TOO_LARGE (not INPUT_INVALID) vi
   const prevVault = process.env.UM_VAULT_DIR;
   process.env.UM_MCP_WRITE_ENABLED = 'true';
   // Point at a tmp vault so append-turn's field validator runs before any FS write
-  const { mkdtemp } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const path = await import('node:path');
-  process.env.UM_VAULT_DIR = await mkdtemp(path.join(tmpdir(), 'um-b6b-'));
+  process.env.UM_VAULT_DIR = tempDir('um-b6b-');
   const { close, url } = await startServer({ token: 'secret', memory: fakeMemory });
   try {
     const body = JSON.stringify({

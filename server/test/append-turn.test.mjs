@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { Writable } from 'node:stream';
 import { doAppendTurn } from '../lib/append-turn.mjs';
 import { handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 function mockRes() {
   const res = {
@@ -20,7 +20,7 @@ function mockRes() {
 }
 
 async function makeTempVault() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-'));
+  const dir = tempDir('um-append-');
   await fs.mkdir(path.join(dir, 'captures'), { recursive: true });
   return dir;
 }
@@ -652,7 +652,7 @@ test('doAppendTurn returns ok=false when lockdir acquire fails (contract preserv
 // no-op). Skip on win32; the lstat-refusal layer (Fix 3) covers cross-platform.
 test('doAppendTurn with O_NOFOLLOW rejects symlink at the raw capture path', { skip: process.platform === 'win32' }, async () => {
   const vault = await makeTempVault();
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-append-out-'));
+  const outside = tempDir('um-append-out-');
   try {
     // Pre-existing file outside the vault — the attacker's redirection target.
     const outsideTarget = path.join(outside, 'outside.txt');

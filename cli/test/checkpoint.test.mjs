@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
+import { rm, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { readCheckpoint, writeCheckpoint, addProcessedId, recordPhase, clearError, createCheckpointClient } from '../lib/checkpoint.mjs';
+import { tempDir } from '../../server/test/helpers/tmpdir.mjs';
 
 let tmp;
-test.before(async () => { tmp = await mkdtemp(path.join(os.tmpdir(), 'reindex-test-')); });
+test.before(async () => { tmp = tempDir('reindex-test-'); });
 test.after(async () => { await rm(tmp, { recursive: true, force: true }); });
 
 test('readCheckpoint returns null on missing file', async () => {

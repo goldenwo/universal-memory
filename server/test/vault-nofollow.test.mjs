@@ -23,16 +23,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { writeVaultFile } from '../lib/vault-write.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 test('writeVaultFile with O_NOFOLLOW rejects symlink at the .tmp path', { skip: process.platform === 'win32' }, async () => {
   // POSIX-only: file symlink creation requires admin/Developer Mode on Windows,
   // and constants.O_NOFOLLOW is undefined on Windows (coerced to 0; no-op).
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-nofollow-vault-'));
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'um-nofollow-out-'));
+  const vault = tempDir('um-nofollow-vault-');
+  const outside = tempDir('um-nofollow-out-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;
@@ -80,7 +80,7 @@ test('writeVaultFile with O_NOFOLLOW rejects symlink at the .tmp path', { skip: 
 });
 
 test('writeVaultFile to a non-symlink path succeeds normally (cross-platform)', async () => {
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-nofollow-ok-'));
+  const vault = tempDir('um-nofollow-ok-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;
@@ -97,7 +97,7 @@ test('writeVaultFile to a non-symlink path succeeds normally (cross-platform)', 
 test('writeVaultFile overwriting an existing regular file succeeds (no symlink)', async () => {
   // Sanity check: O_NOFOLLOW must not break the legitimate "rewrite an
   // existing file" path. Only symlink-typed entries should be refused.
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-nofollow-rewrite-'));
+  const vault = tempDir('um-nofollow-rewrite-');
   const original = process.env.UM_VAULT_DIR;
   try {
     process.env.UM_VAULT_DIR = vault;

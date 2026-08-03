@@ -11,7 +11,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -19,6 +18,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createStateStore } from '../lib/oauth/state-store.mjs';
 import { createConsentThrottle } from '../lib/oauth/throttle.mjs';
 import { createOAuthHandlers } from '../lib/oauth/endpoints.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const BASE_URL = 'https://um.example.test';
 const OPERATOR = 'operator-secret-token';
@@ -33,7 +33,7 @@ function pkcePair() {
 // One disposable store + handlers + server per test. `onRegistration` capture
 // lets each test assert the metric callback fired with the right outcome.
 function makeRig({ now } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'um-oauth-dcr-'));
+  const dir = tempDir('um-oauth-dcr-');
   const clock = now ?? { t: Date.now() };
   const nowFn = () => clock.t;
   const store = createStateStore(dir, { now: nowFn });

@@ -2,15 +2,14 @@
 // authorization-server JSON state store (Gap-3 OAuth spec 4.2-4.3, plan Task
 // 2.4). Single operator, single vault, no DB: an in-memory object persisted
 // atomically to <dir>/oauth-state.json after every mutation. Every test uses
-// a fresh mkdtemp dir and an injectable `now` (a `let t` advanced by hand) so
+// a fresh tempDir() and an injectable `now` (a `let t` advanced by hand) so
 // TTL/expiry behaviour is exercised without sleeping.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import { tempDir } from './helpers/tmpdir.mjs';
 import {
   OAUTH_TTLS,
   sha256hex,
@@ -18,7 +17,7 @@ import {
 } from '../lib/oauth/state-store.mjs';
 
 async function tmpDir() {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'um-oauth-state-'));
+  return tempDir('um-oauth-state-');
 }
 const STATE_FILE = (dir) => path.join(dir, 'oauth-state.json');
 function readRaw(dir) {

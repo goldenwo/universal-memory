@@ -18,3 +18,11 @@ server/test/fixtures/* text eol=lf
 server/test/token-cost-baseline.txt text eol=lf
 # Exception: SQLite DB fixtures are binary — LF-normalization would corrupt them.
 server/test/fixtures/*.db binary
+
+# JS sources must be LF so a Windows editor cannot commit a whole-file CRLF
+# flip. Every .mjs in the tree is already LF and core.autocrlf is false, so this
+# is a no-op today — it exists because state-shape.test.mjs was committed as
+# CRLF during the tmpdir-leak change and turned a 4-line edit into a 156-line
+# diff, which is exactly how a real change hides inside reformatting noise.
+*.mjs text eol=lf
+*.js text eol=lf

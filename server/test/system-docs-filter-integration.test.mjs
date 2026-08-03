@@ -27,11 +27,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
 import { doList, doSearch, doRecent, createRequestHandler } from '../mem0-mcp-http.mjs';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const stampDoc = { metadata: { id: '_um_embedding_stamp', stamp: { provider: 'openai' } }, memory: 'stamp text' };
 const realDoc = { metadata: { id: 'real-uuid', title: 'Real' }, memory: 'real content' };
@@ -69,7 +69,7 @@ test('doRecent excludes stamp doc from authored vault listing', async () => {
   // underscore-prefix filter, this test would become vacuous and the fixture
   // should be renamed (keeping the frontmatter `id: _um_embedding_stamp` to
   // prove the filter, not the listing, is what excludes it).
-  const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'um-de3-'));
+  const vault = tempDir('um-de3-');
   const prev = process.env.UM_VAULT_DIR;
   process.env.UM_VAULT_DIR = vault;
   try {
