@@ -564,6 +564,35 @@ test('R6 update: server-managed attribution/partition/supersession keys stripped
   assert.equal(payload.note, 'ok');
 });
 
+// VF-R6 — valid_from is the ONLY field temporal query-resolution ranks on, and
+// handleUpdate bypasses buildPayload, so R6_PROTECTED_KEYS is the sole guard on
+// this path. Unprotected, a caller sets the ranking date at will; with
+// UM_TEMPORAL_DECAY on, a far-future value yields score Infinity. Protected
+// exactly as its sibling createdAt is — both branches, since sanitizeUpdateMetadata
+// feeds the upsert and the setPayload merge alike.
+test('R6 update: client metadata cannot clobber valid_from (re-embed branch)', async () => {
+  const qdrant = makeQdrant([point('p1', { data: 'old text', extra: { valid_from: '2026-05-01T00:00:00Z' } })]);
+  const out = await call('PUT', '/v1/memories/p1/', {
+    text: 'new text',
+    metadata: { valid_from: '2099-01-01T00:00:00Z', note: 'ok' },
+  }, ctxOf({ qdrant }));
+  assert.equal(out.status, 200);
+  const p = qdrant.calls.upsert[0].args.points[0];
+  assert.equal(p.payload.valid_from, '2026-05-01T00:00:00Z');
+  assert.equal(p.payload.note, 'ok');
+});
+
+test('R6 update: client metadata cannot clobber valid_from (metadata-only branch)', async () => {
+  const qdrant = makeQdrant([point('p1', { extra: { valid_from: '2026-05-01T00:00:00Z' } })]);
+  const out = await call('PUT', '/v1/memories/p1/', {
+    metadata: { valid_from: '2099-01-01T00:00:00Z', note: 'ok' },
+  }, ctxOf({ qdrant }));
+  assert.equal(out.status, 200);
+  const { payload } = qdrant.calls.setPayload[0].args;
+  assert.equal('valid_from' in payload, false);
+  assert.equal(payload.note, 'ok');
+});
+
 // ---------------------------------------------------------------------------
 // R7 — DELETE /v1/memories/{id}/
 // ---------------------------------------------------------------------------
