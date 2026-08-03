@@ -16,7 +16,18 @@ set -uo pipefail
 # v1.1: source the W1.5 endpoint resolver. Falls back to inline definition
 # for pre-v1.1 installs (matches the auto-start.sh:34 fail-soft pattern).
 _UM_LIB_DIR="${UM_LIB_DIR:-$HOME/.local/share/um/lib}"
-if [ -r "$_UM_LIB_DIR/endpoint.sh" ]; then
+# Prefer um-api.sh. It composes the spec §4 tier-3 `~/.um/endpoint` FILE on top
+# of endpoint.sh's env tiers, and endpoint.sh deliberately does NOT implement
+# that tier ("do not fork its semantics" — um-api.sh:20). Sourcing endpoint.sh
+# alone therefore stops at tier 2 and drops straight to the loopback default,
+# which is why /adr was the ONE thing that broke on a standard remote install:
+# installer/install.sh writes ~/.um/endpoint and never persists UM_SERVER_URL,
+# so every um-* script (which goes through um-api.sh) worked while this did not.
+# um-api.sh sources endpoint.sh itself and has no other top-level side effects.
+if [ -r "$_UM_LIB_DIR/um-api.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$_UM_LIB_DIR/um-api.sh"
+elif [ -r "$_UM_LIB_DIR/endpoint.sh" ]; then
   # shellcheck source=/dev/null
   source "$_UM_LIB_DIR/endpoint.sh"
 fi
@@ -45,6 +56,36 @@ if ! command -v um_resolve_endpoint >/dev/null 2>&1; then
     printf '%s\n' "$default_url"
   }
 fi
+
+# _adr_endpoint
+# The endpoint this skill posts to — spec §4 tiers 1-4:
+#   1-2. UM_SERVER_URL, then deprecated UM_ENDPOINT (endpoint.sh)
+#   3.   ~/.um/endpoint file, trimmed first line (installer remote flow / um-setup)
+#   4.   um_resolve_endpoint()'s loopback default
+# Delegates to um_api_endpoint when the composed resolver was sourced. The
+# branch below is only for a partial install with no um-api.sh; it composes
+# tier 3 the same way rather than forking endpoint.sh, so such an install is
+# not silently pinned to loopback either. Env vars are read directly because
+# um_endpoint_configured() does not exist on the inline-fallback path.
+_adr_endpoint() {
+  if command -v um_api_endpoint >/dev/null 2>&1; then
+    um_api_endpoint
+    return 0
+  fi
+  if [ -z "${UM_SERVER_URL:-}" ] && [ -z "${UM_ENDPOINT:-}" ]; then
+    local file="${UM_ENDPOINT_FILE:-$HOME/.um/endpoint}" value=""
+    if [ -r "$file" ]; then
+      # First line only — trimming the whole file would mash a stray second
+      # line into one bogus endpoint (mirrors _um_api_endpoint_file).
+      value=$(head -n1 "$file" 2>/dev/null | tr -d '[:space:]' || true)
+    fi
+    if [ -n "$value" ]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+  um_resolve_endpoint
+}
 
 _LAST_ERR=""
 
@@ -452,7 +493,7 @@ EOF
   slug=$(_slug "$clean_title")
 
   local endpoint
-  endpoint=$(um_resolve_endpoint)
+  endpoint=$(_adr_endpoint)
 
   local nnnn target rc body
   nnnn=$(_auto_number docs/decisions)
@@ -568,7 +609,7 @@ cmd_sync() {
   [ -n "$fm_decided_at" ] || _die 65 "$adr_file: missing required field: decided_at"
 
   local endpoint token
-  endpoint=$(um_resolve_endpoint)
+  endpoint=$(_adr_endpoint)
   token=$(_resolve_auth_token)
   # Match cmd_create's adr_id shape: just the leading 4-digit prefix, NOT
   # the full `NNNN-slug` from frontmatter.id. Server-side reconciliation

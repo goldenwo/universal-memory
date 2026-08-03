@@ -898,6 +898,67 @@ print(fm['title'])
   assert_contains "INT14 frontmatter has description" "$fm_block" "description:"
 fi
 
+# ─── Endpoint resolution (spec §4 tiers 1-4) ────────────────────────────────
+# REGRESSION: this skill sourced endpoint.sh directly and called
+# um_resolve_endpoint, which implements only tiers 1, 2 and 4 — the
+# ~/.um/endpoint FILE tier is composed one layer up, in um-api.sh. Because
+# installer/install.sh writes that file and never persists UM_SERVER_URL, a
+# standard remote install left every um-* script working and ONLY /adr posting
+# to http://localhost:6335. Tier 3 below is the case that would have caught it.
+echo ""
+echo "--- EP: endpoint resolution tiers ---"
+
+# Each case runs in a subshell with a private HOME, so the real ~/.um/endpoint
+# cannot make a broken tier look like it passed. Both env vars are unset first
+# for the same reason: an exported UM_SERVER_URL in the developer's own shell
+# (exactly the workaround this fix removes the need for) would otherwise mask
+# every lower tier.
+_ep() (
+  HOME="$1"; shift
+  unset UM_SERVER_URL UM_ENDPOINT
+  for kv in "$@"; do export "${kv?}"; done
+  _adr_endpoint 2>/dev/null
+)
+
+ep_tmp=$(mktemp -d)
+mkdir -p "$ep_tmp/withfile/.um" "$ep_tmp/nofile"
+printf 'http://file-tier.example:6337\n' > "$ep_tmp/withfile/.um/endpoint"
+
+assert_eq "EP tier1 UM_SERVER_URL wins" \
+  "http://env1.example:1" \
+  "$(_ep "$ep_tmp/withfile" UM_SERVER_URL=http://env1.example:1)"
+
+assert_eq "EP tier2 UM_ENDPOINT when SERVER_URL unset" \
+  "http://env2.example:2" \
+  "$(_ep "$ep_tmp/withfile" UM_ENDPOINT=http://env2.example:2)"
+
+assert_eq "EP tier1 beats tier2 when both set" \
+  "http://env1.example:1" \
+  "$(_ep "$ep_tmp/withfile" UM_SERVER_URL=http://env1.example:1 UM_ENDPOINT=http://env2.example:2)"
+
+# THE regression: no env at all, endpoint only in the installer-written file.
+assert_eq "EP tier3 ~/.um/endpoint file when no env (THE regression)" \
+  "http://file-tier.example:6337" \
+  "$(_ep "$ep_tmp/withfile")"
+
+assert_eq "EP tier4 loopback default when nothing configured" \
+  "http://localhost:6335" \
+  "$(_ep "$ep_tmp/nofile")"
+
+# A stray second line must not be mashed into the URL.
+printf 'http://first.example:6337\nhttp://second.example:9999\n' > "$ep_tmp/withfile/.um/endpoint"
+assert_eq "EP tier3 uses first line only" \
+  "http://first.example:6337" \
+  "$(_ep "$ep_tmp/withfile")"
+
+# An empty file must fall through to the default, not yield an empty endpoint.
+: > "$ep_tmp/withfile/.um/endpoint"
+assert_eq "EP tier3 empty file falls through to default" \
+  "http://localhost:6335" \
+  "$(_ep "$ep_tmp/withfile")"
+
+rm -rf "$ep_tmp"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 echo ""
 echo "=================================================="
