@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyTemporalDecay } from '../lib/ranking.mjs';
+import { applyTemporalDecay, resolveItemDate, isUsableDate } from '../lib/ranking.mjs';
 
 // Fixed "now" for all date-dependent tests.
 const FIXED_NOW = new Date('2026-04-17T00:00:00Z').getTime();
@@ -185,5 +185,56 @@ test('applyTemporalDecay — missing score defaults to 1 before multiplication',
     );
   } finally {
     Date.now = originalNow;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 9. isUsableDate — the write-side guard (VF-SUB)
+// ---------------------------------------------------------------------------
+
+// VF-SUB — the subset invariant: everything isUsableDate ACCEPTS must be
+// resolvable by resolveItemDate. Pins the direction RC6 cannot: a future
+// TIGHTENING of the reader would otherwise silently preserve values the
+// reader can no longer resolve, reopening the undated-points defect with no
+// failing test.
+test('VF-SUB: accept(isUsableDate) is a subset of resolvable(resolveItemDate)', () => {
+  const fixtures = [
+    '2026-08-02T04:00:00.000Z',
+    '2026-08-02',
+    'March 3, 2026',   // Date-parseable but NOT ISO — makes RC7 demonstrable
+    '',
+    'yesterday',
+    [],
+    {},
+    true,
+    1,
+    1754107200000,
+    null,
+    undefined,
+  ];
+  for (const v of fixtures) {
+    if (isUsableDate(v)) {
+      const ms = resolveItemDate({ metadata: { valid_from: v } });
+      assert.notEqual(ms, null, `isUsableDate accepted ${JSON.stringify(v)} but resolveItemDate could not resolve it`);
+    }
+  }
+});
+
+test('VF-SUB: isUsableDate rejects non-strings that resolveItemDate WOULD resolve', () => {
+  // true and 1 resolve read-side to 1970-01-01T00:00:00.001Z. They must still
+  // be rejected write-side so the payload honours openapi.mjs:174 (date-time).
+  assert.equal(isUsableDate(true), false);
+  assert.equal(isUsableDate(1), false);
+  assert.notEqual(resolveItemDate({ metadata: { valid_from: true } }), null);
+});
+
+test('VF-SUB: isUsableDate accepts a real ISO string and a parseable non-ISO string', () => {
+  assert.equal(isUsableDate('2026-08-02T04:00:00.000Z'), true);
+  assert.equal(isUsableDate('March 3, 2026'), true);
+});
+
+test('VF-SUB: isUsableDate rejects empty, unparseable, and container values', () => {
+  for (const v of ['', 'yesterday', [], {}, null, undefined]) {
+    assert.equal(isUsableDate(v), false, `expected ${JSON.stringify(v)} to be rejected`);
   }
 });
