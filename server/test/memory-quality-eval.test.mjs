@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 import { writeFile, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 import {
   recallAtK,
@@ -334,7 +334,7 @@ test('formatSummaryTable: renders the headline sections, null-tolerant', () => {
 // --- loadFixtureJsonl ------------------------------------------------------
 
 test('loadFixtureJsonl: round-trips a temp jsonl, drops blank lines', async () => {
-  const p = join(tmpdir(), `mq-eval-fixture-${process.pid}.jsonl`);
+  const p = join(tempDir('um-mq-eval-'), 'fixture.jsonl');
   await writeFile(p, '{"id":"r1","query":"q1"}\n\n{"id":"r2","query":"q2"}\n', 'utf8');
   try {
     const rows = await loadFixtureJsonl(p);
@@ -347,7 +347,7 @@ test('loadFixtureJsonl: round-trips a temp jsonl, drops blank lines', async () =
 });
 
 test('loadFixtureJsonl: malformed line throws WITH the 1-based line number', async () => {
-  const p = join(tmpdir(), `mq-eval-bad-${process.pid}.jsonl`);
+  const p = join(tempDir('um-mq-eval-bad-'), 'fixture.jsonl');
   await writeFile(p, '{"id":"ok"}\n{not json}\n', 'utf8');
   try {
     await assert.rejects(() => loadFixtureJsonl(p), /line 2/);

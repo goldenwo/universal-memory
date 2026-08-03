@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 import {
   isComparable,
@@ -265,7 +265,7 @@ test('formatSummaryTable: non-empty string with expected section tokens', () => 
 // ── loadFixtureJsonl ─────────────────────────────────────────────────────────
 
 test('loadFixtureJsonl: round-trips a 2-line .jsonl from tmpdir', async () => {
-  const p = join(tmpdir(), `d3-eval-test-${process.pid}-${Date.now()}.jsonl`);
+  const p = join(tempDir('um-d3-eval-'), 'fixture.jsonl');
   const row1 = { olderFact: 'x', newerFact: 'y', olderLane: 'work', newerLane: 'work', olderPersona: null, newerPersona: null, label: 'contradiction', category: 'same-lane-contradiction' };
   const row2 = { olderFact: 'm', newerFact: 'n', olderLane: 'work', newerLane: 'home', olderPersona: null, newerPersona: null, label: 'not', category: 'cross-lane' };
   // Include a trailing newline + a blank line to confirm blank-line filtering.
