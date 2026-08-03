@@ -49,18 +49,33 @@ function runFixture(mode) {
   // exiting 0 having run nothing, which would look exactly like a clean run.
   delete env.NODE_TEST_CONTEXT;
 
-  const res = spawnSync(process.execPath, ['--test', FIXTURE], { encoding: 'utf8', env });
+  // timeout: nothing above this applies one — node:test has no default per-test
+  // timeout — so a fixture that hangs would wedge the whole suite until the
+  // workflow-level timeout killed it, and the signal-killed children would then
+  // leak their own temp dirs and make the sweep blame the wrong thing.
+  const res = spawnSync(process.execPath, ['--test', FIXTURE], {
+    encoding: 'utf8', env, timeout: 60_000, killSignal: 'SIGKILL',
+  });
 
   const created = readFileSync(record, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean);
   // Surfaced in every assertion below: when the child fails to run at all, the
   // bare counts are indistinguishable from a passing cleanup.
   const why = `mode=${mode} child_status=${res.status}${res.error ? ` spawn_error=${res.error.message}` : ''}\n${res.stderr || ''}`;
-  return { root, created, why };
+  return { root, created, why, signal: res.signal };
 }
 
 for (const mode of MODES) {
   test(`tempDir leaves nothing behind when a test ends via: ${mode}`, () => {
-    const { root, created, why } = runFixture(mode);
+    const { root, created, why, signal } = runFixture(mode);
+
+    // The fixture records its dir BEFORE branching on the mode, so an
+    // unrecognised mode records 1 dir, falls through to its `default: throw`,
+    // cleans up normally, and satisfies every assertion below. Renaming a MODE
+    // entry would silently collapse all five termination paths into one generic
+    // throw while this file stayed green — so prove the child took the path it
+    // was asked to take, not merely that it cleaned up.
+    assert.ok(!why.includes('unknown LEAK_FIXTURE_MODE'), `fixture did not recognise mode=${mode} — ${why}`);
+    assert.notEqual(signal, 'SIGKILL', `fixture timed out for mode=${mode} — ${why}`);
 
     // Without this the assertions below would also pass if the fixture had
     // silently done nothing at all.
@@ -69,6 +84,19 @@ for (const mode of MODES) {
     assert.deepEqual(readdirSync(root), [], `isolated TMPDIR not empty after mode=${mode}`);
   });
 }
+
+// tempDir() is the single mandated holder of a recursive+force delete, and five
+// call sites forward a caller-supplied prefix into it (api-stats, capture-events,
+// control-routes, stats-payload, stats). These are the inputs that would put the
+// delete somewhere other than a fresh child of the temp root.
+test('tempDir rejects a prefix that would escape the temp root', () => {
+  for (const bad of ['', '../escape-', 'a/b-', 'a\\b-', '..', null, undefined, 7]) {
+    assert.throws(() => tempDir(bad), TypeError, `tempDir(${JSON.stringify(bad)}) should have thrown`);
+  }
+  // '' is the subtle one: path.join drops an empty segment, so it would create a
+  // SIBLING of the temp root rather than a child — invisible to the CI sweep.
+  assert.throws(() => tempDir(''), /non-empty/);
+});
 
 test('negative control: bypassing tempDir() DOES leak, so the checks above can see a leak', () => {
   const { root, created, why } = runFixture('raw-leak-control');

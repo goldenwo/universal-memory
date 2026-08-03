@@ -232,10 +232,30 @@ jobs:
         # something still held a handle to it. Only a whole-suite sweep catches
         # that, and it is what stops a repeat of the ~82,000 abandoned `um-*`
         # dirs found in a dev box's temp dir in August 2026.
+        #
+        # `shell: bash` is load-bearing: it adds -o pipefail, without which
+        # `find ... | wc -l` reports the exit status of `wc` and a failed find
+        # silently counts 0 — a gate that passes when its own measurement broke.
+        shell: bash
         run: |
           export TMPDIR="$RUNNER_TEMP/um-suite-tmp"
           rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-          node --test test/*.test.mjs
+
+          # test/lint/ is a second tier that `test/*.test.mjs` does NOT match —
+          # it must be named explicitly or no-raw-mkdtemp.test.mjs never runs and
+          # the "every call site uses the helper" half of this gate is unenforced.
+          #
+          # Capture the status instead of letting -e abort the step: the sweep
+          # has to run on FAILING runs too. Cleanup that only happens when the
+          # assertions pass is the exact defect this change was written to fix,
+          # and a gate that skips itself on failure repeats it one level up.
+          suite_rc=0
+          node --test test/*.test.mjs test/lint/*.test.mjs || suite_rc=$?
+
+          if [ ! -d "$TMPDIR" ]; then
+            echo "::error::leak check could not run — temp root $TMPDIR is missing"
+            exit 1
+          fi
           leftovers=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 | wc -l)
           if [ "$leftovers" -ne 0 ]; then
             echo "::error::server suite leaked $leftovers temp entries — see server/test/helpers/tmpdir.mjs"
@@ -243,6 +263,7 @@ jobs:
             exit 1
           fi
           echo "temp-dir leak check: clean"
+          exit $suite_rc
 
       # Full smoke — install step mounted /tmp/um-vault-ci rw and enabled MCP
       # writes, so Task 7 (reindex vault files), Task 8 (state writes), and

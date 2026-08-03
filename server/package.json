@@ -7,7 +7,7 @@
   "main": "mem0-mcp-http.mjs",
   "scripts": {
     "start": "node mem0-mcp-http.mjs",
-    "test": "node --test test/**/*.test.mjs"
+    "test": "node --test test/*.test.mjs test/*/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
