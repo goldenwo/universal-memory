@@ -945,3 +945,48 @@ test('umAdd VF6b: truthy-but-unusable caller values are all replaced', async () 
     assert.equal(payload.valid_from, payload.createdAt);
   }
 });
+
+// VF3/VF4/VF8 are GUARD tests — they pass by construction once the stamp lands.
+// Their value is realised only through RC1/RC3/RC5 (see the commit body).
+
+test('umAdd VF3: _systemMigration:true + absent → NO valid_from key at all', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'valid_from'), false, 'rebuild paths must never mint an event time');
+});
+
+test('umAdd VF4: _systemMigration:true + frontmatter value → preserved', async () => {
+  const qdrant = makeMockQdrantD2();
+  const supplied = '2019-05-06T07:08:09.000Z';
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: supplied },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, supplied);
+});
+
+test('umAdd VF8: system doc → NOT stamped', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'stamp', userId: 'u', infer: false,
+    metadata: { id: '_um_embedding_stamp', collection: 'memories' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'valid_from'), false, 'a dated system doc could flip temporalActive via countInWindow');
+});
