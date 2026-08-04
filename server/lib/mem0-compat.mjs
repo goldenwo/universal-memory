@@ -433,10 +433,18 @@ function pointToRawRecord(point) {
  * constant assertNoReservedFields enforces on the write path
  * (D3_SERVER_MANAGED_STATUS_FIELDS: status/supersededBy/supersededAt) so
  * the two guards cannot drift.
+ *
+ * valid_from joins them as the temporal RANKING date (the sole field
+ * resolveItemDate reads). handleUpdate upserts directly, bypassing
+ * buildPayload, so this set is the only guard on the path — without it a
+ * caller re-dates any point at will, and under UM_TEMPORAL_DECAY a
+ * far-future value scores Infinity. This is an authorisation rule about who
+ * may write the field, NOT validation of its value: a legitimate correction
+ * goes through the write path, as it already does for createdAt.
  */
 const R6_PROTECTED_KEYS = new Set([
   ...D3_SERVER_MANAGED_STATUS_FIELDS,
-  'userId', 'data', 'hash', 'createdAt', 'updatedAt', 'surfaces', 'lane',
+  'userId', 'data', 'hash', 'createdAt', 'updatedAt', 'valid_from', 'surfaces', 'lane',
 ]);
 
 function sanitizeUpdateMetadata(metadata) {
