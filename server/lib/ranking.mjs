@@ -3,6 +3,7 @@
  *
  * Exports:
  *   resolveItemDate(r)                          → epoch ms | null
+ *   isUsableDate(v)                             → boolean (write-side guard)
  *   applyTemporalDecay(results, halfLifeDays)   → sorted results[]
  *   applyTemporalWindow(results, window, opts)  → sorted results[]
  *   countInWindow(results, window)              → number
@@ -56,6 +57,29 @@ export function resolveItemDate(r) {
   if (!vf) return null;
   const ms = new Date(vf).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Is `v` a value the write path may persist as `valid_from`?
+ *
+ * Deliberately STRICTER than `resolveItemDate`, and the asymmetry is the point:
+ *   accept(isUsableDate) ⊆ resolvable(resolveItemDate)
+ * Everything the writer preserves is readable; never the reverse.
+ *
+ * `typeof v === 'string'` is necessary but not sufficient for the OpenAPI
+ * contract (`openapi.mjs:174` declares `date-time`, so a parseable non-ISO
+ * string like 'March 3, 2026' passes here while still not being a date-time).
+ * It excludes the `true` / `1` trap, both of which resolveItemDate WOULD
+ * resolve — to 1970-01-01T00:00:00.001Z, a silently wrong real date.
+ *
+ * Lives here, not in add.mjs, because its entire contract is "what
+ * resolveItemDate can resolve"; co-locating them is what stops the two
+ * drifting. Pinned by VF-SUB; RC6 and RC7 cover both drift directions.
+ *
+ * @returns {boolean}
+ */
+export function isUsableDate(v) {
+  return typeof v === 'string' && Number.isFinite(new Date(v).getTime());
 }
 
 /**
