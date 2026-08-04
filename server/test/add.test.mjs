@@ -869,3 +869,79 @@ test('umAdd #17: embedder fault → rejects loudly, no silent drop (fail-loud)',
   );
   assert.equal(q.upserts.length, 0, 'no partial/silent write when the fact cannot be embedded');
 });
+
+// ── Write-side valid_from stamp (spec step 1) ────────────────────────────────
+// Prefix is VF<n>, NOT T<n> — umAdd T7/T8 already exist above at :248/:261.
+
+test('umAdd VF1: infer:true, no valid_from → stamped, and valid_from === createdAt', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: true,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.ok(payload.valid_from, 'expected a valid_from stamp');
+  assert.equal(payload.valid_from, payload.createdAt, 'must share ONE clock read');
+});
+
+test('umAdd VF2: usable caller valid_from is preserved byte-exact', async () => {
+  const qdrant = makeMockQdrantD2();
+  const supplied = '2020-01-02T03:04:05.000Z';
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: supplied },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, supplied);
+  assert.notEqual(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF5: infer:false direct add, absent → stamped', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.ok(payload.valid_from);
+  assert.equal(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF6: caller valid_from:"" → replaced with a real instant, no empty string survives', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: '' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.notEqual(payload.valid_from, '');
+  assert.equal(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF6b: truthy-but-unusable caller values are all replaced', async () => {
+  for (const bad of [[], {}, 'yesterday', true, 1]) {
+    const qdrant = makeMockQdrantD2();
+    await umAdd({
+      memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+      metadata: { project: 'p', valid_from: bad },
+      _factsProviderOverride: factsPassthrough,
+      _embedProviderOverride: embedDummy,
+      _qdrantClient: qdrant.client,
+    });
+    const payload = qdrant.upserts[0].body.points[0].payload;
+    assert.equal(typeof payload.valid_from, 'string', `${JSON.stringify(bad)} should have been replaced by a string`);
+    assert.equal(payload.valid_from, payload.createdAt);
+  }
+});

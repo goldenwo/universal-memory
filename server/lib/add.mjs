@@ -60,6 +60,7 @@ import { withRequestContext, currentRequestId } from './request-context.mjs';
 import { umFactsExtractedTotal, umInbandSupersedeTotal, umInbandSupersedeDurationSeconds } from './metrics.mjs';
 import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
+import { isUsableDate } from './ranking.mjs';
 import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
 import { validateLanePersonaSlug } from './default-project.mjs';
@@ -113,7 +114,7 @@ export function computeFactId({ userId, text, lane, persona }) {
   return uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM);
 }
 
-function buildPayload({ userId, text, metadata, surface, lane, persona }) {
+function buildPayload({ userId, text, metadata, surface, lane, persona, stampValidFrom }) {
   // Capture metadata.project BEFORE the flatten-spread so we can ALSO seed
   // the `projects` Set field. Both forms (scalar + Set) coexist for backward
   // compat — existing project-scoped readers use the scalar; new readers
@@ -129,12 +130,20 @@ function buildPayload({ userId, text, metadata, surface, lane, persona }) {
   const projectScalar = metadata?.project;
   const surfaces = surface ? [surface] : undefined;
   const projects = projectScalar ? [projectScalar] : undefined;
+  const nowIso = new Date().toISOString();
   return {
     ...metadata,                       // FLATTENED (mem0 convention) — load-bearing
     userId,                            // CAMELCASE — mem0's createFilter uses raw key
     data: text,
     hash: md5(text),
-    createdAt: new Date().toISOString(),  // CAMELCASE — match mem0
+    createdAt: nowIso,                 // CAMELCASE — match mem0
+    // Write-side event time — the ONLY field temporal ranking resolves.
+    // ONE nowIso shared with createdAt so `valid_from === createdAt` is
+    // byte-exact and assertable (VF1).
+    // The GUARD, not the spread ordering, is what preserves a usable caller
+    // value: `...metadata` is spread ABOVE, so without `!isUsableDate` this
+    // would clobber it. RC2 pins that.
+    ...(stampValidFrom && !isUsableDate(metadata?.valid_from) ? { valid_from: nowIso } : {}),
     ...(lane !== undefined ? { lane } : {}),
     ...(persona !== undefined ? { persona } : {}),
     ...(surfaces ? { surfaces } : {}),
@@ -263,7 +272,13 @@ export async function umAdd({
     _classifyLane !== undefined ||
     _laneClassifierEnabled !== undefined ||
     defaultClassifierEnabled();
-  const classifySkip = _systemMigration === true || isSystemDoc({ metadata });
+  // `_systemMigration` (reindex / bulk import) and system docs are both
+  // "not authoritative for this write": they neither classify a lane nor mint
+  // an event time. ONE expression, TWO named policies — so a future change to
+  // either cannot silently alter the other.
+  const notAuthoritativeWrite = _systemMigration === true || isSystemDoc({ metadata });
+  const classifySkip = notAuthoritativeWrite;
+  const stampValidFrom = !notAuthoritativeWrite;
 
   // Gap-5 P3: write-time in-band supersession seam (ADR-0007 Option C), resolved
   // once per call. The inline judge is left to evaluateInBandSupersession's own
@@ -465,6 +480,7 @@ export async function umAdd({
           surface,
           lane: itemLane,
           persona,
+          stampValidFrom,
         }),
       };
       // Errors propagate raw — outer call sites (mem0-mcp-http) wrap in
