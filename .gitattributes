@@ -19,10 +19,17 @@ server/test/token-cost-baseline.txt text eol=lf
 # Exception: SQLite DB fixtures are binary — LF-normalization would corrupt them.
 server/test/fixtures/*.db binary
 
-# JS sources must be LF so a Windows editor cannot commit a whole-file CRLF
-# flip. Every .mjs in the tree is already LF and core.autocrlf is false, so this
-# is a no-op today — it exists because state-shape.test.mjs was committed as
-# CRLF during the tmpdir-leak change and turned a 4-line edit into a 156-line
-# diff, which is exactly how a real change hides inside reformatting noise.
-*.mjs text eol=lf
-*.js text eol=lf
+# NOT pinned: `*.mjs text eol=lf`. It was added in #218 on the claim that every
+# .mjs was already LF so the rule was a no-op. That claim was wrong — FOUR files
+# are committed with CRLF bytes (server/lib/ranking.mjs, server/openapi.mjs,
+# server/test/custom-gpt-actions.test.mjs, server/test/frontmatter.test.mjs), so
+# the rule made a fresh clone or worktree show ~2,000 lines of pure line-ending
+# churn across them, one of which was under active edit on another branch. A
+# `git add -A` there would have swept the renormalization into an unrelated
+# commit.
+#
+# Pinning JS to LF is still worth doing, but it has to be a DELIBERATE
+# renormalization (rule + `git add --renormalize .` in one commit, on a quiet
+# tree), not a rule dropped on top of a tree that does not already satisfy it.
+# cf. f2c178f, which reverted an out-of-scope line-ending normalization for the
+# same reason.

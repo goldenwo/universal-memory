@@ -106,5 +106,22 @@ function cleanup(final) {
   }
 }
 
+// KEEPING `after` IS DELIBERATE — decided 2026-08-03, pinned so it is not
+// re-argued. A review round proposed dropping it and relying on the `exit`
+// listener alone, since cleanup() is synchronous and `exit` runs strictly
+// later, so `after` adds no coverage and is the only reason the requeue above
+// exists. The stated hazard: because this module's `after` is registered at
+// import time it necessarily runs BEFORE the importing file's own `after`, so
+// on POSIX it rm -rf's the directory of a still-open better-sqlite3 handle
+// before that file closes it.
+//
+// Real in shape, benign in effect. POSIX permits unlinking an open file and
+// the descriptor stays valid, so sqlite's close path writes into an unlinked
+// temp file and the bytes are discarded — which is exactly the desired outcome
+// for a temp test DB. Linux CI has been green across this the whole time.
+// Dropping it would be a simplification bought against a live suite with no
+// demonstrated defect, so it is not taken. Revisit only if a real flake appears
+// (symptom to look for: a sqlite "disk I/O error" or a WAL/journal complaint
+// during a test file's own `after`, POSIX only).
 after(() => cleanup(false));
 process.on('exit', () => cleanup(true));
