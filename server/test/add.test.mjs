@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { v5 as uuidv5 } from 'uuid';
-import { umAdd } from '../lib/add.mjs';
+import { umAdd, computeFactId } from '../lib/add.mjs';
 import { RESERVED_METADATA_FIELDS, NAMESPACE_UM } from '../lib/dedup-constants.mjs';
 import { registry } from '../lib/metrics.mjs';
 
@@ -989,4 +989,51 @@ test('umAdd VF8: system doc → NOT stamped', async () => {
   });
   const payload = qdrant.upserts[0].body.points[0].payload;
   assert.equal(Object.hasOwn(payload, 'valid_from'), false, 'a dated system doc could flip temporalActive via countInWindow');
+});
+
+test('umAdd VF7: dedup merge leaves the existing point valid_from untouched', async () => {
+  // L2 (embedding) hit → mergeSurface patches only surfaces/projects/
+  // dedupCount/dedupLastSeenAt. No date field is in that patch, so the
+  // existing point keeps its own event time with no code change.
+  const qdrant = makeMockQdrantInband({
+    searchHit: {
+      id: '11111111-1111-5111-8111-111111111111',
+      score: 0.99,
+      payload: { data: 'hello', valid_from: '2001-02-03T04:05:06.000Z', createdAt: '2001-02-03T04:05:06.000Z' },
+    },
+  });
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  // makeMockQdrantInband pushes { collection, body } — the patch is body.payload.
+  const patched = qdrant.setPayloads[0].body.payload;
+  assert.equal(Object.hasOwn(patched, 'valid_from'), false, 'merge must not patch valid_from');
+  assert.equal(Object.hasOwn(patched, 'createdAt'), false, 'merge must not patch createdAt');
+});
+
+test('umAdd VF7b: dedup fail-soft on an L1 hit replaces the payload at the SAME id', async () => {
+  // Documents spec §5.2 / §9 residual 1: a swallowed dedup error falls through
+  // to the plain upsert, which takes the same deterministic computeFactId id,
+  // and qdrant upsert REPLACES the payload — re-dating an existing point.
+  // Pinned, not fixed: changing fail-soft upsert semantics is its own change.
+  const text = 'hello';
+  const expectedId = computeFactId({ userId: 'u', text, lane: undefined, persona: undefined });
+  const qdrant = makeMockQdrantInband({
+    scrollHit: { id: expectedId, payload: { data: text, valid_from: '2001-02-03T04:05:06.000Z' } },
+    setPayloadThrows: true,
+  });
+  await umAdd({
+    memory: makeMockMemory(), text, userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const point = qdrant.upserts[0].body.points[0];
+  assert.equal(point.id, expectedId, 'fail-soft upsert must reuse the deterministic id');
+  assert.notEqual(point.payload.valid_from, '2001-02-03T04:05:06.000Z', 'documents the re-dating');
 });
