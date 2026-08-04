@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
-import { applyTemporalDecay, applyTemporalWindow, countInWindow } from './lib/ranking.mjs';
+import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate } from './lib/ranking.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
 
 // Temporal over-fetch constants (spec D-a). The cap borrows
@@ -1178,12 +1178,18 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			const relPath = `authored/${project}/${id}.md`;
 
 			// Build document: frontmatter + body
+			// The server default must be applied AFTER the caller spread, not
+			// before it. Spread-then-default was silently clobbered by a caller
+			// passing `valid_from: null` or '', leaving the doc with no usable
+			// event time — permanently ungradeable by temporal ranking, which
+			// reads this field and nothing else. Guarded on isUsableDate so a
+			// genuinely usable caller value still wins.
 			const fm = {
 				schema_version: 1,
 				status: 'current',
-				valid_from: new Date().toISOString(),
 				...metadata,
 			};
+			if (!isUsableDate(fm.valid_from)) fm.valid_from = new Date().toISOString();
 			const docText = serializeFrontmatter(fm, `\n${content}`);
 
 			await writeVaultFile(relPath, docText);
@@ -1346,13 +1352,18 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 			}
 
 			// 2. Create new doc
+			// Same fix as memory_capture, with two differences that matter:
+			// `supersedes` stays AFTER the spread (deliberately last, so a caller
+			// cannot override the linkage), and the default reuses the shared
+			// `now` rather than taking a second clock read — the same `now` is
+			// written to oldFm.invalidated_at below and the pair must agree.
 			const newFm = {
 				schema_version: 1,
 				status: 'current',
-				valid_from: now,
 				...new_doc,
 				supersedes: [old_id],
 			};
+			if (!isUsableDate(newFm.valid_from)) newFm.valid_from = now;
 			// Remove content from frontmatter — it belongs in the body
 			const newContent = new_doc.content;
 			delete newFm.content;

@@ -280,6 +280,40 @@ export async function umAdd({
   const classifySkip = notAuthoritativeWrite;
   const stampValidFrom = !notAuthoritativeWrite;
 
+  // A doc's event time is owned by its own frontmatter, so we never mint one
+  // for it (that is the point of the guard above). The cost is that a doc
+  // indexed WITHOUT `valid_from` is permanently ungradeable by temporal
+  // ranking and nothing reports it — the exact silent failure this field
+  // exists to remove. The stamp cannot close that hole; this warn does.
+  //
+  // Keyed on `_systemMigration` specifically, NOT notAuthoritativeWrite:
+  // system docs are the OTHER arm and have no meaningful event time, so
+  // warning about them would be pure noise.
+  //
+  // Placed here because this is the one point where both the path and the
+  // value are known. It covers all four index paths uniformly (reindexDoc,
+  // POST /api/reindex — which does NOT call reindexDoc but inlines the logic
+  // and calls umAdd directly — cli/reindex.mjs and cli/mem0-import.mjs).
+  // One warn per umAdd call: every _systemMigration caller passes infer:false
+  // and calls umAdd once per document, so per-call IS per-document here.
+  if (_systemMigration === true && !isUsableDate(metadata?.valid_from)) {
+    logger.warn(
+      {
+        event: 'valid_from.missing_on_index',
+        // Identifiers ONLY — never `text`, `data`, or any fact body. Logs are
+        // an egress surface and corpus content stays local. `metadata.id` is
+        // genuinely absent on bulk import (buildImportMetadata returns
+        // {mem0_id, category, imported_at}), so the fallback is live.
+        id: metadata?.id ?? metadata?.mem0_id ?? null,
+        collection,
+        surface: surface ?? null,
+      },
+      // Must say what to DO — and must NOT suggest re-indexing, which is
+      // forbidden while the #215 measurement frame is open.
+      'indexed document has no usable valid_from; add `valid_from:` to the document frontmatter',
+    );
+  }
+
   // Gap-5 P3: write-time in-band supersession seam (ADR-0007 Option C), resolved
   // once per call. The inline judge is left to evaluateInBandSupersession's own
   // default (judgeContradiction) unless a test injects _judgeContradiction.

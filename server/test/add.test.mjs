@@ -1037,3 +1037,79 @@ test('umAdd VF7b: dedup fail-soft on an L1 hit replaces the payload at the SAME 
   assert.equal(point.id, expectedId, 'fail-soft upsert must reuse the deterministic id');
   assert.notEqual(point.payload.valid_from, '2001-02-03T04:05:06.000Z', 'documents the re-dating');
 });
+
+// ── Step 2: authoring-defect warn ───────────────────────────────────────────
+// Docs are never stamped (their event time is owned by their own frontmatter),
+// so a doc indexed WITHOUT valid_from is permanently ungradeable and nothing
+// reports it. This warn is what closes that hole; the stamp cannot.
+
+test('umAdd VF-W1: _systemMigration + unusable valid_from → exactly one warn, no corpus content', async () => {
+  const warns = [];
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'CORPUS-BODY-MUST-NOT-LEAK', userId: 'u', infer: false,
+    metadata: { id: 'doc-9', project: 'p' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+    _logger: { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }) },
+  });
+  assert.equal(warns.length, 1, 'exactly one warn per umAdd call');
+  assert.equal(warns[0].obj.event, 'valid_from.missing_on_index');
+  assert.equal(warns[0].obj.id, 'doc-9');
+  // Logs are an egress surface — identifiers only, never a fact body.
+  const line = JSON.stringify(warns[0]);
+  assert.ok(!line.includes('CORPUS-BODY-MUST-NOT-LEAK'), 'warn must carry no corpus content');
+  // Must not tell the operator to reindex — forbidden while the #215 frame is open.
+  assert.ok(!/reindex/i.test(warns[0].msg), 'remediation must not suggest reindexing');
+  assert.match(warns[0].msg, /frontmatter/i, 'remediation must say what to do');
+});
+
+test('umAdd VF-W1b: _systemMigration + USABLE valid_from → no warn', async () => {
+  const warns = [];
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { id: 'doc-9', valid_from: '2019-05-06T07:08:09.000Z' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+    _logger: { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }) },
+  });
+  assert.equal(warns.filter((w) => w.obj?.event === 'valid_from.missing_on_index').length, 0);
+});
+
+test('umAdd VF-W1c: bulk-import shape (no metadata.id) falls back to mem0_id', async () => {
+  // buildImportMetadata returns {mem0_id, category, imported_at} — no `id` —
+  // so this fallback branch is live, not defensive.
+  const warns = [];
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { mem0_id: 'm-42' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+    _logger: { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }) },
+  });
+  const w = warns.find((x) => x.obj?.event === 'valid_from.missing_on_index');
+  assert.ok(w, 'warn emitted on the import path too');
+  assert.equal(w.obj.id, 'm-42');
+});
+
+test('umAdd VF-W1d: a normal (non-migration) add emits no such warn — it gets stamped instead', async () => {
+  const warns = [];
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+    _logger: { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }) },
+  });
+  assert.equal(warns.filter((w) => w.obj?.event === 'valid_from.missing_on_index').length, 0);
+});
