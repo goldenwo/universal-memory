@@ -100,8 +100,20 @@ export async function checkContentHashDedup({ client, collection, userId, hash, 
           partitionArm('persona', persona),
         ],
         // D3.1 §4.1 — exclude superseded tombstones so a re-assert of a
-        // superseded fact creates a fresh point rather than merging into the
-        // dead one. Expressed as must_not (not must status==current) so that
+        // superseded fact does not MERGE into the dead one.
+        //
+        // It does NOT create a fresh point, despite what this comment claimed
+        // until 2026-08-03. The re-assert finds no dedup hit here and falls
+        // through to the plain upsert — but computeFactId is text-deterministic,
+        // so the id resolves to the existing tombstone's id and qdrant `upsert`
+        // REPLACES its payload. Since buildPayload forces status:'current'
+        // unconditionally, the superseded point is RESURRECTED (and re-dated).
+        // Pinned by `umAdd VF7b` in add.test.mjs.
+        //
+        // Whether resurrection is desirable is a supersession-model question,
+        // recorded as a spec residual and deliberately NOT changed here.
+        //
+        // Expressed as must_not (not must status==current) so that
         // pre-D3 points with NO status key are correctly treated as current
         // and still match (absence-tolerance invariant).
         must_not: [{ key: 'status', match: { value: 'superseded' } }],

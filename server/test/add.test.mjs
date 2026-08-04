@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { v5 as uuidv5 } from 'uuid';
-import { umAdd } from '../lib/add.mjs';
+import { umAdd, computeFactId } from '../lib/add.mjs';
 import { RESERVED_METADATA_FIELDS, NAMESPACE_UM } from '../lib/dedup-constants.mjs';
 import { registry } from '../lib/metrics.mjs';
 
@@ -868,4 +868,172 @@ test('umAdd #17: embedder fault → rejects loudly, no silent drop (fail-loud)',
     /embedder down/,
   );
   assert.equal(q.upserts.length, 0, 'no partial/silent write when the fact cannot be embedded');
+});
+
+// ── Write-side valid_from stamp (spec step 1) ────────────────────────────────
+// Prefix is VF<n>, NOT T<n> — umAdd T7/T8 already exist above at :248/:261.
+
+test('umAdd VF1: infer:true, no valid_from → stamped, and valid_from === createdAt', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: true,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.ok(payload.valid_from, 'expected a valid_from stamp');
+  assert.equal(payload.valid_from, payload.createdAt, 'must share ONE clock read');
+});
+
+test('umAdd VF2: usable caller valid_from is preserved byte-exact', async () => {
+  const qdrant = makeMockQdrantD2();
+  const supplied = '2020-01-02T03:04:05.000Z';
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: supplied },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, supplied);
+  assert.notEqual(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF5: infer:false direct add, absent → stamped', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.ok(payload.valid_from);
+  assert.equal(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF6: caller valid_from:"" → replaced with a real instant, no empty string survives', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: '' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.notEqual(payload.valid_from, '');
+  assert.equal(payload.valid_from, payload.createdAt);
+});
+
+test('umAdd VF6b: truthy-but-unusable caller values are all replaced', async () => {
+  for (const bad of [[], {}, 'yesterday', true, 1]) {
+    const qdrant = makeMockQdrantD2();
+    await umAdd({
+      memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+      metadata: { project: 'p', valid_from: bad },
+      _factsProviderOverride: factsPassthrough,
+      _embedProviderOverride: embedDummy,
+      _qdrantClient: qdrant.client,
+    });
+    const payload = qdrant.upserts[0].body.points[0].payload;
+    assert.equal(typeof payload.valid_from, 'string', `${JSON.stringify(bad)} should have been replaced by a string`);
+    assert.equal(payload.valid_from, payload.createdAt);
+  }
+});
+
+// VF3/VF4/VF8 are GUARD tests — they pass by construction once the stamp lands.
+// Their value is realised only through RC1/RC3/RC5 (see the commit body).
+
+test('umAdd VF3: _systemMigration:true + absent → NO valid_from key at all', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'valid_from'), false, 'rebuild paths must never mint an event time');
+});
+
+test('umAdd VF4: _systemMigration:true + frontmatter value → preserved', async () => {
+  const qdrant = makeMockQdrantD2();
+  const supplied = '2019-05-06T07:08:09.000Z';
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p', valid_from: supplied },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, supplied);
+});
+
+test('umAdd VF8: system doc → NOT stamped', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'stamp', userId: 'u', infer: false,
+    metadata: { id: '_um_embedding_stamp', collection: 'memories' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(Object.hasOwn(payload, 'valid_from'), false, 'a dated system doc could flip temporalActive via countInWindow');
+});
+
+test('umAdd VF7: dedup merge leaves the existing point valid_from untouched', async () => {
+  // L2 (embedding) hit → mergeSurface patches only surfaces/projects/
+  // dedupCount/dedupLastSeenAt. No date field is in that patch, so the
+  // existing point keeps its own event time with no code change.
+  const qdrant = makeMockQdrantInband({
+    searchHit: {
+      id: '11111111-1111-5111-8111-111111111111',
+      score: 0.99,
+      payload: { data: 'hello', valid_from: '2001-02-03T04:05:06.000Z', createdAt: '2001-02-03T04:05:06.000Z' },
+    },
+  });
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  // makeMockQdrantInband pushes { collection, body } — the patch is body.payload.
+  const patched = qdrant.setPayloads[0].body.payload;
+  assert.equal(Object.hasOwn(patched, 'valid_from'), false, 'merge must not patch valid_from');
+  assert.equal(Object.hasOwn(patched, 'createdAt'), false, 'merge must not patch createdAt');
+});
+
+test('umAdd VF7b: dedup fail-soft on an L1 hit replaces the payload at the SAME id', async () => {
+  // Documents spec §5.2 / §9 residual 1: a swallowed dedup error falls through
+  // to the plain upsert, which takes the same deterministic computeFactId id,
+  // and qdrant upsert REPLACES the payload — re-dating an existing point.
+  // Pinned, not fixed: changing fail-soft upsert semantics is its own change.
+  const text = 'hello';
+  const expectedId = computeFactId({ userId: 'u', text, lane: undefined, persona: undefined });
+  const qdrant = makeMockQdrantInband({
+    scrollHit: { id: expectedId, payload: { data: text, valid_from: '2001-02-03T04:05:06.000Z' } },
+    setPayloadThrows: true,
+  });
+  await umAdd({
+    memory: makeMockMemory(), text, userId: 'u', infer: false,
+    metadata: { project: 'p' },
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const point = qdrant.upserts[0].body.points[0];
+  assert.equal(point.id, expectedId, 'fail-soft upsert must reuse the deterministic id');
+  assert.notEqual(point.payload.valid_from, '2001-02-03T04:05:06.000Z', 'documents the re-dating');
 });
