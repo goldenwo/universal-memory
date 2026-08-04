@@ -362,6 +362,17 @@ jobs:
           # ships default-off/inert; against a flag-off stack S9 skips cleanly
           # on the /v1/ping/ 404). Self-cleaning via the compat R7 DELETE.
           UM_SMOKE_MEM0_COMPAT: "1"
+          # Write-side valid_from — UM_SMOKE_VALIDFROM=1 fires the S11
+          # projection probe: write a fact via REST /api/add supplying NO
+          # valid_from (so the write-side stamp must mint one), then read it
+          # back through MCP memory_search with full:true and assert the value
+          # arrived as metadata.valid_from and parses as a datetime. This is the
+          # one property no unit test can cover: buildPayload writes a FLAT
+          # payload key, the ranker reads a NESTED metadata.valid_from, and the
+          # projection happens inside mem0ai's Memory.search rather than in UM
+          # code — so a mocked unit assertion could only check its own copy of
+          # the mapping. Self-cleaning (DELETE), like S8.
+          UM_SMOKE_VALIDFROM: "1"
           # #159 T9 — UM_SMOKE_REMOTE_RT=1 fires the S10 remote round-trip
           # probe: append-turn ×2 (X-UM-Source header) → capture.turn counters
           # row read via `docker exec node -e` from the container's
