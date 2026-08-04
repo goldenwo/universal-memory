@@ -2793,6 +2793,83 @@ sys.exit(0 if any(m in str(r.get('title','')) + str(r.get('body','')) + str(r.ge
 	echo "[smoke]     Tier-2 #9 S8 cross-surface records cleaned up"
 fi
 
+# S11 — write-side valid_from projection probe. Gated by UM_SMOKE_VALIDFROM=1,
+# mirroring S2–S9. Proves the ONE property no unit test can: buildPayload writes
+# a FLAT payload key, the ranker reads a NESTED r.metadata.valid_from, and the
+# flat->nested projection happens inside mem0ai's Memory.search — not in UM code.
+# makeMockMemory is a bare config stub with no search method, so a unit-level
+# assertion could only check the test's own copy of the mapping, which is exactly
+# the duplicated-predicate failure (#188) this probe exists to avoid.
+#
+# The assertion deliberately does NOT re-implement resolveItemDate. The rig is
+# bash + python3 and cannot import it; hand-copying the predicate would be the
+# same #188 smell. It checks the two things the rig CAN check without duplicating
+# logic: the key survives projection, and the value parses as a datetime.
+# Resolvability in JS terms is already pinned at unit level by VF6b.
+#
+# Self-cleaning like S8. Runs after the 5/5 gate, so cleanup is store hygiene.
+if [ -n "${UM_SMOKE_VALIDFROM:-}" ]; then
+	echo "[smoke] S11 — write-side valid_from projection (UM_SMOKE_VALIDFROM=1)"
+	VF_MARKER="validfrom-$(date +%s)-$$"
+	VF_IDS=""
+
+	vf_cleanup() {
+		for id in $VF_IDS; do
+			[ -n "$id" ] || continue
+			curl -sf -X DELETE "$ENDPOINT/api/$id" >/dev/null 2>&1 || true
+		done
+	}
+	vf_fail() { echo "[smoke] S11 FAIL: $1" >&2; vf_cleanup; _um_smoke_auth_cleanup; exit 1; }
+
+	# 1) WRITE via REST — no valid_from supplied, so the write-side stamp must
+	#    mint one. This is a direct, non-system add: exactly the path the stamp
+	#    covers.
+	VF_ADD_RESP=$(curl -sf -X POST "$ENDPOINT/api/add" \
+		-H 'Content-Type: application/json' \
+		-d "{\"text\": \"The valid-from projection code is $VF_MARKER.\"}") || vf_fail "/api/add request failed"
+	VF_IDS=$(echo "$VF_ADD_RESP" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for r in data.get('results', []):
+    if r.get('id'): print(r['id'])
+") || vf_fail "/api/add returned malformed JSON: $VF_ADD_RESP"
+	[ -n "$VF_IDS" ] || vf_fail "/api/add extracted 0 facts (input must reliably extract): $VF_ADD_RESP"
+	echo "[smoke]     wrote $(echo "$VF_IDS" | wc -w | tr -d ' ') fact(s), marker=$VF_MARKER"
+
+	# 2) READ BACK with full:true — the branch that surfaces `metadata`. Poll,
+	#    since mem0 writes settle async (same 15x2s budget as S8).
+	VF_FOUND=0
+	VF_SEARCH_RESP=""
+	for i in $(seq 1 15); do
+		VF_SEARCH_RESP=$(mcp_call 200 memory_search "{\"query\":\"$VF_MARKER\",\"limit\":10,\"full\":true}") || true
+		if echo "$VF_SEARCH_RESP" | python3 -c "
+import json, sys, datetime
+m = '$VF_MARKER'
+data = json.load(sys.stdin)
+txt = (data.get('result', {}).get('content') or [{}])[0].get('text', '{}')
+results = json.loads(txt).get('results', []) if txt else []
+hits = [r for r in results if m in str(r.get('title','')) + str(r.get('body','')) + str(r.get('snippet',''))]
+if not hits:
+    sys.exit(1)
+# The projection under test: a FLAT payload key must arrive NESTED here.
+vf = (hits[0].get('metadata') or {}).get('valid_from')
+if not vf:
+    print('MISSING', file=sys.stderr); sys.exit(2)
+# Parse only — do NOT re-implement resolveItemDate. fromisoformat rejects a
+# trailing Z before Python 3.11, so normalise it rather than skipping the check.
+datetime.datetime.fromisoformat(str(vf).replace('Z', '+00:00'))
+sys.exit(0)
+" 2>/dev/null; then VF_FOUND=1; break; fi
+		sleep 2
+	done
+	[ "$VF_FOUND" = "1" ] || vf_fail "marker '$VF_MARKER' never surfaced with a parseable metadata.valid_from after 30s. Last response: $VF_SEARCH_RESP"
+	echo "[smoke]     OK: stamped valid_from survived projection to metadata.valid_from and parses as a datetime"
+
+	# 3) Cleanup — restore baseline.
+	vf_cleanup
+	echo "[smoke]     S11 valid_from probe records cleaned up"
+fi
+
 # mem0-compat S9 — mem0 Platform-dialect round-trip probe (compat spec §8;
 # docs/mem0-compat.md is the canonical contract). Gated by
 # UM_SMOKE_MEM0_COMPAT=1 (explicit opt-in), mirroring S2–S8. Exercises the
