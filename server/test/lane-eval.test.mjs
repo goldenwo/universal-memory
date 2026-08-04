@@ -20,7 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 import {
   computeMetrics,
@@ -241,7 +241,7 @@ test('formatSummaryTable: non-empty string with expected section tokens', () => 
 // ── loadFixtureJsonl ─────────────────────────────────────────────────────────
 
 test('loadFixtureJsonl: round-trips a 2-line .jsonl incl. an expected_lane:null row', async () => {
-  const p = join(tmpdir(), `lane-eval-test-${process.pid}-${Date.now()}.jsonl`);
+  const p = join(tempDir('um-lane-eval-'), 'fixture.jsonl');
   const row1 = { text: 'sprint planning notes', expected_lane: 'work', category: 'work' };
   const row2 = { text: 'it might rain', expected_lane: null, category: 'noise' };
   await writeFile(p, JSON.stringify(row1) + '\n' + JSON.stringify(row2) + '\n\n', 'utf8');
