@@ -34,6 +34,91 @@ jobs:
       - id: check
         run: echo "has_secret=${{ secrets.OPENAI_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
 
+  # Offline dependency + patch integrity gate. Runs on EVERY PR, with no
+  # secrets required.
+  #
+  # WHY THIS EXISTS. The `smoke` job below owns the unit suite, the
+  # patch-package apply AND the mem0ai source-hash verify — and it gates on
+  # OPENAI_API_KEY. Dependabot PRs execute in a separate secrets scope where
+  # that secret is empty, so `smoke` skips CLEANLY and all three checks vanish
+  # with it. The visible result is a green PR whose test suite never ran.
+  #
+  # Measured 2026-08-04 on #211 (mem0ai 2.4.6 -> 3.1.2): the source hash drifts
+  # and the version-pinned W6.2 patch does not apply, yet the PR presented as
+  # passing. A real image build would have failed loud on the hash pin, but
+  # nothing before `docker build` was reachable in that context.
+  #
+  # This job deliberately DUPLICATES the three checks rather than being
+  # conditioned as the complement of `smoke`'s `if:`. A hand-maintained
+  # complement is one edit away from leaving a gap identical to the one this
+  # closes; ~1 minute of duplicated work is the cheaper failure mode.
+  deps-guard:
+    name: deps + patch integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        working-directory: server
+        run: npm ci
+
+      # ORDER IS LOAD-BEARING: the pin is a hash of the PRISTINE source and
+      # the Dockerfile verifies it BEFORE `npx patch-package` (Dockerfile:47-53).
+      # Patch-then-verify would compare a patched file against an unpatched
+      # pin and fail on a perfectly good tree.
+      #
+      # Mirrors the Dockerfile pin exactly. Derives the expected-hash filename
+      # from the INSTALLED version, so a bump that leaves a stale
+      # mem0ai+<old>.source.sha256 behind fails here as a missing pin rather
+      # than silently verifying against the wrong file.
+      - name: mem0ai source hash pin
+        working-directory: server
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./node_modules/mem0ai/package.json').version")
+          pin="patches/mem0ai+${version}.source.sha256"
+          if [ ! -f "$pin" ]; then
+            echo "::error::no source-hash pin for mem0ai@${version} (expected $pin). A version bump requires the reconciliation in server/patches/README.md."
+            exit 1
+          fi
+          computed=$(sha256sum node_modules/mem0ai/dist/oss/index.mjs | awk '{print $1}')
+          expected=$(cat "$pin")
+          if [ "$computed" != "$expected" ]; then
+            echo "::error::mem0ai source hash drift — expected=$expected got=$computed; see server/patches/README.md §Reconciliation"
+            exit 1
+          fi
+          echo "mem0ai@${version} source hash verified"
+
+      # Must apply cleanly. patch-package exits 0 on a no-op, so assert the
+      # patched marker is actually present afterwards rather than trusting the
+      # exit code (the same trap noted at the Dockerfile patch step).
+      - name: mem0ai patch applies
+        working-directory: server
+        run: |
+          set -euo pipefail
+          npx patch-package
+          if ! grep -q "\[mem0-patch\]" node_modules/mem0ai/dist/oss/index.mjs; then
+            echo "::error::patch-package reported success but no [mem0-patch] marker is present — the patch did not apply. See server/patches/README.md §Reconciliation"
+            exit 1
+          fi
+
+      # Includes test/provider/ (90 tests), which the smoke job's own command
+      # omits — measured 2026-08-04: `test/*.test.mjs test/lint/*.test.mjs` runs
+      # 2077 of the tree's 2170 tests. Those 90 need no secrets and pass clean;
+      # they were simply never named.
+      #
+      # test/perf/ stays OUT deliberately: the C.10 perf-budget tests are
+      # load-flaky on shared runners (they pass standalone). A timing assertion
+      # on a noisy runner produces failures that teach nothing, and this job's
+      # job is to be trustworthy enough that a red result means something.
+      - name: Unit suite
+        working-directory: server
+        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs
+
   smoke:
     name: build + smoke
     needs: guard
