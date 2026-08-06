@@ -28,6 +28,10 @@
 
 import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+// ranking.mjs is pure and import-free — safe at module top (no live dep is touched).
+// assertDateCohorts uses the READ PATH's own predicate so the cohort guard cannot drift
+// from what the ranker actually treats as dated.
+import { isUsableDate } from '../lib/ranking.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
@@ -866,6 +870,89 @@ async function clearPoints(client, name) {
 async function countPoints(client, name) {
   try { return (await client.count(name, { exact: true })).count; }
   catch (e) { if (e?.status === 404) return null; throw e; }
+}
+
+/**
+ * Delete the TOP-LEVEL `valid_from` key from a DEFINED SUBSET of points on a scratch
+ * collection. This is how the undated cohort is created: everything is seeded through the
+ * normal write path (so dedup, lane classification, reserved-field assertions and capture
+ * counters all behave exactly as in production), and only then is the date removed from
+ * the chosen subset.
+ *
+ * TWO WAYS THE OBVIOUS IMPLEMENTATION SILENTLY NO-OPS — both leave every point dated, so
+ * the downstream measurement passes VACUOUSLY, which is indistinguishable from success:
+ *   1. `setPayload` CANNOT delete keys — lib/supersede.mjs clears fields to `null` for
+ *      exactly this reason. Only `deletePayload` removes a key.
+ *   2. The key is the top-level `valid_from`, NOT `metadata.valid_from`. lib/add.mjs
+ *      flattens metadata to the payload root; the dotted form is only the read-path
+ *      projection in lib/ranking.mjs, and naming it removes nothing.
+ *
+ * Scratch-only: assertScratchSafe runs BEFORE any client call. An empty subset is refused
+ * rather than treated as success — a no-op strip is the failure this function exists to
+ * make impossible.
+ */
+export async function stripValidFrom(client, collection, pointIds) {
+  assertScratchSafe(collection);
+  if (!Array.isArray(pointIds) || pointIds.length === 0) {
+    throw new Error('mq-eval: stripValidFrom needs a non-empty point-id subset — an empty strip is a silent no-op');
+  }
+  await client.deletePayload(collection, { points: pointIds, keys: ['valid_from'], wait: true });
+}
+
+/**
+ * Assert the dated/undated cohorts are exactly as intended, BEFORE any number is computed.
+ *
+ * BOTH directions are mandatory, and each guards a different vacuous pass:
+ *   - undated ids carry NO `valid_from` — catches a strip that no-opped (wrong API, or the
+ *     dotted key), which would leave both cohorts dated.
+ *   - dated ids STILL carry theirs — catches a strip that was too broad. If the whole
+ *     corpus ends up undated, the undated factor becomes a uniform multiplier, ordering is
+ *     unchanged by construction, and the gate passes with a delta of exactly 0: a null
+ *     result wearing the shape of a clean pass.
+ *
+ * Both subsets must be non-empty, or the corresponding check is itself vacuous.
+ *
+ * THE TWO CHECKS ARE DELIBERATELY ASYMMETRIC — do not "simplify" them to one predicate:
+ *   - undated: the key must be strictly ABSENT. A present-but-null `valid_from` is exactly
+ *     what a `setPayload`-based no-op leaves behind (supersede.mjs clears fields to null),
+ *     so accepting null here would wave through the very mistake trap (a) exists to catch.
+ *   - dated: the value must satisfy the READ PATH's own `isUsableDate`. A present-but-
+ *     unusable value (null, '', a Date object that add.mjs failed to stamp) is one the
+ *     ranker scores as undated, which silently makes the whole corpus undated — the
+ *     uniform-multiplier vacuous pass, arriving through the back door.
+ */
+export async function assertDateCohorts(client, collection, { undatedIds = [], datedIds = [] } = {}) {
+  assertScratchSafe(collection);
+  if (undatedIds.length === 0 || datedIds.length === 0) {
+    throw new Error(
+      `mq-eval: assertDateCohorts needs BOTH cohorts non-empty (undated=${undatedIds.length}, dated=${datedIds.length}) — a one-sided corpus makes the measurement vacuous`,
+    );
+  }
+
+  const ids = [...undatedIds, ...datedIds];
+  const fetched = await client.retrieve(collection, { ids, with_payload: true });
+  const found = new Map((fetched ?? []).map((p) => [String(p.id), p.payload ?? {}]));
+
+  const missing = ids.filter((id) => !found.has(String(id)));
+  if (missing.length > 0) {
+    throw new Error(`mq-eval COHORT VIOLATION: ${missing.length}/${ids.length} cohort points not found in '${collection}'`);
+  }
+
+  const stillDated = undatedIds.filter((id) => found.get(String(id)).valid_from !== undefined);
+  if (stillDated.length > 0) {
+    throw new Error(
+      `mq-eval COHORT VIOLATION: ${stillDated.length}/${undatedIds.length} undated-cohort points STILL carry valid_from — the strip no-opped (wrong API, or the dotted metadata.valid_from). Every number computed from here would be vacuous.`,
+    );
+  }
+
+  const lostDate = datedIds.filter((id) => !isUsableDate(found.get(String(id)).valid_from));
+  if (lostDate.length > 0) {
+    throw new Error(
+      `mq-eval COHORT VIOLATION: ${lostDate.length}/${datedIds.length} dated distractors LOST a usable valid_from — the strip was too broad, or the value is one the read path cannot use. A uniformly-undated corpus makes the undated factor a uniform multiplier, so the gate passes with a delta of exactly 0.`,
+    );
+  }
+
+  return { undated: undatedIds.length, dated: datedIds.length };
 }
 
 /**
