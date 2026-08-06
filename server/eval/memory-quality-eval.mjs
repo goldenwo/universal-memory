@@ -873,6 +873,83 @@ async function countPoints(client, name) {
 }
 
 /**
+ * An ISO 8601 STRING for `daysAgo` days before `now`, for back-dating the dated cohort.
+ *
+ * WHY A STRING, AND WHY THIS MATTERS: lib/add.mjs preserves a caller-supplied
+ * `valid_from` only when `isUsableDate` accepts it, and isUsableDate requires
+ * `typeof v === 'string'`. A `Date` object or an epoch number is therefore REJECTED and
+ * silently replaced with `nowIso`. The point still ends up WITH a `valid_from`, so a
+ * presence check still passes — while the whole cohort has quietly reverted to ~0 days
+ * old, which is the exact degenerate fixture the back-dating exists to avoid. Use
+ * assertBackdated (equality, not presence) to catch it.
+ */
+export function backdatedIso(daysAgo, now = Date.now()) {
+  if (!Number.isFinite(daysAgo)) throw new Error(`mq-eval: backdatedIso needs a finite daysAgo (got ${daysAgo})`);
+  // NEGATIVE is refused, not merely odd: a forward-dated point yields a NEGATIVE age, and
+  // applyTemporalDecay has no upper clamp (unlike applyTemporalWindow, which documents
+  // "a score is only ever multiplied by a factor <= 1"). So a sign typo in a fixture would
+  // silently INFLATE a seed's score above its true value — the opposite of the degenerate
+  // case this helper exists to prevent, and far harder to notice.
+  if (daysAgo < 0) throw new Error(`mq-eval: backdatedIso refuses a negative daysAgo (${daysAgo}) — a future date inflates the decay factor above 1`);
+  const ms = now - daysAgo * 86400000;
+  if (!Number.isFinite(ms) || Number.isNaN(new Date(ms).getTime())) {
+    throw new Error(`mq-eval: backdatedIso(${daysAgo}) falls outside the representable Date range`);
+  }
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Assert each dated point's `valid_from` EQUALS the value the fixture asked for.
+ *
+ * EQUALITY, NEVER PRESENCE. If a fixture supplied a non-string date, add.mjs minted `now`
+ * over it; the key is present, so a presence check reports success while the cohort sits
+ * at ~0 days old and the measurement degenerates. Comparing to the expected value is the
+ * only check that distinguishes "back-dated" from "silently re-stamped".
+ *
+ * @param {Array<{eval_ref:string, valid_from?:string}>} points
+ * @param {Record<string,string>|Map<string,string>} expectedByRef  eval_ref → expected ISO
+ */
+export function assertBackdated(points, expectedByRef) {
+  const expected = expectedByRef instanceof Map ? expectedByRef : new Map(Object.entries(expectedByRef ?? {}));
+  if (expected.size === 0) throw new Error('mq-eval: assertBackdated needs a non-empty expectation map — an empty one asserts nothing');
+
+  // Every EXPECTATION must itself be a usable date. Building the map with
+  // `[ref, f.valid_from]` over a mixed fixture yields `undefined` for every undated seed,
+  // and `undefined !== undefined` is false — so those refs would pass silently and inflate
+  // `checked`. Refusing them keeps the count honest and the assertion meaningful.
+  const unusable = [...expected].filter(([, v]) => !isUsableDate(v)).map(([ref]) => ref);
+  if (unusable.length > 0) {
+    throw new Error(
+      `mq-eval: assertBackdated expectations must all be usable date strings — ${unusable.length} are not (${unusable.slice(0, 5).join(', ')}). ` +
+      'Filter the dated cohort before building the map; an undefined expectation asserts nothing.',
+    );
+  }
+
+  const actual = new Map((points ?? []).map((p) => [p.eval_ref, p.valid_from]));
+  if (actual.size !== (points ?? []).length) {
+    // Last-wins would let a correctly-dated duplicate mask a re-stamped one.
+    throw new Error(`mq-eval: assertBackdated got duplicate eval_refs (${(points ?? []).length} points, ${actual.size} distinct) — the check would silently drop one`);
+  }
+  const problems = [];
+  for (const [ref, want] of expected) {
+    if (!actual.has(ref)) { problems.push(`${ref}: not found`); continue; }
+    const got = actual.get(ref);
+    if (got !== want) problems.push(`${ref}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `mq-eval BACK-DATE VIOLATION: ${problems.length}/${expected.size} dated points do not carry their fixture value ` +
+      '(a presence check would not have caught this). Known causes, in the order worth checking: ' +
+      '(1) a non-string valid_from — isUsableDate rejects it and add.mjs re-stamps `now`; ' +
+      '(2) a dedup collision — an identical text+lane written second keeps the FIRST writer\'s date (mergeSurface does not patch valid_from); ' +
+      '(3) a fail-soft upsert at the same deterministic fact id, which REPLACES the payload and re-dates the point. ' +
+      problems.slice(0, 5).join('; '),
+    );
+  }
+  return { checked: expected.size };
+}
+
+/**
  * Delete the TOP-LEVEL `valid_from` key from a DEFINED SUBSET of points on a scratch
  * collection. This is how the undated cohort is created: everything is seeded through the
  * normal write path (so dedup, lane classification, reserved-field assertions and capture
@@ -960,7 +1037,7 @@ export async function assertDateCohorts(client, collection, { undatedIds = [], d
  * eval-only metadata.eval_ref + a pinned lane (review G1). Records the write-returned id
  * per seed. Guards (review G2): surface DEDUP_MERGED and any id-collision.
  */
-async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
+export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
   const seeds = []; // { eval_ref, text, lane, writeId, event }
   for (const row of rows) {
     for (let i = 0; i < row.seed_facts.length; i++) {
@@ -968,7 +1045,10 @@ async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
       const eval_ref = `${row.id}:${i}`;
       const res = await recordTimed(latency.umAdd, () => umAdd({
         memory, text: f.text, userId: EVAL_USER, infer: false, surface: 'eval',
-        metadata: { eval_ref, lane: f.lane }, _qdrantClient: client, metrics,
+        // valid_from pass-through for the back-dated cohort. A seed fact WITHOUT one
+        // yields a metadata object identical to before — the default rows (and therefore
+        // the nightly drift gate) must not move. See backdatedIso: it must be a STRING.
+        metadata: { eval_ref, lane: f.lane, ...(f.valid_from !== undefined ? { valid_from: f.valid_from } : {}) }, _qdrantClient: client, metrics,
       }));
       const r0 = res.results?.[0] ?? {};
       seeds.push({ eval_ref, text: f.text, lane: f.lane, writeId: r0.id, event: r0.event });
