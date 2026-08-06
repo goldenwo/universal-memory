@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 
 import { applyTemporalDecay, UNDATED_FACTOR, UNDATED_EFOLDINGS } from '../lib/ranking.mjs';
 import {
-  H, withFixedNow, undatedItem, datedExpect, mixedSet,
+  H, DAY, FIXED_NOW, withFixedNow, datedItem, undatedItem, datedExpect, mixedSet, DATED_PAIRS,
 } from './helpers/undated-policy-fixtures.mjs';
 
 test('the fixture really does invert the dated cohort under decay (guards the guards)', () => {
@@ -160,5 +160,230 @@ test('U9: the input array and its items are not mutated', () => {
     assert.equal(JSON.stringify(input), snapshot, 'input was mutated');
     assert.notEqual(out, input, 'must return a NEW array');
     for (const item of out) assert.ok(!input.includes(item), 'items must be copies, not the originals');
+  });
+});
+
+// --- U2 / U3 / U4: the cohorts in isolation, and at the small-sample edge ---
+
+test('U2: an ALL-UNDATED set keeps its ordering, and every scored item is input x exp(-1)', () => {
+  // A uniform positive multiplier cannot reorder anything — which is precisely why an
+  // all-undated corpus would make this policy unmeasurable (the delta would be exactly 0).
+  withFixedNow(() => {
+    const input = [undatedItem('a', 0.9), undatedItem('b', 0.5), undatedItem('c', 0.1)];
+    const out = applyTemporalDecay(input, H);
+    assert.deepEqual(out.map((r) => r.id), ['a', 'b', 'c']);
+    assert.equal(out[0].score, 0.9 * Math.exp(-1));
+    assert.equal(out[1].score, 0.5 * Math.exp(-1));
+    assert.equal(out[2].score, 0.1 * Math.exp(-1));
+  });
+});
+
+test('U3: an ALL-DATED set is untouched by the policy — the dated branch is byte-identical', () => {
+  withFixedNow(() => {
+    const spec = [
+      { id: 'old-high', age: 120, score: 0.9 },
+      { id: 'new-low', age: 1, score: 0.3 },
+      { id: 'mid', age: 30, score: 0.6 },
+    ];
+    const out = applyTemporalDecay(spec.map((s) => datedItem(s.id, s.age, s.score)), H);
+    for (const s of spec) {
+      assert.equal(out.find((r) => r.id === s.id).score, datedExpect(s.age, s.score));
+    }
+    // The decay-induced order, which is what makes this fixture discriminating.
+    assert.deepEqual(out.map((r) => r.id), ['new-low', 'mid', 'old-high']);
+  });
+});
+
+test('U4: the undated factor is exp(-1) even with exactly ONE dated point in the set', () => {
+  // Set-independence at the smallest sample. A median-of-result-set estimator would be
+  // degenerate here — at n=1 every item takes the same multiplier and decay becomes an
+  // ordering no-op — so this pins that no such estimator crept in.
+  withFixedNow(() => {
+    const out = applyTemporalDecay([datedItem('d', 45, 0.7), undatedItem('u', 0.8)], H);
+    assert.equal(out.find((r) => r.id === 'u').score, 0.8 * Math.exp(-1));
+    assert.equal(out.find((r) => r.id === 'd').score, datedExpect(45, 0.7));
+  });
+});
+
+test('U7: a score-less DATED item is still MINTED 1 x factor — the unchanged dated branch', () => {
+  // The never-mint guard is scoped to the UNDATED branch ONLY. The dated branch keeps its
+  // `(r.score || 1)`, so a well-meaning "make both branches consistent" edit fails here.
+  withFixedNow(() => {
+    const item = { id: 'd-noscore', metadata: { valid_from: new Date(FIXED_NOW - 10 * DAY).toISOString() } };
+    const [out] = applyTemporalDecay([item], H);
+    assert.equal(out.score, 1 * Math.exp(-10 / H));
+  });
+});
+
+test('U8: a common item scores identically in a subset and in a superset containing it', () => {
+  // Set-independence stated as an experiment: an item's factor must not depend on what
+  // else happened to be returned alongside it.
+  withFixedNow(() => {
+    const common = () => [datedItem('d1', 20, 0.7), undatedItem('u1', 0.6)];
+    const subset = applyTemporalDecay(common(), H);
+    const superset = applyTemporalDecay(
+      [...common(), datedItem('d2', 400, 0.95), undatedItem('u2', 0.05), undatedItem('u3', 0.99)],
+      H,
+    );
+    for (const id of ['d1', 'u1']) {
+      assert.equal(
+        superset.find((r) => r.id === id).score,
+        subset.find((r) => r.id === id).score,
+        `${id} moved when unrelated items joined the set`,
+      );
+    }
+  });
+});
+
+// --- V1 / V2: each cohort's internal order is preserved ---------------------
+
+test('V1: the DATED subsequence comes out in analytic decayed order', () => {
+  withFixedNow(() => {
+    const out = applyTemporalDecay(mixedSet(), H);
+    const datedOut = out.filter((r) => r.metadata?.valid_from).map((r) => r.id);
+    // Derived from DATED_PAIRS, not retyped: that export exists precisely so a fixture
+    // edit cannot leave this expectation stale while the test stays green.
+    const expected = [...DATED_PAIRS]
+      .sort((a, b) => datedExpect(b.age, b.score) - datedExpect(a.age, a.score))
+      .map((x) => x.id);
+    assert.deepEqual(datedOut, expected);
+    // The fixture inverts under decay, so this is genuinely sensitive rather than
+    // incidentally true of the input order.
+    assert.deepEqual(expected, ['d-new-low', 'd-old-high']);
+  });
+});
+
+test('V2: the scored-UNDATED subsequence comes out in input-SCORE order, not input-ARRAY order', () => {
+  // One positive constant preserves sign and order, so the undated cohort's internal
+  // ranking must be exactly its cosine ranking. Fed in DELIBERATELY SHUFFLED array order
+  // so the expectation is not merely "unchanged from how they arrived" — otherwise any
+  // order-preserving implementation satisfies it and the test discriminates nothing.
+  withFixedNow(() => {
+    const shuffled = [
+      undatedItem('u-mid', 0.5),
+      undatedItem('u-low', 0.2),
+      undatedItem('u-high', 0.9),
+      datedItem('d', 15, 0.6),
+    ];
+    const out = applyTemporalDecay(shuffled, H);
+    const undatedOut = out
+      .filter((r) => !r.metadata?.valid_from && typeof r.score === 'number')
+      .map((r) => r.id);
+    assert.deepEqual(undatedOut, ['u-high', 'u-mid', 'u-low']);
+  });
+});
+
+test('V1+V2 together: ONLY the interleaving between the cohorts moves', () => {
+  withFixedNow(() => {
+    const out = applyTemporalDecay(mixedSet(), H).map((r) => r.id);
+    assert.ok(out.indexOf('d-new-low') < out.indexOf('d-old-high'), 'dated order changed');
+    assert.ok(out.indexOf('u-high') < out.indexOf('u-low'), 'undated order changed');
+  });
+});
+
+// --- V3: property test over the full domain, as EXACT identities -----------
+
+/** xorshift32 with a LITERAL seed — node:test has no seeded RNG and V3 must be pinned. */
+function xorshift32(seed) {
+  let x = seed >>> 0;
+  return () => {
+    x ^= x << 13; x >>>= 0;
+    x ^= x >>> 17; x >>>= 0;
+    x ^= x << 5; x >>>= 0;
+    return x / 0x100000000;
+  };
+}
+
+const V3_SEED = 0x5eed1234;
+const V3_SCORES = [undefined, 0, 0.5, 1.0, -0.4];
+
+test('V3: 200 seeded iterations satisfy the four exact identities', () => {
+  // EXACT IDENTITIES, deliberately not `output <= input`: that weaker formulation is FALSE
+  // on this very domain, twice over — a future date gives a factor above 1 (the
+  // deliberately-unfixed missing upper clamp), and any negative score times a factor in
+  // (0,1) increases. The identities are strictly stronger and stay honest about both.
+  const rnd = xorshift32(V3_SEED);
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+
+  // Domain counters, incremented from THIS loop — not from a replica. An earlier version
+  // asserted the domain in a separate test that re-implemented the generator, so narrowing
+  // the real age range here left the replica (and the suite) green while V3 silently
+  // stopped sweeping future dates. Observe the generator you actually run.
+  const seen = { items: 0, dated: 0, undated: 0, future: 0, negative: 0, scoreless: 0, maxN: 0 };
+
+  withFixedNow(() => {
+    for (let iter = 0; iter < 200; iter++) {
+      const n = Math.floor(rnd() * 21);          // 0..20 items
+      const undatedFraction = rnd();             // drawn per iteration in [0,1]
+      seen.maxN = Math.max(seen.maxN, n);
+      const input = [];
+      const meta = new Map();
+
+      for (let i = 0; i < n; i++) {
+        const id = `i${iter}-${i}`;
+        const score = pick(V3_SCORES);
+        seen.items++;
+        if (score === undefined) seen.scoreless++;
+        if (typeof score === 'number' && score < 0) seen.negative++;
+        if (rnd() < undatedFraction) {
+          seen.undated++;
+          input.push(undatedItem(id, score));
+          meta.set(id, { dated: false, score });
+        } else {
+          const age = Math.floor(rnd() * 801) - 400;   // -400..400 days, future INCLUDED
+          seen.dated++;
+          if (age < 0) seen.future++;
+          input.push(datedItem(id, age, score));
+          meta.set(id, { dated: true, score, age });
+        }
+      }
+
+      const out = applyTemporalDecay(input, H);
+      assert.equal(out.length, input.length, `iter ${iter}: length changed`);
+
+      for (const r of out) {
+        const m = meta.get(r.id);
+        if (m.dated) {
+          // Covers both "numeric score" and "no score": `(score || 1)` is the shipped
+          // dated expression, and a 0 falls through it exactly as 1 does, by design.
+          assert.equal(r.score, (m.score || 1) * Math.exp(-m.age / H), `iter ${iter}: dated ${r.id}`);
+        } else if (typeof m.score === 'number') {
+          assert.equal(r.score, m.score * Math.exp(-1), `iter ${iter}: undated ${r.id}`);
+        } else {
+          // `=== undefined` rather than key-absence, deliberately. `undatedItem` OMITS the
+          // key when score is undefined, so key-absence would happen to pass here — but
+          // `datedItem` always writes it, and any generator that produced a present-but-
+          // undefined score would leave the key there after the spread. `=== undefined` is
+          // true either way, and it is exactly what the sort comparator reads.
+          assert.equal(r.score, undefined, `iter ${iter}: score-less undated ${r.id}`);
+        }
+      }
+
+      for (let i = 1; i < out.length; i++) {
+        assert.ok((out[i - 1].score || 0) >= (out[i].score || 0), `iter ${iter}: not sorted at ${i}`);
+      }
+    }
+  });
+
+  // The identities above are only as strong as the domain that produced them. If the
+  // generator ever narrows, V3 would keep passing while quietly testing less — in
+  // particular it would stop covering the two cases that falsify `output <= input`, which
+  // is the whole reason this test is written as exact identities.
+  assert.ok(seen.items > 500, `too few items generated (${seen.items})`);
+  assert.equal(seen.maxN, 20, 'the 0..20 item range must be exercised at its top');
+  assert.ok(seen.dated > 100 && seen.undated > 100, `cohorts unbalanced: ${seen.dated} dated / ${seen.undated} undated`);
+  assert.ok(seen.future > 50, `too few FUTURE-dated items (${seen.future}) — the missing-clamp path`);
+  assert.ok(seen.negative > 50, `too few NEGATIVE scores (${seen.negative}) — the other falsifier`);
+  assert.ok(seen.scoreless > 50, `too few score-less items (${seen.scoreless}) — the mint guard`);
+});
+
+test('V3 corollary: a FUTURE-dated item is inflated above 1 — the unfixed clamp, pinned', () => {
+  // Deliberately NOT fixed by this change: an upper clamp would alter the DATED cohort's
+  // ordering and break the "dated order unchanged" invariant. Pinned here so the separate
+  // issue that fixes it has a ready witness, and so it cannot be "fixed" here unnoticed.
+  withFixedNow(() => {
+    const [out] = applyTemporalDecay([datedItem('future', -10, 0.5)], H);
+    assert.equal(out.score, 0.5 * Math.exp(10 / H));
+    assert.ok(out.score > 0.5, 'a future date currently INFLATES the score');
   });
 });
