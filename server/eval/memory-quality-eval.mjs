@@ -1153,17 +1153,87 @@ export async function collectBounceRows({ gradeAnswer, doSearch, memory, recallR
 }
 
 /**
+ * Resolve a caller's `decay` option to the literal env string. STRICT by design: only
+ * boolean `true` or the exact string 'true' enable decay; every other value (undefined,
+ * false, 'false', 'TRUE', 1, 'yes', null) normalises to 'false'. This preserves the
+ * hermeticity guard the previously-hardcoded 'false' provided — an ambient
+ * UM_TEMPORAL_DECAY in the caller's environment must never leak into a run.
+ */
+export function resolveDecayFlag(decay) {
+  return decay === true || decay === 'true' ? 'true' : 'false';
+}
+
+/**
+ * Run `fn` with UM_TEMPORAL_DECAY pinned to the resolved value, then DELETE the variable.
+ * Deleting rather than restoring is deliberate: a second runOnce/runCorpusSweep in the
+ * same process must not inherit a previous run's decay setting. The write happens BEFORE
+ * `fn` so the lazy imports inside it capture the pinned value (review B1 / G2), and the
+ * `finally` runs even when `fn` throws.
+ *
+ * In-process hygiene ONLY — a Node process cannot mutate its parent's environment. This
+ * does not substitute for the standing rule that UM_TEMPORAL_DECAY is never written to
+ * `.env`: a stale 'true' there makes every later reaction-gate run refuse.
+ *
+ * NOT RE-ENTRANT — do not nest. Because the `finally` DELETES rather than restores, an
+ * inner call clears the OUTER pin when it returns, so everything after it in the outer
+ * scope silently runs with decay OFF. A two-arm harness must therefore pass `decay`
+ * down into each run call (runOnce({ decay })), never wrap a group of runs in one
+ * outer withDecayEnv.
+ *
+ * NOT CONCURRENCY-SAFE either — run the arms SEQUENTIALLY. `process.env` is
+ * process-global, so `Promise.all([runOnce({decay:true}), runOnce({decay:false})])`
+ * has the second pin clobber the first, and whichever settles first deletes the
+ * variable out from under the other. The read path reads the flag per search at call
+ * time, so the loser silently executes the wrong arm while recording the right one.
+ * Both hazards are pinned by tests in mq-eval-decay-param.test.mjs.
+ */
+export async function withDecayEnv(decay, fn) {
+  const resolved = resolveDecayFlag(decay);
+  process.env.UM_TEMPORAL_DECAY = resolved;
+  try {
+    return await fn(resolved);
+  } finally {
+    delete process.env.UM_TEMPORAL_DECAY;
+  }
+}
+
+/**
+ * The `flags` block recorded in a run result. UM_TEMPORAL_DECAY is derived from the SAME
+ * resolver `withDecayEnv` writes, so the value RECORDED cannot drift from the value the
+ * run actually executed under.
+ */
+export function evalRunFlags({ decay, autosupersede = 'true' } = {}) {
+  return {
+    UM_DEDUP_ENABLED: 'true',
+    UM_AUTOSUPERSEDE_ENABLED: autosupersede,
+    UM_LANE_CLASSIFIER_ENABLED: 'true',
+    UM_TEMPORAL_DECAY: resolveDecayFlag(decay),
+  };
+}
+
+/**
  * One full eval run against LIVE qdrant. Pins MEM0_USER_ID + flags BEFORE the lazy
  * import (USER_ID is captured at mem0-mcp-http import time — review B1). Isolated to
  * uniquely-named scratch collections; try/finally teardown + `memories` integrity assert.
  *
+ * Thin wrapper: the body runs inside `withDecayEnv` so UM_TEMPORAL_DECAY is pinned from
+ * the resolved `decay` option for the whole run and cleared afterwards.
+ *
  * @param {{recallRows:Array, stalenessRows:Array, noAnswerRows:Array, runid?:string,
- *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string}} args
+ *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string,
+ *          decay?:boolean|string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false }) {
+export async function runOnce(args = {}) {
+  // Pass the RESOLVED value down — never let the inner frame re-derive it. Two
+  // independent derivations of the same flag can drift silently, and the one that lands
+  // in `flags` is the artifact of record.
+  return withDecayEnv(args.decay, (resolved) => runOnceDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false, decay }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
+  // UM_TEMPORAL_DECAY is pinned by withDecayEnv one frame up, and cleared when it returns.
   process.env.MEM0_USER_ID = EVAL_USER;
-  process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';
   process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
@@ -1265,7 +1335,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     timestamp: new Date().toISOString(),
     provider, model, fixtureRev,
     evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: evalRunFlags({ decay }),
     env: { node: process.version, platform: process.platform },
     fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)', noAnswer: noAnswerFixturePath ?? '(none)' },
     recall,
@@ -1296,11 +1366,24 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
  * pressure read (§4.2a) see the distractor vectors. LIVE layer — no unit test; verified
  * by self-read + the formatCorpusSweep render test + the operator's keyed run (the
  * harness's no-live-calls contract). Scratch-isolated; 'memories' asserted untouched.
+ *
+ * Like runOnce, the body runs inside `withDecayEnv`, so UM_TEMPORAL_DECAY is pinned from
+ * the resolved `decay` option for the whole sweep and cleared afterwards. Read
+ * withDecayEnv's contract before calling this with `decay: true` — it is neither
+ * re-entrant nor concurrency-safe, so arms must run sequentially.
+ *
+ * @param {{recallRows:Array, sweepSizes?:Array<number>, seed?:number, runid?:string,
+ *          decay?:boolean|string}} args
  */
-export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, runid }) {
+export async function runCorpusSweep(args = {}) {
+  // Resolved value passed down — see runOnce.
+  return withDecayEnv(args.decay, (resolved) => runCorpusSweepDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runCorpusSweepDecayPinned({ recallRows = [], sweepSizes, seed = 0, runid, decay }) {
   // --- pin env BEFORE the lazy imports capture it (mirror runOnce) ---
+  // UM_TEMPORAL_DECAY is pinned by withDecayEnv one frame up, and cleared when it returns.
   process.env.MEM0_USER_ID = EVAL_USER;
-  process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';            // prod-faithful: effectiveN tells the truth
   process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';   // OFF for the sweep: synthetic distractors self-contradict in the dedup band, and targets seed FIRST (oldest) → autosupersede would DEMOTE real targets, confounding recall. The sweep grows the corpus via dedup only (spec pins dedup, not supersession). Confirmed by the 2026-06-25 dry run.
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
@@ -1388,7 +1471,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   return {
     timestamp: new Date().toISOString(),
     provider, model, evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'false', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: evalRunFlags({ decay, autosupersede: 'false' }),
     env: { node: process.version, platform: process.platform },
     corpusSweep: { seed, targetCount, sizes, exactSearchThreshold: EXACT_THRESHOLD, pressure, rows },
   };
