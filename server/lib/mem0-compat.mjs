@@ -624,6 +624,19 @@ async function handleSearch({ req, body, ctx }) {
   // frame is open) is untouched. The asymmetry — compat is measured but not
   // re-ranked — is a recorded v1 limitation, not an oversight: this path's
   // fetch/limit semantics differ and deserve their own decision.
+  //
+  // SURFACE-COVERAGE LIMITATION, recorded (undated-decay policy, 2026-08-06).
+  // `applyTemporalDecay` now scales an UNDATED result by a fixed imputed factor
+  // (lib/ranking.mjs, UNDATED_FACTOR) instead of leaving it at 1.0. That runs on the
+  // doSearch path only. So once UM_TEMPORAL_DECAY is enabled, /api/search and MCP
+  // memory_search will scale undated points while THIS facade leaves them unscaled —
+  // the same undated-vs-dated asymmetry reappearing as a BETWEEN-SURFACE divergence.
+  //
+  // Deliberately not "fixed" here. This path applies an ABSOLUTE score threshold
+  // (default 0.3), so a multiplicative demotion would become a hard DROP rather than a
+  // demotion — 0.72 * exp(-1) = 0.265 falls under it — and dropping results for missing
+  // metadata is what the recall-safety rule forbids. Any future change here must decide
+  // the threshold interaction first, not just copy the factor across.
   let compatWindow = null;
   let compatParseOk = true;
   try {

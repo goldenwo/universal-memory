@@ -25,8 +25,11 @@
  * incidental phrasing rather than on any property of the data.
  *
  * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
- *         Enabled via UM_TEMPORAL_DECAY=true; half-life UM_DECAY_HALF_LIFE_DAYS
- *         (default 30).
+ *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
+ *         (default 30). NAMING: that variable is an E-FOLDING time, not a
+ *         half-life — exp(-age/H) reaches 0.5 at H*ln2 ~= 0.69*H, not at H. The
+ *         operator-facing name is kept for compatibility; the misnomer is noted
+ *         here so nobody derives a half-life from it.
  * Window: score unchanged inside a resolved window, demoted with a floored
  *         exponential outside it. Enabled via UM_TEMPORAL_QUERY=true. It
  *         SUBSTITUTES for decay rather than stacking — both are wired in
@@ -86,13 +89,31 @@ export const DEMOTION_FLOOR = 0.05;
 /**
  * The single ranking-date resolver, shared by decay and the window re-rank.
  *
- * **`valid_from` ONLY — `createdAt` is deliberately NOT consulted** (spec D-h,
- * revised on the F19 measurement). `umAdd` stamps `createdAt` at write time and
- * a reindex rebuilds through `umAdd`, so for the 186 of 353 live points that
- * carry no `valid_from`, `createdAt` is bulk-arrival time: 86.5% of them sit on
- * just two days (a migration and a reindex). Grading on it would rank half the
- * corpus by which import it arrived in — strictly worse than not grading on it,
- * which is what this function guarantees by returning null.
+ * **`valid_from` ONLY — `createdAt` is deliberately NOT consulted** (spec D-h).
+ *
+ * MECHANISM CORRECTED 2026-08-05 — the conclusion stands, the old reason did not.
+ * This comment used to say "a reindex rebuilds through `umAdd`, so `createdAt` is
+ * bulk-arrival time". That is FALSE, and it was measured: of the points carrying both
+ * fields, 77 join a pre-reindex archive by hash and their archived `createdAt` matches
+ * their `valid_from` EXACTLY — delta 0, 100%, median and p90 both 0.000 days. The
+ * 2026-07-28 reindex did not destroy `createdAt`; surviving points kept their originals.
+ *
+ * The accurate statement:
+ *
+ *   `createdAt` is genuine WRITE time. It is uninformative precisely where a bulk
+ *   operation wrote many points at one instant — which happens to be 164 of the 186
+ *   undated points (104 post-purge re-extraction on one day, 60 mem0 imports).
+ *
+ * Measured on the live corpus 2026-08-05: 401 points, 215 dated, **186 undated (46.4%)**.
+ * Grading on `createdAt` would rank nearly half the corpus by which bulk operation it
+ * arrived in — strictly worse than not grading on it, which is what this function
+ * guarantees by returning null.
+ *
+ * Why this matters enough to correct rather than leave: a wrong-but-load-bearing
+ * rationale is how the next person reaches the wrong conclusion. Someone who believed
+ * the reindex destroyed `createdAt` would also believe restoring it is a backfill they
+ * could perform. It is not — no event time is recoverable for 164 of those 186 points
+ * from any surviving source (a perfect `createdAt` backfill reaches 22/186, 11.8%).
  *
  * "No resolvable date" is NOT the same as "no penalty": applyTemporalDecay imputes a
  * flat factor for such items (UNDATED_FACTOR). That is a decision made downstream of
@@ -194,7 +215,7 @@ export function windowFalloffDays(window) {
  *
  * @param {Array<object>} results  - Search result objects with optional score
  *                                   and metadata.valid_from.
- * @param {number}        halfLifeDays - Half-life in days for the decay factor.
+ * @param {number}        halfLifeDays - Decay timescale in days (an e-folding time, not a half-life).
  * @returns {Array<object>} New array sorted by decayed score descending.
  *                          Input array and its items are NOT mutated.
  */

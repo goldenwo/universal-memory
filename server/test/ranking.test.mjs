@@ -69,12 +69,20 @@ test('applyTemporalDecay — missing valid_from and created_at gets the imputed 
 // returns camelCase `createdAt` (so the fallback was dead: spec F13). It passed
 // only against this hand-made fixture.
 //
-// Activating it "correctly" would have been worse than leaving it dead. A live
-// cross-tab (spec F19) showed the 186 of 353 points lacking `valid_from` are
-// bulk-arrival artifacts — 86.5% of them on just two days, a migration and a
-// reindex — because `umAdd` stamps `createdAt` at write time and a reindex
-// rebuilds through `umAdd`. Grading on it would rank half the corpus by which
-// import a point arrived in — so an arrival stamp is NOT a ranking date.
+// Activating it "correctly" would have been worse than leaving it dead. Measured on the
+// live corpus 2026-08-05: 401 points, 215 dated, **186 undated (46.4%)**, and 164 of those
+// 186 carry a bulk-operation marker (104 from one day's post-purge re-extraction, 60 from
+// the mem0 import). Grading on `createdAt` would rank nearly half the corpus by which bulk
+// operation it arrived in — so an arrival stamp is NOT a ranking date.
+//
+// MECHANISM CORRECTED 2026-08-05 (this block previously carried the same wrong reason as
+// ranking.mjs): it is NOT true that "a reindex rebuilds through `umAdd`", so `createdAt` is
+// not bulk-arrival time in general. Of the points carrying both fields, 77 join a
+// pre-reindex archive by hash and their archived `createdAt` equals their `valid_from`
+// EXACTLY (delta 0, 100%). `createdAt` is genuine WRITE time; it is uninformative only
+// where a bulk operation wrote many points at one instant. The conclusion is unchanged —
+// the reason is not, and the wrong reason invites someone to "restore" a backfill that
+// does not exist (the ceiling is 22/186, 11.8%).
 //
 // That conclusion still stands. What changed is the treatment of "no ranking date":
 // such an item is now given a fixed imputed factor instead of being left at 1.0, because

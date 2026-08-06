@@ -191,7 +191,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score (original * exp(-age/halfLife)). When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
+          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-1)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
       },
       metadata: ref('MemoryMetadata'),
       hash: { type: 'string' },
@@ -216,7 +216,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead.',
+          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take a fixed imputed factor rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead.',
       },
     },
   },
@@ -1325,6 +1325,20 @@ const GPT_DESCRIPTION_OVERRIDES = [
     expect:
       'Opt-in superseded-only listing. Inverts the status filter — returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict to that partition. Mode (b): no filters → all superseded across partitions, each row exposing lane/persona/supersededBy. Wins over include_superseded when both set. Default limit 50 when no explicit limit given.',
     text: 'Superseded-only listing: returns ONLY status=superseded records. Mode (a): with filters.lane/persona → restrict partition. Mode (b): no filters → all superseded across partitions. Wins over include_superseded when both set. Default limit 50.',
+  },
+  {
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'components.schemas.CompactMemoryResult.properties.score.description',
+    expect:
+      'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take a fixed imputed factor rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead.',
+    text: 'Optional relevance score (search results only; absent on list/recent). With UM_TEMPORAL_DECAY=true this is the decayed score - undated results take a fixed imputed factor rather than being left unscaled. With UM_TEMPORAL_QUERY=true and a resolved date expression, it is the window-re-ranked score.',
+  },
+  {
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    at: 'components.schemas.MemoryResult.properties.score.description',
+    expect:
+      'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-1)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
+    text: 'Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed score: a dated result is scaled by exp(-age/halfLife), an undated one by a fixed imputed factor rather than left unscaled. With UM_TEMPORAL_QUERY=true and a resolved date expression, the window re-rank applies INSTEAD of decay.',
   },
 ];
 
