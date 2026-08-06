@@ -458,3 +458,42 @@ test('D1: the guard list is frozen and covers the temporal read-path flag', () =
   assert.ok(Object.isFrozen(READ_PATH_ENV_GUARDS));
   assert.ok(READ_PATH_ENV_GUARDS.includes('UM_TEMPORAL_QUERY'));
 });
+
+// ─── D2 (2026-08-05) ─────────────────────────────────────────────────────────
+// Both read-path flags re-rank doSearch, which H3(b)'s rank<=3 probes depend on.
+// These assertions name each flag EXPLICITLY rather than checking the list's
+// length or contents generically: the failure mode being guarded is an entry
+// being dropped or misspelled in a later refactor, which a generic check would
+// not catch. If a third read-path flag is ever added, add its own case here.
+test('D2: verifyReadPathEnv refuses when UM_TEMPORAL_DECAY=true', () => {
+  const r = verifyReadPathEnv({ UM_TEMPORAL_DECAY: 'true' });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /UM_TEMPORAL_DECAY/);
+});
+
+test('D2: passes when decay is unset, false, or any non-"true" value', () => {
+  for (const env of [{}, { UM_TEMPORAL_DECAY: 'false' }, { UM_TEMPORAL_DECAY: '' }, { UM_TEMPORAL_DECAY: '1' }]) {
+    assert.equal(verifyReadPathEnv(env).ok, true, `unexpected refusal for ${JSON.stringify(env)}`);
+  }
+});
+
+test('D2: the guard list covers the decay flag by name', () => {
+  assert.ok(READ_PATH_ENV_GUARDS.includes('UM_TEMPORAL_DECAY'));
+});
+
+test('D2: the refusal names R2\'s mandatory-check window so the deadline is not silently deferred', () => {
+  // A fail-closed refusal is not costless: R2 requires a check inside
+  // 2026-11-01..15 and missing it is itself a recorded protocol violation. An
+  // operator who hits this refusal must be able to see what is at stake.
+  for (const name of READ_PATH_ENV_GUARDS) {
+    const r = verifyReadPathEnv({ [name]: 'true' });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /2026-11-01/, `${name} refusal must name the R2 window`);
+  }
+});
+
+test('D2: either flag alone triggers the refusal — neither masks the other', () => {
+  assert.equal(verifyReadPathEnv({ UM_TEMPORAL_QUERY: 'true', UM_TEMPORAL_DECAY: 'false' }).ok, false);
+  assert.equal(verifyReadPathEnv({ UM_TEMPORAL_QUERY: 'false', UM_TEMPORAL_DECAY: 'true' }).ok, false);
+  assert.equal(verifyReadPathEnv({ UM_TEMPORAL_QUERY: 'false', UM_TEMPORAL_DECAY: 'false' }).ok, true);
+});

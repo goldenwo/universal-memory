@@ -65,28 +65,43 @@ export function verifyAnchor({ rulePath, anchorPath }) {
   return { ok: true };
 }
 
-// ─── Read-path environment precondition (D1, 2026-08-02) ─────────────────────
-// Mechanics guard, logged as D1 in reaction-gate-runs.log BEFORE any in-frame
-// quantity was computed. It changes no threshold and moves no quantity — it can
-// only refuse to run.
+// ─── Read-path environment precondition (D1 2026-08-02, D2 2026-08-05) ───────
+// Mechanics guard, each entry logged in reaction-gate-runs.log BEFORE any
+// in-frame quantity was computed. It changes no threshold and moves no quantity
+// — it can only refuse to run.
 //
 // H3(b) probes call doSearch with the fact's own text and demand rank <= 3. That
 // hypothesis is stated in terms of doSearch's ranking as it existed at freeze,
-// when no read-path window feature existed. UM_TEMPORAL_QUERY (temporal v1)
-// widens the fetch and re-ranks when 'true', and work-context fact text routinely
-// contains "last week" / "in March" / "since <date>". The probes read the flag
-// from THIS process, not the server container, so deployment-side discipline does
-// not cover them: a local `node --env-file=.env` run would silently perturb H3.
-// Fail closed rather than measure under a condition the frozen rule cannot see.
-export const READ_PATH_ENV_GUARDS = Object.freeze(['UM_TEMPORAL_QUERY']);
+// when neither read-path feature existed. Both flags re-rank it when 'true':
+//
+//   UM_TEMPORAL_QUERY (D1) widens the fetch and re-ranks against a resolved
+//     window, and work-context fact text routinely contains "last week" /
+//     "in March" / "since <date>".
+//   UM_TEMPORAL_DECAY (D2) multiplies every result's score by an age-derived
+//     factor, so probe ranks can move without any date expression at all.
+//
+// The probes read these flags from THIS process, not the server container, so
+// deployment-side discipline does not cover them: a local `node --env-file=.env`
+// run would silently perturb H3. Fail closed rather than measure under a
+// condition the frozen rule cannot see.
+//
+// Adding a flag here is a DEVIATION under the frozen rule's §D — log it in
+// reaction-gate-runs.log first, and add a named case to reaction-gate-eval.test.mjs.
+export const READ_PATH_ENV_GUARDS = Object.freeze(['UM_TEMPORAL_QUERY', 'UM_TEMPORAL_DECAY']);
 
 export function verifyReadPathEnv(env = process.env) {
   for (const name of READ_PATH_ENV_GUARDS) {
     if (env[name] === 'true') {
       return {
         ok: false,
+        // Naming the R2 window is load-bearing, not decoration: refusing is not
+        // costless. A check MUST run inside 2026-11-01..15 and missing it is
+        // itself a recorded protocol violation, so an operator who hits this
+        // must see the deadline rather than simply deferring the run.
         reason: `${name}=true in the harness environment — it re-ranks doSearch, which H3(b) probes depend on. `
-          + `Unset it (or set 'false') and re-run; see D1 in reaction-gate-runs.log.`,
+          + `Unset it (or set 'false') and re-run; see D1/D2 in reaction-gate-runs.log. `
+          + `Do NOT defer indefinitely: rule R2 requires a check inside 2026-11-01..2026-11-15, `
+          + `and missing that window is itself a recorded protocol violation.`,
       };
     }
   }
