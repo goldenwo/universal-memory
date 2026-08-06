@@ -44,14 +44,16 @@ test('applyTemporalDecay — recent ranks above old with half-life 30', () => {
 // 2. Missing valid_from (and missing created_at) — returned unchanged
 // ---------------------------------------------------------------------------
 
-test('applyTemporalDecay — missing valid_from and created_at returns item unchanged', () => {
+test('applyTemporalDecay — missing valid_from and created_at gets the imputed undated factor', () => {
   const originalNow = Date.now;
   Date.now = () => FIXED_NOW;
   try {
     const item = { id: 'a', metadata: {}, score: 0.5 };
     const out = applyTemporalDecay([item], 30);
-    // Score must not have changed
-    assert.equal(out[0].score, 0.5);
+    // The LITERAL Math.exp(-1), never the imported UNDATED_FACTOR — see the note at the
+    // top of ranking-undated-policy.test.mjs. Importing the constant would make this
+    // assertion move with any retune and stop testing anything.
+    assert.equal(out[0].score, 0.5 * Math.exp(-1));
     assert.equal(out[0].id, 'a');
   } finally {
     Date.now = originalNow;
@@ -72,16 +74,25 @@ test('applyTemporalDecay — missing valid_from and created_at returns item unch
 // bulk-arrival artifacts — 86.5% of them on just two days, a migration and a
 // reindex — because `umAdd` stamps `createdAt` at write time and a reindex
 // rebuilds through `umAdd`. Grading on it would rank half the corpus by which
-// import a point arrived in. Undated-and-neutral is the correct treatment.
+// import a point arrived in — so an arrival stamp is NOT a ranking date.
+//
+// That conclusion still stands. What changed is the treatment of "no ranking date":
+// such an item is now given a fixed imputed factor instead of being left at 1.0, because
+// 1.0 became the top of the range once everything else decayed. The guard below is
+// STRONGER for it: an item graded on createdAt would produce exp(-age/H), a different
+// number, so this still fails the moment anything starts grading on an arrival stamp.
 
-test('applyTemporalDecay — does NOT grade on created_at/createdAt; item returned unchanged', () => {
+test('applyTemporalDecay — does NOT grade on created_at/createdAt; gets the flat undated factor', () => {
   const originalNow = Date.now;
   Date.now = () => FIXED_NOW;
   try {
     for (const key of ['created_at', 'createdAt']) {
       const item = { id: 'x', [key]: '2026-04-10T00:00:00Z', score: 1.0 };
       const out = applyTemporalDecay([item], 30);
-      assert.equal(out[0].score, 1.0, `${key} must not be treated as a ranking date`);
+      // LITERAL Math.exp(-1) on purpose: grading on the stamp would give exp(-age/30),
+      // which for this date is nowhere near exp(-1). Writing UNDATED_FACTOR here would
+      // make the test tautological under a retune and void the red control.
+      assert.equal(out[0].score, 1.0 * Math.exp(-1), `${key} must not be treated as a ranking date`);
     }
   } finally {
     Date.now = originalNow;
@@ -153,15 +164,17 @@ test('applyTemporalDecay — does not mutate input results array', () => {
 // 7. Missing metadata field (metadata is undefined)
 // ---------------------------------------------------------------------------
 
-test('applyTemporalDecay — item with no metadata and only createdAt is left unchanged', () => {
+test('applyTemporalDecay — item with no metadata and only createdAt gets the undated factor', () => {
   const originalNow = Date.now;
   Date.now = () => FIXED_NOW;
   try {
     // metadata is undefined (not present at all); only an arrival stamp exists.
-    // Per spec D-h that is "no resolvable date" ⇒ neutral, not decayed.
+    // Per spec D-h that is still "no resolvable date" — the arrival stamp is never graded
+    // on. It is now imputed at a flat one e-folding rather than left at 1.0.
     const item = { id: 'y', createdAt: '2026-04-10T00:00:00Z', score: 1.0 };
     const out = applyTemporalDecay([item], 30);
-    assert.equal(out[0].score, 1.0);
+    // LITERAL, not the imported constant — see the note in ranking-undated-policy.test.mjs.
+    assert.equal(out[0].score, 1.0 * Math.exp(-1));
   } finally {
     Date.now = originalNow;
   }
