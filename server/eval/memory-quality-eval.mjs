@@ -791,6 +791,7 @@ export function parseArgs(argv) {
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--sweep') args.sweep = true;
+    else if (a === '--undated-arm') args.undatedArm = true;
     else if (a === '--corpus-sweep') args.corpusSweep = true;
     else if (a === '--sweep-sizes') {
       // tolerate a missing/empty value (flag passed last) → undefined so the runner uses its default
@@ -870,6 +871,59 @@ async function clearPoints(client, name) {
 async function countPoints(client, name) {
   try { return (await client.count(name, { exact: true })).count; }
   catch (e) { if (e?.status === 404) return null; throw e; }
+}
+
+/**
+ * The undated arm's shape, PINNED IN ADVANCE.
+ *
+ * The arm size is fixed here, in code, before any number exists — a subset size chosen
+ * after seeing results is a choice about the result. The fixture is checked against these
+ * values by its own test, so drifting the file without a deliberate re-pin fails loudly.
+ *
+ * Deliberately SEPARATE from the default recall corpus: memory-quality-eval is the nightly
+ * drift gate, whose floors carry "re-pin only with a committed 2-run re-measurement". This
+ * arm gets its own fixture, its own scratch collection and its own entry point so the
+ * default run stays byte-identical.
+ */
+export const UNDATED_ARM = Object.freeze({
+  fixture: 'eval/undated-arm-set.jsonl',
+  rows: 48,
+  undatedGold: 24,
+  dated: 24,
+});
+
+/**
+ * WIRING NOTE — the fixture's rows are NOT seedable as loaded.
+ *
+ * They carry `days_ago`, not `valid_from`. Feeding them straight to seedCorpus looks
+ * correct and fails silently: seedCorpus reads only `f.valid_from`, so add.mjs stamps
+ * `now` on all of them and the entire dated cohort collapses to age 0 — the ~0-day corner
+ * the back-dating exists to avoid. Worse, assertDateCohorts STILL PASSES (the undated ids
+ * genuinely lack the key; the dated ids genuinely carry a usable date — just today's).
+ *
+ * Always: rows = materialiseValidFrom(await loadFixtureJsonl(UNDATED_ARM.fixture)), and
+ * build assertBackdated's expectation map from THOSE rows, so the check and the seed share
+ * one source of truth. assertBackdated is the only guard that catches this.
+ */
+
+/**
+ * Materialise each seed fact's `days_ago` into a `valid_from` ISO string relative to `now`.
+ *
+ * The fixture stores AGES, not dates. A hardcoded absolute date would drift one day older
+ * every day, silently changing the decay factors the fixture exists to hold fixed — the
+ * spread would stop mirroring the live corpus the moment it was committed. Deriving at
+ * seed time keeps the fixture reproducible for as long as it lives.
+ *
+ * Pure: returns new rows, mutates nothing. Seed facts without `days_ago` pass through
+ * untouched, so this is safe to run over any fixture.
+ */
+export function materialiseValidFrom(rows, now = Date.now()) {
+  return (rows ?? []).map((row) => ({
+    ...row,
+    seed_facts: (row.seed_facts ?? []).map((f) => (
+      f.days_ago === undefined ? { ...f } : { ...f, valid_from: backdatedIso(f.days_ago, now) }
+    )),
+  }));
 }
 
 /**
