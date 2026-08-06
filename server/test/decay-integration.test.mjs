@@ -191,17 +191,70 @@ test('includeSuperseded=true bypasses all status/invalidation filtering', async 
 	assert.equal(results.length, 5, 'all docs returned when includeSuperseded=true');
 });
 
-test('decay does NOT crash on docs with missing valid_from (graceful fallback)', async () => {
-	// applyTemporalDecay should handle docs without valid_from — common for
-	// legacy docs that predate the frontmatter schema.
+// T1 — this case used to assert ONLY `results.length === 2`. Under the undated policy its
+// two items swap order, and a length assertion stays green through that, so "full suite
+// green" was not evidence about the ranking change. It now pins order AND absolute scores.
+test('decay: an undated doc is demoted below an equally-scored recent dated doc (order + absolute)', async () => {
+	// Both start at cosine 0.5. The dated doc is 5 days old, so it barely decays; the
+	// undated doc takes the flat imputed factor and lands well below it.
 	const canned = [
 		{ id: 'no-date', memory: 'x', score: 0.5, metadata: {} },
 		result({ id: 'dated', score: 0.5, daysOld: 5 }),
 	];
 	const mock = mockMemory(canned);
 
-	await withEnv({ UM_TEMPORAL_DECAY: 'true' }, async () => {
+	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
 		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results.length, 2, 'both docs survive decay pass');
+
+		// Order flipped: before the policy the undated doc kept 0.5 and TIED for first.
+		assert.deepEqual(results.map((r) => r.id), ['dated', 'no-date']);
+
+		// The undated score is EXACT — the imputed factor has no time term at all.
+		// Literal Math.exp(-1), never the imported UNDATED_FACTOR: importing it would make
+		// this hold for any constant. See ranking-undated-policy.test.mjs.
+		const undated = results.find((r) => r.id === 'no-date');
+		assert.equal(undated.score, 0.5 * Math.exp(-1));
+
+		// The dated score carries real-clock drift between `daysAgo()` and Date.now(),
+		// so it gets a tolerance rather than exact equality.
+		const dated = results.find((r) => r.id === 'dated');
+		assert.ok(
+			Math.abs(dated.score - 0.5 * Math.exp(-5 / 30)) < 1e-6,
+			`dated score ${dated.score} should be ~${0.5 * Math.exp(-5 / 30)}`,
+		);
+	});
+});
+
+// T2 — a doSearch-level mixed case asserting the ABSOLUTE top-1 score, which is the value
+// `bounceTopHit` consumes (it gates on an absolute post-decay score, not a rank). This is
+// the coupling worth having a test for: the policy moves undated items ACROSS that gate.
+test('decay: mixed set — absolute top-1 score is the post-decay value the bouncer would gate on', async () => {
+	// Chosen so the undated doc crosses BOUNCER_SCORE_GATE (0.60) because of the policy:
+	//   before: undated 0.72 untouched  -> top-1, ABOVE the gate  (grading skipped)
+	//   after:  undated 0.72 * exp(-1) = 0.2649 -> BELOW the gate (grading triggered),
+	//           and the dated doc at 0.65 * exp(-3/30) = 0.5881 becomes top-1.
+	const canned = [
+		{ id: 'undated-strong', memory: 'x', score: 0.72, metadata: {} },
+		result({ id: 'dated-fresh', score: 0.65, daysOld: 3 }),
+	];
+	const mock = mockMemory(canned);
+
+	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
+		const { results } = await doSearch('q', 5, false, false, mock);
+
+		assert.deepEqual(results.map((r) => r.id), ['dated-fresh', 'undated-strong'],
+			'the undated doc must no longer take top-1 on raw cosine alone');
+
+		const expectedTop = 0.65 * Math.exp(-3 / 30);
+		assert.ok(
+			Math.abs(results[0].score - expectedTop) < 1e-6,
+			`absolute top-1 score ${results[0].score} should be ~${expectedTop}`,
+		);
+
+		// The demoted item's absolute value, exactly — and the gate crossing it implies.
+		assert.equal(results[1].score, 0.72 * Math.exp(-1));
+		assert.ok(results[1].score < 0.60, 'undated top-hit now falls below the bouncer gate');
+		assert.ok(0.72 > 0.60, 'and it sat above that gate before the policy — the crossing is the point');
 	});
 });
