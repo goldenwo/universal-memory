@@ -1,0 +1,1870 @@
+{
+  "timestamp": "2026-08-07T02:16:15.444Z",
+  "arm": "undated",
+  "flags": {
+    "UM_DEDUP_ENABLED": "true",
+    "UM_AUTOSUPERSEDE_ENABLED": "false",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "true"
+  },
+  "fixture": {
+    "path": "eval/undated-arm-set.jsonl",
+    "rows": 48,
+    "undatedGold": 24,
+    "dated": 24,
+    "ageSpreadDays": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      15,
+      19
+    ]
+  },
+  "seedCount": 401,
+  "corpus": {
+    "fixtureSeeds": 48,
+    "distractorsRequested": 353,
+    "effectiveN": 312,
+    "distractorsCollapsed": 89
+  },
+  "mergedCount": 89,
+  "g2": {
+    "metric": "recall@5 over the undated-gold subset",
+    "value": 1,
+    "rows": 24
+  },
+  "g1": {
+    "metric": "mean rank of the undated cohort (REPORTED, not gated)",
+    "meanRank": 1,
+    "rowsRanked": 24,
+    "rowsUnranked": 0
+  },
+  "headroom": {
+    "metric": "hit score / weakest in-window score — how much demotion the hit could absorb",
+    "rows": 24,
+    "median": 2.4108006495979537,
+    "min": 1.424779467010929,
+    "policyDemotion": 2.718281828459045,
+    "atCeiling": false,
+    "note": "at least one gold is within the policy demotion of dropping out — the gate can discriminate"
+  },
+  "recall": {
+    "aggregate": {
+      "1": 0.9791666666666666,
+      "3": 1,
+      "5": 1,
+      "10": 1
+    },
+    "details": [
+      {
+        "id": "u001",
+        "query": "what time does the tuesday standup begin now",
+        "target_ref": "u001:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "17f4bfb9-00a0-5bb4-b785-3368296368b6",
+          "2023a7a6-23db-5ad1-bfd3-bb080ca094fb",
+          "43ab7d8e-b847-5425-9551-bd4ab0108ad6",
+          "31b25676-8b18-5e0f-a944-32b76e5fd1d7",
+          "3bdb6e61-7dfc-59a9-96ae-37b25429b5f3"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6319351,
+          0.4210063754205255,
+          0.31723022,
+          0.30566867748021853,
+          0.28538205785252013
+        ]
+      },
+      {
+        "id": "u002",
+        "query": "who approved the extra backend headcount",
+        "target_ref": "u002:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "289bd4a3-961f-5101-a218-bf53c846f11d",
+          "c664005a-f25a-5ddc-847b-333a361e0a9c",
+          "cd78930d-b32b-5d6d-be37-18426d16932f",
+          "ebce0977-3f5a-5070-8ddd-1c2c8e03802f",
+          "7c28f7b0-69e4-5739-8a21-2acdb887128f"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5391444677178799,
+          0.36115783477095464,
+          0.3441974629575377,
+          0.31192304360036904,
+          0.30326332565796765
+        ]
+      },
+      {
+        "id": "u003",
+        "query": "how far ahead do design docs need to go out",
+        "target_ref": "u003:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "aa3709e8-e866-59a1-a9a0-c54ac0103643",
+          "174520fb-416b-51d4-9ed1-d00a5bad6796",
+          "cd78930d-b32b-5d6d-be37-18426d16932f",
+          "04a2a28e-8b53-5535-b43f-c5936aa8d7b4",
+          "e145f56a-93ac-58fa-9e90-ceee3c307d65"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6200097,
+          0.47818395314393836,
+          0.4453053180751701,
+          0.38666205024190303,
+          0.361066167674926
+        ]
+      },
+      {
+        "id": "u004",
+        "query": "who is on incident duty end of august",
+        "target_ref": "u004:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "0c1c3ac3-8bb5-5779-bd0a-43d18478339f",
+          "7165c3a0-fcf6-5037-a728-75ed578652aa",
+          "7c28f7b0-69e4-5739-8a21-2acdb887128f",
+          "68bedcd9-4f43-5958-886b-57e3cc2439bf",
+          "75a6e3e6-bef9-5d38-8bde-a041e04fa2bf"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5996712965916037,
+          0.34927630962137085,
+          0.3275928210697553,
+          0.3081395,
+          0.28387483543807773
+        ]
+      },
+      {
+        "id": "u005",
+        "query": "what replaced the thursday retrospective",
+        "target_ref": "u005:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "43ab7d8e-b847-5425-9551-bd4ab0108ad6",
+          "a356e404-89c6-5d6f-95a8-168350c3118a",
+          "17f4bfb9-00a0-5bb4-b785-3368296368b6",
+          "3bdb6e61-7dfc-59a9-96ae-37b25429b5f3",
+          "6d1a2ac0-e3c5-59de-8c19-7957ac4c2c20"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5036844,
+          0.4445591079929742,
+          0.3936596,
+          0.3637428490024396,
+          0.28865225532480515
+        ]
+      },
+      {
+        "id": "u006",
+        "query": "when does staging data get wiped",
+        "target_ref": "u006:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "25a4298e-a700-59d7-8253-8eb577e7de93",
+          "dbc70a8b-202a-5a5c-a502-7aea011e4d66",
+          "b81df771-d8ae-5aa8-8cfe-df071eeb5eaa",
+          "cc4b80b3-bc62-5300-8ed3-9da1d317555d",
+          "43b1957e-f251-556a-8a8a-4a62dcb856ab"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5890865267177536,
+          0.30368783199648025,
+          0.2973461114951696,
+          0.28718665980867897,
+          0.2830895021486021
+        ]
+      },
+      {
+        "id": "u007",
+        "query": "are feature flags cached when the process starts",
+        "target_ref": "u007:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "3db1f474-8d7b-5abe-a8ef-53e967329466",
+          "7165c3a0-fcf6-5037-a728-75ed578652aa",
+          "284b85b9-ed72-5d72-ad69-9e3eadc7a09c",
+          "6a4f1bd0-7e8f-5cd3-83e0-c5326960247d",
+          "7c28f7b0-69e4-5739-8a21-2acdb887128f"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.7236619,
+          0.23305189673738888,
+          0.21476123284291404,
+          0.2052185950831778,
+          0.20262152093942432
+        ]
+      },
+      {
+        "id": "u008",
+        "query": "why is the parser held back a version",
+        "target_ref": "u008:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "97d4ab68-5c85-5440-8049-ed1a887fc578",
+          "8830d164-e7b4-5973-b69f-e7040cd82322",
+          "2b926cab-a5eb-526e-b806-4b6ba48f8763",
+          "ca5ae8b5-8b75-5378-a2ed-ee5cfabf6797",
+          "053951e6-aba5-5fda-9460-439ec5fbf131"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5152007200363871,
+          0.42555823373243185,
+          0.3940690615771809,
+          0.36007533601874303,
+          0.31507848491635354
+        ]
+      },
+      {
+        "id": "u009",
+        "query": "when does the integration suite actually run",
+        "target_ref": "u009:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "80efad5d-f78a-53a2-a322-eb786384a071",
+          "e5988b70-ee01-53fe-b6be-fa16d7b9630d",
+          "b9d4a27d-72fd-5461-8c10-82a9bffa58a4",
+          "f06aeaaa-fc05-5f06-bcb3-98c7725e93c4",
+          "cc4b80b3-bc62-5300-8ed3-9da1d317555d"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.64676344,
+          0.3217821417028053,
+          0.30629198984150774,
+          0.2999743105995564,
+          0.25650727671018414
+        ]
+      },
+      {
+        "id": "u010",
+        "query": "what window does rate limiting use",
+        "target_ref": "u010:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "6ff2045f-1e6a-55a3-9999-048005a09950",
+          "0eef9f06-e764-509b-ae40-3bdd25a7865c",
+          "e5988b70-ee01-53fe-b6be-fa16d7b9630d",
+          "b1544f0f-7f67-51f8-be8f-80598531838a",
+          "d8829684-4b7a-5cfd-952f-a086bb7b3a43"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5612600732095918,
+          0.26713774,
+          0.2504466754877006,
+          0.24851676379222543,
+          0.24344356099859396
+        ]
+      },
+      {
+        "id": "u011",
+        "query": "when is the boiler contract up for renewal",
+        "target_ref": "u011:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "c5f8bb97-35a7-5f2c-b5fe-f01033f02d77",
+          "99e09170-f5af-511a-a311-23523d73697e",
+          "b1544f0f-7f67-51f8-be8f-80598531838a",
+          "d49007ba-d0a0-5e3c-a91d-3c6064c95ab5",
+          "0ccfd725-850b-5dc1-88f1-dfd02c8fafbb"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6877719,
+          0.3461525,
+          0.33916514589675784,
+          0.32575268,
+          0.3069753
+        ]
+      },
+      {
+        "id": "u012",
+        "query": "which day is recycling picked up now",
+        "target_ref": "u012:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "3bdb6e61-7dfc-59a9-96ae-37b25429b5f3",
+          "190498d7-b3c0-5b0f-abfd-a62f1004779f",
+          "d6dca9c7-c0ed-5c67-8ec5-8ac4e1abeeca",
+          "83163887-54bc-5042-a3f3-9000a10dc233",
+          "60ae8223-e7db-5ab8-b5d1-83ac9b4d2bde"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6351583046552792,
+          0.3485882054024995,
+          0.3244501093431591,
+          0.3002664000761287,
+          0.2971874735645329
+        ]
+      },
+      {
+        "id": "u013",
+        "query": "which radiator still needs bleeding",
+        "target_ref": "u013:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "99e09170-f5af-511a-a311-23523d73697e",
+          "c5f8bb97-35a7-5f2c-b5fe-f01033f02d77",
+          "55f869d0-faca-5b37-8b4d-4eb3a5c298fb",
+          "0ccfd725-850b-5dc1-88f1-dfd02c8fafbb",
+          "e503efce-cf70-52f9-b54e-5b289b810894"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.7558736,
+          0.30857813,
+          0.2904066754881084,
+          0.27716535,
+          0.27559674
+        ]
+      },
+      {
+        "id": "u014",
+        "query": "where is the water shutoff valve",
+        "target_ref": "u014:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "55f869d0-faca-5b37-8b4d-4eb3a5c298fb",
+          "99e09170-f5af-511a-a311-23523d73697e",
+          "3823b61c-d6ae-509d-928b-f3d463c80c80",
+          "c5f8bb97-35a7-5f2c-b5fe-f01033f02d77",
+          "1368cf70-dcde-53d9-9266-edffec3e16e7"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.336887680469438,
+          0.23227878,
+          0.17806056559054284,
+          0.16946706,
+          0.1549848130588545
+        ]
+      },
+      {
+        "id": "u015",
+        "query": "what did the landlord agree to fix",
+        "target_ref": "u015:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "0ccfd725-850b-5dc1-88f1-dfd02c8fafbb",
+          "23f0b136-8747-5162-a634-a146a41a78cd",
+          "baa5cb48-cb6f-5724-aa6a-be8f5d8ea9c3",
+          "646c9e59-7689-5045-b5f7-08d807550632",
+          "751a72f3-4788-588b-ae90-dccaec903fb9"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.61204374,
+          0.3405613262087861,
+          0.2947024477271218,
+          0.2874158514213148,
+          0.2808805177090315
+        ]
+      },
+      {
+        "id": "u016",
+        "query": "how often is the dental checkup scheduled",
+        "target_ref": "u016:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "31b25676-8b18-5e0f-a944-32b76e5fd1d7",
+          "043b37bf-5f90-50fe-a9f5-b9342ed55f38",
+          "80c71d07-e304-5dcf-87a5-2bd10bedcbe5",
+          "4634af8b-664e-5adb-bc44-157c73880fb0",
+          "7d67ec06-a6d5-5f38-9a87-c3602968d20a"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5338229468294009,
+          0.31980688207436275,
+          0.31716900656270197,
+          0.3155090314291354,
+          0.3083983947855159
+        ]
+      },
+      {
+        "id": "u017",
+        "query": "what painkiller am i using for my knee now",
+        "target_ref": "u017:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "819df35d-1bbc-5fa5-8aa8-560c0e96652b",
+          "16edaa29-dd91-57aa-b44c-a5b44c876f49",
+          "1d2a77e5-440c-5ad2-8d5c-4df196fc89c2",
+          "28735448-4526-5ed9-94ae-490ede8b2d4d",
+          "5246d819-738e-5947-860f-5ae8f40f66e0"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6255592,
+          0.21552029790017266,
+          0.21279736478202038,
+          0.21058605564833302,
+          0.20724645332708497
+        ]
+      },
+      {
+        "id": "u018",
+        "query": "what did the physiotherapist prescribe",
+        "target_ref": "u018:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "e589e842-57a5-5e20-9553-4a3ceb465f05",
+          "15054a98-4423-5160-9316-5687f72c44f5",
+          "5246d819-738e-5947-860f-5ae8f40f66e0",
+          "819df35d-1bbc-5fa5-8aa8-560c0e96652b",
+          "16edaa29-dd91-57aa-b44c-a5b44c876f49"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4214653253008206,
+          0.4156396351544187,
+          0.3872936665369021,
+          0.3679553,
+          0.27057406042910126
+        ]
+      },
+      {
+        "id": "u019",
+        "query": "how do i receive my lab results",
+        "target_ref": "u019:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "14690dd1-650c-51e9-a90e-5890e9915b00",
+          "db197710-addf-5851-94ad-0dff49b0b989",
+          "80c71d07-e304-5dcf-87a5-2bd10bedcbe5",
+          "d1674855-0c1d-57ae-ae59-27479ca35d44",
+          "043b37bf-5f90-50fe-a9f5-b9342ed55f38"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.50601506,
+          0.2596327,
+          0.24722853357843258,
+          0.24484903886588766,
+          0.2346022623492896
+        ]
+      },
+      {
+        "id": "u020",
+        "query": "what caffeine rule did i adopt for sleep",
+        "target_ref": "u020:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "8087c0d6-b947-5560-8b92-f4420635b1b2",
+          "c258d065-821e-5be8-a0b0-237bedfe042d",
+          "6eb3c004-0083-5e39-97ff-3da814f08500",
+          "166d9adf-e990-5ddc-9e07-ab45bc41c930",
+          "d8829684-4b7a-5cfd-952f-a086bb7b3a43"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4644254159100207,
+          0.4280465973616132,
+          0.4162844562095258,
+          0.40604058513745955,
+          0.40106031560067557
+        ]
+      },
+      {
+        "id": "u021",
+        "query": "when does the tax free savings allowance renew",
+        "target_ref": "u021:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "85893bd1-b2f0-5339-b6bd-a4b54d623022",
+          "d49007ba-d0a0-5e3c-a91d-3c6064c95ab5",
+          "08257eca-f9e1-53c8-b179-a2d7f90d84db",
+          "b86da590-e8ab-5d8e-ac5d-eb8a2d078e5a",
+          "9c6625af-fef8-518b-b15b-1f9b45ebcb87"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.57923216,
+          0.39669386,
+          0.35148634068639045,
+          0.29450176259212746,
+          0.29044855186021784
+        ]
+      },
+      {
+        "id": "u022",
+        "query": "what am i paying for internet now",
+        "target_ref": "u022:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "b1544f0f-7f67-51f8-be8f-80598531838a",
+          "e5988b70-ee01-53fe-b6be-fa16d7b9630d",
+          "1faa79d7-f491-50a9-b64a-83b4b2f18540",
+          "08257eca-f9e1-53c8-b179-a2d7f90d84db",
+          "8ca4f6c1-6c29-5002-935f-5ffdbd70c1d6"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.47426079220548895,
+          0.27355366417067234,
+          0.2569248046125367,
+          0.25603490341782176,
+          0.24395720129510648
+        ]
+      },
+      {
+        "id": "u023",
+        "query": "how much will my employer match into the pension",
+        "target_ref": "u023:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "1263daff-e2f5-5e44-8724-56c6f13014d2",
+          "057badce-3180-56c0-bdd0-73dd85304e88",
+          "deac61a0-5511-5fe6-8274-844c5bb08cf0",
+          "b86da590-e8ab-5d8e-ac5d-eb8a2d078e5a",
+          "2c064b01-3c7e-5157-999a-6cb7c6a9a393"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.699713,
+          0.2721502583481764,
+          0.2719017239378466,
+          0.24806034751911385,
+          0.22506788535651764
+        ]
+      },
+      {
+        "id": "u024",
+        "query": "which subscription did i cancel",
+        "target_ref": "u024:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "6aa36269-9cc7-5a6a-b17e-21f5b9d810f1",
+          "1faa79d7-f491-50a9-b64a-83b4b2f18540",
+          "08257eca-f9e1-53c8-b179-a2d7f90d84db",
+          "9c6625af-fef8-518b-b15b-1f9b45ebcb87",
+          "67a3f6a5-6b81-5a0c-834c-ca5f2c4fb6fc"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.43563431828980825,
+          0.420883877554796,
+          0.40564159454366794,
+          0.3973427413320882,
+          0.3438272193129561
+        ]
+      },
+      {
+        "id": "u025",
+        "query": "what is the receipt threshold for expenses",
+        "target_ref": "u025:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "db197710-addf-5851-94ad-0dff49b0b989",
+          "ebce0977-3f5a-5070-8ddd-1c2c8e03802f",
+          "deac61a0-5511-5fe6-8274-844c5bb08cf0",
+          "85893bd1-b2f0-5339-b6bd-a4b54d623022",
+          "f70e650b-a0f7-5b7b-8995-e2ac53f82ca2"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5554627,
+          0.3088687951587123,
+          0.2880003299871854,
+          0.26466015,
+          0.22765739373005867
+        ]
+      },
+      {
+        "id": "u026",
+        "query": "which terminal is the lisbon departure",
+        "target_ref": "u026:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "abc46045-d2ba-5b63-ba16-2070303557e8",
+          "acb300f9-0ccb-56a8-bd4f-f24e0a7978b2",
+          "dc542bbf-c6a3-5867-a36e-7a9e6aa6f52f",
+          "413f013d-1cd9-57af-8ff7-2c374034981f",
+          "8830d164-e7b4-5973-b69f-e7040cd82322"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5610839761240443,
+          0.3029440430515143,
+          0.26052720438188093,
+          0.2565739778830192,
+          0.24538549738309884
+        ]
+      },
+      {
+        "id": "u027",
+        "query": "when does my passport run out",
+        "target_ref": "u027:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "d49007ba-d0a0-5e3c-a91d-3c6064c95ab5",
+          "85893bd1-b2f0-5339-b6bd-a4b54d623022",
+          "db197710-addf-5851-94ad-0dff49b0b989",
+          "413f013d-1cd9-57af-8ff7-2c374034981f",
+          "ea4a98fd-b42b-5a96-a2dd-dd71bc21863f"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6383661,
+          0.28856426,
+          0.28230727,
+          0.20937457452603894,
+          0.20684326305374018
+        ]
+      },
+      {
+        "id": "u028",
+        "query": "which row did we pick on the flight",
+        "target_ref": "u028:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "6fe79c91-da58-5e36-9a27-f1d25ce8dcdb",
+          "9b6eaf30-e8cc-59dd-ba15-48dcb771ef0e",
+          "f1a40e93-0629-5d34-95ce-034233e03bbe",
+          "646c9e59-7689-5045-b5f7-08d807550632",
+          "04212673-2220-5f51-a5e4-b7dff07099c3"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4177209741243524,
+          0.2824245796892309,
+          0.2747577533858036,
+          0.2660237463127228,
+          0.24913161599033234
+        ]
+      },
+      {
+        "id": "u029",
+        "query": "when does the railcard discount apply",
+        "target_ref": "u029:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "0eef9f06-e764-509b-ae40-3bdd25a7865c",
+          "c5f8bb97-35a7-5f2c-b5fe-f01033f02d77",
+          "acb300f9-0ccb-56a8-bd4f-f24e0a7978b2",
+          "731d8d5a-de69-5f91-9aad-94d33e6a85a5",
+          "f70e650b-a0f7-5b7b-8995-e2ac53f82ca2"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.739681,
+          0.33123964,
+          0.28348161238706754,
+          0.2813746478394493,
+          0.26522442263042845
+        ]
+      },
+      {
+        "id": "u030",
+        "query": "what time can we get into the room",
+        "target_ref": "u030:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "87c3fd1b-25be-5136-854a-45b8043880f5",
+          "aa3709e8-e866-59a1-a9a0-c54ac0103643",
+          "784c3624-fcaf-57e2-96b6-fc99d0612037",
+          "9c1c41f0-e14d-5029-a116-bf5f18ee90e3",
+          "6fe79c91-da58-5e36-9a27-f1d25ce8dcdb"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4019554547840675,
+          0.26893497,
+          0.26078767,
+          0.259277605176689,
+          0.25768437031541375
+        ]
+      },
+      {
+        "id": "u031",
+        "query": "how often does the starter need feeding",
+        "target_ref": "u031:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "ec282a35-e6f6-56b0-a752-9a238081428b",
+          "e503efce-cf70-52f9-b54e-5b289b810894",
+          "99e09170-f5af-511a-a311-23523d73697e",
+          "057badce-3180-56c0-bdd0-73dd85304e88",
+          "d6dca9c7-c0ed-5c67-8ec5-8ac4e1abeeca"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5428152,
+          0.3320949,
+          0.29104674,
+          0.27516673082547377,
+          0.2612312415892555
+        ]
+      },
+      {
+        "id": "u032",
+        "query": "which milk do we buy for coffee now",
+        "target_ref": "u032:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "96621d62-eb9a-5648-a506-81654b012371",
+          "8087c0d6-b947-5560-8b92-f4420635b1b2",
+          "6d700d17-830d-53d2-8b97-5a781d15e3b0",
+          "05faf1fb-1880-59c7-9300-4e65f37d48eb",
+          "8bcb4aa3-6129-5ab9-aefd-0f61b1ac527c"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5106457355099088,
+          0.304971133303822,
+          0.2655399733476349,
+          0.24243870239096318,
+          0.22091086559890627
+        ]
+      },
+      {
+        "id": "u033",
+        "query": "how late can we order from the thai restaurant",
+        "target_ref": "u033:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "784c3624-fcaf-57e2-96b6-fc99d0612037",
+          "960c7b79-f4da-5a76-88d0-b80469c025f6",
+          "15b05576-0bba-5d5c-938f-2740cc3671ef",
+          "87c3fd1b-25be-5136-854a-45b8043880f5",
+          "5e569ffa-4b4c-512d-9187-fa0d5c8217a0"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6961533,
+          0.25540784655215926,
+          0.24590064367019235,
+          0.23786227216674502,
+          0.23146091420472012
+        ]
+      },
+      {
+        "id": "u034",
+        "query": "what temperature and time for the roast chicken",
+        "target_ref": "u034:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "8ae2e608-3ca6-582b-a0c0-a30f48ddaad0",
+          "d88c5518-1c24-5664-80cb-0a37421dabe8",
+          "17e60d9a-6c65-5ee1-9d38-88a8f8a14f28",
+          "1744a284-b5fa-52bf-ba44-68c8d77e2785",
+          "c2b27c0e-2a05-5654-a597-41e8a2ee3139"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5371986638179808,
+          0.2652226541809978,
+          0.25111320304756,
+          0.2454216631823402,
+          0.20433796118410966
+        ]
+      },
+      {
+        "id": "u035",
+        "query": "which food am i avoiding now",
+        "target_ref": "u035:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "68bedcd9-4f43-5958-886b-57e3cc2439bf",
+          "6d700d17-830d-53d2-8b97-5a781d15e3b0",
+          "05faf1fb-1880-59c7-9300-4e65f37d48eb",
+          "da62f702-95cf-518c-9478-dc5ef67007db",
+          "7bdca3ff-23d5-5b2e-b36a-8d552eb6192e"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4296006,
+          0.33418228045514675,
+          0.30864631585488395,
+          0.2724135287219454,
+          0.2434440945820542
+        ]
+      },
+      {
+        "id": "u036",
+        "query": "which day is the birthday meal booked",
+        "target_ref": "u036:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "5e569ffa-4b4c-512d-9187-fa0d5c8217a0",
+          "ae5755c9-b2fb-5f3b-ae62-15292e0cb58b",
+          "927743e5-6d52-5f8f-bb6d-69f555efa4ef",
+          "dcd076b7-3583-5688-baf3-c65ab0e1e95e",
+          "989afc5e-1455-56e4-b12d-565255e1e927"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.4536572690623398,
+          0.35387110553674433,
+          0.31910497556077155,
+          0.2998868269867228,
+          0.29336776366656425
+        ]
+      },
+      {
+        "id": "u037",
+        "query": "what time does sam leave for school",
+        "target_ref": "u037:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "bd011f4b-1b20-517d-ba00-a43bfbab33c7",
+          "7ca9d43c-69d2-570c-bd45-295932c3405e",
+          "ca152e5e-691b-55fb-a780-1623e0a7a33c",
+          "784c3624-fcaf-57e2-96b6-fc99d0612037",
+          "449085b2-fca0-5602-b71d-85a693e6a1bf"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6053165,
+          0.2779984,
+          0.22738798421469647,
+          0.22037737,
+          0.1871509066028138
+        ]
+      },
+      {
+        "id": "u038",
+        "query": "how do we decide where christmas happens",
+        "target_ref": "u038:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "92e89488-a7a9-54da-96d5-10b26c9deeba",
+          "75a6e3e6-bef9-5d38-8bde-a041e04fa2bf",
+          "4404a226-0b27-58da-8817-d01f5041875f",
+          "497aea6f-fa29-57d0-b06a-d681e3eebd0d",
+          "a6d4ae0f-fb82-5eac-b097-2a2439f3bb0d"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.3544758109726506,
+          0.24773937410845273,
+          0.2270826489884357,
+          0.22336813109442533,
+          0.21504355372638756
+        ]
+      },
+      {
+        "id": "u039",
+        "query": "when is the best time to ring dad",
+        "target_ref": "u039:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "7ca9d43c-69d2-570c-bd45-295932c3405e",
+          "ae5755c9-b2fb-5f3b-ae62-15292e0cb58b",
+          "989afc5e-1455-56e4-b12d-565255e1e927",
+          "5e569ffa-4b4c-512d-9187-fa0d5c8217a0",
+          "a6d4ae0f-fb82-5eac-b097-2a2439f3bb0d"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5533922,
+          0.25838303402528334,
+          0.2539111474142781,
+          0.23833506191000797,
+          0.22879171533807383
+        ]
+      },
+      {
+        "id": "u040",
+        "query": "when do the red problems get changed",
+        "target_ref": "u040:0",
+        "paraphrase_level": "oblique",
+        "rank1": 0,
+        "recallByK": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 0.3333333333333333,
+        "ndcgByK": {
+          "1": 0,
+          "3": 0.5,
+          "5": 0.5,
+          "10": 0.5
+        },
+        "twin": false,
+        "topIds": [
+          "6e5db3d7-6277-5341-b4d9-80ecba43c6e1",
+          "3bdb6e61-7dfc-59a9-96ae-37b25429b5f3",
+          "5c69bd6e-7cd1-5ef6-a6f9-c6faee75afd0",
+          "15364525-217d-5c6e-a4e3-e0805bf52b07",
+          "646c9e59-7689-5045-b5f7-08d807550632"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.3256356143914062,
+          0.3066388536820048,
+          0.30526675021147703,
+          0.3045644193238461,
+          0.30338216463785694
+        ]
+      },
+      {
+        "id": "u041",
+        "query": "which piece am i working on at the piano",
+        "target_ref": "u041:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "95ce68da-5580-548e-9e04-dc2dce751985",
+          "f6dbc601-503c-55de-a6db-ba8a307882e7",
+          "68329f43-885a-5a4a-b5dd-2faeeae20860",
+          "f381f239-cc94-58f0-9bf5-0fa22e2a0992",
+          "6d5c3381-4de6-52a3-843e-4a32e7815a43"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.43849123,
+          0.3827767712748894,
+          0.36751176396970725,
+          0.322354917476742,
+          0.307760772914505
+        ]
+      },
+      {
+        "id": "u042",
+        "query": "how is the camera writing files",
+        "target_ref": "u042:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "1db63db1-236c-5a5d-b39e-1ba207e570b7",
+          "c258d065-821e-5be8-a0b0-237bedfe042d",
+          "7165c3a0-fcf6-5037-a728-75ed578652aa",
+          "db197710-addf-5851-94ad-0dff49b0b989",
+          "a633c2dd-7a61-52b2-a76c-1c7b78ba496c"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.37947795171674203,
+          0.24961157410567347,
+          0.24430194463509874,
+          0.22963637,
+          0.21333581973664906
+        ]
+      },
+      {
+        "id": "u043",
+        "query": "what has to happen before planting brassicas",
+        "target_ref": "u043:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "e503efce-cf70-52f9-b54e-5b289b810894",
+          "99e09170-f5af-511a-a311-23523d73697e",
+          "190498d7-b3c0-5b0f-abfd-a62f1004779f",
+          "01cbc4f7-a3b3-5717-8079-0004d485a20b",
+          "9680ec4c-5f3f-5d16-94d4-0859493f60ec"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.6191853,
+          0.29948184,
+          0.2859909938569326,
+          0.2580802733298744,
+          0.2552019475723434
+        ]
+      },
+      {
+        "id": "u044",
+        "query": "is the spanish course in person this term",
+        "target_ref": "u044:0",
+        "paraphrase_level": "oblique",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "3d20d151-4b0f-56bb-b131-ec785e8292e0",
+          "be5211a3-9371-574c-80fd-b4bcffe30301",
+          "ba2ff5e5-cf54-59ec-bdc2-2d34d8bf1931",
+          "c32d77d3-98db-5fac-913b-bc6713623c89",
+          "64d6a258-c60c-5aa8-adbd-5ea2d3adf3d1"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.39539418288544725,
+          0.2942517312508508,
+          0.28087030875508456,
+          0.2606930632757527,
+          0.24351781120141336
+        ]
+      },
+      {
+        "id": "u045",
+        "query": "how far into the systems book am i",
+        "target_ref": "u045:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "72632dfa-a632-5db5-9803-388f1cb86e61",
+          "5fd67751-dcf2-5397-8aea-4c61cf0d4bc3",
+          "f6dbc601-503c-55de-a6db-ba8a307882e7",
+          "ca152e5e-691b-55fb-a780-1623e0a7a33c",
+          "cb1ad411-66ff-51b7-a453-25db86a77e2d"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5980408,
+          0.3029847591561116,
+          0.2815346908847664,
+          0.24926814796203312,
+          0.2488889909085751
+        ]
+      },
+      {
+        "id": "u046",
+        "query": "how many retakes does the exam permit",
+        "target_ref": "u046:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "f71fd77e-0f2f-5b7b-ba1e-3fe8a7333cf0",
+          "ffe4c96e-37a4-5ae1-8fc3-2899c11e5405",
+          "85893bd1-b2f0-5339-b6bd-a4b54d623022",
+          "1263daff-e2f5-5e44-8724-56c6f13014d2",
+          "a356e404-89c6-5d6f-95a8-168350c3118a"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.42704360399150665,
+          0.2983265,
+          0.26068193,
+          0.24295157,
+          0.23753152701934577
+        ]
+      },
+      {
+        "id": "u047",
+        "query": "what is my daily new card limit",
+        "target_ref": "u047:0",
+        "paraphrase_level": "lexical",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "ffe4c96e-37a4-5ae1-8fc3-2899c11e5405",
+          "deac61a0-5511-5fe6-8274-844c5bb08cf0",
+          "0eef9f06-e764-509b-ae40-3bdd25a7865c",
+          "731d8d5a-de69-5f91-9aad-94d33e6a85a5",
+          "85893bd1-b2f0-5339-b6bd-a4b54d623022"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.5553979,
+          0.321418188759555,
+          0.3090668,
+          0.2998433633176693,
+          0.2945699
+        ]
+      },
+      {
+        "id": "u048",
+        "query": "where is the oncall handover written down",
+        "target_ref": "u048:0",
+        "paraphrase_level": "paraphrase",
+        "rank1": 1,
+        "recallByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "rr": 1,
+        "ndcgByK": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "twin": false,
+        "topIds": [
+          "ef8e7c85-b42f-508d-8517-b34277639f51",
+          "c664005a-f25a-5ddc-847b-333a361e0a9c",
+          "3090d463-62d1-5701-ab45-84f116086286",
+          "7c28f7b0-69e4-5739-8a21-2acdb887128f",
+          "e145f56a-93ac-58fa-9e90-ceee3c307d65"
+        ],
+        "targetCos": null,
+        "bestNonTargetCos": null,
+        "topScores": [
+          0.3838214210878559,
+          0.35079299156552035,
+          0.2952335076237491,
+          0.2931988161562839,
+          0.29200727971914814
+        ]
+      }
+    ]
+  },
+  "cost": {
+    "embedTokensIn": 4574,
+    "embedTokensOut": 0,
+    "embedCostUsd": 0.0000914799999999999
+  },
+  "latency": {
+    "umAdd": {
+      "count": 401,
+      "p50": 168.47339999999986,
+      "p95": 271.27959999999985,
+      "min": 120.6740000000027,
+      "max": 2167.2411999999968,
+      "mean": 189.7672852867831
+    },
+    "doSearch": {
+      "count": 48,
+      "p50": 205.40889999998035,
+      "p95": 336.5603000000119,
+      "min": 166.33230000000913,
+      "max": 3000.252199999988,
+      "mean": 279.4459687499984
+    }
+  }
+}
