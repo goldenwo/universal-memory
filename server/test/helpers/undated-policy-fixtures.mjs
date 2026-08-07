@@ -4,7 +4,7 @@
 // Deliberately NOT a *.test.mjs file: importing fixtures from a test module would
 // re-register that module's tests in every importing runner process.
 //
-// Every consumer must write the LITERAL Math.exp(-1) in its assertions rather than
+// Every consumer must write the LITERAL Math.exp(-0.25) in its assertions rather than
 // importing UNDATED_FACTOR — see the note at the top of ranking-undated-policy.test.mjs.
 
 export const FIXED_NOW = Date.parse('2026-08-06T00:00:00.000Z');
@@ -27,7 +27,7 @@ export const datedItem = (id, age, score) => ({
  * An undated item. `score` may be omitted entirely, which is a case the policy's score
  * guard must handle (the key must stay absent, not be minted).
  *
- * It always carries a `createdAt` whose implied factor differs from exp(-1): without that,
+ * It always carries a `createdAt` whose implied factor differs from exp(-0.25): without that,
  * a mutant grading undated items on `createdAt` would be INERT on the fixture and its red
  * control could never go red.
  */

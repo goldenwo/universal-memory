@@ -635,8 +635,9 @@ async function handleSearch({ req, body, ctx }) {
   // Deliberately not "fixed" here, and the reason is ORDER-DEPENDENT, so state the premise
   // rather than the conclusion: the absolute score threshold (default 0.3) is applied
   // ABOVE, when results are filtered. For the caller's threshold to mean what it says, a
-  // demotion would have to run BEFORE that filter — and there 0.72 * exp(-1) = 0.265 falls
-  // under the 0.3 default, so the demotion becomes a hard DROP, which the recall-safety
+  // demotion would have to run BEFORE that filter — and there any raw score in
+  // [0.30, 0.385) falls under the 0.3 default once scaled by exp(-0.25) (e.g.
+  // 0.36 * 0.779 = 0.280), so the demotion becomes a hard DROP, which the recall-safety
   // rule forbids for missing metadata. Applied AFTER the filter (i.e. here) nothing drops,
   // but the facade would then return scores below its own stated threshold. Either way the
   // threshold interaction has to be decided first; copying the factor across is not enough.

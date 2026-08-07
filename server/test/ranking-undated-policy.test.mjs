@@ -4,10 +4,10 @@
 // never penalised", and it was — until every DATED point started being multiplied by
 // exp(-age/H) < 1. At that moment a factor of 1.0 stopped being the middle of the range
 // and became the TOP of it: undated points were strictly better than every dated one.
-// The policy imputes a flat one e-folding instead.
+// The policy imputes a flat 0.25 e-foldings instead.
 //
 // ┌─ READ THIS BEFORE "TIDYING" THE ASSERTIONS ────────────────────────────────────────┐
-// │ Every assertion writes the LITERAL `Math.exp(-1)`, never the imported              │
+// │ Every assertion writes the LITERAL `Math.exp(-0.25)`, never the imported           │
 // │ UNDATED_FACTOR. Replacing the literals with the import looks like an obvious DRY   │
 // │ cleanup and is exactly what house convention would normally encourage — but it     │
 // │ would make both sides of every identity move together under a retune, so the       │

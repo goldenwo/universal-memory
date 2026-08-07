@@ -191,7 +191,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-1)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
+          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-0.25)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
       },
       metadata: ref('MemoryMetadata'),
       hash: { type: 'string' },
@@ -1337,7 +1337,7 @@ const GPT_DESCRIPTION_OVERRIDES = [
     // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
     at: 'components.schemas.MemoryResult.properties.score.description',
     expect:
-      'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-1)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
+      'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-0.25)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor.',
     text: 'Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed score: a dated result is scaled by exp(-age/halfLife), an undated one by a fixed imputed factor rather than left unscaled. With UM_TEMPORAL_QUERY=true and a resolved date expression, the window re-rank applies INSTEAD of decay.',
   },
 ];

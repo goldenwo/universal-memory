@@ -65,7 +65,7 @@ test('an undated item keeps its original score and is never demoted (D-b1 path)'
 
 test('an undated item is untouched even when the window IS active (reaches the branch)', () => {
 	// The invariant this pins became LOAD-BEARING with the undated-decay policy: decay now
-	// imputes exp(-1) for an undated point while the window path deliberately does not, and
+	// imputes exp(-0.25) for an undated point while the window path deliberately does not, and
 	// the two imputations must be chosen JOINTLY (see lib/ranking.mjs's module header). That
 	// asymmetry is a documented design point, so it needs a test that can actually fail.
 	//

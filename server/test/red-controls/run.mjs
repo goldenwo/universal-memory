@@ -45,7 +45,7 @@ const CONTROLS = [
       'export const UNDATED_FACTOR = 1.0;'),
     mustFlip: ['U1', 'U2', 'U4', 'U10', 'V3'],
     mustPass: ['U3', 'U5', 'U6', 'U7'],
-    // U8 gained a sub-case pinning an ABSOLUTE undated value (0.6 x exp(-1)), so any change
+    // U8 gained a sub-case pinning an ABSOLUTE undated value (0.6 x exp(-0.25)), so any change
     // to the magnitude necessarily flips it. Named rather than tolerated.
     alsoFlip: ['U8'],
     why: 'the policy is scoped to the undated branch and mints no score, so the dated cases and the guard cases are untouched by the magnitude',

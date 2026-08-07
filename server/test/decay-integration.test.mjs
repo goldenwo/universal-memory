@@ -212,10 +212,10 @@ test('decay: an undated doc is demoted below an equally-scored recent dated doc 
 		assert.deepEqual(results.map((r) => r.id), ['dated', 'no-date']);
 
 		// The undated score is EXACT — the imputed factor has no time term at all.
-		// Literal Math.exp(-1), never the imported UNDATED_FACTOR: importing it would make
+		// Literal Math.exp(-0.25), never the imported UNDATED_FACTOR: importing it would make
 		// this hold for any constant. See ranking-undated-policy.test.mjs.
 		const undated = results.find((r) => r.id === 'no-date');
-		assert.equal(undated.score, 0.5 * Math.exp(-1));
+		assert.equal(undated.score, 0.5 * Math.exp(-0.25));
 
 		// The dated score carries real-clock drift between `daysAgo()` and Date.now(),
 		// so it gets a tolerance rather than exact equality.
@@ -233,8 +233,11 @@ test('decay: an undated doc is demoted below an equally-scored recent dated doc 
 test('decay: mixed set — absolute top-1 score is the post-decay value the bouncer would gate on', async () => {
 	// Chosen so the undated doc crosses BOUNCER_SCORE_GATE (0.60) because of the policy:
 	//   before: undated 0.72 untouched  -> top-1, ABOVE the gate  (grading skipped)
-	//   after:  undated 0.72 * exp(-1) = 0.2649 -> BELOW the gate (grading triggered),
+	//   after:  undated 0.72 * exp(-0.25) = 0.5607 -> BELOW the gate (grading triggered),
 	//           and the dated doc at 0.65 * exp(-3/30) = 0.5881 becomes top-1.
+	// NOTE the retune margin: the ordering below needs 0.72 * exp(-E) < 0.5881, i.e.
+	// E > 0.203 — this fixture is a genuine LOWER bound on any future retune of the
+	// constant, and it reddens if the policy gets mild enough to stop crossing the gate.
 	const canned = [
 		{ id: 'undated-strong', memory: 'x', score: 0.72, metadata: {} },
 		result({ id: 'dated-fresh', score: 0.65, daysOld: 3 }),
@@ -273,6 +276,6 @@ test('decay: mixed set — absolute top-1 score is the post-decay value the boun
 		assert.ok(results[0].score < BOUNCER_SCORE_GATE, 'post-policy top-1 falls below the bouncer gate — real cost, real latency');
 
 		// And the demoted doc's absolute value, exactly (the imputed factor has no time term).
-		assert.equal(results[1].score, undatedRaw * Math.exp(-1));
+		assert.equal(results[1].score, undatedRaw * Math.exp(-0.25));
 	});
 });

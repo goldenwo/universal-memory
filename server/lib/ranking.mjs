@@ -16,12 +16,12 @@
  *   - applyTemporalWindow: still leaves it untouched — undated reads as in-window.
  *     A window is query-expressed intent, and demoting an unknown date when the user
  *     asked about a period trades recall for a guess.
- *   - applyTemporalDecay: imputes a flat one e-folding (see UNDATED_FACTOR). Leaving it
+ *   - applyTemporalDecay: imputes a flat 0.25 e-foldings (see UNDATED_FACTOR). Leaving it
  *     at 1.0 stopped being neutral the moment everything else decayed — it became the
  *     top of the range.
  * Their imputations must eventually be chosen JOINTLY: the two are mutually exclusive at
  * the call site, so with both flags on an undated point's factor flips between 1.0 and
- * 0.368 on THREE things that are not properties of that point —
+ * 0.779 on THREE things that are not properties of that point —
  *   1. incidental query phrasing (does the text parse as a date expression at all),
  *   2. pool composition (is some OTHER candidate dated-and-in-window),
  *   3. the caller's `limit` (the window path widens the fetch, changing 2's answer).
@@ -56,17 +56,19 @@ const DAY_MS = 86400000;
  * and one very old point would annihilate the undated cohort. It is applied
  * UNCONDITIONALLY (no "any dated?" short-circuit) because a conditional would make an
  * item's factor depend on the rest of the returned set: the same point would score 1.0x at
- * limit=5 and 0.368x at limit=10.
+ * limit=5 and 0.779x at limit=10.
  *
  * ⚠ SCOPE OF THAT CLAIM — it is a property of THIS FUNCTION, not of the system, and an
  * earlier version of this comment overstated it. `doSearch` chooses between the two
  * re-rankers on `temporalActive` (a window parsed AND at least one candidate dated-and-
  * in-window), so with UM_TEMPORAL_QUERY also enabled the *choice* is set-dependent even
- * though this function is not. Measured end-to-end with both flags on: the same undated
- * point on the same query scores 0.80 (factor 1.000) when the pool holds a dated in-window
- * candidate and 0.294 (factor 0.368) when it does not — and because the window path widens
- * the fetch, the literal limit=5 vs limit=10 case above reproduces, with the factors the
- * other way round. So set-independence holds within decay and NOT across the pair.
+ * though this function is not. Measured end-to-end with both flags on (2026-08-07, at the
+ * pre-retune UNDATED_EFOLDINGS = 1): the same undated point on the same query scored 0.80
+ * (factor 1.000) when the pool held a dated in-window candidate and 0.294 (factor 0.368)
+ * when it did not — and because the window path widens the fetch, the literal limit=5 vs
+ * limit=10 case above reproduces, with the factors the other way round. The retune to 0.25
+ * narrows the flip (1.000 vs 0.779) without removing it. So set-independence holds within
+ * decay and NOT across the pair.
  *
  * That is the deferred window-imputation problem tracked as a successor issue, and it is why the
  * two imputations must be chosen JOINTLY rather than one at a time. It is inert today: the
@@ -76,13 +78,21 @@ const DAY_MS = 86400000;
  * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
  * distinct capability would be "decay on, undated at 1.0" — i.e. re-enabling the defect.
  *
- * MAGNITUDE IS AN OPEN CALL. Measured on the live corpus (2026-08-05, 215 dated points):
- * median age 6.3d, median factor 0.811, and ZERO points below exp(-1). So on today's
- * corpus this is a BOUNDED DEMOTION below the whole dated cohort, not neutrality — the
- * change is directionally right at any factor < 1, but the size must be re-decided against
- * a re-measured age distribution before decay is enabled in production. That distribution
- * is currently transient (the write-side stamp is younger than the spread it produced), so
- * calibrating to today's 0.811 would fit doc-rewrite recency rather than corpus age.
+ * MAGNITUDE — RETUNED 1 → 0.25 (2026-08-07), still re-decided at flip time. Measured on
+ * the live corpus (2026-08-05, 215 dated points): median age 6.3d, median factor 0.811,
+ * ZERO points below exp(-1) — one e-folding demoted undated points below the WHOLE dated
+ * cohort. The before-arm capture (eval/results/2026-08-07-undated-arm-run{1,2}.json) then
+ * measured gold headroom at median 2.41x / min 1.42x against exp(-1)'s 2.72x demotion:
+ * 16 of 24 undated golds had less headroom than the policy applied, projecting the
+ * after-arm gate G2 near 0.33 against a floor near 0.94 — the policy would have failed
+ * its own recall-safety gate. E = 0.25 sits above the live median imputed age
+ * (−ln(0.811) ≈ 0.21 e-foldings, so undated still ranks below the typical dated point)
+ * and below the all-golds-survive bound (ln(1.4247) ≈ 0.354), with margin for the ~1-2%
+ * run-to-run score drift the doubled capture showed. The size must STILL be re-decided
+ * against a re-measured age distribution before decay is enabled in production (the
+ * flip-precondition issue): today's distribution is transient (the write-side stamp is
+ * younger than the spread it produced), so any constant chosen now — including this one —
+ * is calibrated against doc-rewrite recency, not corpus age.
  *
  * SCOPE OF THE "DEMOTION" CLAIM: it holds on the positive half-line. A NEGATIVE score
  * would be moved toward zero, i.e. promoted — a property inherited symmetrically from the
@@ -90,8 +100,8 @@ const DAY_MS = 86400000;
  * Unreachable in practice: embedding cosines against real text are positive, and the
  * bouncer's absolute gate already assumes a positive range.
  */
-export const UNDATED_EFOLDINGS = 1;
-export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);   // 0.36787944117144233
+export const UNDATED_EFOLDINGS = 0.25;
+export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);   // 0.7788007830714049
 
 /**
  * Items dated up to this far past a window's end edge still count as in-window.
@@ -241,7 +251,7 @@ export function applyTemporalDecay(results, halfLifeDays) {
   const decayed = results.map((r) => {
     const ms = resolveItemDate(r);
     if (ms === null) {
-      // No resolvable date — impute one decay timescale (see UNDATED_FACTOR).
+      // No resolvable date — impute a fixed fraction of the decay timescale (see UNDATED_FACTOR).
       // GUARD: never MINT a score. `(r.score || 1) * f` would give a score-less item a
       // score and lift it from last place to first, and would turn a genuine `score: 0`
       // into `1 * f` — an item scoring 0.0 outranking one scoring 0.1. Both invert

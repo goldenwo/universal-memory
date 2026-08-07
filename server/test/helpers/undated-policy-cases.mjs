@@ -11,7 +11,7 @@
 // Each case is `(decay, mod) => void` and signals failure by THROWING (node:assert).
 // `mod` is the ranking module under test, so U10 can read the mutant's own exports.
 //
-// The LITERAL `Math.exp(-1)` rule from the test file applies here verbatim: never write
+// The LITERAL `Math.exp(-0.25)` rule from the test file applies here verbatim: never write
 // `mod.UNDATED_FACTOR` in an assertion except in U10, whose whole job is to compare the
 // export against the literal. Using the import elsewhere makes both sides of an identity
 // move together under a retune, so RC1 could never go red.
@@ -23,26 +23,26 @@ import {
 
 export const CASES = {
   U1: [
-    ['each scored undated item is exactly input x exp(-1) in a mixed set', (decay) => withFixedNow(() => {
+    ['each scored undated item is exactly input x exp(-0.25) in a mixed set', (decay) => withFixedNow(() => {
       const byId = new Map(decay(mixedSet(), H).map((r) => [r.id, r]));
-      assert.equal(byId.get('u-high').score, 0.8 * Math.exp(-1));
-      assert.equal(byId.get('u-low').score, 0.2 * Math.exp(-1));
+      assert.equal(byId.get('u-high').score, 0.8 * Math.exp(-0.25));
+      assert.equal(byId.get('u-low').score, 0.2 * Math.exp(-0.25));
     })],
     ['an undated item is NOT graded on its createdAt', (decay) => withFixedNow(() => {
-      // The fixture's createdAt is 120 days old; grading on it gives exp(-4), not exp(-1).
+      // The fixture's createdAt is 120 days old; grading on it gives exp(-4), not exp(-0.25).
       const [out] = decay([undatedItem('u', 1.0, 120)], H);
-      assert.equal(out.score, 1.0 * Math.exp(-1));
+      assert.equal(out.score, 1.0 * Math.exp(-0.25));
       assert.notEqual(out.score, 1.0 * Math.exp(-120 / H));
     })],
   ],
 
   U2: [
-    ['an ALL-UNDATED set keeps its ordering, every scored item input x exp(-1)', (decay) => withFixedNow(() => {
+    ['an ALL-UNDATED set keeps its ordering, every scored item input x exp(-0.25)', (decay) => withFixedNow(() => {
       const out = decay([undatedItem('a', 0.9), undatedItem('b', 0.5), undatedItem('c', 0.1)], H);
       assert.deepEqual(out.map((r) => r.id), ['a', 'b', 'c']);
-      assert.equal(out[0].score, 0.9 * Math.exp(-1));
-      assert.equal(out[1].score, 0.5 * Math.exp(-1));
-      assert.equal(out[2].score, 0.1 * Math.exp(-1));
+      assert.equal(out[0].score, 0.9 * Math.exp(-0.25));
+      assert.equal(out[1].score, 0.5 * Math.exp(-0.25));
+      assert.equal(out[2].score, 0.1 * Math.exp(-0.25));
     })],
   ],
 
@@ -60,14 +60,14 @@ export const CASES = {
     })],
     // Epoch 0 is a DATE, not an absent one. `resolveItemDate` returns 0, which is falsy —
     // so a `!ms` test (instead of `ms === null`) silently reclassifies it as undated. That
-    // used to be a no-op; under this policy it becomes a 0.368x demotion, which is why the
+    // used to be a no-op; under this policy it becomes a 0.779x demotion, which is why the
     // boundary is worth pinning even though no real memory carries it.
     ['a valid_from at epoch 0 is DATED, not undated (0 is falsy but not null)', (decay) => withFixedNow(() => {
       const item = { id: 'epoch', score: 0.5, metadata: { valid_from: new Date(0).toISOString() } };
       const [out] = decay([item], H);
       const ageDays = (FIXED_NOW - 0) / DAY;
       assert.equal(out.score, 0.5 * Math.exp(-ageDays / H));
-      assert.notEqual(out.score, 0.5 * Math.exp(-1), 'must NOT take the undated factor');
+      assert.notEqual(out.score, 0.5 * Math.exp(-0.25), 'must NOT take the undated factor');
     })],
     ['an ALL-DATED set is untouched — the dated branch is byte-identical', (decay) => withFixedNow(() => {
       const spec = [
@@ -82,9 +82,9 @@ export const CASES = {
   ],
 
   U4: [
-    ['the undated factor is exp(-1) even with exactly ONE dated point', (decay) => withFixedNow(() => {
+    ['the undated factor is exp(-0.25) even with exactly ONE dated point', (decay) => withFixedNow(() => {
       const out = decay([datedItem('d', 45, 0.7), undatedItem('u', 0.8)], H);
-      assert.equal(out.find((r) => r.id === 'u').score, 0.8 * Math.exp(-1));
+      assert.equal(out.find((r) => r.id === 'u').score, 0.8 * Math.exp(-0.25));
       assert.equal(out.find((r) => r.id === 'd').score, datedExpect(45, 0.7));
     })],
   ],
@@ -94,7 +94,7 @@ export const CASES = {
       const [out] = decay([undatedItem('u-nascore', undefined)], H);
       assert.ok(!('score' in out), 'a score key must not be created');
       assert.equal(out.score, undefined);
-      assert.notEqual(out.score, Math.exp(-1), 'minting 1 * factor would lift it from last to first');
+      assert.notEqual(out.score, Math.exp(-0.25), 'minting 1 * factor would lift it from last to first');
     })],
     ['a score-less undated item still sorts LAST, not first', (decay) => withFixedNow(() => {
       const out = decay([undatedItem('u-nascore', undefined), ...mixedSet()], H);
@@ -103,10 +103,10 @@ export const CASES = {
   ],
 
   U6: [
-    ['an undated item with score 0 stays exactly 0 — not 1 x exp(-1)', (decay) => withFixedNow(() => {
+    ['an undated item with score 0 stays exactly 0 — not 1 x exp(-0.25)', (decay) => withFixedNow(() => {
       const [out] = decay([undatedItem('u-zero', 0)], H);
       assert.equal(out.score, 0);
-      assert.notEqual(out.score, Math.exp(-1), '`score || 1` would turn a genuine 0 into the factor');
+      assert.notEqual(out.score, Math.exp(-0.25), '`score || 1` would turn a genuine 0 into the factor');
     })],
     ['a 0-scoring undated item never outranks a positive-scoring one', (decay) => withFixedNow(() => {
       const out = decay([undatedItem('u-zero', 0), undatedItem('u-small', 0.1)], H);
@@ -116,7 +116,7 @@ export const CASES = {
       for (const bad of [null, '0.9', undefined]) {
         const [out] = decay([{ id: 'u', createdAt: '2026-04-10T00:00:00Z', score: bad }], H);
         assert.equal(out.score, bad, `score ${JSON.stringify(bad)} must pass through untouched`);
-        assert.notEqual(out.score, Math.exp(-1), 'a non-numeric score must not be coerced to the factor');
+        assert.notEqual(out.score, Math.exp(-0.25), 'a non-numeric score must not be coerced to the factor');
       }
     })],
   ],
@@ -151,7 +151,7 @@ export const CASES = {
     // return {...r};` flips U1, U2 and V3 — and U8 survives it.
     //
     // The discriminating shape is an ALL-UNDATED subset widened by one dated point: under
-    // the short-circuit the undated item scores 1.0x alone and 0.368x once a dated point
+    // the short-circuit the undated item scores 1.0x alone and 0.779x once a dated point
     // joins, which is precisely "the factor depends on the rest of the returned set".
     ['an ALL-UNDATED subset keeps its scores when a DATED point joins (the anyDated short-circuit)', (decay) => withFixedNow(() => {
       const common = () => [undatedItem('u1', 0.6), undatedItem('u2', 0.4)];
@@ -165,7 +165,7 @@ export const CASES = {
         );
       }
       // And pin the absolute value, so "identical but both wrong" cannot pass.
-      assert.equal(alone.find((r) => r.id === 'u1').score, 0.6 * Math.exp(-1));
+      assert.equal(alone.find((r) => r.id === 'u1').score, 0.6 * Math.exp(-0.25));
     })],
   ],
 
@@ -189,9 +189,9 @@ export const CASES = {
 
   U10: [
     // The ONE place the import is compared to the literal.
-    ['UNDATED_FACTOR is exactly Math.exp(-1)', (_decay, mod) => {
-      assert.equal(mod.UNDATED_FACTOR, Math.exp(-1));
-      assert.equal(mod.UNDATED_EFOLDINGS, 1);
+    ['UNDATED_FACTOR is exactly Math.exp(-0.25)', (_decay, mod) => {
+      assert.equal(mod.UNDATED_FACTOR, Math.exp(-0.25));
+      assert.equal(mod.UNDATED_EFOLDINGS, 0.25);
     }],
     ['UNDATED_FACTOR is a constant strictly inside (0,1)', (_decay, mod) => {
       assert.ok(mod.UNDATED_FACTOR > 0 && mod.UNDATED_FACTOR < 1);
@@ -279,7 +279,7 @@ export const CASES = {
             if (m.dated) {
               assert.equal(r.score, (m.score || 1) * Math.exp(-m.age / H), `iter ${iter}: dated ${r.id}`);
             } else if (typeof m.score === 'number') {
-              assert.equal(r.score, m.score * Math.exp(-1), `iter ${iter}: undated ${r.id}`);
+              assert.equal(r.score, m.score * Math.exp(-0.25), `iter ${iter}: undated ${r.id}`);
             } else {
               assert.equal(r.score, undefined, `iter ${iter}: score-less undated ${r.id}`);
             }
