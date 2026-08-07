@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// server/test/red-controls/run.mjs — RC1-RC5 for the undated-decay policy.
+// server/test/red-controls/run.mjs — RC1-RC6 for the undated-decay policy.
 //
 // A passing test suite proves the tests pass. It does NOT prove they would FAIL if the
 // implementation were wrong — and a test that cannot fail is worse than no test, because
@@ -101,12 +101,31 @@ const CONTROLS = [
       ].join('\n')),
     mustFlip: ['U2', 'U8'],
     mustPass: ['U3', 'U5', 'U6', 'U7'],
-    // V3 draws all-undated iterations, so the short-circuit fires there. So does U1's third
-    // sub-case, which decays a SINGLE undated item (an all-undated set by construction) to
-    // prove createdAt is not graded on. U4/V1/V2 mixed sets always hold a dated point, so
-    // the short-circuit never fires and they correctly survive.
+    // V3 draws all-undated iterations, so the short-circuit fires there. So does U1's
+    // "an undated item is NOT graded on its createdAt" sub-case, which decays a SINGLE
+    // undated item — an all-undated set by construction. (Named by label, not ordinal: an
+    // earlier version said "third sub-case" and went stale when a dated sub-case moved to
+    // U3.) U4/V1/V2 mixed sets always hold a dated point, so the short-circuit never fires
+    // and they correctly survive.
     alsoFlip: ['V3', 'U1'],
     why: 'the constant is applied UNCONDITIONALLY so an item factor never depends on the rest of the returned set. This is the exact defect that rationale names — and until U8 gained an all-undated subset, NOTHING in the suite could see it: the short-circuit mutant flipped U1/U2/V3 while U8 survived',
+  },
+  {
+    id: 'RC6',
+    what: 'the undated branch MUTATES in place instead of returning a copy',
+    mutate: (src) => replaceOnce(src,
+      '      return { ...r, score: r.score * UNDATED_FACTOR };',
+      [
+        '      r.score = r.score * UNDATED_FACTOR;',
+        '      return r;',
+      ].join('\n')),
+    mustFlip: ['U9'],
+    mustPass: ['U3', 'U7'],
+    // Mutating in place still produces the RIGHT score, so every value assertion survives;
+    // only the purity case can see it. That is exactly why U9 needed a control: it was the
+    // one case in the table no mutation could redden, so nothing proved it bites.
+    alsoFlip: [],
+    why: 'purity is a documented contract (a new array, items never mutated) and callers rely on it — but a value-only test suite cannot distinguish a copy from an in-place write',
   },
 ];
 

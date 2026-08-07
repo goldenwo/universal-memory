@@ -24,6 +24,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { doSearch } from '../mem0-mcp-http.mjs';
+import { BOUNCER_SCORE_GATE } from '../lib/bouncer.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixtures — ISO-8601 strings at known offsets from "now"
@@ -249,22 +250,29 @@ test('decay: mixed set — absolute top-1 score is the post-decay value the boun
 		// bounceTopHit consumes items[0] and NOTHING else, so every gate assertion below is
 		// on results[0]. An earlier version asserted the crossing on results[1] (rank 2,
 		// which the bouncer never sees) and paired it with `assert.ok(0.72 > 0.60)` — two
-		// literals, an assertion that cannot fail. Derive both sides from the fixture.
-		const UNDATED_RAW = 0.72;                       // the pre-policy top-1
-		const DATED_DECAYED = 0.65 * Math.exp(-3 / 30); // the post-policy top-1
+		// literals, an assertion no production change could ever redden.
+		//
+		// Values are READ from `canned` and the gate is the REAL exported constant, not
+		// retyped numbers: binding a literal to a name does not stop it constant-folding.
+		// The point is that retuning BOUNCER_SCORE_GATE must redden this test rather than
+		// silently leaving its narrative false.
+		const undatedRaw = canned.find((c) => c.id === 'undated-strong').score;
+		const datedRaw = canned.find((c) => c.id === 'dated-fresh').score;
+		const datedDecayed = datedRaw * Math.exp(-3 / 30);
 
 		assert.ok(
-			Math.abs(results[0].score - DATED_DECAYED) < 1e-6,
-			`absolute top-1 score ${results[0].score} should be ~${DATED_DECAYED}`,
+			Math.abs(results[0].score - datedDecayed) < 1e-6,
+			`absolute top-1 score ${results[0].score} should be ~${datedDecayed}`,
 		);
 
-		// THE CROSSING, on the value the bouncer reads. Before the policy the undated doc
-		// was top-1 at 0.72, ABOVE the 0.60 gate, so grading was skipped. After it, top-1 is
-		// the dated doc at ~0.588, BELOW the gate, so an LLM grade is triggered.
-		assert.ok(UNDATED_RAW > 0.60, 'precondition: the pre-policy top-1 sat above the gate');
-		assert.ok(results[0].score < 0.60, 'post-policy top-1 falls below the bouncer gate — real cost, real latency');
+		// THE CROSSING, on the value the bouncer reads, against the gate it really uses
+		// (bouncer.mjs gates on `topItem.score > BOUNCER_SCORE_GATE`, strict >).
+		// Before the policy top-1 was the undated doc, ABOVE the gate → grading skipped.
+		// After it, top-1 is the dated doc BELOW the gate → an LLM grade is triggered.
+		assert.ok(undatedRaw > BOUNCER_SCORE_GATE, 'fixture precondition: the pre-policy top-1 sat above the gate');
+		assert.ok(results[0].score < BOUNCER_SCORE_GATE, 'post-policy top-1 falls below the bouncer gate — real cost, real latency');
 
 		// And the demoted doc's absolute value, exactly (the imputed factor has no time term).
-		assert.equal(results[1].score, UNDATED_RAW * Math.exp(-1));
+		assert.equal(results[1].score, undatedRaw * Math.exp(-1));
 	});
 });

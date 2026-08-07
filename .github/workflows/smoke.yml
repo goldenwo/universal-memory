@@ -117,7 +117,7 @@ jobs:
       # job is to be trustworthy enough that a red result means something.
       - name: Unit suite
         working-directory: server
-        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs
+        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs test/red-controls/*.test.mjs
 
   smoke:
     name: build + smoke
@@ -335,7 +335,7 @@ jobs:
           # assertions pass is the exact defect this change was written to fix,
           # and a gate that skips itself on failure repeats it one level up.
           suite_rc=0
-          node --test test/*.test.mjs test/lint/*.test.mjs || suite_rc=$?
+          node --test test/*.test.mjs test/lint/*.test.mjs test/red-controls/*.test.mjs || suite_rc=$?
 
           if [ ! -d "$TMPDIR" ]; then
             echo "::error::leak check could not run — temp root $TMPDIR is missing"
