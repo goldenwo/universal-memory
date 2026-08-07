@@ -632,11 +632,14 @@ async function handleSearch({ req, body, ctx }) {
   // memory_search will scale undated points while THIS facade leaves them unscaled —
   // the same undated-vs-dated asymmetry reappearing as a BETWEEN-SURFACE divergence.
   //
-  // Deliberately not "fixed" here. This path applies an ABSOLUTE score threshold
-  // (default 0.3), so a multiplicative demotion would become a hard DROP rather than a
-  // demotion — 0.72 * exp(-1) = 0.265 falls under it — and dropping results for missing
-  // metadata is what the recall-safety rule forbids. Any future change here must decide
-  // the threshold interaction first, not just copy the factor across.
+  // Deliberately not "fixed" here, and the reason is ORDER-DEPENDENT, so state the premise
+  // rather than the conclusion: the absolute score threshold (default 0.3) is applied
+  // ABOVE, when results are filtered. For the caller's threshold to mean what it says, a
+  // demotion would have to run BEFORE that filter — and there 0.72 * exp(-1) = 0.265 falls
+  // under the 0.3 default, so the demotion becomes a hard DROP, which the recall-safety
+  // rule forbids for missing metadata. Applied AFTER the filter (i.e. here) nothing drops,
+  // but the facade would then return scores below its own stated threshold. Either way the
+  // threshold interaction has to be decided first; copying the factor across is not enough.
   let compatWindow = null;
   let compatParseOk = true;
   try {

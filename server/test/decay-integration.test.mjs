@@ -246,15 +246,25 @@ test('decay: mixed set — absolute top-1 score is the post-decay value the boun
 		assert.deepEqual(results.map((r) => r.id), ['dated-fresh', 'undated-strong'],
 			'the undated doc must no longer take top-1 on raw cosine alone');
 
-		const expectedTop = 0.65 * Math.exp(-3 / 30);
+		// bounceTopHit consumes items[0] and NOTHING else, so every gate assertion below is
+		// on results[0]. An earlier version asserted the crossing on results[1] (rank 2,
+		// which the bouncer never sees) and paired it with `assert.ok(0.72 > 0.60)` — two
+		// literals, an assertion that cannot fail. Derive both sides from the fixture.
+		const UNDATED_RAW = 0.72;                       // the pre-policy top-1
+		const DATED_DECAYED = 0.65 * Math.exp(-3 / 30); // the post-policy top-1
+
 		assert.ok(
-			Math.abs(results[0].score - expectedTop) < 1e-6,
-			`absolute top-1 score ${results[0].score} should be ~${expectedTop}`,
+			Math.abs(results[0].score - DATED_DECAYED) < 1e-6,
+			`absolute top-1 score ${results[0].score} should be ~${DATED_DECAYED}`,
 		);
 
-		// The demoted item's absolute value, exactly — and the gate crossing it implies.
-		assert.equal(results[1].score, 0.72 * Math.exp(-1));
-		assert.ok(results[1].score < 0.60, 'undated top-hit now falls below the bouncer gate');
-		assert.ok(0.72 > 0.60, 'and it sat above that gate before the policy — the crossing is the point');
+		// THE CROSSING, on the value the bouncer reads. Before the policy the undated doc
+		// was top-1 at 0.72, ABOVE the 0.60 gate, so grading was skipped. After it, top-1 is
+		// the dated doc at ~0.588, BELOW the gate, so an LLM grade is triggered.
+		assert.ok(UNDATED_RAW > 0.60, 'precondition: the pre-policy top-1 sat above the gate');
+		assert.ok(results[0].score < 0.60, 'post-policy top-1 falls below the bouncer gate — real cost, real latency');
+
+		// And the demoted doc's absolute value, exactly (the imputed factor has no time term).
+		assert.equal(results[1].score, UNDATED_RAW * Math.exp(-1));
 	});
 });

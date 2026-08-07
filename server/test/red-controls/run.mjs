@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// server/test/red-controls/run.mjs — RC1-RC4 for the undated-decay policy.
+// server/test/red-controls/run.mjs — RC1-RC5 for the undated-decay policy.
 //
 // A passing test suite proves the tests pass. It does NOT prove they would FAIL if the
 // implementation were wrong — and a test that cannot fail is worse than no test, because
@@ -15,7 +15,10 @@
 // ranking-undated-policy.test.mjs runs, so a control can never drift from the suite it
 // certifies.
 //
-// EXIT 0 only when all four controls behave exactly as the table says.
+// EXIT 0 only when EVERY control behaves exactly as the table says.
+//
+// Wired into the suite by controls.test.mjs — this file is not `*.test.mjs`, so no glob
+// reaches it on its own and the controls would otherwise never run in CI.
 //
 // If a control flips something OUTSIDE its named set, the fixture or the table is wrong —
 // fix THAT. Never relax an expectation to make this runner green: a weakened control is
@@ -42,7 +45,9 @@ const CONTROLS = [
       'export const UNDATED_FACTOR = 1.0;'),
     mustFlip: ['U1', 'U2', 'U4', 'U10', 'V3'],
     mustPass: ['U3', 'U5', 'U6', 'U7'],
-    alsoFlip: [],
+    // U8 gained a sub-case pinning an ABSOLUTE undated value (0.6 x exp(-1)), so any change
+    // to the magnitude necessarily flips it. Named rather than tolerated.
+    alsoFlip: ['U8'],
     why: 'the policy is scoped to the undated branch and mints no score, so the dated cases and the guard cases are untouched by the magnitude',
   },
   {
@@ -80,9 +85,28 @@ const CONTROLS = [
     mustFlip: ['U1', 'V3'],
     mustPass: ['U3'],
     // Every undated fixture item carries a 120-day-old createdAt (deliberately, so this
-    // control is not inert), so any case asserting an undated SCORE also reddens.
-    alsoFlip: ['U2', 'U4'],
+    // control is not inert), so any case asserting an undated SCORE also reddens — including
+    // U8's absolute-value sub-case.
+    alsoFlip: ['U2', 'U4', 'U8'],
     why: 'catches a future contributor reinstating the createdAt fallback — an arrival stamp must never be a ranking date',
+  },
+  {
+    id: 'RC5',
+    what: 'an anyDated short-circuit — skip the policy when the set holds no dated point',
+    mutate: (src) => replaceOnce(src,
+      "      if (typeof r.score !== 'number') return { ...r };",
+      [
+        '      if (!results.some((x) => resolveItemDate(x) !== null)) return { ...r };',
+        "      if (typeof r.score !== 'number') return { ...r };",
+      ].join('\n')),
+    mustFlip: ['U2', 'U8'],
+    mustPass: ['U3', 'U5', 'U6', 'U7'],
+    // V3 draws all-undated iterations, so the short-circuit fires there. So does U1's third
+    // sub-case, which decays a SINGLE undated item (an all-undated set by construction) to
+    // prove createdAt is not graded on. U4/V1/V2 mixed sets always hold a dated point, so
+    // the short-circuit never fires and they correctly survive.
+    alsoFlip: ['V3', 'U1'],
+    why: 'the constant is applied UNCONDITIONALLY so an item factor never depends on the rest of the returned set. This is the exact defect that rationale names — and until U8 gained an all-undated subset, NOTHING in the suite could see it: the short-circuit mutant flipped U1/U2/V3 while U8 survived',
   },
 ];
 
@@ -146,7 +170,11 @@ async function main() {
       (r.passed ? survived : flipped).push(id);
     }
 
-    const missingFlips = c.mustFlip.filter((id) => !flipped.includes(id));
+    // alsoFlip entries are CLAIMS about what those cases still assert ("U4 and U7 assert
+    // dated scores directly"). If one silently stops flipping, the control stays green while
+    // certifying strictly less — the erosion this runner exists to prevent. So they are
+    // required to flip too; the two lists differ only in the failure message.
+    const missingFlips = [...c.mustFlip, ...(c.alsoFlip ?? [])].filter((id) => !flipped.includes(id));
     const brokenPasses = c.mustPass.filter((id) => !survived.includes(id));
     // Flips outside BOTH named sets are gated too. Without this a future broadening of a
     // mutation could redden strictly more cases and the run would still report success —

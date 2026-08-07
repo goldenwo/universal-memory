@@ -133,6 +133,29 @@ export const CASES = {
         );
       }
     })],
+    // The sub-case above CANNOT see the defect UNDATED_FACTOR's own comment names as the
+    // reason for applying the constant unconditionally. Its subset already contains a dated
+    // point, so an `anyDated` short-circuit is true on BOTH sides and the scores match.
+    // Demonstrated: a mutant adding `if (!results.some(x => resolveItemDate(x) !== null))
+    // return {...r};` flips U1, U2 and V3 — and U8 survives it.
+    //
+    // The discriminating shape is an ALL-UNDATED subset widened by one dated point: under
+    // the short-circuit the undated item scores 1.0x alone and 0.368x once a dated point
+    // joins, which is precisely "the factor depends on the rest of the returned set".
+    ['an ALL-UNDATED subset keeps its scores when a DATED point joins (the anyDated short-circuit)', (decay) => withFixedNow(() => {
+      const common = () => [undatedItem('u1', 0.6), undatedItem('u2', 0.4)];
+      const alone = decay(common(), H);
+      const widened = decay([...common(), datedItem('d1', 20, 0.7)], H);
+      for (const id of ['u1', 'u2']) {
+        assert.equal(
+          widened.find((r) => r.id === id).score,
+          alone.find((r) => r.id === id).score,
+          `${id} changed when a DATED point joined — the factor is set-dependent`,
+        );
+      }
+      // And pin the absolute value, so "identical but both wrong" cannot pass.
+      assert.equal(alone.find((r) => r.id === 'u1').score, 0.6 * Math.exp(-1));
+    })],
   ],
 
   U9: [

@@ -20,9 +20,12 @@
  *     at 1.0 stopped being neutral the moment everything else decayed — it became the
  *     top of the range.
  * Their imputations must eventually be chosen JOINTLY: the two are mutually exclusive at
- * the call site, so with both flags on, a query that resolves a window would leave undated
- * points at 1.0 while every other query scales them — flipping their treatment on
- * incidental phrasing rather than on any property of the data.
+ * the call site, so with both flags on an undated point's factor flips between 1.0 and
+ * 0.368 on THREE things that are not properties of that point —
+ *   1. incidental query phrasing (does the text parse as a date expression at all),
+ *   2. pool composition (is some OTHER candidate dated-and-in-window),
+ *   3. the caller's `limit` (the window path widens the fetch, changing 2's answer).
+ * Measured, not inferred — see UNDATED_FACTOR. Inert until BOTH flags are on.
  *
  * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
  *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
@@ -54,6 +57,20 @@ const DAY_MS = 86400000;
  * UNCONDITIONALLY (no "any dated?" short-circuit) because a conditional would make an
  * item's factor depend on the rest of the returned set: the same point would score 1.0x at
  * limit=5 and 0.368x at limit=10.
+ *
+ * ⚠ SCOPE OF THAT CLAIM — it is a property of THIS FUNCTION, not of the system, and an
+ * earlier version of this comment overstated it. `doSearch` chooses between the two
+ * re-rankers on `temporalActive` (a window parsed AND at least one candidate dated-and-
+ * in-window), so with UM_TEMPORAL_QUERY also enabled the *choice* is set-dependent even
+ * though this function is not. Measured end-to-end with both flags on: the same undated
+ * point on the same query scores 0.80 (factor 1.000) when the pool holds a dated in-window
+ * candidate and 0.294 (factor 0.368) when it does not — and because the window path widens
+ * the fetch, the literal limit=5 vs limit=10 case above reproduces, with the factors the
+ * other way round. So set-independence holds within decay and NOT across the pair.
+ *
+ * That is the deferred window-imputation problem tracked as a successor issue, and it is why the
+ * two imputations must be chosen JOINTLY rather than one at a time. It is inert today: the
+ * divergence needs BOTH flags on, and production runs with both off.
  *
  * Deliberately NOT an env knob: this module is pure and takes `halfLifeDays` as a
  * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
