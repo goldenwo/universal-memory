@@ -153,11 +153,15 @@ test('assertDateCohorts: reads payloads (with_payload) or it could not see the k
 });
 
 test('assertDateCohorts: a NULL valid_from in the undated cohort THROWS — it is not "undated enough"', async () => {
-  // The checks are deliberately ASYMMETRIC and this pins the strict half.
-  // `setPayload` cannot delete a key, so the classic wrong implementation leaves
-  // `valid_from: null` behind. Treating null as undated would wave that no-op straight
-  // through. Requiring strict ABSENCE is what makes the strip provably a deletion.
-  // If anyone ever relaxes this to a truthiness check, this test is the thing that stops them.
+  // Pins the strict half of the asymmetry: `!== undefined`, never a truthiness test.
+  //
+  // Be precise about what this buys, because the comment here used to overclaim. Measured
+  // against qdrant v1.13.0 (2026-08-06): a null-valued payload key comes back ABSENT —
+  // qdrant drops nulls — so this does NOT catch a setPayload-based strip, and an earlier
+  // version of this comment said it did. What it does guarantee is that a present-but-null
+  // value from ANY source (a direct upsert, another client, a future qdrant that preserves
+  // nulls) is refused rather than quietly counted as undated. The read path treats null as
+  // undated, so agreeing with it here would hide a strip that only half-worked.
   const c = mockClient({ u1: { valid_from: null, data: 'x' }, d1: dated() });
   await assert.rejects(
     () => assertDateCohorts(c, SCRATCH, { undatedIds: ['u1'], datedIds: ['d1'] }),

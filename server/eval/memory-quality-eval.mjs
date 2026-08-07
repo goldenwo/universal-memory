@@ -1010,13 +1010,25 @@ export function assertBackdated(points, expectedByRef) {
  * counters all behave exactly as in production), and only then is the date removed from
  * the chosen subset.
  *
- * TWO WAYS THE OBVIOUS IMPLEMENTATION SILENTLY NO-OPS — both leave every point dated, so
- * the downstream measurement passes VACUOUSLY, which is indistinguishable from success:
- *   1. `setPayload` CANNOT delete keys — lib/supersede.mjs clears fields to `null` for
- *      exactly this reason. Only `deletePayload` removes a key.
- *   2. The key is the top-level `valid_from`, NOT `metadata.valid_from`. lib/add.mjs
- *      flattens metadata to the payload root; the dotted form is only the read-path
- *      projection in lib/ranking.mjs, and naming it removes nothing.
+ * THE WAY THE OBVIOUS IMPLEMENTATION SILENTLY NO-OPS — it leaves every point dated, so the
+ * downstream measurement passes VACUOUSLY, which is indistinguishable from success:
+ *
+ *   **The key is the top-level `valid_from`, NOT `metadata.valid_from`.** lib/add.mjs
+ *   flattens metadata to the payload root. Qdrant DOES read a dot as a nested path, so
+ *   `keys: ['metadata.valid_from']` strips the nested projection (if any) and leaves the
+ *   ROOT key — the one the read path resolves — completely intact.
+ *
+ * MEASURED against qdrant v1.13.0 on 2026-08-06 rather than assumed:
+ *   - `deletePayload({keys:['valid_from']})` removes the root key entirely: it comes back
+ *     ABSENT, not null, and every other payload key survives.
+ *   - `deletePayload({keys:['metadata.valid_from']})` leaves the root key untouched and
+ *     strips only the nested one. That is the trap, confirmed live.
+ *   - `setPayload({valid_from: null})` ALSO ends with the key absent — qdrant drops
+ *     null-valued keys. So "setPayload cannot delete keys" is not true in the sense that
+ *     matters here; an earlier version of this comment claimed it was, citing
+ *     lib/supersede.mjs, and that was wrong. `deletePayload` remains the right call
+ *     because it states the intent exactly and does not lean on a null-dropping quirk —
+ *     but the reason is clarity, not capability.
  *
  * Scratch-only: assertScratchSafe runs BEFORE any client call. An empty subset is refused
  * rather than treated as success — a no-op strip is the failure this function exists to
@@ -1044,9 +1056,15 @@ export async function stripValidFrom(client, collection, pointIds) {
  * Both subsets must be non-empty, or the corresponding check is itself vacuous.
  *
  * THE TWO CHECKS ARE DELIBERATELY ASYMMETRIC — do not "simplify" them to one predicate:
- *   - undated: the key must be strictly ABSENT. A present-but-null `valid_from` is exactly
- *     what a `setPayload`-based no-op leaves behind (supersede.mjs clears fields to null),
- *     so accepting null here would wave through the very mistake trap (a) exists to catch.
+ *   - undated: the key must be strictly ABSENT — `!== undefined`, not a truthiness test.
+ *     Be precise about what that buys, because an earlier comment here overclaimed:
+ *     measured against qdrant v1.13.0, a null-valued key comes back ABSENT (qdrant drops
+ *     nulls), so this does NOT distinguish a `deletePayload` from a `setPayload(null)`.
+ *     What it DOES guarantee is that nothing counts as undated unless the key is genuinely
+ *     gone — a present-but-null value from any other source (a direct upsert, another
+ *     client, a future qdrant that preserves nulls) is refused rather than assumed benign.
+ *     Conservative on purpose: the read path treats null as undated, so silently agreeing
+ *     with it would hide a strip that only half-worked.
  *   - dated: the value must satisfy the READ PATH's own `isUsableDate`. A present-but-
  *     unusable value (null, '', a Date object that add.mjs failed to stamp) is one the
  *     ranker scores as undated, which silently makes the whole corpus undated — the
@@ -1091,6 +1109,181 @@ export async function assertDateCohorts(client, collection, { undatedIds = [], d
  * eval-only metadata.eval_ref + a pinned lane (review G1). Records the write-returned id
  * per seed. Guards (review G2): surface DEDUP_MERGED and any id-collision.
  */
+/**
+ * The undated-arm measurement pass: seed the whole fixture through the NORMAL write path,
+ * strip the date from the gold subset only, prove both cohorts are what they claim to be,
+ * then run one recall pass with decay pinned and report G1/G2.
+ *
+ * WHY THIS DOES NOT CALL `runOnce`. runOnce also drives the staleness and answer-grading
+ * passes — LLM cost and grader noise in a measurement that is purely about RANKING. This
+ * arm needs `seedCorpus` + `recallPass` and nothing else, so it composes them directly. It
+ * still runs inside `withDecayEnv`, so the flag is pinned in-process and cleared after, and
+ * `flags` records the same resolved value the run actually executed under.
+ *
+ * ORDER IS LOAD-BEARING. Both cohort assertions run BEFORE any number is computed, because
+ * both failure directions produce a VACUOUS pass that looks exactly like success: a strip
+ * that no-opped leaves nothing undated, and a strip that was too broad leaves nothing dated
+ * (the undated factor then becomes a uniform multiplier and the delta is exactly 0).
+ *
+ * Every live dependency is INJECTED rather than imported here, so the sequence and scoping
+ * are drivable by fakes offline. The live seams — does deletePayload really remove the key
+ * — are proven by a live probe and by the run itself; a fake cannot testify about qdrant.
+ *
+ * @param {object} args
+ * @param {Array}  args.rows        RAW fixture rows (they still carry `days_ago`).
+ * @param {string} args.collection  Scratch collection; must carry the eval_mq_ prefix.
+ * @param {boolean|string} [args.decay=true]
+ * @param {number} [args.now]       Clock for back-dating; pass a fixed value to reproduce.
+ */
+export async function runUndatedArm(args = {}) {
+  return withDecayEnv(args.decay ?? true, (resolved) => runUndatedArmDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runUndatedArmDecayPinned({
+  rows, collection, decay, now = Date.now(),
+  umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+  ks = [1, 3, 5, 10],
+}) {
+  assertScratchSafe(collection);
+
+  // days_ago -> valid_from. Skipping this is the silent failure the fixture warns about:
+  // seedCorpus reads only `valid_from`, so unmaterialised rows get stamped `now` and the
+  // entire dated cohort collapses to age 0 while every cohort assertion still passes.
+  const materialised = materialiseValidFrom(rows, now);
+  const { goldRefs, datedRefs, expectedByRef } = undatedArmCohorts(materialised);
+
+  const latency = { umAdd: [], doSearch: [] };
+  const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
+  const seedInfo = await seedCorpus({ umAdd, memory, client, rows: materialised, latency, metrics: NOOP_METRICS });
+
+  // A doSearch result id is a writeId, not an eval_ref — the strip has to address points by
+  // the id the write actually returned.
+  const writeIdByRef = new Map(seedInfo.seeds.map((s) => [s.eval_ref, s.writeId]));
+  const idsFor = (refs) => refs.map((ref) => {
+    const id = writeIdByRef.get(ref);
+    if (id === undefined) throw new Error(`mq-eval undated-arm: no write id captured for '${ref}'`);
+    return id;
+  });
+  const goldIds = idsFor(goldRefs);
+  const datedIds = idsFor(datedRefs);
+
+  // Dedup would silently merge two seeds into one point and break the 1:1 cohort split, so
+  // it is ASSERTED rather than assumed — `mergedCount: 0` must be measured, which is exactly
+  // what the _systemMigration shortcut would have made true by construction instead.
+  if (seedInfo.mergedCount !== 0) {
+    throw new Error(`mq-eval undated-arm: ${seedInfo.mergedCount} seed(s) were DEDUP_MERGED — the cohort split is no longer 1:1`);
+  }
+  if (seedInfo.distinctIdCount !== seedInfo.seeds.length) {
+    throw new Error(`mq-eval undated-arm: id collision — ${seedInfo.seeds.length} seeds produced ${seedInfo.distinctIdCount} distinct ids`);
+  }
+
+  await stripValidFrom(client, collection, goldIds);
+  await assertDateCohorts(client, collection, { undatedIds: goldIds, datedIds });
+
+  // EQUALITY, not presence: a non-string valid_from is rejected by isUsableDate and
+  // re-stamped as `now`, which a presence check passes while the age spread is silently gone.
+  const datedPoints = (await client.retrieve(collection, { ids: datedIds, with_payload: true }) ?? [])
+    .map((p) => ({ eval_ref: p.payload?.eval_ref, valid_from: p.payload?.valid_from }));
+  assertBackdated(datedPoints, expectedByRef);
+
+  const recall = await recallPass({
+    doSearch, embed, cosineStrict, NOOP_METRICS, memory,
+    rows: materialised, seeds: seedInfo.seeds, ks, cost, latency,
+  });
+
+  const { g1, g2 } = undatedArmMetrics(recall.details, goldRefs);
+
+  return {
+    timestamp: new Date(now).toISOString(),
+    arm: 'undated',
+    flags: evalRunFlags({ decay }),
+    fixture: {
+      path: UNDATED_ARM.fixture,
+      rows: materialised.length,
+      undatedGold: goldRefs.length,
+      dated: datedRefs.length,
+      ageSpreadDays: [...new Set(materialised.flatMap((r) => r.seed_facts.map((f) => f.days_ago)))].sort((a, b) => a - b),
+    },
+    seedCount: seedInfo.seeds.length,
+    mergedCount: seedInfo.mergedCount,
+    g2,
+    g1,
+    recall: { aggregate: recall.aggregate ?? null, details: recall.details },
+    cost,
+    latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
+  };
+}
+
+/**
+ * Split materialised fixture rows into the two cohorts, and build the back-date expectation
+ * map at the same time so the check and the seed share ONE source of truth.
+ *
+ * PURE, kept separate from the live orchestration precisely so the part with logic worth
+ * getting exactly right is testable without qdrant, an embedder, or an API key.
+ *
+ * @returns {{goldRefs: string[], datedRefs: string[], expectedByRef: Record<string,string>}}
+ *   `goldRefs` are the eval_refs whose points get stripped (the undated cohort); `datedRefs`
+ *   keep theirs; `expectedByRef` maps every DATED ref to the exact ISO value the fixture
+ *   asked for, which is what assertBackdated compares against. Gold refs are deliberately
+ *   ABSENT from the map — their dates are about to be deleted, so an expectation would be
+ *   asserting something the run itself destroys.
+ */
+export function undatedArmCohorts(rows) {
+  const goldRefs = [];
+  const datedRefs = [];
+  const expectedByRef = {};
+  for (const row of rows ?? []) {
+    for (let i = 0; i < (row.seed_facts ?? []).length; i++) {
+      const ref = `${row.id}:${i}`;
+      if (row.undated_gold) {
+        goldRefs.push(ref);
+      } else {
+        datedRefs.push(ref);
+        expectedByRef[ref] = row.seed_facts[i].valid_from;
+      }
+    }
+  }
+  return { goldRefs, datedRefs, expectedByRef };
+}
+
+/**
+ * G1 and G2 over a recall pass's per-row details. PURE — these are the numbers the whole
+ * arc turns on, so they must be checkable without a live run.
+ *
+ * G2 (**the gate**) — recall@5 restricted to rows whose gold answer is an UNDATED point.
+ * That is the genuine cost the policy can fail: demoting undated points can only hurt here.
+ *
+ * G1 (**reported, never gated**) — the undated cohort's mean rank. A synthetic fixture's
+ * author picks the undated fraction, the age spread and the seed scores, so this delta is
+ * determined by fixture construction; gating on it would test the fixture. Recorded with
+ * its parameters, per the standing rule against fixture-derived efficacy claims.
+ *
+ * `rr` is the reciprocal rank (0 when the target never surfaced), so rank = 1/rr. Rows
+ * whose target was NOT retrieved are excluded from the mean and counted SEPARATELY —
+ * averaging over only the found rows while hiding how many vanished is exactly how a
+ * mean-rank "improvement" gets manufactured by losing the hard rows.
+ */
+export function undatedArmMetrics(details, goldRefs) {
+  const gold = new Set(goldRefs ?? []);
+  const goldRows = (details ?? []).filter((d) => gold.has(d.target_ref));
+  const found = goldRows.filter((d) => (d.rr ?? 0) > 0);
+  const ranks = found.map((d) => 1 / d.rr);
+
+  return {
+    g2: {
+      metric: 'recall@5 over the undated-gold subset',
+      value: goldRows.length === 0 ? null : mean(goldRows.map((d) => d.recallByK?.[5] ?? 0)),
+      rows: goldRows.length,
+    },
+    g1: {
+      metric: 'mean rank of the undated cohort (REPORTED, not gated)',
+      meanRank: ranks.length === 0 ? null : mean(ranks),
+      rowsRanked: found.length,
+      rowsUnranked: goldRows.length - found.length,
+    },
+  };
+}
+
 export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
   const seeds = []; // { eval_ref, text, lane, writeId, event }
   for (const row of rows) {
