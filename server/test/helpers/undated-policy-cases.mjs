@@ -1,7 +1,7 @@
 // server/test/helpers/undated-policy-cases.mjs — the undated-decay policy's case table,
 // parameterised by the implementation under test.
 //
-// WHY THIS EXISTS. The red controls (RC1-RC4) must confirm that each mutation flips its
+// WHY THIS EXISTS. The red controls (RC1-RC6) must confirm that each mutation flips its
 // NAMED set of cases and leaves its must-still-pass set green. That is only meaningful if
 // the controls evaluate the SAME cases the suite asserts — two hand-maintained copies
 // would drift, and a drifted control proves nothing about the tests that actually run.

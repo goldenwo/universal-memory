@@ -1,5 +1,5 @@
 // server/test/helpers/undated-policy-fixtures.mjs — shared fixtures for the undated-decay
-// policy tests and (later) its red controls.
+// policy tests and its red controls (RC1-RC6).
 //
 // Deliberately NOT a *.test.mjs file: importing fixtures from a test module would
 // re-register that module's tests in every importing runner process.

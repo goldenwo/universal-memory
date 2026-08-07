@@ -167,9 +167,21 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  const subCases = Object.values(CASES).reduce((n, v) => n + v.length, 0);
   console.log(`baseline: all ${Object.keys(CASES).length} cases pass against lib/ranking.mjs`);
+  // Sub-case total too: the group count alone cannot see a DROPPED sub-case, and some
+  // groups have a single sub-case carrying the only guard for a whole branch.
+  console.log(`baseline: ${subCases} sub-cases`);
 
   for (const c of CONTROLS) {
+    // A control that names NO case it must redden asserts nothing, yet would print PASS
+    // with its `what` string intact — the CI log would actively misreport. Neutering a
+    // control is a subtler erosion than deleting it, and the roster pin cannot see it.
+    if (c.mustFlip.length === 0) {
+      console.log(`FAIL ${c.id} — ${c.what}`);
+      failures.push(`${c.id}: mustFlip is EMPTY — a control that names no case it must redden certifies nothing`);
+      continue;
+    }
     // Per-control try/catch: a drifted mutation anchor throws, and without this the
     // first drift would abort the run with the later controls never evaluated.
     let mod;

@@ -26,8 +26,16 @@ import { fileURLToPath } from 'node:url';
 /** Every control that must actually execute. Update deliberately, never to make CI green. */
 const CONTROLS = ['RC1', 'RC2', 'RC3', 'RC4', 'RC5', 'RC6'];
 
-/** Cases in the shared table. Literal, so silently dropping one reddens this test. */
+/** Case GROUPS in the shared table. Literal, so silently dropping one reddens this test. */
 const CASE_COUNT = 13;
+
+/**
+ * SUB-cases across those groups. Pinned SEPARATELY because the group count cannot see a
+ * dropped sub-case — and some groups have exactly one sub-case carrying the only guard for
+ * a whole branch (U6's non-numeric-score case is the sole thing distinguishing the shipped
+ * `typeof r.score !== 'number'` from a weaker `== null`, which would coerce a string score).
+ */
+const SUBCASE_COUNT = 21;
 
 function runControls() {
   // Child process: run.mjs signals via process.exitCode, and importing it would set the
@@ -57,4 +65,6 @@ test('red controls: the baseline gate ran over the whole case table', () => {
   const r = runControls();
   assert.match(r.stdout, new RegExp(String.raw`baseline: all ${CASE_COUNT} cases pass`),
     `the case table changed size — re-pin CASE_COUNT deliberately\n${r.stdout}`);
+  assert.match(r.stdout, new RegExp(String.raw`baseline: ${SUBCASE_COUNT} sub-cases`),
+    `a SUB-case was added or dropped — re-pin SUBCASE_COUNT deliberately\n${r.stdout}`);
 });
