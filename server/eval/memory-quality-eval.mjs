@@ -1129,6 +1129,14 @@ export async function assertDateCohorts(client, collection, { undatedIds = [], d
  * are drivable by fakes offline. The live seams — does deletePayload really remove the key
  * — are proven by a live probe and by the run itself; a fake cannot testify about qdrant.
  *
+ * ⚠ CALLER RESPONSIBILITY, and it bites silently: **`MEM0_USER_ID` must be pinned to
+ * EVAL_USER BEFORE `mem0-mcp-http.mjs` is imported**, because doSearch captures USER_ID at
+ * import time. This function cannot do it for you — the imports belong to the caller, which
+ * is the price of the DI that makes the wiring testable. Get it wrong and doSearch searches
+ * the wrong user, every target misses, and G2 comes back 0 — which reads as "the policy
+ * destroyed recall" rather than "an env var was set too late". The CLI entry point below
+ * does this correctly; any bespoke runner must too.
+ *
  * @param {object} args
  * @param {Array}  args.rows        RAW fixture rows (they still carry `days_ago`).
  * @param {string} args.collection  Scratch collection; must carry the eval_mq_ prefix.
@@ -2042,6 +2050,68 @@ async function writeJson(path, obj) {
 
 async function cliMain() {
   const args = parseArgs(process.argv);
+
+  // Undated-arm measurement (its OWN fixture, OWN scratch collection, OWN entry point —
+  // the shared corpus and the nightly drift gate are deliberately untouched by this path).
+  // Returns early; never reads mq-gate-thresholds.json, because the subset floor is derived
+  // from a BEFORE-arm run and pinned separately.
+  if (args.undatedArm) {
+    // Pin BEFORE the lazy imports: doSearch captures USER_ID at import time (review B1).
+    // UM_TEMPORAL_DECAY is deliberately NOT set here — runUndatedArm pins it in-process and
+    // clears it after. Writing it to the environment (or .env) is what would make every
+    // later reaction-gate run refuse.
+    process.env.MEM0_USER_ID = EVAL_USER;
+    process.env.UM_DEDUP_ENABLED = 'true';
+    process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
+    process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
+
+    const { Memory } = await import('mem0ai/oss');
+    const { QdrantClient } = await import('@qdrant/js-client-rest');
+    const { umAdd } = await import('../lib/add.mjs');
+    const { doSearch } = await import('../mem0-mcp-http.mjs');
+    const { embed, getEmbedderConfig } = await import('../lib/embed.mjs');
+    const { getFactsLlmConfig } = await import('../lib/facts.mjs');
+    const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+    const { cosineStrict } = await import('../lib/vector.mjs');
+
+    const rows = await loadFixtureJsonl(args.recall ?? UNDATED_ARM.fixture);
+    const host = process.env.QDRANT_HOST ?? 'localhost';
+    const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+    const client = new QdrantClient({ host, port });
+    const collection = `${SCRATCH_PREFIX}undated_${isoDate()}_${args.seed ?? process.pid}`;
+
+    const memoriesBefore = await countPoints(client, 'memories');
+    let result;
+    try {
+      await ensureCollection(client, collection, VECTOR_DIM);
+      const memory = new Memory({
+        embedder: getEmbedderConfig(process.env),
+        llm: getFactsLlmConfig(process.env),
+        vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
+      });
+      result = await runUndatedArm({
+        rows, collection, decay: true,
+        umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+      });
+    } finally {
+      await dropCollectionQuiet(client, collection).catch((e) => console.error('[mq-eval] undated-arm teardown:', e?.message));
+    }
+
+    const memoriesAfter = await countPoints(client, 'memories');
+    if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+      throw new Error(`mq-eval ISOLATION VIOLATION: 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+    }
+
+    const out = args.out ?? join('eval/results', `mq-undated-arm-${isoDate()}-${args.seed ?? process.pid}.json`);
+    await writeJson(out, result);
+    console.log(`[mq-eval] undated arm written to ${out}`);
+    console.log(`  flags        ${JSON.stringify(result.flags)}`);
+    console.log(`  seeds        ${result.seedCount} (merged ${result.mergedCount})`);
+    console.log(`  cohorts      ${result.fixture.undatedGold} undated-gold / ${result.fixture.dated} dated`);
+    console.log(`  G2 (GATE)    recall@5 over the undated-gold subset: ${result.g2.value} over ${result.g2.rows} rows`);
+    console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
+    return;
+  }
 
   // Storage & index growth (#19): footprint vs N. NO API key (synthetic vectors, direct upsert);
   // needs a local Docker qdrant + --recall (supplies lanes for realistic synthetic text). Returns early.
