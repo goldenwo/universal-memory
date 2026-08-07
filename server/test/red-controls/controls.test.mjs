@@ -35,7 +35,7 @@ const CASE_COUNT = 13;
  * a whole branch (U6's non-numeric-score case is the sole thing distinguishing the shipped
  * `typeof r.score !== 'number'` from a weaker `== null`, which would coerce a string score).
  */
-const SUBCASE_COUNT = 21;
+const SUBCASE_COUNT = 22;
 
 function runControls() {
   // Child process: run.mjs signals via process.exitCode, and importing it would set the

@@ -189,7 +189,11 @@ async function main() {
       mod = await loadMutant(c.id, c.mutate, src);
     } catch (err) {
       console.log(`FAIL ${c.id} — ${c.what}`);
-      failures.push(`${c.id}: could not build the mutant — ${err.message}`);
+      // Truncate at the data: URL. Node's resolver error embeds the ENTIRE base64 mutant,
+      // so on the failure mode this file explicitly anticipates ("what if ranking.mjs ever
+      // gains an import") all six controls emit ~44 KB of base64 and bury the one
+      // actionable line — for a failure whose whole job is to say what the contributor broke.
+      failures.push(`${c.id}: could not build the mutant — ${String(err.message).split(' from "data:')[0]}`);
       continue;
     }
     const flipped = [];

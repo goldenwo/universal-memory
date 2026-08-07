@@ -58,6 +58,17 @@ export const CASES = {
       assert.equal(byId.get('d-old-high').score, datedExpect(120, 0.9));
       assert.equal(byId.get('d-new-low').score, datedExpect(1, 0.3));
     })],
+    // Epoch 0 is a DATE, not an absent one. `resolveItemDate` returns 0, which is falsy —
+    // so a `!ms` test (instead of `ms === null`) silently reclassifies it as undated. That
+    // used to be a no-op; under this policy it becomes a 0.368x demotion, which is why the
+    // boundary is worth pinning even though no real memory carries it.
+    ['a valid_from at epoch 0 is DATED, not undated (0 is falsy but not null)', (decay) => withFixedNow(() => {
+      const item = { id: 'epoch', score: 0.5, metadata: { valid_from: new Date(0).toISOString() } };
+      const [out] = decay([item], H);
+      const ageDays = (FIXED_NOW - 0) / DAY;
+      assert.equal(out.score, 0.5 * Math.exp(-ageDays / H));
+      assert.notEqual(out.score, 0.5 * Math.exp(-1), 'must NOT take the undated factor');
+    })],
     ['an ALL-DATED set is untouched — the dated branch is byte-identical', (decay) => withFixedNow(() => {
       const spec = [
         { id: 'old-high', age: 120, score: 0.9 },
@@ -159,8 +170,15 @@ export const CASES = {
   ],
 
   U9: [
-    ['the input array and its items are not mutated', (decay) => withFixedNow(() => {
-      const input = mixedSet();
+    // Its OWN fixture, not mixedSet(): every item there carries a numeric score, so the
+    // score-less guard branch (`typeof r.score !== 'number'` -> return a COPY) was never
+    // reached and its purity was unguarded. RC6 mutates the OTHER return, so a `return r;`
+    // on the guard line was caught only by RC2/RC5's anchors drifting — and replaceOnce's
+    // own error message tells the contributor to re-anchor, which removes that signal on
+    // the very edit that caused the regression. A local fixture also keeps U5's
+    // "sorts LAST" sub-case unambiguous.
+    ['the input array and its items are not mutated (BOTH undated branches)', (decay) => withFixedNow(() => {
+      const input = [...mixedSet(), undatedItem('u-nascore', undefined)];
       const snapshot = JSON.stringify(input);
       const out = decay(input, H);
       assert.equal(JSON.stringify(input), snapshot, 'input was mutated');
