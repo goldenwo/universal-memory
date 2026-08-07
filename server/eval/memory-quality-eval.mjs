@@ -1427,7 +1427,7 @@ export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
  */
-async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false }) {
+export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false }) {
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
