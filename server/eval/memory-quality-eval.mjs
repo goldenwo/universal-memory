@@ -1371,7 +1371,12 @@ export function undatedArmMetrics(details, goldRefs) {
  * Needs `topScores`, which recallPass captures only when asked (default off).
  */
 export function headroomFromDetails(rows) {
-  const policyDemotion = 1 / Math.exp(-1);
+  // MIRRORS UNDATED_EFOLDINGS = 0.25 (lib/ranking.mjs, PR C). Hardcoded because this
+  // branch merges BEFORE the constant exists on main; switch to `1 / UNDATED_FACTOR`
+  // once both PRs are in, so a future retune cannot silently stale this report. The
+  // 2026-08-07 run artifacts carry policyDemotion 2.718 — captured at the pre-retune
+  // constant, historically accurate, deliberately not rewritten.
+  const policyDemotion = 1 / Math.exp(-0.25);
   const ratios = [];
   for (const r of rows ?? []) {
     const scores = r.topScores;
