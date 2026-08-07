@@ -10,12 +10,29 @@
  *
  * THE RANKING DATE IS `metadata.valid_from` AND NOTHING ELSE (spec D-h REVISED).
  * `createdAt` / `created_at` are deliberately not consulted — see resolveItemDate
- * for the measurement behind that. An item with no resolvable date keeps its
- * original score in both re-rankers: undated means neutral, never penalised.
+ * for the measurement behind that.
+ *
+ * The two re-rankers now treat an undated item DIFFERENTLY, deliberately:
+ *   - applyTemporalWindow: still leaves it untouched — undated reads as in-window.
+ *     A window is query-expressed intent, and demoting an unknown date when the user
+ *     asked about a period trades recall for a guess.
+ *   - applyTemporalDecay: imputes a flat 0.25 e-foldings (see UNDATED_FACTOR). Leaving it
+ *     at 1.0 stopped being neutral the moment everything else decayed — it became the
+ *     top of the range.
+ * Their imputations must eventually be chosen JOINTLY: the two are mutually exclusive at
+ * the call site, so with both flags on an undated point's factor flips between 1.0 and
+ * 0.779 on THREE things that are not properties of that point —
+ *   1. incidental query phrasing (does the text parse as a date expression at all),
+ *   2. pool composition (is some OTHER candidate dated-and-in-window),
+ *   3. the caller's `limit` (the window path widens the fetch, changing 2's answer).
+ * Measured, not inferred — see UNDATED_FACTOR. Inert until BOTH flags are on.
  *
  * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
- *         Enabled via UM_TEMPORAL_DECAY=true; half-life UM_DECAY_HALF_LIFE_DAYS
- *         (default 30).
+ *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
+ *         (default 30). NAMING: that variable is an E-FOLDING time, not a
+ *         half-life — exp(-age/H) reaches 0.5 at H*ln2 ~= 0.69*H, not at H. The
+ *         operator-facing name is kept for compatibility; the misnomer is noted
+ *         here so nobody derives a half-life from it.
  * Window: score unchanged inside a resolved window, demoted with a floored
  *         exponential outside it. Enabled via UM_TEMPORAL_QUERY=true. It
  *         SUBSTITUTES for decay rather than stacking — both are wired in
@@ -23,6 +40,68 @@
  */
 
 const DAY_MS = 86400000;
+
+/**
+ * Imputed age for an undated point, in e-foldings of the decay timescale.
+ *
+ * WHY THIS EXISTS. `applyTemporalDecay` used to return an undated result with its score
+ * untouched, defended as "undated means neutral, never penalised". That was true while
+ * nothing decayed. Once every DATED point is multiplied by `exp(-age/H) < 1`, a factor of
+ * 1.0 stops being the middle of the range and becomes the TOP of it: undated points became
+ * strictly better than every dated one, without anyone choosing that.
+ *
+ * WHY A FIXED CONSTANT, and not a median of the result set: on the decay path the fetch
+ * limit equals the result limit, so the dated sample is typically 1-3 points — the
+ * estimator would be noisiest exactly where it runs, would be an ordering no-op at n=1,
+ * and one very old point would annihilate the undated cohort. It is applied
+ * UNCONDITIONALLY (no "any dated?" short-circuit) because a conditional would make an
+ * item's factor depend on the rest of the returned set: the same point would score 1.0x at
+ * limit=5 and 0.779x at limit=10.
+ *
+ * ⚠ SCOPE OF THAT CLAIM — it is a property of THIS FUNCTION, not of the system, and an
+ * earlier version of this comment overstated it. `doSearch` chooses between the two
+ * re-rankers on `temporalActive` (a window parsed AND at least one candidate dated-and-
+ * in-window), so with UM_TEMPORAL_QUERY also enabled the *choice* is set-dependent even
+ * though this function is not. Measured end-to-end with both flags on (2026-08-07, at the
+ * pre-retune UNDATED_EFOLDINGS = 1): the same undated point on the same query scored 0.80
+ * (factor 1.000) when the pool held a dated in-window candidate and 0.294 (factor 0.368)
+ * when it did not — and because the window path widens the fetch, the literal limit=5 vs
+ * limit=10 case above reproduces, with the factors the other way round. The retune to 0.25
+ * narrows the flip (1.000 vs 0.779) without removing it. So set-independence holds within
+ * decay and NOT across the pair.
+ *
+ * That is the deferred window-imputation problem tracked as a successor issue, and it is why the
+ * two imputations must be chosen JOINTLY rather than one at a time. It is inert today: the
+ * divergence needs BOTH flags on, and production runs with both off.
+ *
+ * Deliberately NOT an env knob: this module is pure and takes `halfLifeDays` as a
+ * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
+ * distinct capability would be "decay on, undated at 1.0" — i.e. re-enabling the defect.
+ *
+ * MAGNITUDE — RETUNED 1 → 0.25 (2026-08-07), still re-decided at flip time. Measured on
+ * the live corpus (2026-08-05, 215 dated points): median age 6.3d, median factor 0.811,
+ * ZERO points below exp(-1) — one e-folding demoted undated points below the WHOLE dated
+ * cohort. The before-arm capture (eval/results/2026-08-07-undated-arm-run{1,2}.json) then
+ * measured gold headroom at median 2.41x / min 1.42x against exp(-1)'s 2.72x demotion:
+ * 16 of 24 undated golds had less headroom than the policy applied, projecting the
+ * after-arm gate G2 near 0.33 against a floor near 0.94 — the policy would have failed
+ * its own recall-safety gate. E = 0.25 sits above the live median imputed age
+ * (−ln(0.811) ≈ 0.21 e-foldings, so undated still ranks below the typical dated point)
+ * and below the all-golds-survive bound (ln(1.4247) ≈ 0.354), with margin for the ~1-2%
+ * run-to-run score drift the doubled capture showed. The size must STILL be re-decided
+ * against a re-measured age distribution before decay is enabled in production (the
+ * flip-precondition issue): today's distribution is transient (the write-side stamp is
+ * younger than the spread it produced), so any constant chosen now — including this one —
+ * is calibrated against doc-rewrite recency, not corpus age.
+ *
+ * SCOPE OF THE "DEMOTION" CLAIM: it holds on the positive half-line. A NEGATIVE score
+ * would be moved toward zero, i.e. promoted — a property inherited symmetrically from the
+ * dated branch's own `(r.score || 1) * factor`, which is left byte-identical here.
+ * Unreachable in practice: embedding cosines against real text are positive, and the
+ * bouncer's absolute gate already assumes a positive range.
+ */
+export const UNDATED_EFOLDINGS = 0.25;
+export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);   // 0.7788007830714049
 
 /**
  * Items dated up to this far past a window's end edge still count as in-window.
@@ -37,13 +116,35 @@ export const DEMOTION_FLOOR = 0.05;
 /**
  * The single ranking-date resolver, shared by decay and the window re-rank.
  *
- * **`valid_from` ONLY — `createdAt` is deliberately NOT consulted** (spec D-h,
- * revised on the F19 measurement). `umAdd` stamps `createdAt` at write time and
- * a reindex rebuilds through `umAdd`, so for the 186 of 353 live points that
- * carry no `valid_from`, `createdAt` is bulk-arrival time: 86.5% of them sit on
- * just two days (a migration and a reindex). Grading on it would rank half the
- * corpus by which import it arrived in — strictly worse than leaving those
- * points neutral, which is what they get today.
+ * **`valid_from` ONLY — `createdAt` is deliberately NOT consulted** (spec D-h).
+ *
+ * MECHANISM CORRECTED 2026-08-05 — the conclusion stands, the old reason did not.
+ * This comment used to say "a reindex rebuilds through `umAdd`, so `createdAt` is
+ * bulk-arrival time". That is FALSE, and it was measured: of the points carrying both
+ * fields, 77 join a pre-reindex archive by hash and their archived `createdAt` matches
+ * their `valid_from` EXACTLY — delta 0, 100%, median and p90 both 0.000 days. The
+ * 2026-07-28 reindex did not destroy `createdAt`; surviving points kept their originals.
+ *
+ * The accurate statement:
+ *
+ *   `createdAt` is genuine WRITE time. It is uninformative precisely where a bulk
+ *   operation wrote many points at one instant — which happens to be 164 of the 186
+ *   undated points (104 post-purge re-extraction on one day, 60 mem0 imports).
+ *
+ * Measured on the live corpus 2026-08-05: 401 points, 215 dated, **186 undated (46.4%)**.
+ * Grading on `createdAt` would rank nearly half the corpus by which bulk operation it
+ * arrived in — strictly worse than not grading on it, which is what this function
+ * guarantees by returning null.
+ *
+ * Why this matters enough to correct rather than leave: a wrong-but-load-bearing
+ * rationale is how the next person reaches the wrong conclusion. Someone who believed
+ * the reindex destroyed `createdAt` would also believe restoring it is a backfill they
+ * could perform. It is not — no event time is recoverable for 164 of those 186 points
+ * from any surviving source (a perfect `createdAt` backfill reaches 22/186, 11.8%).
+ *
+ * "No resolvable date" is NOT the same as "no penalty": applyTemporalDecay imputes a
+ * flat factor for such items (UNDATED_FACTOR). That is a decision made downstream of
+ * this function; resolveItemDate's only job is to refuse the arrival stamp.
  *
  * Note the old `metadata.valid_from || r.created_at` expression was dead on the
  * second operand: mem0ai's search maps results with camelCase `createdAt`, so
@@ -141,7 +242,7 @@ export function windowFalloffDays(window) {
  *
  * @param {Array<object>} results  - Search result objects with optional score
  *                                   and metadata.valid_from.
- * @param {number}        halfLifeDays - Half-life in days for the decay factor.
+ * @param {number}        halfLifeDays - Decay timescale in days (an e-folding time, not a half-life).
  * @returns {Array<object>} New array sorted by decayed score descending.
  *                          Input array and its items are NOT mutated.
  */
@@ -150,8 +251,14 @@ export function applyTemporalDecay(results, halfLifeDays) {
   const decayed = results.map((r) => {
     const ms = resolveItemDate(r);
     if (ms === null) {
-      // No resolvable date — shallow copy with score unchanged.
-      return { ...r };
+      // No resolvable date — impute a fixed fraction of the decay timescale (see UNDATED_FACTOR).
+      // GUARD: never MINT a score. `(r.score || 1) * f` would give a score-less item a
+      // score and lift it from last place to first, and would turn a genuine `score: 0`
+      // into `1 * f` — an item scoring 0.0 outranking one scoring 0.1. Both invert
+      // ordering in the exact direction this policy exists to correct. Multiplying a
+      // numeric 0 yields 0, which is right.
+      if (typeof r.score !== 'number') return { ...r };
+      return { ...r, score: r.score * UNDATED_FACTOR };
     }
     const ageDays = (now - ms) / DAY_MS;
     const factor = Math.exp(-ageDays / halfLifeDays);
