@@ -890,6 +890,26 @@ export const UNDATED_ARM = Object.freeze({
   rows: 48,
   undatedGold: 24,
   dated: 24,
+  /**
+   * Semantic distractors seeded alongside the fixture — NOT queried, purely competition.
+   *
+   * WHY THIS EXISTS, learned the expensive way. The first before-arm run without them came
+   * back at CEILING: 24/24 gold rows at rank 1, recall@5 = 1.0, mean rank exactly 1.0. The
+   * 48 fixture facts are deliberately dissimilar (closest pair ~0.47 cosine, so nothing
+   * dedups), which also means each query's target wins by a wide margin against only 47
+   * distant competitors. A gate that returns 1.0 there would return 1.0 for ANY imputed
+   * factor — exp(-1), exp(-5), 0.001 — so it measures the fixture, not the policy.
+   *
+   * 353 makes the arm's corpus 401 points, matching the live corpus measured 2026-08-05
+   * (401 total / 215 dated / 186 undated). Distractors are lane-driven, so they compete by
+   * semantic proximity rather than sitting harmlessly far away.
+   *
+   * They are DATED and back-dated across the fixture's own spread: post-policy a dated
+   * competitor keeps ~0.8-0.99 of its score while an undated gold takes 0.368, so dated
+   * distractors are exactly the pressure the gate needs to be able to fail.
+   */
+  distractors: 353,
+  distractorSeed: 7,
 });
 
 /**
@@ -1150,6 +1170,8 @@ export async function runUndatedArm(args = {}) {
 async function runUndatedArmDecayPinned({
   rows, collection, decay, now = Date.now(),
   umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+  generateDistractors, lanesFromRows,
+  distractors = UNDATED_ARM.distractors, distractorSeed = UNDATED_ARM.distractorSeed,
   ks = [1, 3, 5, 10],
 }) {
   assertScratchSafe(collection);
@@ -1160,9 +1182,16 @@ async function runUndatedArmDecayPinned({
   const materialised = materialiseValidFrom(rows, now);
   const { goldRefs, datedRefs, expectedByRef } = undatedArmCohorts(materialised);
 
+  // Competitive pressure. Without distractors every gold wins at rank 1 by a wide margin,
+  // the gate sits at ceiling, and it would pass for ANY imputed factor — see UNDATED_ARM.
+  const distractorRows = undatedArmDistractorRows(materialised, {
+    count: distractors, seed: distractorSeed, lanes: lanesFromRows(materialised), generate: generateDistractors,
+  });
+  const seedRows = [...materialised, ...materialiseValidFrom(distractorRows, now)];
+
   const latency = { umAdd: [], doSearch: [] };
   const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
-  const seedInfo = await seedCorpus({ umAdd, memory, client, rows: materialised, latency, metrics: NOOP_METRICS });
+  const seedInfo = await seedCorpus({ umAdd, memory, client, rows: seedRows, latency, metrics: NOOP_METRICS });
 
   // A doSearch result id is a writeId, not an eval_ref — the strip has to address points by
   // the id the write actually returned.
@@ -1175,14 +1204,25 @@ async function runUndatedArmDecayPinned({
   const goldIds = idsFor(goldRefs);
   const datedIds = idsFor(datedRefs);
 
-  // Dedup would silently merge two seeds into one point and break the 1:1 cohort split, so
-  // it is ASSERTED rather than assumed — `mergedCount: 0` must be measured, which is exactly
+  // Dedup on a FIXTURE seed would merge two cohort points into one and break the 1:1 split,
+  // so it is ASSERTED rather than assumed — `merged: 0` must be measured, which is exactly
   // what the _systemMigration shortcut would have made true by construction instead.
-  if (seedInfo.mergedCount !== 0) {
-    throw new Error(`mq-eval undated-arm: ${seedInfo.mergedCount} seed(s) were DEDUP_MERGED — the cohort split is no longer 1:1`);
+  //
+  // SCOPED TO THE FIXTURE, deliberately. Distractors are generated from templates and DO
+  // collapse against each other (353 requested, ~342 distinct), which is harmless — they are
+  // undifferentiated competition, not cohort members. A whole-corpus check would abort every
+  // run on that, and "relax the guard" would be the tempting wrong fix.
+  const fixtureRefs = new Set([...goldRefs, ...datedRefs]);
+  const fixtureSeeds = seedInfo.seeds.filter((s) => fixtureRefs.has(s.eval_ref));
+  const fixtureMerged = fixtureSeeds.filter((s) => s.event === 'DEDUP_MERGED').length;
+  if (fixtureMerged !== 0) {
+    throw new Error(`mq-eval undated-arm: ${fixtureMerged} FIXTURE seed(s) were DEDUP_MERGED — the cohort split is no longer 1:1`);
   }
-  if (seedInfo.distinctIdCount !== seedInfo.seeds.length) {
-    throw new Error(`mq-eval undated-arm: id collision — ${seedInfo.seeds.length} seeds produced ${seedInfo.distinctIdCount} distinct ids`);
+  if (new Set(fixtureSeeds.map((s) => s.writeId)).size !== fixtureSeeds.length) {
+    throw new Error(`mq-eval undated-arm: id collision among the ${fixtureSeeds.length} fixture seeds`);
+  }
+  if (fixtureSeeds.length !== goldRefs.length + datedRefs.length) {
+    throw new Error(`mq-eval undated-arm: expected ${goldRefs.length + datedRefs.length} fixture seeds, captured ${fixtureSeeds.length}`);
   }
 
   await stripValidFrom(client, collection, goldIds);
@@ -1194,17 +1234,19 @@ async function runUndatedArmDecayPinned({
     .map((p) => ({ eval_ref: p.payload?.eval_ref, valid_from: p.payload?.valid_from }));
   assertBackdated(datedPoints, expectedByRef);
 
+  // `rows` drives the QUERIES (fixture only); `seeds` is every point in the collection, so
+  // the twin guard and the id join see the distractors too. Mirrors runCorpusSweep.
   const recall = await recallPass({
     doSearch, embed, cosineStrict, NOOP_METRICS, memory,
-    rows: materialised, seeds: seedInfo.seeds, ks, cost, latency,
+    rows: materialised, seeds: seedInfo.seeds, ks, cost, latency, captureScores: true,
   });
 
-  const { g1, g2 } = undatedArmMetrics(recall.details, goldRefs);
+  const { g1, g2, headroom } = undatedArmMetrics(recall.details, goldRefs);
 
   return {
     timestamp: new Date(now).toISOString(),
     arm: 'undated',
-    flags: evalRunFlags({ decay }),
+    flags: evalRunFlags({ decay, autosupersede: 'false' }),
     fixture: {
       path: UNDATED_ARM.fixture,
       rows: materialised.length,
@@ -1213,9 +1255,16 @@ async function runUndatedArmDecayPinned({
       ageSpreadDays: [...new Set(materialised.flatMap((r) => r.seed_facts.map((f) => f.days_ago)))].sort((a, b) => a - b),
     },
     seedCount: seedInfo.seeds.length,
+    corpus: {
+      fixtureSeeds: fixtureSeeds.length,
+      distractorsRequested: distractors,
+      effectiveN: seedInfo.distinctIdCount,
+      distractorsCollapsed: seedInfo.seeds.length - seedInfo.distinctIdCount,
+    },
     mergedCount: seedInfo.mergedCount,
     g2,
     g1,
+    headroom,
     recall: { aggregate: recall.aggregate ?? null, details: recall.details },
     cost,
     latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
@@ -1236,6 +1285,23 @@ async function runUndatedArmDecayPinned({
  *   ABSENT from the map — their dates are about to be deleted, so an expectation would be
  *   asserting something the run itself destroys.
  */
+/**
+ * Wrap generated distractors as seedable rows, back-dated across the FIXTURE's own age
+ * spread so the competition looks like the corpus rather than like a block of age-0 writes.
+ *
+ * PURE (the generator is injected). Distractors carry no `query` and never reach recallPass's
+ * `rows` — they exist only to be retrieved against.
+ */
+export function undatedArmDistractorRows(fixtureRows, { count, seed, lanes, generate }) {
+  if (count <= 0) return [];
+  const spread = (fixtureRows ?? []).flatMap((r) => (r.seed_facts ?? []).map((f) => f.days_ago)).filter((n) => Number.isFinite(n));
+  if (spread.length === 0) throw new Error('undatedArmDistractorRows: the fixture supplied no days_ago spread to mirror');
+  return generate(count, { seed, lanes }).map((d, i) => ({
+    id: `distractor:${i}`,
+    seed_facts: [{ text: d.text, lane: d.lane, days_ago: spread[i % spread.length] }],
+  }));
+}
+
 export function undatedArmCohorts(rows) {
   const goldRefs = [];
   const datedRefs = [];
@@ -1289,6 +1355,47 @@ export function undatedArmMetrics(details, goldRefs) {
       rowsRanked: found.length,
       rowsUnranked: goldRows.length - found.length,
     },
+    headroom: headroomFromDetails(goldRows),
+  };
+}
+
+/**
+ * How much further demotion each gold hit could absorb before falling out of the top-k.
+ *
+ * WHY THIS IS REPORTED. A recall of 1.0 is not self-interpreting: it can mean "the policy is
+ * harmless" or "this fixture cannot express the failure mode". The ratio between a hit score
+ * and the weakest score still inside the window is what separates them. If the smallest
+ * headroom is still larger than the policy's own demotion, the gate CANNOT fail and a pass
+ * carries no information — better to say so than to report a bare 1.0.
+ *
+ * Needs `topScores`, which recallPass captures only when asked (default off).
+ */
+export function headroomFromDetails(rows) {
+  const policyDemotion = 1 / Math.exp(-1);
+  const ratios = [];
+  for (const r of rows ?? []) {
+    const scores = r.topScores;
+    const rank = (r.rr ?? 0) > 0 ? Math.round(1 / r.rr) : null;
+    if (!Array.isArray(scores) || rank === null) continue;
+    const hit = scores[rank - 1];
+    const weakest = scores.filter((v) => typeof v === 'number').at(-1);
+    if (typeof hit !== 'number' || typeof weakest !== 'number' || weakest <= 0) continue;
+    ratios.push(hit / weakest);
+  }
+  if (ratios.length === 0) return { rows: 0, median: null, min: null, policyDemotion, note: 'no scores captured' };
+  const sorted = [...ratios].sort((a, b) => a - b);
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const cannotFail = sorted[0] > policyDemotion;
+  return {
+    metric: 'hit score / weakest in-window score — how much demotion the hit could absorb',
+    rows: ratios.length,
+    median,
+    min: sorted[0],
+    policyDemotion,
+    atCeiling: cannotFail,
+    note: cannotFail
+      ? 'every gold could absorb MORE than the policy applies — the gate cannot fail on this fixture'
+      : 'at least one gold is within the policy demotion of dropping out — the gate can discriminate',
   };
 }
 
@@ -1320,7 +1427,7 @@ export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
  */
-async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false }) {
+async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false }) {
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
@@ -1393,7 +1500,11 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
         if (bestNonTargetCos === null || c > bestNonTargetCos) bestNonTargetCos = c;
       }
     }
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5), targetCos, bestNonTargetCos });
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5), targetCos, bestNonTargetCos,
+      // Opt-in ONLY (default off) so the nightly gate's artifact shape is unchanged. The
+      // undated arm needs post-decay scores to compute how much demotion a hit could absorb
+      // before dropping out of top-k — a recall of 1.0 says nothing about margin.
+      ...(captureScores ? { topScores: (sr.results ?? []).slice(0, 5).map((r) => r.score ?? null) } : {}) });
   }
 
   return {
@@ -2062,7 +2173,12 @@ async function cliMain() {
     // later reaction-gate run refuse.
     process.env.MEM0_USER_ID = EVAL_USER;
     process.env.UM_DEDUP_ENABLED = 'true';
-    process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
+    // OFF, for the same reason runCorpusSweep pins it off: the synthetic distractors
+    // self-contradict in the dedup band, and the FIXTURE rows seed FIRST (so they are the
+    // OLDEST) — autosupersede would retire real cohort targets in favour of a template-
+    // generated distractor, and a superseded point is filtered out of search entirely.
+    // Observed live on the 2026-08-07 run before this was pinned: five in-band supersessions.
+    process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
     process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
 
     const { Memory } = await import('mem0ai/oss');
@@ -2073,6 +2189,7 @@ async function cliMain() {
     const { getFactsLlmConfig } = await import('../lib/facts.mjs');
     const { NOOP_METRICS } = await import('../lib/metrics.mjs');
     const { cosineStrict } = await import('../lib/vector.mjs');
+    const { lanesFromRows, generateDistractors } = await import('./lib/corpus-distractors.mjs');
 
     const rows = await loadFixtureJsonl(args.recall ?? UNDATED_ARM.fixture);
     const host = process.env.QDRANT_HOST ?? 'localhost';
@@ -2092,6 +2209,7 @@ async function cliMain() {
       result = await runUndatedArm({
         rows, collection, decay: true,
         umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+        generateDistractors, lanesFromRows,
       });
     } finally {
       await dropCollectionQuiet(client, collection).catch((e) => console.error('[mq-eval] undated-arm teardown:', e?.message));
@@ -2108,8 +2226,11 @@ async function cliMain() {
     console.log(`  flags        ${JSON.stringify(result.flags)}`);
     console.log(`  seeds        ${result.seedCount} (merged ${result.mergedCount})`);
     console.log(`  cohorts      ${result.fixture.undatedGold} undated-gold / ${result.fixture.dated} dated`);
+    console.log(`  corpus       ${result.corpus.effectiveN} effective points (${result.corpus.fixtureSeeds} fixture + ${result.corpus.distractorsRequested} distractors, ${result.corpus.distractorsCollapsed} collapsed)`);
     console.log(`  G2 (GATE)    recall@5 over the undated-gold subset: ${result.g2.value} over ${result.g2.rows} rows`);
     console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
+    console.log(`  headroom     median ${result.headroom.median?.toFixed(2)}x, min ${result.headroom.min?.toFixed(2)}x vs the policy ${result.headroom.policyDemotion?.toFixed(2)}x demotion`);
+    console.log(`               ${result.headroom.note}`);
     return;
   }
 

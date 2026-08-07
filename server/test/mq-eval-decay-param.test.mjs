@@ -246,14 +246,34 @@ test('§decay: neither inner frame re-derives decay from its own default', () =>
 // two unscoped assertions, SWAPPING the call sites (runOnce recording the sweep's form and
 // vice versa) leaves both regexes satisfied and the suite green, while both functions then
 // record a value the run never executed under.
-const SWEEP_AT = CODE.indexOf('async function runCorpusSweepDecayPinned');
-const RUNONCE_HALF = CODE.slice(0, SWEEP_AT);
-const SWEEP_HALF = CODE.slice(SWEEP_AT);
+// Slice per RUN FUNCTION, not into arbitrary halves. There are three now (the undated arm
+// was added later), and a two-way positional split silently mis-attributed its flags call to
+// runOnce — the guard fired, correctly, and the fix was to make the regions exact rather than
+// to relax the assertion.
+const AT = (name) => CODE.indexOf(`async function ${name}DecayPinned`);
+const REGIONS = ['runUndatedArm', 'runOnce', 'runCorpusSweep'].map((n) => ({ name: n, at: AT(n) }));
+const regionOf = (name) => {
+  const i = REGIONS.findIndex((r) => r.name === name);
+  const next = REGIONS.slice(i + 1).map((r) => r.at).filter((x) => x > REGIONS[i].at).sort((a, b) => a - b)[0];
+  return CODE.slice(REGIONS[i].at, next ?? CODE.length);
+};
 
-test('§decay: the source splits cleanly into the two run-function halves', () => {
-  // Guards the two assertions below from silently degrading into whole-file matches.
-  assert.ok(SWEEP_AT > 0, 'runCorpusSweepDecayPinned not found — the split below is meaningless');
-  assert.ok(RUNONCE_HALF.includes('async function runOnceDecayPinned'));
+test('§decay: every run function is locatable, so the per-region assertions are exact', () => {
+  // Guards the assertions below from silently degrading into whole-file matches.
+  for (const r of REGIONS) assert.ok(r.at > 0, `${r.name}DecayPinned not found — its region assertion is meaningless`);
+  const ordered = REGIONS.map((r) => r.at);
+  assert.deepEqual(ordered, [...ordered].sort((a, b) => a - b), 'regions must be in source order to slice correctly');
+});
+
+const RUNONCE_HALF = regionOf('runOnce');
+const SWEEP_HALF = regionOf('runCorpusSweep');
+const UNDATED_HALF = regionOf('runUndatedArm');
+
+test('§decay: the undated arm records autosupersede OFF — its distractors self-contradict', () => {
+  // Pinned because it is easy to "fix" back to the runOnce default. With it ON, a synthetic
+  // distractor supersedes a real cohort target (the fixture seeds FIRST, so it is oldest)
+  // and a superseded point is filtered out of search entirely. Observed live 2026-08-07.
+  assert.match(UNDATED_HALF, /flags:\s*evalRunFlags\(\{\s*decay,\s*autosupersede:\s*'false'\s*\}\)/);
 });
 
 test('§decay: runOnce records autosupersede ON — in runOnce\'s own half of the file', () => {

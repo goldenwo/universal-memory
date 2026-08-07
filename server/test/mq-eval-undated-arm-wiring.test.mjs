@@ -39,18 +39,22 @@ const rows = () => [
  * A fake stack that records the ORDER of every significant operation, so the test can
  * assert the sequence rather than just the end state.
  */
-function fakes({ mergedCount = 0 } = {}) {
+function fakes(fakeOpts = {}) {
+  const { mergedCount = 0 } = fakeOpts;
   const calls = [];
   const payloads = new Map();       // writeId -> payload
   const refToId = new Map();
   let n = 0;
 
+  const seenText = new Set();
   const umAdd = async ({ text, metadata }) => {
+    const dupText = seenText.has(text);
+    seenText.add(text);
     const id = `pt-${++n}`;
     refToId.set(metadata.eval_ref, id);
     payloads.set(id, { eval_ref: metadata.eval_ref, lane: metadata.lane, ...(metadata.valid_from !== undefined ? { valid_from: metadata.valid_from } : {}) });
     calls.push({ op: 'umAdd', ref: metadata.eval_ref, valid_from: metadata.valid_from });
-    return { results: [{ id, event: n <= mergedCount ? 'DEDUP_MERGED' : 'ADD' }] };
+    return { results: [{ id, event: (n <= mergedCount || dupText) ? 'DEDUP_MERGED' : 'ADD' }] };
   };
 
   const client = {
@@ -74,13 +78,23 @@ function fakes({ mergedCount = 0 } = {}) {
     return { results: [{ id: target, score: 0.9 }, { id: 'noise', score: 0.1 }] };
   };
 
-  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, memory: {}, NOOP_METRICS: {} };
+  // Distractor generator: deterministic, and `dupes` of them collide so the test can prove
+  // distractor collapse is TOLERATED while a fixture collapse is refused.
+  const generateDistractors = (count, { seed }) => Array.from({ length: count }, (_, i) => ({
+    text: i < (fakeOpts.dupeDistractors ?? 0) ? 'colliding distractor' : `distractor text ${seed}-${i}`,
+    lane: 'work',
+  }));
+  const lanesFromRows = () => ['work', 'home'];
+
+  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
 }
 
 const run = (f, over = {}) => runUndatedArm({
   rows: rows(), collection: COL, now: NOW,
   umAdd: f.umAdd, memory: f.memory, client: f.client, doSearch: f.doSearch,
   embed: f.embed, cosineStrict: f.cosineStrict, NOOP_METRICS: f.NOOP_METRICS,
+  generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
+  distractors: 3, distractorSeed: 1,
   ...over,
 });
 
@@ -130,7 +144,7 @@ test('runUndatedArm: materialises days_ago into valid_from BEFORE seeding', asyn
   const f = fakes();
   await run(f);
   const seeded = f.calls.filter((c) => c.op === 'umAdd');
-  assert.equal(seeded.length, 4);
+  assert.equal(seeded.length, 7, '4 fixture rows + 3 distractors');
   for (const c of seeded) {
     assert.ok(isUsableDate(c.valid_from), `${c.ref} reached umAdd without a usable valid_from`);
   }
@@ -206,4 +220,41 @@ test('runUndatedArm: reports the fixture parameters alongside G1 (never a bare n
   assert.match(out.g1.metric, /REPORTED, not gated/);
   assert.equal(out.g2.rows, 2);
   assert.equal(out.g2.value, 1, 'the fake search returns every target at rank 1');
+});
+
+// --- distractors: competition, not cohort members --------------------------
+
+test('runUndatedArm: distractors ARE seeded but NEVER queried', async () => {
+  // Without them every gold wins at rank 1 by a wide margin and the gate sits at ceiling —
+  // it would return the same number for any imputed factor, which is not evidence.
+  const f = fakes();
+  const out = await run(f, { distractors: 5 });
+  const seededRefs = f.calls.filter((c) => c.op === 'umAdd').map((c) => c.ref);
+  assert.equal(seededRefs.filter((r) => r.startsWith('distractor:')).length, 5, 'distractors must reach the collection');
+  const queried = f.calls.filter((c) => c.op === 'doSearch').map((c) => c.query);
+  assert.deepEqual(queried, ['q-g1', 'q-d1', 'q-g2', 'q-d2'], 'only fixture rows carry queries');
+  assert.equal(out.corpus.distractorsRequested, 5);
+  assert.equal(out.corpus.fixtureSeeds, 4);
+});
+
+test('runUndatedArm: distractors are back-dated across the FIXTURE spread, not left at age 0', async () => {
+  const f = fakes();
+  await run(f, { distractors: 4 });
+  const ages = f.calls.filter((c) => c.op === 'umAdd' && c.ref.startsWith('distractor:'))
+    .map((c) => Math.round((NOW - Date.parse(c.valid_from)) / 86400000));
+  assert.deepEqual(ages, [6, 3, 13, 19], 'cycles the fixture ages, so the competition looks like the corpus');
+});
+
+test('runUndatedArm: a DISTRACTOR collapse is tolerated — only FIXTURE merges abort', async () => {
+  // 353 generated distractors really do collapse to ~342 against a live qdrant. Aborting on
+  // that would make every run red, and "relax the guard" would be the tempting wrong fix.
+  const f = fakes({ dupeDistractors: 3 });
+  const out = await run(f, { distractors: 3 });
+  assert.equal(out.corpus.fixtureSeeds, 4, 'the cohort split is untouched by distractor collapse');
+  assert.ok(out.mergedCount > 0, 'and the collapse is still REPORTED, not hidden');
+});
+
+test('runUndatedArm: still refuses a FIXTURE merge even with distractors present', async () => {
+  const f = fakes({ mergedCount: 1 });
+  await assert.rejects(() => run(f, { distractors: 3 }), /FIXTURE seed\(s\) were DEDUP_MERGED/);
 });
