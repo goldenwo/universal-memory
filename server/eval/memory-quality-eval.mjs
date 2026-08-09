@@ -28,6 +28,10 @@
 
 import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+// ranking.mjs is pure and import-free — safe at module top (no live dep is touched).
+// assertDateCohorts uses the READ PATH's own predicate so the cohort guard cannot drift
+// from what the ranker actually treats as dated.
+import { isUsableDate } from '../lib/ranking.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
@@ -787,6 +791,7 @@ export function parseArgs(argv) {
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--sweep') args.sweep = true;
+    else if (a === '--undated-arm') args.undatedArm = true;
     else if (a === '--corpus-sweep') args.corpusSweep = true;
     else if (a === '--sweep-sizes') {
       // tolerate a missing/empty value (flag passed last) → undefined so the runner uses its default
@@ -869,11 +874,537 @@ async function countPoints(client, name) {
 }
 
 /**
+ * The undated arm's shape, PINNED IN ADVANCE.
+ *
+ * The arm size is fixed here, in code, before any number exists — a subset size chosen
+ * after seeing results is a choice about the result. The fixture is checked against these
+ * values by its own test, so drifting the file without a deliberate re-pin fails loudly.
+ *
+ * Deliberately SEPARATE from the default recall corpus: memory-quality-eval is the nightly
+ * drift gate, whose floors carry "re-pin only with a committed 2-run re-measurement". This
+ * arm gets its own fixture, its own scratch collection and its own entry point so the
+ * default run stays byte-identical.
+ */
+export const UNDATED_ARM = Object.freeze({
+  fixture: 'eval/undated-arm-set.jsonl',
+  rows: 48,
+  undatedGold: 24,
+  dated: 24,
+  /**
+   * Semantic distractors seeded alongside the fixture — NOT queried, purely competition.
+   *
+   * WHY THIS EXISTS, learned the expensive way. The first before-arm run without them came
+   * back at CEILING: 24/24 gold rows at rank 1, recall@5 = 1.0, mean rank exactly 1.0. The
+   * 48 fixture facts are deliberately dissimilar (closest pair ~0.47 cosine, so nothing
+   * dedups), which also means each query's target wins by a wide margin against only 47
+   * distant competitors. A gate that returns 1.0 there would return 1.0 for ANY imputed
+   * factor — exp(-1), exp(-5), 0.001 — so it measures the fixture, not the policy.
+   *
+   * 353 makes the arm's corpus 401 points, matching the live corpus measured 2026-08-05
+   * (401 total / 215 dated / 186 undated). Distractors are lane-driven, so they compete by
+   * semantic proximity rather than sitting harmlessly far away.
+   *
+   * They are DATED and back-dated across the fixture's own spread: post-policy a dated
+   * competitor keeps ~0.8-0.99 of its score while an undated gold takes 0.368, so dated
+   * distractors are exactly the pressure the gate needs to be able to fail.
+   */
+  distractors: 353,
+  distractorSeed: 7,
+});
+
+/**
+ * WIRING NOTE — the fixture's rows are NOT seedable as loaded.
+ *
+ * They carry `days_ago`, not `valid_from`. Feeding them straight to seedCorpus looks
+ * correct and fails silently: seedCorpus reads only `f.valid_from`, so add.mjs stamps
+ * `now` on all of them and the entire dated cohort collapses to age 0 — the ~0-day corner
+ * the back-dating exists to avoid. Worse, assertDateCohorts STILL PASSES (the undated ids
+ * genuinely lack the key; the dated ids genuinely carry a usable date — just today's).
+ *
+ * Always: rows = materialiseValidFrom(await loadFixtureJsonl(UNDATED_ARM.fixture)), and
+ * build assertBackdated's expectation map from THOSE rows, so the check and the seed share
+ * one source of truth. assertBackdated is the only guard that catches this.
+ */
+
+/**
+ * Materialise each seed fact's `days_ago` into a `valid_from` ISO string relative to `now`.
+ *
+ * The fixture stores AGES, not dates. A hardcoded absolute date would drift one day older
+ * every day, silently changing the decay factors the fixture exists to hold fixed — the
+ * spread would stop mirroring the live corpus the moment it was committed. Deriving at
+ * seed time keeps the fixture reproducible for as long as it lives.
+ *
+ * Pure: returns new rows, mutates nothing. Seed facts without `days_ago` pass through
+ * untouched, so this is safe to run over any fixture.
+ */
+export function materialiseValidFrom(rows, now = Date.now()) {
+  return (rows ?? []).map((row) => ({
+    ...row,
+    seed_facts: (row.seed_facts ?? []).map((f) => (
+      f.days_ago === undefined ? { ...f } : { ...f, valid_from: backdatedIso(f.days_ago, now) }
+    )),
+  }));
+}
+
+/**
+ * An ISO 8601 STRING for `daysAgo` days before `now`, for back-dating the dated cohort.
+ *
+ * WHY A STRING, AND WHY THIS MATTERS: lib/add.mjs preserves a caller-supplied
+ * `valid_from` only when `isUsableDate` accepts it, and isUsableDate requires
+ * `typeof v === 'string'`. A `Date` object or an epoch number is therefore REJECTED and
+ * silently replaced with `nowIso`. The point still ends up WITH a `valid_from`, so a
+ * presence check still passes — while the whole cohort has quietly reverted to ~0 days
+ * old, which is the exact degenerate fixture the back-dating exists to avoid. Use
+ * assertBackdated (equality, not presence) to catch it.
+ */
+export function backdatedIso(daysAgo, now = Date.now()) {
+  if (!Number.isFinite(daysAgo)) throw new Error(`mq-eval: backdatedIso needs a finite daysAgo (got ${daysAgo})`);
+  // NEGATIVE is refused, not merely odd: a forward-dated point yields a NEGATIVE age, and
+  // applyTemporalDecay has no upper clamp (unlike applyTemporalWindow, which documents
+  // "a score is only ever multiplied by a factor <= 1"). So a sign typo in a fixture would
+  // silently INFLATE a seed's score above its true value — the opposite of the degenerate
+  // case this helper exists to prevent, and far harder to notice.
+  if (daysAgo < 0) throw new Error(`mq-eval: backdatedIso refuses a negative daysAgo (${daysAgo}) — a future date inflates the decay factor above 1`);
+  const ms = now - daysAgo * 86400000;
+  if (!Number.isFinite(ms) || Number.isNaN(new Date(ms).getTime())) {
+    throw new Error(`mq-eval: backdatedIso(${daysAgo}) falls outside the representable Date range`);
+  }
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Assert each dated point's `valid_from` EQUALS the value the fixture asked for.
+ *
+ * EQUALITY, NEVER PRESENCE. If a fixture supplied a non-string date, add.mjs minted `now`
+ * over it; the key is present, so a presence check reports success while the cohort sits
+ * at ~0 days old and the measurement degenerates. Comparing to the expected value is the
+ * only check that distinguishes "back-dated" from "silently re-stamped".
+ *
+ * @param {Array<{eval_ref:string, valid_from?:string}>} points
+ * @param {Record<string,string>|Map<string,string>} expectedByRef  eval_ref → expected ISO
+ */
+export function assertBackdated(points, expectedByRef) {
+  const expected = expectedByRef instanceof Map ? expectedByRef : new Map(Object.entries(expectedByRef ?? {}));
+  if (expected.size === 0) throw new Error('mq-eval: assertBackdated needs a non-empty expectation map — an empty one asserts nothing');
+
+  // Every EXPECTATION must itself be a usable date. Building the map with
+  // `[ref, f.valid_from]` over a mixed fixture yields `undefined` for every undated seed,
+  // and `undefined !== undefined` is false — so those refs would pass silently and inflate
+  // `checked`. Refusing them keeps the count honest and the assertion meaningful.
+  const unusable = [...expected].filter(([, v]) => !isUsableDate(v)).map(([ref]) => ref);
+  if (unusable.length > 0) {
+    throw new Error(
+      `mq-eval: assertBackdated expectations must all be usable date strings — ${unusable.length} are not (${unusable.slice(0, 5).join(', ')}). ` +
+      'Filter the dated cohort before building the map; an undefined expectation asserts nothing.',
+    );
+  }
+
+  const actual = new Map((points ?? []).map((p) => [p.eval_ref, p.valid_from]));
+  if (actual.size !== (points ?? []).length) {
+    // Last-wins would let a correctly-dated duplicate mask a re-stamped one.
+    throw new Error(`mq-eval: assertBackdated got duplicate eval_refs (${(points ?? []).length} points, ${actual.size} distinct) — the check would silently drop one`);
+  }
+  const problems = [];
+  for (const [ref, want] of expected) {
+    if (!actual.has(ref)) { problems.push(`${ref}: not found`); continue; }
+    const got = actual.get(ref);
+    if (got !== want) problems.push(`${ref}: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `mq-eval BACK-DATE VIOLATION: ${problems.length}/${expected.size} dated points do not carry their fixture value ` +
+      '(a presence check would not have caught this). Known causes, in the order worth checking: ' +
+      '(1) a non-string valid_from — isUsableDate rejects it and add.mjs re-stamps `now`; ' +
+      '(2) a dedup collision — an identical text+lane written second keeps the FIRST writer\'s date (mergeSurface does not patch valid_from); ' +
+      '(3) a fail-soft upsert at the same deterministic fact id, which REPLACES the payload and re-dates the point. ' +
+      problems.slice(0, 5).join('; '),
+    );
+  }
+  return { checked: expected.size };
+}
+
+/**
+ * Delete the TOP-LEVEL `valid_from` key from a DEFINED SUBSET of points on a scratch
+ * collection. This is how the undated cohort is created: everything is seeded through the
+ * normal write path (so dedup, lane classification, reserved-field assertions and capture
+ * counters all behave exactly as in production), and only then is the date removed from
+ * the chosen subset.
+ *
+ * THE WAY THE OBVIOUS IMPLEMENTATION SILENTLY NO-OPS — it leaves every point dated, so the
+ * downstream measurement passes VACUOUSLY, which is indistinguishable from success:
+ *
+ *   **The key is the top-level `valid_from`, NOT `metadata.valid_from`.** lib/add.mjs
+ *   flattens metadata to the payload root. Qdrant DOES read a dot as a nested path, so
+ *   `keys: ['metadata.valid_from']` strips the nested projection (if any) and leaves the
+ *   ROOT key — the one the read path resolves — completely intact.
+ *
+ * MEASURED against qdrant v1.13.0 on 2026-08-06 rather than assumed:
+ *   - `deletePayload({keys:['valid_from']})` removes the root key entirely: it comes back
+ *     ABSENT, not null, and every other payload key survives.
+ *   - `deletePayload({keys:['metadata.valid_from']})` leaves the root key untouched and
+ *     strips only the nested one. That is the trap, confirmed live.
+ *   - `setPayload({valid_from: null})` ALSO ends with the key absent — qdrant drops
+ *     null-valued keys. So "setPayload cannot delete keys" is not true in the sense that
+ *     matters here; an earlier version of this comment claimed it was, citing
+ *     lib/supersede.mjs, and that was wrong. `deletePayload` remains the right call
+ *     because it states the intent exactly and does not lean on a null-dropping quirk —
+ *     but the reason is clarity, not capability.
+ *
+ * Scratch-only: assertScratchSafe runs BEFORE any client call. An empty subset is refused
+ * rather than treated as success — a no-op strip is the failure this function exists to
+ * make impossible.
+ */
+export async function stripValidFrom(client, collection, pointIds) {
+  assertScratchSafe(collection);
+  if (!Array.isArray(pointIds) || pointIds.length === 0) {
+    throw new Error('mq-eval: stripValidFrom needs a non-empty point-id subset — an empty strip is a silent no-op');
+  }
+  await client.deletePayload(collection, { points: pointIds, keys: ['valid_from'], wait: true });
+}
+
+/**
+ * Assert the dated/undated cohorts are exactly as intended, BEFORE any number is computed.
+ *
+ * BOTH directions are mandatory, and each guards a different vacuous pass:
+ *   - undated ids carry NO `valid_from` — catches a strip that no-opped (wrong API, or the
+ *     dotted key), which would leave both cohorts dated.
+ *   - dated ids STILL carry theirs — catches a strip that was too broad. If the whole
+ *     corpus ends up undated, the undated factor becomes a uniform multiplier, ordering is
+ *     unchanged by construction, and the gate passes with a delta of exactly 0: a null
+ *     result wearing the shape of a clean pass.
+ *
+ * Both subsets must be non-empty, or the corresponding check is itself vacuous.
+ *
+ * THE TWO CHECKS ARE DELIBERATELY ASYMMETRIC — do not "simplify" them to one predicate:
+ *   - undated: the key must be strictly ABSENT — `!== undefined`, not a truthiness test.
+ *     Be precise about what that buys, because an earlier comment here overclaimed:
+ *     measured against qdrant v1.13.0, a null-valued key comes back ABSENT (qdrant drops
+ *     nulls), so this does NOT distinguish a `deletePayload` from a `setPayload(null)`.
+ *     What it DOES guarantee is that nothing counts as undated unless the key is genuinely
+ *     gone — a present-but-null value from any other source (a direct upsert, another
+ *     client, a future qdrant that preserves nulls) is refused rather than assumed benign.
+ *     Conservative on purpose: the read path treats null as undated, so silently agreeing
+ *     with it would hide a strip that only half-worked.
+ *   - dated: the value must satisfy the READ PATH's own `isUsableDate`. A present-but-
+ *     unusable value (null, '', a Date object that add.mjs failed to stamp) is one the
+ *     ranker scores as undated, which silently makes the whole corpus undated — the
+ *     uniform-multiplier vacuous pass, arriving through the back door.
+ */
+export async function assertDateCohorts(client, collection, { undatedIds = [], datedIds = [] } = {}) {
+  assertScratchSafe(collection);
+  if (undatedIds.length === 0 || datedIds.length === 0) {
+    throw new Error(
+      `mq-eval: assertDateCohorts needs BOTH cohorts non-empty (undated=${undatedIds.length}, dated=${datedIds.length}) — a one-sided corpus makes the measurement vacuous`,
+    );
+  }
+
+  const ids = [...undatedIds, ...datedIds];
+  const fetched = await client.retrieve(collection, { ids, with_payload: true });
+  const found = new Map((fetched ?? []).map((p) => [String(p.id), p.payload ?? {}]));
+
+  const missing = ids.filter((id) => !found.has(String(id)));
+  if (missing.length > 0) {
+    throw new Error(`mq-eval COHORT VIOLATION: ${missing.length}/${ids.length} cohort points not found in '${collection}'`);
+  }
+
+  const stillDated = undatedIds.filter((id) => found.get(String(id)).valid_from !== undefined);
+  if (stillDated.length > 0) {
+    throw new Error(
+      `mq-eval COHORT VIOLATION: ${stillDated.length}/${undatedIds.length} undated-cohort points STILL carry valid_from — the strip no-opped (wrong API, or the dotted metadata.valid_from). Every number computed from here would be vacuous.`,
+    );
+  }
+
+  const lostDate = datedIds.filter((id) => !isUsableDate(found.get(String(id)).valid_from));
+  if (lostDate.length > 0) {
+    throw new Error(
+      `mq-eval COHORT VIOLATION: ${lostDate.length}/${datedIds.length} dated distractors LOST a usable valid_from — the strip was too broad, or the value is one the read path cannot use. A uniformly-undated corpus makes the undated factor a uniform multiplier, so the gate passes with a delta of exactly 0.`,
+    );
+  }
+
+  return { undated: undatedIds.length, dated: datedIds.length };
+}
+
+/**
  * Seed the recall corpus: each seed fact → umAdd(infer:false) under EVAL_USER with an
  * eval-only metadata.eval_ref + a pinned lane (review G1). Records the write-returned id
  * per seed. Guards (review G2): surface DEDUP_MERGED and any id-collision.
  */
-async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
+/**
+ * The undated-arm measurement pass: seed the whole fixture through the NORMAL write path,
+ * strip the date from the gold subset only, prove both cohorts are what they claim to be,
+ * then run one recall pass with decay pinned and report G1/G2.
+ *
+ * WHY THIS DOES NOT CALL `runOnce`. runOnce also drives the staleness and answer-grading
+ * passes — LLM cost and grader noise in a measurement that is purely about RANKING. This
+ * arm needs `seedCorpus` + `recallPass` and nothing else, so it composes them directly. It
+ * still runs inside `withDecayEnv`, so the flag is pinned in-process and cleared after, and
+ * `flags` records the same resolved value the run actually executed under.
+ *
+ * ORDER IS LOAD-BEARING. Both cohort assertions run BEFORE any number is computed, because
+ * both failure directions produce a VACUOUS pass that looks exactly like success: a strip
+ * that no-opped leaves nothing undated, and a strip that was too broad leaves nothing dated
+ * (the undated factor then becomes a uniform multiplier and the delta is exactly 0).
+ *
+ * Every live dependency is INJECTED rather than imported here, so the sequence and scoping
+ * are drivable by fakes offline. The live seams — does deletePayload really remove the key
+ * — are proven by a live probe and by the run itself; a fake cannot testify about qdrant.
+ *
+ * ⚠ CALLER RESPONSIBILITY, and it bites silently: **`MEM0_USER_ID` must be pinned to
+ * EVAL_USER BEFORE `mem0-mcp-http.mjs` is imported**, because doSearch captures USER_ID at
+ * import time. This function cannot do it for you — the imports belong to the caller, which
+ * is the price of the DI that makes the wiring testable. Get it wrong and doSearch searches
+ * the wrong user, every target misses, and G2 comes back 0 — which reads as "the policy
+ * destroyed recall" rather than "an env var was set too late". The CLI entry point below
+ * does this correctly; any bespoke runner must too.
+ *
+ * @param {object} args
+ * @param {Array}  args.rows        RAW fixture rows (they still carry `days_ago`).
+ * @param {string} args.collection  Scratch collection; must carry the eval_mq_ prefix.
+ * @param {boolean|string} [args.decay=true]
+ * @param {number} [args.now]       Clock for back-dating; pass a fixed value to reproduce.
+ */
+export async function runUndatedArm(args = {}) {
+  return withDecayEnv(args.decay ?? true, (resolved) => runUndatedArmDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runUndatedArmDecayPinned({
+  rows, collection, decay, now = Date.now(),
+  umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+  generateDistractors, lanesFromRows,
+  distractors = UNDATED_ARM.distractors, distractorSeed = UNDATED_ARM.distractorSeed,
+  ks = [1, 3, 5, 10],
+}) {
+  assertScratchSafe(collection);
+
+  // days_ago -> valid_from. Skipping this is the silent failure the fixture warns about:
+  // seedCorpus reads only `valid_from`, so unmaterialised rows get stamped `now` and the
+  // entire dated cohort collapses to age 0 while every cohort assertion still passes.
+  const materialised = materialiseValidFrom(rows, now);
+  const { goldRefs, datedRefs, expectedByRef } = undatedArmCohorts(materialised);
+
+  // Competitive pressure. Without distractors every gold wins at rank 1 by a wide margin,
+  // the gate sits at ceiling, and it would pass for ANY imputed factor — see UNDATED_ARM.
+  const distractorRows = undatedArmDistractorRows(materialised, {
+    count: distractors, seed: distractorSeed, lanes: lanesFromRows(materialised), generate: generateDistractors,
+  });
+  const seedRows = [...materialised, ...materialiseValidFrom(distractorRows, now)];
+
+  const latency = { umAdd: [], doSearch: [] };
+  const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
+  const seedInfo = await seedCorpus({ umAdd, memory, client, rows: seedRows, latency, metrics: NOOP_METRICS });
+
+  // A doSearch result id is a writeId, not an eval_ref — the strip has to address points by
+  // the id the write actually returned.
+  const writeIdByRef = new Map(seedInfo.seeds.map((s) => [s.eval_ref, s.writeId]));
+  const idsFor = (refs) => refs.map((ref) => {
+    const id = writeIdByRef.get(ref);
+    if (id === undefined) throw new Error(`mq-eval undated-arm: no write id captured for '${ref}'`);
+    return id;
+  });
+  const goldIds = idsFor(goldRefs);
+  const datedIds = idsFor(datedRefs);
+
+  // Dedup on a FIXTURE seed would merge two cohort points into one and break the 1:1 split,
+  // so it is ASSERTED rather than assumed — `merged: 0` must be measured, which is exactly
+  // what the _systemMigration shortcut would have made true by construction instead.
+  //
+  // SCOPED TO THE FIXTURE, deliberately. Distractors are generated from templates and DO
+  // collapse against each other (353 requested, ~342 distinct), which is harmless — they are
+  // undifferentiated competition, not cohort members. A whole-corpus check would abort every
+  // run on that, and "relax the guard" would be the tempting wrong fix.
+  const fixtureRefs = new Set([...goldRefs, ...datedRefs]);
+  const fixtureSeeds = seedInfo.seeds.filter((s) => fixtureRefs.has(s.eval_ref));
+  const fixtureMerged = fixtureSeeds.filter((s) => s.event === 'DEDUP_MERGED').length;
+  if (fixtureMerged !== 0) {
+    throw new Error(`mq-eval undated-arm: ${fixtureMerged} FIXTURE seed(s) were DEDUP_MERGED — the cohort split is no longer 1:1`);
+  }
+  if (new Set(fixtureSeeds.map((s) => s.writeId)).size !== fixtureSeeds.length) {
+    throw new Error(`mq-eval undated-arm: id collision among the ${fixtureSeeds.length} fixture seeds`);
+  }
+  if (fixtureSeeds.length !== goldRefs.length + datedRefs.length) {
+    throw new Error(`mq-eval undated-arm: expected ${goldRefs.length + datedRefs.length} fixture seeds, captured ${fixtureSeeds.length}`);
+  }
+
+  await stripValidFrom(client, collection, goldIds);
+  await assertDateCohorts(client, collection, { undatedIds: goldIds, datedIds });
+
+  // EQUALITY, not presence: a non-string valid_from is rejected by isUsableDate and
+  // re-stamped as `now`, which a presence check passes while the age spread is silently gone.
+  const datedPoints = (await client.retrieve(collection, { ids: datedIds, with_payload: true }) ?? [])
+    .map((p) => ({ eval_ref: p.payload?.eval_ref, valid_from: p.payload?.valid_from }));
+  assertBackdated(datedPoints, expectedByRef);
+
+  // `rows` drives the QUERIES (fixture only); `seeds` is every point in the collection, so
+  // the twin guard and the id join see the distractors too. Mirrors runCorpusSweep.
+  const recall = await recallPass({
+    doSearch, embed, cosineStrict, NOOP_METRICS, memory,
+    rows: materialised, seeds: seedInfo.seeds, ks, cost, latency, captureScores: true,
+  });
+
+  const { g1, g2, headroom } = undatedArmMetrics(recall.details, goldRefs);
+
+  return {
+    timestamp: new Date(now).toISOString(),
+    arm: 'undated',
+    flags: evalRunFlags({ decay, autosupersede: 'false' }),
+    fixture: {
+      path: UNDATED_ARM.fixture,
+      rows: materialised.length,
+      undatedGold: goldRefs.length,
+      dated: datedRefs.length,
+      ageSpreadDays: [...new Set(materialised.flatMap((r) => r.seed_facts.map((f) => f.days_ago)))].sort((a, b) => a - b),
+    },
+    seedCount: seedInfo.seeds.length,
+    corpus: {
+      fixtureSeeds: fixtureSeeds.length,
+      distractorsRequested: distractors,
+      effectiveN: seedInfo.distinctIdCount,
+      distractorsCollapsed: seedInfo.seeds.length - seedInfo.distinctIdCount,
+    },
+    mergedCount: seedInfo.mergedCount,
+    g2,
+    g1,
+    headroom,
+    recall: { aggregate: recall.aggregate ?? null, details: recall.details },
+    cost,
+    latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
+  };
+}
+
+/**
+ * Split materialised fixture rows into the two cohorts, and build the back-date expectation
+ * map at the same time so the check and the seed share ONE source of truth.
+ *
+ * PURE, kept separate from the live orchestration precisely so the part with logic worth
+ * getting exactly right is testable without qdrant, an embedder, or an API key.
+ *
+ * @returns {{goldRefs: string[], datedRefs: string[], expectedByRef: Record<string,string>}}
+ *   `goldRefs` are the eval_refs whose points get stripped (the undated cohort); `datedRefs`
+ *   keep theirs; `expectedByRef` maps every DATED ref to the exact ISO value the fixture
+ *   asked for, which is what assertBackdated compares against. Gold refs are deliberately
+ *   ABSENT from the map — their dates are about to be deleted, so an expectation would be
+ *   asserting something the run itself destroys.
+ */
+/**
+ * Wrap generated distractors as seedable rows, back-dated across the FIXTURE's own age
+ * spread so the competition looks like the corpus rather than like a block of age-0 writes.
+ *
+ * PURE (the generator is injected). Distractors carry no `query` and never reach recallPass's
+ * `rows` — they exist only to be retrieved against.
+ */
+export function undatedArmDistractorRows(fixtureRows, { count, seed, lanes, generate }) {
+  if (count <= 0) return [];
+  const spread = (fixtureRows ?? []).flatMap((r) => (r.seed_facts ?? []).map((f) => f.days_ago)).filter((n) => Number.isFinite(n));
+  if (spread.length === 0) throw new Error('undatedArmDistractorRows: the fixture supplied no days_ago spread to mirror');
+  return generate(count, { seed, lanes }).map((d, i) => ({
+    id: `distractor:${i}`,
+    seed_facts: [{ text: d.text, lane: d.lane, days_ago: spread[i % spread.length] }],
+  }));
+}
+
+export function undatedArmCohorts(rows) {
+  const goldRefs = [];
+  const datedRefs = [];
+  const expectedByRef = {};
+  for (const row of rows ?? []) {
+    for (let i = 0; i < (row.seed_facts ?? []).length; i++) {
+      const ref = `${row.id}:${i}`;
+      if (row.undated_gold) {
+        goldRefs.push(ref);
+      } else {
+        datedRefs.push(ref);
+        expectedByRef[ref] = row.seed_facts[i].valid_from;
+      }
+    }
+  }
+  return { goldRefs, datedRefs, expectedByRef };
+}
+
+/**
+ * G1 and G2 over a recall pass's per-row details. PURE — these are the numbers the whole
+ * arc turns on, so they must be checkable without a live run.
+ *
+ * G2 (**the gate**) — recall@5 restricted to rows whose gold answer is an UNDATED point.
+ * That is the genuine cost the policy can fail: demoting undated points can only hurt here.
+ *
+ * G1 (**reported, never gated**) — the undated cohort's mean rank. A synthetic fixture's
+ * author picks the undated fraction, the age spread and the seed scores, so this delta is
+ * determined by fixture construction; gating on it would test the fixture. Recorded with
+ * its parameters, per the standing rule against fixture-derived efficacy claims.
+ *
+ * `rr` is the reciprocal rank (0 when the target never surfaced), so rank = 1/rr. Rows
+ * whose target was NOT retrieved are excluded from the mean and counted SEPARATELY —
+ * averaging over only the found rows while hiding how many vanished is exactly how a
+ * mean-rank "improvement" gets manufactured by losing the hard rows.
+ */
+export function undatedArmMetrics(details, goldRefs) {
+  const gold = new Set(goldRefs ?? []);
+  const goldRows = (details ?? []).filter((d) => gold.has(d.target_ref));
+  const found = goldRows.filter((d) => (d.rr ?? 0) > 0);
+  const ranks = found.map((d) => 1 / d.rr);
+
+  return {
+    g2: {
+      metric: 'recall@5 over the undated-gold subset',
+      value: goldRows.length === 0 ? null : mean(goldRows.map((d) => d.recallByK?.[5] ?? 0)),
+      rows: goldRows.length,
+    },
+    g1: {
+      metric: 'mean rank of the undated cohort (REPORTED, not gated)',
+      meanRank: ranks.length === 0 ? null : mean(ranks),
+      rowsRanked: found.length,
+      rowsUnranked: goldRows.length - found.length,
+    },
+    headroom: headroomFromDetails(goldRows),
+  };
+}
+
+/**
+ * How much further demotion each gold hit could absorb before falling out of the top-k.
+ *
+ * WHY THIS IS REPORTED. A recall of 1.0 is not self-interpreting: it can mean "the policy is
+ * harmless" or "this fixture cannot express the failure mode". The ratio between a hit score
+ * and the weakest score still inside the window is what separates them. If the smallest
+ * headroom is still larger than the policy's own demotion, the gate CANNOT fail and a pass
+ * carries no information — better to say so than to report a bare 1.0.
+ *
+ * Needs `topScores`, which recallPass captures only when asked (default off).
+ */
+export function headroomFromDetails(rows) {
+  // MIRRORS UNDATED_EFOLDINGS = 0.25 (lib/ranking.mjs, PR C). Hardcoded because this
+  // branch merges BEFORE the constant exists on main; switch to `1 / UNDATED_FACTOR`
+  // once both PRs are in, so a future retune cannot silently stale this report. The
+  // 2026-08-07 run artifacts carry policyDemotion 2.718 — captured at the pre-retune
+  // constant, historically accurate, deliberately not rewritten.
+  const policyDemotion = 1 / Math.exp(-0.25);
+  const ratios = [];
+  for (const r of rows ?? []) {
+    const scores = r.topScores;
+    const rank = (r.rr ?? 0) > 0 ? Math.round(1 / r.rr) : null;
+    if (!Array.isArray(scores) || rank === null) continue;
+    const hit = scores[rank - 1];
+    const weakest = scores.filter((v) => typeof v === 'number').at(-1);
+    if (typeof hit !== 'number' || typeof weakest !== 'number' || weakest <= 0) continue;
+    ratios.push(hit / weakest);
+  }
+  if (ratios.length === 0) return { rows: 0, median: null, min: null, policyDemotion, note: 'no scores captured' };
+  const sorted = [...ratios].sort((a, b) => a - b);
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const cannotFail = sorted[0] > policyDemotion;
+  return {
+    metric: 'hit score / weakest in-window score — how much demotion the hit could absorb',
+    rows: ratios.length,
+    median,
+    min: sorted[0],
+    policyDemotion,
+    atCeiling: cannotFail,
+    note: cannotFail
+      ? 'every gold could absorb MORE than the policy applies — the gate cannot fail on this fixture'
+      : 'at least one gold is within the policy demotion of dropping out — the gate can discriminate',
+  };
+}
+
+export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
   const seeds = []; // { eval_ref, text, lane, writeId, event }
   for (const row of rows) {
     for (let i = 0; i < row.seed_facts.length; i++) {
@@ -881,7 +1412,10 @@ async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
       const eval_ref = `${row.id}:${i}`;
       const res = await recordTimed(latency.umAdd, () => umAdd({
         memory, text: f.text, userId: EVAL_USER, infer: false, surface: 'eval',
-        metadata: { eval_ref, lane: f.lane }, _qdrantClient: client, metrics,
+        // valid_from pass-through for the back-dated cohort. A seed fact WITHOUT one
+        // yields a metadata object identical to before — the default rows (and therefore
+        // the nightly drift gate) must not move. See backdatedIso: it must be a STRING.
+        metadata: { eval_ref, lane: f.lane, ...(f.valid_from !== undefined ? { valid_from: f.valid_from } : {}) }, _qdrantClient: client, metrics,
       }));
       const r0 = res.results?.[0] ?? {};
       seeds.push({ eval_ref, text: f.text, lane: f.lane, writeId: r0.id, event: r0.event });
@@ -898,7 +1432,7 @@ async function seedCorpus({ umAdd, memory, client, rows, latency, metrics }) {
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
  */
-async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false }) {
+export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false }) {
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
@@ -971,7 +1505,11 @@ async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory,
         if (bestNonTargetCos === null || c > bestNonTargetCos) bestNonTargetCos = c;
       }
     }
-    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5), targetCos, bestNonTargetCos });
+    details.push({ id: row.id, query: row.query, target_ref: row.target_ref, paraphrase_level: row.paraphrase_level, rank1: rk[1], recallByK: rk, rr, ndcgByK: nd, twin, topIds: rankedIds.slice(0, 5), targetCos, bestNonTargetCos,
+      // Opt-in ONLY (default off) so the nightly gate's artifact shape is unchanged. The
+      // undated arm needs post-decay scores to compute how much demotion a hit could absorb
+      // before dropping out of top-k — a recall of 1.0 says nothing about margin.
+      ...(captureScores ? { topScores: (sr.results ?? []).slice(0, 5).map((r) => r.score ?? null) } : {}) });
   }
 
   return {
@@ -1153,17 +1691,87 @@ export async function collectBounceRows({ gradeAnswer, doSearch, memory, recallR
 }
 
 /**
+ * Resolve a caller's `decay` option to the literal env string. STRICT by design: only
+ * boolean `true` or the exact string 'true' enable decay; every other value (undefined,
+ * false, 'false', 'TRUE', 1, 'yes', null) normalises to 'false'. This preserves the
+ * hermeticity guard the previously-hardcoded 'false' provided — an ambient
+ * UM_TEMPORAL_DECAY in the caller's environment must never leak into a run.
+ */
+export function resolveDecayFlag(decay) {
+  return decay === true || decay === 'true' ? 'true' : 'false';
+}
+
+/**
+ * Run `fn` with UM_TEMPORAL_DECAY pinned to the resolved value, then DELETE the variable.
+ * Deleting rather than restoring is deliberate: a second runOnce/runCorpusSweep in the
+ * same process must not inherit a previous run's decay setting. The write happens BEFORE
+ * `fn` so the lazy imports inside it capture the pinned value (review B1 / G2), and the
+ * `finally` runs even when `fn` throws.
+ *
+ * In-process hygiene ONLY — a Node process cannot mutate its parent's environment. This
+ * does not substitute for the standing rule that UM_TEMPORAL_DECAY is never written to
+ * `.env`: a stale 'true' there makes every later reaction-gate run refuse.
+ *
+ * NOT RE-ENTRANT — do not nest. Because the `finally` DELETES rather than restores, an
+ * inner call clears the OUTER pin when it returns, so everything after it in the outer
+ * scope silently runs with decay OFF. A two-arm harness must therefore pass `decay`
+ * down into each run call (runOnce({ decay })), never wrap a group of runs in one
+ * outer withDecayEnv.
+ *
+ * NOT CONCURRENCY-SAFE either — run the arms SEQUENTIALLY. `process.env` is
+ * process-global, so `Promise.all([runOnce({decay:true}), runOnce({decay:false})])`
+ * has the second pin clobber the first, and whichever settles first deletes the
+ * variable out from under the other. The read path reads the flag per search at call
+ * time, so the loser silently executes the wrong arm while recording the right one.
+ * Both hazards are pinned by tests in mq-eval-decay-param.test.mjs.
+ */
+export async function withDecayEnv(decay, fn) {
+  const resolved = resolveDecayFlag(decay);
+  process.env.UM_TEMPORAL_DECAY = resolved;
+  try {
+    return await fn(resolved);
+  } finally {
+    delete process.env.UM_TEMPORAL_DECAY;
+  }
+}
+
+/**
+ * The `flags` block recorded in a run result. UM_TEMPORAL_DECAY is derived from the SAME
+ * resolver `withDecayEnv` writes, so the value RECORDED cannot drift from the value the
+ * run actually executed under.
+ */
+export function evalRunFlags({ decay, autosupersede = 'true' } = {}) {
+  return {
+    UM_DEDUP_ENABLED: 'true',
+    UM_AUTOSUPERSEDE_ENABLED: autosupersede,
+    UM_LANE_CLASSIFIER_ENABLED: 'true',
+    UM_TEMPORAL_DECAY: resolveDecayFlag(decay),
+  };
+}
+
+/**
  * One full eval run against LIVE qdrant. Pins MEM0_USER_ID + flags BEFORE the lazy
  * import (USER_ID is captured at mem0-mcp-http import time — review B1). Isolated to
  * uniquely-named scratch collections; try/finally teardown + `memories` integrity assert.
  *
+ * Thin wrapper: the body runs inside `withDecayEnv` so UM_TEMPORAL_DECAY is pinned from
+ * the resolved `decay` option for the whole run and cleared afterwards.
+ *
  * @param {{recallRows:Array, stalenessRows:Array, noAnswerRows:Array, runid?:string,
- *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string}} args
+ *          recallFixturePath?:string, stalenessFixturePath?:string, noAnswerFixturePath?:string,
+ *          decay?:boolean|string}} args
  */
-export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false }) {
+export async function runOnce(args = {}) {
+  // Pass the RESOLVED value down — never let the inner frame re-derive it. Two
+  // independent derivations of the same flag can drift silently, and the one that lands
+  // in `flags` is the artifact of record.
+  return withDecayEnv(args.decay, (resolved) => runOnceDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false, decay }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
+  // UM_TEMPORAL_DECAY is pinned by withDecayEnv one frame up, and cleared when it returns.
   process.env.MEM0_USER_ID = EVAL_USER;
-  process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';
   process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
@@ -1265,7 +1873,7 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
     timestamp: new Date().toISOString(),
     provider, model, fixtureRev,
     evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'true', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: evalRunFlags({ decay }),
     env: { node: process.version, platform: process.platform },
     fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)', noAnswer: noAnswerFixturePath ?? '(none)' },
     recall,
@@ -1296,11 +1904,24 @@ export async function runOnce({ recallRows = [], stalenessRows = [], noAnswerRow
  * pressure read (§4.2a) see the distractor vectors. LIVE layer — no unit test; verified
  * by self-read + the formatCorpusSweep render test + the operator's keyed run (the
  * harness's no-live-calls contract). Scratch-isolated; 'memories' asserted untouched.
+ *
+ * Like runOnce, the body runs inside `withDecayEnv`, so UM_TEMPORAL_DECAY is pinned from
+ * the resolved `decay` option for the whole sweep and cleared afterwards. Read
+ * withDecayEnv's contract before calling this with `decay: true` — it is neither
+ * re-entrant nor concurrency-safe, so arms must run sequentially.
+ *
+ * @param {{recallRows:Array, sweepSizes?:Array<number>, seed?:number, runid?:string,
+ *          decay?:boolean|string}} args
  */
-export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, runid }) {
+export async function runCorpusSweep(args = {}) {
+  // Resolved value passed down — see runOnce.
+  return withDecayEnv(args.decay, (resolved) => runCorpusSweepDecayPinned({ ...args, decay: resolved }));
+}
+
+async function runCorpusSweepDecayPinned({ recallRows = [], sweepSizes, seed = 0, runid, decay }) {
   // --- pin env BEFORE the lazy imports capture it (mirror runOnce) ---
+  // UM_TEMPORAL_DECAY is pinned by withDecayEnv one frame up, and cleared when it returns.
   process.env.MEM0_USER_ID = EVAL_USER;
-  process.env.UM_TEMPORAL_DECAY = 'false';
   process.env.UM_DEDUP_ENABLED = 'true';            // prod-faithful: effectiveN tells the truth
   process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';   // OFF for the sweep: synthetic distractors self-contradict in the dedup band, and targets seed FIRST (oldest) → autosupersede would DEMOTE real targets, confounding recall. The sweep grows the corpus via dedup only (spec pins dedup, not supersession). Confirmed by the 2026-06-25 dry run.
   process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
@@ -1388,7 +2009,7 @@ export async function runCorpusSweep({ recallRows = [], sweepSizes, seed = 0, ru
   return {
     timestamp: new Date().toISOString(),
     provider, model, evalUser: EVAL_USER,
-    flags: { UM_DEDUP_ENABLED: 'true', UM_AUTOSUPERSEDE_ENABLED: 'false', UM_LANE_CLASSIFIER_ENABLED: 'true', UM_TEMPORAL_DECAY: 'false' },
+    flags: evalRunFlags({ decay, autosupersede: 'false' }),
     env: { node: process.version, platform: process.platform },
     corpusSweep: { seed, targetCount, sizes, exactSearchThreshold: EXACT_THRESHOLD, pressure, rows },
   };
@@ -1545,6 +2166,78 @@ async function writeJson(path, obj) {
 
 async function cliMain() {
   const args = parseArgs(process.argv);
+
+  // Undated-arm measurement (its OWN fixture, OWN scratch collection, OWN entry point —
+  // the shared corpus and the nightly drift gate are deliberately untouched by this path).
+  // Returns early; never reads mq-gate-thresholds.json, because the subset floor is derived
+  // from a BEFORE-arm run and pinned separately.
+  if (args.undatedArm) {
+    // Pin BEFORE the lazy imports: doSearch captures USER_ID at import time (review B1).
+    // UM_TEMPORAL_DECAY is deliberately NOT set here — runUndatedArm pins it in-process and
+    // clears it after. Writing it to the environment (or .env) is what would make every
+    // later reaction-gate run refuse.
+    process.env.MEM0_USER_ID = EVAL_USER;
+    process.env.UM_DEDUP_ENABLED = 'true';
+    // OFF, for the same reason runCorpusSweep pins it off: the synthetic distractors
+    // self-contradict in the dedup band, and the FIXTURE rows seed FIRST (so they are the
+    // OLDEST) — autosupersede would retire real cohort targets in favour of a template-
+    // generated distractor, and a superseded point is filtered out of search entirely.
+    // Observed live on the 2026-08-07 run before this was pinned: five in-band supersessions.
+    process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
+    process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
+
+    const { Memory } = await import('mem0ai/oss');
+    const { QdrantClient } = await import('@qdrant/js-client-rest');
+    const { umAdd } = await import('../lib/add.mjs');
+    const { doSearch } = await import('../mem0-mcp-http.mjs');
+    const { embed, getEmbedderConfig } = await import('../lib/embed.mjs');
+    const { getFactsLlmConfig } = await import('../lib/facts.mjs');
+    const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+    const { cosineStrict } = await import('../lib/vector.mjs');
+    const { lanesFromRows, generateDistractors } = await import('./lib/corpus-distractors.mjs');
+
+    const rows = await loadFixtureJsonl(args.recall ?? UNDATED_ARM.fixture);
+    const host = process.env.QDRANT_HOST ?? 'localhost';
+    const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+    const client = new QdrantClient({ host, port });
+    const collection = `${SCRATCH_PREFIX}undated_${isoDate()}_${args.seed ?? process.pid}`;
+
+    const memoriesBefore = await countPoints(client, 'memories');
+    let result;
+    try {
+      await ensureCollection(client, collection, VECTOR_DIM);
+      const memory = new Memory({
+        embedder: getEmbedderConfig(process.env),
+        llm: getFactsLlmConfig(process.env),
+        vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
+      });
+      result = await runUndatedArm({
+        rows, collection, decay: true,
+        umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+        generateDistractors, lanesFromRows,
+      });
+    } finally {
+      await dropCollectionQuiet(client, collection).catch((e) => console.error('[mq-eval] undated-arm teardown:', e?.message));
+    }
+
+    const memoriesAfter = await countPoints(client, 'memories');
+    if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+      throw new Error(`mq-eval ISOLATION VIOLATION: 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+    }
+
+    const out = args.out ?? join('eval/results', `mq-undated-arm-${isoDate()}-${args.seed ?? process.pid}.json`);
+    await writeJson(out, result);
+    console.log(`[mq-eval] undated arm written to ${out}`);
+    console.log(`  flags        ${JSON.stringify(result.flags)}`);
+    console.log(`  seeds        ${result.seedCount} (merged ${result.mergedCount})`);
+    console.log(`  cohorts      ${result.fixture.undatedGold} undated-gold / ${result.fixture.dated} dated`);
+    console.log(`  corpus       ${result.corpus.effectiveN} effective points (${result.corpus.fixtureSeeds} fixture + ${result.corpus.distractorsRequested} distractors, ${result.corpus.distractorsCollapsed} collapsed)`);
+    console.log(`  G2 (GATE)    recall@5 over the undated-gold subset: ${result.g2.value} over ${result.g2.rows} rows`);
+    console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
+    console.log(`  headroom     median ${result.headroom.median?.toFixed(2)}x, min ${result.headroom.min?.toFixed(2)}x vs the policy ${result.headroom.policyDemotion?.toFixed(2)}x demotion`);
+    console.log(`               ${result.headroom.note}`);
+    return;
+  }
 
   // Storage & index growth (#19): footprint vs N. NO API key (synthetic vectors, direct upsert);
   // needs a local Docker qdrant + --recall (supplies lanes for realistic synthetic text). Returns early.
