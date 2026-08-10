@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 // ranking.mjs is pure and import-free — safe at module top (no live dep is touched).
 // assertDateCohorts uses the READ PATH's own predicate so the cohort guard cannot drift
 // from what the ranker actually treats as dated.
-import { isUsableDate } from '../lib/ranking.mjs';
+import { isUsableDate, UNDATED_FACTOR } from '../lib/ranking.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
@@ -1371,12 +1371,12 @@ export function undatedArmMetrics(details, goldRefs) {
  * Needs `topScores`, which recallPass captures only when asked (default off).
  */
 export function headroomFromDetails(rows) {
-  // MIRRORS UNDATED_EFOLDINGS = 0.25 (lib/ranking.mjs, PR C). Hardcoded because this
-  // branch merges BEFORE the constant exists on main; switch to `1 / UNDATED_FACTOR`
-  // once both PRs are in, so a future retune cannot silently stale this report. The
-  // 2026-08-07 run artifacts carry policyDemotion 2.718 — captured at the pre-retune
-  // constant, historically accurate, deliberately not rewritten.
-  const policyDemotion = 1 / Math.exp(-0.25);
+  // The REAL constant, deliberately (inverse of the test files' literal rule): this is a
+  // REPORT of what the shipped policy would do to these scores, not an assertion about the
+  // policy — importing it is what keeps the report true under a retune. Historical
+  // artifacts keep the policyDemotion captured at their own run's constant (the 2026-08-07
+  // before-arm carries 2.718) and are deliberately not rewritten.
+  const policyDemotion = 1 / UNDATED_FACTOR;
   const ratios = [];
   for (const r of rows ?? []) {
     const scores = r.topScores;
