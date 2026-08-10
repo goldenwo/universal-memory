@@ -2169,8 +2169,9 @@ async function cliMain() {
 
   // Undated-arm measurement (its OWN fixture, OWN scratch collection, OWN entry point —
   // the shared corpus and the nightly drift gate are deliberately untouched by this path).
-  // Returns early; never reads mq-gate-thresholds.json, because the subset floor is derived
-  // from a BEFORE-arm run and pinned separately.
+  // Returns early; never reads the shared `thresholds` floors (those describe the default
+  // corpus). With --gate it evaluates `undatedThresholds` ONLY — the subset floor derived
+  // from the committed before-arm run and pinned under its own key (plan Task 7.3).
   if (args.undatedArm) {
     // Pin BEFORE the lazy imports: doSearch captures USER_ID at import time (review B1).
     // UM_TEMPORAL_DECAY is deliberately NOT set here — runUndatedArm pins it in-process and
@@ -2236,6 +2237,23 @@ async function cliMain() {
     console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
     console.log(`  headroom     median ${result.headroom.median?.toFixed(2)}x, min ${result.headroom.min?.toFixed(2)}x vs the policy ${result.headroom.policyDemotion?.toFixed(2)}x demotion`);
     console.log(`               ${result.headroom.note}`);
+
+    // Subset floor (plan Task 7.3): --gate evaluates the arm against `undatedThresholds`,
+    // never the shared `thresholds` block. A gate file WITHOUT the key is refused rather
+    // than passed — a floorless gate reading as green is the dead-detector failure §3.3
+    // exists to prevent.
+    if (args.gate) {
+      const config = JSON.parse(await readFile(args.gate, 'utf8'));
+      if (!Array.isArray(config.undatedThresholds) || config.undatedThresholds.length === 0) {
+        throw new Error('mq-eval undated-arm: --gate file carries no undatedThresholds — refusing a floorless gate');
+      }
+      const gate = evaluateGate(result, { thresholds: config.undatedThresholds });
+      console.log(formatGateReport(gate));
+      if (!gate.pass) {
+        console.error('UNDATED-ARM GATE FAILED');
+        process.exitCode = 1;
+      }
+    }
     return;
   }
 

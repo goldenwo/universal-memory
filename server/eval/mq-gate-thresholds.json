@@ -12,6 +12,11 @@
     { "metric": "abstainPoolSize",               "path": ["verdictGate", "abstain", "total"],     "direction": "min", "floor": 74 },
     { "metric": "extractPoolSize",               "path": ["verdictGate", "extract", "total"],     "direction": "min", "floor": 56 }
   ],
+  "_undatedComment": "Undated-arm G2 subset floor (undated-decay arc, plan Task 7.3; consumed ONLY by the --undated-arm entry point via --gate — the mq nightly reads `thresholds` and never sees this key). PINNED from the doubled before-arm 2026-08-07 (2026-08-07-undated-arm-run{1,2}.json, committed): G2 = recall@5 over the 24-row undated-gold subset = 1.000 in BOTH runs (zero dispersion on G2), arm size N=24. Zero dispersion -> no band, so the floor follows the extractionThresholds recipe pre-registered in the plan: floor = round3(observed_min - 1.5/N) = round3(1.000 - 0.0625) = 0.938. Tolerates one gold eviction (23/24 = 0.958 passes), breaches at two (22/24 = 0.917). The rows floor pins the DENOMINATOR at authoring size — fixture attrition or a swapped fixture breaches as below_floor instead of silently re-scaling the rate. Context the floor exists to interpret: at the shipped UNDATED_EFOLDINGS = 0.25 the captured headroom (min 1.4247x vs the policy's 1.284x demotion) makes an after-arm G2 of 1.000 arithmetically expected from a correct implementation, so a breach indicates an implementation defect (wrong-cohort or double application), not a magnitude call — full derivation and retention curve in issue #239. NEVER weaken to go green; re-pin only with a committed 2-run re-measurement + rationale.",
+  "undatedThresholds": [
+    { "metric": "undatedG2Recall@5", "path": ["g2", "value"], "direction": "min", "floor": 0.938 },
+    { "metric": "undatedGoldRows",   "path": ["g2", "rows"],  "direction": "min", "floor": 24 }
+  ],
   "thresholds": [
     { "metric": "recall@1",        "path": ["recall", "aggregate", "1"],     "direction": "min", "floor": 0.90 },
     { "metric": "recall@5",        "path": ["recall", "aggregate", "5"],     "direction": "min", "floor": 0.96 },
