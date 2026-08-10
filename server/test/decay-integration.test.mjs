@@ -24,6 +24,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { doSearch } from '../mem0-mcp-http.mjs';
+import { BOUNCER_SCORE_GATE } from '../lib/bouncer.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixtures — ISO-8601 strings at known offsets from "now"
@@ -191,17 +192,90 @@ test('includeSuperseded=true bypasses all status/invalidation filtering', async 
 	assert.equal(results.length, 5, 'all docs returned when includeSuperseded=true');
 });
 
-test('decay does NOT crash on docs with missing valid_from (graceful fallback)', async () => {
-	// applyTemporalDecay should handle docs without valid_from — common for
-	// legacy docs that predate the frontmatter schema.
+// T1 — this case used to assert ONLY `results.length === 2`. Under the undated policy its
+// two items swap order, and a length assertion stays green through that, so "full suite
+// green" was not evidence about the ranking change. It now pins order AND absolute scores.
+test('decay: an undated doc is demoted below an equally-scored recent dated doc (order + absolute)', async () => {
+	// Both start at cosine 0.5. The dated doc is 5 days old, so it barely decays; the
+	// undated doc takes the flat imputed factor and lands well below it.
 	const canned = [
 		{ id: 'no-date', memory: 'x', score: 0.5, metadata: {} },
 		result({ id: 'dated', score: 0.5, daysOld: 5 }),
 	];
 	const mock = mockMemory(canned);
 
-	await withEnv({ UM_TEMPORAL_DECAY: 'true' }, async () => {
+	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
 		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results.length, 2, 'both docs survive decay pass');
+
+		// Order flipped: before the policy the undated doc kept 0.5 and TIED for first.
+		assert.deepEqual(results.map((r) => r.id), ['dated', 'no-date']);
+
+		// The undated score is EXACT — the imputed factor has no time term at all.
+		// Literal Math.exp(-0.25), never the imported UNDATED_FACTOR: importing it would make
+		// this hold for any constant. See ranking-undated-policy.test.mjs.
+		const undated = results.find((r) => r.id === 'no-date');
+		assert.equal(undated.score, 0.5 * Math.exp(-0.25));
+
+		// The dated score carries real-clock drift between `daysAgo()` and Date.now(),
+		// so it gets a tolerance rather than exact equality.
+		const dated = results.find((r) => r.id === 'dated');
+		assert.ok(
+			Math.abs(dated.score - 0.5 * Math.exp(-5 / 30)) < 1e-6,
+			`dated score ${dated.score} should be ~${0.5 * Math.exp(-5 / 30)}`,
+		);
+	});
+});
+
+// T2 — a doSearch-level mixed case asserting the ABSOLUTE top-1 score, which is the value
+// `bounceTopHit` consumes (it gates on an absolute post-decay score, not a rank). This is
+// the coupling worth having a test for: the policy moves undated items ACROSS that gate.
+test('decay: mixed set — absolute top-1 score is the post-decay value the bouncer would gate on', async () => {
+	// Chosen so the undated doc crosses BOUNCER_SCORE_GATE (0.60) because of the policy:
+	//   before: undated 0.72 untouched  -> top-1, ABOVE the gate  (grading skipped)
+	//   after:  undated 0.72 * exp(-0.25) = 0.5607 -> BELOW the gate (grading triggered),
+	//           and the dated doc at 0.65 * exp(-3/30) = 0.5881 becomes top-1.
+	// NOTE the retune margin: the ordering below needs 0.72 * exp(-E) < 0.5881, i.e.
+	// E > 0.203 — this fixture is a genuine LOWER bound on any future retune of the
+	// constant, and it reddens if the policy gets mild enough to stop crossing the gate.
+	const canned = [
+		{ id: 'undated-strong', memory: 'x', score: 0.72, metadata: {} },
+		result({ id: 'dated-fresh', score: 0.65, daysOld: 3 }),
+	];
+	const mock = mockMemory(canned);
+
+	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
+		const { results } = await doSearch('q', 5, false, false, mock);
+
+		assert.deepEqual(results.map((r) => r.id), ['dated-fresh', 'undated-strong'],
+			'the undated doc must no longer take top-1 on raw cosine alone');
+
+		// bounceTopHit consumes items[0] and NOTHING else, so every gate assertion below is
+		// on results[0]. An earlier version asserted the crossing on results[1] (rank 2,
+		// which the bouncer never sees) and paired it with `assert.ok(0.72 > 0.60)` — two
+		// literals, an assertion no production change could ever redden.
+		//
+		// Values are READ from `canned` and the gate is the REAL exported constant, not
+		// retyped numbers: binding a literal to a name does not stop it constant-folding.
+		// The point is that retuning BOUNCER_SCORE_GATE must redden this test rather than
+		// silently leaving its narrative false.
+		const undatedRaw = canned.find((c) => c.id === 'undated-strong').score;
+		const datedRaw = canned.find((c) => c.id === 'dated-fresh').score;
+		const datedDecayed = datedRaw * Math.exp(-3 / 30);
+
+		assert.ok(
+			Math.abs(results[0].score - datedDecayed) < 1e-6,
+			`absolute top-1 score ${results[0].score} should be ~${datedDecayed}`,
+		);
+
+		// THE CROSSING, on the value the bouncer reads, against the gate it really uses
+		// (bouncer.mjs gates on `topItem.score > BOUNCER_SCORE_GATE`, strict >).
+		// Before the policy top-1 was the undated doc, ABOVE the gate → grading skipped.
+		// After it, top-1 is the dated doc BELOW the gate → an LLM grade is triggered.
+		assert.ok(undatedRaw > BOUNCER_SCORE_GATE, 'fixture precondition: the pre-policy top-1 sat above the gate');
+		assert.ok(results[0].score < BOUNCER_SCORE_GATE, 'post-policy top-1 falls below the bouncer gate — real cost, real latency');
+
+		// And the demoted doc's absolute value, exactly (the imputed factor has no time term).
+		assert.equal(results[1].score, undatedRaw * Math.exp(-0.25));
 	});
 });

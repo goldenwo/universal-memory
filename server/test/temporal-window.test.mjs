@@ -35,8 +35,12 @@ const WEEK = { start: T(13), end: T(19) + DAY - 1, kind: 'last_week' };
 test('resolveItemDate grades on valid_from only — createdAt is NOT a ranking date', () => {
 	assert.equal(resolveItemDate({ metadata: { valid_from: '2026-07-15T00:00:00Z' } }), Date.UTC(2026, 6, 15));
 
-	// createdAt is bulk-arrival time for exactly the points lacking valid_from
-	// (spec F19), so promoting it would rank by which import a point arrived in.
+	// MECHANISM CORRECTED 2026-08-05 — see lib/ranking.mjs's resolveItemDate. This
+	// comment used to say "createdAt is bulk-arrival time for exactly the points lacking
+	// valid_from", which was MEASURED FALSE: createdAt is genuine WRITE time and survived
+	// the reindex intact. It is uninformative only where a bulk operation wrote many
+	// points at one instant (164 of 186). The conclusion is unchanged — an arrival stamp
+	// is never a ranking date — but the wrong reason invites a backfill that cannot exist.
 	assert.equal(resolveItemDate({ createdAt: '2026-07-15T00:00:00Z' }), null);
 	assert.equal(resolveItemDate({ created_at: '2026-07-15T00:00:00Z' }), null);
 });
@@ -49,11 +53,34 @@ test('resolveItemDate: absent, empty, or unparseable all mean "no resolvable dat
 	assert.equal(resolveItemDate(null), null);
 });
 
-test('an undated item keeps its original score and is never demoted', () => {
+test('an undated item keeps its original score and is never demoted (D-b1 path)', () => {
+	// NOTE: this fixture has NO in-window item, so the D-b1 early return fires and the
+	// per-item map is never reached. It pins D-b1, not the undated branch — the case below
+	// is the one that actually exercises the branch.
 	const rows = [item('dated-out', 0.9, T(1)), item('undated', 0.5, null)];
 	const out = applyTemporalWindow(rows, WEEK);
 	const undated = out.find((r) => r.id === 'undated');
 	assert.equal(undated.score, 0.5, 'undated items are neutral, not penalised');
+});
+
+test('an undated item is untouched even when the window IS active (reaches the branch)', () => {
+	// The invariant this pins became LOAD-BEARING with the undated-decay policy: decay now
+	// imputes exp(-0.25) for an undated point while the window path deliberately does not, and
+	// the two imputations must be chosen JOINTLY (see lib/ranking.mjs's module header). That
+	// asymmetry is a documented design point, so it needs a test that can actually fail.
+	//
+	// It previously had none: the only undated case short-circuits on D-b1, so a mutant
+	// demoting undated items inside applyTemporalWindow passed the whole suite.
+	const rows = [
+		item('dated-in', 0.9, T(15)),      // inside WEEK (13..19) → D-b1 does NOT fire
+		item('dated-out', 0.8, T(1)),      // well before the window → demoted
+		item('undated', 0.5, null),
+	];
+	const out = applyTemporalWindow(rows, WEEK);
+	assert.equal(out.find((r) => r.id === 'undated').score, 0.5,
+		'the window path must leave an undated item UNSCALED — changing this is a joint decision with decay');
+	assert.ok(out.find((r) => r.id === 'dated-out').score < 0.8,
+		'precondition: the window really was active, so the per-item map ran');
 });
 
 // ── D-b core mechanism ───────────────────────────────────────────────────────
