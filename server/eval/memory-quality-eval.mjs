@@ -918,16 +918,18 @@ export const UNDATED_ARM = Object.freeze({
 });
 
 /**
- * The window arm's shape, mirroring UNDATED_ARM (F4 — arm size fixed in advance, spec
- * §7.2). Distractor count/seed are DELIBERATELY UNDATED_ARM's, not a second copy (brief
- * delta 4b) — both arms compete an undated-gold subset against the SAME dated-distractor
- * recipe, just under a different read path (decay's exponential vs the window's step).
+ * The window arm's fixture path — single-sourced here so the CLI default and the recorded
+ * `fixture.path` field can never drift apart. F4 (arm size fixed in advance, spec §7.2) is
+ * pinned by window-arm-harness.test.mjs's own literal assertions against the shipped
+ * fixture (48 rows / 24 golds), NOT by fields on this constant — there is no size pin here
+ * to keep in sync, deliberately, so this object does not carry dead data.
+ *
+ * Distractor count/seed are DELIBERATELY UNDATED_ARM's, not a second copy (brief delta 4b)
+ * — both arms compete an undated-gold subset against the SAME dated-distractor recipe, just
+ * under a different read path (decay's exponential vs the window's step).
  */
 export const WINDOW_ARM = Object.freeze({
   fixture: 'eval/window-arm-set.jsonl',
-  rows: 48,
-  undatedGold: 24,
-  dated: 24,
 });
 
 /**
@@ -1487,11 +1489,11 @@ export function headroomFromDetails(rows) {
  */
 export async function runWindowArm(args = {}) {
   return withTemporalEnv({ query: true, decay: args.decay ?? 'on' }, (resolved) =>
-    runWindowArmTemporalPinned({ ...args, decay: resolved.decay }));
+    runWindowArmTemporalPinned({ ...args, decay: resolved.decay, temporalQuery: resolved.query }));
 }
 
 async function runWindowArmTemporalPinned({
-  rows, collection, decay, now,
+  rows, collection, decay, temporalQuery, now,
   umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
   generateDistractors, lanesFromRows,
   distractors = UNDATED_ARM.distractors, distractorSeed = UNDATED_ARM.distractorSeed,
@@ -1588,11 +1590,19 @@ async function runWindowArmTemporalPinned({
 
   // Four abort guards (spec §7.3 step 3) — the run FAILS rather than silently reporting a
   // meaningless projection. Order matches the spec's (a)-(d) listing.
-  if (identityG2W !== g2.value) {
-    throw new Error(`mq-eval window-arm PROJECTION GUARD (a): identity re-run at factor 1 (${identityG2W}) != observed G2W (${g2.value})`);
+  //
+  // (a) is TWO checks in one, deliberately. `identityG2W !== g2.value` alone misses a fully
+  // null measurement: if no row's `target_ref` lands in `goldRefs` (e.g. a typo'd separator,
+  // or a fixture regression), `undatedArmMetrics` returns `g2.value: null` (goldRows.length
+  // === 0), `perRowGold` is empty so `identityG2W = mean([]) = null` too, and `null !== null`
+  // is `false` — the run would exit 0 having measured NOTHING. `!Number.isFinite(g2.value)`
+  // catches that vacuous case explicitly; the disequality catches the ordinary mismatch
+  // (§7.3 step 3(a) proper — see the "unsorted results" regression test).
+  if (!Number.isFinite(g2.value) || identityG2W !== g2.value) {
+    throw new Error(`mq-eval window-arm PROJECTION GUARD (a): G2W unmeasured (no gold rows matched) or identity re-run mismatch — identity re-run at factor 1 (${identityG2W}) != observed G2W (${g2.value})`);
   }
   if (recall.projection.undatedCandidatesScaled === 0) {
-    throw new Error('mq-eval window-arm PROJECTION GUARD (b): undatedCandidatesScaled === 0 — wrong-id-space, the projection scaled nothing (a projection keyed by eval_ref where results carry writeIds is the classic cause)');
+    throw new Error('mq-eval window-arm PROJECTION GUARD (b): undatedCandidatesScaled === 0 — either a wrong-id-space (a projection keyed by eval_ref where results carry writeIds scales nothing) OR a genuine total eviction (every gold point fell out of every row\'s live candidate set entirely, so nothing was ever a candidate to scale)');
   }
   if (recall.projection.datedCandidatesTouched !== 0) {
     throw new Error(`mq-eval window-arm PROJECTION GUARD (c): datedCandidatesTouched=${recall.projection.datedCandidatesTouched} — the complement cohort moved`);
@@ -1605,7 +1615,11 @@ async function runWindowArmTemporalPinned({
   return {
     timestamp: new Date(now).toISOString(),
     arm: 'window',
-    flags: { ...evalRunFlags({ decay, autosupersede: 'false' }), UM_TEMPORAL_QUERY: 'true' },
+    // UM_TEMPORAL_QUERY is the value withTemporalEnv actually RESOLVED and pinned (threaded
+    // down as `temporalQuery`), never a literal — the file's own invariant: "the value
+    // RECORDED cannot drift from the value the run executed under" (mirrors evalRunFlags'
+    // own UM_TEMPORAL_DECAY derivation, just for the second flag this arm pins).
+    flags: { ...evalRunFlags({ decay, autosupersede: 'false' }), UM_TEMPORAL_QUERY: temporalQuery },
     fixture: {
       path: WINDOW_ARM.fixture,
       rows: materialised.length,
@@ -2017,12 +2031,14 @@ export async function withDecayEnv(decay, fn) {
  * DELETE both — the window arm's two-flag analogue of `withDecayEnv`, same set/`finally`-
  * clear shape (DJ-12, spec §7.2). `query` is boolean-shaped (the window arm always pins it
  * `true` — there is no window path to measure otherwise). `decay` is the window arm's OWN
- * vocabulary, `'on'|'off'` — DELIBERATELY not `resolveDecayFlag`'s `true|'true'` domain,
- * because 'on' must resolve to enabled and anything else (including the unrelated boolean
- * `true`) must not silently pass through: only the caller's exact 'on' enables it, mirroring
- * `resolveDecayFlag`'s own "strict by design" rule for a different vocabulary. 'off'
- * reproduces the pre-policy window path byte-for-byte (J2), so the factor-1.0 baseline
- * stays regenerable forever — the CLI's `--decay on|off` maps straight through.
+ * vocabulary, `'on'|'off'` — DELIBERATELY not `resolveDecayFlag`'s `true|'true'` domain, and
+ * STRICT about it: exactly `'on'` or `'off'` is accepted, anything else THROWS rather than
+ * silently resolving to off. Without the throw, a copy-paste `runWindowArm({ decay: true })`
+ * (the `true|'true'` vocabulary every sibling runner — runOnce/runCorpusSweep/runUndatedArm —
+ * actually uses) would silently run decay-off: `true` is not `'on'`, so it would fall through
+ * to the `'false'` branch with no error, and the artifact would misreport what ran. 'off'
+ * reproduces the pre-policy window path byte-for-byte (J2), so the factor-1.0 baseline stays
+ * regenerable forever — the CLI's `--decay on|off` maps straight through unchanged.
  *
  * Same two hazards as `withDecayEnv`, doubled rather than removed — see its comment for the
  * full explanation: NOT re-entrant (delete-not-restore clears an outer pin rather than
@@ -2031,6 +2047,9 @@ export async function withDecayEnv(decay, fn) {
  */
 export async function withTemporalEnv({ query, decay }, fn) {
   const resolvedQuery = query === true || query === 'true' ? 'true' : 'false';
+  if (decay !== 'on' && decay !== 'off') {
+    throw new Error(`mq-eval window-arm: withTemporalEnv's decay must be exactly 'on' or 'off', got ${JSON.stringify(decay)}`);
+  }
   const resolvedDecay = decay === 'on' ? 'true' : 'false';
   process.env.UM_TEMPORAL_QUERY = resolvedQuery;
   process.env.UM_TEMPORAL_DECAY = resolvedDecay;
@@ -2637,6 +2656,8 @@ async function cliMain() {
     console.log(`  corpus       ${result.corpus.effectiveN} effective points (${result.corpus.fixtureSeeds} fixture + ${result.corpus.distractorsRequested} distractors, ${result.corpus.distractorsCollapsed} collapsed)`);
     console.log(`  G2 (GATE)    recall@5 over the undated-gold subset: ${result.g2.value} over ${result.g2.rows} rows`);
     console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
+    console.log(`  headroom     median ${result.headroom.median?.toFixed(2)}x, min ${result.headroom.min?.toFixed(2)}x vs the policy ${result.headroom.policyDemotion?.toFixed(2)}x demotion`);
+    console.log(`               ${result.headroom.note}`);
     console.log(`  projection   g2wProjected ${result.projection.g2wProjected} / evicted [${result.projection.evictedRefs.map((r) => r.target_ref).join(', ')}] / scaled ${result.projection.undatedCandidatesScaled}`);
 
     // Subset floor (plan Task 7.3): --gate evaluates the arm against `windowThresholds`,

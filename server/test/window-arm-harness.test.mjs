@@ -226,6 +226,20 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
     }
     const rowId = query.split(' ')[0];
     const target = refToId.get(`${rowId}:0`);
+    if (resultIdsMode === 'unsorted-gold' && rowId === 'w1') {
+      // Raw order ranks the gold target FIRST (index 0) — "observed" recall (recallPass's
+      // recallAtK, which trusts doSearch's own order) sees it at rank 1, recall@5 = 1. But
+      // its SCORE is the lowest of the six — the identity projection re-sorts by score
+      // before checking rank, so it lands OUTSIDE the top 5, identityRecall5 = 0. This is
+      // exactly the mechanism guard (a) exists to catch: a doSearch whose results are not
+      // already score-sorted makes "observed" and "identity re-rank at factor 1" disagree
+      // even though nothing was scaled.
+      return { _temporalWidened: true, results: [
+        { id: target, score: 0.1 },
+        { id: 'f1', score: 0.9 }, { id: 'f2', score: 0.8 }, { id: 'f3', score: 0.7 },
+        { id: 'f4', score: 0.6 }, { id: 'f5', score: 0.5 },
+      ] };
+    }
     return { _temporalWidened: true, results: [{ id: target, score: 0.9 }, { id: 'noise', score: 0.1 }] };
   };
 
@@ -242,6 +256,30 @@ const runWindowArgs = (f, over = {}) => ({
   generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
   distractors: 3, distractorSeed: 1,
   ...over,
+});
+
+/** w1's `target_ref` uses '#' instead of ':' — matches nothing `windowArmCohorts` ever
+ *  produces (its refs are always `${row.id}:${i}`). Reproduces the fully-null-measurement
+ *  hazard: the row still seeds/strips/asserts fine (those key off eval_ref, not
+ *  target_ref), but recallPass can never resolve a target for it, and the row never counts
+ *  as "gold" in undatedArmMetrics either — so BOTH g2.value and identityG2W come back null. */
+const windowRowsWithBadTargetRef = () => {
+  const rows = windowRows();
+  rows[0] = { ...rows[0], target_ref: 'w1#0' };
+  return rows;
+};
+
+test('runWindowArm: guard (a) fires when observed recall (raw order) disagrees with the identity re-rank (score order)', async () => {
+  const f = windowFakes({ resultIdsMode: 'unsorted-gold' });
+  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(a\)/);
+});
+
+test('runWindowArm: guard (a) fires on a fully null measurement (target_ref matches no goldRef)', async () => {
+  const f = windowFakes();
+  await assert.rejects(
+    () => runWindowArm(runWindowArgs(f, { rows: windowRowsWithBadTargetRef() })),
+    /GUARD \(a\).*unmeasured/,
+  );
 });
 
 test('runWindowArm: guard (b) fires when the live result ids never fall in the gold write-id space', async () => {
