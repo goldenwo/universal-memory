@@ -1431,8 +1431,15 @@ export async function seedCorpus({ umAdd, memory, client, rows, latency, metrics
  * module default collection), join results→target by the captured write-id, score
  * recall@k + RR. Twin-collision flag (review G3): a row whose target has a non-target
  * seed within TWIN_COSINE is excluded from the collision-excluded aggregate.
+ *
+ * `project` guards assume the COMPLEMENT cohort is untouched — a projection that moves
+ * dated scores (e.g. a future #238 clamp arm) is a NEW named projection with its own
+ * guards, never a loosening of these.
  */
-export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false }) {
+export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory, rows, seeds, ks, cost, latency, measurePressure = false, captureScores = false, now = undefined, requireTemporalWidened = false, project = undefined }) {
+  if (project && project.cohort !== 'undated') {
+    throw new Error(`recallPass: project.cohort must be 'undated', got ${JSON.stringify(project.cohort)}`);
+  }
   const byRef = new Map(seeds.map((s) => [s.eval_ref, s]));
 
   // Embed seed texts once (real embedder) for twin-collision detection.
@@ -1470,10 +1477,16 @@ export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, 
   const reciprocalRanks = [];
   const perQueryNdcg = [];
   const details = [];
+  const projectionRows = [];
+  const scaledPerRun = { undatedCandidatesScaled: 0, datedCandidatesTouched: 0 };
   for (const row of rows) {
     const target = byRef.get(row.target_ref);
     const targetIds = target?.writeId ? [target.writeId] : [];
-    const sr = await recordTimed(latency.doSearch, () => doSearch(row.query, 10, false, true, { memory }));
+    const ctx = now === undefined ? { memory } : { memory, now };
+    const sr = await recordTimed(latency.doSearch, () => doSearch(row.query, 10, false, true, ctx));
+    if (requireTemporalWidened && sr._temporalWidened !== true) {
+      throw new Error(`recallPass: row ${row.id} did not take the window path (_temporalWidened absent) — the arm would silently measure the decay path`);
+    }
     const rankedIds = (sr.results ?? []).map((r) => r.id);
     const rk = recallAtK(rankedIds, targetIds, ks);
     const rr = reciprocalRank(rankedIds, targetIds);
@@ -1510,6 +1523,36 @@ export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, 
       // undated arm needs post-decay scores to compute how much demotion a hit could absorb
       // before dropping out of top-k — a recall of 1.0 says nothing about margin.
       ...(captureScores ? { topScores: (sr.results ?? []).slice(0, 5).map((r) => r.score ?? null) } : {}) });
+
+    if (project) {
+      const results = sr.results ?? [];
+      const applyFactor = (factor, before) => {
+        let scaledCount = 0;
+        const scaled = results.map((r) => {
+          if (project.writeIds.has(r.id) && typeof r.score === 'number') {
+            scaledCount++;
+            return { ...r, score: r.score * factor };
+          }
+          return r;
+        });
+        if (factor !== 1) scaledPerRun.undatedCandidatesScaled += scaledCount;
+        if (before) {
+          // Guard (c)'s tripwire (spec §7.3 step 3): structurally 0 here — any non-zero is a bug
+          // in THIS projection code, which is exactly what the abort exists to catch.
+          for (const r of scaled) {
+            if (!project.writeIds.has(r.id) && before.get(r.id) !== r.score) scaledPerRun.datedCandidatesTouched++;
+          }
+        }
+        scaled.sort((a, b) => (b.score || 0) - (a.score || 0));
+        const rank = scaled.findIndex((r) => targetIds.includes(r.id));
+        return rank >= 0 && rank < 5 ? 1 : 0;
+      };
+      const before = new Map(results.filter((r) => !project.writeIds.has(r.id))
+        .map((r) => [r.id, r.score]));
+      const projectedRecall5 = applyFactor(project.factor, before);
+      const identityRecall5 = applyFactor(1);
+      projectionRows.push({ target_ref: row.target_ref, projectedRecall5, identityRecall5 });
+    }
   }
 
   return {
@@ -1521,6 +1564,7 @@ export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, 
     mrr: mrr(reciprocalRanks),
     ndcg: aggregateRecall(perQueryNdcg, ks),  // generic per-k mean — same helper as recall
     details,
+    ...(project ? { projection: { perRow: projectionRows, ...scaledPerRun } } : {}),
   };
 }
 

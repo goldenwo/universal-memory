@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
 import { parseTemporalWindow } from '../lib/temporal-query.mjs';
+import { recallPass } from '../eval/memory-quality-eval.mjs';
 
 const NOW = Date.UTC(2026, 7, 12, 15, 0, 0); // Wed 2026-08-12
 const row = (over = {}) => ({
@@ -69,4 +70,65 @@ test('the shipped fixture passes its own validator at arbitrary clock positions'
       assert.ok(WINDOW_ARM_ALLOWED_KINDS.includes(w.kind), `${r.id} kind ${w.kind}`);
     }
   }
+});
+
+const stubEmbed = async () => ({ vector: [1, 0], tokensIn: 0, tokensOut: 0, costUsd: 0 });
+const stubCosine = () => 0; // no twins
+const NOOP = {};
+const mkSeeds = () => [
+  { eval_ref: 'w001:0', text: 't', lane: 'work', writeId: 'id-gold' },
+  { eval_ref: 'w001:1', text: 'c', lane: 'work', writeId: 'id-dated' },
+];
+const mkRows = () => [{ id: 'w001', query: 'q in the last 2 weeks', target_ref: 'w001:0', paraphrase_level: 'p' }];
+const baseArgs = (doSearch) => ({
+  doSearch, embed: stubEmbed, cosineStrict: stubCosine, NOOP_METRICS: NOOP, memory: {},
+  rows: mkRows(), seeds: mkSeeds(), ks: [1, 3, 5], cost: { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 },
+  latency: { doSearch: [] },
+});
+
+test('project: gold demoted below a dated competitor is an eviction the projection sees', async () => {
+  const doSearch = async () => ({ _temporalWidened: true, results: [
+    { id: 'id-gold', score: 0.80 },   // undated gold, rank 1 observed
+    { id: 'id-dated', score: 0.75 },  // in-window dated
+  ] });
+  const r = await recallPass({ ...baseArgs(doSearch), captureScores: true,
+    project: { cohort: 'undated', factor: 0.5, writeIds: new Set(['id-gold']) } });
+  // 0.80*0.5 = 0.40 < 0.75 → projected rank 2, still recall@5 = 1; identity unchanged.
+  assert.equal(r.projection.perRow[0].identityRecall5, 1);
+  assert.equal(r.projection.perRow[0].projectedRecall5, 1);
+  assert.equal(r.projection.undatedCandidatesScaled, 1);
+  assert.equal(r.projection.datedCandidatesTouched, 0);
+});
+
+test('project: an actual top-5 eviction shows projectedRecall5 = 0 while identity stays 1', async () => {
+  const filler = Array.from({ length: 5 }, (_, i) => ({ id: `f${i}`, score: 0.5 - i * 0.01 }));
+  const doSearch = async () => ({ _temporalWidened: true, results: [
+    { id: 'id-gold', score: 0.51 }, ...filler,
+  ] });
+  const r = await recallPass({ ...baseArgs(doSearch), captureScores: true,
+    project: { cohort: 'undated', factor: 0.5, writeIds: new Set(['id-gold']) } });
+  // 0.51*0.5 = 0.255 sorts below all five fillers → out of top 5.
+  assert.equal(r.projection.perRow[0].projectedRecall5, 0);
+  assert.equal(r.projection.perRow[0].identityRecall5, 1);
+});
+
+test('requireTemporalWidened throws when the live result lacks the stamp', async () => {
+  const doSearch = async () => ({ results: [{ id: 'id-gold', score: 0.8 }] }); // no stamp
+  await assert.rejects(() => recallPass({ ...baseArgs(doSearch), requireTemporalWidened: true }),
+    /w001.*_temporalWidened/);
+});
+
+test('now is threaded into ctx; absent now leaves ctx exactly { memory }', async () => {
+  let ctx;
+  const doSearch = async (q, k, full, x, c) => { ctx = c; return { results: [] }; };
+  await recallPass({ ...baseArgs(doSearch), now: 123 });
+  assert.equal(ctx.now, 123);
+  await recallPass(baseArgs(doSearch));
+  assert.deepEqual(Object.keys(ctx), ['memory']);
+});
+
+test('absent opts leave the return shape byte-identical (no projection key)', async () => {
+  const doSearch = async () => ({ results: [{ id: 'id-gold', score: 0.8 }] });
+  const r = await recallPass(baseArgs(doSearch));
+  assert.ok(!('projection' in r));
 });
