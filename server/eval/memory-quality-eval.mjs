@@ -32,6 +32,9 @@ import { dirname, join } from 'node:path';
 // assertDateCohorts uses the READ PATH's own predicate so the cohort guard cannot drift
 // from what the ranker actually treats as dated.
 import { isUsableDate, UNDATED_FACTOR } from '../lib/ranking.mjs';
+// window-arm-fixture.mjs is pure too (parseTemporalWindow has no I/O) — same offline-safe
+// module-top-import rule as ranking.mjs above.
+import { resolveWindowRows } from './lib/window-arm-fixture.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
@@ -792,6 +795,8 @@ export function parseArgs(argv) {
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--sweep') args.sweep = true;
     else if (a === '--undated-arm') args.undatedArm = true;
+    else if (a === '--window-arm') args.windowArm = true;
+    else if (a === '--decay') args.decay = argv[++i];
     else if (a === '--corpus-sweep') args.corpusSweep = true;
     else if (a === '--sweep-sizes') {
       // tolerate a missing/empty value (flag passed last) → undefined so the runner uses its default
@@ -910,6 +915,19 @@ export const UNDATED_ARM = Object.freeze({
    */
   distractors: 353,
   distractorSeed: 7,
+});
+
+/**
+ * The window arm's shape, mirroring UNDATED_ARM (F4 — arm size fixed in advance, spec
+ * §7.2). Distractor count/seed are DELIBERATELY UNDATED_ARM's, not a second copy (brief
+ * delta 4b) — both arms compete an undated-gold subset against the SAME dated-distractor
+ * recipe, just under a different read path (decay's exponential vs the window's step).
+ */
+export const WINDOW_ARM = Object.freeze({
+  fixture: 'eval/window-arm-set.jsonl',
+  rows: 48,
+  undatedGold: 24,
+  dated: 24,
 });
 
 /**
@@ -1321,6 +1339,37 @@ export function undatedArmCohorts(rows) {
 }
 
 /**
+ * Split RESOLVED, MATERIALISED window-arm rows into cohorts. Same shape as
+ * `undatedArmCohorts`, but the split is PER-FACT, not per-row: only `seed_facts[0]` of an
+ * `undated_gold` row is the gold target that gets stripped — its dated COMPANION
+ * (`seed_facts[1]`) stays dated, because F2 needs it in-window and competing at factor 1.0.
+ * Every seed_fact of a non-gold row is dated too. `i === 0 && row.undated_gold` is the
+ * whole rule.
+ *
+ * PURE — unit-tested directly (window-arm-harness.test.mjs Step 1), no qdrant/embedder
+ * needed to verify the split is right.
+ *
+ * @returns {{goldRefs: string[], datedRefs: string[], expectedByRef: Record<string,string>}}
+ */
+export function windowArmCohorts(rows) {
+  const goldRefs = [];
+  const datedRefs = [];
+  const expectedByRef = {};
+  for (const row of rows ?? []) {
+    for (let i = 0; i < (row.seed_facts ?? []).length; i++) {
+      const ref = `${row.id}:${i}`;
+      if (row.undated_gold && i === 0) {
+        goldRefs.push(ref);
+      } else {
+        datedRefs.push(ref);
+        expectedByRef[ref] = row.seed_facts[i].valid_from;
+      }
+    }
+  }
+  return { goldRefs, datedRefs, expectedByRef };
+}
+
+/**
  * G1 and G2 over a recall pass's per-row details. PURE — these are the numbers the whole
  * arc turns on, so they must be checkable without a live run.
  *
@@ -1401,6 +1450,190 @@ export function headroomFromDetails(rows) {
     note: cannotFail
       ? 'every gold could absorb MORE than the policy applies — the gate cannot fail on this fixture'
       : 'at least one gold is within the policy demotion of dropping out — the gate can discriminate',
+  };
+}
+
+/**
+ * The window-arm measurement pass: sibling of `runUndatedArm`, but under an ACTIVE window
+ * (`UM_TEMPORAL_QUERY=true`) rather than decay — the recall risk is new in kind (spec
+ * §7.1): the undated gold competes against IN-WINDOW dated distractors at factor 1.0, not
+ * age-decayed ones, so the undated arm's own headroom numbers do not transfer.
+ *
+ * Clones `runUndatedArm`'s sequence (materialise → cohorts → distractors → seed → strip →
+ * assert → recall) with the deltas spec §7.2/§7.3 require:
+ *   1. BOTH `UM_TEMPORAL_QUERY` and `UM_TEMPORAL_DECAY` are pinned in-process via
+ *      `withTemporalEnv`, not just decay.
+ *   2. `now` is REQUIRED, not defaulted — the one-clock guard below (F1's validation parse
+ *      and the live doSearch parse must resolve the SAME window over the SAME ages).
+ *   3. `resolveWindowRows` validates the fixture (F1/F2) BEFORE anything else runs.
+ *   4. Cohorts split PER-FACT via `windowArmCohorts`, not per-row.
+ *   5. `recallPass` is called with `requireTemporalWidened: true` (the row must actually
+ *      take the window path — §7.2's live-path assertion) and a `project` opt that computes
+ *      the §7.3 step 3 projection IN-PROCESS, while the full ranked candidate list is live.
+ *   6. Four self-guards (spec §7.3 step 3) — the run ABORTS rather than silently reporting a
+ *      meaningless projection.
+ *
+ * ⚠ Same caller responsibility as `runUndatedArm`: **`MEM0_USER_ID` must be pinned to
+ * EVAL_USER BEFORE `mem0-mcp-http.mjs` is imported** (doSearch captures USER_ID at import
+ * time). The CLI entry point below does this correctly; any bespoke runner must too.
+ *
+ * @param {object} args
+ * @param {Array}  args.rows        RAW window-arm fixture rows (still carry `query` +
+ *                                   `days_ago`, some possibly `null` — F2 resolves those).
+ * @param {string} args.collection  Scratch collection; must carry the eval_mq_ prefix.
+ * @param {'on'|'off'} [args.decay='on']  DJ-12: a parameter, never a constant. `'off'`
+ *   reproduces the pre-policy window path byte-for-byte (J2) — the regenerable baseline.
+ * @param {number} args.now         Pinned clock; REQUIRED (the one-clock guard).
+ */
+export async function runWindowArm(args = {}) {
+  return withTemporalEnv({ query: true, decay: args.decay ?? 'on' }, (resolved) =>
+    runWindowArmTemporalPinned({ ...args, decay: resolved.decay }));
+}
+
+async function runWindowArmTemporalPinned({
+  rows, collection, decay, now,
+  umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+  generateDistractors, lanesFromRows,
+  distractors = UNDATED_ARM.distractors, distractorSeed = UNDATED_ARM.distractorSeed,
+  ks = [1, 3, 5, 10],
+}) {
+  assertScratchSafe(collection);
+  // The one-clock guard (spec §7.2): F1's validation parse and the live doSearch parse must
+  // resolve the SAME window over the SAME ages, or before-arm/after-arm (days apart) stop
+  // being comparable.
+  if (!Number.isFinite(now)) {
+    throw new Error('mq-eval window-arm: `now` must be finite — the one-clock guard (spec §7.2)');
+  }
+
+  // F1/F2 before anything else: every row's query parses to an allowed, >=7-day window, and
+  // every date the row ships (companion; dated target) resolves inside it. Throws loudly,
+  // naming the row, on any violation — the arm is worthless if a row silently measures the
+  // wrong §4.2 path.
+  const { rows: windowRows } = resolveWindowRows(rows, { now });
+
+  // days_ago -> valid_from, exactly like the undated arm (materialiseValidFrom's silent-
+  // failure warning applies here verbatim: skip this and the whole cohort collapses to age 0
+  // while every cohort assertion still passes).
+  const materialised = materialiseValidFrom(windowRows, now);
+  const { goldRefs, datedRefs, expectedByRef } = windowArmCohorts(materialised);
+
+  // Distractors — general competitive noise, mirroring undatedArmDistractorRows' rationale
+  // verbatim (UNDATED_ARM's doc comment): without them every gold wins by a wide margin
+  // regardless of window, and the gate would sit at ceiling for any imputed factor.
+  const distractorRows = undatedArmDistractorRows(materialised, {
+    count: distractors, seed: distractorSeed, lanes: lanesFromRows(materialised), generate: generateDistractors,
+  });
+  const seedRows = [...materialised, ...materialiseValidFrom(distractorRows, now)];
+
+  const latency = { umAdd: [], doSearch: [] };
+  const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
+  const seedInfo = await seedCorpus({ umAdd, memory, client, rows: seedRows, latency, metrics: NOOP_METRICS });
+
+  // A doSearch result id is a writeId, not an eval_ref — the strip has to address points by
+  // the id the write actually returned.
+  const writeIdByRef = new Map(seedInfo.seeds.map((s) => [s.eval_ref, s.writeId]));
+  const idsFor = (refs) => refs.map((ref) => {
+    const id = writeIdByRef.get(ref);
+    if (id === undefined) throw new Error(`mq-eval window-arm: no write id captured for '${ref}'`);
+    return id;
+  });
+  const goldIds = idsFor(goldRefs);
+  const datedIds = idsFor(datedRefs);
+
+  // Same fixture-scoped dedup guard as the undated arm — a merge on a FIXTURE seed breaks
+  // the cohort split; a DISTRACTOR collapse is harmless competition and tolerated.
+  const fixtureRefs = new Set([...goldRefs, ...datedRefs]);
+  const fixtureSeeds = seedInfo.seeds.filter((s) => fixtureRefs.has(s.eval_ref));
+  const fixtureMerged = fixtureSeeds.filter((s) => s.event === 'DEDUP_MERGED').length;
+  if (fixtureMerged !== 0) {
+    throw new Error(`mq-eval window-arm: ${fixtureMerged} FIXTURE seed(s) were DEDUP_MERGED — the cohort split is no longer 1:1`);
+  }
+  if (new Set(fixtureSeeds.map((s) => s.writeId)).size !== fixtureSeeds.length) {
+    throw new Error(`mq-eval window-arm: id collision among the ${fixtureSeeds.length} fixture seeds`);
+  }
+  if (fixtureSeeds.length !== goldRefs.length + datedRefs.length) {
+    throw new Error(`mq-eval window-arm: expected ${goldRefs.length + datedRefs.length} fixture seeds, captured ${fixtureSeeds.length}`);
+  }
+
+  await stripValidFrom(client, collection, goldIds);
+  await assertDateCohorts(client, collection, { undatedIds: goldIds, datedIds });
+
+  // EQUALITY, not presence (F3 / decay §6.5's minting trap) — see assertBackdated's doc.
+  const datedPoints = (await client.retrieve(collection, { ids: datedIds, with_payload: true }) ?? [])
+    .map((p) => ({ eval_ref: p.payload?.eval_ref, valid_from: p.payload?.valid_from }));
+  assertBackdated(datedPoints, expectedByRef);
+
+  // project.factor is the IMPORTED UNDATED_FACTOR, deliberately (same precedent as
+  // headroomFromDetails just above, J8): this is a REPORT of what the shipped policy would
+  // do to these scores, not an assertion about the policy — importing it keeps the
+  // projection true under a retune, rather than freezing a stale literal.
+  const goldIdSet = new Set(goldIds);
+  const recall = await recallPass({
+    doSearch, embed, cosineStrict, NOOP_METRICS, memory,
+    rows: materialised, seeds: seedInfo.seeds, ks, cost, latency, captureScores: true,
+    now, requireTemporalWidened: true,
+    project: { cohort: 'undated', factor: UNDATED_FACTOR, writeIds: goldIdSet },
+  });
+
+  const { g1, g2, headroom } = undatedArmMetrics(recall.details, goldRefs);
+
+  // Projection block (spec §7.3 step 3): restricted to the GOLD rows only — a dated row's
+  // own target is never scaled, so folding it into the mean would dilute G2W with rows the
+  // policy cannot affect.
+  const goldRefSet = new Set(goldRefs);
+  const perRowGold = recall.projection.perRow.filter((p) => goldRefSet.has(p.target_ref));
+  const g2wProjected = mean(perRowGold.map((p) => p.projectedRecall5));
+  const identityG2W = mean(perRowGold.map((p) => p.identityRecall5));
+  const evictedRefs = perRowGold.filter((p) => p.identityRecall5 === 1 && p.projectedRecall5 === 0);
+
+  // Four abort guards (spec §7.3 step 3) — the run FAILS rather than silently reporting a
+  // meaningless projection. Order matches the spec's (a)-(d) listing.
+  if (identityG2W !== g2.value) {
+    throw new Error(`mq-eval window-arm PROJECTION GUARD (a): identity re-run at factor 1 (${identityG2W}) != observed G2W (${g2.value})`);
+  }
+  if (recall.projection.undatedCandidatesScaled === 0) {
+    throw new Error('mq-eval window-arm PROJECTION GUARD (b): undatedCandidatesScaled === 0 — wrong-id-space, the projection scaled nothing (a projection keyed by eval_ref where results carry writeIds is the classic cause)');
+  }
+  if (recall.projection.datedCandidatesTouched !== 0) {
+    throw new Error(`mq-eval window-arm PROJECTION GUARD (c): datedCandidatesTouched=${recall.projection.datedCandidatesTouched} — the complement cohort moved`);
+  }
+  const strayEvictions = evictedRefs.filter((r) => !goldRefSet.has(r.target_ref));
+  if (strayEvictions.length > 0) {
+    throw new Error(`mq-eval window-arm PROJECTION GUARD (d): ${strayEvictions.length} evicted ref(s) fall outside goldRefs`);
+  }
+
+  return {
+    timestamp: new Date(now).toISOString(),
+    arm: 'window',
+    flags: { ...evalRunFlags({ decay, autosupersede: 'false' }), UM_TEMPORAL_QUERY: 'true' },
+    fixture: {
+      path: WINDOW_ARM.fixture,
+      rows: materialised.length,
+      undatedGold: goldRefs.length,
+      dated: datedRefs.length,
+      ageSpreadDays: [...new Set(materialised.flatMap((r) => r.seed_facts.map((f) => f.days_ago)))].sort((a, b) => a - b),
+    },
+    seedCount: seedInfo.seeds.length,
+    corpus: {
+      fixtureSeeds: fixtureSeeds.length,
+      distractorsRequested: distractors,
+      effectiveN: seedInfo.distinctIdCount,
+      distractorsCollapsed: seedInfo.seeds.length - seedInfo.distinctIdCount,
+    },
+    mergedCount: seedInfo.mergedCount,
+    g2,
+    g1,
+    headroom,
+    projection: {
+      g2wProjected,
+      evictedRefs,
+      undatedCandidatesScaled: recall.projection.undatedCandidatesScaled,
+      datedCandidatesTouched: recall.projection.datedCandidatesTouched,
+      identityG2W,
+    },
+    recall: { aggregate: recall.aggregate ?? null, details: recall.details },
+    cost,
+    latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
   };
 }
 
@@ -1775,6 +2008,36 @@ export async function withDecayEnv(decay, fn) {
   try {
     return await fn(resolved);
   } finally {
+    delete process.env.UM_TEMPORAL_DECAY;
+  }
+}
+
+/**
+ * Run `fn` with BOTH `UM_TEMPORAL_QUERY` and `UM_TEMPORAL_DECAY` pinned in-process, then
+ * DELETE both — the window arm's two-flag analogue of `withDecayEnv`, same set/`finally`-
+ * clear shape (DJ-12, spec §7.2). `query` is boolean-shaped (the window arm always pins it
+ * `true` — there is no window path to measure otherwise). `decay` is the window arm's OWN
+ * vocabulary, `'on'|'off'` — DELIBERATELY not `resolveDecayFlag`'s `true|'true'` domain,
+ * because 'on' must resolve to enabled and anything else (including the unrelated boolean
+ * `true`) must not silently pass through: only the caller's exact 'on' enables it, mirroring
+ * `resolveDecayFlag`'s own "strict by design" rule for a different vocabulary. 'off'
+ * reproduces the pre-policy window path byte-for-byte (J2), so the factor-1.0 baseline
+ * stays regenerable forever — the CLI's `--decay on|off` maps straight through.
+ *
+ * Same two hazards as `withDecayEnv`, doubled rather than removed — see its comment for the
+ * full explanation: NOT re-entrant (delete-not-restore clears an outer pin rather than
+ * restoring it), and NOT concurrency-safe (`process.env` is process-global; run arms
+ * sequentially, never `Promise.all` two arms together).
+ */
+export async function withTemporalEnv({ query, decay }, fn) {
+  const resolvedQuery = query === true || query === 'true' ? 'true' : 'false';
+  const resolvedDecay = decay === 'on' ? 'true' : 'false';
+  process.env.UM_TEMPORAL_QUERY = resolvedQuery;
+  process.env.UM_TEMPORAL_DECAY = resolvedDecay;
+  try {
+    return await fn({ query: resolvedQuery, decay: resolvedDecay });
+  } finally {
+    delete process.env.UM_TEMPORAL_QUERY;
     delete process.env.UM_TEMPORAL_DECAY;
   }
 }
@@ -2295,6 +2558,100 @@ async function cliMain() {
       console.log(formatGateReport(gate));
       if (!gate.pass) {
         console.error('UNDATED-ARM GATE FAILED');
+        process.exitCode = 1;
+      }
+    }
+    return;
+  }
+
+  // Window-arm measurement (its OWN fixture, OWN scratch collection, OWN entry point —
+  // sibling of --undated-arm; the shared corpus and the nightly drift gate stay untouched).
+  // Returns early; never reads the shared `thresholds` floors. With --gate it evaluates
+  // `windowThresholds` ONLY — its own subset floor (plan Task 7.3).
+  if (args.windowArm) {
+    // DJ-12: a parameter, never a constant — reject anything but the two spelled values.
+    const decayArg = args.decay ?? 'on';
+    if (decayArg !== 'on' && decayArg !== 'off') {
+      throw new Error(`mq-eval window-arm: --decay must be 'on' or 'off', got '${decayArg}'`);
+    }
+
+    // Pin BEFORE the lazy imports: doSearch captures USER_ID at import time (review B1).
+    // UM_TEMPORAL_QUERY / UM_TEMPORAL_DECAY are deliberately NOT set here — runWindowArm
+    // pins both in-process via withTemporalEnv and clears them after. Writing them to the
+    // environment (or .env) is what would make every later reaction-gate run refuse.
+    process.env.MEM0_USER_ID = EVAL_USER;
+    process.env.UM_DEDUP_ENABLED = 'true';
+    // OFF, for the same reason the undated arm pins it off: the synthetic distractors
+    // self-contradict in the dedup band, and the FIXTURE rows seed FIRST (so they are the
+    // OLDEST) — autosupersede would retire real cohort targets in favour of a template-
+    // generated distractor, and a superseded point is filtered out of search entirely.
+    process.env.UM_AUTOSUPERSEDE_ENABLED = 'false';
+    process.env.UM_LANE_CLASSIFIER_ENABLED = 'true';
+
+    const { Memory } = await import('mem0ai/oss');
+    const { QdrantClient } = await import('@qdrant/js-client-rest');
+    const { umAdd } = await import('../lib/add.mjs');
+    const { doSearch } = await import('../mem0-mcp-http.mjs');
+    const { embed, getEmbedderConfig } = await import('../lib/embed.mjs');
+    const { getFactsLlmConfig } = await import('../lib/facts.mjs');
+    const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+    const { cosineStrict } = await import('../lib/vector.mjs');
+    const { lanesFromRows, generateDistractors } = await import('./lib/corpus-distractors.mjs');
+
+    const rows = await loadFixtureJsonl(args.recall ?? WINDOW_ARM.fixture);
+    const now = Date.now(); // pinned once (the one-clock guard) — recorded in the artifact
+    const host = process.env.QDRANT_HOST ?? 'localhost';
+    const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
+    const client = new QdrantClient({ host, port });
+    const collection = `${SCRATCH_PREFIX}window_${isoDate()}_${args.seed ?? process.pid}`;
+
+    const memoriesBefore = await countPoints(client, 'memories');
+    let result;
+    try {
+      await ensureCollection(client, collection, VECTOR_DIM);
+      const memory = new Memory({
+        embedder: getEmbedderConfig(process.env),
+        llm: getFactsLlmConfig(process.env),
+        vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
+      });
+      result = await runWindowArm({
+        rows, collection, decay: decayArg, now,
+        umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
+        generateDistractors, lanesFromRows,
+      });
+    } finally {
+      await dropCollectionQuiet(client, collection).catch((e) => console.error('[mq-eval] window-arm teardown:', e?.message));
+    }
+
+    const memoriesAfter = await countPoints(client, 'memories');
+    if (memoriesBefore != null && memoriesAfter !== memoriesBefore) {
+      throw new Error(`mq-eval ISOLATION VIOLATION: 'memories' point-count changed ${memoriesBefore} → ${memoriesAfter}`);
+    }
+
+    const out = args.out ?? join('eval/results', `mq-window-arm-${isoDate()}-${args.seed ?? process.pid}.json`);
+    await writeJson(out, result);
+    console.log(`[mq-eval] window arm written to ${out}`);
+    console.log(`  flags        ${JSON.stringify(result.flags)}`);
+    console.log(`  seeds        ${result.seedCount} (merged ${result.mergedCount})`);
+    console.log(`  cohorts      ${result.fixture.undatedGold} undated-gold / ${result.fixture.dated} dated`);
+    console.log(`  corpus       ${result.corpus.effectiveN} effective points (${result.corpus.fixtureSeeds} fixture + ${result.corpus.distractorsRequested} distractors, ${result.corpus.distractorsCollapsed} collapsed)`);
+    console.log(`  G2 (GATE)    recall@5 over the undated-gold subset: ${result.g2.value} over ${result.g2.rows} rows`);
+    console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
+    console.log(`  projection   g2wProjected ${result.projection.g2wProjected} / evicted [${result.projection.evictedRefs.map((r) => r.target_ref).join(', ')}] / scaled ${result.projection.undatedCandidatesScaled}`);
+
+    // Subset floor (plan Task 7.3): --gate evaluates the arm against `windowThresholds`,
+    // never the shared `thresholds` block. A gate file WITHOUT the key is refused rather
+    // than passed — a floorless gate reading as green is the dead-detector failure §3.3
+    // exists to prevent.
+    if (args.gate) {
+      const config = JSON.parse(await readFile(args.gate, 'utf8'));
+      if (!Array.isArray(config.windowThresholds) || config.windowThresholds.length === 0) {
+        throw new Error('mq-eval window-arm: --gate file carries no windowThresholds — refusing a floorless gate');
+      }
+      const gate = evaluateGate(result, { thresholds: config.windowThresholds });
+      console.log(formatGateReport(gate));
+      if (!gate.pass) {
+        console.error('WINDOW-ARM GATE FAILED');
         process.exitCode = 1;
       }
     }

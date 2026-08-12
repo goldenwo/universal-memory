@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
 import { parseTemporalWindow } from '../lib/temporal-query.mjs';
-import { recallPass } from '../eval/memory-quality-eval.mjs';
+import { recallPass, windowArmCohorts, runWindowArm, parseArgs } from '../eval/memory-quality-eval.mjs';
 
 const NOW = Date.UTC(2026, 7, 12, 15, 0, 0); // Wed 2026-08-12
 const row = (over = {}) => ({
@@ -72,6 +72,22 @@ test('the shipped fixture passes its own validator at arbitrary clock positions'
   }
 });
 
+// --- windowArmCohorts (pure) -------------------------------------------------
+
+test('windowArmCohorts: gold target strips, companion and dated targets stay dated', () => {
+  const rows = [
+    { id: 'w1', undated_gold: true, seed_facts: [
+      { text: 't', valid_from: '2026-08-01T00:00:00.000Z' },
+      { text: 'c', valid_from: '2026-08-05T00:00:00.000Z' }] },
+    { id: 'w2', undated_gold: false, seed_facts: [{ text: 'd', valid_from: '2026-08-06T00:00:00.000Z' }] },
+  ];
+  const { goldRefs, datedRefs, expectedByRef } = windowArmCohorts(rows);
+  assert.deepEqual(goldRefs, ['w1:0']);
+  assert.deepEqual(datedRefs, ['w1:1', 'w2:0']);
+  assert.equal(expectedByRef['w1:1'], '2026-08-05T00:00:00.000Z');
+  assert.equal(expectedByRef['w2:0'], '2026-08-06T00:00:00.000Z');
+});
+
 const stubEmbed = async () => ({ vector: [1, 0], tokensIn: 0, tokensOut: 0, costUsd: 0 });
 const stubCosine = () => 0; // no twins
 const NOOP = {};
@@ -131,4 +147,124 @@ test('absent opts leave the return shape byte-identical (no projection key)', as
   const doSearch = async () => ({ results: [{ id: 'id-gold', score: 0.8 }] });
   const r = await recallPass(baseArgs(doSearch));
   assert.ok(!('projection' in r));
+});
+
+// --- parseArgs: --window-arm / --decay (pure) -------------------------------
+
+test('parseArgs: --window-arm sets the flag; --decay captures the raw value', () => {
+  const a = parseArgs(['node', 'x', '--window-arm', '--decay', 'off']);
+  assert.equal(a.windowArm, true);
+  assert.equal(a.decay, 'off');
+});
+
+test('parseArgs: absent --window-arm leaves the flag falsy (default runs unaffected)', () => {
+  assert.ok(!parseArgs(['node', 'x']).windowArm);
+  assert.ok(!parseArgs(['node', 'x', '--recall', 'a.jsonl', '--gate', 'g.json']).windowArm);
+});
+
+// --- runWindowArm: offline stub-DI tests for the guards ---------------------
+//
+// Same stub-DI pattern the undated arm's own wiring tests use
+// (mq-eval-undated-arm-wiring.test.mjs `fakes()`): every live dependency (umAdd, client,
+// embed, doSearch) is a fake, so this runs with no qdrant, no embedder, no API key. Two
+// window-arm rows — one gold (2 seed_facts), one dated (1 seed_fact) — are the smallest
+// fixture that satisfies resolveWindowRows' F1/F2 AND assertDateCohorts' both-cohorts-
+// non-empty rule.
+
+const windowRows = () => [
+  {
+    id: 'w1', undated_gold: true, category: 'work', paraphrase_level: 'paraphrase',
+    query: 'w1 standup update in the last 2 weeks', target_ref: 'w1:0',
+    seed_facts: [
+      { text: 'w1 gold fact', lane: 'work', days_ago: 3 },
+      { text: 'w1 companion fact', lane: 'work', days_ago: 5 },
+    ],
+  },
+  {
+    id: 'w2', undated_gold: false, category: 'dev', paraphrase_level: 'oblique',
+    query: 'w2 deploy pipeline change in the last 3 weeks', target_ref: 'w2:0',
+    seed_facts: [{ text: 'w2 dated fact', lane: 'dev', days_ago: 5 }],
+  },
+];
+
+/** `resultIdsMode: 'mismatched'` reproduces the wrong-id-space hazard: doSearch returns ids
+ *  that never appear in ANY seed's write-id space, so a projection keyed correctly still
+ *  scales nothing — exactly what guard (b) exists to catch. */
+function windowFakes({ resultIdsMode = 'correct' } = {}) {
+  const calls = [];
+  const payloads = new Map();
+  const refToId = new Map();
+  let n = 0;
+
+  const umAdd = async ({ metadata }) => {
+    const id = `pt-${++n}`;
+    refToId.set(metadata.eval_ref, id);
+    payloads.set(id, { eval_ref: metadata.eval_ref, lane: metadata.lane, ...(metadata.valid_from !== undefined ? { valid_from: metadata.valid_from } : {}) });
+    calls.push({ op: 'umAdd', ref: metadata.eval_ref, valid_from: metadata.valid_from });
+    return { results: [{ id, event: 'ADD' }] };
+  };
+
+  const client = {
+    async deletePayload(collection, { points, keys }) {
+      calls.push({ op: 'deletePayload', points: [...points], keys: [...keys] });
+      for (const id of points) for (const k of keys) delete payloads.get(id)?.[k];
+    },
+    async retrieve(collection, { ids }) {
+      calls.push({ op: 'retrieve', ids: [...ids] });
+      return ids.filter((id) => payloads.has(id)).map((id) => ({ id, payload: payloads.get(id) }));
+    },
+  };
+
+  const embed = async () => ({ vector: [1, 0, 0], tokensIn: 1, tokensOut: 0, costUsd: 0 });
+  const cosineStrict = () => 0.1;
+  // Records the LIVE UM_TEMPORAL_DECAY the wrapper pinned, so the --decay off test can
+  // assert doSearch actually observed 'false' rather than just trusting the return value.
+  const doSearch = async (query) => {
+    calls.push({ op: 'doSearch', query, decayEnv: process.env.UM_TEMPORAL_DECAY });
+    if (resultIdsMode === 'mismatched') {
+      return { _temporalWidened: true, results: [{ id: 'unrelated-1', score: 0.9 }, { id: 'unrelated-2', score: 0.1 }] };
+    }
+    const rowId = query.split(' ')[0];
+    const target = refToId.get(`${rowId}:0`);
+    return { _temporalWidened: true, results: [{ id: target, score: 0.9 }, { id: 'noise', score: 0.1 }] };
+  };
+
+  const generateDistractors = (count, { seed }) => Array.from({ length: count }, (_, i) => ({ text: `distractor ${seed}-${i}`, lane: 'work' }));
+  const lanesFromRows = () => ['work', 'dev'];
+
+  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
+}
+
+const runWindowArgs = (f, over = {}) => ({
+  rows: windowRows(), collection: 'eval_mq_window_test', now: NOW,
+  umAdd: f.umAdd, memory: f.memory, client: f.client, doSearch: f.doSearch,
+  embed: f.embed, cosineStrict: f.cosineStrict, NOOP_METRICS: f.NOOP_METRICS,
+  generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
+  distractors: 3, distractorSeed: 1,
+  ...over,
+});
+
+test('runWindowArm: guard (b) fires when the live result ids never fall in the gold write-id space', async () => {
+  const f = windowFakes({ resultIdsMode: 'mismatched' });
+  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(b\)|undatedCandidatesScaled/);
+});
+
+test('runWindowArm: --decay off pins UM_TEMPORAL_DECAY=false for doSearch and still runs to completion', async () => {
+  const f = windowFakes();
+  const out = await runWindowArm(runWindowArgs(f, { decay: 'off' }));
+  const searches = f.calls.filter((c) => c.op === 'doSearch');
+  assert.ok(searches.length > 0, 'the run must actually search');
+  for (const s of searches) assert.equal(s.decayEnv, 'false', 'doSearch must observe the pinned value, not just the return');
+  assert.equal(out.arm, 'window');
+  assert.equal(out.flags.UM_TEMPORAL_DECAY, 'false');
+  assert.equal(out.flags.UM_TEMPORAL_QUERY, 'true');
+  assert.equal(out.projection.evictedRefs.length, 0, 'the happy-path fixture has no eviction');
+  assert.equal(process.env.UM_TEMPORAL_DECAY, undefined, 'the pin must not leak past the run');
+  assert.equal(process.env.UM_TEMPORAL_QUERY, undefined, 'the pin must not leak past the run');
+});
+
+test('runWindowArm: the one-clock guard throws when `now` is not finite, before touching any dependency', async () => {
+  const f = windowFakes();
+  await assert.rejects(() => runWindowArm(runWindowArgs(f, { now: undefined })), /finite/);
+  assert.equal(f.calls.length, 0, 'nothing should run before the guard');
 });
