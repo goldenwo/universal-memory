@@ -1756,12 +1756,32 @@ if [ "${UM_SMOKE_REMEMBER_ON:-}" = "1" ]; then
 	fi
 	# Use $MARKER-scoped text so cross-run dedup never collides (parallel to S2).
 	_um_remember_text="The smoke test user's name is remember-probe-${MARKER}."
-	# First write — expect plain success (ADD event).
-	b2_resp1=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
-		bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+	# Invoke the helper; retry ONCE if (and only if) the output carries the helper's
+	# transport-failure warning ("not saved ... server unreachable"). The helper's
+	# curl --max-time 10 fires when a server-side extraction call rides an upstream
+	# latency spike (seen live: a 19.4s /api/add in the same CI run that eventually
+	# succeeded — run 31642434404), and its error path labels ANY curl failure
+	# "server unreachable". One bounded retry absorbs exactly that transient; every
+	# other outcome (including a successful save WITHOUT a dedup match) is returned
+	# untouched so the assertions below keep their full teeth.
+	_um_remember_invoke() {
+		local _resp
+		_resp=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
+			bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+		if echo "$_resp" | grep -q "not saved to universal-memory"; then
+			echo "[smoke]     ($1: transport failure — likely upstream latency > the helper's 10s timeout; one retry in 5s)" >&2
+			sleep 5
+			_resp=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
+				bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+		fi
+		printf '%s' "$_resp"
+	}
+	# First write — expect plain success (ADD event). A timed-out write1 whose
+	# request still lands server-side makes the retry a DEDUP_MERGED — fine either
+	# way: the block's contract is write2-surfaces-dedup, asserted below.
+	b2_resp1=$(_um_remember_invoke write1)
 	# Second write — expect dedup-match suffix.
-	b2_resp2=$(UM_SERVER_URL="$ENDPOINT" UM_AUTH_TOKEN="${UM_AUTH_TOKEN:-}" \
-		bash "$_um_remember_helper" remember --text "$_um_remember_text" 2>&1 || true)
+	b2_resp2=$(_um_remember_invoke write2)
 	echo "[smoke]     write1: $b2_resp1"
 	echo "[smoke]     write2: $b2_resp2"
 	if ! echo "$b2_resp2" | grep -q "dedup match"; then
