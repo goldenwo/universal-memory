@@ -322,12 +322,42 @@ const gateConfig = JSON.parse(await readFile(GATE_CONFIG_PATH, 'utf8'));
 const RUN1_PATH = fileURLToPath(new URL('../eval/results/2026-08-12-window-arm-run1.json', import.meta.url));
 const windowRun1 = JSON.parse(await readFile(RUN1_PATH, 'utf8'));
 
+const RUN2_PATH = fileURLToPath(new URL('../eval/results/2026-08-12-window-arm-run2.json', import.meta.url));
+const windowRun2 = JSON.parse(await readFile(RUN2_PATH, 'utf8'));
+
 test('windowThresholds: present, exactly the pinned roster', () => {
   assert.ok(Array.isArray(gateConfig.windowThresholds), 'windowThresholds key must exist');
   assert.deepEqual(
     gateConfig.windowThresholds.map((t) => t.metric).sort(),
     ['windowG2Recall@5', 'windowGoldRows'],
   );
+});
+
+test('windowThresholds: G2 floor follows the pre-registered recipe exactly, recomputed from BOTH committed artifacts', () => {
+  // No copied literals: observed_min and N come straight off the committed run1/run2
+  // g2 blocks, not off a hardcoded constant or the pinned floor itself — a mistyped floor
+  // digit in mq-gate-thresholds.json (e.g. 0.9 instead of 0.938) fails this strict-equality
+  // check even though it might slip past pass/fail behavioral fixtures chosen after the
+  // fact. Mirrors mq-gate-undated-floor.test.mjs's 'G2 floor follows the pre-registered
+  // recipe exactly', going one step further by loading the real artifacts instead of
+  // restating their values as constants.
+  const observedMin = Math.min(windowRun1.g2.value, windowRun2.g2.value);
+  const armSize = windowRun1.g2.rows;
+  assert.equal(windowRun2.g2.rows, armSize, 'both runs must report the same arm size — the floor pins ONE denominator');
+  const expectedFloor = Math.round((observedMin - 1.5 / armSize) * 1000) / 1000;
+
+  const g2 = gateConfig.windowThresholds.find((t) => t.metric === 'windowG2Recall@5');
+  assert.equal(g2.floor, expectedFloor, 'the pinned floor must equal round3(observed_min - 1.5/N) recomputed from the committed artifacts');
+  assert.deepEqual(g2.path, ['g2', 'value'], 'path must match the arm artifact shape');
+  assert.equal(g2.direction, 'min');
+});
+
+test('windowThresholds: the rows floor pins the denominator at the artifacts\' authoring size', () => {
+  const rows = gateConfig.windowThresholds.find((t) => t.metric === 'windowGoldRows');
+  assert.equal(rows.floor, windowRun1.g2.rows, 'the pinned rows floor must equal the committed artifact\'s g2.rows, not a copied literal');
+  assert.equal(rows.floor, windowRun2.g2.rows, 'both runs share the same authoring-size denominator');
+  assert.deepEqual(rows.path, ['g2', 'rows']);
+  assert.equal(rows.direction, 'min');
 });
 
 test('evaluateGate over windowThresholds: a below-floor synthetic result FAILS the gate', () => {
