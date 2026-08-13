@@ -11,6 +11,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as ranking from '../lib/ranking.mjs';
 import {
 	applyTemporalWindow,
 	resolveItemDate,
@@ -19,6 +20,7 @@ import {
 	DEMOTION_FLOOR,
 	CLOCK_SKEW_TOLERANCE_MS,
 } from '../lib/ranking.mjs';
+import { CASES } from './helpers/window-policy-cases.mjs';
 
 const DAY = 86400000;
 const T = (isoDay) => Date.UTC(2026, 6, isoDay); // July 2026
@@ -63,7 +65,7 @@ test('an undated item keeps its original score and is never demoted (D-b1 path)'
 	assert.equal(undated.score, 0.5, 'undated items are neutral, not penalised');
 });
 
-test('an undated item is untouched even when the window IS active (reaches the branch)', () => {
+test('an undated item is untouched even when the window IS active — when no undatedFactor is passed (decay off)', () => {
 	// The invariant this pins became LOAD-BEARING with the undated-decay policy: decay now
 	// imputes exp(-0.25) for an undated point while the window path deliberately does not, and
 	// the two imputations must be chosen JOINTLY (see lib/ranking.mjs's module header). That
@@ -248,3 +250,24 @@ test('an unmarked window defaults to exact (no tolerance)', () => {
 	const justAfter = item('x', 1, T(15) + DAY - 1 + 60 * 1000);
 	assert.equal(countInWindow([justAfter], w), 0);
 });
+
+// ── W-series: the window-undated joint-imputation policy (shared case table) ────────────
+//
+// The case bodies live in ./helpers/window-policy-cases.mjs because test/red-controls/
+// run.mjs will run the SAME table against deliberately-broken copies of ranking.mjs (Task
+// 11, spec §6.4 DJ-11) — two hand-maintained copies would drift, and a drifted control
+// would certify nothing about the tests that actually run. Consumed identically to how
+// ranking-undated-policy.test.mjs consumes the decay table's CASES.
+//
+// COMMITTED RED (spec's TDD discipline — this is Task 7 of the window-undated-joint-
+// imputation plan): `applyTemporalWindow` does not yet consume `undatedFactor`, so cases
+// that assert a scaled undated score fail today. The policy itself lands in Task 8. See
+// the header of window-policy-cases.mjs for the literal-assertion discipline (W8/W11 are
+// the two deliberate import exceptions — everything else asserts the LITERAL
+// Math.exp(-0.25), never the imported UNDATED_FACTOR).
+
+for (const [id, subCases] of Object.entries(CASES)) {
+	for (const [label, run] of subCases) {
+		test(`${id}: ${label}`, () => run(applyTemporalWindow, ranking));
+	}
+}
