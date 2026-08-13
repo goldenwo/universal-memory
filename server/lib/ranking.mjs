@@ -23,7 +23,8 @@
  *      1.0, no re-rank (decay off);
  *   3. no window (incl. parser fail-open) → decay arm, same as 2.
  * Phrasing moves a query between rows; pool composition and `limit` move it between rows 1
- * and 2 — none of the three changes the factor anymore (resolves #237).
+ * and 2 — none of the three changes the factor anymore (resolves #237). Measured, not
+ * inferred — see UNDATED_FACTOR.
  * The window imputes decay's exact constant, not its own: any other value reproduces the
  * per-query factor flip at smaller magnitude — equality is the only fixed point. It imputes
  * conditionally (only when decay is enabled) because an unconditional demotion would spend
@@ -31,7 +32,7 @@
  * The DATED cohort's treatment still diverges between the two paths, unchanged and
  * deliberate (§1.3): in-window dated items keep factor 1.0 under the window re-rank but
  * decay by exp(-age/H) under decay — a window is query-expressed intent and overrides
- * recency; out of scope here. Measured, not inferred — see UNDATED_FACTOR.
+ * recency; out of scope here.
  *
  * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
  *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
@@ -72,13 +73,13 @@ const DAY_MS = 86400000;
  * pre-retune UNDATED_EFOLDINGS = 1): the same undated point on the same query scored 0.80
  * (factor 1.000) when the pool held a dated in-window candidate and 0.294 (factor 0.368)
  * when it did not — and because the window path widens the fetch, the literal limit=5 vs
- * limit=10 case above reproduces, with the factors the other way round. The retune to 0.25
- * narrows the flip (1.000 vs 0.779) without removing it. So set-independence holds within
- * decay and NOT across the pair.
+ * limit=10 case above reproduces, with the factors the other way round. At that constant, the
+ * retune to 0.25 would only have narrowed the flip (1.000 vs 0.779), not removed it — this
+ * function alone was set-independent, the pair was not.
  *
- * That is the deferred window-imputation problem tracked as a successor issue, and it is why the
- * two imputations must be chosen JOINTLY rather than one at a time. It is inert today: the
- * divergence needs BOTH flags on, and production runs with both off.
+ * That cross-pair flip is now resolved (#237): `applyTemporalWindow` imputes this same
+ * constant on its own undated branch when decay is enabled — see the module header and its
+ * `undatedFactor` opt for the mechanism.
  *
  * Deliberately NOT an env knob: this module is pure and takes `halfLifeDays` as a
  * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
