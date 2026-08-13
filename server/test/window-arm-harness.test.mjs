@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
 import { parseTemporalWindow } from '../lib/temporal-query.mjs';
-import { recallPass, windowArmCohorts, runWindowArm, parseArgs } from '../eval/memory-quality-eval.mjs';
+import { recallPass, windowArmCohorts, runWindowArm, parseArgs, evaluateGate } from '../eval/memory-quality-eval.mjs';
 
 const NOW = Date.UTC(2026, 7, 12, 15, 0, 0); // Wed 2026-08-12
 const row = (over = {}) => ({
@@ -305,4 +307,40 @@ test('runWindowArm: the one-clock guard throws when `now` is not finite, before 
   const f = windowFakes();
   await assert.rejects(() => runWindowArm(runWindowArgs(f, { now: undefined })), /finite/);
   assert.equal(f.calls.length, 0, 'nothing should run before the guard');
+});
+
+// --- windowThresholds gate wiring (Task 6, plan Sec7.3 step 4) --------------
+//
+// Cheaper than a fresh `--window-arm --decay on --gate ... --seed 3` run: loads the REAL
+// pinned config and the REAL committed run1 artifact (both in-repo, no keys needed) and
+// proves `evaluateGate` actually bites in both directions over `windowThresholds` — a
+// silent edit to the floor, the key, or the artifact path would go green instead of red.
+
+const GATE_CONFIG_PATH = fileURLToPath(new URL('../eval/mq-gate-thresholds.json', import.meta.url));
+const gateConfig = JSON.parse(await readFile(GATE_CONFIG_PATH, 'utf8'));
+
+const RUN1_PATH = fileURLToPath(new URL('../eval/results/2026-08-12-window-arm-run1.json', import.meta.url));
+const windowRun1 = JSON.parse(await readFile(RUN1_PATH, 'utf8'));
+
+test('windowThresholds: present, exactly the pinned roster', () => {
+  assert.ok(Array.isArray(gateConfig.windowThresholds), 'windowThresholds key must exist');
+  assert.deepEqual(
+    gateConfig.windowThresholds.map((t) => t.metric).sort(),
+    ['windowG2Recall@5', 'windowGoldRows'],
+  );
+});
+
+test('evaluateGate over windowThresholds: a below-floor synthetic result FAILS the gate', () => {
+  const belowFloorValue = evaluateGate({ g2: { value: 0.90, rows: 24 } }, { thresholds: gateConfig.windowThresholds });
+  assert.equal(belowFloorValue.pass, false, 'g2.value 0.90 is below the 0.938 floor');
+  assert.equal(belowFloorValue.breaches[0].reason, 'below_floor');
+
+  const shrunkRows = evaluateGate({ g2: { value: 1.0, rows: 23 } }, { thresholds: gateConfig.windowThresholds });
+  assert.equal(shrunkRows.pass, false, 'g2.rows 23 breaches the denominator floor, never silently re-scales');
+});
+
+test('evaluateGate over windowThresholds: the committed run1 artifact PASSES the pinned floor', () => {
+  const gate = evaluateGate(windowRun1, { thresholds: gateConfig.windowThresholds });
+  assert.equal(gate.pass, true, 'run1 (g2.value 1.000, g2.rows 24) must clear the 0.938 / 24 floors');
+  assert.deepEqual(gate.breaches, []);
 });
