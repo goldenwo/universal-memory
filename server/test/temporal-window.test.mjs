@@ -67,9 +67,13 @@ test('an undated item keeps its original score and is never demoted (D-b1 path)'
 
 test('an undated item is untouched even when the window IS active — when no undatedFactor is passed (decay off)', () => {
 	// The invariant this pins became LOAD-BEARING with the undated-decay policy: decay now
-	// imputes exp(-0.25) for an undated point while the window path deliberately does not, and
-	// the two imputations must be chosen JOINTLY (see lib/ranking.mjs's module header). That
-	// asymmetry is a documented design point, so it needs a test that can actually fail.
+	// imputes exp(-0.25) for an undated point, and the window path now joins that same
+	// imputation too — but ONLY when the caller passes an undatedFactor, which is exactly
+	// how the two paths are chosen JOINTLY (see lib/ranking.mjs's module header). This test
+	// passes no undatedFactor at all — decay off — so the window path must leave the undated
+	// item UNSCALED; that conditional asymmetry (imputed jointly when decay is on, untouched
+	// when it is off) is the documented design point, and it needs a test that can actually
+	// fail.
 	//
 	// It previously had none: the only undated case short-circuits on D-b1, so a mutant
 	// demoting undated items inside applyTemporalWindow passed the whole suite.
