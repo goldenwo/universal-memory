@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// server/test/red-controls/run.mjs — RC1-RC6 for the undated-decay policy.
+// server/test/red-controls/run.mjs — RC1-RC6 (undated-decay policy) + RCW1-RCW5
+// (window-undated joint-imputation policy, spec §6.4), via an open TABLES registry.
 //
 // A passing test suite proves the tests pass. It does NOT prove they would FAIL if the
 // implementation were wrong — and a test that cannot fail is worse than no test, because
-// it reads as coverage. These controls close that gap: each deliberately breaks the policy
+// it reads as coverage. These controls close that gap: each deliberately breaks a policy
 // in one specific way and asserts that exactly the NAMED cases go red while the named
 // must-still-pass set stays green. Both halves matter — a mutation that reddens everything
 // shows only that the tests are coupled, not that they are precise.
@@ -11,11 +12,38 @@
 // MECHANISM. lib/ranking.mjs has ZERO imports (and no import.meta), so a mutant is just
 // its source with one string replaced, imported straight from a `data:` URL. Nothing is
 // written to disk: no temp dir to leak, no module shimming, and the real file is never
-// touched. The cases come from test/helpers/undated-policy-cases.mjs — the SAME table
-// ranking-undated-policy.test.mjs runs, so a control can never drift from the suite it
-// certifies.
+// touched. Both policy tables live in the SAME file, so one mutant load carries both
+// `applyTemporalDecay` and `applyTemporalWindow` regardless of which table the control
+// belongs to — which is exactly what makes the union evaluation below possible.
 //
-// EXIT 0 only when EVERY control behaves exactly as the table says.
+// TABLES REGISTRY (spec DJ-11). Each policy owns a case table sourced from
+// test/helpers/*-policy-cases.mjs — the SAME tables ranking-undated-policy.test.mjs and
+// temporal-window.test.mjs run, so a control can never drift from the suite it certifies.
+// A third policy table (e.g. #238's clamp) is meant to be one entry here, not four edits
+// scattered through this file.
+//
+// UNION EVALUATION. Every control's mutant is run against EVERY table's cases, not just
+// its own — for each `[name, tbl]` in TABLES, `tbl.runCase(id, mod[tbl.fnName], mod)` runs
+// over `Object.keys(tbl.CASES)`. A flip in a table other than the control's own is a
+// cross-table leak, and the `unexpected` gate below catches it mechanically UNLESS the
+// control names it in `alsoFlip` as expected-by-mechanism. Only two entries do:
+//   RC1 → alsoFlip includes 'W11': W11 is the window table's retune tripwire and reddens
+//         on ANY change to UNDATED_FACTOR/UNDATED_EFOLDINGS BY DESIGN, so RC1's hardcoded
+//         magnitude necessarily reaches it.
+//   RC5 → alsoFlip includes 'W8': W8 pins JOINTNESS by calling `mod.applyTemporalDecay`
+//         directly on its own undated item, so a mutant of decay's own conditionality
+//         moves W8's decay-side operand too.
+// Every OTHER cross-table flip (RC2-RC4/RC6 into window, any RCW into decay) is a hard
+// failure. This is what makes the spec's "isolation verified both ways" a CHECKED property
+// instead of a vacuous one.
+//
+// W10 (doSearch-level #237 resolution) is in NO control's flip set: it cannot be
+// table-resident because doSearch statically imports the real ranking.mjs, so no `data:`
+// mutant can reach it. Its relationship to RCW1 (the same omitted/1 identity W2 pins at
+// unit level) is a MANUAL claim recorded on the PR, not an automated one — see the task
+// report for the captured transcript.
+//
+// EXIT 0 only when EVERY control behaves exactly as its table says.
 //
 // Wired into the suite by controls.test.mjs — this file is not `*.test.mjs`, so no glob
 // reaches it on its own and the controls would otherwise never run in CI.
@@ -29,17 +57,32 @@
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-import { CASES, runCase } from '../helpers/undated-policy-cases.mjs';
+import { CASES as DECAY_CASES, runCase as runDecayCase } from '../helpers/undated-policy-cases.mjs';
+import { CASES as WINDOW_CASES, runCase as runWindowCase } from '../helpers/window-policy-cases.mjs';
 
 const RANKING = fileURLToPath(new URL('../../lib/ranking.mjs', import.meta.url));
 
+/** Open registry (spec DJ-11): a third policy table (#238's clamp) is one entry, not four edits. */
+const TABLES = {
+  decay: {
+    CASES: DECAY_CASES, runCase: runDecayCase, fnName: 'applyTemporalDecay', banner: 'decay baseline',
+  },
+  window: {
+    CASES: WINDOW_CASES, runCase: runWindowCase, fnName: 'applyTemporalWindow', banner: 'window baseline',
+  },
+};
+
 /**
- * Each control: a named mutation of ranking.mjs, the cases it MUST flip, and the cases it
- * MUST still pass. Sourced from the spec's red-control table.
+ * Each control: a named mutation of ranking.mjs, the cases it MUST flip (in its own
+ * table), and the cases it MUST still pass (in its own table). `table` resolves which
+ * entry of TABLES the control belongs to for baseline/roster purposes — but every
+ * control's mutant is evaluated against the UNION of every table's cases (see the module
+ * header). Sourced from the spec's red-control table (§6.4 for the window entries).
  */
 const CONTROLS = [
   {
     id: 'RC1',
+    table: 'decay',
     what: 'UNDATED_FACTOR hardcoded to 1.0 (the pre-policy behaviour)',
     mutate: (src) => replaceOnce(src, 'export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);',
       'export const UNDATED_FACTOR = 1.0;'),
@@ -47,11 +90,16 @@ const CONTROLS = [
     mustPass: ['U3', 'U5', 'U6', 'U7'],
     // U8 gained a sub-case pinning an ABSOLUTE undated value (0.6 x exp(-0.25)), so any change
     // to the magnitude necessarily flips it. Named rather than tolerated.
-    alsoFlip: ['U8'],
-    why: 'the policy is scoped to the undated branch and mints no score, so the dated cases and the guard cases are untouched by the magnitude',
+    // W11 (window table) is the retune tripwire — it reddens on ANY UNDATED_FACTOR change BY
+    // DESIGN (spec §6.4 rule-2 correction), so this control's hardcoded magnitude reaches it
+    // too. Cross-table and expected-by-mechanism, so it is named here rather than left for the
+    // `unexpected` gate to (correctly) fail on.
+    alsoFlip: ['U8', 'W11'],
+    why: 'the policy is scoped to the undated branch and mints no score, so the dated cases and the guard cases are untouched by the magnitude. W11 is the one window-table case that is ALSO scoped to this exact magnitude (by design, as its own tripwire), so it is the sole window-side exception.',
   },
   {
     id: 'RC2',
+    table: 'decay',
     what: 'score guard removed — undated branch uses (r.score || 1) * f',
     mutate: (src) => replaceOnce(src,
       "      if (typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * UNDATED_FACTOR };",
@@ -63,6 +111,7 @@ const CONTROLS = [
   },
   {
     id: 'RC3',
+    table: 'decay',
     what: 'UNDATED_FACTOR replaces the dated exp(-age/H) factor',
     mutate: (src) => replaceOnce(src, '    const factor = Math.exp(-ageDays / halfLifeDays);',
       '    const factor = UNDATED_FACTOR;'),
@@ -76,6 +125,7 @@ const CONTROLS = [
   },
   {
     id: 'RC4',
+    table: 'decay',
     what: 'undated branch grades on createdAt (the fallback D-h removed)',
     mutate: (src) => replaceOnce(src,
       '      return { ...r, score: r.score * UNDATED_FACTOR };',
@@ -92,6 +142,7 @@ const CONTROLS = [
   },
   {
     id: 'RC5',
+    table: 'decay',
     what: 'an anyDated short-circuit — skip the policy when the set holds no dated point',
     mutate: (src) => replaceOnce(src,
       "      if (typeof r.score !== 'number') return { ...r };",
@@ -107,11 +158,16 @@ const CONTROLS = [
     // earlier version said "third sub-case" and went stale when a dated sub-case moved to
     // U3.) U4/V1/V2 mixed sets always hold a dated point, so the short-circuit never fires
     // and they correctly survive.
-    alsoFlip: ['V3', 'U1'],
-    why: 'the constant is applied UNCONDITIONALLY so an item factor never depends on the rest of the returned set. This is the exact defect that rationale names — and until U8 gained an all-undated subset, NOTHING in the suite could see it: the short-circuit mutant flipped U1/U2/V3 while U8 survived',
+    // W8 (window table) also flips: it calls `mod.applyTemporalDecay` directly on the same
+    // undated item to pin cross-policy jointness (spec §6.4 rule-2 correction), so a mutant
+    // that changes decay's own conditionality necessarily moves W8's decay-side operand.
+    // Cross-table and expected-by-mechanism, named here rather than left for `unexpected`.
+    alsoFlip: ['V3', 'U1', 'W8'],
+    why: 'the constant is applied UNCONDITIONALLY so an item factor never depends on the rest of the returned set. This is the exact defect that rationale names — and until U8 gained an all-undated subset, NOTHING in the suite could see it: the short-circuit mutant flipped U1/U2/V3 while U8 survived. W8 calls the mutated decay function directly, so it inherits the same short-circuit and is the sole window-side exception.',
   },
   {
     id: 'RC6',
+    table: 'decay',
     what: 'the undated branch MUTATES in place instead of returning a copy',
     mutate: (src) => replaceOnce(src,
       '      return { ...r, score: r.score * UNDATED_FACTOR };',
@@ -126,6 +182,66 @@ const CONTROLS = [
     // one case in the table no mutation could redden, so nothing proved it bites.
     alsoFlip: [],
     why: 'purity is a documented contract (a new array, items never mutated) and callers rely on it — but a value-only test suite cannot distinguish a copy from an in-place write',
+  },
+  {
+    id: 'RCW1',
+    table: 'window',
+    what: 'uf resolution ignores the opt entirely — unconditional imputation (approach B by accident)',
+    mutate: (src) => replaceOnce(src,
+      '  const uf = Number.isFinite(undatedFactor) && undatedFactor > 0 && undatedFactor <= 1\n    ? undatedFactor\n    : 1;',
+      '  const uf = UNDATED_FACTOR;'),
+    mustFlip: ['W2', 'W3', 'JV1'],
+    mustPass: ['W1', 'W11', 'W5', 'W4'],
+    alsoFlip: [],
+    why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items',
+  },
+  {
+    id: 'RCW2',
+    table: 'window',
+    what: 'never-mint guard removed — whole undated branch becomes (r.score || 1) * uf',
+    mutate: (src) => replaceOnce(src,
+      "      if (uf === 1 || typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * uf };",
+      '      return { ...r, score: (r.score || 1) * uf };'),
+    mustFlip: ['W4', 'JV1'],
+    mustPass: ['W1', 'W2'],
+    alsoFlip: [],
+    why: 'W1/W2 pools are pinned numeric-nonzero, where (score||1)*uf === score*uf',
+  },
+  {
+    id: 'RCW3',
+    table: 'window',
+    what: 'the factor leaks onto dated in-window items',
+    mutate: (src) => replaceOnce(src,
+      '    if (isInWindow(r, window)) return { ...r };',
+      "    if (isInWindow(r, window)) return typeof r.score === 'number' ? { ...r, score: r.score * uf } : { ...r };"),
+    mustFlip: ['W5', 'JV1'],
+    mustPass: ['W1'],
+    alsoFlip: [],
+    why: 'W1 asserts only undated outputs; dated leakage is exactly what W5/JV1 pin',
+  },
+  {
+    id: 'RCW4',
+    table: 'window',
+    what: 'window-native constant: the undated multiply uses exp(-1) instead of uf',
+    mutate: (src) => replaceOnce(src,
+      '      return { ...r, score: r.score * uf };',
+      '      return { ...r, score: r.score * Math.exp(-1) };'),
+    mustFlip: ['W8', 'W1', 'W11', 'JV1'],
+    mustPass: ['W2', 'W5'],
+    alsoFlip: [],
+    why: 'the uf === 1 short-circuit is untouched, so the omitted/1 path still returns early',
+  },
+  {
+    id: 'RCW5',
+    table: 'window',
+    what: 'range check dropped from the factor guard, nullish default kept',
+    mutate: (src) => replaceOnce(src,
+      '  const uf = Number.isFinite(undatedFactor) && undatedFactor > 0 && undatedFactor <= 1\n    ? undatedFactor\n    : 1;',
+      '  const uf = undatedFactor ?? 1;'),
+    mustFlip: ['W3', 'JV1'],
+    mustPass: ['W1', 'W2'],
+    alsoFlip: [],
+    why: 'the omitted-opt path is untouched, so the mutant isolates the range check',
   },
 ];
 
@@ -154,24 +270,40 @@ async function main() {
   let checks = 0;
   const src = await readFile(RANKING, 'utf8');
 
-  // Sanity gate: every case must PASS against the real implementation first. Without it a
-  // control could "flip" a case that was already broken, and the run would certify nothing.
+  // Sanity gate: every case, in EVERY table, must PASS against the real implementation
+  // first. Without it a control could "flip" a case that was already broken, and the run
+  // would certify nothing.
   const real = await import(pathToFileURL(RANKING).href);
-  for (const id of Object.keys(CASES)) {
-    const r = runCase(id, real.applyTemporalDecay, real);
-    checks++;
-    if (!r.passed) failures.push(`BASELINE ${id} (${r.label}) fails against the REAL implementation: ${r.error.message}`);
+  for (const [name, t] of Object.entries(TABLES)) {
+    for (const id of Object.keys(t.CASES)) {
+      const r = t.runCase(id, real[t.fnName], real);
+      checks++;
+      if (!r.passed) failures.push(`BASELINE ${name}/${id} (${r.label}) fails against the REAL implementation: ${r.error.message}`);
+    }
   }
   if (failures.length > 0) {
     console.error(`baseline is not green:\n  ${failures.join('\n  ')}`);
     process.exitCode = 1;
     return;
   }
-  const subCases = Object.values(CASES).reduce((n, v) => n + v.length, 0);
-  console.log(`baseline: all ${Object.keys(CASES).length} cases pass against lib/ranking.mjs`);
-  // Sub-case total too: the group count alone cannot see a DROPPED sub-case, and some
-  // groups have a single sub-case carrying the only guard for a whole branch.
-  console.log(`baseline: ${subCases} sub-cases`);
+  // Baselines print per table. The decay lines are kept BYTE-IDENTICAL to their
+  // pre-registry wording — controls.test.mjs pins them literally, and this is the table
+  // that existed before the registry, so it is grandfathered rather than moved onto the
+  // generic banner-driven form below. Every OTHER table — window today, a third table
+  // tomorrow — prints via its own `banner` entry, so adding one is purely a TABLES edit.
+  for (const [name, t] of Object.entries(TABLES)) {
+    const count = Object.keys(t.CASES).length;
+    // Sub-case total too: the group count alone cannot see a DROPPED sub-case, and some
+    // groups have a single sub-case carrying the only guard for a whole branch.
+    const subCases = Object.values(t.CASES).reduce((n, v) => n + v.length, 0);
+    if (name === 'decay') {
+      console.log(`baseline: all ${count} cases pass against lib/ranking.mjs`);
+      console.log(`baseline: ${subCases} sub-cases`);
+    } else {
+      console.log(`${t.banner}: all ${count} cases pass`);
+      console.log(`${t.banner}: ${subCases} sub-cases`);
+    }
+  }
 
   for (const c of CONTROLS) {
     // A control that names NO case it must redden asserts nothing, yet would print PASS
@@ -182,6 +314,9 @@ async function main() {
       failures.push(`${c.id}: mustFlip is EMPTY — a control that names no case it must redden certifies nothing`);
       continue;
     }
+    const t = TABLES[c.table];
+    if (!t) throw new Error(`${c.id}: unknown table "${c.table}" — register it in TABLES first`);
+
     // Per-control try/catch: a drifted mutation anchor throws, and without this the
     // first drift would abort the run with the later controls never evaluated.
     let mod;
@@ -191,34 +326,47 @@ async function main() {
       console.log(`FAIL ${c.id} — ${c.what}`);
       // Truncate at the data: URL. Node's resolver error embeds the ENTIRE base64 mutant,
       // so on the failure mode this file explicitly anticipates ("what if ranking.mjs ever
-      // gains an import") all six controls emit ~44 KB of base64 and bury the one
+      // gains an import") all controls emit tens of KB of base64 and bury the one
       // actionable line — for a failure whose whole job is to say what the contributor broke.
       failures.push(`${c.id}: could not build the mutant — ${String(err.message).split(' from "data:')[0]}`);
       continue;
     }
+
+    // Evaluate the mutant against the UNION of every table's cases (spec DJ-11 / §6.4), not
+    // just the control's own table. A flip in a FOREIGN table is always outside the
+    // control's named sets unless explicitly claimed in alsoFlip, so the `unexpected` gate
+    // below catches cross-table leakage mechanically — this is what makes "isolation
+    // verified both ways" a checked property instead of a vacuous one.
     const flipped = [];
     const survived = [];
-
-    for (const id of Object.keys(CASES)) {
-      const r = runCase(id, mod.applyTemporalDecay, mod);
-      checks++;
-      (r.passed ? survived : flipped).push(id);
+    for (const tbl of Object.values(TABLES)) {
+      for (const id of Object.keys(tbl.CASES)) {
+        const r = tbl.runCase(id, mod[tbl.fnName], mod);
+        checks++;
+        (r.passed ? survived : flipped).push(id);
+      }
     }
 
+    const ownIds = new Set(Object.keys(t.CASES));
+    const ownFlipped = flipped.filter((id) => ownIds.has(id));
+    const foreignFlipped = flipped.filter((id) => !ownIds.has(id));
+
     // alsoFlip entries are CLAIMS about what those cases still assert ("U4 and U7 assert
-    // dated scores directly"). If one silently stops flipping, the control stays green while
-    // certifying strictly less — the erosion this runner exists to prevent. So they are
-    // required to flip too; the two lists differ only in the failure message.
+    // dated scores directly", or — for RC1/RC5's two cross-table entries — "W11/W8 are
+    // scoped to this exact mechanism"). If one silently stops flipping, the control stays
+    // green while certifying strictly less — the erosion this runner exists to prevent. So
+    // they are required to flip too; the two lists differ only in the failure message.
     const missingFlips = [...c.mustFlip, ...(c.alsoFlip ?? [])].filter((id) => !flipped.includes(id));
     const brokenPasses = c.mustPass.filter((id) => !survived.includes(id));
-    // Flips outside BOTH named sets are gated too. Without this a future broadening of a
-    // mutation could redden strictly more cases and the run would still report success —
-    // and a mutation that reddens everything shows only that the tests are coupled.
+    // Flips outside BOTH named sets are gated too — own-table AND cross-table. Without this
+    // a future broadening of a mutation could redden strictly more cases (in either table)
+    // and the run would still report success.
     const unexpected = flipped.filter((id) => !c.mustFlip.includes(id) && !(c.alsoFlip ?? []).includes(id));
 
     const ok = missingFlips.length === 0 && brokenPasses.length === 0 && unexpected.length === 0;
     console.log(`${ok ? 'PASS' : 'FAIL'} ${c.id} — ${c.what}`);
-    console.log(`       flipped: [${flipped.join(', ')}]`);
+    console.log(`       flipped: [${ownFlipped.join(', ')}]`);
+    if (foreignFlipped.length > 0) console.log(`       cross-table flipped: [${foreignFlipped.join(', ')}]`);
     console.log(`       expected to flip: [${c.mustFlip.join(', ')}] · expected to survive: [${c.mustPass.join(', ')}]`);
 
     if (missingFlips.length > 0) {
@@ -226,8 +374,8 @@ async function main() {
     }
     if (unexpected.length > 0) {
       failures.push(
-        `${c.id}: flipped ${unexpected.join(', ')}, which is in NEITHER named set — the mutation is `
-        + 'broader than the control describes. Narrow the mutation, or add the case to alsoFlip WITH a '
+        `${c.id}: flipped ${unexpected.join(', ')}, which is in NEITHER named set (own-table or cross-table) — the `
+        + 'mutation is broader than the control describes. Narrow the mutation, or add the case to alsoFlip WITH a '
         + 'reason. Never widen it silently.',
       );
     }

@@ -17,25 +17,39 @@
 // "all red controls behaved exactly as specified". That is the same "green while certifying
 // strictly less" erosion the controls themselves exist to prevent, one level up. Adding or
 // removing a control must now be a deliberate edit here.
+//
+// PINNED PER TABLE (spec DJ-11 / §6.4): run.mjs's own TABLES registry means a control now
+// belongs to a policy table (decay or window today), and each table gets its own roster +
+// case/sub-case counts + baseline banner wording. A third table is one entry in the map
+// below, not a fork of this file.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-/** Every control that must actually execute. Update deliberately, never to make CI green. */
-const CONTROLS = ['RC1', 'RC2', 'RC3', 'RC4', 'RC5', 'RC6'];
-
-/** Case GROUPS in the shared table. Literal, so silently dropping one reddens this test. */
-const CASE_COUNT = 13;
-
 /**
- * SUB-cases across those groups. Pinned SEPARATELY because the group count cannot see a
- * dropped sub-case — and some groups have exactly one sub-case carrying the only guard for
- * a whole branch (U6's non-numeric-score case is the sole thing distinguishing the shipped
- * `typeof r.score !== 'number'` from a weaker `== null`, which would coerce a string score).
+ * Every control that must actually execute, and the shared case table it is scored against
+ * — one entry per policy table in run.mjs's TABLES registry. Update deliberately, never to
+ * make CI green.
+ *
+ * `cases`/`subcases` mirror run.mjs's baseline gate: `cases` is the GROUP count in the
+ * table (test/helpers/{undated,window}-policy-cases.mjs), `subcases` the total sub-case
+ * count across those groups — pinned separately because the group count alone cannot see a
+ * dropped sub-case (decay's U6 non-numeric-score sub-case is the sole thing distinguishing
+ * the shipped `typeof r.score !== 'number'` from a weaker `== null`, which would coerce a
+ * string score). `banner` is the literal prefix run.mjs prints the baseline lines under —
+ * decay keeps its pre-registry wording (`baseline: ...`); window uses the new general form
+ * (`window baseline: ...`).
  */
-const SUBCASE_COUNT = 22;
+const TABLES = {
+  decay: {
+    controls: ['RC1', 'RC2', 'RC3', 'RC4', 'RC5', 'RC6'], cases: 13, subcases: 22, banner: 'baseline',
+  },
+  window: {
+    controls: ['RCW1', 'RCW2', 'RCW3', 'RCW4', 'RCW5'], cases: 11, subcases: 13, banner: 'window baseline',
+  },
+};
 
 function runControls() {
   // Child process: run.mjs signals via process.exitCode, and importing it would set the
@@ -54,17 +68,21 @@ test('red controls: every control passes its own flip/survive table', () => {
 
 test('red controls: the full roster actually RAN (an empty table must not pass)', () => {
   const r = runControls();
-  for (const id of CONTROLS) {
-    assert.match(r.stdout, new RegExp(String.raw`^PASS ${id} `, 'm'), `${id} did not run`);
+  for (const t of Object.values(TABLES)) {
+    for (const id of t.controls) {
+      assert.match(r.stdout, new RegExp(String.raw`^PASS ${id} `, 'm'), `${id} did not run`);
+    }
   }
 });
 
-test('red controls: the baseline gate ran over the whole case table', () => {
-  // A literal count, not \d+ — dropping a case from the shared table would otherwise leave
-  // both the runner and this wrapper green while covering less.
+test('red controls: the baseline gate ran over the whole case table, per policy table', () => {
+  // A literal count, not \d+ — dropping a case from either shared table would otherwise
+  // leave both the runner and this wrapper green while covering less.
   const r = runControls();
-  assert.match(r.stdout, new RegExp(String.raw`baseline: all ${CASE_COUNT} cases pass`),
-    `the case table changed size — re-pin CASE_COUNT deliberately\n${r.stdout}`);
-  assert.match(r.stdout, new RegExp(String.raw`baseline: ${SUBCASE_COUNT} sub-cases`),
-    `a SUB-case was added or dropped — re-pin SUBCASE_COUNT deliberately\n${r.stdout}`);
+  for (const [name, t] of Object.entries(TABLES)) {
+    assert.match(r.stdout, new RegExp(String.raw`${t.banner}: all ${t.cases} cases pass`),
+      `${name}: the case table changed size — re-pin its cases count deliberately\n${r.stdout}`);
+    assert.match(r.stdout, new RegExp(String.raw`${t.banner}: ${t.subcases} sub-cases`),
+      `${name}: a SUB-case was added or dropped — re-pin its subcases count deliberately\n${r.stdout}`);
+  }
 });
