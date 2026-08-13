@@ -78,11 +78,16 @@ test('red controls: the full roster actually RAN (an empty table must not pass)'
 test('red controls: the baseline gate ran over the whole case table, per policy table', () => {
   // A literal count, not \d+ — dropping a case from either shared table would otherwise
   // leave both the runner and this wrapper green while covering less.
+  //
+  // ANCHORED with `^` + the `'m'` flag (review finding I2): an unanchored regex here let
+  // `baseline: all 13 cases pass` match as a mid-string substring of a WRONG line (e.g. a
+  // misprinted `decay baseline: all 13 cases pass`) and silently pass. The sibling roster
+  // test above already anchors its `^PASS ${id} ` regex the same way.
   const r = runControls();
   for (const [name, t] of Object.entries(TABLES)) {
-    assert.match(r.stdout, new RegExp(String.raw`${t.banner}: all ${t.cases} cases pass`),
+    assert.match(r.stdout, new RegExp(String.raw`^${t.banner}: all ${t.cases} cases pass`, 'm'),
       `${name}: the case table changed size — re-pin its cases count deliberately\n${r.stdout}`);
-    assert.match(r.stdout, new RegExp(String.raw`${t.banner}: ${t.subcases} sub-cases`),
+    assert.match(r.stdout, new RegExp(String.raw`^${t.banner}: ${t.subcases} sub-cases`, 'm'),
       `${name}: a SUB-case was added or dropped — re-pin its subcases count deliberately\n${r.stdout}`);
   }
 });

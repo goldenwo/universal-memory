@@ -62,15 +62,41 @@ import { CASES as WINDOW_CASES, runCase as runWindowCase } from '../helpers/wind
 
 const RANKING = fileURLToPath(new URL('../../lib/ranking.mjs', import.meta.url));
 
-/** Open registry (spec DJ-11): a third policy table (#238's clamp) is one entry, not four edits. */
+/**
+ * Open registry (spec DJ-11): a third policy table (#238's clamp) is one entry, not four
+ * edits. `banner`/`baselineSuffix` drive the baseline print generically (see the print loop
+ * in main()) — decay's values reproduce its pre-registry wording exactly, so the OUTPUT is
+ * unchanged even though the print code is now table-agnostic.
+ */
 const TABLES = {
   decay: {
-    CASES: DECAY_CASES, runCase: runDecayCase, fnName: 'applyTemporalDecay', banner: 'decay baseline',
+    CASES: DECAY_CASES, runCase: runDecayCase, fnName: 'applyTemporalDecay',
+    banner: 'baseline', baselineSuffix: ' against lib/ranking.mjs',
   },
   window: {
-    CASES: WINDOW_CASES, runCase: runWindowCase, fnName: 'applyTemporalWindow', banner: 'window baseline',
+    CASES: WINDOW_CASES, runCase: runWindowCase, fnName: 'applyTemporalWindow',
+    banner: 'window baseline', baselineSuffix: '',
   },
 };
+
+// GUARD (review finding I1): the union gate further down keys flips/survivors by BARE case
+// id across flat arrays (`flipped.includes(id)`), which assumes ids are globally unique
+// across every table. A colliding id would let a foreign survivor mask a genuine own-table
+// break, and let a foreign flip get silently excused whenever it happens to match a
+// mustFlip/alsoFlip entry meant for the OTHER table. Assert disjointness once, at startup,
+// so the extension path this registry exists for (e.g. #238's clamp) fails loudly on a
+// naming collision instead of silently corrupting the gate.
+{
+  const owner = new Map(); // case id -> table name
+  for (const [name, t] of Object.entries(TABLES)) {
+    for (const id of Object.keys(t.CASES)) {
+      if (owner.has(id)) {
+        throw new Error(`TABLES registry: case id "${id}" is used by both "${owner.get(id)}" and "${name}" — case ids must be globally unique across every table.`);
+      }
+      owner.set(id, name);
+    }
+  }
+}
 
 /**
  * Each control: a named mutation of ranking.mjs, the cases it MUST flip (in its own
@@ -286,23 +312,20 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  // Baselines print per table. The decay lines are kept BYTE-IDENTICAL to their
-  // pre-registry wording — controls.test.mjs pins them literally, and this is the table
-  // that existed before the registry, so it is grandfathered rather than moved onto the
-  // generic banner-driven form below. Every OTHER table — window today, a third table
-  // tomorrow — prints via its own `banner` entry, so adding one is purely a TABLES edit.
-  for (const [name, t] of Object.entries(TABLES)) {
+  // Baselines print per table, GENERICALLY, off each table's own `banner` + `baselineSuffix`
+  // (review finding I2). An earlier version special-cased `name === 'decay'` here, which let
+  // run.mjs's own `decay.banner` value silently disagree with controls.test.mjs's pinned
+  // copy — the special case made the field dead code, and nothing caught the drift. The
+  // OUTPUT is still pinned byte-identical (controls.test.mjs asserts it literally); this loop
+  // is what keeps that true generically, so a third table needs no changes here — only a new
+  // TABLES entry with its own banner/baselineSuffix.
+  for (const t of Object.values(TABLES)) {
     const count = Object.keys(t.CASES).length;
     // Sub-case total too: the group count alone cannot see a DROPPED sub-case, and some
     // groups have a single sub-case carrying the only guard for a whole branch.
     const subCases = Object.values(t.CASES).reduce((n, v) => n + v.length, 0);
-    if (name === 'decay') {
-      console.log(`baseline: all ${count} cases pass against lib/ranking.mjs`);
-      console.log(`baseline: ${subCases} sub-cases`);
-    } else {
-      console.log(`${t.banner}: all ${count} cases pass`);
-      console.log(`${t.banner}: ${subCases} sub-cases`);
-    }
+    console.log(`${t.banner}: all ${count} cases pass${t.baselineSuffix}`);
+    console.log(`${t.banner}: ${subCases} sub-cases`);
   }
 
   for (const c of CONTROLS) {
