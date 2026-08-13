@@ -258,17 +258,16 @@ test('an unmarked window defaults to exact (no tolerance)', () => {
 // ── W-series: the window-undated joint-imputation policy (shared case table) ────────────
 //
 // The case bodies live in ./helpers/window-policy-cases.mjs because test/red-controls/
-// run.mjs will run the SAME table against deliberately-broken copies of ranking.mjs (Task
-// 11, spec §6.4 DJ-11) — two hand-maintained copies would drift, and a drifted control
-// would certify nothing about the tests that actually run. Consumed identically to how
+// run.mjs runs the SAME table against deliberately-broken copies of ranking.mjs (Task 11,
+// spec §6.4 DJ-11) — two hand-maintained copies would drift, and a drifted control would
+// certify nothing about the tests that actually run. Consumed identically to how
 // ranking-undated-policy.test.mjs consumes the decay table's CASES.
 //
-// COMMITTED RED (spec's TDD discipline — this is Task 7 of the window-undated-joint-
-// imputation plan): `applyTemporalWindow` does not yet consume `undatedFactor`, so cases
-// that assert a scaled undated score fail today. The policy itself lands in Task 8. See
-// the header of window-policy-cases.mjs for the literal-assertion discipline (W8/W11 are
-// the two deliberate import exceptions — everything else asserts the LITERAL
-// Math.exp(-0.25), never the imported UNDATED_FACTOR).
+// The window-undated joint-imputation policy has landed (Task 8): `applyTemporalWindow`
+// consumes `undatedFactor`, and all 13 sub-cases below are green. See the header of
+// window-policy-cases.mjs for the literal-assertion discipline (W8/W11 are the two
+// deliberate import exceptions — everything else asserts the LITERAL Math.exp(-0.25),
+// never the imported UNDATED_FACTOR).
 
 for (const [id, subCases] of Object.entries(CASES)) {
 	for (const [label, run] of subCases) {

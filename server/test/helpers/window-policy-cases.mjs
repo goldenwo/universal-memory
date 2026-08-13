@@ -7,8 +7,8 @@
 // is only meaningful if the controls evaluate the SAME cases the suite asserts — two
 // hand-maintained copies would drift, and a drifted control proves nothing about the tests
 // that actually run. So the cases live here, and both `temporal-window.test.mjs` and
-// `red-controls/run.mjs` (via an open table registry, keyed by table name — spec §6.4) are
-// meant to consume them.
+// `red-controls/run.mjs` (via an open table registry, keyed by table name — spec §6.4)
+// consume them.
 //
 // Each case is `(applyWindow, mod) => void` and signals failure by THROWING (node:assert).
 // `mod` is the ranking module under test, so W8/W11 can read the mutant's own exports.
