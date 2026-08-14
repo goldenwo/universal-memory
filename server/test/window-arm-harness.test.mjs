@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
 import { parseTemporalWindow } from '../lib/temporal-query.mjs';
-import { recallPass, windowArmCohorts, runWindowArm, parseArgs } from '../eval/memory-quality-eval.mjs';
+import { recallPass, windowArmCohorts, runWindowArm, parseArgs, evaluateGate } from '../eval/memory-quality-eval.mjs';
 
 const NOW = Date.UTC(2026, 7, 12, 15, 0, 0); // Wed 2026-08-12
 const row = (over = {}) => ({
@@ -305,4 +307,70 @@ test('runWindowArm: the one-clock guard throws when `now` is not finite, before 
   const f = windowFakes();
   await assert.rejects(() => runWindowArm(runWindowArgs(f, { now: undefined })), /finite/);
   assert.equal(f.calls.length, 0, 'nothing should run before the guard');
+});
+
+// --- windowThresholds gate wiring (Task 6, plan Sec7.3 step 4) --------------
+//
+// Cheaper than a fresh `--window-arm --decay on --gate ... --seed 3` run: loads the REAL
+// pinned config and the REAL committed run1 artifact (both in-repo, no keys needed) and
+// proves `evaluateGate` actually bites in both directions over `windowThresholds` — a
+// silent edit to the floor, the key, or the artifact path would go green instead of red.
+
+const GATE_CONFIG_PATH = fileURLToPath(new URL('../eval/mq-gate-thresholds.json', import.meta.url));
+const gateConfig = JSON.parse(await readFile(GATE_CONFIG_PATH, 'utf8'));
+
+const RUN1_PATH = fileURLToPath(new URL('../eval/results/2026-08-12-window-arm-run1.json', import.meta.url));
+const windowRun1 = JSON.parse(await readFile(RUN1_PATH, 'utf8'));
+
+const RUN2_PATH = fileURLToPath(new URL('../eval/results/2026-08-12-window-arm-run2.json', import.meta.url));
+const windowRun2 = JSON.parse(await readFile(RUN2_PATH, 'utf8'));
+
+test('windowThresholds: present, exactly the pinned roster', () => {
+  assert.ok(Array.isArray(gateConfig.windowThresholds), 'windowThresholds key must exist');
+  assert.deepEqual(
+    gateConfig.windowThresholds.map((t) => t.metric).sort(),
+    ['windowG2Recall@5', 'windowGoldRows'],
+  );
+});
+
+test('windowThresholds: G2 floor follows the pre-registered recipe exactly, recomputed from BOTH committed artifacts', () => {
+  // No copied literals: observed_min and N come straight off the committed run1/run2
+  // g2 blocks, not off a hardcoded constant or the pinned floor itself — a mistyped floor
+  // digit in mq-gate-thresholds.json (e.g. 0.9 instead of 0.938) fails this strict-equality
+  // check even though it might slip past pass/fail behavioral fixtures chosen after the
+  // fact. Mirrors mq-gate-undated-floor.test.mjs's 'G2 floor follows the pre-registered
+  // recipe exactly', going one step further by loading the real artifacts instead of
+  // restating their values as constants.
+  const observedMin = Math.min(windowRun1.g2.value, windowRun2.g2.value);
+  const armSize = windowRun1.g2.rows;
+  assert.equal(windowRun2.g2.rows, armSize, 'both runs must report the same arm size — the floor pins ONE denominator');
+  const expectedFloor = Math.round((observedMin - 1.5 / armSize) * 1000) / 1000;
+
+  const g2 = gateConfig.windowThresholds.find((t) => t.metric === 'windowG2Recall@5');
+  assert.equal(g2.floor, expectedFloor, 'the pinned floor must equal round3(observed_min - 1.5/N) recomputed from the committed artifacts');
+  assert.deepEqual(g2.path, ['g2', 'value'], 'path must match the arm artifact shape');
+  assert.equal(g2.direction, 'min');
+});
+
+test('windowThresholds: the rows floor pins the denominator at the artifacts\' authoring size', () => {
+  const rows = gateConfig.windowThresholds.find((t) => t.metric === 'windowGoldRows');
+  assert.equal(rows.floor, windowRun1.g2.rows, 'the pinned rows floor must equal the committed artifact\'s g2.rows, not a copied literal');
+  assert.equal(rows.floor, windowRun2.g2.rows, 'both runs share the same authoring-size denominator');
+  assert.deepEqual(rows.path, ['g2', 'rows']);
+  assert.equal(rows.direction, 'min');
+});
+
+test('evaluateGate over windowThresholds: a below-floor synthetic result FAILS the gate', () => {
+  const belowFloorValue = evaluateGate({ g2: { value: 0.90, rows: 24 } }, { thresholds: gateConfig.windowThresholds });
+  assert.equal(belowFloorValue.pass, false, 'g2.value 0.90 is below the 0.938 floor');
+  assert.equal(belowFloorValue.breaches[0].reason, 'below_floor');
+
+  const shrunkRows = evaluateGate({ g2: { value: 1.0, rows: 23 } }, { thresholds: gateConfig.windowThresholds });
+  assert.equal(shrunkRows.pass, false, 'g2.rows 23 breaches the denominator floor, never silently re-scales');
+});
+
+test('evaluateGate over windowThresholds: the committed run1 artifact PASSES the pinned floor', () => {
+  const gate = evaluateGate(windowRun1, { thresholds: gateConfig.windowThresholds });
+  assert.equal(gate.pass, true, 'run1 (g2.value 1.000, g2.rows 24) must clear the 0.938 / 24 floors');
+  assert.deepEqual(gate.breaches, []);
 });
