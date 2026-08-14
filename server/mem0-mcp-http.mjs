@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
-import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate } from './lib/ranking.mjs';
+import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, UNDATED_FACTOR } from './lib/ranking.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
 
 // Temporal over-fetch constants (spec D-a). The cap borrows
@@ -1890,12 +1890,18 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// (D-b0). Gating on "a window parsed" alone would put D-b1's skip inside
 	// this arm, silently disabling decay for exactly the zero-in-window queries
 	// D-b1 predicts are common.
+	const decayEnabled = process.env.UM_TEMPORAL_DECAY === 'true';
 	const inWindowCount = windowFetch ? countInWindow(items, temporalWindow) : 0;
 	const temporalActive = windowFetch && inWindowCount > 0;
 	if (temporalActive) {
 		// Pass the count we just computed so applyTemporalWindow does not repeat
 		// the scan (it resolves + parses a date per candidate, on the hottest path).
-		items = applyTemporalWindow(items, temporalWindow, { inWindowCount });
+		items = applyTemporalWindow(items, temporalWindow, {
+			inWindowCount,
+			// DJ-1/DJ-2: decay's exact constant, conditionally — see ranking.mjs header for why
+			// neither a window-native value nor an unconditional demotion survives review.
+			undatedFactor: decayEnabled ? UNDATED_FACTOR : 1,
+		});
 	} else {
 		// D-b1: a window resolved but nothing falls inside it. The fetch was
 		// already widened (that decision precedes the count), so the pool must be
@@ -1905,7 +1911,7 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		// no-op on. Narrowing here restores "zero in-window ⇒ output equals
 		// flag-off output" as an actual property rather than a claim.
 		if (windowFetch) items = items.slice(0, baseLimit);
-		if (process.env.UM_TEMPORAL_DECAY === 'true') {
+		if (decayEnabled) {
 			// Unchanged from before this arc: UM_DECAY_HALF_LIFE_DAYS controls the
 			// rate (default 30d). Applied after the status filter so only allowed
 			// results are re-ranked.
@@ -1963,6 +1969,9 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// Gated on temporalActive, NOT windowFetch: when the window resolved empty the
 	// pool was already narrowed back above, so there is nothing left to truncate
 	// and the handlers must take their untouched path.
+	// The window arm's F2 asserts this marker to prove §4.2 row 1 ran — widening
+	// this gate (temporalActive → windowFetch) silently invalidates that arm;
+	// W12 pins both directions.
 	if (temporalActive) {
 		Object.defineProperty(envelope, '_temporalWidened', { value: true, enumerable: false });
 	}

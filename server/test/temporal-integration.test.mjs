@@ -56,6 +56,17 @@ const withFlag = async (on, fn) => {
 	}
 };
 
+const withFlags = async ({ query, decay }, fn) => {
+	const prevQuery = process.env.UM_TEMPORAL_QUERY;
+	const prevDecay = process.env.UM_TEMPORAL_DECAY;
+	if (query) process.env.UM_TEMPORAL_QUERY = 'true'; else delete process.env.UM_TEMPORAL_QUERY;
+	if (decay) process.env.UM_TEMPORAL_DECAY = 'true'; else delete process.env.UM_TEMPORAL_DECAY;
+	try { return await fn(); } finally {
+		if (prevQuery === undefined) delete process.env.UM_TEMPORAL_QUERY; else process.env.UM_TEMPORAL_QUERY = prevQuery;
+		if (prevDecay === undefined) delete process.env.UM_TEMPORAL_DECAY; else process.env.UM_TEMPORAL_DECAY = prevDecay;
+	}
+};
+
 const TEMPORAL_Q = 'what did we decide last week about the sidecar';
 const PLAIN_Q = 'what did we decide about the sidecar';
 const ids = (r) => r.results.map((x) => x.id);
@@ -334,4 +345,44 @@ test('E1e: the marker never reaches the wire on REST POST or GET either', async 
 	} finally {
 		await new Promise((r) => srv.close(r));
 	}
+});
+
+// ── W10 / W12 — Task 10: joint-imputation policy (#237) + widened-stamp gate ──
+
+test('W10 (#237 resolution): the undated factor is exp(-0.25) for every query shape, per-query ratio', async () => {
+	const pool = () => [point('u-target', 0.8, null), point('d-in', 0.6, IN_WINDOW)];
+	// point(id, score, null) must emit NO valid_from — check the helper at :35-40 handles null.
+	const queries = [
+		'what did we decide last week about the sidecar',        // §4.2 row 1: window + in-window hit
+		'what did we decide in January 2020 about the sidecar',  // row 2: window resolves, empty
+		'what did we decide about the sidecar',                  // row 3: no window
+	];
+	for (const q of queries) {
+		const score = async (decay) => {
+			const r = await withFlags({ query: true, decay }, () =>
+				doSearch(q, 5, false, false, { memory: stubMemory(pool()), now: NOW }));
+			return r.results.find((x) => x.id === 'u-target').score;
+		};
+		const on = await score(true);
+		const off = await score(false);
+		// Multiplication-side, not quotient: on/off isn't bit-exact in IEEE-754, but this
+		// replicates the policy's own single multiply, so strict equality holds bit-exact.
+		assert.equal(on, off * Math.exp(-0.25), `query '${q}': the per-query factor moved with phrasing`);
+		// J2 leg: decay-off equals the flags-fully-off baseline for the same query.
+		const baseline = await withFlags({ query: false, decay: false }, () =>
+			doSearch(q, 5, false, false, { memory: stubMemory(pool()), now: NOW }));
+		assert.equal(off, baseline.results.find((x) => x.id === 'u-target').score);
+	}
+});
+
+test('W12: _temporalWidened is stamped exactly when the window path ran', async () => {
+	const on = await withFlags({ query: true, decay: false }, () =>
+		doSearch('what did we decide last week about the sidecar', 5, false, false,
+			{ memory: stubMemory([point('d-in', 0.6, IN_WINDOW)]), now: NOW }));
+	assert.equal(on._temporalWidened, true, 'stamped when a window resolves with an in-window hit');
+
+	const empty = await withFlags({ query: true, decay: false }, () =>
+		doSearch('what did we decide last week about the sidecar', 5, false, false,
+			{ memory: stubMemory([point('d-out', 0.6, OUT_WINDOW)]), now: NOW }));
+	assert.equal(empty._temporalWidened, undefined, 'NOT stamped when zero candidates fall inside');
 });

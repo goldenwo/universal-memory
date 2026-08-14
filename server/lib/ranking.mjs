@@ -12,20 +12,27 @@
  * `createdAt` / `created_at` are deliberately not consulted — see resolveItemDate
  * for the measurement behind that.
  *
- * The two re-rankers now treat an undated item DIFFERENTLY, deliberately:
- *   - applyTemporalWindow: still leaves it untouched — undated reads as in-window.
- *     A window is query-expressed intent, and demoting an unknown date when the user
- *     asked about a period trades recall for a guess.
- *   - applyTemporalDecay: imputes a flat 0.25 e-foldings (see UNDATED_FACTOR). Leaving it
- *     at 1.0 stopped being neutral the moment everything else decayed — it became the
- *     top of the range.
- * Their imputations must eventually be chosen JOINTLY: the two are mutually exclusive at
- * the call site, so with both flags on an undated point's factor flips between 1.0 and
- * 0.779 on THREE things that are not properties of that point —
- *   1. incidental query phrasing (does the text parse as a date expression at all),
- *   2. pool composition (is some OTHER candidate dated-and-in-window),
- *   3. the caller's `limit` (the window path widens the fetch, changing 2's answer).
- * Measured, not inferred — see UNDATED_FACTOR. Inert until BOTH flags are on.
+ * The undated cohort's factor is now a function of CONFIGURATION ONLY (spec §3, the joint
+ * policy): when the window is active and UM_TEMPORAL_DECAY is enabled, applyTemporalWindow
+ * imputes the SAME UNDATED_FACTOR decay uses (0.7788) — not an independently-tuned window
+ * constant. When decay is disabled the window leaves undated results untouched, today's
+ * behaviour, byte-identical. Three call-site paths, one factor per configuration (§4.2):
+ *   1. window resolves, ≥1 in-window candidate → window re-rank: 0.7788 (decay on) / 1.0
+ *      (decay off);
+ *   2. window resolves, 0 in-window → falls through to the decay arm: 0.7788 (decay on) /
+ *      1.0, no re-rank (decay off);
+ *   3. no window (incl. parser fail-open) → decay arm, same as 2.
+ * Phrasing moves a query between rows; pool composition and `limit` move it between rows 1
+ * and 2 — none of the three changes the factor anymore (resolves #237). Measured, not
+ * inferred — see UNDATED_FACTOR.
+ * The window imputes decay's exact constant, not its own: any other value reproduces the
+ * per-query factor flip at smaller magnitude — equality is the only fixed point. It imputes
+ * conditionally (only when decay is enabled) because an unconditional demotion would spend
+ * recall in configurations where no inconsistency exists.
+ * The DATED cohort's treatment still diverges between the two paths, unchanged and
+ * deliberate (§1.3): in-window dated items keep factor 1.0 under the window re-rank but
+ * decay by exp(-age/H) under decay — a window is query-expressed intent and overrides
+ * recency; out of scope here.
  *
  * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
  *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
@@ -66,13 +73,13 @@ const DAY_MS = 86400000;
  * pre-retune UNDATED_EFOLDINGS = 1): the same undated point on the same query scored 0.80
  * (factor 1.000) when the pool held a dated in-window candidate and 0.294 (factor 0.368)
  * when it did not — and because the window path widens the fetch, the literal limit=5 vs
- * limit=10 case above reproduces, with the factors the other way round. The retune to 0.25
- * narrows the flip (1.000 vs 0.779) without removing it. So set-independence holds within
- * decay and NOT across the pair.
+ * limit=10 case above reproduces, with the factors the other way round. At that constant, the
+ * retune to 0.25 would only have narrowed the flip (1.000 vs 0.779), not removed it — this
+ * function alone was set-independent, the pair was not.
  *
- * That is the deferred window-imputation problem tracked as a successor issue, and it is why the
- * two imputations must be chosen JOINTLY rather than one at a time. It is inert today: the
- * divergence needs BOTH flags on, and production runs with both off.
+ * That cross-pair flip is now resolved (#237): `applyTemporalWindow` imputes this same
+ * constant on its own undated branch when decay is enabled — see the module header and its
+ * `undatedFactor` opt for the mechanism.
  *
  * Deliberately NOT an env knob: this module is pure and takes `halfLifeDays` as a
  * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
@@ -281,18 +288,19 @@ export function applyTemporalDecay(results, halfLifeDays) {
  *   zero in-window items    → input returned unchanged  (D-b1)
  *   in-window               → score unchanged
  *   out-of-window           → score × max(exp(−dEdge/falloff), DEMOTION_FLOOR)
- *   no resolvable date      → score unchanged
+ *   no resolvable date      → unchanged when `undatedFactor` is omitted/1; × undatedFactor
+ *                              otherwise (the joint policy — see the module header)
  *
  * Out-of-window items are demoted, never dropped — matching UM's recall-safety
  * house rule and mem0's "additive, never filters out" posture.
  *
  * @param {Array<object>} results
  * @param {{start:number,end:number}} window
- * @param {{falloffDays?:number}} [opts] - `= {}` default is load-bearing: the
- *   production call site passes two arguments and a bare destructure would
- *   throw, which the parser's fail-open wrapper does not cover.
+ * @param {{falloffDays?:number, inWindowCount?:number, undatedFactor?:number}} [opts] - `= {}`
+ *   default is load-bearing: the production call site passes two arguments and a bare
+ *   destructure would throw, which the parser's fail-open wrapper does not cover.
  */
-export function applyTemporalWindow(results, window, { falloffDays, inWindowCount } = {}) {
+export function applyTemporalWindow(results, window, { falloffDays, inWindowCount, undatedFactor } = {}) {
   if (!isUsableWindow(window)) return [...results];
   // D-b1: nothing in the window ⇒ every item would be multiplied by a distance
   // term varying by orders of magnitude, so the exponential would dominate
@@ -310,10 +318,25 @@ export function applyTemporalWindow(results, window, { falloffDays, inWindowCoun
   const falloff = Number.isFinite(falloffDays) && falloffDays > 0
     ? falloffDays
     : windowFalloffDays(window);
+  // DJ-4 (D-b3 self-validation, extended): a degenerate undatedFactor must not become a
+  // hard filter (0 => silent drop of every undated point) or an inflation (>1 — the #238
+  // defect shape). Anything outside (0, 1] falls back to 1, today's behaviour.
+  const uf = Number.isFinite(undatedFactor) && undatedFactor > 0 && undatedFactor <= 1
+    ? undatedFactor
+    : 1;
 
   const ranked = results.map((r) => {
     const ms = resolveItemDate(r);
-    if (ms === null || isInWindow(r, window)) return { ...r };
+    if (ms === null) {
+      // Never mint a score (decay policy §4.3 adopted): score-less items stay score-less
+      // and sort last; a numeric 0 stays 0. As with UNDATED_FACTOR's own comment, the
+      // "demotion" claim is scoped to positive scores — a negative score moves toward
+      // zero; unreachable in practice, present in JV1's property domain.
+      if (uf === 1 || typeof r.score !== 'number') return { ...r };
+      return { ...r, score: r.score * uf };
+    }
+    // Known, deliberately kept: resolveItemDate runs again inside isInWindow — deferred, not hoisted (spec §4.1).
+    if (isInWindow(r, window)) return { ...r };
     const dEdge = ms < window.start ? window.start - ms : ms - window.end;
     const factor = Math.max(Math.exp(-(dEdge / DAY_MS) / falloff), DEMOTION_FLOOR);
     return { ...r, score: (r.score || 1) * factor };

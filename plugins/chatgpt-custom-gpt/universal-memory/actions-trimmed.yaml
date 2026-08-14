@@ -677,11 +677,11 @@ components:
           description: Short text excerpt from the stored memory body
         score:
           type: number
-          description: Optional relevance score (search results only; absent on
-            list/recent). With UM_TEMPORAL_DECAY=true this is the decayed score
-            - undated results take a fixed imputed factor rather than being left
-            unscaled. With UM_TEMPORAL_QUERY=true and a resolved date
-            expression, it is the window-re-ranked score.
+          description: "Relevance score (search results only; absent on list/recent). With
+            UM_TEMPORAL_DECAY=true this is the decayed score - undated results
+            take a fixed imputed factor. With UM_TEMPORAL_QUERY=true and a
+            resolved date expression the window re-rank applies; both on:
+            undated take the same factor in-window."
     MemoryResult:
       type: object
       description: A single memory record returned by search/list endpoints (full
@@ -697,10 +697,10 @@ components:
         score:
           type: number
           description: "Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed
-            score: a dated result is scaled by exp(-age/halfLife), an undated
-            one by a fixed imputed factor rather than left unscaled. With
-            UM_TEMPORAL_QUERY=true and a resolved date expression, the window
-            re-rank applies INSTEAD of decay."
+            score: dated results scale by exp(-age/halfLife), undated ones by a
+            fixed imputed factor. With UM_TEMPORAL_QUERY=true and a resolved
+            date expression the window re-rank applies instead; both on: undated
+            take the same factor in-window."
         metadata:
           $ref: "#/components/schemas/MemoryMetadata"
         hash:
