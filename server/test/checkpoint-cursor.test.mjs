@@ -156,6 +156,33 @@ test('shape guard: schema_version 2 -> recovery', async () => {
   assert.equal(result.reason, 'shape_invalid:schema_version');
 });
 
+test('shape guard: JSON scalar (not an object) -> recovery, not_an_object', async () => {
+  const vault = makeVault();
+  await writeCursorFileRaw(vault, '42');
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, true);
+  assert.equal(result.reason, 'shape_invalid:not_an_object');
+});
+
+test('shape guard: JSON array (not an object) -> recovery, not_an_object', async () => {
+  const vault = makeVault();
+  await writeCursorFileRaw(vault, '[1,2,3]');
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, true);
+  assert.equal(result.reason, 'shape_invalid:not_an_object');
+});
+
+test('shape guard: offset 1e999 (parses to Infinity, valid JSON syntax) -> recovery', async () => {
+  const vault = makeVault();
+  await writeCursorFileRaw(
+    vault,
+    '{"schema_version":1,"file":"2026-08-10.md","offset":1e999,"boundary":"turn","last_turn_iso":null,"last_summary_id":null,"updated_at":"2026-08-10T00:00:00.000Z"}',
+  );
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, true);
+  assert.equal(result.reason, 'shape_invalid:offset');
+});
+
 // ===========================================================================
 // Section B — §4.2 checks 1/2: offset-vs-size and turn-boundary alignment.
 // ===========================================================================
@@ -228,12 +255,53 @@ test('missing cursor.file -> adjusted resume at next newer existing file (NOT re
   await writeRawFile(vault, '2026-08-10.md', 'irrelevant');
   await writeRawFile(vault, '2026-08-12.md', 'irrelevant');
   // cursor points at 2026-08-11.md, which was never written (e.g. deleted/never-created).
-  await writeCursorFile(vault, { file: '2026-08-11.md', offset: 500, boundary: 'turn' });
+  // updated_at is pinned an hour in the future so this test — about check 3's
+  // adjustment, not check 4's growth tripwire — never races the raw files'
+  // mtimes against a "now" timestamp captured moments later (same rationale
+  // as the sibling tests below).
+  await writeCursorFile(vault, {
+    file: '2026-08-11.md',
+    offset: 500,
+    boundary: 'turn',
+    updated_at: new Date(Date.now() + 3600_000).toISOString(),
+  });
   const result = await loadCursor({ vaultDir: vault, project: PROJECT });
   assert.equal(result.reinitialized, false);
   assert.equal(result.cursor.file, '2026-08-12.md');
   assert.equal(result.cursor.offset, 0);
   assert.equal(result.cursor.boundary, 'turn');
+});
+
+test('check 4 (below-cursor growth) still runs inside check 3s missing-file branch', async () => {
+  const vault = makeVault();
+  await writeRawFile(vault, '2026-08-05.md', 'original content');
+  // cursor.file itself does not exist -> check 3's "NOT invalid" path would
+  // normally apply, but check 4 must still run first and can override it.
+  await writeCursorFile(vault, {
+    file: '2026-08-10.md',
+    offset: 500,
+    boundary: 'turn',
+    updated_at: '2020-01-01T00:00:00.000Z', // deliberately ancient
+  });
+  // Bump the OLDER file's mtime to "now" — content appeared below a cursor
+  // pointing at a file that doesn't even exist.
+  await fs.writeFile(path.join(rawDir(vault), '2026-08-05.md'), 'mutated content', 'utf8');
+
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, true);
+  assert.equal(result.reason, 'below_cursor_growth');
+});
+
+test('future-dated cursor.file with no newer raw file -> recovery (never perpetually skip forward)', async () => {
+  const vault = makeVault();
+  // Empty vault: cursor.file names a date far in the future and nothing
+  // newer will ever exist "naturally" — must not be treated as a legally-
+  // deleted file (check 3), since that would silently treat all real future
+  // content as already-digested forever.
+  await writeCursorFile(vault, { file: '9999-12-31.md', offset: 0, boundary: 'turn' });
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, true);
+  assert.equal(result.reason, 'future_dated_file');
 });
 
 test('missing cursor.file with no newer file available -> stays at same name, offset reset to 0', async () => {
@@ -311,6 +379,26 @@ test('bootstrapInit: with session files -> newest date governs', async () => {
   assert.equal(cursor.schema_version, 1);
 });
 
+test('bootstrapInit: orphan .md.tmp (never reaped) newer than the newest real .md is ignored', async () => {
+  const vault = makeVault();
+  await writeSessionFile(vault, 'session-2026-08-01-aaaaaaaa.md', '---\ntype: session_summary\n---\nbody');
+  // A phase-2 failure orphan — the pipeline leaves these on disk forever;
+  // nothing reaps them. Its embedded date is newer than the real summary's,
+  // but it is NOT a durable summary and must never set the bootstrap
+  // boundary (that would silently skip the entire backlog below it).
+  await writeSessionFile(vault, 'session-2026-08-14-bbbbbbbb.md.tmp', '---\ntype: session_summary\nstatus: orphan_summary\n---\nnever committed');
+  const cursor = await bootstrapInit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, '2026-08-01.md');
+});
+
+test('bootstrapInit: stray non-.md file (e.g. notes.txt) with a session-date-shaped name is ignored', async () => {
+  const vault = makeVault();
+  await writeSessionFile(vault, 'session-2026-08-01-aaaaaaaa.md', '---\ntype: session_summary\n---\nbody');
+  await writeSessionFile(vault, 'session-2026-08-20-notes.txt', 'unrelated stray file');
+  const cursor = await bootstrapInit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, '2026-08-01.md');
+});
+
 test('bootstrapInit: no session files -> oldest raw file', async () => {
   const vault = makeVault();
   await writeRawFile(vault, '2026-07-20.md', 'x');
@@ -373,6 +461,37 @@ test('recoveryReinit: forged early header (quoted, future ISO) pulls cursor earl
   assert.equal(cursor.file, '2026-08-14.md');
   assert.equal(cursor.offset, forgedOffset); // lands exactly at the forged (earlier) header
   assert.ok(cursor.offset < realOffset, 'cursor must land at or before the forged header, never after real content');
+});
+
+test('recoveryReinit: covers_until in the BODY (no frontmatter block) is ignored, not treated as W', async () => {
+  const vault = makeVault();
+  // No leading `---` fence at all — a plain body line that happens to look
+  // like a frontmatter field (LLM-generated summaries can echo field names
+  // verbatim) must never be trusted as the real watermark: doing so would
+  // fabricate W from a fake future date and could push the recovery scan
+  // past genuinely undigested content.
+  await writeSessionFile(
+    vault,
+    'session-2026-08-05-aaaaaaaa.md',
+    'No frontmatter here.\ncovers_until: 2099-01-01T00:00:00.000Z\nJust a body line that looks like frontmatter but is not.',
+  );
+  const cursor = await recoveryReinit({ vaultDir: vault, project: PROJECT });
+  const expected = await bootstrapInit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, expected.file); // falls back to bootstrap — never fooled by the fake future date
+});
+
+test('recoveryReinit: covers_until AFTER the closing frontmatter fence (body) is ignored', async () => {
+  const vault = makeVault();
+  // A real frontmatter block with NO covers_until inside it, followed by a
+  // body that contains a covers_until-shaped line after the closing fence.
+  await writeSessionFile(
+    vault,
+    'session-2026-08-05-aaaaaaaa.md',
+    '---\ntype: session_summary\n---\nSome narrative text.\ncovers_until: 2099-01-01T00:00:00.000Z\nMore narrative.',
+  );
+  const cursor = await recoveryReinit({ vaultDir: vault, project: PROJECT });
+  const expected = await bootstrapInit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, expected.file);
 });
 
 test('recoveryReinit: no covers_until anywhere -> falls back to bootstrapInit', async () => {

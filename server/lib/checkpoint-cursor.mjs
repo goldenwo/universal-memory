@@ -129,9 +129,23 @@ async function isTurnHeaderAt(filePath, offset) {
 }
 
 /**
- * §4.2 check 4: any raw file lexically < `cursor.file` whose mtime is newer
- * than `cursor.updated_at` means content appeared below the cursor after it
- * was last written — the §4.3b write-ordering invariant was violated.
+ * §4.2 check 4: any raw file lexically < `cursor.file` whose mtime is at or
+ * newer than `cursor.updated_at` means content appeared below the cursor
+ * after (or in the same instant as) it was last written — the §4.3b
+ * write-ordering invariant was violated.
+ *
+ * Direction matters here: firing this tripwire means "recovery re-init",
+ * which is the SAFE (re-read/duplicate) outcome; not firing means "trust
+ * this cursor", which is the UNSAFE (possible-skip) outcome. So every
+ * precision ambiguity must be resolved toward firing, never away from it.
+ * Concretely: `updated_at` is an ISO string (millisecond precision only),
+ * while filesystem mtimes (`stat.mtimeMs`) carry sub-millisecond precision
+ * on NTFS/most Linux filesystems. Comparing with strict `>` after flooring
+ * the mtime down to match the ISO string's precision would make a
+ * same-millisecond write LESS likely to be flagged as growth — exactly the
+ * unsafe direction. Using the raw (unfloored) mtime with `>=` instead means
+ * a below-cursor file touched in the cursor's own millisecond (or any
+ * later one) is always caught.
  *
  * `cursor.updated_at` is always written by advanceCursor in normal
  * operation; if it is ever missing/unparseable on a hand-edited or legacy
@@ -147,16 +161,7 @@ async function belowCursorGrowthDetected(rawDir, cursor) {
     if (name >= cursor.file) continue; // only files lexically < cursor.file
     const st = await fs.stat(path.join(rawDir, name)).catch(() => null);
     if (!st) continue;
-    // Floor to whole milliseconds before comparing: `updated_at` is an ISO
-    // string (millisecond precision by construction), but filesystem mtimes
-    // on NTFS/most Linux filesystems carry sub-millisecond precision
-    // (mtimeMs is a float). Comparing the raw float against the truncated
-    // ISO value would spuriously flag "growth" whenever two writes land in
-    // the same millisecond — not a real ordering signal, just precision
-    // mismatch. Flooring restores an apples-to-apples comparison without
-    // weakening real detection (a write in a strictly later millisecond is
-    // still caught).
-    if (Math.floor(st.mtimeMs) > threshold) return true;
+    if (st.mtimeMs >= threshold) return true;
   }
   return false;
 }
@@ -183,6 +188,22 @@ async function validateAndAdjust({ vaultDir, project, cursor }) {
     }
     const candidates = await listRawFiles(rawDir);
     const next = candidates.find((n) => n > cursor.file);
+    if (next === undefined) {
+      // No newer file exists. If `cursor.file` is dated in the future
+      // relative to today, this can never self-correct: raw files are
+      // never created ahead of their write date, so "adjust and resume at
+      // the same name" would return this exact answer on every future
+      // load forever. Worse, the cursor's positional semantics ("every
+      // file lexically < `file` is digested") would then treat ALL real
+      // content written from now on — every date up to the poisoned
+      // future one — as already-digested, silently skipping it. That is
+      // the unsafe/skip direction, so this is NOT the check-3 "legally
+      // deleted file" case — it is corruption, and gets recovery re-init.
+      const todayFile = `${new Date().toISOString().slice(0, 10)}.md`;
+      if (cursor.file > todayFile) {
+        return { invalid: true, reason: 'future_dated_file' };
+      }
+    }
     return {
       invalid: false,
       cursor: {
@@ -232,7 +253,12 @@ async function validateAndAdjust({ vaultDir, project, cursor }) {
 export async function bootstrapInit({ vaultDir, project }) {
   const sessionsDir = path.join(vaultDir, 'sessions', project);
   const sessionFiles = await fs.readdir(sessionsDir).catch(() => []);
-  const sessionDateRe = /^session-(\d{4}-\d{2}-\d{2})-/;
+  // Anchored to `.md$` (matches recoveryReinit's sessionMdRe) — WITHOUT this,
+  // an orphan `session-2026-08-14-....md.tmp` (phase-2 failures leave these
+  // behind forever; nothing reaps them) or a stray `session-2026-08-14-
+  // notes.txt` would set the bootstrap boundary too high, silently skipping
+  // the entire backlog below it.
+  const sessionDateRe = /^session-(\d{4}-\d{2}-\d{2})-.*\.md$/;
   let newestDate = null;
   for (const name of sessionFiles) {
     const m = sessionDateRe.exec(name);
@@ -257,7 +283,26 @@ export async function bootstrapInit({ vaultDir, project }) {
   return makeCursor({ file: '0000-00-00.md' });
 }
 
-/** Read `covers_until:` from a summary file's head (frontmatter), without reading the full body. */
+// Matches a leading YAML frontmatter block (mirrors frontmatter.mjs's
+// FM_REGEX, applied to a bounded head window instead of the whole file):
+// captures only the text BETWEEN the opening and closing `---` fences.
+const FRONTMATTER_BLOCK_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n/;
+
+/**
+ * Read `covers_until:` from a summary file's LEADING FRONTMATTER BLOCK
+ * only, without reading the full body.
+ *
+ * Extraction is strictly bounded to the text between the opening and
+ * closing `---` fences — never the body. A body line that happens to read
+ * "covers_until: <date>" (LLM-generated summary content can echo field
+ * names verbatim, and this repo's own captures literally discuss this
+ * field) must never be mistaken for real frontmatter: doing so would
+ * fabricate the recovery watermark W and could push a recovery scan PAST
+ * genuinely undigested content — the skip/loss direction. If the head
+ * window doesn't start with a `---` fence, or the closing fence isn't
+ * found within HEAD_READ_BYTES, we bail (return null) rather than widen
+ * the search into the body.
+ */
 async function readCoversUntilHead(filePath) {
   let fh;
   try {
@@ -269,7 +314,10 @@ async function readCoversUntilHead(filePath) {
     const buf = Buffer.alloc(HEAD_READ_BYTES);
     const { bytesRead } = await fh.read(buf, 0, HEAD_READ_BYTES, 0);
     const head = buf.toString('utf8', 0, bytesRead);
-    const m = /^covers_until:\s*(.+)$/m.exec(head);
+    const fmMatch = FRONTMATTER_BLOCK_RE.exec(head);
+    if (!fmMatch) return null; // no frontmatter block in the head window — never scan the body
+    const frontmatterBlock = fmMatch[1];
+    const m = /^covers_until:\s*(.+)$/m.exec(frontmatterBlock);
     if (!m) return null;
     return m[1].trim().replace(/^['"]|['"]$/g, '');
   } finally {
