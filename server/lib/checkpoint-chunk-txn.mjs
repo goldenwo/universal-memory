@@ -252,8 +252,8 @@ function buildSupersedeDigest(detections, lane, persona) {
  * @param {object} args.config - parsed checkpoint.json.
  * @param {{summarizeTimeoutMs:number, autosupersedeTimeoutMs:number, stateMergeTimeoutMs:number}} args.chunkingCfg
  *   - resolveChunkingConfig() output (checkpoint-config.mjs).
- * @param {string|null} [args.lane]
- * @param {string|null} [args.persona]
+ * @param {string|undefined} [args.lane]
+ * @param {string|undefined} [args.persona]
  * @param {string} [args.surface]
  * @param {boolean} [args.skipStateMerge]
  * @param {boolean} [args.skipCursorAdvance] - Task 6 / spec §4.8's no-cursor sentinel for
@@ -282,8 +282,13 @@ export async function runChunkTransaction(args, deps = {}) {
     prevCursor,
     config,
     chunkingCfg,
-    lane = null,
-    persona = null,
+    // No `= null` default here: the upstream validator (validateLanePersonaSlug,
+    // default-project.mjs) returns undefined for an absent slug, and dedup.mjs's
+    // partitionArm distinguishes undefined (correct is_empty absence arm) from a
+    // manufactured null (qdrant 400 Bad Request on a null match value) — CI S5
+    // auto-supersession regression. Let undefined pass through unmodified.
+    lane,
+    persona,
     surface,
     skipStateMerge = false,
     skipCursorAdvance = false,
