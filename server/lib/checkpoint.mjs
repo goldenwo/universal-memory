@@ -50,7 +50,10 @@ import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { loadCursor } from './checkpoint-cursor.mjs';
 import { buildNextChunk } from './chunk-builder.mjs';
 import { runChunkTransaction } from './checkpoint-chunk-txn.mjs';
-import { resolveChunkingConfig, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS } from './checkpoint-config.mjs';
+import {
+  resolveChunkingConfig, resolveFloor, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS,
+  DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_MIN_TRANSCRIPT_TURNS,
+} from './checkpoint-config.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -162,6 +165,13 @@ export async function doCheckpoint(args, ctx = {}) {
     };
   }
 
+  // Task-6 review MINOR 12: an empty/whitespace-only since/until string must
+  // not silently select windowed mode (§4.8 bypasses the cursor entirely) —
+  // treat it exactly like an absent field. Runs after the typeof guard above
+  // so a genuinely wrong-typed value still reports its own INPUT_INVALID.
+  const normalizedSince = typeof since === 'string' && since.trim() === '' ? null : since;
+  const normalizedUntil = typeof until === 'string' && until.trim() === '' ? null : until;
+
   // D3.2: validate lane/persona slugs (same validator as add.mjs; throws INPUT_INVALID on bad input).
   // Absent (null/undefined/empty) is valid — the detector's own gate handles that case.
   let lane, persona;
@@ -181,6 +191,18 @@ export async function doCheckpoint(args, ctx = {}) {
   const config = ctx.config ?? JSON.parse(await fs.readFile(DEFAULT_CONFIG_PATH, 'utf8'));
   const vaultDir = ctx.vaultDir ?? process.env.UM_VAULT_DIR;
   const chunkingCfg = resolveChunkingConfig(config);
+  // #185 floors, resolved exactly as checkpoint-chunk-txn.mjs resolves them
+  // for its own thin gate — this run layer needs the SAME resolved bytes
+  // floor for two reasons: (1) chunk-builder.mjs's fill-to-floor rule
+  // (§4.4, Task-6 review IMPORTANT 2) needs it threaded in as
+  // `minChunkBytes` so it never hands the txn a sub-floor chunk while
+  // content pends; (2) the abstention envelope's diagnostic log line
+  // (MINOR 8) reports the floors that actually fired, not just the
+  // resulting bytes/turns counts.
+  const minTranscriptBytes = resolveFloor(
+    'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', config.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES);
+  const minTranscriptTurns = resolveFloor(
+    'UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS', config.min_transcript_turns, DEFAULT_MIN_TRANSCRIPT_TURNS);
 
   // Load summarize system prompt (mirrors update-state.mjs prompt-resolution
   // priority). Per-run, not per-chunk: read once off disk here and threaded
@@ -297,17 +319,20 @@ export async function doCheckpoint(args, ctx = {}) {
     };
 
     // §4.8: since/until (either one) selects windowed mode — the cursor is
-    // bypassed entirely. Neither present → the default, cursor-driven path.
-    const isWindowed = since !== null || until !== null;
+    // bypassed entirely. Neither present (or present-but-blank, MINOR 12
+    // above) → the default, cursor-driven path.
+    const isWindowed = normalizedSince !== null || normalizedUntil !== null;
     if (isWindowed) {
       return await runWindowedMode({
-        vaultDir, project, since, until, config, chunkingCfg, lane, persona,
+        vaultDir, project, since: normalizedSince, until: normalizedUntil, config, chunkingCfg, lane, persona,
         skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
+        minTranscriptBytes, minTranscriptTurns,
       });
     }
     return await runDefaultMode({
       vaultDir, project, config, chunkingCfg, lane, persona,
       skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
+      minTranscriptBytes, minTranscriptTurns,
     });
   } finally {
     clearInterval(heartbeatTimer);
@@ -327,7 +352,10 @@ export async function doCheckpoint(args, ctx = {}) {
  * max-persist (§4.1) only holds if threaded; this is a pinned integration
  * invariant (Task 5 carry #1), not an incidental detail.
  */
-async function runDefaultMode({ vaultDir, project, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0 }) {
+async function runDefaultMode({
+  vaultDir, project, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0,
+  minTranscriptBytes, minTranscriptTurns,
+}) {
   const { cursor: initialCursor } = await loadCursor({ vaultDir, project });
 
   // Bound acquire/release for chunk-builder's DI seam (spec §4.4: "bind
@@ -355,11 +383,16 @@ async function runDefaultMode({ vaultDir, project, config, chunkingCfg, lane, pe
     lastSummaryId: null, lastSummaryPath: null,
     stateUpdated: false, statePath: null,
   };
-  const envCtx = { project, surface, t0 };
+  const envCtx = { project, surface, t0, minBytes: minTranscriptBytes, minTurns: minTranscriptTurns };
 
   let cursor = initialCursor;
   const buildArgs = () => ({
     vaultDir, project, cursor, chunkMaxBytes: chunkingCfg.chunkMaxBytes,
+    // §4.4 fill-to-floor (Task-6 review IMPORTANT 2): the SAME resolved
+    // bytes floor the txn's own #185 gate uses, so the builder never hands
+    // it a sub-floor chunk while content still pends — see chunk-builder.mjs's
+    // matching doc comment.
+    minChunkBytes: minTranscriptBytes,
     acquireLock, releaseLock: releaseLockdir,
   });
 
@@ -435,7 +468,10 @@ async function runDefaultMode({ vaultDir, project, config, chunkingCfg, lane, pe
  * checkpoint-chunk-txn.mjs) rather than duplicating the summarize/write/
  * reindex pipeline a second time in this file.
  */
-async function runWindowedMode({ vaultDir, project, since, until, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0 }) {
+async function runWindowedMode({
+  vaultDir, project, since, until, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0,
+  minTranscriptBytes, minTranscriptTurns,
+}) {
   const rawDir = path.join(vaultDir, 'captures', project, 'raw');
   const rawFiles = await fs.readdir(rawDir).catch(() => []);
 
@@ -499,7 +535,7 @@ async function runWindowedMode({ vaultDir, project, since, until, config, chunki
     lastSummaryId: null, lastSummaryPath: null,
     stateUpdated: false, statePath: null,
   };
-  const envCtx = { project, surface, t0 };
+  const envCtx = { project, surface, t0, minBytes: minTranscriptBytes, minTurns: minTranscriptTurns };
   const outcome = classifyAndApply(txnResult, acc, envCtx);
   if (outcome.done) return outcome.envelope;
 
@@ -690,12 +726,17 @@ function classifyAndApply(txnResult, acc, envCtx) {
 
 /** §4.5.2's abstention envelope — unchanged shape, byte-for-byte (§8: "unchanged"). */
 function abstentionEnvelope(envCtx, { transcriptBytes, transcriptTurns }) {
+  // MINOR 8 (Task-6 review): min_bytes/min_turns restored to the run-layer
+  // diagnostic log — the primary "why did it abstain?" signal (the resolved
+  // floors that actually fired), not just the resulting bytes/turns counts.
   safeLog(() => getLogger().info({
     request_id: currentRequestId(),
     component: 'checkpoint',
     project: envCtx.project,
     transcript_bytes: transcriptBytes,
     transcript_turns: transcriptTurns,
+    min_bytes: envCtx.minBytes,
+    min_turns: envCtx.minTurns,
   }, 'thin transcript — abstaining from summary'), 'log:checkpoint:thin-abstain');
   recordCaptureEvent({
     surface: envCtx.surface,

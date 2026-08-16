@@ -949,3 +949,129 @@ test('HARDENING: seeded parameterized sweep — chunkMaxBytes x shapes x mid-swe
   }
   assert.ok(anySplitObserved, 'the matrix must exercise at least one mid-sweep hard split (the split-resume path)');
 });
+
+// ===========================================================================
+// Section Q — round-2 review IMPORTANT 2: fill-to-floor (spec §4.4).
+//
+// Reproduction: a sub-floor turn followed by a turn so large it alone
+// exceeds the REMAINING budget used to end the chunk early (boundary:
+// 'turn', chunk stays below minChunkBytes) — routed through the txn's #185
+// thin gate, that sub-floor chunk abstains on the FIRST chunk of every run
+// forever (abstention never advances the cursor), permanently stalling that
+// project's backlog even though real undigested content sits right behind
+// it. The fix hard-splits the oversized turn to fill the chunk up to
+// chunkMaxBytes instead of ending early, whenever ending early would leave
+// the chunk below minChunkBytes with more content still pending.
+// ===========================================================================
+
+test('fill-to-floor: sub-floor turn + oversized turn behind it -> chunk fills via split, never ends thin while content pends (IMPORTANT-2 repro)', async () => {
+  const vault = makeVault();
+  const minChunkBytes = 500;
+  const chunkMaxBytes = 1024; // realistic config-floor value (resolvePositiveInt's min for chunk_max_bytes)
+
+  const t1 = turn('2026-08-10T00:00:00.000Z', 'user', 'short'); // well under minChunkBytes alone
+  // Realistic body: periodic newlines (like real LLM output), not one
+  // unbroken run — computeSplitPoint prefers the LAST newline under its
+  // budget, so a newline-free blob would legitimately cut right after the
+  // header (the only nearby newline) regardless of fill-to-floor; that's a
+  // property of the newline-preferring split heuristic, not what this test
+  // is pinning. Frequent line breaks let the split land close to the actual
+  // budget ceiling, like the existing "oversized single turn" tests do.
+  const t2Body = Array.from({ length: 400 }, (_, i) => `line ${i} ${'y'.repeat(10)}`).join('\n');
+  const t2 = turn('2026-08-10T00:01:00.000Z', 'assistant', t2Body); // alone far exceeds chunkMaxBytes
+  const content = t1 + t2;
+  await writeRawFile(vault, '2026-08-10.md', content);
+
+  assert.ok(Buffer.byteLength(t1.trim(), 'utf8') < minChunkBytes, 'fixture sanity: t1 alone must be sub-floor');
+  assert.ok(Buffer.byteLength(t2, 'utf8') > chunkMaxBytes - Buffer.byteLength(t1, 'utf8'),
+    'fixture sanity: t2 alone must exceed the budget remaining after t1');
+
+  const cursor = freshCursor('2026-08-10.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, minChunkBytes, ...NOOP_LOCK,
+  });
+
+  assert.ok(result.chunk, 'expected a chunk, not exhausted');
+  // I2 still holds: the fill-to-floor split never pushes the chunk over the ceiling.
+  assert.ok(Buffer.byteLength(result.chunk.text, 'utf8') <= chunkMaxBytes,
+    `I2 violated: chunk is ${Buffer.byteLength(result.chunk.text, 'utf8')} bytes > chunkMaxBytes=${chunkMaxBytes}`);
+  // The core fix: the chunk must NOT stay sub-floor while t2 sits right behind t1.
+  assert.ok(Buffer.byteLength(result.chunk.text.trim(), 'utf8') >= minChunkBytes,
+    `fill-to-floor did not fire: chunk trimmed to ${Buffer.byteLength(result.chunk.text.trim(), 'utf8')} bytes, still below minChunkBytes=${minChunkBytes}`);
+  assert.equal(result.chunk.boundary, 'split', 'a fill-to-floor hard-split must report boundary:split');
+  assert.equal(result.chunk.turnCount, 2, 'both t1 and t2 headers are inside the chunk (t2 is split, not dropped)');
+  assert.ok(result.chunk.text.startsWith(t1), 'the chunk must still start with t1 in full');
+  // Genuine progress into t2's body, not merely re-including t1.
+  const t1End = Buffer.byteLength(t1, 'utf8');
+  assert.ok(result.nextCursor.offset > t1End, 'the cursor must have advanced INTO t2, not stopped at the end of t1');
+
+  // "next run digests the remainder": resume from nextCursor and keep
+  // building until exhausted; concatenating every chunk must byte-exactly
+  // reproduce the whole file (I1 — no loss), and no later chunk may ever be
+  // thin while more content is still pending (only the LAST one may be).
+  let cur = result.nextCursor;
+  let assembled = Buffer.from(result.chunk.text, 'utf8');
+  let calls = 1;
+  for (;;) {
+    calls += 1;
+    assert.ok(calls < 50, 'runaway loop — cursor is not making progress');
+    // eslint-disable-next-line no-await-in-loop
+    const next = await buildNextChunk({
+      vaultDir: vault, project: PROJECT, cursor: cur, chunkMaxBytes, minChunkBytes, ...NOOP_LOCK,
+    });
+    if (next.exhausted) break;
+    assembled = Buffer.concat([assembled, Buffer.from(next.chunk.text, 'utf8')]);
+    cur = next.nextCursor;
+  }
+  assert.ok(calls > 1, 'the oversized t2 must require more than one buildNextChunk call to fully digest');
+  assert.ok(Buffer.compare(assembled, Buffer.from(content, 'utf8')) === 0,
+    'concatenating every chunk (incl. the fill-to-floor split) must byte-exactly reproduce the whole file');
+});
+
+test('fill-to-floor: a TRUE end-of-corpus tail (nothing pending after it) still thins — the fix never forces padding out of nothing', async () => {
+  const vault = makeVault();
+  const minChunkBytes = 500;
+  const chunkMaxBytes = 1024;
+
+  const t1 = turn('2026-08-10T00:00:00.000Z', 'user', 'short'); // the ENTIRE corpus — nothing to fill with
+  await writeRawFile(vault, '2026-08-10.md', t1);
+
+  const cursor = freshCursor('2026-08-10.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, minChunkBytes, ...NOOP_LOCK,
+  });
+
+  assert.ok(result.chunk, 'expected a chunk, not exhausted');
+  assert.equal(result.chunk.text, t1, 'a genuine tail must be returned unpadded — there is nothing left to fill it with');
+  assert.equal(result.chunk.boundary, 'turn', 'natural EOF, not a forced split');
+  assert.ok(Buffer.byteLength(result.chunk.text.trim(), 'utf8') < minChunkBytes,
+    'fixture sanity: this chunk is genuinely sub-floor — the #185 gate correctly abstains on it (thin_transcript), not a fill-to-floor bug');
+
+  // Resuming from here must report exhausted — there truly is nothing more.
+  const next = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor: result.nextCursor, chunkMaxBytes, minChunkBytes, ...NOOP_LOCK,
+  });
+  assert.deepEqual(next, { exhausted: true });
+});
+
+test('fill-to-floor: minChunkBytes defaults to DEFAULT_MIN_TRANSCRIPT_BYTES when the caller omits it', async () => {
+  // checkpoint.mjs always threads a resolved minChunkBytes through in
+  // production; this pins the module's own fallback for callers that don't
+  // (e.g. a bare unit test), matching checkpoint-config.mjs's shipped 500.
+  const vault = makeVault();
+  const chunkMaxBytes = 1024;
+  const t1 = turn('2026-08-10T00:00:00.000Z', 'user', 'short');
+  const t2Body = Array.from({ length: 400 }, (_, i) => `line ${i} ${'y'.repeat(10)}`).join('\n');
+  const t2 = turn('2026-08-10T00:01:00.000Z', 'assistant', t2Body);
+  await writeRawFile(vault, '2026-08-10.md', t1 + t2);
+
+  const cursor = freshCursor('2026-08-10.md');
+  // No minChunkBytes passed — must still fill to the 500-byte default floor.
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, ...NOOP_LOCK,
+  });
+
+  assert.ok(result.chunk);
+  assert.ok(Buffer.byteLength(result.chunk.text.trim(), 'utf8') >= 500,
+    'the default minChunkBytes must still trigger fill-to-floor without an explicit override');
+});

@@ -21,11 +21,17 @@
 // remainder, the ENTIRE remainder as one legacy blob segment. Segments are
 // accumulated into the chunk being built, in order, until the next segment
 // would push the chunk over `chunkMaxBytes` — at which point assembly stops
-// (chunk ends `boundary: "turn"`, positionally exact) UNLESS the chunk is
-// still empty, in which case the oversized segment itself is hard-split at
-// `chunkMaxBytes` (chunk ends `boundary: "split"`) — this is what guarantees
-// every call makes forward progress regardless of how large a single turn or
-// legacy blob is (spec §4.4 "guaranteed progress").
+// (chunk ends `boundary: "turn"`, positionally exact) UNLESS either (a) the
+// chunk is still empty, or (b) the chunk has SOME content but it is still
+// below `minChunkBytes` (the resolved #185 bytes floor) — in either case the
+// oversized segment is hard-split to fill the remaining budget (chunk ends
+// `boundary: "split"`). Case (a) is what guarantees every call makes forward
+// progress regardless of how large a single turn or legacy blob is (spec
+// §4.4 "guaranteed progress"); case (b) is the "fill-to-floor" rule (spec
+// §4.4) that keeps a sub-floor head + oversized-next-turn from abstaining
+// forever with the cursor frozen (Task-6 review IMPORTANT 2) — a chunk is
+// only ever allowed to end thin when it is genuinely the last content in the
+// corpus (nothing left pending to fill it with).
 //
 // Locking: per spec, the caller injects `acquireLock`/`releaseLock` (bound
 // lockdir.mjs functions, same `<rawFilePath>.lockdir` convention as
@@ -36,7 +42,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { makeTurnHeaderRe } from './checkpoint-config.mjs';
+import { makeTurnHeaderRe, DEFAULT_MIN_TRANSCRIPT_BYTES } from './checkpoint-config.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
@@ -208,6 +214,14 @@ function trackIso(range, iso) {
  *   caller's responsibility (checkpoint-cursor.mjs's loadCursor).
  * @param {number} args.chunkMaxBytes - hard ceiling on `chunk.text`'s byte
  *   length (I2, absolute — never exceeded for any input).
+ * @param {number} [args.minChunkBytes] - the resolved #185 bytes floor
+ *   (spec §4.4's fill-to-floor rule, Task-6 review IMPORTANT 2). The caller
+ *   resolves this via checkpoint-config.mjs's resolveFloor exactly as
+ *   checkpoint-chunk-txn.mjs's own #185 gate does, and passes it in here so
+ *   the builder never STOPS a chunk below this floor while content still
+ *   pends — it hard-splits to fill the remaining budget instead. Defaults
+ *   to DEFAULT_MIN_TRANSCRIPT_BYTES for callers that don't thread a
+ *   resolved value through (e.g. direct unit tests of this module).
  * @param {(lockdirPath: string) => Promise<boolean>} args.acquireLock
  * @param {(lockdirPath: string) => Promise<void>} args.releaseLock
  * @returns {Promise<
@@ -216,7 +230,11 @@ function trackIso(range, iso) {
  *   {stopped: {reason: 'raw_lock', file: string}, chunk?: object, nextCursor?: object}
  * >}
  */
-export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes, acquireLock, releaseLock }) {
+export async function buildNextChunk({
+  vaultDir, project, cursor, chunkMaxBytes,
+  minChunkBytes = DEFAULT_MIN_TRANSCRIPT_BYTES,
+  acquireLock, releaseLock,
+}) {
   const rawDir = path.join(vaultDir, 'captures', project, 'raw');
   const pendingFiles = await listPendingRawFiles(rawDir, cursor.file);
   if (pendingFiles.length === 0) {
@@ -379,14 +397,35 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
       const segDecodedLen = decodedByteLength(segBuf);
 
       if (decodedBytesSoFar + segDecodedLen > chunkMaxBytes) {
-        if (pieces.length === 0) {
-          // Guaranteed progress (spec §4.4): this single segment alone
-          // exceeds the budget — hard-split it, ending the chunk here. This
-          // is also the chunk's first (and only) content: fix startFile/
-          // startOffset to exactly where the split piece begins.
-          startFile = fname;
-          startOffset = resumeByte + seg.startByte;
-          const splitAt = computeSplitPoint(segBuf, chunkMaxBytes);
+        // Fill-to-floor (spec §4.4, Task-6 review IMPORTANT 2): a chunk is
+        // hard-split to fill the REMAINING budget — not merely ended early
+        // — whenever ending it here would leave it below `minChunkBytes`
+        // (the resolved #185 bytes floor) while content still pends. Two
+        // cases trigger this:
+        //   (a) pieces.length === 0 — the chunk's first segment alone
+        //       exceeds the budget (guaranteed progress, unconditional —
+        //       there is no accumulated content to fall below any floor).
+        //   (b) pieces.length > 0 but decodedBytesSoFar < minChunkBytes —
+        //       the chunk already has SOME content, but ending it here
+        //       would produce a sub-floor chunk. Without this, a sub-floor
+        //       head followed by an oversized turn would abstain FOREVER
+        //       (the #185 thin gate on the first chunk of a run never
+        //       advances the cursor — reproduced: 3 runs, cursor frozen,
+        //       backlog undigested) — the exact silent-abstain-with-
+        //       pending-backlog class this design exists to dissolve.
+        // `remainingBudget > 0` guards a pathological misconfiguration
+        // (minChunkBytes > chunkMaxBytes) from ever computing a zero/
+        // negative split budget — falls through to the plain stop instead.
+        const remainingBudget = chunkMaxBytes - decodedBytesSoFar;
+        const fillToFloor = (pieces.length === 0 || decodedBytesSoFar < minChunkBytes) && remainingBudget > 0;
+        if (fillToFloor) {
+          if (pieces.length === 0) {
+            // This is also the chunk's first (and only) content so far: fix
+            // startFile/startOffset to exactly where the split piece begins.
+            startFile = fname;
+            startOffset = resumeByte + seg.startByte;
+          }
+          const splitAt = computeSplitPoint(segBuf, remainingBudget);
           pieces.push(segBuf.subarray(0, splitAt));
           if (seg.headerIso) turnCount += 1;
           trackIso(isoRange, segIso);
@@ -394,10 +433,12 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
           endOffset = resumeByte + seg.startByte + splitAt;
           boundary = 'split';
         }
-        // Either just hard-split (above) or the chunk already had content
-        // and this segment doesn't fit in the remaining budget (deferred to
-        // the next call) — either way, stop assembling: `endFile`/
-        // `endOffset`/`boundary` already hold the correct cut point.
+        // Either just hard-split (above, guaranteeing first-segment
+        // progress or filling a sub-floor chunk to the floor) or the chunk
+        // already had enough content (>= minChunkBytes) and this segment
+        // doesn't fit the remaining budget (deferred to the next call) —
+        // either way, stop assembling: `endFile`/`endOffset`/`boundary`
+        // already hold the correct cut point.
         stopped = true;
         break;
       }

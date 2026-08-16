@@ -125,6 +125,13 @@ test('checkpoint: happy path returns complete result shape', async () => {
   assert.ok(typeof result.tokens_in === 'number', 'tokens_in must be a number');
   assert.ok(typeof result.tokens_out === 'number', 'tokens_out must be a number');
   assert.ok(typeof result.duration_ms === 'number' && result.duration_ms >= 0, 'duration_ms must be non-negative number');
+  // Task-6 review MINOR 13: the additive chunked-mode fields on the basic
+  // success envelope (§4.6) — a single tiny fixture always fully drains the
+  // backlog in one committed chunk.
+  assert.equal(result.chunks_done, 1, 'exactly one chunk committed');
+  assert.equal(result.backlog_remaining, false, 'the backlog is fully drained after this one chunk');
+  assert.equal(result.stopped, undefined, 'no stop reason on a clean, fully-drained run');
+  assert.equal(result.truncated, undefined, 'the deprecated alias only appears when backlog remains');
   assert.equal(reindexCalls.length, 1, 'reindex should be called once');
 
   // Verify on-disk content of summary file
@@ -372,6 +379,24 @@ test('checkpoint: since/until filter reads only files within window', async () =
   await seedCapture(vaultDir, 'myproj', '2026-01-02.md', '# Session B\nContent B only.');
   await seedCapture(vaultDir, 'myproj', '2026-01-03.md', '# Session C\nContent C only.');
 
+  // §4.8 / Task-6 review IMPORTANT 3: windowed mode bypasses the durable
+  // cursor entirely — no read, no write. Pin BOTH directions: (a) a
+  // windowed run on a project that has never had a cursor must not create
+  // one; (b) a windowed run on a project that ALREADY has one must leave it
+  // byte-for-byte untouched.
+  const cursorPath = path.join(vaultDir, 'state', 'myproj', 'checkpoint-cursor.json');
+  await fs.mkdir(path.dirname(cursorPath), { recursive: true });
+  const preexistingCursor = JSON.stringify({
+    schema_version: 1,
+    file: '2025-12-31.md',
+    offset: 42,
+    boundary: 'turn',
+    last_turn_iso: '2025-12-31T23:59:00.000Z',
+    last_summary_id: 'session-2025-12-31-deadbeef',
+    updated_at: '2025-12-31T23:59:59.000Z',
+  }, null, 2);
+  await fs.writeFile(cursorPath, preexistingCursor, 'utf8');
+
   let capturedTranscript = '';
   const spySummarizeFn = async (transcript, ctx) => {
     capturedTranscript = transcript;
@@ -397,6 +422,68 @@ test('checkpoint: since/until filter reads only files within window', async () =
   assert.ok(!capturedTranscript.includes('Content A only'), 'day1 should be filtered out by since');
   assert.ok(capturedTranscript.includes('Content B only'), 'day2 should be included');
   assert.ok(capturedTranscript.includes('Content C only'), 'day3 should be included');
+
+  const cursorAfter = await fs.readFile(cursorPath, 'utf8');
+  assert.equal(cursorAfter, preexistingCursor, 'windowed mode must leave a pre-existing cursor file byte-for-byte unchanged (no write)');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// §4.8 / Task-6 review IMPORTANT 3, other direction: a windowed run on a
+// project that has NEVER had a cursor must not create one either — the
+// no-cursor sentinel (skipCursorAdvance) means "no read, no write", not
+// merely "no write when one already exists".
+test('checkpoint: windowed run on a project with no prior cursor creates none', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'windowproj', '2026-01-01.md', '# Session\nWindowed, no cursor ever.');
+
+  const result = await doCheckpoint(
+    { project: 'windowproj', since: '2026-01-01T00:00:00Z' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  const cursorPath = path.join(vaultDir, 'state', 'windowproj', 'checkpoint-cursor.json');
+  const cursorStat = await fs.stat(cursorPath).catch(() => null);
+  assert.equal(cursorStat, null, 'windowed mode must never create a cursor file');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Task-6 review MINOR 12: an empty or whitespace-only since/until must be
+// treated exactly like an absent field — NOT silently select windowed mode
+// (§4.8 bypasses the cursor entirely; a caller-supplied `since: ''`, e.g.
+// from an unfilled form field, must not disable dedup for that run).
+test('checkpoint: since:"" and until:"  " are treated as absent — default (cursor) mode runs, not windowed', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'blankwindowproj', '2026-01-01.md', '# Session\nBlank since/until probe.');
+
+  const result = await doCheckpoint(
+    { project: 'blankwindowproj', since: '', until: '   ' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  // Only the default (cursor-driven) path ever creates a cursor file and
+  // reports chunks_done/backlog_remaining as a genuine drain — a windowed
+  // run bypasses the cursor entirely (see the two tests just above).
+  assert.equal(result.chunks_done, 1);
+  assert.equal(result.backlog_remaining, false);
+  const cursorPath = path.join(vaultDir, 'state', 'blankwindowproj', 'checkpoint-cursor.json');
+  const cursorStat = await fs.stat(cursorPath).catch(() => null);
+  assert.ok(cursorStat, 'a blank since/until must still run the default cursor-driven path, which creates a cursor file');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -695,6 +782,29 @@ test('POST /api/checkpoint STATE_LOCK_CONTENTION result → HTTP 503', async () 
   assert.equal(res.jsonBody.error.code, 'STATE_LOCK_CONTENTION');
 });
 
+// Task-6 review MINOR 5: SERVER_INTERNAL (cursor-write failure, spec §4.5
+// step 5) → HTTP 500, mirroring the UPSTREAM_FAILURE/502 and
+// STATE_LOCK_CONTENTION/503 siblings above. Also pins the additive `stage`
+// passthrough the same handler change adds.
+test('POST /api/checkpoint SERVER_INTERNAL result → HTTP 500 with stage passed through', async () => {
+  const req = { body: { project: 'cursor-write-fail-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    writesEnabled: true,
+    _doCheckpoint: async () => ({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'SERVER_INTERNAL', stage: 'cursor_write', message: 'checkpoint cursor write failed (ENOSPC) — check free space on the vault volume' },
+    }),
+  });
+
+  assert.equal(res.statusCode, 500, 'SERVER_INTERNAL should map to HTTP 500');
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'SERVER_INTERNAL');
+  assert.equal(res.jsonBody.error.stage, 'cursor_write', 'the additive stage field must pass through untouched');
+  assert.match(res.jsonBody.error.message, /ENOSPC/);
+});
+
 // Fix 2 (round-9): reindexFn must receive a STRING path, not {path, project} object.
 // reindexDoc(relPath) in mem0-mcp-http.mjs takes a string; passing an object silently coerced
 // to "[object Object]" and caused every checkpoint reindex to fail silently.
@@ -785,6 +895,45 @@ test('checkpoint: backlog_remaining after chunk_cap sets truncated:true (depreca
   assert.equal(result.backlog_remaining, true, 'the 1.1MB fixture has far more than one 200KB chunk pending');
   assert.equal(result.stopped?.reason, 'chunk_cap', `expected stopped.reason 'chunk_cap', got: ${JSON.stringify(result.stopped)}`);
   assert.equal(result.truncated, true, 'truncated is the deprecated alias for backlog_remaining:true — nothing was dropped, just deferred');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Task-6 review MINOR 6: windowed mode's OWN MAX_TRANSCRIPT_BYTES 1MB guard
+// (independent of the chunked path's backlog_remaining-derived alias above —
+// this mode has no cursor/backlog concept) ships at runWindowedMode but had
+// no test asserting it since the old single-shot 'MAX_TRANSCRIPT_BYTES cap'
+// pin was repurposed (that fixture never passed since/until, so it exercised
+// the DEFAULT path, not this one). Re-pinned here with since/until supplied.
+test('checkpoint: windowed mode MAX_TRANSCRIPT_BYTES 1MB guard truncates the window and sets truncated:true', async () => {
+  const vaultDir = await makeVault();
+  // Two files inside the requested window, together > 1MB — the guard must
+  // stop accumulating once the running total would exceed the cap, so the
+  // second file's content never reaches the summarizer.
+  await seedCapture(vaultDir, 'windowbigproj', '2026-01-01.md', 'A'.repeat(700 * 1024));
+  await seedCapture(vaultDir, 'windowbigproj', '2026-01-02.md', 'B'.repeat(700 * 1024));
+
+  let capturedTranscript = '';
+  const spySummarizeFn = async (transcript) => {
+    capturedTranscript = transcript;
+    return { summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 };
+  };
+
+  const result = await doCheckpoint(
+    { project: 'windowbigproj', since: '2026-01-01T00:00:00Z', until: '2026-01-02T23:59:59Z' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: spySummarizeFn,
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true, 'the windowed 1MB guard must set truncated:true');
+  assert.ok(capturedTranscript.includes('A'), 'the first (within-cap) file must still be included');
+  assert.ok(!capturedTranscript.includes('B'), 'the second file must be excluded once the running total would exceed 1MB');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -1712,12 +1861,21 @@ test('#185: floor of 0 disables the gate (config opt-out preserves old behavior)
   }
 });
 
+// Task-6 review round 2 IMPORTANT 1: this test previously seeded NO raw
+// captures at all for 'envproj' — under the cursor architecture that reads
+// as `exhausted` unconditionally (the SAME abstention envelope regardless of
+// floor config, see the "no captures dir" test above), so the assertion
+// passed even with the env vars deleted — vacuous, not proving env-beats-
+// config at all. Fixed the same way as its 'optoutproj' sibling just above:
+// seed a REAL whitespace-only file so there's an actual chunk for the #185
+// gate to evaluate the (env-overridden) floors against.
 test('#185: env overrides beat config floors (UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES/TURNS)', async () => {
   const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'envproj', '2026-01-01.md', '   \n\n  \n');
   const savedBytes = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES;
   const savedTurns = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS;
   try {
-    // Config disables the gate; env re-arms it → empty transcript must abstain.
+    // Config disables the gate; env re-arms it → thin content must abstain.
     process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES = '500';
     process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS = '2';
     const result = await doCheckpoint(

@@ -142,6 +142,50 @@ test('multi-chunk run: 3 turns -> 3 chunks, cursor threaded (carry-1 pin), summe
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// Task-6 review round 2 MINOR 10: the test above uses MONOTONICALLY
+// increasing turn ISOs across chunks, so its final persisted last_turn_iso
+// would come out correct even if prevCursor threading were completely
+// broken (chunk N's own coversUntil is already the run's running max
+// regardless of what prevCursor contributed) — it doesn't actually
+// distinguish threaded from unthreaded. This fixture uses two turns with
+// NON-MONOTONIC client-supplied ISOs across chunk boundaries (turn 1 is
+// LATER than turn 2 — legal; turn timestamps are client-supplied and
+// non-monotonic, spec §4.1/§4.2) so the two behaviors diverge: correctly
+// threaded, chunk 2's txn call receives chunk 1's real committed nextCursor
+// (last_turn_iso = turn 1's LATER iso) and maxIso keeps it (no regression);
+// unthreaded (e.g. every chunk call reusing the initial/null prevCursor),
+// chunk 2's txn would compute maxIso(null, turn2's EARLIER iso) and
+// WRONGLY persist the earlier watermark — a regression §4.1's max-persist
+// rule exists specifically to forbid.
+test('cursor threading (non-monotonic fixture): persisted last_turn_iso does not regress across chunks — the pin the monotone fixture above cannot make', async () => {
+  const vaultDir = await makeVault();
+  const t1 = makeTurn('2026-01-01T12:00:00.000Z', 'user', 'a'.repeat(1000)); // LATER iso, positionally first
+  const t2 = makeTurn('2026-01-01T06:00:00.000Z', 'assistant', 'b'.repeat(1000)); // EARLIER iso, positionally second
+  await seedCapture(vaultDir, 'nonmonoproj', '2026-01-01.md', t1 + t2);
+
+  const chunkMaxBytes = Math.max(Buffer.byteLength(t1, 'utf8'), Buffer.byteLength(t2, 'utf8')) + 20;
+
+  const result = await doCheckpoint(
+    { project: 'nonmonoproj' },
+    {
+      config: { ...BASE_CONFIG, chunk_max_bytes: chunkMaxBytes, max_chunks_per_run: 5 },
+      vaultDir,
+      summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, `expected ok:true, got: ${JSON.stringify(result)}`);
+  assert.equal(result.chunks_done, 2, 'both turns committed as 2 separate chunks');
+
+  const cursor = await readCursor(vaultDir, 'nonmonoproj');
+  assert.equal(cursor.last_turn_iso, '2026-01-01T12:00:00.000Z',
+    `last_turn_iso must stay at turn 1's LATER watermark, not regress to turn 2's earlier one (got ${cursor.last_turn_iso}) — proves chunk 2's txn call actually received chunk 1's committed nextCursor as prevCursor`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------------------
 // chunk_cap: max_chunks_per_run reached with backlog left pending.
 // ---------------------------------------------------------------------------
