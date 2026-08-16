@@ -253,6 +253,44 @@ test('chunk_cap: exact-fit finish (max_chunks_per_run matches remaining backlog 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// Final whole-branch review MINOR 3: the post-loop PEEK (used only to
+// distinguish exact-fit finish from real remaining backlog) must not
+// flatten every non-exhausted peek result into 'chunk_cap' — when the peek
+// itself lands on a genuinely locked next file, the more specific
+// 'raw_lock' reason must pass through instead (the drain script, spec §5,
+// branches on this exact value: chunk_cap continues immediately, raw_lock
+// waits 30s first). max_chunks_per_run:1 forces the loop to stop after
+// committing file1's single chunk, so the ONLY way `stopped` gets set here
+// is via the peek — never the main loop's own raw_lock branch.
+test('chunk_cap peek: cap reached AND the peeked next file is genuinely locked -> stopped:raw_lock, not chunk_cap (real lock contention, ~5s)', async () => {
+  const vaultDir = await makeVault();
+  const t1 = makeTurn('2026-01-01T00:00:01.000Z', 'user', 'a'.repeat(1000));
+  await seedCapture(vaultDir, 'peekrawlockproj', '2026-01-01.md', t1);
+  // Second file must exist (so the peek's walk actually reaches it after
+  // file1 is fully drained) and be genuinely, freshly locked.
+  await seedCapture(vaultDir, 'peekrawlockproj', '2026-01-02.md', '# never read\n');
+  const file2Lockdir = path.join(vaultDir, 'captures', 'peekrawlockproj', 'raw', '2026-01-02.md.lockdir');
+  await fs.mkdir(file2Lockdir, { recursive: true });
+
+  const result = await doCheckpoint(
+    { project: 'peekrawlockproj' },
+    {
+      config: { ...BASE_CONFIG, max_chunks_per_run: 1 }, // exactly 1 chunk (file1) — the loop itself never sees raw_lock
+      vaultDir,
+      summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, `expected ok:true, got: ${JSON.stringify(result)}`);
+  assert.equal(result.chunks_done, 1, 'file1 still committed before the cap was reached');
+  assert.equal(result.backlog_remaining, true);
+  assert.equal(result.stopped?.reason, 'raw_lock', `the peek hit a genuinely locked file — must report raw_lock, not chunk_cap; got: ${JSON.stringify(result.stopped)}`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------------------
 // thin_tail: a thin trailing chunk AFTER >=1 committed chunk is a success
 // with thin_tail:true — never the abstention envelope (spec §4.5.2).

@@ -364,6 +364,11 @@ export async function recoveryReinit({ vaultDir, project }) {
   const threshold = maxCoversUntilMs - RECOVERY_SLACK_MS;
   const rawDir = path.join(vaultDir, 'captures', project, 'raw');
   const rawFiles = await listRawFiles(rawDir);
+  // Oldest raw file (if any) that yields ZERO header matches at all — a
+  // legacy headerless blob. Distinct from "has headers, none above the
+  // watermark": we cannot vouch for content we can't even parse for turn
+  // boundaries, so it must never be silently folded into "all digested".
+  let firstHeaderlessFile = null;
 
   for (const name of rawFiles) {
     const filePath = path.join(rawDir, name);
@@ -373,7 +378,9 @@ export async function recoveryReinit({ vaultDir, project }) {
     // files. The pattern's only capture group is the role, not the ISO, so
     // the ISO is sliced out of the full match (`## <ISO> <role>`) instead.
     const headerRe = makeTurnHeaderRe('gm');
+    let sawHeader = false;
     for (const m of content.matchAll(headerRe)) {
+      sawHeader = true;
       const iso = m[0].slice(3, m[0].indexOf(' ', 3));
       const ms = Date.parse(iso);
       if (Number.isNaN(ms) || !(ms > threshold)) continue;
@@ -382,9 +389,15 @@ export async function recoveryReinit({ vaultDir, project }) {
       // later (duplication-safe, never loss).
       return makeCursor({ file: name, offset: charIndexToByteOffset(content, m.index) });
     }
+    if (!sawHeader && firstHeaderlessFile === null) firstHeaderlessFile = name;
   }
 
   // No turn header found above the watermark in any raw file.
+  if (firstHeaderlessFile !== null) {
+    // At least one pending raw file has NO header matches whatsoever (a
+    // legacy blob) — resolve toward re-reading it (never-skip), not EOF.
+    return makeCursor({ file: firstHeaderlessFile, offset: 0 });
+  }
   if (rawFiles.length === 0) {
     // Summaries exist (we have a W) but every raw file is gone — a
     // degenerate state this system should never produce on its own (raw

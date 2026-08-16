@@ -8,8 +8,9 @@
 //     var must not silently zero out a byte/timeout ceiling. Mirrors the
 //     guard the repo already shipped for UM_FRESHNESS_MAX_AGE_HOURS
 //     (server/lib/stats-payload.mjs:48-59).
-//   - resolveFloor: the pre-existing #185 thin-transcript floors
-//     (server/lib/checkpoint.mjs:111-115). 0 is a valid, deliberate value
+//   - resolveFloor: the pre-existing #185 thin-transcript floors (the
+//     pre-rewrite server/lib/checkpoint.mjs's own resolveFloor function,
+//     ec1939e:checkpoint.mjs:111-115). 0 is a valid, deliberate value
 //     there ("disable this floor"). This module becomes its home verbatim —
 //     semantics are copied byte-for-byte, not changed.
 //
@@ -59,8 +60,9 @@ export function resolvePositiveInt({ envName, configValue, fallback, min = 1 }) 
 
 /**
  * Resolve a #185 thin-transcript floor: env > config > shipped default.
- * EXACT semantics of the private copy this replaces (server/lib/
- * checkpoint.mjs:111-115) — copied byte-for-byte, never changed. Unlike
+ * EXACT semantics of the private copy this replaces (the pre-rewrite
+ * server/lib/checkpoint.mjs's own resolveFloor function,
+ * ec1939e:checkpoint.mjs:111-115) — copied byte-for-byte, never changed. Unlike
  * resolvePositiveInt, env `0` YIELDS 0 here: 0 is the deliberate "disable
  * this floor" value for the #185 gate, not a misconfiguration.
  *
@@ -75,7 +77,9 @@ export function resolveFloor(envName, configValue, fallback) {
   return configValue ?? fallback;
 }
 
-// #185 thin-transcript floor defaults — same values as checkpoint.mjs:99-100.
+// #185 thin-transcript floor defaults — same values as the pre-rewrite
+// checkpoint.mjs's own DEFAULT_MIN_TRANSCRIPT_BYTES/_TURNS constants
+// (ec1939e:checkpoint.mjs:99-100).
 export const DEFAULT_MIN_TRANSCRIPT_BYTES = 500;
 export const DEFAULT_MIN_TRANSCRIPT_TURNS = 2;
 
@@ -128,9 +132,10 @@ export function resolveChunkingConfig(config = {}) {
 // Shared turn-header pattern (§4.4/Task 2 review parked finding): the single
 // source of truth for "what does a raw append-turn header look like", so
 // checkpoint-cursor.mjs and chunk-builder.mjs never carry their own
-// slightly-drifted copies. Text aligns with checkpoint.mjs:105's
-// TURN_HEADER_RE ('\S*' after the ISO's 'T', not '\S+' — a real ISO always
-// has non-empty content there, so this is a no-op for valid data). Matches
+// slightly-drifted copies. Text aligns with the pre-rewrite checkpoint.mjs's
+// own TURN_HEADER_RE (ec1939e:checkpoint.mjs:105) — '\S*' after the ISO's
+// 'T', not '\S+' (a real ISO always has non-empty content there, so this is
+// a no-op for valid data). Matches
 // doAppendTurn's raw header at line start: `## <ISO> <role>` (an optional
 // ` (conversation_id: …)` suffix, if present, falls outside the `\b`
 // boundary and is simply not part of the match).

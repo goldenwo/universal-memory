@@ -31,13 +31,15 @@
 // duplicative, ad-hoc re-summarization of an explicit date window — not the
 // crash-safe, idempotent, no-loss default (cursor-driven) path.
 //
-// Porting note (temporary, deliberate duplication — Task 6 deletes the
-// original checkpoint.mjs pipeline block and its markOrphanSummary once the
-// orchestrator is re-pointed at this module): markOrphanSummary, the NOFOLLOW
+// Porting note (historical): this module's markOrphanSummary, the NOFOLLOW
 // symlink-guard pattern, the two-phase write, the D3.2/D3.3 auto-supersede
-// pass, and the blocking-reindex withRetry wiring are ported near-verbatim
-// from server/lib/checkpoint.mjs:122-149 and :426-745. Deviations from that
-// block are called out inline and summarized in the task-5 report.
+// pass, and the blocking-reindex withRetry wiring were ported near-verbatim
+// from the pre-rewrite checkpoint.mjs's own inline pipeline (ec1939e:
+// checkpoint.mjs, doCheckpoint's per-chunk block + its own markOrphanSummary).
+// Task 6 then deleted that original block from checkpoint.mjs and re-pointed
+// the orchestrator at THIS module — this is now the sole implementation, not
+// a temporary duplicate. Deviations from the ported block are called out
+// inline and summarized in the task-5 report.
 
 import fs from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
@@ -100,12 +102,14 @@ const STATE_MERGE_UNAVAILABLE_MARKER = '<!-- state-merge-unavailable -->';
  * Rewrite a .tmp summary file to set `status: orphan_summary` in its
  * frontmatter. Best-effort: failures here are logged but not propagated.
  *
- * Ported verbatim from checkpoint.mjs:122-149 (task-5 brief: "markOrphanSummary
- * semantics are COPIED here for now — Task 6 deletes the original"). The
- * stale "next-session-start orphan recovery" framing from the original's
- * comment is corrected per spec §4.5 step 4: no recovery mechanism exists or
- * ships; an orphaned .tmp simply means the chunk never committed, so its
- * content is re-digested next run — inert disk litter, not unfinished work.
+ * Ported verbatim from the pre-rewrite checkpoint.mjs's own markOrphanSummary
+ * (ec1939e:checkpoint.mjs:122-149; task-5 brief: "markOrphanSummary semantics
+ * are COPIED here for now — Task 6 deletes the original", which it has —
+ * this module is now the sole implementation). The stale "next-session-start
+ * orphan recovery" framing from the original's comment is corrected per spec
+ * §4.5 step 4: no recovery mechanism exists or ships; an orphaned .tmp simply
+ * means the chunk never committed, so its content is re-digested next run —
+ * inert disk litter, not unfinished work.
  */
 async function markOrphanSummary(tmpPath) {
   try {
@@ -208,7 +212,7 @@ async function incrementCostFile(costPath, daySpent, costUsd) {
   } catch {}
 }
 
-/** §5b's supersession digest block (spec §3.7 format) — ported verbatim from checkpoint.mjs:596-609. */
+/** §5b's supersession digest block (spec §3.7 format) — ported verbatim from the pre-rewrite checkpoint.mjs's inline digest-building code (ec1939e:checkpoint.mjs:596-609). */
 function buildSupersedeDigest(detections, lane, persona) {
   const laneStr = lane || '-';
   const personaStr = persona || '-';
@@ -262,8 +266,9 @@ function buildSupersedeDigest(detections, lane, persona) {
  * @param {object} [deps] - DI overrides; each defaults to the real implementation
  *   exactly as checkpoint.mjs's ctx does.
  * @param {string} [deps.systemPrompt] - REQUIRED for real (non-test) use: passed straight
- *   through to summarizeFn as the curated UM-format system prompt (checkpoint.mjs:426's
- *   comment on the same hazard). Per-run prompt loading (reading summarize.txt off disk once,
+ *   through to summarizeFn as the curated UM-format system prompt (the pre-rewrite
+ *   checkpoint.mjs's own summarizeFn call carried the same comment on the same hazard —
+ *   ec1939e:checkpoint.mjs:426). Per-run prompt loading (reading summarize.txt off disk once,
  *   not per chunk) is Task 6's job, not this module's — an omitted/empty systemPrompt does NOT
  *   fail the chunk, it silently produces a generic (non-UM-format) summary from whatever
  *   summarizeFn's own default prompt is.
@@ -374,7 +379,8 @@ export async function runChunkTransaction(args, deps = {}) {
   try {
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
 
-    // Symlink guards on both .tmp and final paths (ported from checkpoint.mjs:446-454).
+    // Symlink guards on both .tmp and final paths (ported from the pre-rewrite
+    // checkpoint.mjs's own guards, ec1939e:checkpoint.mjs:446-454).
     // Unlike the original's early-return, a refusal here is a genuine
     // phase-2-stage failure and is normalized into the same failed/phase2
     // shape as every other failure in this block (a deliberate improvement —
@@ -389,7 +395,8 @@ export async function runChunkTransaction(args, deps = {}) {
     }
 
     // Frontmatter — reindexDoc requires type/id/title. Additive covers_from/
-    // covers_until (§4.5 step 4) beyond checkpoint.mjs:456-470's fields.
+    // covers_until (§4.5 step 4) beyond the pre-rewrite checkpoint.mjs's own
+    // frontmatter field list (ec1939e:checkpoint.mjs:456-470).
     const coversDate = chunk.coversFrom.slice(0, 10);
     const frontmatter = [
       '---',
@@ -408,14 +415,16 @@ export async function runChunkTransaction(args, deps = {}) {
     ].join('\n');
     summaryWithFm = frontmatter + summary;
 
-    // Phase 1: write .tmp (NOFOLLOW open — checkpoint.mjs:473-481).
+    // Phase 1: write .tmp (NOFOLLOW open — ported from the pre-rewrite
+    // checkpoint.mjs's own phase-1 write, ec1939e:checkpoint.mjs:473-481).
     {
       const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
       try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
     }
 
     // Phase 2: state.md merge (unless skipStateMerge), THEN atomic rename —
-    // ordering rationale ported from checkpoint.mjs:484-490: state.md is the
+    // ordering rationale ported from the pre-rewrite checkpoint.mjs's own
+    // phase-2 comment (ec1939e:checkpoint.mjs:484-490): state.md is the
     // contention-prone path, so a state-merge failure leaves the summary
     // .tmp in place for orphan-marking below, never advancing to the rename.
     if (!skipStateMerge) {
@@ -468,7 +477,8 @@ export async function runChunkTransaction(args, deps = {}) {
         mergedMd = stateResult.mergedMd;
       }
 
-      // Symlink guard on state.md target before rename (checkpoint.mjs:504-507).
+      // Symlink guard on state.md target before rename (ported from the
+      // pre-rewrite checkpoint.mjs's own guard, ec1939e:checkpoint.mjs:504-507).
       const stateSymCheck = await fs.lstat(oldStatePath).catch(() => null);
       if (stateSymCheck && stateSymCheck.isSymbolicLink()) {
         throw Object.assign(new Error('target is a symlink; refusing to write'), { code: 'SYMLINK_REFUSED' });
@@ -486,7 +496,8 @@ export async function runChunkTransaction(args, deps = {}) {
     // Final rename — the summary becomes durably reachable at its canonical path.
     await fs.rename(tmpSummaryPath, absSummaryPath);
   } catch (phase2Err) {
-    // Ported from checkpoint.mjs:524-551, HARDENED beyond the original
+    // Ported from the pre-rewrite checkpoint.mjs's own phase-2 catch block
+    // (ec1939e:checkpoint.mjs:524-551), HARDENED beyond the original
     // (round-1 review IMPORTANT 1): the original used fs.stat here, which
     // FOLLOWS symlinks. If a symlink had been planted at tmpSummaryPath (the
     // predictable sessions/<project>/<id>.md.tmp path), fs.stat would resolve
@@ -525,7 +536,8 @@ export async function runChunkTransaction(args, deps = {}) {
         }, 'phase-2 orphan re-stage failed'), 'log:checkpoint-chunk-txn:phase2-orphan-failed');
       }
     }
-    // Additive `code` (round-1 review IMPORTANT 2): checkpoint.mjs:552-565
+    // Additive `code` (round-1 review IMPORTANT 2): the pre-rewrite
+    // checkpoint.mjs's own catch block (ec1939e:checkpoint.mjs:552-565)
     // branches on EBUSY/STATE_LOCK_CONTENTION to pick the 503-retryable
     // envelope + emit the lock-contention metric — Task 6 cannot restore
     // either from `message` alone. Precedent: the reindex shape already

@@ -899,18 +899,30 @@ test('checkpoint: backlog_remaining after chunk_cap sets truncated:true (depreca
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
-// Task-6 review MINOR 6: windowed mode's OWN MAX_TRANSCRIPT_BYTES 1MB guard
-// (independent of the chunked path's backlog_remaining-derived alias above —
-// this mode has no cursor/backlog concept) ships at runWindowedMode but had
-// no test asserting it since the old single-shot 'MAX_TRANSCRIPT_BYTES cap'
-// pin was repurposed (that fixture never passed since/until, so it exercised
-// the DEFAULT path, not this one). Re-pinned here with since/until supplied.
-test('checkpoint: windowed mode MAX_TRANSCRIPT_BYTES 1MB guard truncates the window and sets truncated:true', async () => {
+// Task-6 review MINOR 6 (original pin) + final whole-branch review IMPORTANT 2
+// (spec §4.8, amended 2026-08-15): windowed mode's own MAX_TRANSCRIPT_BYTES
+// 1MB guard is still exercised here (two files together > 1MB — the second
+// file's content must never even enter `transcript`), but I2 ("chunk.text
+// never exceeds chunkMaxBytes") is ABSOLUTE in every mode, not just the
+// default cursor path — the pre-clamp behavior let this window feed up to
+// ~1MB (~250k tokens) straight to the summarizer, which would 500 on exactly
+// the provider-context-limit outage class this arc exists to dissolve. This
+// pin now asserts the STRONGER, CURRENT contract: what actually reaches the
+// summarizer is clamped a second time at `chunkMaxBytes` (BASE_CONFIG sets no
+// override, so the resolveChunkingConfig default of 200_000 bytes applies),
+// cut at a clean line boundary (chunk-builder.mjs's shared
+// newline-else-UTF-8 splitter, `computeSplitPoint`, exported and reused here
+// — never re-derived), and `truncated: true` still fires.
+test('checkpoint: windowed mode clamps summarize input at chunkMaxBytes (§4.8), cut at a clean boundary, truncated:true', async () => {
   const vaultDir = await makeVault();
-  // Two files inside the requested window, together > 1MB — the guard must
-  // stop accumulating once the running total would exceed the cap, so the
-  // second file's content never reaches the summarizer.
-  await seedCapture(vaultDir, 'windowbigproj', '2026-01-01.md', 'A'.repeat(700 * 1024));
+  // 137-byte lines (136 'A's + '\n') so chunkMaxBytes (200_000) does NOT land
+  // on an exact line multiple — proves the splitter actually backs off to the
+  // nearest newline rather than the clamp coincidentally landing clean.
+  const LINE = 'A'.repeat(136) + '\n';
+  const fileAContent = LINE.repeat(5000); // 685,000 bytes — well over chunkMaxBytes, well under 1MB alone.
+  await seedCapture(vaultDir, 'windowbigproj', '2026-01-01.md', fileAContent);
+  // Second file: together with the first, exceeds the 1MB assembly ceiling —
+  // must never even enter `transcript` (unchanged legacy guard).
   await seedCapture(vaultDir, 'windowbigproj', '2026-01-02.md', 'B'.repeat(700 * 1024));
 
   let capturedTranscript = '';
@@ -931,9 +943,18 @@ test('checkpoint: windowed mode MAX_TRANSCRIPT_BYTES 1MB guard truncates the win
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.truncated, true, 'the windowed 1MB guard must set truncated:true');
-  assert.ok(capturedTranscript.includes('A'), 'the first (within-cap) file must still be included');
+  assert.equal(result.truncated, true, 'either the 1MB assembly ceiling or the chunkMaxBytes clamp must set truncated:true');
   assert.ok(!capturedTranscript.includes('B'), 'the second file must be excluded once the running total would exceed 1MB');
+
+  const chunkMaxBytes = 200_000; // resolveChunkingConfig's shipped default (BASE_CONFIG sets no override)
+  const capturedBytes = Buffer.byteLength(capturedTranscript, 'utf8');
+  assert.ok(capturedBytes <= chunkMaxBytes, `I2: summarize input must never exceed chunkMaxBytes, got ${capturedBytes}`);
+  assert.ok(capturedBytes < fileAContent.length, 'the full 685,000-byte window must actually have been clamped, not passed through');
+  // Clean-boundary: the clamp backs off to the last newline strictly under
+  // the limit, so the captured transcript is exactly N whole lines — never a
+  // line sliced mid-'A'.
+  assert.equal(capturedTranscript, LINE.repeat(1459), 'must be cut at the last full line under chunkMaxBytes, not mid-line');
+  assert.ok(capturedTranscript.endsWith('\n'), 'a clean-boundary cut always ends on a full line');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });

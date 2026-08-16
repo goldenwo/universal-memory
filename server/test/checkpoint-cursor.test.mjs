@@ -537,6 +537,27 @@ test('recoveryReinit: no turn header exceeds the watermark -> cursor at EOF of n
   assert.equal(cursor.boundary, 'turn');
 });
 
+test('recoveryReinit: headerless legacy raw file present -> cursor lands at its start, never EOF-skipped', async () => {
+  const vault = makeVault();
+  // W = 2026-08-20T00:00:00.000Z; threshold = 2026-08-18T00:00:00.000Z.
+  // The oldest raw file is a pre-header-format legacy blob with ZERO turn
+  // header matches at all — it must never be silently declared "digested"
+  // by falling through to EOF-of-newest; the never-skip invariant requires
+  // landing at its start so it gets re-read.
+  await writeSessionFile(
+    vault,
+    'session-2026-08-20-aaaaaaaa.md',
+    '---\ntype: session_summary\ncovers_until: 2026-08-20T00:00:00.000Z\n---\nbody',
+  );
+  await writeRawFile(vault, '2026-08-10.md', 'plain legacy text, no turn headers at all here.\n');
+  await writeRawFile(vault, '2026-08-12.md', turnHeader('2026-08-12T00:00:00.000Z', 'assistant') + '\nold, has headers\n\n');
+
+  const cursor = await recoveryReinit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, '2026-08-10.md');
+  assert.equal(cursor.offset, 0);
+  assert.equal(cursor.boundary, 'turn');
+});
+
 // ===========================================================================
 // Section G — loadCursor's own bootstrap-on-missing-cursor-file path.
 // ===========================================================================

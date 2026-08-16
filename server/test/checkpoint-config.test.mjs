@@ -98,6 +98,18 @@ test('resolvePositiveInt: config absent falls through to fallback', () => {
   });
 });
 
+// Final-review ledger (cheap item): a non-numeric configValue (e.g. a raw
+// JSON-parsed checkpoint.json field that came through as a string instead of
+// a number) must fall through exactly like 0/negative/absent — Number.
+// isSafeInteger(configValue) is false for any non-number typeof, so this was
+// already the resolver's real behavior; only the pin was missing.
+test('resolvePositiveInt: non-numeric configValue (string "7") falls through to fallback', () => {
+  withEnv(undefined, () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: '7', fallback: 9 });
+    assert.equal(v, 9);
+  });
+});
+
 test('resolvePositiveInt: env absent, config valid wins over fallback', () => {
   withEnv(undefined, () => {
     const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 15, fallback: 9 });
@@ -365,17 +377,26 @@ test('I6(a): HEARTBEAT_INTERVAL_MS < DEFAULT_LOW_DISK_STALE_MS (spec §9 I6(a), 
 });
 
 test('I6(b): maxChunksPerRun x (summarizeTimeoutMs + stateMergeTimeoutMs + autosupersedeTimeoutMs) <= 0.7 x 900_000 (spec §5/§9 I6(b), the drain\'s curl --max-time 900 budget, >=30% margin)', () => {
-  const cfg = resolveChunkingConfig(); // shipped defaults — env/config overrides are an operator choice, not this pin's concern
-  const DRAIN_CURL_BUDGET_MS = 900_000; // spec §5: um-drain.sh's own `curl --max-time 900`
-  const MARGIN_FRACTION = 0.7; // literal, per task-8-brief.md §3 — at most 70% of budget used, so >=30% margin remains
-  const worstCaseMs = cfg.maxChunksPerRun * (cfg.summarizeTimeoutMs + cfg.stateMergeTimeoutMs + cfg.autosupersedeTimeoutMs);
-  // The remaining margin absorbs what this formula does NOT represent: the
-  // per-chunk cost-cap peek (step 1), raw-lock acquire waits (chunk-builder's
-  // RAW_LOCK_TIMEOUT_MS per pending file), and general run/IO overhead —
-  // none of which carry their own timeout constant (Task-6 review Minor 9).
-  assert.ok(
-    worstCaseMs <= MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS,
-    `worst-case run duration (${worstCaseMs}ms = ${cfg.maxChunksPerRun} x (${cfg.summarizeTimeoutMs}+${cfg.stateMergeTimeoutMs}+${cfg.autosupersedeTimeoutMs})) `
-    + `must stay <= ${MARGIN_FRACTION} x the drain's 900s curl budget (${MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS}ms)`,
-  );
+  // Final-review MINOR 7: this pin's whole point is testing the SHIPPED
+  // DEFAULTS — a bare resolveChunkingConfig() call reads ambient
+  // UM_CHECKPOINT_* env vars if a runner happens to have any exported
+  // (operator shell, a leaking prior test), silently skewing the formula
+  // away from the defaults it claims to pin. withChunkingEnv({}, ...) —
+  // the same seam every other test in this file already uses — clears the
+  // five keys for the duration of the call.
+  withChunkingEnv({}, () => {
+    const cfg = resolveChunkingConfig(); // shipped defaults — env/config overrides are an operator choice, not this pin's concern
+    const DRAIN_CURL_BUDGET_MS = 900_000; // spec §5: um-drain.sh's own `curl --max-time 900`
+    const MARGIN_FRACTION = 0.7; // literal, per task-8-brief.md §3 — at most 70% of budget used, so >=30% margin remains
+    const worstCaseMs = cfg.maxChunksPerRun * (cfg.summarizeTimeoutMs + cfg.stateMergeTimeoutMs + cfg.autosupersedeTimeoutMs);
+    // The remaining margin absorbs what this formula does NOT represent: the
+    // per-chunk cost-cap peek (step 1), raw-lock acquire waits (chunk-builder's
+    // RAW_LOCK_TIMEOUT_MS per pending file), and general run/IO overhead —
+    // none of which carry their own timeout constant (Task-6 review Minor 9).
+    assert.ok(
+      worstCaseMs <= MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS,
+      `worst-case run duration (${worstCaseMs}ms = ${cfg.maxChunksPerRun} x (${cfg.summarizeTimeoutMs}+${cfg.stateMergeTimeoutMs}+${cfg.autosupersedeTimeoutMs})) `
+      + `must stay <= ${MARGIN_FRACTION} x the drain's 900s curl budget (${MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS}ms)`,
+    );
+  });
 });

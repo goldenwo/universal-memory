@@ -34,11 +34,11 @@
 // corpus (nothing left pending to fill it with).
 //
 // Locking: per spec, the caller injects `acquireLock`/`releaseLock` (bound
-// lockdir.mjs functions, same `<rawFilePath>.lockdir` convention as
-// checkpoint.mjs:357). This module acquires a file's lock immediately before
-// reading it and releases it right after (finally) — it never reads a file
-// it could not lock, and never reads PAST a file whose lock it could not
-// acquire (spec §4.4 "no-skip-ahead", I3).
+// lockdir.mjs functions, same `<rawFilePath>.lockdir` convention checkpoint.mjs's
+// runWindowedMode uses for its own raw-file reads). This module acquires a
+// file's lock immediately before reading it and releases it right after
+// (finally) — it never reads a file it could not lock, and never reads PAST a
+// file whose lock it could not acquire (spec §4.4 "no-skip-ahead", I3).
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -163,11 +163,15 @@ function backToUtf8Boundary(buf, pos) {
  * bytes) on content that isn't overwhelmingly invalid bytes, which is what
  * guarantees assembly position always advances.
  *
+ * Exported (checkpoint.mjs's §4.8 windowed-mode clamp) so the ONE
+ * newline-else-UTF-8-boundary splitter implementation is shared rather than
+ * re-derived — never duplicate this logic at a second call site.
+ *
  * @param {Buffer} buf
  * @param {number} maxBytes
  * @returns {number}
  */
-function computeSplitPoint(buf, maxBytes) {
+export function computeSplitPoint(buf, maxBytes) {
   const limit = Math.min(maxBytes, buf.length);
   const newlineIdx = buf.lastIndexOf(0x0a, limit - 1); // 0x0a = '\n'
   let candidate = newlineIdx !== -1 ? newlineIdx + 1 : backToUtf8Boundary(buf, limit);

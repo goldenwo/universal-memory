@@ -24,6 +24,10 @@
 //     through runChunkTransaction as ONE synthetic chunk, with
 //     `prevCursor: null` + `skipCursorAdvance: true` (a no-cursor sentinel —
 //     see checkpoint-chunk-txn.mjs's matching doc comment on that option).
+//     The assembled window is clamped a SECOND time, at `chunkMaxBytes`, right
+//     before that chunk is built — I2 (the summarize-input byte ceiling) is
+//     absolute in every mode, not just the default cursor path; see
+//     runWindowedMode's own comment below.
 //
 // Stale-comment correction (spec §4.5.4): the old phase-2 comments here used
 // to promise "next-session-start orphan recovery" — that client-side branch
@@ -48,7 +52,7 @@ import { lockContentionsTotal } from './metrics.mjs';
 import { applyDefaultProject, TOOL_IDS, validateLanePersonaSlug } from './default-project.mjs';
 import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { loadCursor } from './checkpoint-cursor.mjs';
-import { buildNextChunk } from './chunk-builder.mjs';
+import { buildNextChunk, computeSplitPoint } from './chunk-builder.mjs';
 import { runChunkTransaction } from './checkpoint-chunk-txn.mjs';
 import {
   resolveChunkingConfig, resolveFloor, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS,
@@ -464,7 +468,16 @@ async function runDefaultMode({
   if (peek.exhausted) {
     return successEnvelope(acc, envCtx, { backlogRemaining: false });
   }
-  return successEnvelope(acc, envCtx, { backlogRemaining: true, stopped: { reason: 'chunk_cap' } });
+  // Final-review MINOR 3: the peek can itself land on a genuinely locked
+  // next file (`stopped: {reason: 'raw_lock', file}` — chunk-builder.mjs)
+  // rather than merely "more pending" — that is a DIFFERENT, more specific
+  // stop reason than the cap itself and must pass through, never get
+  // mislabeled as 'chunk_cap' (the drain script branches on this exact
+  // value, §5). Only `reason` crosses into the public envelope — same
+  // shape convention as every other `stopped` site in this file; the
+  // internal `file` stays internal.
+  const stopped = peek.stopped ? { reason: peek.stopped.reason } : { reason: 'chunk_cap' };
+  return successEnvelope(acc, envCtx, { backlogRemaining: true, stopped });
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +494,19 @@ async function runDefaultMode({
  * `skipCursorAdvance: true` (see that option's doc comment in
  * checkpoint-chunk-txn.mjs) rather than duplicating the summarize/write/
  * reindex pipeline a second time in this file.
+ *
+ * §4.8 hardening: MAX_TRANSCRIPT_BYTES (1MB) is only the multi-file ASSEMBLY
+ * read-ceiling above this — the actual input handed to the summarizer is
+ * clamped a second time at `chunkingCfg.chunkMaxBytes` (the same ceiling the
+ * default cursor path enforces per-chunk, resolveChunkingConfig) right before
+ * the synthetic chunk is built, using chunk-builder.mjs's own
+ * newline-else-UTF-8-boundary splitter (`computeSplitPoint`, exported for
+ * exactly this reuse — never a second copy of that logic). I2 (chunk.text
+ * never exceeds chunkMaxBytes) is therefore absolute in every mode, not just
+ * the default path: pre-clamp, this window could still feed up to ~1MB
+ * (~250k tokens) straight to the provider. `transcriptTruncated` is reused
+ * for both ceilings — either one held back real content, so both mean
+ * `truncated: true`.
  */
 async function runWindowedMode({
   vaultDir, project, since, until, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0,
@@ -535,6 +561,18 @@ async function runWindowedMode({
     }
   }
 
+  // §4.8: clamp the assembled window at chunkMaxBytes — the same absolute
+  // ceiling the default cursor path enforces per-chunk — before it is ever
+  // handed to the summarizer. Applied to `transcript` itself (not just at the
+  // txn layer) so chunk.text, turnCount, and coversFrom/coversUntil (computed
+  // from `transcript` below) all honestly reflect what was actually digested.
+  if (Buffer.byteLength(transcript, 'utf8') > chunkingCfg.chunkMaxBytes) {
+    const transcriptBuf = Buffer.from(transcript, 'utf8');
+    const splitAt = computeSplitPoint(transcriptBuf, chunkingCfg.chunkMaxBytes);
+    transcript = transcriptBuf.subarray(0, splitAt).toString('utf8');
+    transcriptTruncated = true;
+  }
+
   const chunk = buildWindowedChunk({ transcript, filteredFiles, sinceDate });
   const txnResult = await runChunkTransaction(
     {
@@ -557,10 +595,12 @@ async function runWindowedMode({
   // means the whole requested window is done; there is no cursor-sense
   // "backlog" left to report.
   const envelope = successEnvelope(acc, envCtx, { backlogRemaining: false });
-  // Legacy MAX_TRANSCRIPT_BYTES truncation is orthogonal to the chunked
-  // path's backlog_remaining-derived alias (this window has no cursor/
-  // backlog concept of its own) — carried through independently, exactly as
-  // the pre-chunking code did (spec §4.8: "KEEP ... truncated: true").
+  // Either the MAX_TRANSCRIPT_BYTES assembly ceiling or the chunkMaxBytes
+  // summarize-input clamp above may have held back real content —
+  // `transcriptTruncated` covers both. Orthogonal to the chunked path's
+  // backlog_remaining-derived alias (this window has no cursor/backlog
+  // concept of its own) — carried through independently, exactly as the
+  // pre-chunking code did (spec §4.8: "KEEP ... truncated: true").
   if (transcriptTruncated) envelope.truncated = true;
   return envelope;
 }

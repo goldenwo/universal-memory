@@ -546,10 +546,13 @@ test('I2 size-invariance: every summarize input stays <= chunk_max_bytes across 
   // Small relative to the 200_000 shipped default, comfortably above the
   // 1024 resolvePositiveInt usability floor.
   const CHUNK_MAX_BYTES = 32_768;
-  // The transcript arg IS the whole budget here (a mocked summarizeFn never
-  // concatenates a separate prompt onto it) — this allowance only guards
-  // against a few bytes of test-fixture slop, not the invariant itself.
-  const ALLOWANCE_BYTES = 8;
+  // Final-review ledger (cheap item): runChunkTransaction passes chunk.text
+  // to summarizeFn UNMODIFIED (no extra bytes ever get appended) — chunk-
+  // builder.mjs's own budget accounting (decodedByteLength, computeSplitPoint)
+  // already guarantees chunk.text never exceeds chunk_max_bytes exactly, so a
+  // slop allowance here would only mask a real off-by-N regression. Zero is
+  // the truthful pin.
+  const ALLOWANCE_BYTES = 0;
 
   const FILES = 3;
   const TURNS_PER_FILE = 1800;
