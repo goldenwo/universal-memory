@@ -347,6 +347,98 @@ test('raw_lock: a genuinely locked next file stops the run — backlog_remaining
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// Task-6 review round 2 finding: a raw-lock-stopped SUB-FLOOR chunk must
+// never be classified as "complete" (thin_tail or abstention) — the builder
+// stopped because the NEXT file is transiently locked, not because nothing
+// more exists (spec §4.4: "only a TRUE end-of-corpus tail can ever be
+// thin"). Both directions, both real (fresh) lockdir contention, ~5s each.
+
+test('raw_lock + thin MID-RUN: chunk 1 commits, chunk 2 is sub-floor + next file locked -> backlog_remaining:true, stopped:raw_lock, NOT thin_tail', async () => {
+  const vaultDir = await makeVault();
+  // file1: big enough to be its own committed (non-thin) chunk.
+  const t1 = makeTurn('2026-01-01T00:00:00.000Z', 'user', 'a'.repeat(1000));
+  await seedCapture(vaultDir, 'midrawlockthinproj', '2026-01-01.md', t1);
+  // file2: sub-floor on its own (well under the 500-byte / 2-turn gate).
+  await seedCapture(vaultDir, 'midrawlockthinproj', '2026-01-02.md', makeTurn('2026-01-02T00:00:00.000Z', 'user', 'short'));
+  // file3: must exist (so chunk-builder's walk reaches it after draining
+  // file2) and be genuinely, freshly locked.
+  await seedCapture(vaultDir, 'midrawlockthinproj', '2026-01-03.md', '# never read\n');
+
+  const file3Lockdir = path.join(vaultDir, 'captures', 'midrawlockthinproj', 'raw', '2026-01-03.md.lockdir');
+  await fs.mkdir(file3Lockdir, { recursive: true });
+
+  // Sized so file1's turn alone fills a chunk (chunk 1 ends exactly at
+  // file1's EOF, boundary:'turn') — file1 + file2's short turn together
+  // would exceed it, so chunk 2 starts fresh at file2.
+  const chunkMaxBytes = Buffer.byteLength(t1, 'utf8') + 20;
+
+  const gatedConfig = {
+    ...BASE_CONFIG,
+    chunk_max_bytes: chunkMaxBytes,
+    max_chunks_per_run: 5,
+    min_transcript_bytes: 500,
+    min_transcript_turns: 2,
+  };
+
+  const result = await doCheckpoint(
+    { project: 'midrawlockthinproj' },
+    {
+      config: gatedConfig,
+      vaultDir,
+      summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, `expected ok:true, got: ${JSON.stringify(result)}`);
+  assert.equal(result.chunks_done, 1, 'only file1 committed — the sub-floor file2 chunk never commits (thin, cursor untouched)');
+  assert.equal(result.backlog_remaining, true, 'file3 is still pending behind the lock — this must never read as complete');
+  assert.equal(result.stopped?.reason, 'raw_lock', `expected raw_lock (transient), got: ${JSON.stringify(result.stopped)}`);
+  assert.equal(result.thin_tail, undefined, 'must NOT be thin_tail — that would falsely signal "nothing more to digest"');
+  assert.equal(result.skipped, undefined, 'must not be the abstention envelope either');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('raw_lock + thin FIRST-CHUNK: sub-floor chunk + locked next file -> chunks_done:0, backlog_remaining:true, stopped:raw_lock, NOT abstention', async () => {
+  const vaultDir = await makeVault();
+  // file1: sub-floor on its own — this is the ONLY chunk this run ever
+  // attempts (chunksDone stays 0 going into the thin check).
+  await seedCapture(vaultDir, 'firstrawlockthinproj', '2026-01-01.md', makeTurn('2026-01-01T00:00:00.000Z', 'user', 'short'));
+  // file2: must exist and be genuinely, freshly locked.
+  await seedCapture(vaultDir, 'firstrawlockthinproj', '2026-01-02.md', '# never read\n');
+
+  const file2Lockdir = path.join(vaultDir, 'captures', 'firstrawlockthinproj', 'raw', '2026-01-02.md.lockdir');
+  await fs.mkdir(file2Lockdir, { recursive: true });
+
+  const gatedConfig = {
+    ...BASE_CONFIG,
+    min_transcript_bytes: 500,
+    min_transcript_turns: 2,
+  };
+
+  const result = await doCheckpoint(
+    { project: 'firstrawlockthinproj' },
+    {
+      config: gatedConfig,
+      vaultDir,
+      summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, `expected ok:true (success-shaped, not an error), got: ${JSON.stringify(result)}`);
+  assert.equal(result.chunks_done, 0, 'nothing committed — file1 alone is sub-floor');
+  assert.equal(result.backlog_remaining, true, 'file2 is still pending behind the lock — this must never read as complete');
+  assert.equal(result.stopped?.reason, 'raw_lock', `expected raw_lock (transient), got: ${JSON.stringify(result.stopped)}`);
+  assert.equal(result.skipped, undefined, 'must NOT be the abstention envelope — that would tell the drain "nothing digestible pending" (§5), which is false: file2 is pending, just transiently locked');
+  assert.equal(result.summary_id, null, 'no chunk was ever committed');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------------------
 // Heartbeat: the whole-run lockdir's mtime is refreshed while a slow chunk
 // runs, and the timer is cleared on completion (spec §4.5).

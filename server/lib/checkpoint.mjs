@@ -413,17 +413,31 @@ async function runDefaultMode({
 
     if (built.stopped?.reason === 'raw_lock') {
       // spec §4.4: "if a chunk came with it, run its txn first; then stop
-      // with stopped:{reason:'raw_lock'}". If that chunk's own outcome is
-      // itself terminal (abstain / 0-chunk provider failure / phase2 /
-      // cursor_write / reindex) or its own stop-the-loop success (thin_tail /
-      // cost_cap / provider partial), THAT outcome takes precedence — the
-      // raw_lock signal is moot once we're already stopping for another
-      // reason. Only a clean commit falls through to the raw_lock envelope.
+      // with stopped:{reason:'raw_lock'}". A genuine terminal failure
+      // (0-chunk provider failure / phase2 / cursor_write / reindex) or an
+      // UNRELATED stop-the-loop success (cost_cap / provider partial) still
+      // takes precedence — those are real, independent stop conditions that
+      // happen to have landed on this same chunk. But round-2 review: a
+      // THIN result here must NEVER be classified as complete (abstention
+      // or thin_tail) — the builder stopped because the NEXT file is
+      // transiently locked, not because nothing more exists (spec §4.4:
+      // "only a TRUE end-of-corpus tail can ever be thin"; a `buildNextChunk`
+      // `exhausted` signal — handled above, a separate branch — is the only
+      // thing that means genuinely nothing pends). Intercepted BEFORE
+      // classifyAndApply so its normal thin -> abstention/thin_tail mapping
+      // (correct for every OTHER caller, including windowed mode, which
+      // never has a raw_lock context) never fires here; symmetric across
+      // chunksDone === 0 (would-be abstention) and chunksDone > 0
+      // (would-be thin_tail) — both become backlog_remaining:true,
+      // stopped:{reason:'raw_lock'} instead.
       if (built.chunk) {
         const txnResult = await runChunkTransaction(
           { vaultDir, project, chunk: built.chunk, prevCursor: cursor, config, chunkingCfg, lane, persona, surface, skipStateMerge },
           txnDeps,
         );
+        if (txnResult.thin) {
+          return successEnvelope(acc, envCtx, { backlogRemaining: true, stopped: { reason: 'raw_lock' } });
+        }
         const outcome = classifyAndApply(txnResult, acc, envCtx);
         if (outcome.done) return outcome.envelope;
         cursor = outcome.nextCursor;
