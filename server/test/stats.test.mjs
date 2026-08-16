@@ -53,7 +53,7 @@ async function tempDbPath(prefix = 'um-stats-') {
   return path.join(dir, 'um-counters.db');
 }
 
-const EMPTY_OUTCOMES = { stored: 0, abstained: 0, deduped: 0, superseded: 0, error: 0 };
+const EMPTY_OUTCOMES = { stored: 0, abstained: 0, deduped: 0, superseded: 0, error: 0, failed: 0 };
 
 // ---------- freshnessHours: pinned formula (A2 exact values) ----------
 
@@ -81,7 +81,8 @@ test('freshnessHours rounds to 1 decimal', () => {
 
 // ---------- readCounterStats: capture aggregates ----------
 
-test('rows today ⇒ freshness_hours 0, last_day_seen today, events_today counted', async () => {
+test('rows today ⇒ freshness_hours 0, last_day_seen today, events_today counted; outcomes_7d '
+  + 'is landing-only (spec §7) while turns_7d carries the turn volume separately', async () => {
   const dbPath = await tempDbPath();
   seedCountersDb(dbPath, [
     { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 4 },
@@ -92,9 +93,15 @@ test('rows today ⇒ freshness_hours 0, last_day_seen today, events_today counte
   const s = stats.capture['claude-code'];
   assert.equal(s.last_day_seen, TODAY);
   assert.equal(s.freshness_hours, 0);
+  // events_today/errors_today (spec §7: UNCHANGED scope) still sum every
+  // capture.% row — turn + extraction alike.
   assert.equal(s.events_today, 6);
   assert.equal(s.errors_today, 0);
-  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 6 });
+  // outcomes_7d (spec §7: LANDING-ONLY) sees only the extraction row — the
+  // turn row's 'stored' outcome no longer inflates it.
+  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 2 });
+  // turns_7d (additive, spec §7) carries the honest turn volume instead.
+  assert.equal(s.turns_7d, 4);
 });
 
 test('A2: last capture row 3 days ago ⇒ freshness_hours exactly 57.5 at the frozen clock', async () => {
@@ -107,7 +114,10 @@ test('A2: last capture row 3 days ago ⇒ freshness_hours exactly 57.5 at the fr
   assert.equal(s.last_day_seen, daysAgo(3));
   assert.equal(s.freshness_hours, 57.5, 'pinned formula: (3−1)*24 + 9.5');
   assert.equal(s.events_today, 0);
-  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 5 }, 'day −3 is inside the 7-day window');
+  // A turn-only row (spec §7): outcomes_7d is landing-only, so a pure-turn
+  // surface reports zero landings — the row's volume lives in turns_7d.
+  assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES, 'capture.turn is not a landing event — day −3 is in-window but not a landing');
+  assert.equal(s.turns_7d, 5, 'the turn volume is inside the 7-day window');
 });
 
 test('G2 incident case: only recall.search today + capture.* 3 days ago ⇒ 3-day freshness', async () => {
@@ -134,7 +144,10 @@ test('scope filter: recall.search rows excluded from every capture aggregate, in
   const stats = readCounterStats({ now: NOW, dbPath });
   const s = stats.capture.discord;
   assert.equal(s.events_today, 3, 'searches must not inflate events_today');
-  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 3 });
+  // The row is capture.turn (not a landing event, spec §7) — outcomes_7d
+  // stays empty and the volume shows up in turns_7d instead.
+  assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES);
+  assert.equal(s.turns_7d, 3);
   assert.equal(stats.recall.searches_today, 7);
   assert.equal(stats.recall.searches_7d, 11);
 });
@@ -149,11 +162,15 @@ test('errors_today is today-scoped: an error row yesterday does not count', asyn
   const stats = readCounterStats({ now: NOW, dbPath });
   const s = stats.capture['claude-code'];
   assert.equal(s.errors_today, 1, "yesterday's errors are outcomes_7d material, not errors_today");
-  assert.equal(s.events_today, 3);
-  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 2, error: 4 });
+  assert.equal(s.events_today, 3, 'events_today (spec §7: UNCHANGED) still sums the turn row too');
+  // outcomes_7d (landing-only, spec §7): capture.checkpoint's error rows
+  // land in it; the capture.turn 'stored' row does not — 'stored' stays 0.
+  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, error: 4 });
+  assert.equal(s.turns_7d, 2, "today's turn row is the only turn volume");
 });
 
-test('outcomes_7d window edge: day 8 excluded, day 7 (oldest in-window) included', async () => {
+test('turns_7d window edge: day 8 excluded, day 7 (oldest in-window) included; both rows are '
+  + 'capture.turn so outcomes_7d stays empty throughout (spec §7 landing-only)', async () => {
   const dbPath = await tempDbPath();
   seedCountersDb(dbPath, [
     { day: daysAgo(7), surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 100 },
@@ -161,7 +178,8 @@ test('outcomes_7d window edge: day 8 excluded, day 7 (oldest in-window) included
   ]);
   const stats = readCounterStats({ now: NOW, dbPath });
   const s = stats.capture['claude-code'];
-  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 1 }, 'window = today + 6 prior days');
+  assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES, 'capture.turn never lands in outcomes_7d');
+  assert.equal(s.turns_7d, 1, 'window = today + 6 prior days; the day −7 row is excluded');
   assert.equal(s.last_day_seen, daysAgo(6));
 });
 
@@ -177,6 +195,7 @@ test('a surface stale beyond the 7-day window still reports last_day_seen + fres
   assert.equal(s.freshness_hours, 29 * 24 + 9.5);
   assert.equal(s.events_today, 0);
   assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES);
+  assert.equal(s.turns_7d, 0, 'the turn row is 30 days out — outside the 7-day window too');
 });
 
 test('per-surface independence: two surfaces do not cross-contaminate', async () => {
@@ -192,10 +211,60 @@ test('per-surface independence: two surfaces do not cross-contaminate', async ()
   assert.equal(cc.freshness_hours, 0);
   assert.equal(cc.events_today, 4);
   assert.equal(cc.errors_today, 1);
+  // cc's landing row is capture.extraction/error — its turn row (3, stored)
+  // must not leak into outcomes_7d either.
+  assert.deepEqual(cc.outcomes_7d, { ...EMPTY_OUTCOMES, error: 1 });
+  assert.equal(cc.turns_7d, 3);
   assert.equal(dc.freshness_hours, 57.5, "claude-code's fresh rows must not refresh discord");
   assert.equal(dc.events_today, 0);
   assert.equal(dc.errors_today, 0);
-  assert.deepEqual(dc.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 8 });
+  // dc's only row is capture.turn — outcomes_7d stays empty, cross-surface
+  // independence holds for turns_7d too (cc's turns must not leak into dc).
+  assert.deepEqual(dc.outcomes_7d, EMPTY_OUTCOMES);
+  assert.equal(dc.turns_7d, 8);
+});
+
+// ---------- readCounterStats: outcomes_7d landing-only + turns_7d (spec §7) ----------
+// The 2026-08-15 instrumented-truth fix (spec §1/§7): the incident this
+// blindfolded — "547 stored/7d" against "growth 0/day" — was 2,570
+// capture.turn rows (outcome 'stored') dominating outcomes_7d.stored while
+// growth_7d (already extraction-only) reported the true near-zero rate. THE
+// regression pin below reproduces that shape at incident scale.
+
+test('THE incident shape: a turn-heavy surface with ZERO landings reports '
+  + 'outcomes_7d.stored === 0 while turns_7d carries the volume — the exact '
+  + '"547 stored/7d vs growth 0/day" contradiction, now resolved', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    // Incident-scale turn volume — all emit outcome 'stored' (append-turn's
+    // real behavior), and NO capture.extraction/capture.checkpoint rows at
+    // all (the summarizer-throw outage: turns keep landing, nothing else does).
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 547 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['claude-code-plugin'];
+  assert.equal(s.events_today, 547, 'events_today (unchanged scope) still sees every turn');
+  assert.equal(s.outcomes_7d.stored, 0, 'landing-only outcomes_7d must NOT read this turn-only surface as "stored"');
+  assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES, 'no landing event occurred at all — every bucket is zero');
+  assert.equal(s.turns_7d, 547, 'the honest volume label carries the number the old conflated "stored" used to claim');
+});
+
+test('failed bucketing: a capture.checkpoint "failed" row (summarizer-throw, #185 catch) '
+  + 'lands in outcomes_7d.failed, is a landing event for the vocabulary check, and never '
+  + 'counts toward turns_7d or growth_docs_7d', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'failed', count: 2 },
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 10 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['claude-code-plugin'];
+  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, failed: 2 });
+  assert.equal(s.turns_7d, 10, 'the sibling turn row is unaffected and stays out of outcomes_7d');
+  assert.equal(s.events_today, 12, 'events_today (unchanged) sums both rows');
+  // growth_docs_7d stays 'stored'+'error' only (spec §7: unchanged) — 'failed'
+  // never enters the doc census (I7: failed never counts as a doc).
+  assert.equal(stats.growth_docs_7d[TODAY], 0, "'failed' must not be miscounted as a doc-tier write");
 });
 
 // ---------- readCounterStats: growth_7d ----------
@@ -305,6 +374,7 @@ test('capture: a surface named __proto__ is reported as data, not swallowed by t
     events_today: 2,
     errors_today: 0,
     outcomes_7d: { ...EMPTY_OUTCOMES, stored: 2 },
+    turns_7d: 0,
   });
   // Neighbouring surface unpoisoned by the hostile key.
   assert.equal(served['claude-code'].events_today, 1);
@@ -325,7 +395,10 @@ test('rows written by recordCaptureEvent (T5 writer) read back through readCount
     const s = stats.capture['claude-code'];
     assert.equal(s.events_today, 2);
     assert.equal(s.freshness_hours, 0);
-    assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, stored: 2 });
+    // CAPTURE_EVENTS.TURN is not a landing event (spec §7) — outcomes_7d
+    // stays empty; the volume reads through turns_7d instead.
+    assert.deepEqual(s.outcomes_7d, EMPTY_OUTCOMES);
+    assert.equal(s.turns_7d, 2);
   } finally {
     if (prev !== undefined) process.env.UM_COUNTERS_DB_PATH = prev;
     else delete process.env.UM_COUNTERS_DB_PATH;

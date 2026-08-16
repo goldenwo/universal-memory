@@ -271,6 +271,15 @@ export function captureVerdict(capture, threshold) {
  * `deduped`/`superseded` COUNT as landing: a dedup hit reached the vault
  * end-to-end and proves the pipeline alive, so `stored === 0` alone would
  * false-alarm an all-dedup week (spec §4 Δ07-28 Δ2 / A23).
+ *
+ * Spec §7 (2026-08-15): `outcomes.stored` on the incoming payload is now
+ * ITSELF landing-only (stats.mjs scopes outcomes_7d to capture.extraction +
+ * capture.checkpoint, excluding capture.turn) — this function's arithmetic
+ * is unchanged, but what it sums is now a true "reached the vault" count
+ * rather than one conflated with raw turn-append volume. That upstream
+ * narrowing is what lets this red rule fire during a checkpoint outage where
+ * turns keep landing but nothing else does (the arc's motivating blindfold:
+ * "547 stored/7d" while growth sat at 0/day).
  */
 function landedCount(outcomes) {
   if (outcomes === null || typeof outcomes !== 'object' || Array.isArray(outcomes)) return null;
@@ -544,35 +553,54 @@ ${freshnessRows(capture, thresholdHours, writesEnabled, stats.generated_at)}
 // Pipeline tile — "classified outcomes (7d)" (spec §4 Pipeline / A20)
 // ---------------------------------------------------------------------------
 
-// Fixed order + the five-outcome vocabulary `stats.mjs` always emits (see
+// Fixed order + the six-outcome vocabulary `stats.mjs` always emits (see
 // control-page.mjs's freshnessTile header note). NOT the same thing as
 // A24's surface-name ban: these are OUTCOME names, module literals, never
 // attacker-controlled — no branch here is keyed on a SURFACE name.
-const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'superseded', 'error']);
+//
+// Spec §7: this vocabulary — and the outcomes_7d counts behind it — is now
+// LANDING-ONLY (capture.extraction + capture.checkpoint; capture.turn is
+// excluded and surfaced separately as `turns_7d`, rendered as its own
+// column below, never classified as an outcome).
+const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'superseded', 'error', 'failed']);
 
 // Colour never the sole carrier (spec §6): every cell spells out its outcome
-// NAME as text, so `error` is still legible without the red. `error` is the
-// ONLY outcome that CAN get the error colour — `abstained` is a routine gate
-// outcome (the #185 thin-transcript gate, #190's zero-turn skips), never a
-// failure, and renders in the SAME plain/neutral style as stored/deduped/
-// superseded. There is deliberately no "good" colour either: this tile has
-// no residual to compare counts against (R2-C-I5), so nothing here claims a
-// count is healthy, only that it is (or is not) an error.
+// NAME as text, so `error`/`failed` are still legible without the red.
+// `error` and `failed` are the ONLY outcomes that CAN get the error colour —
+// both denote a genuine pipeline failure (`error`: retry-exhausted, the
+// summary/state.md landed but the index is stale; `failed`: the summarizer
+// threw, nothing landed at all — spec §7's owned OUTCOME_KEYS ripple).
+// `abstained` is a routine gate outcome (the #185 thin-transcript gate,
+// #190's zero-turn skips), never a failure, and renders in the SAME plain/
+// neutral style as stored/deduped/superseded. There is deliberately no
+// "good" colour either: this tile has no residual to compare counts against
+// (R2-C-I5), so nothing here claims a count is healthy, only that it is (or
+// is not) a failure.
 //
 // The red is further gated on the count itself: a HEALTHY deployment (0
-// errors) must not render a red "error: 0" block — that would be color
-// crying wolf on every render of a fine surface — and a malformed count
-// (non-numeric, rendering as the raw text or an em dash) must not be
+// errors/failures) must not render a red "error: 0" block — that would be
+// color crying wolf on every render of a fine surface — and a malformed
+// count (non-numeric, rendering as the raw text or an em dash) must not be
 // error-coloured either, per this module's own empty-state contract
 // (absent ⇒ em dash, unusable ⇒ grey "cannot assess" elsewhere, never a false
 // red). `pyFloat` (not bare `Number`) so a string count from a hostile or
 // out-of-band producer is judged by the SAME coercion rules as every other
 // cron-adjacent number in this module.
+const FAILURE_OUTCOME_NAMES = Object.freeze(['error', 'failed']);
+
 function outcomeCell(name, value) {
   const text = `${name}: ${cell(value)}`;
   const n = pyFloat(value);
-  const isRealError = name === 'error' && Number.isFinite(n) && n > 0;
+  const isRealError = FAILURE_OUTCOME_NAMES.includes(name) && Number.isFinite(n) && n > 0;
   return isRealError ? `<td class="s-red">${text}</td>` : `<td>${text}</td>`;
+}
+
+// `turns_7d` is a VOLUME scalar, never an outcome — plain always, no colour
+// (spec §7: raw capture.turn appends carry no classified outcome of their
+// own). Kept out of outcomeCell/OUTCOME_KEYS on purpose so a future outcome
+// added to that vocabulary cannot accidentally start colouring turns.
+function turnsCell(value) {
+  return `<td>turns: ${cell(value)}</td>`;
 }
 
 function pipelineRows(capture) {
@@ -580,9 +608,11 @@ function pipelineRows(capture) {
     const info = asPlainObject(capture[name]);
     const outcomes = info === null ? null : asPlainObject(info.outcomes_7d);
     const cells = OUTCOME_KEYS.map((k) => outcomeCell(k, outcomes === null ? undefined : outcomes[k])).join('\n          ');
+    const turns = turnsCell(info === null ? undefined : info.turns_7d);
     return `        <tr>
           <th scope="row">${t(name)}</th>
           ${cells}
+          ${turns}
         </tr>`;
   }).join('\n');
 }
@@ -605,6 +635,13 @@ function captureShapeReason(capture) {
  * carries only the 1-day `events_today` scalar and the 7-day `outcomes_7d`
  * sum), so an "unlabelled residual" column would subtract across two
  * different windows and can go negative. No residual is rendered (A20).
+ *
+ * Spec §7: `outcomes_7d` is now LANDING-only (capture.extraction +
+ * capture.checkpoint) — this table classifies landings, not raw capture
+ * volume. `turns_7d` (capture.turn's honest volume label) rides the SAME
+ * row as its own trailing column, deliberately UNCLASSIFIED (plain, never
+ * coloured) — it is a count, not an outcome, and is still not a residual:
+ * it comes from its own query, not a subtraction across windows.
  *
  * Shares its `capture` guard shape with freshnessTile (null/malformed ⇒
  * cannot-assess, `{}` ⇒ never-written) because it reads the SAME `capture`
@@ -637,6 +674,8 @@ function pipelineTile(stats) {
             <th scope="col">Deduped</th>
             <th scope="col">Superseded</th>
             <th scope="col">Error</th>
+            <th scope="col">Failed</th>
+            <th scope="col">Turns (7d)</th>
           </tr>
         </thead>
         <tbody>

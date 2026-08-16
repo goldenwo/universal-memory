@@ -18,6 +18,16 @@
 //   • Degraded mode (A5): missing/unreadable counters db ⇒ null-shaped result
 //     (never throws) — the route maps it to capture:null + growth_7d:null +
 //     degraded:["counters-unavailable"], HTTP 200.
+//   • LANDING-ONLY outcomes_7d (spec §7, 2026-08-15 instrumented-truth fix):
+//     outcomes_7d is scoped to LANDING_EVENTS (capture.extraction,
+//     capture.checkpoint) only — capture.turn no longer inflates "stored" (the
+//     547-stored/7d-vs-growth-0/day contradiction: 2,570 turn-appends emit
+//     outcome 'stored' too, and used to dominate the same bucket as real
+//     landings). events_today/errors_today/freshness keep their prior ALL
+//     capture.% scope unchanged (one semantics change per surface per
+//     release — the layers block carries the per-layer truth instead).
+//   • Additive turns_7d (per surface): the honest 7-day volume label — the
+//     same capture.turn rows that used to masquerade as "stored" landings.
 //
 // CLOCK SEAM: every time-dependent function takes `now` (epoch ms) as an
 // explicit parameter — no Date.now() in this module. The route passes
@@ -36,8 +46,17 @@ const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 86_400_000;
 const WINDOW_DAYS = 7; // today + 6 prior UTC days (spec §3 "_7d" fields)
 
-/** Spec §6 outcome vocabulary — outcomes_7d always carries all five keys. */
-const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'superseded', 'error']);
+/** Spec §6 outcome vocabulary — outcomes_7d always carries all six keys. */
+const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'superseded', 'error', 'failed']);
+
+/**
+ * Spec §7 — the events that count as a LANDING (something reached the vault
+ * or was durably written to disk). `capture.turn` is deliberately excluded:
+ * it is raw append volume, not a pipeline outcome, and is exposed instead via
+ * the additive `turns_7d` field. Single-sourced here so the SQL scope and the
+ * doc comments above cannot drift apart.
+ */
+const LANDING_EVENTS = Object.freeze(['capture.extraction', 'capture.checkpoint']);
 
 /** Degraded shape (A5): counters unavailable ⇒ nulls, never a throw. */
 function nullShaped() {
@@ -85,7 +104,8 @@ export function freshnessHours(lastDaySeen, nowMs) {
  *   available: boolean,
  *   capture: null | Record<string, { last_day_seen: string, freshness_hours: number,
  *     events_today: number, errors_today: number,
- *     outcomes_7d: Record<'stored'|'abstained'|'deduped'|'superseded'|'error', number> }>,
+ *     outcomes_7d: Record<'stored'|'abstained'|'deduped'|'superseded'|'error'|'failed', number>,
+ *     turns_7d: number }>,
  *   growth_7d: null | Record<string, number>,
  *   recall: null | { searches_today: number, searches_7d: number },
  * }} Null-shaped ({available:false}, all sections null) when the counters db
@@ -123,6 +143,29 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       FROM counters
       WHERE event LIKE 'capture.%' AND day >= ? AND day <= ?
       GROUP BY surface, day, outcome
+    `).all(windowStart, today);
+
+    // Spec §7 — outcomes_7d is LANDING-ONLY: capture.extraction + capture.
+    // checkpoint, never capture.turn (a turn-append also emits outcome
+    // 'stored', which is exactly how it used to inflate outcomes_7d.stored
+    // above windowRows' all-capture.% scope). LANDING_EVENTS is the single
+    // source for both this WHERE clause and the doc comments above.
+    const landingPlaceholders = LANDING_EVENTS.map(() => '?').join(', ');
+    const landingRows = db.prepare(`
+      SELECT surface, outcome, SUM(count) AS n
+      FROM counters
+      WHERE event IN (${landingPlaceholders}) AND day >= ? AND day <= ?
+      GROUP BY surface, outcome
+    `).all(...LANDING_EVENTS, windowStart, today);
+
+    // Additive turns_7d (spec §7): the honest volume label — the same
+    // capture.turn rows outcomes_7d now excludes, summed per surface over the
+    // window (no outcome breakdown; turn always emits 'stored').
+    const turnRows = db.prepare(`
+      SELECT surface, SUM(count) AS n
+      FROM counters
+      WHERE event = 'capture.turn' AND day >= ? AND day <= ?
+      GROUP BY surface
     `).all(windowStart, today);
 
     const growthRows = db.prepare(`
@@ -168,17 +211,29 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
         events_today: 0,
         errors_today: 0,
         outcomes_7d: emptyOutcomes(),
+        turns_7d: 0,
       };
     }
+    // events_today/errors_today (spec §7: UNCHANGED) — still every capture.%
+    // row, today-scoped, exactly as before this fix. outcomes_7d is NO LONGER
+    // populated from this loop — see the landingRows loop below.
     for (const { surface, day, outcome, n } of windowRows) {
       const s = capture[surface]; // always present: window rows are a subset of last-seen surfaces
       if (day === today) {
         s.events_today += n;
         if (outcome === 'error') s.errors_today += n;
       }
-      // Outcome '' (inapplicable, spec §6) counts toward events_today but has
-      // no outcomes_7d bucket by design.
+    }
+    // Spec §7: outcomes_7d is landing-only — populated from landingRows
+    // (capture.extraction + capture.checkpoint), never capture.turn.
+    for (const { surface, outcome, n } of landingRows) {
+      const s = capture[surface]; // always present: landing rows are a subset of last-seen surfaces
+      // Outcome '' (inapplicable, spec §6) has no outcomes_7d bucket by design.
       if (Object.hasOwn(s.outcomes_7d, outcome)) s.outcomes_7d[outcome] += n;
+    }
+    for (const { surface, n } of turnRows) {
+      const s = capture[surface]; // always present: turn rows are a subset of last-seen surfaces
+      s.turns_7d = n;
     }
 
     // #187 reactions_7d: signal.reaction lives OUTSIDE the capture.* namespace

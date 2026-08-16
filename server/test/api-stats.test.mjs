@@ -189,7 +189,12 @@ test('A1: 200 with token — full spec-§3 shape', async () => {
     assert.equal(cc.freshness_hours, 0);
     assert.equal(cc.events_today, 6, 'recall.search rows do NOT count as capture events');
     assert.equal(cc.errors_today, 0);
-    assert.deepEqual(cc.outcomes_7d, { stored: 6, abstained: 0, deduped: 0, superseded: 0, error: 0 });
+    // outcomes_7d (spec §7: landing-only) sees only the 2 capture.extraction
+    // rows — the 4 capture.turn rows no longer inflate "stored".
+    assert.deepEqual(cc.outcomes_7d, {
+      stored: 2, abstained: 0, deduped: 0, superseded: 0, error: 0, failed: 0,
+    });
+    assert.equal(cc.turns_7d, 4, 'turns_7d (additive) carries the turn volume outcomes_7d now excludes');
 
     assert.equal(body.recall.searches_today, 7);
     assert.equal(body.recall.searches_7d, 7);

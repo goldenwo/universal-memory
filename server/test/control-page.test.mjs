@@ -51,13 +51,20 @@ function surface({
   deduped = 0,
   superseded = 0,
   error = 0,
+  // spec §7 (2026-08-15 instrumented-truth fix): outcomes_7d's 6th key, and
+  // the additive turns_7d volume label riding alongside it.
+  failed = 0,
+  turns_7d = 0,
 } = {}) {
   return {
     last_day_seen,
     freshness_hours,
     events_today,
     errors_today,
-    outcomes_7d: { stored, abstained, deduped, superseded, error },
+    outcomes_7d: {
+      stored, abstained, deduped, superseded, error, failed,
+    },
+    turns_7d,
   };
 }
 
@@ -440,6 +447,30 @@ test('A23: the red rule is per-surface only and never fires on a stale surface',
   assert.doesNotMatch(html, /landing nothing/);
 });
 
+test('spec §7 arc pin: landedCount fires red on TURN-ONLY activity — freshness is 0h (turns keep '
+  + 'landing) but outcomes_7d is all-zero (nothing actually reaches the vault), reproducing the '
+  + 'checkpoint-outage class the "547 stored/7d vs growth 0/day" blindfold hid', () => {
+  const html = render(makeStats({
+    capture: {
+      'claude-code-plugin': surface({
+        freshness_hours: 0, events_today: 547, errors_today: 0,
+        stored: 0, deduped: 0, superseded: 0, abstained: 0, error: 0, failed: 0,
+        turns_7d: 547,
+      }),
+    },
+  }));
+  // Before spec §7, outcomes_7d.stored would have been 547 (turn-appends
+  // conflated into "stored") and this row would have read green — exactly
+  // the blindfold. Landing-only outcomes_7d makes the red rule fire instead.
+  assert.match(html, /<td class="s-red">active but landing nothing<\/td>/);
+  // The aggregate cron verdict is untouched by this (freshness-only input) —
+  // still FRESH, since turns DID keep the surface's freshness alive.
+  assert.match(html, /Cron verdict: FRESH/);
+  // The pipeline tile's own turns_7d cell shows the volume was real, not zero.
+  const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
+  assert.match(section, /<td>turns: 547<\/td>/);
+});
+
 // ---------------------------------------------------------------------------
 // A6 — hostile map KEYS
 // ---------------------------------------------------------------------------
@@ -745,9 +776,13 @@ test('carry-in 2 (fix round 1): brandCss() is a REAL single source — both page
 // ---------------------------------------------------------------------------
 
 test('A20: the pipeline tile is labelled "classified outcomes (7d)", has no residual, '
-  + 'and colours only the error outcome', () => {
+  + 'and colours only the error/failed outcomes', () => {
   const html = render(makeStats({
-    capture: { a: surface({ stored: 3, abstained: 41, deduped: 1, superseded: 0, error: 2 }) },
+    capture: {
+      a: surface({
+        stored: 3, abstained: 41, deduped: 1, superseded: 0, error: 2, failed: 1, turns_7d: 12,
+      }),
+    },
   }));
   const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
   assert.match(section, /stored: 3/);
@@ -755,12 +790,17 @@ test('A20: the pipeline tile is labelled "classified outcomes (7d)", has no resi
   assert.match(section, /deduped: 1/);
   assert.match(section, /superseded: 0/);
   assert.match(section, /error: 2/);
-  // error is the ONLY outcome coloured; each count is named as text, so
-  // colour is never the sole carrier (spec §6).
+  assert.match(section, /failed: 1/);
+  // error/failed are the ONLY outcomes coloured (spec §7's OUTCOME_KEYS
+  // ripple); each count is named as text, so colour is never the sole
+  // carrier (spec §6).
   assert.match(section, /<td class="s-red">error: 2<\/td>/);
+  assert.match(section, /<td class="s-red">failed: 1<\/td>/);
   assert.doesNotMatch(section, /<td class="s-red">abstained/);
   assert.doesNotMatch(section, /<td class="s-green">/, 'no outcome renders in the success-green colour');
   assert.doesNotMatch(html, /events_7d/i, 'no residual — there is no events_7d in the payload');
+  // turns_7d (additive, spec §7) rides the same row, its own cell, never coloured.
+  assert.match(section, /<td>turns: 12<\/td>/);
 });
 
 test('pipeline tile: capture:null/malformed is cannot-assess; capture:{} is never-written — same '
@@ -775,18 +815,21 @@ test('pipeline tile: capture:null/malformed is cannot-assess; capture:{} is neve
   assert.match(red, /never written/i);
 });
 
-test('pipeline tile: a surface with malformed/missing outcomes_7d renders em dashes, '
-  + 'never a crash or a false zero', () => {
+test('pipeline tile: a surface with malformed/missing outcomes_7d (and turns_7d) renders em '
+  + 'dashes, never a crash or a false zero', () => {
   const html = render(makeStats({
     capture: { a: { last_day_seen: '2026-07-28', freshness_hours: 0, events_today: 1, errors_today: 0 } },
   }));
   const section = sectionByHeading(html, 'Classified outcomes \\(7d\\)');
   assert.match(section, /stored: —/);
   assert.match(section, /error: —/);
+  assert.match(section, /failed: —/);
+  assert.match(section, /turns: —/, 'a missing turns_7d renders an em dash too, never a false 0');
   // MED-1 (fix round 1): an unusable count is never error-coloured either —
   // this module's contract is absent ⇒ em dash, unusable ⇒ grey elsewhere,
-  // never a false red.
+  // never a false red. Applies to 'failed' the same way it applies to 'error'.
   assert.doesNotMatch(section, /<td class="s-red">error/);
+  assert.doesNotMatch(section, /<td class="s-red">failed/);
 });
 
 test('MED-1 (fix round 1): a healthy zero-error surface renders plain, not a red "error: 0" '
@@ -810,6 +853,29 @@ test('MED-1 (fix round 1): a healthy zero-error surface renders plain, not a red
     'Classified outcomes \\(7d\\)',
   );
   assert.match(real, /<td class="s-red">error: 3<\/td>/, 'a genuine positive error count IS still coloured');
+});
+
+test('MED-1 sibling: the same healthy/hostile/real pattern applies to "failed" (spec §7 — the '
+  + 'summarizer-throw outcome is a genuine failure too, not a routine gate outcome)', () => {
+  const healthy = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, failed: 0 }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(healthy, /failed: 0/);
+  assert.doesNotMatch(healthy, /<td class="s-red">failed/, 'a real ZERO failed count must not read as an alarm');
+
+  const hostile = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, failed: 'not-a-number' }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(hostile, /failed: not-a-number/);
+  assert.doesNotMatch(hostile, /<td class="s-red">failed/, 'an unparseable count is not coloured red either');
+
+  const real = sectionByHeading(
+    render(makeStats({ capture: { a: surface({ stored: 5, failed: 2 }) } })),
+    'Classified outcomes \\(7d\\)',
+  );
+  assert.match(real, /<td class="s-red">failed: 2<\/td>/, 'a genuine positive failed count IS still coloured');
 });
 
 // ---------------------------------------------------------------------------
