@@ -104,6 +104,81 @@ test('resolvePositiveInt: env absent, config valid wins over fallback', () => {
   });
 });
 
+// --- resolvePositiveInt: integrality matrix (round-1 review IMPORTANT 2) --
+// Fractional/non-safe-integer values must fall through exactly like NaN or
+// negative values do — a persisted fractional chunk offset would fail
+// checkpoint-cursor.mjs's `Number.isSafeInteger(offset)` shape guard
+// forever (a permanent recovery-reinit loop). Also closes Task 1's deferred
+// minor ("200000.5 would pass un-rounded").
+
+test('resolvePositiveInt: fractional env ("7.5") falls through to config', () => {
+  withEnv('7.5', () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 7, fallback: 1 });
+    assert.equal(v, 7);
+  });
+});
+
+test('resolvePositiveInt: fractional config (200000.5) falls through to fallback', () => {
+  withEnv(undefined, () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 200000.5, fallback: 200_000 });
+    assert.equal(v, 200_000);
+  });
+});
+
+test('resolvePositiveInt: env Infinity falls through to config (not a safe integer)', () => {
+  withEnv('Infinity', () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 7, fallback: 1 });
+    assert.equal(v, 7);
+  });
+});
+
+test('resolvePositiveInt: env beyond MAX_SAFE_INTEGER falls through to config', () => {
+  withEnv(String(Number.MAX_SAFE_INTEGER + 1024), () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 7, fallback: 1 });
+    assert.equal(v, 7);
+  });
+});
+
+test('resolvePositiveInt: a whole-number-valued env string ("42.0") is accepted (still a safe integer)', () => {
+  withEnv('42.0', () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 7, fallback: 1 });
+    assert.equal(v, 42);
+  });
+});
+
+// --- resolvePositiveInt: `min` param (round-1 review IMPORTANT 2) --------
+// Values that clear "positive integer" but not a caller-supplied usability
+// floor fall through exactly like any other invalid value — never silently
+// accepted just because they're technically > 0.
+
+test('resolvePositiveInt: env below min falls through to config', () => {
+  withEnv('3', () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 5000, fallback: 9000, min: 1024 });
+    assert.equal(v, 5000);
+  });
+});
+
+test('resolvePositiveInt: env at exactly min is accepted', () => {
+  withEnv('1024', () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 5000, fallback: 9000, min: 1024 });
+    assert.equal(v, 1024);
+  });
+});
+
+test('resolvePositiveInt: config below min falls through to fallback', () => {
+  withEnv(undefined, () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 500, fallback: 9000, min: 1024 });
+    assert.equal(v, 9000);
+  });
+});
+
+test('resolvePositiveInt: default min is 1 (unchanged ">0" behavior when omitted)', () => {
+  withEnv(undefined, () => {
+    const v = resolvePositiveInt({ envName: ENV_NAME, configValue: 1, fallback: 9000 });
+    assert.equal(v, 1);
+  });
+});
+
 // --- resolveFloor --------------------------------------------------------
 
 test('resolveFloor: env "0" YIELDS 0 (disable semantics — contrast with resolvePositiveInt)', () => {
@@ -204,19 +279,52 @@ test('resolveChunkingConfig: UM_CHECKPOINT_STATE_MERGE_TIMEOUT_MS override lands
 test('resolveChunkingConfig: config fields land on the right keys', () => {
   withChunkingEnv({}, () => {
     const cfg = resolveChunkingConfig({
-      chunk_max_bytes: 1,
+      // chunk_max_bytes must clear its 1024 usability floor (round-1 review
+      // IMPORTANT 2) — unlike the other four keys, `1` is not accepted here.
+      chunk_max_bytes: 2000,
       max_chunks_per_run: 2,
       summarize_timeout_ms: 3,
       autosupersede_timeout_ms: 4,
       state_merge_timeout_ms: 5,
     });
     assert.deepEqual(cfg, {
-      chunkMaxBytes: 1,
+      chunkMaxBytes: 2000,
       maxChunksPerRun: 2,
       summarizeTimeoutMs: 3,
       autosupersedeTimeoutMs: 4,
       stateMergeTimeoutMs: 5,
     });
+  });
+});
+
+// --- resolveChunkingConfig: chunk_max_bytes's 1024 usability floor
+// (round-1 review IMPORTANT 2) ---------------------------------------------
+
+test('resolveChunkingConfig: UM_CHECKPOINT_CHUNK_MAX_BYTES below 1024 falls through to config, then default', () => {
+  withChunkingEnv({ UM_CHECKPOINT_CHUNK_MAX_BYTES: '1' }, () => {
+    const cfg = resolveChunkingConfig();
+    assert.equal(cfg.chunkMaxBytes, 200_000, 'below the 1024 floor -> shipped default, not 1');
+  });
+});
+
+test('resolveChunkingConfig: UM_CHECKPOINT_CHUNK_MAX_BYTES=0.5 (fractional) falls through to default', () => {
+  withChunkingEnv({ UM_CHECKPOINT_CHUNK_MAX_BYTES: '0.5' }, () => {
+    const cfg = resolveChunkingConfig();
+    assert.equal(cfg.chunkMaxBytes, 200_000);
+  });
+});
+
+test('resolveChunkingConfig: chunk_max_bytes config value 0.25 (fractional) falls through to default', () => {
+  withChunkingEnv({}, () => {
+    const cfg = resolveChunkingConfig({ chunk_max_bytes: 0.25 });
+    assert.equal(cfg.chunkMaxBytes, 200_000);
+  });
+});
+
+test('resolveChunkingConfig: UM_CHECKPOINT_CHUNK_MAX_BYTES=1024 (exactly the floor) is accepted', () => {
+  withChunkingEnv({ UM_CHECKPOINT_CHUNK_MAX_BYTES: '1024' }, () => {
+    const cfg = resolveChunkingConfig();
+    assert.equal(cfg.chunkMaxBytes, 1024);
   });
 });
 

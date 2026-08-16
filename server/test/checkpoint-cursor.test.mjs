@@ -233,6 +233,21 @@ test('offset mid-turn with boundary "turn" -> recovery (boundary_misaligned)', a
   assert.equal(result.reason, 'boundary_misaligned');
 });
 
+test('offset at a turn-header start with an EMPTY ISO-suffix ("T user", \\S* widened acceptance) -> valid, no reinit', async () => {
+  // Task 4's shared makeTurnHeaderRe() aligns this module's header pattern
+  // with checkpoint.mjs:105's ('\\S*' after the ISO's 'T', not the previous
+  // local '\\S+') — a header whose ISO suffix is empty (immediately followed
+  // by a space and the role) is now accepted, where the old '\\S+' pattern
+  // would have rejected it and forced an unnecessary recovery re-init.
+  const vault = makeVault();
+  const content = '## 2026-08-10T user\nhi\n\n';
+  await writeRawFile(vault, '2026-08-10.md', content);
+  await writeCursorFile(vault, { file: '2026-08-10.md', offset: 0, boundary: 'turn' });
+  const result = await loadCursor({ vaultDir: vault, project: PROJECT });
+  assert.equal(result.reinitialized, false);
+  assert.equal(result.cursor.offset, 0);
+});
+
 test('same mid-turn offset with boundary "split" -> VALID (check 2 skipped)', async () => {
   const vault = makeVault();
   const content = turnHeader('2026-08-10T00:00:00.000Z', 'user') + '\nhello world\n\n';

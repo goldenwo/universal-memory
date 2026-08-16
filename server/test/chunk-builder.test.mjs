@@ -31,6 +31,15 @@ async function writeRawFile(vault, filename, content, project = PROJECT) {
   return p;
 }
 
+/** Write raw BYTES (not a utf8-encoded string) — for constructing invalid-UTF-8 fixtures directly. */
+async function writeRawFileBytes(vault, filename, buffer, project = PROJECT) {
+  const dir = rawDir(vault, project);
+  await fs.mkdir(dir, { recursive: true });
+  const p = path.join(dir, filename);
+  await fs.writeFile(p, buffer);
+  return p;
+}
+
 function turnHeader(iso, role) {
   return `## ${iso} ${role}`;
 }
@@ -552,4 +561,391 @@ test('chunkMaxBytes is measured in BYTES (Buffer.byteLength), not JS string leng
 
   assert.ok(Buffer.byteLength(result.chunk.text, 'utf8') <= chunkMaxBytes);
   assert.equal(result.chunk.boundary, 'split', 't1 alone exceeds the byte budget even though it fits the char budget');
+});
+
+// ===========================================================================
+// Section K — round-1 review IMPORTANT 1: invalid UTF-8 bytes must never
+// break I2 or drive the cursor past EOF. Header scanning happens in the
+// BYTE domain (latin1 decode: char index === byte offset for ANY input),
+// never via a utf8-decode + Buffer.byteLength backmap (which inflates
+// length for invalid sequences — each byte maps to U+FFFD, 3 bytes when
+// re-measured).
+// ===========================================================================
+
+test('IMPORTANT-1: reviewer repro shape — chunkMaxBytes=60 on content with 8x0xFF never exceeds the limit or the file size', async () => {
+  const vault = makeVault();
+  const header = Buffer.from(`${turnHeader('2026-08-10T00:00:00.000Z', 'user')}\n`, 'utf8');
+  const invalidRun = Buffer.from(Array(8).fill(0xff)); // 8 bytes, each an unconditionally-invalid UTF-8 lead byte
+  const filler = Buffer.from('z'.repeat(40), 'utf8');
+  const tail = Buffer.from('\n\n', 'utf8');
+  const fileBuf = Buffer.concat([header, filler.subarray(0, 20), invalidRun, filler.subarray(20), tail]);
+  await writeRawFileBytes(vault, '2026-08-11.md', fileBuf);
+
+  const cursor = freshCursor('2026-08-11.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 60, ...NOOP_LOCK,
+  });
+  assert.ok(result.chunk, 'expected a chunk (guaranteed progress)');
+  const chunkBytes = Buffer.byteLength(result.chunk.text, 'utf8');
+  assert.ok(chunkBytes <= 60, `I2 violated: got ${chunkBytes} bytes, limit 60`);
+  assert.ok(result.nextCursor.offset <= fileBuf.length, 'cursor must never exceed the actual file size');
+});
+
+test('IMPORTANT-1: invalid UTF-8 bytes across a full sweep -> I2 holds every call, byte-exact reassembly (Buffers, not strings), cursor never exceeds file size', async () => {
+  const vault = makeVault();
+  const header = Buffer.from(`${turnHeader('2026-08-10T00:00:00.000Z', 'user')}\n`, 'utf8');
+  const asciiA = Buffer.from('a'.repeat(30), 'utf8');
+  const invalidRun = Buffer.from(Array(8).fill(0xff));
+  const asciiB = Buffer.from('b'.repeat(30), 'utf8');
+  const tail = Buffer.from('\n\n', 'utf8');
+  const fileBuf = Buffer.concat([header, asciiA, invalidRun, asciiB, tail]);
+  await writeRawFileBytes(vault, '2026-08-10.md', fileBuf);
+  const totalSize = fileBuf.length;
+
+  const chunkMaxBytes = 20; // small: forces multiple hard splits, some landing inside/adjacent to the 0xFF run
+  let cursor = freshCursor('2026-08-10.md');
+  let assembled = Buffer.alloc(0);
+  let guard = 0;
+  for (;;) {
+    guard += 1;
+    assert.ok(guard < 200, 'runaway loop — position not advancing');
+    const result = await buildNextChunk({
+      vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, ...NOOP_LOCK,
+    });
+    if (result.exhausted) break;
+    const chunkBuf = Buffer.from(result.chunk.text, 'utf8');
+    assert.ok(chunkBuf.length <= chunkMaxBytes, `I2 violated: chunk is ${chunkBuf.length} bytes at limit ${chunkMaxBytes}`);
+    assert.ok(result.nextCursor.offset <= totalSize, 'nextCursor.offset must never exceed the file size');
+    assembled = Buffer.concat([assembled, chunkBuf]);
+    cursor = result.nextCursor;
+  }
+  // The one well-defined byte-exact invariant for content containing lone,
+  // UNCONDITIONALLY invalid bytes (0xFF is never a valid UTF-8 lead byte at
+  // any position, so splitting mid-run cannot change how many replacement
+  // characters result): decoding+re-encoding the file across N
+  // correctly-positioned pieces must equal decoding+re-encoding it in one
+  // pass over the whole file.
+  const expected = Buffer.from(fileBuf.toString('utf8'), 'utf8');
+  assert.ok(Buffer.compare(assembled, expected) === 0, 'byte-exact reassembly (via utf8 round-trip) failed');
+});
+
+// ===========================================================================
+// Section L — round-1 review IMPORTANT 2: config-layer fix (resolvePositiveInt
+// integrality + min:1024 for chunk_max_bytes) is checkpoint-config.mjs's job
+// (see checkpoint-config.test.mjs); this pins the BUILDER still makes clean
+// progress at that floor value for realistic oversized multi-byte content.
+// ===========================================================================
+
+test('IMPORTANT-2: chunkMaxBytes=1024 (the new config floor) makes guaranteed progress on a multi-byte-leading oversized turn', async () => {
+  const vault = makeVault();
+  // Body starts with multi-byte characters so a split point could plausibly
+  // land mid-codepoint near byte 1024 if the boundary math were wrong.
+  const body = '💎中文é'.repeat(400); // well over 1024 bytes, no newlines at all
+  const big = turn('2026-08-10T00:00:00.000Z', 'user', body);
+  await writeRawFile(vault, '2026-08-10.md', big);
+
+  const chunkMaxBytes = 1024;
+  const cursor = freshCursor('2026-08-10.md');
+  const first = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, ...NOOP_LOCK,
+  });
+  assert.ok(Buffer.byteLength(first.chunk.text, 'utf8') <= chunkMaxBytes);
+  assert.equal(first.chunk.boundary, 'split');
+  assert.ok(first.nextCursor.offset > 0, 'guaranteed progress at the config floor');
+  assert.ok(!first.chunk.text.includes('�'), 'no broken codepoint');
+
+  // Full sweep to confirm the whole (oversized) turn is eventually consumed
+  // byte-exact at this exact floor value.
+  let cursor2 = cursor;
+  let assembled = '';
+  let guard = 0;
+  for (;;) {
+    guard += 1;
+    assert.ok(guard < 50);
+    const result = await buildNextChunk({
+      vaultDir: vault, project: PROJECT, cursor: cursor2, chunkMaxBytes, ...NOOP_LOCK,
+    });
+    if (result.exhausted) break;
+    assert.ok(Buffer.byteLength(result.chunk.text, 'utf8') <= chunkMaxBytes);
+    assembled += result.chunk.text;
+    cursor2 = result.nextCursor;
+  }
+  assert.equal(assembled, big);
+});
+
+// ===========================================================================
+// Section M — round-1 review MINOR 3: a regex-shape-matching but
+// semantically-unparseable header ISO must not poison covers_from/
+// covers_until — treated as headerless (falls back to carry/file-date).
+// ===========================================================================
+
+test('MINOR-3: header ISO with garbage suffix ("Tzzz") is unparseable -> contributes nothing, falls back to carry/file-date', async () => {
+  const vault = makeVault();
+  const badHeaderTurn = '## 2026-08-10Tzzz user\nbroken timestamp\n\n';
+  const goodTurn = turn('2026-08-10T05:00:00.000Z', 'assistant', 'a real turn after it');
+  const content = badHeaderTurn + goodTurn;
+  await writeRawFile(vault, '2026-08-10.md', content);
+
+  const cursor = freshCursor('2026-08-10.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 200_000, ...NOOP_LOCK,
+  });
+
+  assert.equal(result.chunk.text, content);
+  assert.equal(result.chunk.turnCount, 2, 'both headers are structurally real turns, regardless of ISO validity');
+  assert.ok(!Number.isNaN(Date.parse(result.chunk.coversFrom)), 'coversFrom must always be well-formed');
+  assert.ok(!Number.isNaN(Date.parse(result.chunk.coversUntil)), 'coversUntil must always be well-formed');
+  // No carry existed yet when the bad-ISO turn was processed -> falls back
+  // to this file's own date-midnight, which becomes the chunk's covers_from
+  // (earlier than the good turn's real 05:00 ISO).
+  assert.equal(result.chunk.coversFrom, '2026-08-10T00:00:00.000Z');
+  assert.equal(result.chunk.coversUntil, '2026-08-10T05:00:00.000Z');
+});
+
+test('MINOR-3: header ISO that is shape-valid but calendar-impossible (month 13) is unparseable -> same fallback, never poisons covers_*', async () => {
+  const vault = makeVault();
+  const badHeaderTurn = '## 2026-13-45T00:00:00.000Z user\nimpossible calendar date\n\n';
+  const goodTurn = turn('2026-08-10T05:00:00.000Z', 'assistant', 'a real turn after it');
+  const content = badHeaderTurn + goodTurn;
+  await writeRawFile(vault, '2026-08-10.md', content);
+
+  const cursor = freshCursor('2026-08-10.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 200_000, ...NOOP_LOCK,
+  });
+
+  assert.equal(result.chunk.text, content);
+  assert.equal(result.chunk.turnCount, 2);
+  assert.ok(!Number.isNaN(Date.parse(result.chunk.coversFrom)));
+  assert.ok(!Number.isNaN(Date.parse(result.chunk.coversUntil)));
+  assert.equal(result.chunk.coversUntil, '2026-08-10T05:00:00.000Z');
+  assert.notEqual(result.chunk.coversFrom, '2026-13-45T00:00:00.000Z', 'the garbage ISO must never appear verbatim in covers_*');
+});
+
+// ===========================================================================
+// Section N — round-1 review MINOR 4: a cursor already at (or past) a
+// file's EOF must never trigger a raw_lock stop for that file — there is
+// nothing to read there, lock or no lock.
+// ===========================================================================
+
+test('MINOR-4: locked LAST file with cursor already at its EOF -> exhausted, never a spurious raw_lock stop', async () => {
+  const vault = makeVault();
+  const content = turn('2026-08-10T00:00:00.000Z', 'user', 'only turn, already fully digested');
+  await writeRawFile(vault, '2026-08-10.md', content);
+  const size = Buffer.byteLength(content, 'utf8');
+
+  const cursor = freshCursor('2026-08-10.md', { offset: size });
+  const { acquireLock, releaseLock } = lockThatFails(['2026-08-10.md']); // a live session holds this file's lock
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 200_000, acquireLock, releaseLock,
+  });
+  assert.deepEqual(result, { exhausted: true });
+});
+
+// ===========================================================================
+// Section O — round-1 review MINOR 5: (a) a releaseLock rejection is
+// best-effort and must never escape/mask; (b) a raw file that vanishes
+// between listing and reading (ENOENT — legal per §4.2 check 3) is skipped,
+// not treated as a run-aborting error.
+// ===========================================================================
+
+function lockWithFailingRelease() {
+  return {
+    acquireLock: async () => true,
+    releaseLock: async () => {
+      throw new Error('boom: release failed');
+    },
+  };
+}
+
+test('MINOR-5a: releaseLock rejection is best-effort — a successful read still returns its chunk (no crash, no masking)', async () => {
+  const vault = makeVault();
+  const content = turn('2026-08-10T00:00:00.000Z', 'user', 'hello');
+  await writeRawFile(vault, '2026-08-10.md', content);
+  const cursor = freshCursor('2026-08-10.md');
+  const { acquireLock, releaseLock } = lockWithFailingRelease();
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 200_000, acquireLock, releaseLock,
+  });
+  assert.ok(result.chunk, 'a failing releaseLock must never abort a successful read');
+  assert.equal(result.chunk.text, content);
+});
+
+/**
+ * Deletes `filenameToDelete` the moment its lock is "acquired" — deterministically
+ * reproduces the TOCTOU race (file present at the readdir/stat snapshot, gone by
+ * the time it's actually read) without depending on real filesystem timing.
+ */
+function lockThatDeletesFileOnAcquire(vault, filenameToDelete, project = PROJECT) {
+  return {
+    acquireLock: async (lockdirPath) => {
+      if (path.basename(lockdirPath, '.lockdir') === filenameToDelete) {
+        await fs.unlink(path.join(rawDir(vault, project), filenameToDelete)).catch(() => {});
+      }
+      return true;
+    },
+    releaseLock: async () => {},
+  };
+}
+
+test('MINOR-5b: raw file vanishes mid-walk (ENOENT, legal deletion per §4.2 check 3) -> skipped, walk continues rather than aborting', async () => {
+  const vault = makeVault();
+  const dayA = turn('2026-08-10T23:00:00.000Z', 'user', 'day A — deleted right after its lock is acquired');
+  const dayB = turn('2026-08-11T00:00:00.000Z', 'assistant', 'day B — present');
+  await writeRawFile(vault, '2026-08-10.md', dayA);
+  await writeRawFile(vault, '2026-08-11.md', dayB);
+
+  const cursor = freshCursor('2026-08-10.md');
+  const { acquireLock, releaseLock } = lockThatDeletesFileOnAcquire(vault, '2026-08-10.md');
+  const result = await buildNextChunk({
+    vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes: 200_000, acquireLock, releaseLock,
+  });
+  assert.ok(result.chunk, 'must not abort — should skip the vanished file and pick up day B');
+  assert.equal(result.chunk.text, dayB);
+  assert.equal(result.chunk.startFile, '2026-08-11.md');
+});
+
+// ===========================================================================
+// Section P — HARDENING: seeded parameterized sweep. chunkMaxBytes (small/
+// medium/large) x content shapes (multi-byte, oversized newline-free turns,
+// legacy-blob prefix, non-monotonic ISOs), with a deterministic seed (no
+// unseeded Math.random anywhere) — a failing case is always exactly
+// reproducible from the seed alone. Asserts byte-exact BUFFER reassembly,
+// I2, parseable covers_*, and strict cursor advance on every single call.
+// ===========================================================================
+
+/** Deterministic PRNG (mulberry32) — same seed always produces the same stream. */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function rand() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const MULTIBYTE_POOL = ['é', 'ñ', '中', '文', '💎', '🚀', '€', 'ü', 'ß', '漢'];
+
+function randomMultiByteBody(rand, minChars, maxChars) {
+  const len = minChars + Math.floor(rand() * (maxChars - minChars));
+  let s = '';
+  for (let i = 0; i < len; i += 1) {
+    if (rand() < 0.3) {
+      s += MULTIBYTE_POOL[Math.floor(rand() * MULTIBYTE_POOL.length)];
+    } else {
+      s += String.fromCharCode(97 + Math.floor(rand() * 26));
+    }
+    if (rand() < 0.05) s += '\n';
+  }
+  return s;
+}
+
+function buildMultiByteCorpus(rand) {
+  return {
+    '2026-08-10.md':
+      turn('2026-08-10T01:00:00.000Z', 'user', randomMultiByteBody(rand, 20, 60)) +
+      turn('2026-08-10T02:00:00.000Z', 'assistant', randomMultiByteBody(rand, 20, 60)),
+    '2026-08-11.md':
+      turn('2026-08-11T00:00:00.000Z', 'user', randomMultiByteBody(rand, 20, 60)),
+  };
+}
+
+function buildOversizedNoNewlineCorpus(rand) {
+  const bigBody = Array.from({ length: 300 }, () => String.fromCharCode(97 + Math.floor(rand() * 26))).join('');
+  return {
+    '2026-08-10.md':
+      turn('2026-08-10T00:00:00.000Z', 'user', bigBody) +
+      turn('2026-08-10T01:00:00.000Z', 'assistant', 'short reply'),
+  };
+}
+
+function buildLegacyBlobPrefixCorpus(rand) {
+  return {
+    '2026-07-01.md': 'legacy prose with no headers at all.\n'.repeat(1 + Math.floor(rand() * 3)),
+    '2026-08-10.md':
+      turn('2026-08-10T00:00:00.000Z', 'user', randomMultiByteBody(rand, 10, 40)) +
+      turn('2026-08-10T01:00:00.000Z', 'assistant', randomMultiByteBody(rand, 10, 40)),
+  };
+}
+
+function buildNonMonotonicCorpus() {
+  return {
+    '2026-08-10.md':
+      turn('2026-08-10T23:00:00.000Z', 'user', 'late in the day') +
+      turn('2026-08-10T01:00:00.000Z', 'assistant', 'earlier timestamp, later position') +
+      turn('2026-08-10T12:00:00.000Z', 'user', 'middle'),
+    '2026-08-11.md':
+      turn('2026-08-11T00:30:00.000Z', 'assistant', 'next day, out of order too') +
+      turn('2026-08-10T18:00:00.000Z', 'user', 'backdated into the next file'),
+  };
+}
+
+/** Runs one full sweep of `files` at `chunkMaxBytes`, asserting every hardening property. Returns `{sawSplit}`. */
+async function sweepCorpus(vault, files, chunkMaxBytes) {
+  const filenames = Object.keys(files).sort();
+  for (const name of filenames) {
+    // eslint-disable-next-line no-await-in-loop
+    await writeRawFile(vault, name, files[name]);
+  }
+  const expected = Buffer.concat(filenames.map((n) => Buffer.from(files[n], 'utf8')));
+
+  let cursor = freshCursor(filenames[0]);
+  let assembled = Buffer.alloc(0);
+  let sawSplit = false;
+  let guard = 0;
+  for (;;) {
+    guard += 1;
+    assert.ok(guard < 500, `runaway loop at chunkMaxBytes=${chunkMaxBytes}`);
+    const before = cursor;
+    // eslint-disable-next-line no-await-in-loop
+    const result = await buildNextChunk({
+      vaultDir: vault, project: PROJECT, cursor, chunkMaxBytes, ...NOOP_LOCK,
+    });
+    if (result.exhausted) break;
+
+    const chunkBuf = Buffer.from(result.chunk.text, 'utf8');
+    assert.ok(chunkBuf.length <= chunkMaxBytes, `I2 violated at chunkMaxBytes=${chunkMaxBytes}: ${chunkBuf.length} bytes`);
+    assert.ok(!Number.isNaN(Date.parse(result.chunk.coversFrom)), `unparseable coversFrom at chunkMaxBytes=${chunkMaxBytes}`);
+    assert.ok(!Number.isNaN(Date.parse(result.chunk.coversUntil)), `unparseable coversUntil at chunkMaxBytes=${chunkMaxBytes}`);
+    if (result.chunk.boundary === 'split') sawSplit = true;
+    assembled = Buffer.concat([assembled, chunkBuf]);
+
+    // Strict advance: (file, offset) must be lexically-then-numerically
+    // greater than before this call, every single call — the guard against
+    // silent non-progress.
+    const advanced =
+      result.nextCursor.file > before.file ||
+      (result.nextCursor.file === before.file && result.nextCursor.offset > before.offset);
+    assert.ok(advanced, `cursor did not strictly advance at chunkMaxBytes=${chunkMaxBytes} (was ${before.file}:${before.offset}, now ${result.nextCursor.file}:${result.nextCursor.offset})`);
+
+    cursor = result.nextCursor;
+  }
+  assert.ok(Buffer.compare(assembled, expected) === 0, `byte-exact reassembly failed at chunkMaxBytes=${chunkMaxBytes}`);
+  return { sawSplit };
+}
+
+test('HARDENING: seeded parameterized sweep — chunkMaxBytes x shapes x mid-sweep split-resume', async () => {
+  const SEED = 20260815; // deterministic — any failure is reproducible from this seed alone, forever
+  const rand = mulberry32(SEED);
+  const sizes = { small: 24, medium: 401, large: 100_000 };
+  const shapeBuilders = {
+    multiByte: buildMultiByteCorpus,
+    oversizedNoNewline: buildOversizedNoNewlineCorpus,
+    legacyBlobPrefix: buildLegacyBlobPrefixCorpus,
+    nonMonotonic: buildNonMonotonicCorpus,
+  };
+
+  let anySplitObserved = false;
+  for (const builder of Object.values(shapeBuilders)) {
+    for (const chunkMaxBytes of Object.values(sizes)) {
+      const vault = makeVault();
+      const files = builder(rand);
+      // eslint-disable-next-line no-await-in-loop
+      const { sawSplit } = await sweepCorpus(vault, files, chunkMaxBytes);
+      if (sawSplit) anySplitObserved = true;
+    }
+  }
+  assert.ok(anySplitObserved, 'the matrix must exercise at least one mid-sweep hard split (the split-resume path)');
 });

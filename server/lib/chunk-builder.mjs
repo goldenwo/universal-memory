@@ -37,6 +37,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { makeTurnHeaderRe } from './checkpoint-config.mjs';
+import { getLogger } from './logger.mjs';
+import { safeLog } from './obs-fallback.mjs';
+import { currentRequestId } from './request-context.mjs';
 
 // Raw day-file naming (mirrors checkpoint-cursor.mjs's CURSOR_FILE_RE):
 // `YYYY-MM-DD.md`, so lexical order == chronological order.
@@ -48,11 +51,6 @@ async function listPendingRawFiles(rawDir, cursorFile) {
   return entries.filter((n) => RAW_DAY_FILE_RE.test(n) && n >= cursorFile).sort();
 }
 
-/** Convert a JS string char-index into its UTF-8 byte offset (positions in this module are byte-exact). */
-function charIndexToByteOffset(str, charIndex) {
-  return Buffer.byteLength(str.slice(0, charIndex), 'utf8');
-}
-
 /** A never-headered legacy file/blob's fallback attribution: its own filename date at UTC midnight. */
 function fileDateMidnightIso(fname) {
   return `${fname.slice(0, 10)}T00:00:00.000Z`;
@@ -60,6 +58,24 @@ function fileDateMidnightIso(fname) {
 
 /**
  * Split one file's unread remainder into ordered segments.
+ *
+ * Header scanning happens entirely in the BYTE domain via a `latin1`
+ * decode, never `utf8` (round-1 review IMPORTANT 1). `latin1` maps every
+ * byte 0x00-0xFF to exactly one UTF-16 code unit, so a JS string char index
+ * is ALWAYS identical to its byte offset — for ANY input, valid UTF-8 or
+ * not. `utf8` decoding is lossy for invalid byte sequences (each maps to
+ * one U+FFFD replacement character, which is 3 bytes when re-measured via
+ * `Buffer.byteLength`), so converting a utf8-decoded string's char index
+ * back to a byte offset silently inflates past the true position — a raw
+ * capture file containing even one stray non-UTF-8 byte (a truncated
+ * multi-byte write, corrupted transport, …) could produce a chunk that
+ * exceeds `chunkMaxBytes` (I2 violation) and a `nextCursor.offset` beyond
+ * the file's actual size. The header pattern itself is pure ASCII, so
+ * matching against the latin1-decoded string finds real headers identically
+ * to matching the utf8-decoded one — only the invalid-byte robustness
+ * differs. `chunk.text` is still emitted via a `utf8` decode of the exact
+ * byte slices at the very end (buildNextChunk's `buildResult`) — this
+ * function only ever decodes for POSITION-FINDING, never for content.
  *
  * @param {Buffer} remainder - bytes from the resume offset to EOF.
  * @returns {Array<{startByte: number, endByte: number, headerIso: string|null}>}
@@ -69,14 +85,15 @@ function fileDateMidnightIso(fname) {
  */
 function segmentsForRemainder(remainder) {
   if (remainder.length === 0) return [];
-  const remainderStr = remainder.toString('utf8');
+  const remainderLatin1 = remainder.toString('latin1');
   const headerRe = makeTurnHeaderRe('gm');
   // makeTurnHeaderRe()'s only capture group is the role, not the ISO, so the
   // ISO is sliced out of each full match (`## <ISO> <role>`) directly —
   // matches checkpoint-cursor.mjs's recoveryReinit approach for the same
-  // shared regex.
-  const matches = [...remainderStr.matchAll(headerRe)].map((m) => ({
-    byte: charIndexToByteOffset(remainderStr, m.index),
+  // shared regex. `m.index` under latin1 decoding IS the byte offset — no
+  // conversion needed (see function doc above).
+  const matches = [...remainderLatin1.matchAll(headerRe)].map((m) => ({
+    byte: m.index,
     iso: m[0].slice(3, m[0].indexOf(' ', 3)),
   }));
 
@@ -103,12 +120,42 @@ function segmentsForRemainder(remainder) {
 }
 
 /**
+ * The byte length of `buf` AFTER a `utf8` decode-then-re-encode round trip
+ * — i.e. what `chunkMaxBytes` must actually bound (round-1 review
+ * IMPORTANT 1's residual). For VALID UTF-8 content this always equals
+ * `buf.length` exactly (utf8 is a lossless bijection for well-formed
+ * input). It can EXCEED `buf.length` for genuinely invalid byte sequences:
+ * each maximal invalid subsequence decodes to one U+FFFD replacement
+ * character, which is 3 bytes in UTF-8 — so a single stray invalid byte can
+ * inflate by 2 bytes on re-encode. Raw byte-slice bookkeeping alone (how
+ * many source bytes were included) is NOT sufficient to bound this; every
+ * budget decision in this module compares against THIS value, not
+ * `buf.length`.
+ */
+function decodedByteLength(buf) {
+  return Buffer.byteLength(buf.toString('utf8'), 'utf8');
+}
+
+/** Back off from `pos` to the nearest position NOT sitting on a UTF-8 continuation byte (10xxxxxx). */
+function backToUtf8Boundary(buf, pos) {
+  let p = pos;
+  while (p > 0 && (buf[p] & 0xc0) === 0x80) p -= 1;
+  return p;
+}
+
+/**
  * Guaranteed-progress hard split (spec §4.4): find the split point, in
- * bytes from the start of `buf`, at or under `maxBytes` — the last newline
- * strictly under the limit, else the nearest UTF-8 character boundary at or
- * before the limit (never mid-codepoint). Always returns > 0 for any
- * realistic `maxBytes` (>= a few bytes), which is what guarantees assembly
- * position always advances.
+ * bytes from the start of `buf`, such that the INCLUDED PREFIX's decoded
+ * (re-encoded) length — not merely its raw byte count — is `<= maxBytes`.
+ * Starts from the last newline strictly under the limit, else the nearest
+ * UTF-8 character boundary at or before the limit (never mid-codepoint);
+ * then, since even a boundary-respecting raw-byte cut can still decode
+ * larger than `maxBytes` when the source contains genuinely invalid UTF-8
+ * (round-1 review IMPORTANT 1), iteratively backs off further — always
+ * re-landing on a safe codepoint boundary — until the decoded length
+ * actually fits. Always returns > 0 for any realistic `maxBytes` (>= a few
+ * bytes) on content that isn't overwhelmingly invalid bytes, which is what
+ * guarantees assembly position always advances.
  *
  * @param {Buffer} buf
  * @param {number} maxBytes
@@ -117,18 +164,34 @@ function segmentsForRemainder(remainder) {
 function computeSplitPoint(buf, maxBytes) {
   const limit = Math.min(maxBytes, buf.length);
   const newlineIdx = buf.lastIndexOf(0x0a, limit - 1); // 0x0a = '\n'
-  if (newlineIdx !== -1) return newlineIdx + 1;
-  // No newline in range: back off from `limit` to the nearest position that
-  // does not sit on a UTF-8 continuation byte (10xxxxxx) — i.e. a position
-  // that either starts a new codepoint or is plain ASCII.
-  let p = limit;
-  while (p > 0 && (buf[p] & 0xc0) === 0x80) p -= 1;
-  return p;
+  let candidate = newlineIdx !== -1 ? newlineIdx + 1 : backToUtf8Boundary(buf, limit);
+  while (candidate > 0 && decodedByteLength(buf.subarray(0, candidate)) > maxBytes) {
+    candidate = backToUtf8Boundary(buf, candidate - 1);
+  }
+  return candidate;
 }
 
-/** Track running min/max ISO (by parsed epoch ms) across a chunk's segments. */
+/**
+ * A turn header can match the regex SHAPE (`\d{4}-\d{2}-\d{2}T\S*`) while
+ * still being semantically unparseable content (e.g. `Tzzz`, or a
+ * shape-valid-but-impossible calendar date like month 13) — client-supplied
+ * text is untrusted. Returns `iso` unchanged when it parses, else `null`.
+ */
+function validIso(iso) {
+  return iso !== null && !Number.isNaN(Date.parse(iso)) ? iso : null;
+}
+
+/**
+ * Track running min/max ISO (by parsed epoch ms) across a chunk's segments.
+ * Round-1 review MINOR 3: silently no-ops on an unparseable `iso` (defense
+ * in depth — the caller already routes an unparseable header ISO through
+ * the headerless carry/file-date fallback via `validIso` before it ever
+ * reaches here, so this guard should never actually fire in practice, but a
+ * poisoned covers_from/covers_until is a bad enough outcome to guard twice).
+ */
 function trackIso(range, iso) {
   const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return;
   if (range.min === null || ms < range.min.ms) range.min = { iso, ms };
   if (range.max === null || ms > range.max.ms) range.max = { iso, ms };
 }
@@ -183,7 +246,7 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
   let carryIso = cursor.boundary === 'split' ? cursor.last_turn_iso : null;
 
   const pieces = [];
-  let accumulatedBytes = 0;
+  let decodedBytesSoFar = 0;
   let turnCount = 0;
   const isoRange = { min: null, max: null };
   let endFile = null;
@@ -223,6 +286,24 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
     if (stopped) break;
 
     const filePath = path.join(rawDir, fname);
+
+    // Round-1 review MINOR 4: a lock-free stat BEFORE ever touching the
+    // lock. If this file already has nothing left to read from the resume
+    // position (the cursor sits at or past its current size), there's no
+    // reason to acquire its lock at all — skip straight to the next
+    // pending file. Without this, a cursor sitting exactly at the LAST
+    // file's EOF, with that file locked by a live session for an unrelated
+    // append, would report a spurious `stopped: raw_lock` instead of
+    // `exhausted` — there was never anything to read from it. A stat that
+    // fails (ENOENT/etc) is treated as "unknown, don't skip" — the
+    // subsequent lock+read attempt handles a genuinely vanished file (see
+    // MINOR 5 below) without this pre-check masking the real error class.
+    const resumeByteGuess = fname === cursor.file ? cursor.offset : 0;
+    const preStat = await fs.stat(filePath).catch(() => null);
+    if (preStat && resumeByteGuess >= preStat.size) {
+      continue;
+    }
+
     const lockPath = `${filePath}.lockdir`;
     const gotLock = await acquireLock(lockPath);
     if (!gotLock) {
@@ -237,12 +318,39 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
       return buildResult({ reason: 'raw_lock', file: fname });
     }
 
-    let fileBuf;
+    // Round-1 review MINOR 5. (a) A file that vanishes between the readdir
+    // snapshot above and this read (ENOENT) is not a hazard — §4.2 check 3
+    // treats deletion of already-digested files as legal — so it's treated
+    // as "nothing to contribute here" and the walk moves on, rather than
+    // aborting the whole run. Any OTHER read error is unexpected and still
+    // surfaces. (b) `releaseLock` is best-effort: a rejection there must
+    // never escape the `finally` and mask whichever error (if any) came out
+    // of the `try` — caught, logged, swallowed.
+    let fileBuf = null;
     try {
       fileBuf = await fs.readFile(filePath);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      safeLog(() => getLogger().warn({
+        request_id: currentRequestId(),
+        component: 'chunk-builder',
+        project,
+        file: fname,
+      }, 'chunk-builder: raw file vanished mid-walk (ENOENT) — skipping'), 'log:chunk-builder:enoent-skip');
     } finally {
-      await releaseLock(lockPath);
+      try {
+        await releaseLock(lockPath);
+      } catch (releaseErr) {
+        safeLog(() => getLogger().warn({
+          request_id: currentRequestId(),
+          component: 'chunk-builder',
+          project,
+          file: fname,
+          err_message: releaseErr?.message ?? String(releaseErr),
+        }, 'chunk-builder: releaseLock failed (best-effort)'), 'log:chunk-builder:release-failed');
+      }
     }
+    if (fileBuf === null) continue;
 
     const resumeByte = fname === cursor.file ? Math.min(cursor.offset, fileBuf.length) : 0;
     const remainder = fileBuf.subarray(resumeByte);
@@ -253,9 +361,24 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
       if (segLen <= 0) {
         continue;
       }
-      const segIso = seg.headerIso ?? carryIso ?? fileDateMidnightIso(fname);
+      // A structurally-matched header whose ISO doesn't actually parse
+      // (round-1 review MINOR 3, e.g. `## 2026-08-10Tzzz user`) is treated
+      // as headerless for ATTRIBUTION purposes — it contributes nothing to
+      // covers_from/covers_until directly and never advances the carry;
+      // the carry/file-date fallback chain applies exactly as if this
+      // segment had no header at all. It still counts toward `turnCount`
+      // below (the header genuinely delimits a turn boundary structurally —
+      // only its timestamp is garbage).
+      const parsedHeaderIso = validIso(seg.headerIso);
+      const segIso = parsedHeaderIso ?? carryIso ?? fileDateMidnightIso(fname);
+      const segBuf = remainder.subarray(seg.startByte, seg.endByte);
+      // Budget decisions compare DECODED length, not raw byte-slice length
+      // (round-1 review IMPORTANT 1's residual): a segment's raw bytes can
+      // fit the remaining budget while its utf8-decoded (re-encoded) form
+      // does not, if it contains genuinely invalid UTF-8.
+      const segDecodedLen = decodedByteLength(segBuf);
 
-      if (accumulatedBytes + segLen > chunkMaxBytes) {
+      if (decodedBytesSoFar + segDecodedLen > chunkMaxBytes) {
         if (pieces.length === 0) {
           // Guaranteed progress (spec §4.4): this single segment alone
           // exceeds the budget — hard-split it, ending the chunk here. This
@@ -263,7 +386,6 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
           // startOffset to exactly where the split piece begins.
           startFile = fname;
           startOffset = resumeByte + seg.startByte;
-          const segBuf = remainder.subarray(seg.startByte, seg.endByte);
           const splitAt = computeSplitPoint(segBuf, chunkMaxBytes);
           pieces.push(segBuf.subarray(0, splitAt));
           if (seg.headerIso) turnCount += 1;
@@ -288,12 +410,15 @@ export async function buildNextChunk({ vaultDir, project, cursor, chunkMaxBytes,
         startFile = fname;
         startOffset = resumeByte + seg.startByte;
       }
-      pieces.push(remainder.subarray(seg.startByte, seg.endByte));
-      accumulatedBytes += segLen;
-      if (seg.headerIso) {
-        turnCount += 1;
-        carryIso = seg.headerIso;
-      }
+      pieces.push(segBuf);
+      // Safe to accumulate decoded lengths independently and sum them
+      // (rather than re-decoding the whole growing buffer each time):
+      // every segment boundary here is ASCII-anchored (a header match or
+      // EOF), never an arbitrary mid-codepoint cut, so decoding each piece
+      // separately and decoding their concatenation agree exactly.
+      decodedBytesSoFar += segDecodedLen;
+      if (seg.headerIso) turnCount += 1;
+      if (parsedHeaderIso) carryIso = parsedHeaderIso;
       trackIso(isoRange, segIso);
       endFile = fname;
       endOffset = resumeByte + seg.endByte;

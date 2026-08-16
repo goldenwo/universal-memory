@@ -17,25 +17,41 @@
 // chunking keys and the #185 floors are never duplicated or module-private.
 
 /**
- * Resolve a positive-integer config value: env > config > shipped default.
- * Env wins only when set AND `Number(...)` is finite AND > 0 — a blank env
- * var (`Number('') === 0`) or garbage (`Number('abc')` NaN) falls through
- * to config, never silently becomes 0. Same fallthrough applies to
- * `configValue`: only a finite number > 0 is accepted.
+ * Resolve a positive-INTEGER config value: env > config > shipped default.
+ * Env wins only when set AND `Number(...)` is a **safe integer** AND `>=
+ * min` — a blank env var (`Number('') === 0`), garbage (`Number('abc')`
+ * NaN), or a fraction (`Number('200000.5')`) all fall through to config,
+ * never silently accepted. Same fallthrough applies to `configValue`.
+ *
+ * `Number.isSafeInteger` (not `Number.isFinite`) is deliberate: these keys
+ * are byte counts / chunk counts / millisecond timeouts, never fractional —
+ * a fractional `chunk_max_bytes` would persist a non-integer cursor
+ * `offset`, which checkpoint-cursor.mjs's §4.2 check 0
+ * (`Number.isSafeInteger(offset)`) then rejects forever, a permanent
+ * recovery-reinit loop.
+ *
+ * `min` (default 1, i.e. the original "> 0" behavior) exists because
+ * "positive" alone doesn't guarantee USABLE: at very small values (e.g.
+ * `chunk_max_bytes: 1`) the chunk builder can never make guaranteed
+ * progress on realistic content (every hard split reduces to an empty
+ * piece), so a caller with a real usability floor passes a higher `min` —
+ * a value that clears "positive integer" but not that floor still falls
+ * through, exactly like any other invalid value.
  *
  * @param {object} opts
  * @param {string} opts.envName - process.env key to check first.
  * @param {number} [opts.configValue] - value from checkpoint.json, if any.
  * @param {number} opts.fallback - shipped default.
+ * @param {number} [opts.min] - minimum accepted value (default 1).
  * @returns {number}
  */
-export function resolvePositiveInt({ envName, configValue, fallback }) {
+export function resolvePositiveInt({ envName, configValue, fallback, min = 1 }) {
   const raw = process.env[envName];
   if (raw !== undefined) {
     const envNum = Number(raw);
-    if (Number.isFinite(envNum) && envNum > 0) return envNum;
+    if (Number.isSafeInteger(envNum) && envNum >= min) return envNum;
   }
-  if (typeof configValue === 'number' && Number.isFinite(configValue) && configValue > 0) {
+  if (Number.isSafeInteger(configValue) && configValue >= min) {
     return configValue;
   }
   return fallback;
@@ -80,6 +96,11 @@ export function resolveChunkingConfig(config = {}) {
       envName: 'UM_CHECKPOINT_CHUNK_MAX_BYTES',
       configValue: config.chunk_max_bytes,
       fallback: 200_000,
+      // Usability floor, not just "positive" (see resolvePositiveInt's doc
+      // comment): far above any realistic single UTF-8 codepoint width, so
+      // chunk-builder.mjs's guaranteed-progress hard split always has room
+      // to advance, and far below the 200_000 default.
+      min: 1024,
     }),
     maxChunksPerRun: resolvePositiveInt({
       envName: 'UM_CHECKPOINT_MAX_CHUNKS_PER_RUN',
