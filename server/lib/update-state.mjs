@@ -112,7 +112,12 @@ export async function updateState(args, ctx = {}) {
     mergedMd = truncateToCap(mergedMd, STATE_CAP_CHARS);
   }
 
-  return { schema_version: 1, mergedMd, costUsd, tokensIn, tokensOut, llmFailure };
+  // §4.8 hardening (checkpoint-chunk-txn.mjs): additive explicit ok:true on
+  // the success return. Previously only the prompt-missing failure path set
+  // `ok`, so a naive `if (!stateResult.ok)` check on the CALLER side
+  // misfired on every successful merge. Additive — existing tests assert
+  // fields individually and are unaffected.
+  return { schema_version: 1, ok: true, mergedMd, costUsd, tokensIn, tokensOut, llmFailure };
 }
 
 /**

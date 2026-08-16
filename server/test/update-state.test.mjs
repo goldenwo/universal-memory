@@ -64,6 +64,21 @@ test('updateState returns ok:false with sanitized message when promptDir is miss
   assert.ok(!result.error.includes('/nonexistent'), 'client error must not leak server path');
 });
 
+// §4.8 hardening (checkpoint-chunk-txn.mjs task-5): additive explicit ok:true
+// on the success return, so a caller can branch on `stateResult.ok === false`
+// without a false positive on every successful merge (previously only the
+// prompt-missing failure path ever set `ok` at all).
+test('updateState: success return carries explicit ok:true', async () => {
+  const result = await updateState(
+    { oldStateMd: 'old', newSummary: 'new summary', projectId: 'ok-true-test' },
+    {
+      summarizeFn: async () => ({ summary: 'merged content', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.mergedMd, 'merged content');
+});
+
 function stubFromFixture(stub) {
   if (stub.mode === 'throw') {
     return async () => { throw new Error(stub.error ?? 'stub error'); };
