@@ -93,11 +93,17 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h) _usage; exit 0 ;;
     --probe)
-      [ $# -ge 2 ] && [ -n "${2:-}" ] || { echo "um-drain: --probe requires a project name" >&2; exit 2; }
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+        echo "um-drain: --probe requires a project name" >&2
+        exit 2
+      fi
       PROBE_PROJECT="$2"; shift 2 ;;
     --yes) SKIP_CONFIRM=1; shift ;;
     --server)
-      [ $# -ge 2 ] && [ -n "${2:-}" ] || { echo "um-drain: --server requires a value" >&2; exit 2; }
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+        echo "um-drain: --server requires a value" >&2
+        exit 2
+      fi
       export UM_SERVER_URL="$2"; shift 2 ;;
     -*) echo "um-drain: unknown option: $1" >&2; _usage >&2; exit 2 ;;
     *) CLI_PROJECTS+=("$1"); shift ;;
