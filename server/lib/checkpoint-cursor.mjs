@@ -33,7 +33,7 @@ import path from 'node:path';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
-import { RECOVERY_SLACK_MS } from './checkpoint-config.mjs';
+import { RECOVERY_SLACK_MS, makeTurnHeaderRe } from './checkpoint-config.mjs';
 
 // B.12-style hardening (checkpoint.mjs, append-turn.mjs): refuse to follow
 // symlinks at the open() syscall level. undefined on Windows (NTFS has a
@@ -46,11 +46,10 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 // `../../evil.md`, `2026-8-1.md` — not zero-padded).
 const CURSOR_FILE_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 
-// Matches doAppendTurn's raw header: `## <ISO> <role>[ (conversation_id: …)]`
-// (append-turn.mjs ROLES = user|assistant|system). Anchored to line start; a
-// quoted header pasted at column 0 inside content also matches — acceptable
-// (and load-bearing safe) per the recovery-scan doc comment above.
-const ROLE_ALT = '(?:user|assistant|system)';
+// Turn-header matching uses the shared `makeTurnHeaderRe()` factory
+// (checkpoint-config.mjs) — never a locally-built pattern. A quoted header
+// pasted at column 0 inside content also matches — acceptable (and
+// load-bearing safe) per the recovery-scan doc comment above.
 
 // Small trailing window read at a cursor's `offset` — large enough for the
 // longest possible header prefix (`## ` + ISO-with-millis + ` ` + role),
@@ -118,14 +117,13 @@ async function readWindow(filePath, position, length) {
 
 /**
  * §4.2 check 2: is the byte at `offset` the start of a turn header? Uses a
- * fresh (locally-scoped, non-global) RegExp instance every call — never the
- * shared module-level pattern a scan loop might reuse, whose `lastIndex`
+ * fresh RegExp instance every call (`makeTurnHeaderRe()`, non-global) — never
+ * a shared module-level pattern a scan loop might reuse, whose `lastIndex`
  * would otherwise mutate across calls and silently shift boundaries.
  */
 async function isTurnHeaderAt(filePath, offset) {
   const window = await readWindow(filePath, offset, HEADER_WINDOW_BYTES);
-  const headerRe = new RegExp(`^## \\d{4}-\\d{2}-\\d{2}T\\S+ ${ROLE_ALT}\\b`);
-  return headerRe.test(window);
+  return makeTurnHeaderRe().test(window);
 }
 
 /**
@@ -370,11 +368,13 @@ export async function recoveryReinit({ vaultDir, project }) {
   for (const name of rawFiles) {
     const filePath = path.join(rawDir, name);
     const content = await fs.readFile(filePath, 'utf8');
-    // Fresh RegExp instance per file — never a shared/module-level object
-    // whose lastIndex could carry state across files.
-    const headerRe = new RegExp(`^## (\\d{4}-\\d{2}-\\d{2}T\\S+) ${ROLE_ALT}\\b`, 'gm');
+    // Fresh RegExp instance per file (makeTurnHeaderRe('gm')) — never a
+    // shared/module-level object whose lastIndex could carry state across
+    // files. The pattern's only capture group is the role, not the ISO, so
+    // the ISO is sliced out of the full match (`## <ISO> <role>`) instead.
+    const headerRe = makeTurnHeaderRe('gm');
     for (const m of content.matchAll(headerRe)) {
-      const iso = m[1];
+      const iso = m[0].slice(3, m[0].indexOf(' ', 3));
       const ms = Date.parse(iso);
       if (Number.isNaN(ms) || !(ms > threshold)) continue;
       // First match wins (file order, then in-file order) — forged/quoted

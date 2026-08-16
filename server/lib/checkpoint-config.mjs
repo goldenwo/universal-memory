@@ -104,6 +104,36 @@ export function resolveChunkingConfig(config = {}) {
   };
 }
 
+// Shared turn-header pattern (§4.4/Task 2 review parked finding): the single
+// source of truth for "what does a raw append-turn header look like", so
+// checkpoint-cursor.mjs and chunk-builder.mjs never carry their own
+// slightly-drifted copies. Text aligns with checkpoint.mjs:105's
+// TURN_HEADER_RE ('\S*' after the ISO's 'T', not '\S+' — a real ISO always
+// has non-empty content there, so this is a no-op for valid data). Matches
+// doAppendTurn's raw header at line start: `## <ISO> <role>` (an optional
+// ` (conversation_id: …)` suffix, if present, falls outside the `\b`
+// boundary and is simply not part of the match).
+const TURN_HEADER_PATTERN = '^## \\d{4}-\\d{2}-\\d{2}T\\S* (user|assistant|system)\\b';
+
+/**
+ * Build a FRESH RegExp instance matching a raw turn header at line start.
+ * Every call constructs a brand-new object — never a shared/module-level
+ * instance — so no caller can ever observe another caller's mutated
+ * `lastIndex` (the hazard a shared `/gm` instance carries the moment two
+ * call sites use `exec`/`matchAll` against it instead of side-effect-free
+ * `.match()`; this is precisely the "regex duplication" finding parked from
+ * Task 2's review).
+ *
+ * @param {string} [flags] - RegExp flags. '' (default) for a plain
+ *   single-shot `.test()` instance (e.g. "is the byte at this offset a
+ *   header start?"); 'gm' for a multi-line global scan (`matchAll` over a
+ *   whole file/chunk to enumerate every header).
+ * @returns {RegExp}
+ */
+export function makeTurnHeaderRe(flags = '') {
+  return new RegExp(TURN_HEADER_PATTERN, flags);
+}
+
 // Whole-run lockdir heartbeat interval (§4.5): refreshed on this cadence so
 // a live multi-chunk run's mtime never crosses the 120s low-disk stale
 // threshold (lockdir.mjs DEFAULT_LOW_DISK_STALE_MS) and loses the lock to a
