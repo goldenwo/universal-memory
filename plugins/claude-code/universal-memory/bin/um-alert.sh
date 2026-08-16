@@ -300,8 +300,15 @@ try:
         if not isinstance(info, dict) or not isinstance(info.get("stale"), bool):
             raise ValueError("project %r has a malformed or missing stale field" % name)
         if info["stale"]:
-            stale.append("%s (lag %sh, pending %s bytes)" % (
-                name, info.get("lag_hours"), info.get("pending_bytes")))
+            # MINOR 7 (review round 1): the JSON sentinel for an infinite lag
+            # is the STRING "Infinity" (see layers.mjs) — printed verbatim it
+            # reads as the nonsensical "Infinityh"; render it as "never"
+            # instead, same idea as um-alert.sh already applying its own
+            # float()-coercion discipline to threshold/freshness values
+            # elsewhere in this file.
+            lag = info.get("lag_hours")
+            lag_str = "never" if lag == "Infinity" else "%sh" % lag
+            stale.append("%s (lag %s, pending %s bytes)" % (name, lag_str, info.get("pending_bytes")))
 except Exception as e:
     emit("ERROR", "layers payload malformed: %s" % e)
 
@@ -312,6 +319,32 @@ emit("OK", "no stale projects")
 
 LAYERS_STATUS="${LAYERS_VERDICT%%|*}"
 LAYERS_MESSAGE="${LAYERS_VERDICT#*|}"
+
+# Review round 1, IMPORTANT 2: the STALE/OK/ERROR taxonomy above says
+# NOTHING about whether `layers` was fully computed — a payload can be a
+# perfectly well-shaped `{}` (or a partial map) while stats.degraded names
+# 'layers-unavailable'/'layers-partial'/'layers_saturated', meaning the
+# check above just evaluated INCOMPLETE (or entirely absent) data and
+# happily emitted "OK — no stale projects". That is exactly this arc's own
+# silent-monitor failure mode: a broken layers computation going quiet
+# because what little (or nothing) it COULD see looked fine. Independent,
+# best-effort, NEVER fatal and NEVER changes STATUS/LAYERS_STATUS/the exit
+# code decided below (same discipline as the ABSENT-key breadcrumb) — purely
+# a breadcrumb naming which flag(s) fired.
+LAYERS_DEGRADED_NOTE=$("$PY" -c '
+import json, sys
+try:
+    stats = json.load(sys.stdin)
+    degraded = stats.get("degraded") if isinstance(stats, dict) else None
+    flags = sorted(d for d in degraded if isinstance(d, str) and d.startswith("layers")) if isinstance(degraded, list) else []
+    print(", ".join(flags))
+except Exception:
+    print("")
+' < "$BODY_FILE" 2>/dev/null) || LAYERS_DEGRADED_NOTE=""
+
+if [ -n "$LAYERS_DEGRADED_NOTE" ]; then
+  echo "um-alert: layers check degraded ($LAYERS_DEGRADED_NOTE) — per-layer freshness may be INCOMPLETE" >&2
+fi
 
 case "$LAYERS_STATUS" in
   ABSENT)

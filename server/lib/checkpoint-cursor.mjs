@@ -46,6 +46,15 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 // `../../evil.md`, `2026-8-1.md` — not zero-padded).
 const CURSOR_FILE_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 
+// Session summary filename date pattern: `session-<YYYY-MM-DD>-<id>.md`.
+// Exported (review round 1, MINOR 4) so layers.mjs (spec §6 per-layer
+// freshness) single-sources this pattern instead of keeping its own
+// drifted copy — both modules extract "the summary's filename DATE" for
+// the same underlying reason (bootstrapInit's boundary here; newest-
+// summary discovery + the sessions/ scan bound there). Cross-pin: layers.mjs
+// imports this export directly as its own SESSION_FILE_RE.
+export const SESSION_DATE_RE = /^session-(\d{4}-\d{2}-\d{2})-.*\.md$/;
+
 // Turn-header matching uses the shared `makeTurnHeaderRe()` factory
 // (checkpoint-config.mjs) — never a locally-built pattern. A quoted header
 // pasted at column 0 inside content also matches — acceptable (and
@@ -255,11 +264,11 @@ export async function bootstrapInit({ vaultDir, project }) {
   // an orphan `session-2026-08-14-....md.tmp` (phase-2 failures leave these
   // behind forever; nothing reaps them) or a stray `session-2026-08-14-
   // notes.txt` would set the bootstrap boundary too high, silently skipping
-  // the entire backlog below it.
-  const sessionDateRe = /^session-(\d{4}-\d{2}-\d{2})-.*\.md$/;
+  // the entire backlog below it. SESSION_DATE_RE (module-level, exported) —
+  // never a locally-built second copy.
   let newestDate = null;
   for (const name of sessionFiles) {
-    const m = sessionDateRe.exec(name);
+    const m = SESSION_DATE_RE.exec(name);
     if (!m) continue;
     if (newestDate === null || m[1] > newestDate) newestDate = m[1];
   }

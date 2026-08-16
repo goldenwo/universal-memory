@@ -468,6 +468,23 @@ STALE_CAPTURE_AND_LAYERS='{"schema_version":1,"capture_freshness_threshold_hours
 # ALREADY non-zero, not just when it would otherwise be FRESH.
 STALE_CAPTURE_MALFORMED_LAYERS='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-01","freshness_hours":1000,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":[]}'
 
+# Review round 1, IMPORTANT 2 fixtures — P1: layers-unavailable (the whole
+# captures/ dir was unreadable; layers is a well-shaped but EMPTY object).
+LAYERS_P1_UNAVAILABLE='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{},"degraded":["layers-unavailable"]}'
+
+# P2: layers-partial — one project succeeded (and is itself fresh, so the
+# STALE/OK taxonomy alone would say "OK") while the degraded flag names the
+# omitted one.
+LAYERS_P2_PARTIAL='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"edge-catcher":{"last_capture_at":"2026-08-15T09:00:00.000Z","last_summary_at":"2026-08-15T08:00:00.000Z","last_state_at":"2026-08-15T08:00:00.000Z","pending_bytes":0,"stale":false,"lag_hours":1.0}},"degraded":["layers-partial"]}'
+
+# P2b: layers-partial COMBINED with a real stale project — proves the
+# breadcrumb and the STALE escalation are orthogonal (both fire together).
+LAYERS_P2_PARTIAL_PLUS_STALE='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"universal-memory":{"last_capture_at":"2026-08-04T09:00:00.000Z","last_summary_at":"2026-07-30T08:00:00.000Z","last_state_at":null,"pending_bytes":7000,"stale":true,"lag_hours":121.0}},"degraded":["layers-partial"]}'
+
+# MINOR 7: a never-checkpointed project's lag_hours is the JSON STRING
+# "Infinity" (layers.mjs's sentinel — JSON has no Infinity literal).
+LAYERS_INFINITE_LAG='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"tmp-project":{"last_capture_at":"2026-08-04T09:00:00.000Z","last_summary_at":null,"last_state_at":null,"pending_bytes":999999,"stale":true,"lag_hours":"Infinity"}}}'
+
 # ─── T21: layers block names a stale project ⇒ FRESH capture verdict is ESCALATED to exit 1 ──
 echo ""
 echo "=== T21: FRESH capture + layers stale ⇒ escalated to exit 1 ==="
@@ -599,6 +616,77 @@ if echo "$output" | grep -q "STALE" && echo "$output" | grep -q "also layers sta
   pass "T28-message-names-both"
 else
   fail "T28-message-names-both: $output"
+fi
+
+# ─── T29 (IMPORTANT 2, P1): layers-unavailable ⇒ breadcrumb present, exit UNCHANGED ──
+echo ""
+echo "=== T29: degraded=[layers-unavailable] (layers:{}) ⇒ breadcrumb printed, exit 0 unchanged ==="
+mock="$TMPDIR_ROOT/t29"; _make_mock_curl "$mock" 200 "$LAYERS_P1_UNAVAILABLE"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T29-exit-0-unchanged"
+else
+  fail "T29-exit-0-unchanged (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "layers check degraded" && echo "$output" | grep -q "layers-unavailable" \
+  && echo "$output" | grep -qi "INCOMPLETE"; then
+  pass "T29-breadcrumb"
+else
+  fail "T29-breadcrumb: $output"
+fi
+
+# ─── T30 (IMPORTANT 2, P2): layers-partial (no stale project) ⇒ breadcrumb present, exit UNCHANGED ──
+echo ""
+echo "=== T30: degraded=[layers-partial], no stale project in the partial data ⇒ breadcrumb printed, exit 0 unchanged ==="
+mock="$TMPDIR_ROOT/t30"; _make_mock_curl "$mock" 200 "$LAYERS_P2_PARTIAL"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T30-exit-0-unchanged"
+else
+  fail "T30-exit-0-unchanged (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "layers check degraded" && echo "$output" | grep -q "layers-partial"; then
+  pass "T30-breadcrumb"
+else
+  fail "T30-breadcrumb: $output"
+fi
+
+# ─── T31: layers-partial breadcrumb AND a real stale escalation fire TOGETHER (orthogonal) ──
+echo ""
+echo "=== T31: degraded=[layers-partial] PLUS a real stale project ⇒ both the breadcrumb and the exit-1 escalation fire ==="
+mock="$TMPDIR_ROOT/t31"; _make_mock_curl "$mock" 200 "$LAYERS_P2_PARTIAL_PLUS_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T31-exit-1-still-escalates"
+else
+  fail "T31-exit-1-still-escalates (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "layers check degraded" && echo "$output" | grep -q "layers-partial" \
+  && echo "$output" | grep -q "LAYERS-STALE" && echo "$output" | grep -q "universal-memory"; then
+  pass "T31-both-signals-present"
+else
+  fail "T31-both-signals-present: $output"
+fi
+
+# ─── T32 (MINOR 7): an infinite lag renders as "never", never the literal "Infinityh" ──
+echo ""
+echo '=== T32: lag_hours:"Infinity" renders as "never", not "Infinityh" ==='
+mock="$TMPDIR_ROOT/t32"; _make_mock_curl "$mock" 200 "$LAYERS_INFINITE_LAG"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T32-exit-1"
+else
+  fail "T32-exit-1 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "lag never" && echo "$output" | grep -q "tmp-project"; then
+  pass "T32-never-rendered"
+else
+  fail "T32-never-rendered: $output"
+fi
+if echo "$output" | grep -q "Infinityh"; then
+  fail "T32-no-literal-infinityh: the raw JSON sentinel leaked into the operator-facing message: $output"
+else
+  pass "T32-no-literal-infinityh"
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

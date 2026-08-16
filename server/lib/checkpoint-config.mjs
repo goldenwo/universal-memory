@@ -17,6 +17,21 @@
 // checkpoint.mjs and the §6 layers code both import from here so the five
 // chunking keys and the #185 floors are never duplicated or module-private.
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
+
+// Single home for the shipped checkpoint.json path (review round 1, MINOR
+// 5). checkpoint.mjs keeps its OWN local copy of this same computation
+// (see the pointer comment at its definition) rather than being repointed
+// at this export — that module is the arc's write path and this fix
+// deliberately does not touch it beyond a comment. layers.mjs (spec §6,
+// read-only) imports THIS export instead of keeping a third independently-
+// computed copy. Both must resolve to the exact same path; if the literal
+// ever moves, checkpoint.mjs's copy has to move with it by hand.
+export const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
+
 /**
  * Resolve a positive-INTEGER config value: env > config > shipped default.
  * Env wins only when set AND `Number(...)` is a **safe integer** AND `>=

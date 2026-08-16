@@ -1439,6 +1439,10 @@ test('A12: captureVerdict and the shipped um-alert.sh agree on every fixture', (
       // which python parses and JS does not) — and that residual resolves to
       // page-ERROR/grey where cron may say FRESH, i.e. the page can be more
       // alarming than cron, never less. It is also unreachable in-process.
+      // Review round 1, MINOR 8: this holds for clean-layers payloads by
+      // design — no A12_FIXTURES entry carries a `layers` key, so Task 10's
+      // LAYERS section stays ABSENT (never escalates) for all of them;
+      // layers-escalation has its own coverage in um-alert.test.sh T21-T32.
       assert.equal(page.state, { FRESH: 'green', STALE: 'red', ERROR: 'grey' }[page.verdict], label);
     }
     // A guard on the HARNESS: if the mock ever stopped reaching the real python

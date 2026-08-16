@@ -14,7 +14,12 @@
 // never qdrant. It does not import checkpoint-cursor.mjs's write-path
 // machinery (loadCursor/recoveryReinit/advanceCursor): this module only
 // ever READS a cursor for a lightweight positional-arithmetic ground-truth
-// read, and must not touch the arc's catastrophic-class write surface.
+// read, and must not touch the arc's catastrophic-class write surface. It
+// DOES import one pure, side-effect-free constant from checkpoint-cursor.mjs
+// (SESSION_DATE_RE, review round 1 MINOR 4) — a shared regex literal is not
+// write-path machinery, and single-sourcing it is what keeps this module's
+// "newest summary date" reading and bootstrapInit's own reading from ever
+// silently drifting apart.
 //
 // STALE RULE (spec §6, verbatim — the ∞ sign has a review history of
 // landing inverted; get the direction right and pin both):
@@ -42,29 +47,39 @@
 //     result — the same class of truth as corpus's "0 points", not
 //     'corpus-unavailable') rather than degraded. This deliberately does
 //     NOT mirror stats.mjs's counters-db precedent (a missing counters db
-//     IS flagged 'counters-unavailable' even on a never-existed file):
-//     UM_VAULT_DIR is required for the server to run at all (see
-//     mem0-mcp-http.mjs), so an absent/unusable vaultDir reaching THIS
-//     module only happens in dev/test callers that never exercise the
-//     layers path. Flagging every such caller degraded would stamp a new
-//     `degraded` key onto every pre-existing /api/stats and /control test
-//     in the suite for a state that cannot occur in a real deployment. A
-//     REAL I/O error reading an EXISTING captures/ directory still
-//     degrades, exactly like corpus-unavailable does for a throwing qdrant
-//     client.
+//     IS flagged 'counters-unavailable' even on a never-existed file).
+//     CORRECTED (review round 1, MINOR 6 — the original text here claimed
+//     "UM_VAULT_DIR is required for the server to run at all", which is
+//     FALSE: vault.mjs's vaultPath() has a real $HOME/.um/vault fallback,
+//     and nothing enforces UM_VAULT_DIR at server boot. The actual reason
+//     an absent vaultDir here is unreachable in a WORKING deployment is
+//     narrower: this module resolves vaultDir the same unfallback'd way
+//     checkpoint.mjs's write path does (`ctx.vaultDir ?? process.env.
+//     UM_VAULT_DIR`, no HOME default) — so an unset UM_VAULT_DIR doesn't
+//     just leave THIS module blind, it already breaks the checkpoint write
+//     path itself (`path.join(undefined, …)` throws in checkpoint.mjs /
+//     checkpoint-cursor.mjs before any capture could ever land). A
+//     deployment with UM_VAULT_DIR unset therefore cannot be capturing
+//     anything for this module to have missed — the failure, if real,
+//     shows up louder and earlier, in the write path. Flagging THIS
+//     module degraded on top would only stamp a new `degraded` key onto
+//     every pre-existing /api/stats and /control test in the suite (none
+//     of which set UM_VAULT_DIR) for a state that, wherever it is real,
+//     coincides with total write-path failure. A REAL I/O error reading an
+//     EXISTING captures/ directory still degrades, exactly like
+//     corpus-unavailable does for a throwing qdrant client.
 //   - Payload-level failure (the captures/ readdir itself throwing a
 //     non-ENOENT error) → degraded entry, never a thrown 500.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { resolveFloor, DEFAULT_MIN_TRANSCRIPT_BYTES } from './checkpoint-config.mjs';
+import {
+  resolveFloor, DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_CONFIG_PATH,
+} from './checkpoint-config.mjs';
+import { SESSION_DATE_RE } from './checkpoint-cursor.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
-
-const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
-const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
 
 // Own scan-entry ceiling, following the SAME precedent/pattern as
 // stats-payload.mjs's FULL_SCAN_LIMIT (a generous cap + a saturation flag)
@@ -80,7 +95,11 @@ export const LAYERS_SCAN_LIMIT = 10000;
 const DEFAULT_SUMMARY_LAG_MAX_HOURS = 30;
 
 const RAW_FILE_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
-const SESSION_FILE_RE = /^session-(\d{4}-\d{2}-\d{2})-.*\.md$/;
+// SESSION_FILE_RE: cross-pinned to checkpoint-cursor.mjs's exported
+// SESSION_DATE_RE (review round 1, MINOR 4) — a local alias so the rest of
+// this file reads no differently, but there is now exactly one regex
+// literal, not two that can silently drift.
+const SESSION_FILE_RE = SESSION_DATE_RE;
 const CURSOR_FILE_NAME_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const MS_PER_HOUR = 3_600_000;
 
@@ -172,8 +191,9 @@ async function readCursorLight(cursorPath) {
  * Scan bounds (spec §6): newest-summary discovery uses the lexical-max
  * filename DATE, then stats only THAT day's (few) files — sessions/ grows
  * one file per chunk forever, so a full-dir stat sweep would be unbounded.
- * `last_capture_at` similarly stats only the single newest raw file (raw
- * filenames are lexically == chronologically sorted).
+ * The raw/ dir, by contrast, is one file per DAY (bounded) — `last_capture_at`
+ * stats every raw entry (review round 1, MINOR 1; see the inline comment
+ * below for why the lexically-last filename's mtime alone is not enough).
  *
  * `budget` is mutated in place with the readdir-derived entry counts this
  * project consumed — the caller enforces LAYERS_SCAN_LIMIT across the whole
@@ -196,10 +216,24 @@ async function computeProjectLayer({
   const sessionEntries = (await readdirSafe(sessionsDir)).filter((n) => SESSION_FILE_RE.test(n)).sort();
   budget.used += sessionEntries.length;
 
-  // last_capture_at: newest raw file's mtime — stat only that one entry.
-  const newestRawStat = await fs.stat(path.join(rawDir, rawEntries[rawEntries.length - 1]));
-  const lastCaptureAt = newestRawStat.mtime.toISOString();
-  const lastCaptureMs = newestRawStat.mtimeMs;
+  // Full stat sweep over EVERY raw file — bounded (one file per day, unlike
+  // sessions/), so this is cheap. Captures the TRUE newest mtime across all
+  // of them (review round 1, MINOR 1 — spec §6 says "newest … mtime", not
+  // "the lexically-last FILENAME's mtime"; a day-file's mtime is not
+  // guaranteed to track its filename date — e.g. an older-dated file
+  // rewritten/backfilled after a newer-dated one already landed — and
+  // trusting the filename alone would silently under-report last_capture_at
+  // in exactly that case) AND each file's SIZE in the same pass, so the
+  // pending_bytes arithmetic below reuses these stat() results instead of
+  // re-stat'ing the same files a second time.
+  const rawStats = new Map();
+  let lastCaptureMs = -Infinity;
+  for (const name of rawEntries) {
+    const st = await fs.stat(path.join(rawDir, name));
+    rawStats.set(name, st);
+    if (st.mtimeMs > lastCaptureMs) lastCaptureMs = st.mtimeMs;
+  }
+  const lastCaptureAt = new Date(lastCaptureMs).toISOString();
 
   // last_summary_at + the §4.3 bootstrap-boundary date, from the SAME
   // sessionEntries readdir (never a second scan for the cursorless
@@ -230,7 +264,26 @@ async function computeProjectLayer({
   }
 
   // Cursor read (light, positional-only — see readCursorLight doc comment).
-  const cursor = await readCursorLight(path.join(stateDir, 'checkpoint-cursor.json'));
+  let cursor = await readCursorLight(path.join(stateDir, 'checkpoint-cursor.json'));
+
+  // Review round 1, IMPORTANT 1: a cursor whose `file` sorts AFTER every
+  // real raw file is not a usable positional watermark — it names a day
+  // that doesn't exist and is newer than everything actually on disk (the
+  // same "future_dated_file" corruption class checkpoint-cursor.mjs's own
+  // §4.2 write-path validation rejects, mirrored here without a clock
+  // dependency: "newer than the newest REAL raw file" substitutes for
+  // "newer than today"). Trusting it would walk EVERY raw entry into the
+  // `name < cursor.file` branch below, silently producing pending_bytes 0
+  // regardless of how large the true backlog is — a false-negative green,
+  // the exact failure class this component exists to close. Treat the
+  // cursor as fully invalid — for BOTH pending_bytes below AND
+  // digested_through further down, not a half-trusted mix — falling
+  // through to the same cursorless bootstrap-boundary computation used
+  // when no cursor file exists at all (the read-only mirror of recovery
+  // re-init).
+  if (cursor !== null && cursor.file > rawEntries[rawEntries.length - 1]) {
+    cursor = null;
+  }
 
   // pending_bytes (spec §6, positional semantics): full bytes of every raw
   // file lexically > cursor.file, plus (size - offset) of cursor.file
@@ -239,11 +292,9 @@ async function computeProjectLayer({
   if (cursor !== null) {
     for (const name of rawEntries) {
       if (name > cursor.file) {
-        const st = await fs.stat(path.join(rawDir, name));
-        pendingBytes += st.size;
+        pendingBytes += rawStats.get(name).size;
       } else if (name === cursor.file) {
-        const st = await fs.stat(path.join(rawDir, name));
-        pendingBytes += Math.max(0, st.size - cursor.offset);
+        pendingBytes += Math.max(0, rawStats.get(name).size - cursor.offset);
       }
       // name < cursor.file: already digested, contributes 0.
     }
@@ -257,8 +308,7 @@ async function computeProjectLayer({
     const boundaryFile = newestSummaryDate !== null ? `${newestSummaryDate}.md` : null;
     for (const name of rawEntries) {
       if (boundaryFile === null || name >= boundaryFile) {
-        const st = await fs.stat(path.join(rawDir, name));
-        pendingBytes += st.size;
+        pendingBytes += rawStats.get(name).size;
       }
     }
   }
@@ -271,11 +321,19 @@ async function computeProjectLayer({
   // masked NaN comparison that reads as "never stale".
   const digestedThrough = cursor !== null ? cursor.lastTurnIso : lastSummaryAt;
   const digestedThroughMs = digestedThrough === null ? NaN : Date.parse(digestedThrough);
-  const lagHours = Number.isNaN(digestedThroughMs)
+  // Review round 1, MINOR 2: `stale` below compares the UNROUNDED lag.
+  // Rounding FIRST (the original code's bug) can shift a lag that is
+  // genuinely 30.04h — truly over a 30h threshold — down to a displayed
+  // 30.0h and, if THAT rounded value were what got compared, read as
+  // exactly-at-threshold and therefore NOT stale: a false negative at
+  // precisely the kind of boundary this component exists to catch. round1()
+  // is applied ONLY when building the displayed `lag_hours` field below,
+  // never before the `stale` comparison.
+  const rawLagHours = Number.isNaN(digestedThroughMs)
     ? Infinity
-    : round1((lastCaptureMs - digestedThroughMs) / MS_PER_HOUR);
+    : (lastCaptureMs - digestedThroughMs) / MS_PER_HOUR;
 
-  const stale = pendingBytes >= minTranscriptBytes && lagHours > lagMaxHours;
+  const stale = pendingBytes >= minTranscriptBytes && rawLagHours > lagMaxHours;
 
   return {
     last_capture_at: lastCaptureAt,
@@ -290,7 +348,7 @@ async function computeProjectLayer({
     // um-alert.sh's python block already speak for threshold/freshness
     // values (both parse "Infinity"/"inf" natively) — one convention, not a
     // second one invented for this field.
-    lag_hours: Number.isFinite(lagHours) ? lagHours : 'Infinity',
+    lag_hours: Number.isFinite(rawLagHours) ? round1(rawLagHours) : 'Infinity',
   };
 }
 

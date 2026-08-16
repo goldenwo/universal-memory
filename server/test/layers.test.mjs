@@ -171,6 +171,87 @@ test('UM_SUMMARY_LAG_MAX_HOURS: unset falls back to the spec default of 30', asy
 });
 
 // ===========================================================================
+// Review round 1 fixes
+// ===========================================================================
+
+test('IMPORTANT 1 (reviewer P-A probe): a future-dated cursor.file beyond every raw file falls through to the cursorless bootstrap computation ⇒ STALE, never a silent pending_bytes:0 green', async () => {
+  const vault = tempDir('um-layers-');
+  // Old raw content, huge real lag — but the cursor CLAIMS to be digested
+  // through a day that doesn't exist and is newer than everything on disk.
+  // A naive positional scan puts every real raw file into the `name <
+  // cursor.file` branch (already-digested) — pending_bytes 0, stale:false,
+  // even though nothing has actually been read in 44 days.
+  await writeRawFile(vault, 'proj', '2026-06-01.md', 'x'.repeat(5000), iso('2026-06-01T09:00:00Z'));
+  await writeCursor(vault, 'proj', {
+    file: '2099-12-31.md', // sorts after every real raw file — poisoned
+    offset: 0,
+    last_turn_iso: '2026-06-01T00:00:00.000Z',
+  });
+  const { layers } = await buildLayers({ vaultDir: vault, config: CONFIG });
+  assert.ok(layers.proj, 'the project still appears');
+  assert.ok(layers.proj.pending_bytes > 0, 'pending_bytes must NOT silently collapse to 0');
+  assert.equal(layers.proj.stale, true, 'huge real lag + real pending content must fire, not go silently green');
+});
+
+test('IMPORTANT 1: a cursor.file exactly equal to the newest raw file is NOT treated as poisoned (boundary — only strictly-greater invalidates)', async () => {
+  const vault = tempDir('um-layers-');
+  await writeRawFile(vault, 'proj', '2026-08-01.md', 'x'.repeat(1000));
+  await writeCursor(vault, 'proj', { file: '2026-08-01.md', offset: 400, last_turn_iso: new Date().toISOString() });
+  const { layers } = await buildLayers({ vaultDir: vault, config: CONFIG });
+  assert.equal(layers.proj.pending_bytes, 600, 'the real (non-poisoned) cursor arithmetic still applies at the boundary');
+});
+
+test('MINOR 1 (reviewer P-D probe): last_capture_at is the TRUE newest mtime across raw files, not the lexically-last filename\'s mtime', async () => {
+  const vault = tempDir('um-layers-');
+  // An OLDER-named file with a NEWER mtime (e.g. a backfill/rewrite that
+  // touched an earlier day-file after a later-dated one already existed) —
+  // last_capture_at must reflect the true newest mtime, not assume the
+  // lexically-last filename is also the most recently touched.
+  await writeRawFile(vault, 'proj', '2026-08-04.md', 'x'.repeat(600), iso('2026-08-04T09:00:00Z'));
+  await writeRawFile(vault, 'proj', '2026-08-01.md', 'x'.repeat(600), iso('2026-08-10T09:00:00Z')); // touched LATER
+  const { layers } = await buildLayers({ vaultDir: vault, config: CONFIG });
+  assert.equal(layers.proj.last_capture_at, new Date('2026-08-10T09:00:00Z').toISOString(),
+    'the true newest mtime (08-10, on the older-named file) must win, not 08-04 from the lexically-last filename');
+});
+
+test('MINOR 2: `stale` compares the UNROUNDED lag — a true 30.04h lag against a 30h threshold fires even though the DISPLAYED lag_hours rounds to 30.0', async () => {
+  const vault = tempDir('um-layers-');
+  const digested = iso('2026-08-01T00:00:00.000Z');
+  // 30h + 144000ms (2.4 min) = 30.04h exactly.
+  const captured = new Date(digested.getTime() + 30 * MS_PER_HOUR + 144_000);
+  await writeRawFile(vault, 'proj', '2026-08-02.md', 'x'.repeat(5000), captured);
+  await writeCursor(vault, 'proj', { file: '2026-07-01.md', offset: 0, last_turn_iso: digested.toISOString() });
+  const prevEnv = process.env.UM_SUMMARY_LAG_MAX_HOURS;
+  process.env.UM_SUMMARY_LAG_MAX_HOURS = '30';
+  try {
+    const { layers } = await buildLayers({ vaultDir: vault, config: CONFIG });
+    assert.equal(layers.proj.lag_hours, 30, 'DISPLAYED lag rounds down to 30.0 (round1(30.04) === 30)');
+    assert.equal(layers.proj.stale, true, 'but the comparison itself must use the UNROUNDED 30.04h, which IS over the 30h threshold');
+  } finally {
+    if (prevEnv === undefined) delete process.env.UM_SUMMARY_LAG_MAX_HOURS;
+    else process.env.UM_SUMMARY_LAG_MAX_HOURS = prevEnv;
+  }
+});
+
+test('MINOR 3: pending_bytes exactly EQUAL to the floor is stale-eligible (>=, not >) — the boundary a >/>= mutation would silently pass otherwise', async () => {
+  const vault = tempDir('um-layers-');
+  // No cursor, no summary ⇒ ∞ lag (well over any finite threshold); pending
+  // bytes is set to EXACTLY the configured floor.
+  await writeRawFile(vault, 'proj', '2026-08-01.md', 'x'.repeat(500), iso('2026-08-01T00:00:00Z'));
+  const { layers } = await buildLayers({ vaultDir: vault, config: { min_transcript_bytes: 500 } });
+  assert.equal(layers.proj.pending_bytes, 500);
+  assert.equal(layers.proj.stale, true, 'pending_bytes == floor must still count — the arm is >=');
+});
+
+test('MINOR 3 companion: pending_bytes one byte UNDER the floor is never stale, even at ∞ lag', async () => {
+  const vault = tempDir('um-layers-');
+  await writeRawFile(vault, 'proj', '2026-08-01.md', 'x'.repeat(499), iso('2026-08-01T00:00:00Z'));
+  const { layers } = await buildLayers({ vaultDir: vault, config: { min_transcript_bytes: 500 } });
+  assert.equal(layers.proj.pending_bytes, 499);
+  assert.equal(layers.proj.stale, false);
+});
+
+// ===========================================================================
 // §11.3 counterfactual — the 2026-08-04 outage replay
 // ===========================================================================
 
