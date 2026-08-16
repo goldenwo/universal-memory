@@ -1,54 +1,56 @@
 // server/lib/checkpoint.mjs — session-end checkpoint orchestration
 //
-// Pipeline order:
-//   1. Validate project slug
-//   2. Acquire lockdir (lockdir.mjs — atomic mkdir + stale recovery)
-//   3. Cost-cap check (per-day, per-project telemetry file)
-//   4. Read raw captures (per-file lockdir coordination)
-//   5. Summarize transcript
-//   6. Two-phase write summary file (phase-1: .tmp; phase-2: rename + state.md)
-//   7. Blocking reindex (3x retry + UPSTREAM_FAILURE on exhaustion — §5.4)
-//   8. Update telemetry
-//   9. Release lockdir (finally)
+// PR-1 rewrite (spec: docs/plans/2026-08-15-checkpoint-chunked-summarization-
+// spec.md §4.5-§4.8). doCheckpoint is now ORCHESTRATION-ONLY: it owns the
+// whole-run lock + heartbeat, the durable per-project cursor (checkpoint-
+// cursor.mjs), the chunk-assembly loop (chunk-builder.mjs), and the run-level
+// result envelope + HTTP-status error mapping (§4.6/§4.7). Every actual
+// summarize -> two-phase write -> cursor advance -> auto-supersede -> reindex
+// -> telemetry step for ONE chunk lives in checkpoint-chunk-txn.mjs
+// (runChunkTransaction) — this file never writes a summary or state.md
+// itself; it only acquires the run lock, resolves config, loads/advances the
+// cursor loop, and (windowed mode only) assembles the legacy raw-file window.
 //
-// B.10 (v0.6) changes vs B.9 baseline:
-//   • Part A: replaces `proper-lockfile` + inline mkdir(lockdir) with shared
-//     acquireLockdir/releaseLockdir from lockdir.mjs (also B.9 in append-turn).
-//   • Part B (spec §4.2.2 two-phase write):
-//       phase-1: write <summary>.md.tmp
-//       phase-2: rename .tmp → final, then update state.md (also two-phase)
-//     Phase-2 failure rewrites the .tmp file with `status: orphan_summary`
-//     frontmatter so next session-start can recover (see hooks/session-start.sh
-//     orphan detection).
-//   • Part C (spec §5.4 blocking reindex):
-//     memory_checkpoint is a semantic consistency point — reindex MUST block
-//     and retry 3x with 100/200/400ms backoff + 0-50ms jitter. Retry-exhausted
-//     surfaces UPSTREAM_FAILURE (B.1 stable-codes table). Contrast: append-turn
-//     (B.9) is best-effort fire-and-forget.
-//     C.11: B.10's manual loop has been replaced with the shared withRetry()
-//     helper from retry.mjs. The legacy DI hooks (ctx.retryDelaysMs,
-//     ctx.retryJitterMaxMs) are still honored for fast-running tests; they
-//     are translated into withRetry opts (maxRetries / baseDelayMs / jitterMaxMs).
-//     The per-attempt structured-warn log is preserved by intercepting
-//     reindexFn rejections before re-throwing into withRetry.
+// Two run modes:
+//   - DEFAULT (no since/until): the durable cursor drives buildNextChunk in a
+//     loop, up to max_chunks_per_run chunks, each committed as an
+//     independently-crash-safe transaction (§4.5/§4.6). This is the no-loss,
+//     at-least-once, idempotent-at-the-doc-layer path.
+//   - WINDOWED (since and/or until supplied — §4.8): bypasses the durable
+//     cursor entirely (no read, no write) — an intentionally duplicative,
+//     ad-hoc re-summarization of an explicit date window. To avoid a second,
+//     drifting copy of the summarize/write/reindex pipeline, the legacy
+//     file-window assembly below feeds its single assembled transcript
+//     through runChunkTransaction as ONE synthetic chunk, with
+//     `prevCursor: null` + `skipCursorAdvance: true` (a no-cursor sentinel —
+//     see checkpoint-chunk-txn.mjs's matching doc comment on that option).
+//
+// Stale-comment correction (spec §4.5.4): the old phase-2 comments here used
+// to promise "next-session-start orphan recovery" — that client-side branch
+// was retired under API-always (hooks/session-start.sh's own header says so)
+// and no recovery code exists anywhere, in this file or the txn module it now
+// delegates to. An orphaned `.tmp` simply means the chunk never committed, so
+// its content is re-digested (default mode, via the un-advanced cursor) or
+// re-assembled into the window (windowed mode, which never persists
+// anything) on the next run — inert disk litter, not unfinished work.
+// Orphan-litter cleanup stays a non-goal (spec §2).
 
 import fs from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { acquireLockdir, releaseLockdir } from './lockdir.mjs';
 import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState } from './update-state.mjs';
-import { withRetry } from './retry.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog, obsFallback } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { lockContentionsTotal } from './metrics.mjs';
 import { applyDefaultProject, TOOL_IDS, validateLanePersonaSlug } from './default-project.mjs';
-import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
-import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled } from './supersede.mjs';
 import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
+import { loadCursor } from './checkpoint-cursor.mjs';
+import { buildNextChunk } from './chunk-builder.mjs';
+import { runChunkTransaction } from './checkpoint-chunk-txn.mjs';
+import { resolveChunkingConfig, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS } from './checkpoint-config.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -64,98 +66,31 @@ const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
 const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/summarize.txt');
 
-// B.12 followup: O_NOFOLLOW — refuse to follow symlinks at the open() syscall level.
-// Closes the lstat→open TOCTOU race: even if an attacker swaps the path for
-// a symlink between our lstat() check and our open(), the kernel rejects
-// the open() with ELOOP and the redirection fails atomically.
-//
-// CRITICAL Windows compatibility: fsConstants.O_NOFOLLOW is `undefined` on
-// Windows (NTFS has a different threat model — symlink creation requires
-// SeCreateSymbolicLinkPrivilege). ORing `undefined` into open flags yields
-// NaN, which fs.open rejects with ERR_INVALID_ARG_TYPE — meaning every vault
-// write would fail on Windows. Coercing to 0 via `?? 0` makes the flag a
-// no-op on Windows, preserving cross-platform writes. Windows-specific
-// TOCTOU exposure is documented as a v0.7 hardening item; the existing
-// lstat-based refusal upstream covers the lstat-refusal layer cross-platform.
-const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
-
 // Project slug validation lives in ./default-project.mjs (v1.1 F1).
 // applyDefaultProject() handles the falsy → soft-default + invalid → null
 // branches; this file no longer carries its own copy of the slug regex.
+
+// §4.4/§4.8: an absolute per-run assembly ceiling — WINDOWED MODE ONLY now.
+// The default (cursor) path never reaches this: chunk math caps each chunk at
+// chunk_max_bytes and the whole run at chunk_max_bytes × max_chunks_per_run
+// (600KB with shipped defaults), both well under this 1MB DoS guard, and
+// nothing is ever dropped there (backlog_remaining reports the remainder
+// instead). Windowed mode has no chunk loop to bound it, so the legacy cap
+// survives there unchanged (spec §4.4's last bullet).
 const MAX_TRANSCRIPT_BYTES = 1024 * 1024; // 1 MB — DoS guard
 
-// Spec §5.4 retry policy for blocking reindex
-const DEFAULT_RETRY_DELAYS_MS = [100, 200, 400];
-const DEFAULT_RETRY_JITTER_MAX_MS = 50;
-
-const LOCK_TIMEOUT_MS = 10_000;
 const RAW_LOCK_TIMEOUT_MS = 5_000;
-
-// #185: thin-transcript abstention gate defaults. Abstain iff BOTH floors trip
-// (bytes AND turns) — AND-composition is the recall-safe direction: a legacy
-// header-less raw file clears on bytes, a tiny-but-real multi-turn session
-// clears on turns. The observed fabrication class is transcript_bytes == 0.
-// Either floor at 0 disables the gate. Env beats config beats these defaults.
-const DEFAULT_MIN_TRANSCRIPT_BYTES = 500;
-const DEFAULT_MIN_TRANSCRIPT_TURNS = 2;
-// Matches doAppendTurn's raw header: `## <ISO> <role>[ (conversation_id: …)]`
-// (append-turn.mjs ROLES = user|assistant|system). Anchored to line start; a
-// quoted header pasted at column 0 inside content would count — acceptable
-// noise for a floor check, never a fabrication vector.
-const TURN_HEADER_RE = /^## \d{4}-\d{2}-\d{2}T\S* (user|assistant|system)\b/gm;
-
-// Floor resolution: env override (operator, no config rebuild) → config
-// (checkpoint.json) → shipped default. Number('') is 0 — an explicitly empty
-// env var reads as "disable this floor", which is fine; NaN (unset/garbage)
-// falls through.
-function resolveFloor(envName, configValue, fallback) {
-  const envNum = Number(process.env[envName]);
-  if (process.env[envName] !== undefined && Number.isFinite(envNum)) return envNum;
-  return configValue ?? fallback;
-}
-
-/**
- * Rewrite a .tmp summary file to set `status: orphan_summary` in its frontmatter.
- * Best-effort: failures here are logged but not propagated — the original phase-2
- * error is what should surface to the caller.
- */
-async function markOrphanSummary(tmpPath) {
-  try {
-    const content = await fs.readFile(tmpPath, 'utf8');
-    // Insert `status: orphan_summary` immediately after the opening `---\n` line,
-    // before any other frontmatter fields. Idempotent: if status: already exists,
-    // replace it; else insert after the opening fence.
-    let updated;
-    if (/^status:\s*\S+$/m.test(content)) {
-      updated = content.replace(/^status:\s*\S+$/m, 'status: orphan_summary');
-    } else {
-      updated = content.replace(/^---\n/, '---\nstatus: orphan_summary\n');
-    }
-    // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
-    // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
-    // followed and overwriting an attacker-chosen target. NOFOLLOW is a
-    // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
-    const fh = await fs.open(tmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-    try { await fh.writeFile(updated, 'utf8'); } finally { await fh.close(); }
-  } catch (err) {
-    // C.9 (§4.2.0): pino emit must never throw out of a checkpoint path.
-    safeLog(() => getLogger().warn({
-      request_id: currentRequestId(),
-      component: 'checkpoint',
-      path: tmpPath,
-      err_message: err?.message ?? String(err),
-    }, 'failed to mark orphan_summary'), 'log:checkpoint:orphan-mark-failed');
-  }
-}
 
 /**
  * Run a full session-end checkpoint for a project.
  *
  * @param {object} args
  * @param {string} args.project          - Project slug (required)
- * @param {string} [args.since]          - Window start ISO string (v0.5: reads all)
- * @param {string} [args.until]          - Window end ISO string (v0.5: reads all)
+ * @param {string} [args.since]          - Window start ISO string (windowed mode, §4.8)
+ * @param {string} [args.until]          - Window end ISO string (windowed mode, §4.8)
  * @param {boolean}[args.skip_state_merge] - If true, skip state.md merge
+ * @param {string} [args.lane]           - D3.2 partition slug for the auto-supersede detector
+ * @param {string} [args.persona]        - D3.2 partition slug for the auto-supersede detector
  * @param {object} [ctx]                 - DI overrides for testing
  * @param {object} [ctx.config]          - Config object (default: checkpoint.json)
  * @param {string} [ctx.vaultDir]        - Vault directory override
@@ -163,8 +98,16 @@ async function markOrphanSummary(tmpPath) {
  * @param {Function}[ctx.updateStateFn]  - updateState function override
  * @param {Function}[ctx.reindexFn]      - Reindex function override
  * @param {string} [ctx.model]           - Model override
- * @param {number[]}[ctx.retryDelaysMs]  - Test override for retry backoff (default 100/200/400)
- * @param {number} [ctx.retryJitterMaxMs]- Test override for retry jitter (default 50ms)
+ * @param {number[]}[ctx.retryDelaysMs]  - Test override for reindex retry backoff (default 100/200/400)
+ * @param {number} [ctx.retryJitterMaxMs]- Test override for reindex retry jitter (default 50ms)
+ * @param {number} [ctx.heartbeatIntervalMs] - Test override for the whole-run lock heartbeat (default 30s, §4.5)
+ * @param {string} [ctx.systemPrompt]    - Test override for the summarize system prompt (default: read from disk once per run)
+ * @param {object} [ctx.qdrantClient]    - D3.2 partitioned MCP context for the auto-supersede detector
+ * @param {string} [ctx.collection]      - D3.2 partitioned MCP context for the auto-supersede detector
+ * @param {string} [ctx.userId]          - D3.2 partitioned MCP context for the auto-supersede detector
+ * @param {Function}[ctx._detectContradictions] - Test override for the D3.2 contradiction detector
+ * @param {Function}[ctx._supersede]     - Test override for the D3.2 supersede call
+ * @param {string} [ctx.surface]         - capture.checkpoint counter attribution (#159 spec §6)
  * @returns {Promise<object>}
  */
 export async function doCheckpoint(args, ctx = {}) {
@@ -237,33 +180,15 @@ export async function doCheckpoint(args, ctx = {}) {
   // Config + DI
   const config = ctx.config ?? JSON.parse(await fs.readFile(DEFAULT_CONFIG_PATH, 'utf8'));
   const vaultDir = ctx.vaultDir ?? process.env.UM_VAULT_DIR;
-  const summarizeFn = ctx.summarizeFn ?? defaultSummarize;
-  const updateStateFn = ctx.updateStateFn ?? defaultUpdateState;
-  const reindexFn = ctx.reindexFn ?? (async () => {});
-  const retryDelaysMs = ctx.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-  const retryJitterMaxMs = ctx.retryJitterMaxMs ?? DEFAULT_RETRY_JITTER_MAX_MS;
+  const chunkingCfg = resolveChunkingConfig(config);
 
-  // D3.2: DI hooks for the contradiction detector + supersede.
-  // ctx.qdrantClient / ctx.collection / ctx.userId: operator-supplied partition context.
-  // ctx._detectContradictions: injected in tests; defaults to real detectContradictionsInBatch.
-  // ctx._supersede: injected in tests; defaults to real supersedePoint.
-  const qdrantClient = ctx.qdrantClient ?? undefined;
-  const collection = ctx.collection ?? undefined;
-  const userId = ctx.userId ?? undefined;
-  const _detectContradictions = ctx._detectContradictions ?? defaultDetectContradictions;
-  const _supersede = ctx._supersede ?? defaultSupersedePoint;
-  // Thresholds (D3.3 Task 3.2): two INDEPENDENT cutoffs. Pass through if set;
-  // undefined lets the detector apply its own eval-derived default.
-  //   - UM_AUTOSUPERSEDE_THRESHOLD           → judge-confidence gate (judgeThreshold)
-  //   - UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD → embedding retrieval cosine (retrievalThreshold)
-  const autoJudgeThreshold = process.env.UM_AUTOSUPERSEDE_THRESHOLD
-    ? Number(process.env.UM_AUTOSUPERSEDE_THRESHOLD)
-    : undefined;
-  const autoRetrievalThreshold = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD
-    ? Number(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD)
-    : undefined;
-
-  // Load summarize system prompt (mirrors update-state.mjs prompt-resolution priority)
+  // Load summarize system prompt (mirrors update-state.mjs prompt-resolution
+  // priority). Per-run, not per-chunk: read once off disk here and threaded
+  // into every chunk's txn as deps.systemPrompt — the txn module's own
+  // contract documents that an omitted prompt silently degrades every chunk
+  // to a generic, non-UM-format summary rather than failing, so loading it
+  // once at the top of the run (ENOENT → error envelope, unchanged from
+  // today) is this file's job, not checkpoint-chunk-txn.mjs's.
   let systemPrompt = ctx.systemPrompt;
   if (!systemPrompt) {
     const promptDir = process.env.UM_PROMPT_DIR;
@@ -315,8 +240,34 @@ export async function doCheckpoint(args, ctx = {}) {
     return { schema_version: 1, ok: false, error: `lock_acquire_failed: ${acquired._acquireError.code ?? acquired._acquireError.message}` };
   }
 
+  // §4.5: whole-run lock heartbeat. lockdir.mjs's stale-recovery window drops
+  // to 120s under low disk (DEFAULT_LOW_DISK_STALE_MS) — a multi-chunk run can
+  // easily outlive that. Refreshing the lockdir's mtime on this cadence (well
+  // under the low-disk threshold, by import — pinned in Task 8's I6 test)
+  // makes takeover impossible for any LIVE run in every stale regime, while a
+  // SIGKILLed run simply stops beating and stale recovery proceeds exactly as
+  // today. Cleared in the same `finally` that releases the lock. Heartbeat
+  // I/O errors warn, never throw (safeLog) — a missed refresh is not fatal to
+  // the run in progress, only a (bounded, self-correcting) staleness risk.
+  const heartbeatIntervalMs = ctx.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+  const heartbeatTimer = setInterval(() => {
+    const now = new Date();
+    fs.utimes(lockdir, now, now).catch((err) => {
+      safeLog(() => getLogger().warn({
+        request_id: currentRequestId(),
+        component: 'checkpoint',
+        project,
+        err_message: err?.message ?? String(err),
+      }, 'checkpoint heartbeat: lockdir mtime refresh failed'), 'log:checkpoint:heartbeat-failed');
+    });
+  }, heartbeatIntervalMs);
+  heartbeatTimer.unref();
+
   try {
-    // Cost cap check
+    // Run-start cost-cap check — the legacy exact 'cost cap hit' string
+    // envelope (pinned, §8). Distinct from the txn's own per-chunk mid-run
+    // cap check (stopped:{reason:'cost_cap'}, always a SUCCESS envelope —
+    // chunks already committed this run stay committed).
     const today = new Date().toISOString().slice(0, 10);
     const costPath = path.join(vaultDir, '.telemetry', `${today}-${project}.count`);
     let daySpent = 0;
@@ -325,422 +276,465 @@ export async function doCheckpoint(args, ctx = {}) {
       return { schema_version: 1, ok: false, error: 'cost cap hit' };
     }
 
-    // Read raw captures — filter by since/until window, enforce MAX_TRANSCRIPT_BYTES cap.
-    // B.10 Part A: per-raw-file coordination now uses lockdir.mjs (sibling .lockdir),
-    // not proper-lockfile's .lock. This keeps the cross-process story consistent with
-    // append-turn writes (B.9) which use the same .lockdir convention. Bash stop.sh
-    // continues to use perl flock against the .lock path — the cross-process race
-    // between bash-perl and node-lockdir is the same as v0.5 (documented, low risk
-    // in practice; B.11 will migrate the bash side to .lockdir to close it).
-    const rawDir = path.join(vaultDir, 'captures', project, 'raw');
-    const rawFiles = await fs.readdir(rawDir).catch(() => []);
+    // DI deps shared by every runChunkTransaction call this run (default
+    // mode's loop, or windowed mode's single synthetic chunk). Every field
+    // left undefined here threads through to the txn module's own defaults
+    // (real summarize/updateState/reindex/detectContradictions/supersede) —
+    // exactly the same fallback contract this file used to apply itself.
+    const txnDeps = {
+      summarizeFn: ctx.summarizeFn ?? defaultSummarize,
+      updateStateFn: ctx.updateStateFn ?? defaultUpdateState,
+      reindexFn: ctx.reindexFn ?? (async () => {}),
+      detectContradictions: ctx._detectContradictions,
+      supersedePoint: ctx._supersede,
+      qdrantClient: ctx.qdrantClient,
+      collection: ctx.collection,
+      userId: ctx.userId,
+      systemPrompt,
+      model: ctx.model,
+      retryDelaysMs: ctx.retryDelaysMs,
+      retryJitterMaxMs: ctx.retryJitterMaxMs,
+    };
 
-    // Parse since/until into date strings (YYYY-MM-DD) for filename comparison
-    const sinceDate = since ? since.slice(0, 10) : null;
-    const untilDate = until ? until.slice(0, 10) : new Date().toISOString().slice(0, 10);
-
-    // Filter: only .md files whose YYYY-MM-DD prefix falls within [sinceDate, untilDate]
-    const filteredFiles = rawFiles
-      .filter(f => f.endsWith('.md'))
-      .filter(f => {
-        const fileDate = f.slice(0, 10); // YYYY-MM-DD prefix
-        if (sinceDate && fileDate < sinceDate) return false;
-        if (untilDate && fileDate > untilDate) return false;
-        return true;
-      })
-      .sort();
-
-    let transcript = '';
-    let transcriptTruncated = false;
-    for (const f of filteredFiles) {
-      const rawFilePath = path.join(rawDir, f);
-      const rawLockdir = rawFilePath + '.lockdir';
-      const rawAcquired = await acquireLockdir(rawLockdir, { timeoutMs: RAW_LOCK_TIMEOUT_MS });
-      if (!rawAcquired) {
-        // Skip this file rather than fail the whole checkpoint — best-effort read,
-        // matches v0.5 proper-lockfile behavior on contention.
-        // R1 review A1, fix #1: contention metric. Per-raw-file collisions
-        // bucket under 'checkpoint:raw' for stable label cardinality.
-        emitLockContentionMetric('checkpoint:raw');
-        safeLog(() => getLogger().warn({
-          request_id: currentRequestId(),
-          component: 'checkpoint',
-          file: f,
-        }, 'could not acquire raw lock; skipping'), 'log:checkpoint:raw-lock-skip');
-        continue;
-      }
-      try {
-        const chunk = await fs.readFile(rawFilePath, 'utf8') + '\n\n';
-        if (Buffer.byteLength(transcript + chunk, 'utf8') > MAX_TRANSCRIPT_BYTES) {
-          transcriptTruncated = true;
-          break;
-        }
-        transcript += chunk;
-      } finally {
-        await releaseLockdir(rawLockdir);
-      }
+    // §4.8: since/until (either one) selects windowed mode — the cursor is
+    // bypassed entirely. Neither present → the default, cursor-driven path.
+    const isWindowed = since !== null || until !== null;
+    if (isWindowed) {
+      return await runWindowedMode({
+        vaultDir, project, since, until, config, chunkingCfg, lane, persona,
+        skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
+      });
     }
-    if (transcriptTruncated) {
-      transcript += `\n\n[transcript truncated at ${MAX_TRANSCRIPT_BYTES} bytes; use since=<date> to window the checkpoint]\n`;
-    }
+    return await runDefaultMode({
+      vaultDir, project, config, chunkingCfg, lane, persona,
+      skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
+    });
+  } finally {
+    clearInterval(heartbeatTimer);
+    await releaseLockdir(lockdir);
+  }
+}
 
-    // ----- #185: thin-transcript abstention gate -----
-    // Deterministic pre-filter BEFORE any LLM spend: a transcript that cannot
-    // support a summary must never reach the summarizer (it template-fills a
-    // fabricated narrative from ~nothing — the 2026-07-27 phantom-summary
-    // incident: 134 points, all tokens_in ≈ prompt-only). Abstention stores
-    // nothing and loses nothing: raw captures stay on disk and the next
-    // checkpoint's default window (no lower date bound) re-reads them.
-    const minTranscriptBytes = resolveFloor(
-      'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', config.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES);
-    const minTranscriptTurns = resolveFloor(
-      'UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS', config.min_transcript_turns, DEFAULT_MIN_TRANSCRIPT_TURNS);
-    const transcriptBytes = Buffer.byteLength(transcript.trim(), 'utf8');
-    const transcriptTurns = (transcript.match(TURN_HEADER_RE) ?? []).length;
-    if (transcriptBytes < minTranscriptBytes && transcriptTurns < minTranscriptTurns) {
-      safeLog(() => getLogger().info({
+// ---------------------------------------------------------------------------
+// Default (cursor-driven) run mode — spec §4.5/§4.6
+// ---------------------------------------------------------------------------
+
+/**
+ * Default run mode. Loads the durable per-project cursor, then loops
+ * chunk-builder.mjs (buildNextChunk) → checkpoint-chunk-txn.mjs
+ * (runChunkTransaction) up to `chunkingCfg.maxChunksPerRun` times, threading
+ * each committed chunk's `nextCursor` into the NEXT chunk's `prevCursor` —
+ * max-persist (§4.1) only holds if threaded; this is a pinned integration
+ * invariant (Task 5 carry #1), not an incidental detail.
+ */
+async function runDefaultMode({ vaultDir, project, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0 }) {
+  const { cursor: initialCursor } = await loadCursor({ vaultDir, project });
+
+  // Bound acquire/release for chunk-builder's DI seam (spec §4.4: "bind
+  // lockdir.mjs's acquire/release with RAW_LOCK_TIMEOUT_MS as today").
+  const acquireLock = async (lockPath) => {
+    const got = await acquireLockdir(lockPath, { timeoutMs: RAW_LOCK_TIMEOUT_MS });
+    if (!got) {
+      // Mirrors windowed mode's per-raw-file contention metric. Unlike
+      // windowed mode's best-effort skip, the chunked path's response to
+      // this is no-skip-ahead (I3): the RUN stops here, it never reads past
+      // this file — see the raw_lock branch below.
+      emitLockContentionMetric('checkpoint:raw');
+      safeLog(() => getLogger().warn({
         request_id: currentRequestId(),
         component: 'checkpoint',
         project,
-        transcript_bytes: transcriptBytes,
-        transcript_turns: transcriptTurns,
-        min_bytes: minTranscriptBytes,
-        min_turns: minTranscriptTurns,
-      }, 'thin transcript — abstaining from summary'), 'log:checkpoint:thin-abstain');
-      recordCaptureEvent({
-        surface: ctx.surface,
-        project,
-        event: CAPTURE_EVENTS.CHECKPOINT,
-        outcome: 'abstained',
-      });
+        file: path.basename(lockPath, '.lockdir'),
+      }, 'could not acquire raw lock; run stops here (no-skip-ahead, I3)'), 'log:checkpoint:raw-lock-stop');
+    }
+    return got;
+  };
+
+  const acc = {
+    chunksDone: 0, costUsd: 0, tokensIn: 0, tokensOut: 0,
+    lastSummaryId: null, lastSummaryPath: null,
+    stateUpdated: false, statePath: null,
+  };
+  const envCtx = { project, surface, t0 };
+
+  let cursor = initialCursor;
+  const buildArgs = () => ({
+    vaultDir, project, cursor, chunkMaxBytes: chunkingCfg.chunkMaxBytes,
+    acquireLock, releaseLock: releaseLockdir,
+  });
+
+  for (let i = 0; i < chunkingCfg.maxChunksPerRun; i += 1) {
+    const built = await buildNextChunk(buildArgs());
+
+    if (built.exhausted) {
+      // Backlog fully drained (or, on the very first iteration with zero
+      // chunks committed, nothing was ever pending — indistinguishable in
+      // effect from "pending but thin", so it gets the SAME abstention
+      // envelope, matching the drain script's own framing (spec §5:
+      // "nothing digestible pending") and the pinned no-captures-dir test.
+      if (acc.chunksDone === 0) {
+        return abstentionEnvelope(envCtx, { transcriptBytes: 0, transcriptTurns: 0 });
+      }
+      return successEnvelope(acc, envCtx, { backlogRemaining: false });
+    }
+
+    if (built.stopped?.reason === 'raw_lock') {
+      // spec §4.4: "if a chunk came with it, run its txn first; then stop
+      // with stopped:{reason:'raw_lock'}". If that chunk's own outcome is
+      // itself terminal (abstain / 0-chunk provider failure / phase2 /
+      // cursor_write / reindex) or its own stop-the-loop success (thin_tail /
+      // cost_cap / provider partial), THAT outcome takes precedence — the
+      // raw_lock signal is moot once we're already stopping for another
+      // reason. Only a clean commit falls through to the raw_lock envelope.
+      if (built.chunk) {
+        const txnResult = await runChunkTransaction(
+          { vaultDir, project, chunk: built.chunk, prevCursor: cursor, config, chunkingCfg, lane, persona, surface, skipStateMerge },
+          txnDeps,
+        );
+        const outcome = classifyAndApply(txnResult, acc, envCtx);
+        if (outcome.done) return outcome.envelope;
+        cursor = outcome.nextCursor;
+      }
+      return successEnvelope(acc, envCtx, { backlogRemaining: true, stopped: { reason: 'raw_lock' } });
+    }
+
+    // Normal chunk.
+    const txnResult = await runChunkTransaction(
+      { vaultDir, project, chunk: built.chunk, prevCursor: cursor, config, chunkingCfg, lane, persona, surface, skipStateMerge },
+      txnDeps,
+    );
+    const outcome = classifyAndApply(txnResult, acc, envCtx);
+    if (outcome.done) return outcome.envelope;
+    cursor = outcome.nextCursor;
+  }
+
+  // max_chunks_per_run reached without exhausting the backlog or otherwise
+  // stopping. Peek one more chunk (never committed) purely to distinguish an
+  // exact-fit finish (no more pending → no stopped reason) from real
+  // remaining backlog (spec §4.6: chunk_cap is reported only "with more
+  // pending").
+  const peek = await buildNextChunk(buildArgs());
+  if (peek.exhausted) {
+    return successEnvelope(acc, envCtx, { backlogRemaining: false });
+  }
+  return successEnvelope(acc, envCtx, { backlogRemaining: true, stopped: { reason: 'chunk_cap' } });
+}
+
+// ---------------------------------------------------------------------------
+// Windowed run mode — spec §4.8
+// ---------------------------------------------------------------------------
+
+/**
+ * Windowed mode (since and/or until supplied). Bypasses the durable cursor
+ * entirely: no read, no write. KEEPS the legacy raw-file window assembly +
+ * MAX_TRANSCRIPT_BYTES truncation (an ad-hoc, intentionally duplicative
+ * re-summarization of an explicit date range — not the crash-safe, idempotent
+ * default path), then feeds the single assembled transcript through
+ * runChunkTransaction as ONE synthetic chunk with `prevCursor: null` +
+ * `skipCursorAdvance: true` (see that option's doc comment in
+ * checkpoint-chunk-txn.mjs) rather than duplicating the summarize/write/
+ * reindex pipeline a second time in this file.
+ */
+async function runWindowedMode({ vaultDir, project, since, until, config, chunkingCfg, lane, persona, skipStateMerge, surface, txnDeps, t0 }) {
+  const rawDir = path.join(vaultDir, 'captures', project, 'raw');
+  const rawFiles = await fs.readdir(rawDir).catch(() => []);
+
+  // Parse since/until into date strings (YYYY-MM-DD) for filename comparison.
+  const sinceDate = since ? since.slice(0, 10) : null;
+  const untilDate = until ? until.slice(0, 10) : new Date().toISOString().slice(0, 10);
+
+  // Filter: only .md files whose YYYY-MM-DD prefix falls within [sinceDate, untilDate].
+  const filteredFiles = rawFiles
+    .filter((f) => f.endsWith('.md'))
+    .filter((f) => {
+      const fileDate = f.slice(0, 10);
+      if (sinceDate && fileDate < sinceDate) return false;
+      if (untilDate && fileDate > untilDate) return false;
+      return true;
+    })
+    .sort();
+
+  let transcript = '';
+  let transcriptTruncated = false;
+  for (const f of filteredFiles) {
+    const rawFilePath = path.join(rawDir, f);
+    const rawLockdir = rawFilePath + '.lockdir';
+    const rawAcquired = await acquireLockdir(rawLockdir, { timeoutMs: RAW_LOCK_TIMEOUT_MS });
+    if (!rawAcquired) {
+      // Best-effort read (unchanged legacy behavior for this ad-hoc path):
+      // windowed mode has no cursor to resume from, so skipping a contended
+      // file — rather than stopping the whole window, which the default
+      // mode's no-skip-ahead rule requires — is the existing tradeoff here.
+      emitLockContentionMetric('checkpoint:raw');
+      safeLog(() => getLogger().warn({
+        request_id: currentRequestId(),
+        component: 'checkpoint',
+        file: f,
+      }, 'could not acquire raw lock; skipping'), 'log:checkpoint:raw-lock-skip');
+      continue;
+    }
+    try {
+      const chunkText = await fs.readFile(rawFilePath, 'utf8') + '\n\n';
+      if (Buffer.byteLength(transcript + chunkText, 'utf8') > MAX_TRANSCRIPT_BYTES) {
+        transcriptTruncated = true;
+        break;
+      }
+      transcript += chunkText;
+    } finally {
+      await releaseLockdir(rawLockdir);
+    }
+  }
+
+  const chunk = buildWindowedChunk({ transcript, filteredFiles, sinceDate });
+  const txnResult = await runChunkTransaction(
+    {
+      vaultDir, project, chunk, prevCursor: null, config, chunkingCfg,
+      lane, persona, surface, skipStateMerge, skipCursorAdvance: true,
+    },
+    txnDeps,
+  );
+
+  const acc = {
+    chunksDone: 0, costUsd: 0, tokensIn: 0, tokensOut: 0,
+    lastSummaryId: null, lastSummaryPath: null,
+    stateUpdated: false, statePath: null,
+  };
+  const envCtx = { project, surface, t0 };
+  const outcome = classifyAndApply(txnResult, acc, envCtx);
+  if (outcome.done) return outcome.envelope;
+
+  // Windowed mode never loops (one chunk, no cursor) — a commit here always
+  // means the whole requested window is done; there is no cursor-sense
+  // "backlog" left to report.
+  const envelope = successEnvelope(acc, envCtx, { backlogRemaining: false });
+  // Legacy MAX_TRANSCRIPT_BYTES truncation is orthogonal to the chunked
+  // path's backlog_remaining-derived alias (this window has no cursor/
+  // backlog concept of its own) — carried through independently, exactly as
+  // the pre-chunking code did (spec §4.8: "KEEP ... truncated: true").
+  if (transcriptTruncated) envelope.truncated = true;
+  return envelope;
+}
+
+/** Turn ISOs found in `transcript`, min/max by parsed epoch; falls back to file dates, then now(). */
+function windowCoversRange(transcript, filteredFiles) {
+  const headerRe = makeTurnHeaderRe('gm');
+  let min = null;
+  let max = null;
+  for (const m of transcript.matchAll(headerRe)) {
+    const iso = m[0].slice(3, m[0].indexOf(' ', 3));
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) continue;
+    if (min === null || ms < min.ms) min = { iso, ms };
+    if (max === null || ms > max.ms) max = { iso, ms };
+  }
+  if (min && max) return { coversFrom: min.iso, coversUntil: max.iso };
+  // Legacy headerless content (or genuinely no turns anywhere in the window):
+  // fall back to the filtered files' own dates at UTC midnight — mirrors
+  // chunk-builder.mjs's never-headered-blob fallback (spec §4.5 step 4).
+  if (filteredFiles.length > 0) {
+    return {
+      coversFrom: `${filteredFiles[0].slice(0, 10)}T00:00:00.000Z`,
+      coversUntil: `${filteredFiles[filteredFiles.length - 1].slice(0, 10)}T00:00:00.000Z`,
+    };
+  }
+  const now = new Date().toISOString();
+  return { coversFrom: now, coversUntil: now };
+}
+
+/**
+ * Build the single synthetic §4.4-shaped chunk windowed mode feeds into
+ * runChunkTransaction. startFile/startOffset/endFile/endOffset only need to
+ * be stable and well-formed here (they feed the deterministic-summary-id
+ * hash) — not byte-exact against any real cursor, since this mode never
+ * reads or writes one (§4.8's no-cursor sentinel, skipCursorAdvance).
+ */
+function buildWindowedChunk({ transcript, filteredFiles, sinceDate }) {
+  const turnCount = (transcript.match(makeTurnHeaderRe('gm')) ?? []).length;
+  const { coversFrom, coversUntil } = windowCoversRange(transcript, filteredFiles);
+  const startFile = filteredFiles[0] ?? `${sinceDate ?? '0000-00-00'}.md`;
+  const endFile = filteredFiles[filteredFiles.length - 1] ?? startFile;
+  return {
+    text: transcript,
+    turnCount,
+    startFile,
+    startOffset: 0,
+    endFile,
+    endOffset: Buffer.byteLength(transcript, 'utf8'),
+    boundary: 'turn',
+    coversFrom,
+    coversUntil,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared: txn-result → envelope mapping (spec §4.6/§4.7) — used by both modes
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate one checkpoint-chunk-txn.mjs result into either a mutation of the
+ * run-level accumulator (`committed` — loop continues, caller re-reads
+ * `outcome.nextCursor`) or a terminal envelope to return immediately
+ * (`done: true` — every other shape). This is the single place the §4.6/§4.7
+ * txn-result → HTTP-envelope mapping lives, so default mode's loop and
+ * windowed mode's single call can never drift apart.
+ */
+function classifyAndApply(txnResult, acc, envCtx) {
+  if (txnResult.committed) {
+    const c = txnResult.committed;
+    acc.chunksDone += 1;
+    acc.costUsd += c.costUsd;
+    acc.tokensIn += c.tokensIn;
+    acc.tokensOut += c.tokensOut;
+    acc.lastSummaryId = c.summaryId;
+    acc.lastSummaryPath = c.summaryPath;
+    acc.stateUpdated = c.stateUpdated;
+    acc.statePath = c.statePath;
+    return { done: false, nextCursor: c.nextCursor };
+  }
+
+  // Ledger carry #3 (Task 5 → 6): thin on the FIRST chunk of this run
+  // (chunks_done still 0) is the legacy abstention envelope, byte-for-byte —
+  // the txn itself does not emit the 'abstained' counter; that happens here,
+  // at the run layer. A thin TAIL after >=1 committed chunk is instead a
+  // success with thin_tail:true (never the abstention envelope, spec §4.5.2).
+  if (txnResult.thin) {
+    if (acc.chunksDone === 0) {
       return {
-        schema_version: 1,
-        ok: true,
-        skipped: 'thin_transcript',
-        transcript_bytes: transcriptBytes,
-        transcript_turns: transcriptTurns,
-        duration_ms: Date.now() - t0,
+        done: true,
+        envelope: abstentionEnvelope(envCtx, {
+          transcriptBytes: txnResult.transcriptBytes,
+          transcriptTurns: txnResult.transcriptTurns,
+        }),
       };
     }
+    return { done: true, envelope: successEnvelope(acc, envCtx, { backlogRemaining: false, thinTail: true }) };
+  }
 
-    // Summarize (pass systemPrompt so the curated UM format is used, not generic output)
-    const { summary, costUsd, tokensIn, tokensOut } = await summarizeFn(transcript, {
-      backend: process.env.UM_SUMMARIZER,
-      model: ctx.model ?? config.summary_model,
-      systemPrompt,
-    });
+  if (txnResult.stopped?.reason === 'cost_cap') {
+    // §4.5 step 1: mid-run cap is ALWAYS a success envelope (chunks already
+    // committed this run stay committed), unlike the run-start check above.
+    return { done: true, envelope: successEnvelope(acc, envCtx, { backlogRemaining: true, stopped: { reason: 'cost_cap' } }) };
+  }
 
-    // ----- B.10 Part B: two-phase write -----
-    // Phase 1: write <summary>.md.tmp with full frontmatter (no `status:` field —
-    //          a successful phase-2 leaves the final file un-statused; phase-2
-    //          failure rewrites the .tmp with `status: orphan_summary`).
-    // Phase 2: atomic rename → final, then update state.md (itself two-phase).
-    //          Failures in phase-2 leave the .tmp with status: orphan_summary
-    //          for next-session-start orphan recovery.
-    const summaryId = `session-${today}-${randomUUID().replace(/-/g, '').slice(0, 8)}`;
-    const summaryRelPath = `sessions/${project}/${summaryId}.md`;
-    const absSummaryPath = path.join(vaultDir, summaryRelPath);
-    const tmpSummaryPath = absSummaryPath + '.tmp';
-    await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
-
-    // Symlink guards on both .tmp and final paths (preserves Fix 3 from v0.5).
-    const tmpSymCheck = await fs.lstat(tmpSummaryPath).catch(() => null);
-    if (tmpSymCheck && tmpSymCheck.isSymbolicLink()) {
-      return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
+  const f = txnResult.failed;
+  if (f?.stage === 'summarize') {
+    // §4.7: 0 chunks committed this run → structured UPSTREAM_FAILURE (502,
+    // via httpStatusFor). >=1 already committed → 200 partial — never lose
+    // work already durably on disk to report a failure on a LATER chunk.
+    if (acc.chunksDone === 0) {
+      return {
+        done: true,
+        envelope: {
+          schema_version: 1,
+          ok: false,
+          error: { code: 'UPSTREAM_FAILURE', stage: 'summarize', provider_class: f.providerClass, message: f.message },
+        },
+      };
     }
-    const summaryStatCheck = await fs.lstat(absSummaryPath).catch(() => null);
-    if (summaryStatCheck && summaryStatCheck.isSymbolicLink()) {
-      return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
-    }
-
-    // Frontmatter — reindexDoc requires type/id/title to index into mem0.
-    const now = new Date();
-    const frontmatter = [
-      '---',
-      `type: session_summary`,
-      `id: ${summaryId}`,
-      `title: Session summary ${today} for ${project}`,
-      `project: ${project}`,
-      `valid_from: ${now.toISOString()}`,
-      `tokens_in: ${tokensIn}`,
-      `tokens_out: ${tokensOut}`,
-      `cost_usd: ${costUsd.toFixed(6)}`,
-      '---',
-      '',
-    ].join('\n');
-    const summaryWithFm = frontmatter + summary;
-
-    // Phase 1: write .tmp
-    // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
-    // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
-    // followed and overwriting an attacker-chosen target. NOFOLLOW is a
-    // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
-    {
-      const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-      try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
-    }
-
-    // Phase 2: update state.md first, then rename .tmp → final.
-    // Ordering rationale: state.md is the contention-prone path (lockdir,
-    // disk-full, lstat symlink check). If state.md update fails, the summary
-    // .tmp is still in place — markOrphanSummary marks it for recovery and we
-    // never advance to the rename. If rename fails AFTER state.md succeeds
-    // (rare: EBUSY on Windows, ENOSPC mid-rename), the state.md references a
-    // summary that exists only as `.tmp`; we still mark it orphan_summary so
-    // session-start recovery can re-attempt the rename to its canonical name.
-    let stateUpdated = false;
-    let statePath = null;
-    try {
-      // State.md merge (also two-phase: state.md.tmp → rename to state.md)
-      if (!skip_state_merge) {
-        const oldStatePath = path.join(vaultDir, 'state', project, 'state.md');
-        let oldStateMd = '';
-        try { oldStateMd = await fs.readFile(oldStatePath, 'utf8'); } catch {}
-        const stateResult = await updateStateFn(
-          { oldStateMd, newSummary: summary, projectId: project },
-          { summarizeFn },
-        );
-        // Symlink guard on state.md target before rename (preserves Fix 3).
-        const stateSymCheck = await fs.lstat(oldStatePath).catch(() => null);
-        if (stateSymCheck && stateSymCheck.isSymbolicLink()) {
-          return { schema_version: 1, ok: false, error: 'target is a symlink; refusing to write' };
-        }
-        const stateTmpPath = oldStatePath + '.tmp';
-        // B.12 followup: open with O_NOFOLLOW so a planted symlink at the .tmp
-        // path is rejected atomically by the kernel (ELOOP on POSIX) instead of
-        // followed and overwriting an attacker-chosen target. NOFOLLOW is a
-        // no-op on Windows (constants.O_NOFOLLOW is undefined → coerced to 0).
-        {
-          const fh = await fs.open(stateTmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-          try { await fh.writeFile(stateResult.mergedMd, 'utf8'); } finally { await fh.close(); }
-        }
-        await fs.rename(stateTmpPath, oldStatePath);
-        stateUpdated = true;
-        statePath = `state/${project}/state.md`;
-      }
-
-      // Final rename — the summary becomes durably reachable at its canonical path.
-      await fs.rename(tmpSummaryPath, absSummaryPath);
-    } catch (phase2Err) {
-      // Phase 2 failed. Mark the .tmp (if still present) as orphan_summary so
-      // next-session-start orphan recovery can finish the job. If rename
-      // succeeded but state.md failed first (impossible with the ordering
-      // above), we'd re-stage a .tmp; the ordering keeps that branch dead but
-      // we keep the safety net for defensive future edits.
-      const tmpStillThere = await fs.stat(tmpSummaryPath).catch(() => null);
-      if (tmpStillThere) {
-        await markOrphanSummary(tmpSummaryPath);
-      } else {
-        try {
-          // B.12 followup: open with O_NOFOLLOW so a planted symlink at the
-          // .tmp path is rejected atomically by the kernel (ELOOP on POSIX)
-          // instead of followed and overwriting an attacker-chosen target.
-          // NOFOLLOW is a no-op on Windows (constants.O_NOFOLLOW is undefined
-          // → coerced to 0).
-          const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-          try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
-          await markOrphanSummary(tmpSummaryPath);
-        } catch (restageErr) {
-          safeLog(() => getLogger().warn({
-            request_id: currentRequestId(),
-            component: 'checkpoint',
-            path: tmpSummaryPath,
-            err_message: restageErr?.message ?? String(restageErr),
-          }, 'phase-2 orphan re-stage failed'), 'log:checkpoint:phase2-orphan-failed');
-        }
-      }
-      const isLockContention =
-        phase2Err.code === 'EBUSY' || phase2Err.code === 'STATE_LOCK_CONTENTION';
-      if (isLockContention) {
-        // R1 review A1, fix #1: phase-2 rename / state.md write contention metric.
-        emitLockContentionMetric('checkpoint:summary');
-      }
-      const out = {
+    return {
+      done: true,
+      envelope: successEnvelope(acc, envCtx, {
+        backlogRemaining: true,
+        stopped: { reason: f.providerClass === 'ratelimit' ? 'provider_ratelimit' : 'provider_failure' },
+      }),
+    };
+  }
+  if (f?.stage === 'phase2') {
+    // Ledger carry #2 (Task 5 → 6): restore the pinned STATE_LOCK_CONTENTION
+    // 503 envelope + its metric from the txn's additive `code` field; every
+    // other phase-2 failure keeps today's plain-string error shape (→400).
+    const isLockContention = f.code === 'EBUSY' || f.code === 'STATE_LOCK_CONTENTION';
+    if (isLockContention) emitLockContentionMetric('checkpoint:summary');
+    return {
+      done: true,
+      envelope: {
         schema_version: 1,
         ok: false,
         error: isLockContention
-          ? { code: 'STATE_LOCK_CONTENTION', message: `checkpoint phase 2: state.md update contention: ${phase2Err.message}` }
-          : phase2Err.message ?? String(phase2Err),
-      };
-      return out;
-    }
-
-    // ----- D3.2/D3.3: auto-supersession contradiction pass (default ON since v1.2) -----
-    // Opt-out: only the literal string 'false' disables this pass (mirrors UM_DEDUP_ENABLED).
-    // Runs after the durable summary write (absSummaryPath exists on disk),
-    // before reindex — so a detection failure can never jeopardise the already-
-    // persisted summary (spec §7 warn-not-throw; must never break the pipeline).
-    //
-    // The detector's own eligibility gate (!lane && !persona → return []) means
-    // that when both are absent this block is a fast no-op even when the flag is on.
-    //
-    // reindexFn reads from disk (it receives summaryRelPath, a path string).
-    // Appending the digest to absSummaryPath BEFORE reindex is therefore correct:
-    // the digest travels into the index without any in-memory content patching.
-    //
-    // v1.2 flip (D3.3): ON by default — opt-out polarity (mirrors UM_DEDUP_ENABLED);
-    // only the literal lowercase 'false' (whitespace-trimmed) disables. The eligibility
-    // gate above keeps this a fast no-op for unpartitioned checkpoints even when on.
-    // Predicate single-sourced in supersede.mjs (Gap-5 P3) — shared with the MCP
-    // memory_checkpoint handler and the write-time in-band decision.
-    if (isAutoSupersedeEnabled()) {
-      try {
-        const detections = await _detectContradictions(transcript, {
-          userId, lane, persona, collection, client: qdrantClient,
-          judgeThreshold: autoJudgeThreshold,
-          retrievalThreshold: autoRetrievalThreshold,
-        });
-        if (detections.length > 0) {
-          for (const d of detections) {
-            await _supersede({ client: qdrantClient, collection, id: d.targetId, supersededBy: d.supersededBy });
-          }
-          // Build the supersession digest block (spec §3.7 format).
-          // One bullet per superseded pair: target, replacing, partition, confidence, reason, undo.
-          const laneStr = lane || '-';
-          const personaStr = persona || '-';
-          const bullets = detections.map((d) =>
-            `- target \`${d.targetId}\` → superseded by \`${d.supersededBy}\` (confidence ${d.confidence})\n` +
-            `  - reason: ${String(d.reasoning ?? '').replace(/\s+/g, ' ').trim()}\n` +
-            `  - undo: \`memory_supersede {"action":"unsupersede","id":"${d.targetId}"}\``
-          ).join('\n');
-          const digest =
-            `\n\n## Auto-superseded (D3.2)\n\n` +
-            `Partition: lane=${laneStr} persona=${personaStr}\n\n` +
-            `${bullets}\n`;
-          // Append to the already-written summary file so the digest is indexed
-          // by the reindexFn that reads from disk below.
-          await fs.appendFile(absSummaryPath, digest, 'utf8');
-        }
-      } catch (err) {
-        safeLog(
-          () => getLogger().warn({
-            request_id: currentRequestId(),
-            component: 'checkpoint',
-            err_message: err?.message ?? String(err),
-          }, 'auto-supersede pass failed (non-fatal)'),
-          'log:checkpoint:autosupersede-failed',
-        );
-      }
-    }
-
-    // ----- B.10 Part C: blocking reindex with retry (spec §5.4) -----
-    // memory_checkpoint is a consistency point — reindex BLOCKS the response.
-    // 3 retries with 100/200/400 ms backoff + 0–retryJitterMaxMs ms jitter.
-    // Retry-exhausted surfaces UPSTREAM_FAILURE (B.1 stable-codes table).
-    //
-    // C.11: now uses the shared withRetry() helper from retry.mjs. Legacy DI
-    // hooks (ctx.retryDelaysMs, ctx.retryJitterMaxMs) are translated into
-    // helper opts: the maxRetries count is the array length, baseDelayMs is
-    // the first non-zero entry (or 0 if all zeros — fast-test case). When the
-    // caller does not override, withRetry's own defaults (100ms base, 50ms
-    // jitter, 3 retries) are used and exactly match the §5.4 spec.
-    let attemptCount = 0;
-    let lastReindexErr;
-    let reindexSucceeded = false;
-    try {
-      const callerOverridesDelays =
-        ctx.retryDelaysMs !== undefined || ctx.retryJitterMaxMs !== undefined;
-      // R1 review A1, fix #1: thread op label for um_mem0_ops_total. Even when
-      // tests override the timing knobs, the op label stays so the metric still
-      // reflects every checkpoint reindex (success or fail).
-      const retryOpts = callerOverridesDelays
-        ? {
-            // Legacy hooks: keep test backwards compat. retryDelaysMs.length is
-            // the retry count; baseDelayMs/jitterMaxMs translate the per-step
-            // values. Tests pass [0,0,0] + 0 to skip waits entirely.
-            maxRetries: retryDelaysMs.length,
-            baseDelayMs: retryDelaysMs[0] ?? 0,
-            jitterMaxMs: retryJitterMaxMs,
-            op: 'reindex',
-          }
-        : { op: 'reindex' }; // let withRetry honor UM_UPSTREAM_RETRY_MAX + spec defaults
-      await withRetry(async () => {
-        attemptCount += 1;
-        try {
-          await reindexFn(summaryRelPath);
-        } catch (err) {
-          lastReindexErr = err;
-          // Preserve B.10's per-attempt warning log so operators can correlate
-          // transient mem0/qdrant blips with checkpoint runs (B.1 observability).
-          safeLog(() => getLogger().warn({
-            request_id: currentRequestId(),
-            component: 'checkpoint',
-            attempt: attemptCount,
-            project,
-            err_message: err?.message ?? String(err),
-          }, 'reindex attempt failed'), 'log:checkpoint:reindex-attempt-failed');
-          throw err; // let withRetry decide whether to back off + try again
-        }
-      }, retryOpts);
-      reindexSucceeded = true;
-    } catch (wrappedErr) {
-      // withRetry wraps the retry-exhausted error in { code: 'UPSTREAM_FAILURE',
-      // cause: lastErr }. We preserve the legacy result envelope shape (string
-      // count "after N retries" + diagnostic context) so existing tests that
-      // assert on result.error.code keep working.
-      void wrappedErr;
-    }
-    if (!reindexSucceeded) {
-      const totalRetries = ctx.retryDelaysMs !== undefined ? retryDelaysMs.length : 3;
-      // T5 (#159 spec §6): error paths count too — a qdrant outage must be
-      // visible in the counters, not silently uncounted. This is the pinned
-      // UPSTREAM_FAILURE emit site (retry-exhausted reindex ⇒ HTTP 502).
-      // Fire-and-forget: recordCaptureEvent never throws.
-      recordCaptureEvent({
-        surface: ctx.surface,
-        project,
-        event: CAPTURE_EVENTS.CHECKPOINT,
-        outcome: 'error',
-      });
-      return {
+          ? { code: 'STATE_LOCK_CONTENTION', message: `checkpoint phase 2: state.md update contention: ${f.message}` }
+          : f.message,
+      },
+    };
+  }
+  if (f?.stage === 'cursor_write') {
+    return {
+      done: true,
+      envelope: {
         schema_version: 1,
         ok: false,
-        error: {
-          code: 'UPSTREAM_FAILURE',
-          message: `checkpoint reindex failed after ${totalRetries} retries: ${lastReindexErr?.message ?? String(lastReindexErr)}`,
-        },
-        // Diagnostic context — caller can surface or log
-        summary_id: summaryId,
-        summary_path: summaryRelPath,
-      };
-    }
-
-    // Update per-day telemetry
-    try {
-      await fs.mkdir(path.dirname(costPath), { recursive: true });
-      // B.12 followup: open with O_NOFOLLOW so a planted symlink at the
-      // telemetry path is rejected atomically by the kernel (ELOOP on POSIX)
-      // instead of followed and overwriting an attacker-chosen target.
-      // NOFOLLOW is a no-op on Windows (constants.O_NOFOLLOW is undefined
-      // → coerced to 0).
-      const fh = await fs.open(costPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-      try { await fh.writeFile(String(daySpent + costUsd), 'utf8'); } finally { await fh.close(); }
-    } catch {}
-
-    // T5 (#159 spec §6): capture.checkpoint counter, emitted INSIDE the shared
-    // lib (one code path for HTTP + MCP tools). Fire-and-forget.
-    recordCaptureEvent({
-      surface: ctx.surface,
-      project,
-      event: CAPTURE_EVENTS.CHECKPOINT,
-      outcome: 'stored',
-    });
-
-    const result = {
-      schema_version: 1,
-      ok: true,
-      summary_id: summaryId,
-      summary_path: summaryRelPath,
-      state_updated: stateUpdated,
-      state_path: statePath,
-      cost_usd: costUsd,
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      duration_ms: Date.now() - t0,
+        error: { code: 'SERVER_INTERNAL', stage: 'cursor_write', message: f.message },
+      },
     };
-    if (transcriptTruncated) result.truncated = true;
-    return result;
-  } finally {
-    await releaseLockdir(lockdir);
   }
+  if (f?.stage === 'reindex') {
+    // Pinned 502 + note semantics preserved: summary_id/summary_path ride
+    // alongside `error` (not nested inside it) — this is what session-end.sh
+    // and the drain's per-doc /api/reindex retry branch consume today.
+    return {
+      done: true,
+      envelope: {
+        schema_version: 1,
+        ok: false,
+        error: { code: 'UPSTREAM_FAILURE', stage: 'reindex', message: f.message },
+        summary_id: f.summaryId,
+        summary_path: f.summaryPath,
+      },
+    };
+  }
+
+  // Defensive: runChunkTransaction's own contract (its JSDoc) enumerates
+  // every shape it can return; anything else is a wiring bug in this
+  // orchestrator, not a runtime condition callers should have to handle.
+  throw new Error(`checkpoint: unrecognized chunk-transaction result shape: ${JSON.stringify(txnResult)}`);
+}
+
+/** §4.5.2's abstention envelope — unchanged shape, byte-for-byte (§8: "unchanged"). */
+function abstentionEnvelope(envCtx, { transcriptBytes, transcriptTurns }) {
+  safeLog(() => getLogger().info({
+    request_id: currentRequestId(),
+    component: 'checkpoint',
+    project: envCtx.project,
+    transcript_bytes: transcriptBytes,
+    transcript_turns: transcriptTurns,
+  }, 'thin transcript — abstaining from summary'), 'log:checkpoint:thin-abstain');
+  recordCaptureEvent({
+    surface: envCtx.surface,
+    project: envCtx.project,
+    event: CAPTURE_EVENTS.CHECKPOINT,
+    outcome: 'abstained',
+  });
+  return {
+    schema_version: 1,
+    ok: true,
+    skipped: 'thin_transcript',
+    transcript_bytes: transcriptBytes,
+    transcript_turns: transcriptTurns,
+    duration_ms: Date.now() - envCtx.t0,
+  };
+}
+
+/** §4.6 CheckpointSuccess envelope — additive fields layered onto the pinned base shape. */
+function successEnvelope(acc, envCtx, { backlogRemaining, thinTail = false, stopped = null }) {
+  const env = {
+    schema_version: 1,
+    ok: true,
+    summary_id: acc.lastSummaryId,
+    summary_path: acc.lastSummaryPath,
+    state_updated: acc.stateUpdated,
+    state_path: acc.statePath,
+    cost_usd: acc.costUsd,
+    tokens_in: acc.tokensIn,
+    tokens_out: acc.tokensOut,
+    duration_ms: Date.now() - envCtx.t0,
+    chunks_done: acc.chunksDone,
+    backlog_remaining: backlogRemaining,
+  };
+  if (thinTail) env.thin_tail = true;
+  if (stopped) env.stopped = stopped;
+  // §4.6: deprecated alias — `truncated: true` whenever backlog remains, so
+  // the pre-chunking consumer of this field survives unchanged in spirit: it
+  // now honestly means "more backlog remains; oldest digested first; cursor
+  // resumes there" instead of "content was dropped".
+  if (backlogRemaining) env.truncated = true;
+  return env;
 }

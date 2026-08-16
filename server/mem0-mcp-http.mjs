@@ -1704,7 +1704,8 @@ export async function handleAppendTurnRequest(req, res, ctx) {
  * persistent failure surfaces as `result.error.code = "UPSTREAM_FAILURE"` which
  * we map to HTTP 502 here. Contrast with /api/append-turn (B.9) which is fire-
  * and-forget. STATE_LOCK_CONTENTION (phase-2 contention from two-phase write)
- * maps to HTTP 503 for retryable-by-client semantics.
+ * maps to HTTP 503 for retryable-by-client semantics. SERVER_INTERNAL (cursor
+ * write failure, spec §4.5 step 5 — Task 6) maps to HTTP 500.
  *
  * @param {{ body: { project?, since?, until?, skip_state_merge? } }} req
  * @param {{ status(code): this, json(obj): this }} res
@@ -1730,17 +1731,23 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		);
 		if (!result.ok) {
 			// B.10: doCheckpoint returns structured `error: { code, message }` for
-			// UPSTREAM_FAILURE (retry-exhausted reindex) and STATE_LOCK_CONTENTION
-			// (two-phase write phase-2 contention). B.13 (§5.1): wrap in the
-			// unified envelope so the wire shape stays consistent with §5.1.
-			// summary_id / summary_path (when present on the upstream-fail result)
-			// land inside `error` as additive fields so callers can correlate the
-			// failed reindex with the partially-written summary doc.
+			// UPSTREAM_FAILURE (retry-exhausted reindex or 0-chunk summarizer
+			// failure, spec §4.7), STATE_LOCK_CONTENTION (two-phase write phase-2
+			// contention), and SERVER_INTERNAL (cursor-write failure, spec §4.5
+			// step 5 — Task 6). B.13 (§5.1): wrap in the unified envelope so the
+			// wire shape stays consistent with §5.1. summary_id / summary_path /
+			// stage / provider_class (when present on the result) pass through as
+			// additive `extra` fields — untouched — so callers can correlate a
+			// failed reindex with the partially-written summary doc, disambiguate
+			// the two 502 meanings (stage), or back off on a ratelimit
+			// (provider_class).
 			const errCode = result.error && typeof result.error === 'object' ? result.error.code : null;
-			if (errCode && (errCode === 'UPSTREAM_FAILURE' || errCode === 'STATE_LOCK_CONTENTION')) {
+			if (errCode && (errCode === 'UPSTREAM_FAILURE' || errCode === 'STATE_LOCK_CONTENTION' || errCode === 'SERVER_INTERNAL')) {
 				const extra = {};
 				if (result.summary_id) extra.summary_id = result.summary_id;
 				if (result.summary_path) extra.summary_path = result.summary_path;
+				if (result.error.stage) extra.stage = result.error.stage;
+				if (result.error.provider_class) extra.provider_class = result.error.provider_class;
 				res.status(httpStatusFor(errCode)).json(errorResponse(
 					errCode,
 					result.error.message ?? errCode,

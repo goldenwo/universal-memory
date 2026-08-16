@@ -22,6 +22,15 @@
 // documented shapes, so a caller can loop chunk-by-chunk without a top-level
 // try/catch of its own.
 //
+// §4.8 windowed mode (since/until supplied): checkpoint.mjs bypasses the
+// durable cursor entirely for this mode — no read, no write — and instead of
+// duplicating this whole pipeline a second time, it feeds its single
+// legacy-assembled transcript through THIS function as one synthetic chunk,
+// with `prevCursor: null` and `skipCursorAdvance: true` (see that option's
+// JSDoc on runChunkTransaction below). Windowed mode is intentionally
+// duplicative, ad-hoc re-summarization of an explicit date window — not the
+// crash-safe, idempotent, no-loss default (cursor-driven) path.
+//
 // Porting note (temporary, deliberate duplication — Task 6 deletes the
 // original checkpoint.mjs pipeline block and its markOrphanSummary once the
 // orchestrator is re-pointed at this module): markOrphanSummary, the NOFOLLOW
@@ -243,6 +252,13 @@ function buildSupersedeDigest(detections, lane, persona) {
  * @param {string|null} [args.persona]
  * @param {string} [args.surface]
  * @param {boolean} [args.skipStateMerge]
+ * @param {boolean} [args.skipCursorAdvance] - Task 6 / spec §4.8's no-cursor sentinel for
+ *   WINDOWED mode (since/until supplied): windowed mode bypasses the durable cursor entirely
+ *   (no read, no write) — an intentionally duplicative, ad-hoc re-summarization of an explicit
+ *   date window, not the crash-safe idempotent default path. When true, step 5 below is a
+ *   no-op that returns `prevCursor` unchanged instead of calling advanceCursor — the caller
+ *   passes `prevCursor: null` for this mode, so `committed.nextCursor` comes back `null` too
+ *   (there is nothing to thread into a next call; windowed mode never loops chunks).
  * @param {object} [deps] - DI overrides; each defaults to the real implementation
  *   exactly as checkpoint.mjs's ctx does.
  * @param {string} [deps.systemPrompt] - REQUIRED for real (non-test) use: passed straight
@@ -265,6 +281,7 @@ export async function runChunkTransaction(args, deps = {}) {
     persona = null,
     surface,
     skipStateMerge = false,
+    skipCursorAdvance = false,
   } = args;
 
   const summarizeFn = deps.summarizeFn ?? defaultSummarize;
@@ -517,24 +534,31 @@ export async function runChunkTransaction(args, deps = {}) {
   }
 
   // ----- Step 5: cursor advance — strictly after the durable rename, strictly before reindex (I5) -----
-  const nextCursorInput = {
-    file: chunk.endFile,
-    offset: chunk.endOffset,
-    boundary: chunk.boundary,
-    // §4.1 max-persist rule: the digested_through watermark must never regress.
-    last_turn_iso: maxIso(prevCursor?.last_turn_iso ?? null, chunk.coversUntil),
-    last_summary_id: summaryId,
-  };
+  // §4.8 no-cursor sentinel (windowed mode, Task 6): skipCursorAdvance makes
+  // this step a no-op that returns the INPUT cursor (prevCursor) unchanged —
+  // windowed mode bypasses the durable cursor entirely, no read, no write.
   let nextCursor;
-  try {
-    nextCursor = await advanceCursor({ vaultDir, project, cursor: nextCursorInput });
-  } catch (cursorErr) {
-    return {
-      failed: {
-        stage: 'cursor_write',
-        message: `checkpoint cursor write failed (${cursorErr?.code ?? 'ERR'}) — check free space on the vault volume`,
-      },
+  if (skipCursorAdvance) {
+    nextCursor = prevCursor ?? null;
+  } else {
+    const nextCursorInput = {
+      file: chunk.endFile,
+      offset: chunk.endOffset,
+      boundary: chunk.boundary,
+      // §4.1 max-persist rule: the digested_through watermark must never regress.
+      last_turn_iso: maxIso(prevCursor?.last_turn_iso ?? null, chunk.coversUntil),
+      last_summary_id: summaryId,
     };
+    try {
+      nextCursor = await advanceCursor({ vaultDir, project, cursor: nextCursorInput });
+    } catch (cursorErr) {
+      return {
+        failed: {
+          stage: 'cursor_write',
+          message: `checkpoint cursor write failed (${cursorErr?.code ?? 'ERR'}) — check free space on the vault volume`,
+        },
+      };
+    }
   }
 
   // ----- Step 6 (spec 5b): auto-supersede contradiction pass — warn-not-throw, under autosupersedeTimeoutMs -----

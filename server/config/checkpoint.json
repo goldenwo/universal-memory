@@ -5,5 +5,10 @@
   "state_cap_chars": 3000,
   "lockdir_stale_timeout_ms": 600000,
   "min_transcript_bytes": 500,
-  "min_transcript_turns": 2
+  "min_transcript_turns": 2,
+  "chunk_max_bytes": 200000,
+  "max_chunks_per_run": 3,
+  "summarize_timeout_ms": 100000,
+  "autosupersede_timeout_ms": 30000,
+  "state_merge_timeout_ms": 60000
 }
