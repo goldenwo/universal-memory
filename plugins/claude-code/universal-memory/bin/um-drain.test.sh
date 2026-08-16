@@ -187,6 +187,38 @@ assert_eq "T2: exit 0 (complete, not aborted)" "$rc" "0"
 assert_not_contains "T2: no ABORT" "$output" "ABORT"
 assert_contains "T2: complete_thin_transcript branch" "$output" "BRANCH=complete_thin_transcript"
 
+echo ""
+echo "=== T2b (review round 1, IMPORTANT C1): thin-first project must NOT permanently disarm the version gate for a legacy-second project ==="
+# Regression for the bug the abstention envelope's shape is genuinely
+# indistinguishable from a legacy (pre-v1.16) server's plain 200 by itself —
+# only a response that actually carries backlog_remaining proves chunking-
+# awareness. A worklist [proj-quiet, proj-big] where proj-quiet abstains
+# FIRST must not let proj-big's legacy-shaped response sail through
+# unchecked; it must still hit the loud abort.
+reset_endpoints
+q_stats 200 '{"schema_version":1,"layers":{"proj-quiet":{"last_capture_at":"2026-08-15T00:00:00Z","last_summary_at":null,"last_state_at":null,"pending_bytes":10,"stale":true,"lag_hours":1},"proj-big":{"last_capture_at":"2026-08-15T00:00:00Z","last_summary_at":null,"last_state_at":null,"pending_bytes":900000,"stale":true,"lag_hours":100}}}'
+q_ckpt 200 '{"ok":true,"skipped":"thin_transcript","transcript_bytes":10,"transcript_turns":1}'
+q_ckpt 200 '{"ok":true,"summary_id":"x","summary_path":"sessions/proj-big/x.md"}'
+run_drain --yes proj-quiet proj-big
+assert_eq "T2b: exit 2 (still aborts on the second, legacy-shaped project)" "$rc" "2"
+assert_contains "T2b: ABORT message" "$output" "server predates chunked checkpoint"
+assert_not_contains "T2b: proj-big never misread as unexpected-shape (the pre-fix failure mode)" \
+  "$output" "unexpected_200_shape"
+
+echo ""
+echo "=== T2c (review round 1, MINOR 6): pre-POST preflight print names pending_bytes + a cost estimate ==="
+reset_endpoints
+q_stats 200 "$(stats_body proj-a 40000)"
+q_ckpt 200 "$(ckpt_complete proj-a)"
+run_drain --yes proj-a
+assert_contains "T2c: pending_bytes printed before any POST" "$output" "pending_bytes=40000"
+assert_contains "T2c: a cost estimate is printed" "$output" "cost estimate"
+
+echo ""
+echo "=== T2d (review round 1, MINOR 6): the #215 per-doc-reindex-only reminder is printed ==="
+assert_contains "T2d: #215 frame reminder present" "$output" "#215"
+assert_contains "T2d: reminder names per-doc reindex" "$output" "per-doc"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Every 200 taxonomy branch, first-match-wins (spec §5)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -330,6 +362,16 @@ assert_eq "T13: exit 0" "$rc" "0"
 assert_contains "T13: BRANCH=502_summarize_ratelimit" "$output" "BRANCH=502_summarize_ratelimit"
 
 echo ""
+echo "=== T13b (review round 1, MINOR 6): 502 stage=summarize but provider_class != ratelimit => stop (502_other), NOT the sleep-and-continue branch ==="
+reset_endpoints
+q_stats 200 "$(stats_body proj-a)"
+q_ckpt 502 '{"ok":false,"error":{"code":"UPSTREAM_FAILURE","stage":"summarize","provider_class":"config","message":"missing API key"}}'
+run_drain --yes proj-a
+assert_eq "T13b: exit 1" "$rc" "1"
+assert_contains "T13b: falls through to BRANCH=502_other" "$output" "BRANCH=502_other"
+assert_not_contains "T13b: NOT the ratelimit branch" "$output" "BRANCH=502_summarize_ratelimit"
+
+echo ""
 echo "=== T14: 502 stage=reindex => POST /api/reindex {path}, succeeds, continue ==="
 reset_endpoints
 q_stats 200 "$(stats_body proj-a)"
@@ -357,6 +399,30 @@ assert_eq "T15: exit 1" "$rc" "1"
 assert_contains "T15: repair exhausted branch" "$output" "BRANCH=502_reindex_repair_exhausted"
 assert_eq "T15: exactly 2 reindex POST attempts (retry x2)" "$(cat "$CAP_DIR/reindex_count")" "2"
 assert_eq "T15: no further checkpoint POST after exhaustion" "$(cat "$CAP_DIR/checkpoint_count")" "1"
+
+echo ""
+echo "=== T15b (review round 1, MINOR 5): 502 stage=reindex that keeps self-repairing forever is bounded at 25 cycles ==="
+# A pathological server: EVERY checkpoint call 502s stage=reindex, but the
+# per-doc /api/reindex repair itself keeps succeeding — the zero-progress
+# guard only watches 200 responses, so without its own cap this specific
+# cycle (502 -> repair succeeds -> continue -> 502 again) would loop forever
+# with no sleep. 26 checkpoint calls queued; only 25 reindex repairs should
+# ever fire (the 26th checkpoint call trips the cap before attempting one).
+reset_endpoints
+q_stats 200 "$(stats_body proj-a)"
+for _i in $(seq 1 26); do
+  q_ckpt 502 "{\"ok\":false,\"error\":{\"code\":\"UPSTREAM_FAILURE\",\"stage\":\"reindex\",\"message\":\"reindex failed\",\"summary_path\":\"sessions/proj-a/session-$_i.md\"}}"
+done
+for _i in $(seq 1 25); do
+  q_reindex 200 "{\"ok\":true,\"path\":\"sessions/proj-a/session-$_i.md\",\"id\":\"session-$_i\",\"indexed\":true}"
+done
+run_drain --yes proj-a
+assert_eq "T15b: exit 1" "$rc" "1"
+assert_contains "T15b: cycle-cap branch fires" "$output" "BRANCH=502_reindex_repair_cycle_cap"
+assert_eq "T15b: exactly 26 checkpoint calls (stops on the 26th, not looping forever)" \
+  "$(cat "$CAP_DIR/checkpoint_count")" "26"
+assert_eq "T15b: exactly 25 reindex repairs (the 26th checkpoint call never attempts one)" \
+  "$(cat "$CAP_DIR/reindex_count")" "25"
 
 echo ""
 echo "=== T16: 502 with no recognized stage => stop project (anything-else fallback) ==="

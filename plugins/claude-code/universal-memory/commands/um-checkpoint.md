@@ -6,10 +6,11 @@ Execute `bash "${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh"` via the Bash tool.
 
 This fires the same detached `POST /api/checkpoint {project}` that `SessionEnd` sends automatically
 on a clean exit — running it on demand just doesn't require exiting first. The hook returns
-immediately (the POST itself is DETACHED, on its own 120s server-side budget); the outcome lands in
-`~/.um/hook.log` (`posted http=200` / `error=...` / `skip=...`), not in this command's own output.
-There is no client-side summarizer or `state.md` merge anymore — the server's checkpoint pipeline
-owns synthesis end to end.
+immediately (the POST itself is DETACHED, on its own 120s client-side `curl --max-time` — not a
+server-side budget; server-side synthesis can still take a while, this just bounds how long the
+detached child waits for it); the outcome lands in `~/.um/hook.log` (`posted http=200` / `error=...`
+/ `skip=...`), not in this command's own output. There is no client-side summarizer or `state.md`
+merge anymore — the server's checkpoint pipeline owns synthesis end to end.
 
 **Chunked semantics.** Server-side, checkpoint synthesis is chunked: each call digests at most a
 few chunks of raw captures (shipped default 3), each an independently committed transaction, then
@@ -29,7 +30,8 @@ Use this before:
 **Draining a large backlog.** This command is for one session's on-demand checkpoint. To catch up a
 large backlog across many calls or many projects at once (e.g. after an extended outage), use the
 operator tool `bin/um-drain.sh` instead — it loops the same POST until `backlog_remaining: false`,
-with a cost estimate and confirm gate up front. See the plugin README's SessionEnd row.
+with a cost estimate and confirm gate up front. See the paragraph on progressive drain semantics
+right below the plugin README's component table.
 
 The hook is fail-soft: missing API key, server down, malformed LLM output — all surface as warnings
 in `~/.um/hook.log`, never data loss. Raw captures stay on disk either way; nothing already digested

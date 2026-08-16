@@ -344,6 +344,7 @@ _drain_project() {
   local http000_streak=0
   local prev_000_pending=""
   local in_progress_streak=0
+  local reindex_repair_cycles=0
   PROJECT_STATUS=""
   PROJECT_REASON=""
 
@@ -376,10 +377,24 @@ _drain_project() {
       http000_streak=0
       prev_000_pending=""
       in_progress_streak=0
+      reindex_repair_cycles=0
 
       if [ "$VERSION_CONFIRMED" != "1" ]; then
-        if [ -n "$resp_backlog_remaining" ] || [ "$resp_skipped" = "thin_transcript" ]; then
+        if [ -n "$resp_backlog_remaining" ]; then
           VERSION_CONFIRMED=1
+        elif [ "$resp_skipped" = "thin_transcript" ]; then
+          # Review round 1, IMPORTANT C1: do NOT confirm the whole server on
+          # this leg. A legacy (pre-v1.16) server emits this EXACT envelope
+          # too — it is indistinguishable from the chunking-era abstention by
+          # shape alone. Suppressing the abort for THIS project (it falls
+          # through to its own complete_thin_transcript branch below) is
+          # correct and matches spec §5's carve-out; but permanently setting
+          # VERSION_CONFIRMED here would silently disarm the gate for every
+          # LATER project in the worklist, one of which could be a real
+          # backlog against that same legacy server — the exact case the
+          # gate exists to catch loudly. Only a response that actually
+          # carries `backlog_remaining` proves chunking-awareness.
+          :
         else
           # A hard, immediate exit (not the per-project stopped/report
           # machinery below) — this disqualifies the WHOLE server, not just
@@ -467,11 +482,27 @@ _drain_project() {
       prev_000_pending=""
       in_progress_streak=0
       if [ "$resp_err_stage" = "summarize" ] && [ "$resp_err_provider_class" = "ratelimit" ]; then
+        reindex_repair_cycles=0
         echo "  BRANCH=502_summarize_ratelimit — 0-chunk provider ratelimit; sleeping 65s"
         sleep 65
         continue
       elif [ "$resp_err_stage" = "reindex" ]; then
-        echo "  BRANCH=502_reindex_repair — durable-but-unindexed doc at ${resp_err_summary_path:-<unknown>}; retrying /api/reindex"
+        # Review round 1, MINOR 5: this is the script's one otherwise-
+        # unbounded loop — a server that 502s stage=reindex on EVERY
+        # checkpoint call while /api/reindex itself keeps 200ing (a
+        # pathological server-side condition, not a transient one the
+        # per-cycle x2 retry below is meant for) would sleep-free `continue`
+        # forever, since the zero-progress guard only watches 200 responses.
+        # A generous cap — stop-and-report is always a legal drain outcome
+        # (spec §5), this just bounds a pathology beyond the letter of the
+        # spec, contradicting nothing in it.
+        reindex_repair_cycles=$((reindex_repair_cycles + 1))
+        if [ "$reindex_repair_cycles" -gt 25 ]; then
+          echo "  BRANCH=502_reindex_repair_cycle_cap — 25 consecutive stage=reindex cycles (each self-repaired, but the server keeps 502ing the next checkpoint call too); stopping rather than looping forever" >&2
+          PROJECT_STATUS="stopped"; PROJECT_REASON="502 stage=reindex repair-cycle cap (25) reached"
+          return 1
+        fi
+        echo "  BRANCH=502_reindex_repair — durable-but-unindexed doc at ${resp_err_summary_path:-<unknown>}; retrying /api/reindex (cycle $reindex_repair_cycles/25)"
         if [ -z "$resp_err_summary_path" ]; then
           echo "  BRANCH=502_reindex_repair_no_path — envelope carried no summary_path to repair" >&2
           PROJECT_STATUS="stopped"; PROJECT_REASON="502 stage=reindex with no summary_path"
@@ -506,6 +537,7 @@ _drain_project() {
     elif [ "$code" = "400" ]; then
       http000_streak=0
       prev_000_pending=""
+      reindex_repair_cycles=0
       if [ "$resp_err_message" = "checkpoint_in_progress" ]; then
         in_progress_streak=$((in_progress_streak + 1))
         if [ "$in_progress_streak" -gt 10 ]; then
@@ -529,6 +561,7 @@ _drain_project() {
 
     elif [ "$code" = "000" ]; then
       in_progress_streak=0
+      reindex_repair_cycles=0
       http000_streak=$((http000_streak + 1))
       if [ "$http000_streak" -gt 3 ]; then
         echo "  BRANCH=000_exhausted — 3 consecutive transport failures/timeouts; stopping" >&2

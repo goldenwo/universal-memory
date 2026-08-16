@@ -89,7 +89,16 @@ BODY="{\"project\":\"$PROJECT\"}"
 # ---------------------------------------------------------------------------
 ENDPOINT=$(um_api_endpoint 2>/dev/null)
 (
-  CKPT_BODY_FILE=$(mktemp)
+  # Review round 1, MINOR 2: a bare `mktemp` failure (disk full, unwritable
+  # TMPDIR) would leave CKPT_BODY_FILE empty; `> "$CKPT_BODY_FILE"` then
+  # redirects to "" and fails BEFORE um_api_post ever runs, so
+  # UM_API_HTTP_CODE is never set — under this script's `set -u`, the `case`
+  # below would hit an unbound-variable error and the child would exit with
+  # NOTHING logged. Fall back to /dev/null: the POST still fires and
+  # UM_API_HTTP_CODE still gets set; only the 502 stage-parse degrades (to
+  # the same safe "note present" reading an absent/legacy stage already
+  # gets), never a silent, unlogged death.
+  CKPT_BODY_FILE=$(mktemp 2>/dev/null) || CKPT_BODY_FILE=/dev/null
   if um_api_post '/api/checkpoint' "$BODY" 120 > "$CKPT_BODY_FILE" 2>/dev/null </dev/null; then
     um_log "posted http=$UM_API_HTTP_CODE"
   else
@@ -141,7 +150,8 @@ except Exception:
         ;;
     esac
   fi
-  rm -f "$CKPT_BODY_FILE"
+  # Never rm the /dev/null fallback itself (the mktemp-failure leg above).
+  [ "$CKPT_BODY_FILE" = "/dev/null" ] || rm -f "$CKPT_BODY_FILE"
 ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
