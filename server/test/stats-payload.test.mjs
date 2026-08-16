@@ -327,7 +327,9 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
         freshness_hours: 0,
         events_today: 3,
         errors_today: 0,
-        outcomes_7d: { stored: 3, abstained: 0, deduped: 0, superseded: 0, error: 0 },
+        outcomes_7d: {
+          stored: 3, abstained: 0, deduped: 0, superseded: 0, error: 0, failed: 0,
+        },
       },
     },
     growth_7d: { [TODAY]: 3 },
