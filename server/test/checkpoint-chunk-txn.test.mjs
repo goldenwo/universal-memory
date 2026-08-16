@@ -685,6 +685,43 @@ test('5b: real detector eligibility gate no-ops when lane/persona are both absen
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// CI S5 regression pin — seam contract: when the txn args omit `persona`
+// (the exact shape the smoke's S5 auto-supersession leg passes: lane='work',
+// persona absent), runChunkTransaction must thread `undefined` straight
+// through to detectContradictions, NOT a manufactured `null`. The old
+// `persona = null` destructure default converted the absent slug into `null`,
+// which dedup.mjs's partitionArm (pre-fix) turned into a qdrant `match: {
+// value: null }` arm -> 400 Bad Request, warn-swallowed by this same 5b pass
+// (container log: "err_message":"Bad Request", "auto-supersede pass failed
+// or timed out (non-fatal)"). Pins the DI seam itself, independent of
+// dedup.mjs's own T24/T25 pins.
+test('5b: DI seam contract — persona threads through as undefined (not null) when txn args omit it and lane is set (CI S5 regression pin)', async () => {
+  const vault = makeVault();
+  let capturedOpts = null;
+
+  const args = baseArgs(vault, { lane: 'work' });
+  delete args.persona; // simulate a caller that truly omits the key, not one that passes null/undefined explicitly
+
+  const result = await runChunkTransaction(
+    args,
+    baseDeps({
+      isAutoSupersedeEnabled: () => true,
+      detectContradictions: async (text, opts) => { capturedOpts = opts; return []; },
+    }),
+  );
+
+  assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+  assert.ok(capturedOpts, 'detectContradictions spy must have been called (lane is truthy, so the eligibility gate must not no-op)');
+  assert.equal(capturedOpts.lane, 'work');
+  assert.equal(
+    capturedOpts.persona,
+    undefined,
+    'REGRESSION PIN (CI S5): persona must thread through as undefined, not a manufactured null default',
+  );
+
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
 // ===========================================================================
 // Section F — per-chunk cost telemetry.
 // ===========================================================================

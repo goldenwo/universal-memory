@@ -1089,3 +1089,67 @@ test('T23: D3.2 findEmbeddingSimilarCandidates — current lane:work only (super
   assert.equal(mock.searches[0].body.limit, 10, 'limit forwarded to client.search');
   assert.equal(mock.searches[0].body.score_threshold, 0.5, 'threshold forwarded as score_threshold');
 });
+
+// ---------------------------------------------------------------------------
+// CI S5 regression pin — partitionArm must treat a manufactured `null` the
+// SAME as `undefined`. feat/checkpoint-cursor-chunking CI: the old
+// checkpoint-chunk-txn.mjs `lane = null, persona = null` destructure default
+// converted validateLanePersonaSlug's `undefined` (absent slug) into `null`
+// before it reached findEmbeddingSimilarCandidates. partitionArm's old
+// `value !== undefined` check let that `null` fall into
+// `{ match: { value: null } }`, which qdrant rejects with 400 Bad Request —
+// the auto-supersede pass then warn-swallowed the error (container log:
+// "component":"checkpoint-chunk-txn","err_message":"Bad Request","msg":
+// "auto-supersede pass failed or timed out (non-fatal)", preceded by
+// "event":"dedup.error","kind":"embedding","stage":"search") and silently
+// no-op'd instead of superseding. null and undefined must produce the
+// identical `is_empty` arm for BOTH lane and persona.
+// ---------------------------------------------------------------------------
+
+test('T24: findEmbeddingSimilarCandidates — persona undefined vs persona null BOTH produce is_empty (CI S5 regression pin)', async () => {
+  const mock = makeMockQdrant();
+
+  await findEmbeddingSimilarCandidates({
+    client: mock.client, collection: 'col', userId: 'u',
+    vector: [0.1, 0.2], threshold: 0.5, lane: 'work', persona: undefined,
+  });
+  assert.deepEqual(
+    mock.searches[0].body.filter.must.find((a) => a.key === 'persona' || a.is_empty?.key === 'persona'),
+    { is_empty: { key: 'persona' } },
+    'persona:undefined must produce is_empty',
+  );
+
+  await findEmbeddingSimilarCandidates({
+    client: mock.client, collection: 'col', userId: 'u',
+    vector: [0.1, 0.2], threshold: 0.5, lane: 'work', persona: null,
+  });
+  assert.deepEqual(
+    mock.searches[1].body.filter.must.find((a) => a.key === 'persona' || a.is_empty?.key === 'persona'),
+    { is_empty: { key: 'persona' } },
+    'REGRESSION PIN (CI S5): persona:null must produce is_empty too, NOT { match: { value: null } } (qdrant 400 Bad Request)',
+  );
+});
+
+test('T25: findEmbeddingSimilarCandidates — lane undefined vs lane null BOTH produce is_empty (symmetric CI S5 regression pin)', async () => {
+  const mock = makeMockQdrant();
+
+  await findEmbeddingSimilarCandidates({
+    client: mock.client, collection: 'col', userId: 'u',
+    vector: [0.1, 0.2], threshold: 0.5, lane: undefined, persona: 'engineer',
+  });
+  assert.deepEqual(
+    mock.searches[0].body.filter.must.find((a) => a.key === 'lane' || a.is_empty?.key === 'lane'),
+    { is_empty: { key: 'lane' } },
+    'lane:undefined must produce is_empty',
+  );
+
+  await findEmbeddingSimilarCandidates({
+    client: mock.client, collection: 'col', userId: 'u',
+    vector: [0.1, 0.2], threshold: 0.5, lane: null, persona: 'engineer',
+  });
+  assert.deepEqual(
+    mock.searches[1].body.filter.must.find((a) => a.key === 'lane' || a.is_empty?.key === 'lane'),
+    { is_empty: { key: 'lane' } },
+    'REGRESSION PIN (CI S5 symmetric hazard): lane:null must produce is_empty too, NOT { match: { value: null } } (qdrant 400 Bad Request)',
+  );
+});

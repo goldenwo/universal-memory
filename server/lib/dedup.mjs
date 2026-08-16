@@ -57,15 +57,18 @@ async function instrumented(kind, stage, fn) {
 
 /**
  * Build the `must` arm for a single partition field (lane or persona).
- * Explicit slug → strict equality. Undefined → `is_empty` matches points
- * where the field is absent (D2 §4.7).
+ * Explicit slug → strict equality. Undefined OR null → `is_empty` matches
+ * points where the field is absent (D2 §4.7).
  *
  * D2's `omitEmpty` write pattern guarantees no `null` payload values for
  * lane/persona, so `is_empty` alone covers the absence arm without
  * needing the complementary `is_null` predicate.
  */
 function partitionArm(key, value) {
-  return value !== undefined
+  // validateLanePersonaSlug's absent-contract is null/undefined/'' — treating
+  // null the same as undefined here closes the whole undefined-vs-null caller
+  // class (a null match value was never valid; qdrant rejects it with 400).
+  return value != null
     ? { key, match: { value } }
     : { is_empty: { key } };
 }
