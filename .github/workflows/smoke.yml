@@ -625,6 +625,8 @@ jobs:
                      plugins/claude-code/universal-memory/bin/um-tunnel \
                      plugins/claude-code/universal-memory/bin/um-alert.sh \
                      plugins/claude-code/universal-memory/bin/um-alert.test.sh \
+                     plugins/claude-code/universal-memory/bin/um-drain.sh \
+                     plugins/claude-code/universal-memory/bin/um-drain.test.sh \
                      plugins/claude-code/universal-memory/hooks/*.sh \
                      plugins/claude-code/universal-memory/hooks/lib/*.sh \
                      plugins/claude-code/universal-memory/skills/create-adr/create-adr.sh \
@@ -675,6 +677,12 @@ jobs:
       # stubbed curl — pure local MOCK_BIN, no network. Wired explicitly:
       # nothing here is glob-covered (plan U3 audit).
       - run: bash plugins/claude-code/universal-memory/bin/um-alert.test.sh
+      # um-drain.test.sh covers the backlog-drain operator script's full
+      # spec §5 response taxonomy (checkpoint chunked summarization arc,
+      # PR-4/Task 11) — a 3-endpoint stubbed curl (checkpoint/stats/reindex),
+      # no network. Wired explicitly, same as um-alert.test.sh above: a new
+      # bin/ script is never glob-covered by this job.
+      - run: bash plugins/claude-code/universal-memory/bin/um-drain.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
