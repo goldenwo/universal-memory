@@ -1129,6 +1129,18 @@ function pathCheckpoint() {
           ...ERROR_RESPONSE,
           description: 'Writes disabled (UM_MCP_WRITE_ENABLED not set)',
         },
+        // Task 8: these two codes are live behavior today (mem0-mcp-http.mjs's
+        // handleCheckpointRequest, spec §8's pinned-behavior table) but were
+        // never declared here — a pre-existing doc/reality gap. See
+        // CheckpointFailure for the shared error-object shape.
+        502: {
+          ...ERROR_RESPONSE,
+          description: 'Upstream failure (UPSTREAM_FAILURE): summarizer failed with zero chunks committed this run, or a post-commit reindex exhausted its retries. `stage`/`provider_class` on the error object disambiguate; a reindex failure also carries `summary_id`/`summary_path` for the drain\'s per-doc retry.',
+        },
+        503: {
+          ...ERROR_RESPONSE,
+          description: 'State lock contention (STATE_LOCK_CONTENTION): a concurrent checkpoint already holds this project\'s state.md lock during the two-phase summary write. Safe to retry.',
+        },
         ...RESP_500,
       },
     },

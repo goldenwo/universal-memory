@@ -22,6 +22,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   RECOVERY_SLACK_MS,
 } from '../lib/checkpoint-config.mjs';
+import { DEFAULT_LOW_DISK_STALE_MS } from '../lib/lockdir.mjs';
 
 const ENV_NAME = 'UM_TEST_CHECKPOINT_CONFIG_KEY';
 
@@ -345,4 +346,36 @@ test('DEFAULT_MIN_TRANSCRIPT_BYTES / DEFAULT_MIN_TRANSCRIPT_TURNS exact values',
 test('HEARTBEAT_INTERVAL_MS / RECOVERY_SLACK_MS exact values', () => {
   assert.equal(HEARTBEAT_INTERVAL_MS, 30_000);
   assert.equal(RECOVERY_SLACK_MS, 48 * 3600 * 1000);
+});
+
+// --- I6 pins (task-8-brief.md §3; spec §9 I6) -------------------------------
+// Both by IMPORT — a future default bump on either side of either formula
+// must fail these tests, not merely a fixture. This is the actual invariant
+// review target §8/§9 name; Task 6 implemented the heartbeat BEHAVIOR
+// (integration-tested in checkpoint-chunked.test.mjs) but explicitly left
+// these numeric import-comparison pins for this task.
+
+test('I6(a): HEARTBEAT_INTERVAL_MS < DEFAULT_LOW_DISK_STALE_MS (spec §9 I6(a), the primary takeover guard — a future default bump on either constant must fail this)', () => {
+  assert.ok(
+    HEARTBEAT_INTERVAL_MS < DEFAULT_LOW_DISK_STALE_MS,
+    `heartbeat interval (${HEARTBEAT_INTERVAL_MS}ms) must stay strictly below the low-disk stale threshold `
+    + `(${DEFAULT_LOW_DISK_STALE_MS}ms) — otherwise a live multi-chunk run's heartbeat can no longer `
+    + 'guarantee takeover-proofness under low disk (lockdir.mjs\'s 120s low-disk regime).',
+  );
+});
+
+test('I6(b): maxChunksPerRun x (summarizeTimeoutMs + stateMergeTimeoutMs + autosupersedeTimeoutMs) <= 0.7 x 900_000 (spec §5/§9 I6(b), the drain\'s curl --max-time 900 budget, >=30% margin)', () => {
+  const cfg = resolveChunkingConfig(); // shipped defaults — env/config overrides are an operator choice, not this pin's concern
+  const DRAIN_CURL_BUDGET_MS = 900_000; // spec §5: um-drain.sh's own `curl --max-time 900`
+  const MARGIN_FRACTION = 0.7; // literal, per task-8-brief.md §3 — at most 70% of budget used, so >=30% margin remains
+  const worstCaseMs = cfg.maxChunksPerRun * (cfg.summarizeTimeoutMs + cfg.stateMergeTimeoutMs + cfg.autosupersedeTimeoutMs);
+  // The remaining margin absorbs what this formula does NOT represent: the
+  // per-chunk cost-cap peek (step 1), raw-lock acquire waits (chunk-builder's
+  // RAW_LOCK_TIMEOUT_MS per pending file), and general run/IO overhead —
+  // none of which carry their own timeout constant (Task-6 review Minor 9).
+  assert.ok(
+    worstCaseMs <= MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS,
+    `worst-case run duration (${worstCaseMs}ms = ${cfg.maxChunksPerRun} x (${cfg.summarizeTimeoutMs}+${cfg.stateMergeTimeoutMs}+${cfg.autosupersedeTimeoutMs})) `
+    + `must stay <= ${MARGIN_FRACTION} x the drain's 900s curl budget (${MARGIN_FRACTION * DRAIN_CURL_BUDGET_MS}ms)`,
+  );
 });
