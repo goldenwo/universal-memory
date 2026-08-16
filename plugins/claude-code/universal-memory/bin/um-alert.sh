@@ -255,8 +255,88 @@ if [ -n "$LEDGER_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
+# Task 10 (spec §6): LAYERS section — per-project filesystem-mtime freshness,
+# independent of the counters-derived verdict above (the exact ground truth
+# that would have caught the 2026-08-04 outage: capture.turn kept the
+# counters-derived surface reading 0h "fresh" while nothing downstream
+# advanced for five days). Mirrors the #201 LEDGER_ALERT pattern: a FRESH
+# capture verdict is ESCALATED to exit 1 when the layers block names a stale
+# project.
+#
+# Three-way taxonomy (python, same BODY_FILE, no jq — house pattern):
+#   ABSENT — no `layers` key at all: an old server (predates v1.16). Skip the
+#     check WITH a breadcrumb; the exit code is left to the capture verdict
+#     above. A rollback to a pre-layers server must not silently disable this
+#     arc's own monitor by going quiet about what it stopped checking.
+#   ERROR  — `layers` present but unparseable/malformed. A malformed
+#     monitoring payload is itself a loud CHECK-FAILED (exit 2), unconditionally
+#     — this arc's own root failure mode was a silently-dropped broken monitor.
+#   STALE/OK — `layers` present and well-shaped; STALE names every project
+#     whose own `stale` flag is true.
+LAYERS_VERDICT=$("$PY" -c '
+import json, sys
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+if "layers" not in stats:
+    emit("ABSENT", "layers key absent — server predates v1.16; per-layer freshness NOT checked")
+
+layers = stats.get("layers")
+if not isinstance(layers, dict):
+    emit("ERROR", "layers key present but malformed (expected an object)")
+
+stale = []
+try:
+    for name, info in layers.items():
+        if not isinstance(info, dict) or not isinstance(info.get("stale"), bool):
+            raise ValueError("project %r has a malformed or missing stale field" % name)
+        if info["stale"]:
+            stale.append("%s (lag %sh, pending %s bytes)" % (
+                name, info.get("lag_hours"), info.get("pending_bytes")))
+except Exception as e:
+    emit("ERROR", "layers payload malformed: %s" % e)
+
+if stale:
+    emit("STALE", "; ".join(sorted(stale)))
+emit("OK", "no stale projects")
+' < "$BODY_FILE" 2>/dev/null) || LAYERS_VERDICT=""
+
+LAYERS_STATUS="${LAYERS_VERDICT%%|*}"
+LAYERS_MESSAGE="${LAYERS_VERDICT#*|}"
+
+case "$LAYERS_STATUS" in
+  ABSENT)
+    echo "um-alert: $LAYERS_MESSAGE" >&2 ;;
+  OK|STALE)
+    : ;;
+  *)
+    # Unconditional, BEFORE the capture-verdict case below: a malformed
+    # layers payload (or an EMPTY LAYERS_STATUS — the python process itself
+    # crashed uncaught) is worth its own CHECK-FAILED regardless of what the
+    # counters-derived verdict says (spec §6) — an operator seeing exit 2
+    # here should investigate the monitor itself, not read it as "the
+    # pipeline is stale". A garbage/empty status is folded into this same
+    # branch rather than silently no-op'ing the layers check: this arc's own
+    # root failure mode was exactly a broken monitor going quiet.
+    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2
+    exit 2 ;;
+esac
+
 case "$STATUS" in
   FRESH)
+    if [ "$LAYERS_STATUS" = "STALE" ]; then
+      echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE (capture freshness itself OK: $MESSAGE)" >&2
+      exit 1
+    fi
     if [ -n "$LEDGER_ALERT" ]; then
       echo "um-alert: LEDGER-ERRORS — $LEDGER_ALERT (capture freshness itself OK: $MESSAGE)" >&2
       exit 1
@@ -264,7 +344,11 @@ case "$STATUS" in
     echo "um-alert: OK — $MESSAGE"
     exit 0 ;;
   STALE)
-    echo "um-alert: STALE — $MESSAGE" >&2
+    if [ "$LAYERS_STATUS" = "STALE" ]; then
+      echo "um-alert: STALE — $MESSAGE; also layers stale: $LAYERS_MESSAGE" >&2
+    else
+      echo "um-alert: STALE — $MESSAGE" >&2
+    fi
     exit 1 ;;
   ERROR)
     echo "um-alert: CHECK FAILED — $MESSAGE" >&2

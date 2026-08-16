@@ -686,6 +686,81 @@ ${pipelineRows(capture)}
 }
 
 // ---------------------------------------------------------------------------
+// Layers tile — per-layer freshness (Task 10, spec §6)
+// ---------------------------------------------------------------------------
+
+/**
+ * One small tile, per spec §6: stale projects red with their lag + pending
+ * bytes — nothing else (no per-field breakdown of every fresh project; the
+ * freshness/pipeline tiles above already cover per-surface detail from the
+ * counters db, and this tile exists specifically to show what THAT data
+ * source cannot see).
+ *
+ * `stats.layers` is malformed/absent ⇒ "cannot assess" (mirrors every other
+ * tile's shape-guard posture); `{}` (no projects have any captures yet) and
+ * "present, zero stale" are both healthy empty states, rendered distinctly
+ * from "cannot assess" per this module's C4 empty-state contract.
+ */
+function layersTile(stats) {
+  const layers = asPlainObject(stats.layers);
+  if (layers === null) {
+    return `    <section class="tile">
+      <h2>Per-layer freshness</h2>
+      <p class="banner s-grey">Cannot assess: the layers section is malformed (it is not an object).</p>
+    </section>`;
+  }
+
+  const names = Object.keys(layers);
+  if (names.length === 0) {
+    return `    <section class="tile">
+      <h2>Per-layer freshness</h2>
+      <p class="muted">no projects with captures yet</p>
+    </section>`;
+  }
+
+  const staleNames = names.filter((n) => {
+    const info = asPlainObject(layers[n]);
+    return info !== null && info.stale === true;
+  });
+
+  if (staleNames.length === 0) {
+    return `    <section class="tile">
+      <h2>Per-layer freshness</h2>
+      <p class="banner s-green">no stale projects</p>
+    </section>`;
+  }
+
+  // `lag_hours` serializes the ∞ case as the STRING "Infinity" (JSON has no
+  // Infinity literal) — rendered as the ∞ glyph rather than the literal
+  // word, everything else passes through cell()/t() like any other payload
+  // value (a hostile project name is a map KEY here, same posture as every
+  // other tile's Object.keys() iteration).
+  const rows = staleNames.map((name) => {
+    const info = asPlainObject(layers[name]) ?? {};
+    const lagIsInfinite = info.lag_hours === 'Infinity';
+    const lagCell = lagIsInfinite ? '∞' : (typeof info.lag_hours === 'number' ? `${t(info.lag_hours)}h` : cell(info.lag_hours));
+    return `        <tr>
+          <th scope="row">${t(name)}</th>
+          <td>${lagCell}</td>
+          <td>${cell(info.pending_bytes)}</td>
+        </tr>`;
+  }).join('\n');
+
+  return `    <section class="tile">
+      <h2>Per-layer freshness</h2>
+      <p class="banner s-red">${staleNames.length} stale project(s) — pending content is not reaching summaries.</p>
+      <table>
+        <thead>
+          <tr><th scope="col">Project</th><th scope="col">Lag</th><th scope="col">Pending bytes</th></tr>
+        </thead>
+        <tbody>
+${rows}
+        </tbody>
+      </table>
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
 // Corpus tile (spec §4 Corpus / §5 C3)
 // ---------------------------------------------------------------------------
 
@@ -1087,6 +1162,7 @@ export function renderControlPage({ stats, nonce, csrf }) {
     </div>
     <h1>Control — operational telemetry</h1>
 ${freshnessTile(s)}
+${layersTile(s)}
 ${pipelineTile(s)}
 ${corpusTile(s)}
 ${growthTile(s)}

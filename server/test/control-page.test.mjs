@@ -90,6 +90,12 @@ function makeStats(overrides = {}) {
       derived_from: 'extraction-counters',
     },
     capture: { 'claude-code-plugin': surface() },
+    // Task 10 (spec §6): real payloads carry `layers` unconditionally (even
+    // as `{}`) from this version forward — the empty, healthy default here
+    // mirrors that so pre-existing fixtures that don't care about layers get
+    // the quiet "no projects with captures yet" state, not a false
+    // "cannot assess" banner from an absent key a real server never omits.
+    layers: {},
     recall: {
       searches_today: 3,
       searches_7d: 20,
@@ -769,6 +775,103 @@ test('carry-in 2 (fix round 1): brandCss() is a REAL single source — both page
   const sharedTail = brandCss('irrelevant-to-this-slice').split('\n').slice(1).join('\n');
   assert.ok(controlStyle.includes(sharedTail), 'control-page renders the shared .brand-name/.brand-sub verbatim');
   assert.ok(consentStyle.includes(sharedTail), 'consent renders the shared .brand-name/.brand-sub verbatim');
+});
+
+// ---------------------------------------------------------------------------
+// Layers tile — per-layer freshness (Task 10, spec §6)
+// ---------------------------------------------------------------------------
+
+test('layers tile: empty state — no projects with captures yet', () => {
+  const html = render(makeStats({ layers: {} }));
+  assert.match(html, /Per-layer freshness/);
+  assert.match(html, /no projects with captures yet/);
+  assert.doesNotMatch(html.split('Per-layer freshness')[1].split('</section>')[0], /class="banner/,
+    'the empty-but-healthy state is not a banner');
+});
+
+test('layers tile: present, zero stale — a distinct healthy state from "no projects yet"', () => {
+  const html = render(makeStats({
+    layers: {
+      'edge-catcher': {
+        last_capture_at: '2026-08-15T09:00:00.000Z',
+        last_summary_at: '2026-08-15T08:00:00.000Z',
+        last_state_at: '2026-08-15T08:00:00.000Z',
+        pending_bytes: 0,
+        stale: false,
+        lag_hours: 1,
+      },
+    },
+  }));
+  assert.match(html, /no stale projects/);
+  assert.doesNotMatch(html, /edge-catcher/, 'nothing else — a fresh project is not itemized in this tile');
+});
+
+test('layers tile: stale projects render red with their lag and pending bytes; fresh siblings are not listed', () => {
+  const html = render(makeStats({
+    layers: {
+      'universal-memory': {
+        last_capture_at: '2026-08-04T09:00:00.000Z',
+        last_summary_at: '2026-07-30T08:00:00.000Z',
+        last_state_at: null,
+        pending_bytes: 7000,
+        stale: true,
+        lag_hours: 121.0,
+      },
+      'edge-catcher': {
+        last_capture_at: '2026-08-15T09:00:00.000Z',
+        last_summary_at: '2026-08-15T08:00:00.000Z',
+        last_state_at: '2026-08-15T08:00:00.000Z',
+        pending_bytes: 0,
+        stale: false,
+        lag_hours: 1,
+      },
+    },
+  }));
+  assert.match(html, /1 stale project/);
+  assert.match(html, /universal-memory/);
+  assert.match(html, /121h/);
+  assert.match(html, /7000/);
+  assert.doesNotMatch(html, /<th scope="row">edge-catcher<\/th>/, 'the fresh sibling is not itemized — stale-only, per spec §6');
+});
+
+test('layers tile: an infinite lag (never-checkpointed project) renders the ∞ glyph, not "Infinityh" or a crash', () => {
+  const html = render(makeStats({
+    layers: {
+      tmp: {
+        last_capture_at: '2026-08-04T09:00:00.000Z',
+        last_summary_at: null,
+        last_state_at: null,
+        pending_bytes: 999999,
+        stale: true,
+        lag_hours: 'Infinity',
+      },
+    },
+  }));
+  assert.match(html, /∞/);
+  assert.doesNotMatch(html, /Infinityh/);
+});
+
+test('layers tile: a malformed layers section (not an object) is "cannot assess", never crashes or fabricates a project list', () => {
+  const html = render(makeStats({ layers: [] }));
+  assert.match(html, /Per-layer freshness/);
+  assert.match(html, /Cannot assess: the layers section is malformed/);
+});
+
+test('layers tile: hostile project names render inert as map keys', () => {
+  const html = render(makeStats({
+    layers: {
+      '<img src=x onerror=alert(1)>': {
+        last_capture_at: '2026-08-04T09:00:00.000Z',
+        last_summary_at: null,
+        last_state_at: null,
+        pending_bytes: 999,
+        stale: true,
+        lag_hours: 10,
+      },
+    },
+  }));
+  assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
 });
 
 // ---------------------------------------------------------------------------

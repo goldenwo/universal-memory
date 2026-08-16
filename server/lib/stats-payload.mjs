@@ -30,6 +30,7 @@ import { readCounterStats } from './stats.mjs';
 import { SERVER_VERSION } from './version.mjs';
 import { latencySinceBoot, LATENCY_LABEL } from './recall-telemetry.mjs';
 import { isWriteEnabled } from './write-enabled.mjs';
+import { buildLayers } from './layers.mjs';
 
 // Full-corpus getAll ceiling for /health + /api/stats (#171 Stage A, plan U2
 // audit): mem0ai's getAll defaults to limit=100, which silently truncated
@@ -74,10 +75,24 @@ function captureFreshnessThresholdHours() {
  *   seam). Defaults to `readCounterStats` — a caller that omits it gets
  *   IDENTICAL behavior to before this param existed. Tests inject a fake/
  *   throwing reader the same way `memory` is already injectable.
+ * @param {string} [opts.vaultDir] - Task 10 (spec §6): vault root for the
+ *   `layers` block's filesystem-mtime reads. Defaults to
+ *   `process.env.UM_VAULT_DIR` — the SAME resolution checkpoint.mjs's own
+ *   ctx.vaultDir fallback uses, not vault.mjs's HOME-fallback vaultPath()
+ *   (this must point at the exact directory checkpoint writes to). Absent in
+ *   most test callers, by design — see lib/layers.mjs's module header for
+ *   why that is NOT treated as degraded.
+ * @param {object} [opts.checkpointConfig] - DI seam over the parsed
+ *   checkpoint.json layers.mjs needs for the #185 min_transcript_bytes
+ *   floor. Production omits it; layers.mjs reads config/checkpoint.json
+ *   itself once per call.
  * @returns {Promise<object>} the full stats body, including `degraded` when
  *   one or more sources are unavailable.
  */
-export async function buildStats({ now, memory, userId, endpoint, readCounters = readCounterStats }) {
+export async function buildStats({
+  now, memory, userId, endpoint, readCounters = readCounterStats,
+  vaultDir = process.env.UM_VAULT_DIR, checkpointConfig,
+}) {
   const degraded = [];
 
   // Qdrant-sourced corpus fields. EXPLICIT large limit (FULL_SCAN_LIMIT) —
@@ -127,6 +142,16 @@ export async function buildStats({ now, memory, userId, endpoint, readCounters =
   const counters = readCounters({ now });
   if (!counters.available) degraded.push('counters-unavailable');
 
+  // Task 10 (spec §6): the `layers` block — filesystem-mtime per-project
+  // freshness, independent of the counters db above (never the same source
+  // twice: this is what would have caught the 08-04 outage the counters-
+  // derived `capture` section could not see). buildLayers() never throws —
+  // its own degraded markers ('layers-unavailable' / 'layers-partial' /
+  // 'layers_saturated') fold into this payload's degraded[] exactly like
+  // corpus/counters do.
+  const layersResult = await buildLayers({ vaultDir, config: checkpointConfig });
+  if (layersResult.degraded.length > 0) degraded.push(...layersResult.degraded);
+
   const body = {
     schema_version: 1,
     generated_at: new Date(now).toISOString(),
@@ -160,6 +185,13 @@ export async function buildStats({ now, memory, userId, endpoint, readCounters =
       derived_from: 'extraction-counters',
     },
     capture: counters.capture,
+    // Task 10 (spec §6): top-level so existing um-alert.sh/consumers stay
+    // shape-safe (§6: "top-level keys are safe for existing um-alert.sh
+    // consumers"). Always present from this version forward, even as `{}` —
+    // um-alert.sh's own absent-key check is how a client tells "this server
+    // predates the layers block" apart from "this server has zero projects
+    // with captures".
+    layers: layersResult.layers,
     recall: {
       searches_today: counters.recall?.searches_today ?? null,
       searches_7d: counters.recall?.searches_7d ?? null,

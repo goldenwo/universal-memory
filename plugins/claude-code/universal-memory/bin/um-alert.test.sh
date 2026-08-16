@@ -442,6 +442,165 @@ else
   fail "T20-over-stale-fallback (rc=$rc, out=$output)"
 fi
 
+# ─── Task 10 (spec §6) fixtures: the `layers` block ─────────────────────────
+# FRESH capture verdict (freshness_hours 0) in every fixture below, so any
+# exit-1/exit-2 the LAYERS section produces is provably ITS OWN escalation,
+# not a leftover from the capture-freshness verdict.
+FRESH_CAPTURE='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}}}'
+
+LAYERS_STALE='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"universal-memory":{"last_capture_at":"2026-08-04T09:00:00.000Z","last_summary_at":"2026-07-30T08:00:00.000Z","last_state_at":null,"pending_bytes":7000,"stale":true,"lag_hours":121.0},"edge-catcher":{"last_capture_at":"2026-08-15T09:00:00.000Z","last_summary_at":"2026-08-15T08:00:00.000Z","last_state_at":"2026-08-15T08:00:00.000Z","pending_bytes":0,"stale":false,"lag_hours":1.0}}}'
+
+LAYERS_ALL_FRESH='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"edge-catcher":{"last_capture_at":"2026-08-15T09:00:00.000Z","last_summary_at":"2026-08-15T08:00:00.000Z","last_state_at":"2026-08-15T08:00:00.000Z","pending_bytes":0,"stale":false,"lag_hours":1.0}}}'
+
+LAYERS_EMPTY='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{}}'
+
+LAYERS_MALFORMED_NOT_OBJECT='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":[]}'
+
+LAYERS_MALFORMED_STALE_FIELD='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-08-15","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":1,"superseded":0,"error":0}}},"layers":{"broken-project":{"last_capture_at":"2026-08-15T09:00:00.000Z","pending_bytes":100,"stale":"yes"}}}'
+
+# A FRESH capture verdict combined with a STALE layers block, so an old
+# server (no layers key) reading exit 0 must NOT match a T21 fixture — this
+# fixture doubles as the STALE half of the ABSENT-vs-present contrast below.
+STALE_CAPTURE_AND_LAYERS='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-01","freshness_hours":1000,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":{"universal-memory":{"last_capture_at":"2026-08-04T09:00:00.000Z","last_summary_at":"2026-07-30T08:00:00.000Z","last_state_at":null,"pending_bytes":7000,"stale":true,"lag_hours":121.0}}}'
+
+# Already-STALE capture verdict (freshness_hours 1000) PLUS malformed layers
+# — T27 proves the layers ERROR override fires even when the base verdict is
+# ALREADY non-zero, not just when it would otherwise be FRESH.
+STALE_CAPTURE_MALFORMED_LAYERS='{"schema_version":1,"capture_freshness_threshold_hours":26,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-01","freshness_hours":1000,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":[]}'
+
+# ─── T21: layers block names a stale project ⇒ FRESH capture verdict is ESCALATED to exit 1 ──
+echo ""
+echo "=== T21: FRESH capture + layers stale ⇒ escalated to exit 1 ==="
+mock="$TMPDIR_ROOT/t21"; _make_mock_curl "$mock" 200 "$LAYERS_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T21-exit-1"
+else
+  fail "T21-exit-1 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "LAYERS-STALE" && echo "$output" | grep -q "universal-memory" \
+  && echo "$output" | grep -q "121" && echo "$output" | grep -q "7000"; then
+  pass "T21-message-content (project + lag + pending_bytes)"
+else
+  fail "T21-message-content: $output"
+fi
+
+# ─── T22: layers block present with no stale project ⇒ no escalation ────────
+echo ""
+echo "=== T22: FRESH capture + layers all-fresh ⇒ exit 0, unescalated ==="
+mock="$TMPDIR_ROOT/t22"; _make_mock_curl "$mock" 200 "$LAYERS_ALL_FRESH"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T22-exit-0"
+else
+  fail "T22-exit-0 (rc=$rc, out=$output)"
+fi
+
+# ─── T23: layers:{} (zero projects with captures yet) ⇒ no escalation ───────
+echo ""
+echo "=== T23: layers:{} (no projects yet) ⇒ exit 0, unescalated ==="
+mock="$TMPDIR_ROOT/t23"; _make_mock_curl "$mock" 200 "$LAYERS_EMPTY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T23-exit-0"
+else
+  fail "T23-exit-0 (rc=$rc, out=$output)"
+fi
+
+# ─── T24: layers key ABSENT (old server) ⇒ breadcrumb + exit code UNCHANGED ──
+echo ""
+echo "=== T24a: layers key absent, capture FRESH ⇒ breadcrumb + exit 0 (unchanged) ==="
+mock="$TMPDIR_ROOT/t24a"; _make_mock_curl "$mock" 200 "$FRESH_CAPTURE"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then
+  pass "T24a-exit-0-unchanged"
+else
+  fail "T24a-exit-0-unchanged (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "layers key absent" && echo "$output" | grep -q "v1.16"; then
+  pass "T24a-breadcrumb"
+else
+  fail "T24a-breadcrumb: $output"
+fi
+
+echo ""
+echo "=== T24b: layers key absent, capture ALREADY STALE ⇒ breadcrumb + exit 1 (unchanged) ==="
+mock="$TMPDIR_ROOT/t24b"; _make_mock_curl "$mock" 200 "$ALL_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T24b-exit-1-unchanged"
+else
+  fail "T24b-exit-1-unchanged (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "layers key absent"; then
+  pass "T24b-breadcrumb"
+else
+  fail "T24b-breadcrumb: $output"
+fi
+
+# ─── T25: layers PRESENT but malformed (not an object) ⇒ exit 2 CHECK-FAILED ─
+echo ""
+echo "=== T25: layers: [] (wrong type) ⇒ exit 2, unconditionally ==="
+mock="$TMPDIR_ROOT/t25"; _make_mock_curl "$mock" 200 "$LAYERS_MALFORMED_NOT_OBJECT"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then
+  pass "T25-exit-2"
+else
+  fail "T25-exit-2 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -qi "CHECK FAILED"; then
+  pass "T25-message"
+else
+  fail "T25-message: $output"
+fi
+
+# ─── T26: a layers project entry with a malformed `stale` field ⇒ exit 2 ────
+echo ""
+echo "=== T26: a project's stale field is not a bool ⇒ exit 2, loud, never silently dropped ==="
+mock="$TMPDIR_ROOT/t26"; _make_mock_curl "$mock" 200 "$LAYERS_MALFORMED_STALE_FIELD"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then
+  pass "T26-exit-2"
+else
+  fail "T26-exit-2 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "broken-project"; then
+  pass "T26-names-project"
+else
+  fail "T26-names-project: $output"
+fi
+
+# ─── T27: malformed layers OVERRIDES an otherwise-STALE capture verdict ─────
+# (the capture verdict alone would already be exit 1; layers ERROR must still
+# win with exit 2 — a malformed monitor deserves its own loud failure class,
+# not to be silently absorbed into "yep, still stale").
+echo ""
+echo "=== T27: malformed layers overrides an already-STALE capture verdict ⇒ exit 2, not 1 ==="
+mock="$TMPDIR_ROOT/t27"; _make_mock_curl "$mock" 200 "$STALE_CAPTURE_MALFORMED_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then
+  pass "T27-exit-2-overrides-stale"
+else
+  fail "T27-exit-2-overrides-stale (rc=$rc, out=$output)"
+fi
+
+# ─── T28: capture ALREADY stale + layers ALSO stale ⇒ exit 1, both named ────
+echo ""
+echo "=== T28: capture stale + layers stale ⇒ exit 1, message names both ==="
+mock="$TMPDIR_ROOT/t28"; _make_mock_curl "$mock" 200 "$STALE_CAPTURE_AND_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then
+  pass "T28-exit-1"
+else
+  fail "T28-exit-1 (rc=$rc, out=$output)"
+fi
+if echo "$output" | grep -q "STALE" && echo "$output" | grep -q "also layers stale" \
+  && echo "$output" | grep -q "universal-memory"; then
+  pass "T28-message-names-both"
+else
+  fail "T28-message-names-both: $output"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"
