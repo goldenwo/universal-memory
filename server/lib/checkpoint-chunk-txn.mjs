@@ -182,6 +182,23 @@ function maxIso(a, b) {
   return bMs >= aMs ? b : a;
 }
 
+/**
+ * Increment the per-day, per-project telemetry cost file (best-effort; a
+ * failure here must never fail the chunk). Shared by both the reindex-
+ * exhaustion path and the normal success path (round-1 review MINOR 4):
+ * spec §4.5 step 7/§4.5.6 says per-chunk telemetry/counters are still
+ * recorded when reindex exhausts (doc durable, cursor advanced — that
+ * chunk's spend is real and must count against the daily cap even though
+ * this run reports it as a failure).
+ */
+async function incrementCostFile(costPath, daySpent, costUsd) {
+  try {
+    await fs.mkdir(path.dirname(costPath), { recursive: true });
+    const fh = await fs.open(costPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+    try { await fh.writeFile(String(daySpent + costUsd), 'utf8'); } finally { await fh.close(); }
+  } catch {}
+}
+
 /** §5b's supersession digest block (spec §3.7 format) — ported verbatim from checkpoint.mjs:596-609. */
 function buildSupersedeDigest(detections, lane, persona) {
   const laneStr = lane || '-';
@@ -200,13 +217,17 @@ function buildSupersedeDigest(detections, lane, persona) {
  * cursor advance → auto-supersede pass (5b) → blocking reindex → telemetry.
  *
  * Never throws: every path below returns exactly one of —
- *   `{ committed: { summaryId, summaryPath, costUsd, tokensIn, tokensOut, nextCursor } }`
+ *   `{ committed: { summaryId, summaryPath, costUsd, tokensIn, tokensOut, nextCursor, stateUpdated, statePath } }`
  *   `{ stopped: { reason: 'cost_cap' } }`                          — step 1, nothing consumed
- *   `{ thin: true }`                                               — step 2, cursor untouched
+ *   `{ thin: true, transcriptBytes, transcriptTurns }`             — step 2, cursor untouched
  *   `{ failed: { stage: 'summarize', providerClass, message } }`   — step 3, nothing written
- *   `{ failed: { stage: 'phase2', message } }`                     — step 4, .tmp orphan-marked, cursor untouched
+ *   `{ failed: { stage: 'phase2', code, message } }`                — step 4, .tmp orphan-marked (unless the .tmp
+ *       itself is a planted symlink, in which case marking is skipped — see the catch below), cursor untouched.
+ *       `code` is the raw error code (e.g. EBUSY/STATE_LOCK_CONTENTION/SYMLINK_REFUSED/ENOSPC), additive so a
+ *       caller can restore checkpoint.mjs's STATE_LOCK_CONTENTION → 503-retryable branch without re-deriving it.
  *   `{ failed: { stage: 'cursor_write', message } }`                — step 5, doc durable, cursor lags
- *   `{ failed: { stage: 'reindex', message, summaryId, summaryPath } }` — step 7, doc durable, CURSOR ADVANCED
+ *   `{ failed: { stage: 'reindex', message, summaryId, summaryPath } }` — step 7, doc durable, CURSOR ADVANCED,
+ *       telemetry/counters still recorded (spec §4.5.6) even though this call reports failure
  *
  * @param {object} args
  * @param {string} args.vaultDir
@@ -224,6 +245,12 @@ function buildSupersedeDigest(detections, lane, persona) {
  * @param {boolean} [args.skipStateMerge]
  * @param {object} [deps] - DI overrides; each defaults to the real implementation
  *   exactly as checkpoint.mjs's ctx does.
+ * @param {string} [deps.systemPrompt] - REQUIRED for real (non-test) use: passed straight
+ *   through to summarizeFn as the curated UM-format system prompt (checkpoint.mjs:426's
+ *   comment on the same hazard). Per-run prompt loading (reading summarize.txt off disk once,
+ *   not per chunk) is Task 6's job, not this module's — an omitted/empty systemPrompt does NOT
+ *   fail the chunk, it silently produces a generic (non-UM-format) summary from whatever
+ *   summarizeFn's own default prompt is.
  * @returns {Promise<object>} one of the shapes documented above.
  */
 export async function runChunkTransaction(args, deps = {}) {
@@ -283,7 +310,12 @@ export async function runChunkTransaction(args, deps = {}) {
     'UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS', config.min_transcript_turns, DEFAULT_MIN_TRANSCRIPT_TURNS);
   const transcriptBytes = Buffer.byteLength(chunk.text.trim(), 'utf8');
   if (transcriptBytes < minTranscriptBytes && chunk.turnCount < minTranscriptTurns) {
-    return { thin: true };
+    // Round-1 review MINOR 3: carry the #185 measurement out with the shape —
+    // this is the ONLY place it's computed; a Task-6 re-derivation from the
+    // chunk would be a drifted second copy of the same arithmetic. Mirrors
+    // the pinned abstention envelope's transcript_bytes/transcript_turns
+    // (checkpoint.test.mjs:1471-1557).
+    return { thin: true, transcriptBytes, transcriptTurns: chunk.turnCount };
   }
 
   // ----- Step 3: summarize, under summarizeTimeoutMs -----
@@ -317,6 +349,10 @@ export async function runChunkTransaction(args, deps = {}) {
   const tmpSummaryPath = absSummaryPath + '.tmp';
 
   let summaryWithFm = null; // built inside the try; used by the catch's defensive re-stage path
+  // Round-1 review MINOR 3: carried into the committed shape below — the
+  // pinned old-envelope fields (checkpoint.test.mjs:113/350-351/626-627).
+  let stateUpdated = false;
+  let statePath = null;
 
   try {
     await fs.mkdir(path.dirname(absSummaryPath), { recursive: true });
@@ -426,21 +462,39 @@ export async function runChunkTransaction(args, deps = {}) {
         try { await fh.writeFile(mergedMd, 'utf8'); } finally { await fh.close(); }
       }
       await fs.rename(stateTmpPath, oldStatePath);
+      stateUpdated = true;
+      statePath = `state/${project}/state.md`;
     }
 
     // Final rename — the summary becomes durably reachable at its canonical path.
     await fs.rename(tmpSummaryPath, absSummaryPath);
   } catch (phase2Err) {
-    // Ported from checkpoint.mjs:524-551.
-    const tmpStillThere = await fs.stat(tmpSummaryPath).catch(() => null);
-    if (tmpStillThere) {
+    // Ported from checkpoint.mjs:524-551, HARDENED beyond the original
+    // (round-1 review IMPORTANT 1): the original used fs.stat here, which
+    // FOLLOWS symlinks. If a symlink had been planted at tmpSummaryPath (the
+    // predictable sessions/<project>/<id>.md.tmp path), fs.stat would resolve
+    // it, `tmpStillThere` would be truthy, and markOrphanSummary would
+    // read-then-O_TRUNC-rewrite THROUGH the link — its own O_NOFOLLOW open is
+    // a no-op on Windows (NOFOLLOW is 0 there), so this is the only effective
+    // guard on that platform. fs.lstat never follows: a symlink at the .tmp
+    // path is detected and its marking is skipped entirely (never touched,
+    // never re-staged) rather than written through.
+    const tmpLstat = await fs.lstat(tmpSummaryPath).catch(() => null);
+    if (tmpLstat && tmpLstat.isSymbolicLink()) {
+      safeLog(() => getLogger().warn({
+        request_id: currentRequestId(),
+        component: 'checkpoint-chunk-txn',
+        path: tmpSummaryPath,
+      }, 'phase-2 failure: refusing to mark orphan through a symlink at the .tmp path'), 'log:checkpoint-chunk-txn:phase2-tmp-symlink-refused');
+    } else if (tmpLstat) {
       await markOrphanSummary(tmpSummaryPath);
     } else if (summaryWithFm !== null) {
       // Defensive re-stage (checkpoint.mjs keeps this branch "dead but a
       // safety net for defensive future edits" — same here): the .tmp
       // vanished between phase-1 write and the phase-2 failure. Only
       // attempted when we actually have content to re-stage (a failure
-      // BEFORE the frontmatter was built has nothing to write).
+      // BEFORE the frontmatter was built has nothing to write). lstat above
+      // already confirmed nothing (symlink or otherwise) sits at this path.
       try {
         const fh = await fs.open(tmpSummaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
         try { await fh.writeFile(summaryWithFm, 'utf8'); } finally { await fh.close(); }
@@ -454,7 +508,12 @@ export async function runChunkTransaction(args, deps = {}) {
         }, 'phase-2 orphan re-stage failed'), 'log:checkpoint-chunk-txn:phase2-orphan-failed');
       }
     }
-    return { failed: { stage: 'phase2', message: phase2Err?.message ?? String(phase2Err) } };
+    // Additive `code` (round-1 review IMPORTANT 2): checkpoint.mjs:552-565
+    // branches on EBUSY/STATE_LOCK_CONTENTION to pick the 503-retryable
+    // envelope + emit the lock-contention metric — Task 6 cannot restore
+    // either from `message` alone. Precedent: the reindex shape already
+    // carries diagnostic fields (summaryId/summaryPath) beyond stage/message.
+    return { failed: { stage: 'phase2', code: phase2Err?.code, message: phase2Err?.message ?? String(phase2Err) } };
   }
 
   // ----- Step 5: cursor advance — strictly after the durable rename, strictly before reindex (I5) -----
@@ -548,6 +607,11 @@ export async function runChunkTransaction(args, deps = {}) {
 
   if (!reindexSucceeded) {
     const totalRetries = callerOverridesDelays ? retryDelaysMs.length : 3;
+    // Round-1 review MINOR 4: telemetry still recorded on reindex exhaustion
+    // (spec §4.5.6) — the doc is durable and the cursor already advanced, so
+    // this chunk's spend is real and must count against the daily cap even
+    // though this run reports it as a failure. The 'error' emit is unchanged.
+    await incrementCostFile(costPath, daySpent, costUsd);
     recordCaptureEventFn({ surface, project, event: CAPTURE_EVENTS.CHECKPOINT, outcome: 'error' });
     return {
       failed: {
@@ -560,11 +624,7 @@ export async function runChunkTransaction(args, deps = {}) {
   }
 
   // ----- Step 8: per-chunk telemetry + stored counter -----
-  try {
-    await fs.mkdir(path.dirname(costPath), { recursive: true });
-    const fh = await fs.open(costPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
-    try { await fh.writeFile(String(daySpent + costUsd), 'utf8'); } finally { await fh.close(); }
-  } catch {}
+  await incrementCostFile(costPath, daySpent, costUsd);
 
   recordCaptureEventFn({ surface, project, event: CAPTURE_EVENTS.CHECKPOINT, outcome: 'stored' });
 
@@ -576,6 +636,10 @@ export async function runChunkTransaction(args, deps = {}) {
       tokensIn,
       tokensOut,
       nextCursor,
+      // Round-1 review MINOR 3: pinned old-envelope fields, carried out of
+      // this module rather than re-derived by Task 6.
+      stateUpdated,
+      statePath,
     },
   };
 }

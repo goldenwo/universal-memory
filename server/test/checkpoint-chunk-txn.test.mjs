@@ -198,6 +198,15 @@ test('happy path: steps run in order (I5 pinned via disk-state spies), committed
   assert.equal(result.committed.nextCursor.offset, chunk.endOffset);
   assert.equal(result.committed.nextCursor.boundary, chunk.boundary);
   assert.equal(result.committed.nextCursor.last_summary_id, summaryId);
+  // Round-1 review MINOR 3: pinned old-envelope fields carried out of the module.
+  assert.equal(result.committed.stateUpdated, true);
+  assert.equal(result.committed.statePath, `state/${PROJECT}/state.md`);
+
+  // Round-1 review MINOR 6: the written frontmatter carries the chunk's exact
+  // covers_from/covers_until — the sole source of §4.2's recovery watermark.
+  const diskContent = await fs.readFile(summaryPathFor(vault, summaryId), 'utf8');
+  assert.match(diskContent, new RegExp(`^covers_from: ${chunk.coversFrom}$`, 'm'));
+  assert.match(diskContent, new RegExp(`^covers_until: ${chunk.coversUntil}$`, 'm'));
 
   // Deterministic id: identical window (fresh vault) -> same id.
   const vault2 = makeVault();
@@ -310,6 +319,61 @@ test('phase-2 rename failure: .tmp orphan-marked, cursor unchanged, failed/phase
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// Round-1 review IMPORTANT 2: checkpoint.mjs:552-565 branches on
+// phase2Err.code EBUSY/STATE_LOCK_CONTENTION to pick the 503-retryable
+// envelope (pinned at checkpoint.test.mjs:672-685) + emit the lock-contention
+// metric. Task 6 cannot restore either from `message` alone, so the raw error
+// code must ride along on the failed/phase2 shape.
+test('phase-2 failure: STATE_LOCK_CONTENTION error code rides along on the failed/phase2 shape', async () => {
+  const vault = makeVault();
+  const result = await runChunkTransaction(
+    baseArgs(vault),
+    baseDeps({
+      updateStateFn: async () => {
+        const err = new Error('state.md contention');
+        err.code = 'STATE_LOCK_CONTENTION';
+        throw err;
+      },
+    }),
+  );
+  assert.equal(result.failed?.stage, 'phase2', `expected phase2 failure, got: ${JSON.stringify(result)}`);
+  assert.equal(result.failed.code, 'STATE_LOCK_CONTENTION');
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
+// Round-1 review IMPORTANT 1: fs.stat (which the original checkpoint.mjs-
+// ported code used) FOLLOWS symlinks, so a symlink planted at the
+// predictable .tmp path would have been read-then-rewritten THROUGH the
+// link by markOrphanSummary — on Windows its own O_NOFOLLOW open is a no-op,
+// so lstat-based detection is the only effective guard there. A symlink at
+// the .tmp path must be left untouched, never marked.
+test('phase-2 failure: a symlink planted at the .tmp path is left untouched, never marked through', { skip: process.platform === 'win32' }, async () => {
+  const vault = makeVault();
+  const chunk = makeChunk();
+  const id = computeId(PROJECT, chunk);
+  const finalPath = summaryPathFor(vault, id);
+  await fs.mkdir(path.dirname(finalPath), { recursive: true });
+  // A symlink at the .tmp path pointing at an outside file we must never see
+  // mutated. This alone triggers the phase-2 symlink-refusal throw (before
+  // any frontmatter is even built) and lands us in the catch under test.
+  const outside = tempDir('um-chunk-txn-outside-');
+  const outsideTarget = path.join(outside, 'outside.txt');
+  await fs.writeFile(outsideTarget, 'pre-existing-outside-data', 'utf8');
+  await fs.symlink(outsideTarget, finalPath + '.tmp', 'file');
+
+  const result = await runChunkTransaction(
+    baseArgs(vault, { chunk, skipStateMerge: true }),
+    baseDeps(),
+  );
+  assert.equal(result.failed?.stage, 'phase2', `expected phase2 failure, got: ${JSON.stringify(result)}`);
+
+  const outsideContent = await fs.readFile(outsideTarget, 'utf8');
+  assert.equal(outsideContent, 'pre-existing-outside-data', 'the symlink target must never be mutated');
+
+  await fs.rm(vault, { recursive: true, force: true });
+  await fs.rm(outside, { recursive: true, force: true });
+});
+
 test('cursor-write failure: doc durable, cursor unchanged, failed/cursor_write', async () => {
   const vault = makeVault();
   const chunk = makeChunk();
@@ -370,11 +434,37 @@ test('reindex exhaustion: cursor ADVANCED, doc durable, outcome=error, failed/re
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// Round-1 review MINOR 4: spec §4.5.6 — "per-chunk telemetry/counters still
+// recorded" on reindex exhaustion. The doc is durable and the cursor already
+// advanced, so that chunk's spend is real and must count against the daily
+// cap even though this call reports failure (otherwise a later run under-
+// counts the day's actual spend).
+test('reindex exhaustion: per-chunk cost telemetry is still incremented (spec §4.5.6)', async () => {
+  const vault = makeVault();
+  const result = await runChunkTransaction(
+    baseArgs(vault, { skipStateMerge: true }),
+    baseDeps({
+      summarizeFn: makeSummarizeFn({ costUsd: 0.02 }),
+      reindexFn: async () => { throw new Error('mem0 unavailable'); },
+      retryDelaysMs: [0, 0, 0],
+      retryJitterMaxMs: 0,
+    }),
+  );
+  assert.equal(result.failed?.stage, 'reindex', `expected reindex failure, got: ${JSON.stringify(result)}`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const costFile = path.join(vault, '.telemetry', `${today}-${PROJECT}.count`);
+  const spent = parseFloat(await fs.readFile(costFile, 'utf8'));
+  assert.ok(Math.abs(spent - 0.02) < 1e-9, `expected ~0.02, got ${spent}`);
+
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
 // ===========================================================================
 // Section C — #185 thin gate (AND-composition), applied to the chunk.
 // ===========================================================================
 
-test('thin gate: below both floors -> {thin:true}, no summarize call, cursor untouched', async () => {
+test('thin gate: below both floors -> {thin:true, transcriptBytes, transcriptTurns}, no summarize call, cursor untouched', async () => {
   const vault = makeVault();
   let summarizeCalls = 0;
   const chunk = makeChunk({ text: 'short', turnCount: 1 });
@@ -384,7 +474,11 @@ test('thin gate: below both floors -> {thin:true}, no summarize call, cursor unt
     baseDeps({ summarizeFn: async () => { summarizeCalls += 1; return { summary: 'x', costUsd: 0, tokensIn: 0, tokensOut: 0 }; } }),
   );
 
-  assert.deepEqual(result, { thin: true });
+  // Round-1 review MINOR 3: the #185 measurement is computed exactly once,
+  // here — carried out on the shape rather than left for a drifted Task-6
+  // re-derivation (mirrors the pinned abstention envelope's
+  // transcript_bytes/transcript_turns, checkpoint.test.mjs:1471-1557).
+  assert.deepEqual(result, { thin: true, transcriptBytes: Buffer.byteLength('short', 'utf8'), transcriptTurns: 1 });
   assert.equal(summarizeCalls, 0, 'summarizer must never see a thin chunk');
   const cursorExists = await fs.stat(cursorPath(vault)).then(() => true, () => false);
   assert.equal(cursorExists, false);
