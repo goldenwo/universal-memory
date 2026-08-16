@@ -54,6 +54,13 @@ See [../docs/architecture.md](../docs/architecture.md) for the full protocol. Su
 - `POST /mcp` — JSON-RPC for MCP clients (Claude Code, Claude Desktop)
 - `GET /health` — liveness + memory count
 
+`/api/checkpoint` digests a project's pending capture backlog in bounded chunks
+(≤3 per call by default) rather than re-reading the whole history every time. A
+call that leaves `backlog_remaining: true` in the response has more to digest —
+repeated calls (or simply the next session-end) drain any backlog progressively
+until it catches up. The five `UM_CHECKPOINT_*` tuning knobs are documented in
+[.env.example](.env.example).
+
 ## Vendor connectors (Claude.ai / ChatGPT) — OAuth
 
 Claude.ai and ChatGPT MCP connectors require MCP-spec OAuth (they do not accept a
