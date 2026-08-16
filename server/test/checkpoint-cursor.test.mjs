@@ -558,6 +558,29 @@ test('recoveryReinit: headerless legacy raw file present -> cursor lands at its 
   assert.equal(cursor.boundary, 'turn');
 });
 
+test('recoveryReinit: headerless file OLDER than a file whose header clears the threshold -> cursor still lands at the headerless file, never the later match (scoped-re-review gap repro)', async () => {
+  const vault = makeVault();
+  // W = 2026-08-20T00:00:00.000Z; threshold = 2026-08-18T00:00:00.000Z.
+  // 2026-08-05.md is a headerless legacy blob (chronologically OLDEST pending
+  // file) — un-vetted content the never-skip invariant must never let a
+  // LATER file's above-threshold header match jump over. Without the
+  // top-of-loop short-circuit, the inner loop's early `return` on
+  // 2026-08-19.md's qualifying header would fire first and silently strand
+  // 2026-08-05.md below the cursor forever (I1 violation).
+  await writeSessionFile(
+    vault,
+    'session-2026-08-20-aaaaaaaa.md',
+    '---\ntype: session_summary\ncovers_until: 2026-08-20T00:00:00.000Z\n---\nbody',
+  );
+  await writeRawFile(vault, '2026-08-05.md', 'plain legacy text, no turn headers at all here.\n');
+  await writeRawFile(vault, '2026-08-19.md', turnHeader('2026-08-19T00:00:00.000Z', 'user') + '\nwell above threshold\n\n');
+
+  const cursor = await recoveryReinit({ vaultDir: vault, project: PROJECT });
+  assert.equal(cursor.file, '2026-08-05.md', 'the older headerless file must win, not the newer file with a qualifying header');
+  assert.equal(cursor.offset, 0);
+  assert.equal(cursor.boundary, 'turn');
+});
+
 // ===========================================================================
 // Section G — loadCursor's own bootstrap-on-missing-cursor-file path.
 // ===========================================================================

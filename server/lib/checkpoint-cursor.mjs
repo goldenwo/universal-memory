@@ -371,6 +371,17 @@ export async function recoveryReinit({ vaultDir, project }) {
   let firstHeaderlessFile = null;
 
   for (const name of rawFiles) {
+    // Scoped-re-review gap: an EARLIER (chronologically older, since
+    // rawFiles is ascending) file already came back headerless — no LATER
+    // file's above-threshold header match, however clean, may take
+    // precedence over content we have not even been able to vet for turn
+    // boundaries. Short-circuit here, before this iteration's inner loop
+    // gets a chance to `return` past it. Checked at the top of every
+    // iteration (not just once) so it fires on the very next file after the
+    // headerless one is recorded, regardless of how many files remain.
+    if (firstHeaderlessFile !== null) {
+      return makeCursor({ file: firstHeaderlessFile, offset: 0 });
+    }
     const filePath = path.join(rawDir, name);
     const content = await fs.readFile(filePath, 'utf8');
     // Fresh RegExp instance per file (makeTurnHeaderRe('gm')) — never a
@@ -389,7 +400,7 @@ export async function recoveryReinit({ vaultDir, project }) {
       // later (duplication-safe, never loss).
       return makeCursor({ file: name, offset: charIndexToByteOffset(content, m.index) });
     }
-    if (!sawHeader && firstHeaderlessFile === null) firstHeaderlessFile = name;
+    if (!sawHeader) firstHeaderlessFile = name;
   }
 
   // No turn header found above the watermark in any raw file.
