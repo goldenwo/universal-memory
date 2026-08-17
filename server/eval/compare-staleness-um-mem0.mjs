@@ -150,7 +150,8 @@ async function main() {
       const m0 = makeMem(mem0Col);
       await m0.add(row.original_fact, { userId: EVAL_USER, infer: false });
       await m0.add(row.updated_fact, { userId: EVAL_USER, infer: false });
-      const m0Sr = await m0.search(row.query, { userId: EVAL_USER, limit: 10 });
+      // #231 mem0 3.x: control arm uses mem0's NATIVE idiom (its add() writes snake user_id; default threshold kept — mem0-as-shipped).
+      const m0Sr = await m0.search(row.query, { filters: { user_id: EVAL_USER }, topK: 10 });
       const m0Arr = Array.isArray(m0Sr) ? m0Sr : (m0Sr?.results ?? []);
       const m0Bodies = m0Arr.map((r) => norm(r.memory ?? r.text ?? ''));
       mem0PerRow.push({

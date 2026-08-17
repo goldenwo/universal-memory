@@ -45,7 +45,8 @@ const fakeMemory = {
 async function startServer() {
   const prev = process.env.UM_AUTH_TOKEN;
   process.env.UM_AUTH_TOKEN = 'tok';
-  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  // #231 mem0 3.x seam: bridge the enumeration override to the existing fake.
+  const srv = createServer(createRequestHandler({ memory: fakeMemory, _umGetAll: async (m, a) => m.getAll(a) }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

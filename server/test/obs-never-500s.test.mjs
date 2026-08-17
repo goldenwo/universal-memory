@@ -48,8 +48,14 @@ const fakeMemory = {
   search: async () => ({ results: [] }),
 };
 
+// #231 mem0ai 3.x seam: /api/list enumerates through lib/mem0-read's native
+// scroll instead of memory.getAll(); ctx._umGetAll is the production DI
+// override, bridged back onto fakeMemory so the fixture above stays
+// authoritative (and a 200 stays a 200 for the reasons this file tests).
+const fakeGetAll = async (memory, args) => memory.getAll(args);
+
 async function startServer({ memory = fakeMemory } = {}) {
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

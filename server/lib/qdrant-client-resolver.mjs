@@ -10,7 +10,8 @@
 
 /**
  * Resolve a real qdrant client from a mem0 Memory instance.
- * mem0ai 2.4.6: host/port live under memory.config.vectorStore.config.
+ * mem0ai 2.4.6 AND 3.x: host/port live under memory.config.vectorStore.config
+ * (shape re-verified against 3.1.6 in the #231 reconciliation).
  */
 export async function getRealClient(memory) {
   const { host, port } = memory.config.vectorStore.config;

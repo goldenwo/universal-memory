@@ -11,3 +11,13 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # mem0ai bumps can NEVER pass as auto-PRs by construction: the package
+      # is patch-package'd (version-pinned patch + sha256 source pin), so any
+      # version change fails deps-guard on hash drift until the deliberate
+      # reconciliation in server/patches/README.md §Reconciliation runs
+      # (the #211/#231 shape). Version currency is owned by reconciliation
+      # arcs + the quarterly #17 review. NOTE: `ignore` suppresses PRs only —
+      # Dependabot security ALERTS for mem0ai still surface in the Security
+      # tab, which remains the advisory path (#231 compensating control).
+      - dependency-name: "mem0ai"

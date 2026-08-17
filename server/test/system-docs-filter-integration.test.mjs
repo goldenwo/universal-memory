@@ -36,16 +36,22 @@ import { tempDir } from './helpers/tmpdir.mjs';
 const stampDoc = { metadata: { id: '_um_embedding_stamp', stamp: { provider: 'openai' } }, memory: 'stamp text' };
 const realDoc = { metadata: { id: 'real-uuid', title: 'Real' }, memory: 'real content' };
 
+// #231 mem0 3.x seam: doList and the /health corpus count enumerate through
+// ctx._umGetAll (a native qdrant scroll in production) instead of memory.getAll.
+// The getAll stubs below are untouched — this bridges the new seam onto them so
+// the system-docs filter is still what removes the stamp from each surface.
+const getAllBridge = async (m, a) => m.getAll(a);
+
 test('doList(full, limit, ctx) excludes stamp doc', async () => {
   const memory = { getAll: async () => [stampDoc, realDoc] };
-  const r = await doList(false, null, { memory });
+  const r = await doList(false, null, { memory, _umGetAll: getAllBridge });
   assert.equal(r.results.length, 1);
   assert.equal(r.results[0].id, 'real-uuid');
 });
 
 test('doList full=true mode also filters stamp', async () => {
   const memory = { getAll: async () => [stampDoc, realDoc] };
-  const r = await doList(true, null, { memory });
+  const r = await doList(true, null, { memory, _umGetAll: getAllBridge });
   assert.ok(!r.results.some((d) => d.metadata?.id === '_um_embedding_stamp'));
   assert.equal(r.results.length, 1);
 });
@@ -107,7 +113,7 @@ test('GET /health excludes stamp doc from memories count', async () => {
   const fakeMemory = {
     getAll: async () => ({ results: [stampDoc, realDoc, { id: 'm2', memory: 'x', metadata: { id: 'doc-2' } }] }),
   };
-  const handler = createRequestHandler({ memory: fakeMemory });
+  const handler = createRequestHandler({ memory: fakeMemory, _umGetAll: getAllBridge });
   const srv = createServer(handler);
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');

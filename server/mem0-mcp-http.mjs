@@ -42,6 +42,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
+import { searchConfig, umGetAll } from './lib/mem0-read.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, UNDATED_FACTOR } from './lib/ranking.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
@@ -456,7 +457,15 @@ export async function initMemory() {
 	const MAX_ATTEMPTS = 30;
 	for (let i = 1; i <= MAX_ATTEMPTS; i++) {
 		try {
-			await memory.getAll({ userId: '__warmup__' });
+			// mem0ai 3.x shape: entity scoping lives in filters (snake_case
+			// keys — mem0's OWN reserved names, unrelated to UM's camelCase
+			// payload schema; '__warmup__' matches nothing by design). This
+			// call deliberately stays on mem0's PUBLIC getAll rather than
+			// lib/mem0-read.mjs: the 3.x constructor swallows init errors and
+			// only surfaces them on the first public call, so the warmup IS
+			// the init-failure discriminator (#231 spec F14; the legacy-qdrant
+			// gate depends on it).
+			await memory.getAll({ filters: { user_id: '__warmup__' }, topK: 1 });
 			console.log(`[mem0-mcp] Memory initialized, Qdrant reachable (attempt ${i})`);
 			break;
 		} catch (err) {
@@ -764,8 +773,10 @@ async function deleteByMetadataId(targetId) {
 	// TODO(v0.3): O(N) full-user scan. Replace with metadata-filtered query when mem0 OSS supports it.
 	// C.11: wrap in withRetry — transient qdrant blips don't fail the request.
 	// R1 review A1, fix #1: thread op label so um_mem0_ops_total increments.
+	// #231: mem0 3.x getAll requires snake_case entity filters that can never
+	// match UM's camelCase payloads — enumeration goes native (lib/mem0-read).
 	const allMemories = await withRetry(() =>
-		memory.getAll({ userId: USER_ID }).catch((e) => { throw tagRetryable(e); })
+		umGetAll(memory, { userId: USER_ID }).catch((e) => { throw tagRetryable(e); })
 	, { op: 'getAll' });
 	const allItems = allMemories?.results || allMemories || [];
 	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
@@ -1867,7 +1878,7 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// to the user when one retry would cover it.
 	// R1 review A1, fix #1: thread op label for um_mem0_ops_total.
 	const raw = await withRetry(() =>
-		memoryClient.search(query, { userId: USER_ID, limit: fetchLimit })
+		memoryClient.search(query, searchConfig({ userId: USER_ID, limit: fetchLimit }))
 			.catch((e) => { throw tagRetryable(e); })
 	, { op: 'search' });
 	let items = raw?.results || raw || [];
@@ -2218,8 +2229,12 @@ export async function doList(full = false, limit = null, ctx = {}) {
   // before surfacing UPSTREAM_FAILURE. /api/list is request-path; covers MCP
   // memory_list as well via doList.
   // R1 review A1, fix #1: thread op label for um_mem0_ops_total.
+  // #231: native enumeration (see deleteByMetadataId note). ctx?._umGetAll
+  // is the DI override (same convention as compat's ctx?._umAdd) — tests
+  // stub the whole enumerator with a canned {results} envelope.
+  const listAll = ctx?._umGetAll ?? umGetAll;
   const all = await withRetry(() =>
-    memoryClient.getAll({ userId: USER_ID })
+    listAll(memoryClient, { userId: USER_ID })
       .catch((e) => { throw tagRetryable(e); })
   , { op: 'getAll' });
   const rawItems = all?.results || all || [];
@@ -2458,7 +2473,7 @@ export function createRequestHandler(ctx = {}) {
 			// corpus grew past it. Same ceiling as the stats corpus fetch
 			// (lib/stats-payload.mjs, FULL_SCAN_LIMIT, mirroring the compat
 			// facade's COMPAT_SCAN_LIMIT).
-			const raw = await resolvedMemory().getAll({ userId: USER_ID, limit: FULL_SCAN_LIMIT });
+			const raw = await (ctx?._umGetAll ?? umGetAll)(resolvedMemory(), { userId: USER_ID, limit: FULL_SCAN_LIMIT });
 			const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
 			const memories = filterSystemDocs(items).length;
 			res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2928,6 +2943,7 @@ export function createRequestHandler(ctx = {}) {
 				userId: USER_ID,
 				endpoint: '/control',
 				readCounters: ctx.readCounters,
+				listAll: ctx?._umGetAll,
 			});
 			return;
 		}
@@ -3015,7 +3031,9 @@ export function createRequestHandler(ctx = {}) {
 		// route is a thin caller so a later in-process /control page can call
 		// buildStats() directly without an HTTP round-trip.
 		if (url.pathname === '/api/stats' && req.method === 'GET') {
-			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats' });
+			// #231: listAll defaults inside buildStats to the native scroll;
+			// ctx?._umGetAll is the test seam (same convention as ctx.memory).
+			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats', listAll: ctx?._umGetAll });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(body));
 			return;

@@ -12,7 +12,9 @@ test('mem0 metadata.id roundtrips through add() with infer:false', { skip: !proc
   // Read back via list (should include the doc with the sentinel ID).
   // mem0 OSS returns either Array OR {results: [...]} shape depending on version —
   // mirror DE4 readStamp's defensive handling (server/lib/embedding-stamp.mjs).
-  const raw = await memory.getAll({ userId: 'test_user' });
+  // #231: mem0-NATIVE 3.x read shape (this spike tests mem0's OWN add()
+  // roundtrip, which writes snake user_id — unlike UM's orchestrated writes).
+  const raw = await memory.getAll({ filters: { user_id: 'test_user' }, topK: 100 });
   const items = Array.isArray(raw) ? raw : (raw?.results ?? []);
   const found = items.find((i) => i.metadata?.id === sentinelId);
   assert.ok(found, `mem0 did not roundtrip metadata.id (got ${items.length} items, none matching ${sentinelId})`);

@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Memory } from 'mem0ai/oss';
 import { QdrantClient } from '@qdrant/js-client-rest';
+import { searchConfig, umGetAll } from '../lib/mem0-read.mjs';
 import { umAdd } from '../lib/add.mjs';
 import { getEmbedderConfig } from '../lib/embed.mjs';
 import { getFactsLlmConfig } from '../lib/facts.mjs';
@@ -78,14 +79,16 @@ test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip:
   assert.ok(Array.isArray(writeResult.results));
   console.log(`  [g2-roundtrip] umAdd wrote ${writeResult.results.length} fact(s)`);
 
-  // 2. Read via mem0.getAll — MUST find what umAdd wrote.
-  // If payload field names diverge (snake_case userId), this returns empty.
-  const all = await memory.getAll({ userId });
+  // 2. Read via the production enumeration path (#231 D8: mem0 3.x getAll
+  // filters snake keys and can never see UM's camelCase payloads — umGetAll
+  // IS the production list read now). MUST find what umAdd wrote.
+  const all = await umGetAll(memory, { userId });
   const items = Array.isArray(all) ? all : (all?.results ?? []);
   assert.ok(items.length >= 1, `mem0.getAll returned 0 items — payload schema likely diverged from mem0 (spec §4.3 camelCase userId)`);
 
-  // 3. Read via mem0.search — MUST find them by query.
-  const search = await memory.search('Tokyo', { userId });
+  // 3. Read via mem0.search with the #231 camel-filter passthrough — the
+  // production recall path; MUST find them by query.
+  const search = await memory.search('Tokyo', searchConfig({ userId }));
   const found = Array.isArray(search) ? search : (search?.results ?? []);
   assert.ok(found.length >= 1, 'mem0.search returned 0 — payload "data" field name may have drifted');
 

@@ -23,6 +23,7 @@
 // Date.now(); tests pass frozen values.
 
 import { filterSystemDocs } from './system-docs.mjs';
+import { umGetAll } from './mem0-read.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { getLogger } from './logger.mjs';
 import { currentRequestId } from './request-context.mjs';
@@ -92,6 +93,10 @@ function captureFreshnessThresholdHours() {
 export async function buildStats({
   now, memory, userId, endpoint, readCounters = readCounterStats,
   vaultDir = process.env.UM_VAULT_DIR, checkpointConfig,
+  // #231: enumeration seam — production defaults to the native scroll
+  // (lib/mem0-read); tests inject a canned {results} enumerator the same
+  // way readCounters already works.
+  listAll = umGetAll,
 }) {
   const degraded = [];
 
@@ -101,7 +106,9 @@ export async function buildStats({
   let pointsByProject = null;
   let scanSaturated = false;
   try {
-    const raw = await memory.getAll({ userId, limit: FULL_SCAN_LIMIT });
+    // #231: native enumeration (mem0 3.x getAll cannot filter UM's camelCase
+    // payload schema); shape parity with 2.4.6 getAll preserved in mem0-read.
+    const raw = await listAll(memory, { userId, limit: FULL_SCAN_LIMIT });
     const rawItems = Array.isArray(raw) ? raw : (raw?.results ?? []);
     // R2-C-I3: authoritative saturation flag. `points` below is a POST-
     // filterSystemDocs count and cannot be compared to FULL_SCAN_LIMIT by a

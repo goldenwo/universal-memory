@@ -38,6 +38,12 @@ import { tempDir } from './helpers/tmpdir.mjs';
 // concurrent `node --test` runs do not collide on a shared port.
 // ---------------------------------------------------------------------------
 
+// #231 mem0 3.x seam: doList enumerates through ctx._umGetAll (native qdrant
+// scroll in production) instead of memory.getAll. The getAll-backed stubs
+// below stay exactly as they were — this bridges the new seam onto them, so
+// every envelope/sibling assertion still runs against the same fixture data.
+const getAllBridge = async (m, a) => m.getAll(a);
+
 /**
  * Listen on an ephemeral port with ctx.memory injected.
  * Returns { origin, close }. `origin` is `http://127.0.0.1:<port>`.
@@ -68,7 +74,7 @@ test('GET /api/list returns enveloped JSON over the wire (compact shape)', async
       ],
     }),
   };
-  const { origin, close } = await startServer({ memory: fakeMemory });
+  const { origin, close } = await startServer({ memory: fakeMemory, _umGetAll: getAllBridge });
   try {
     const res = await fetch(`${origin}/api/list`);
     assert.equal(res.status, 200, 'HTTP status must be 200');
@@ -104,7 +110,7 @@ test('GET /api/list?full=1 returns enveloped JSON over the wire (full shape)', a
       ],
     }),
   };
-  const { origin, close } = await startServer({ memory: fakeMemory });
+  const { origin, close } = await startServer({ memory: fakeMemory, _umGetAll: getAllBridge });
   try {
     const res = await fetch(`${origin}/api/list?full=1`);
     assert.equal(res.status, 200);
@@ -234,7 +240,7 @@ test('GET /api/list propagates additive top-level siblings through to the wire (
       latency_ms: 42,
     }),
   };
-  const { origin, close } = await startServer({ memory: fakeMemory });
+  const { origin, close } = await startServer({ memory: fakeMemory, _umGetAll: getAllBridge });
   try {
     const res = await fetch(`${origin}/api/list`);
     assert.equal(res.status, 200);
@@ -258,7 +264,7 @@ test('GET /api/list?full=1 propagates additive top-level siblings through to the
       latency_ms: 42,
     }),
   };
-  const { origin, close } = await startServer({ memory: fakeMemory });
+  const { origin, close } = await startServer({ memory: fakeMemory, _umGetAll: getAllBridge });
   try {
     const res = await fetch(`${origin}/api/list?full=1`);
     assert.equal(res.status, 200);

@@ -96,6 +96,10 @@ function spawnServer(logSink, historyDir) {
       // Format-valid placeholder — passes the sk- preflight, never used
       // (see header). NOT a secret.
       OPENAI_API_KEY: 'sk-um-legacy-boot-placeholder-000000000000',
+      // Second boot preflight that would otherwise fake the RED signal by
+      // dying before initMemory (same class as the key preflight): the
+      // server requires a user id at startup.
+      MEM0_USER_ID: 'um-legacy-gate',
       UM_TEST_MOCK_SDK: '1',
       UM_EMBEDDING_PROVIDER: 'openai',
       UM_FACTS_PROVIDER: 'openai',
@@ -162,11 +166,16 @@ test('legacy qdrant 1.7.x: pre-existing collection → the hunk decides server l
 
   if (hunkPresent()) {
     // GREEN leg (positive control: same env as RED; hunk = only variable).
-    const up = await waitFor(healthUp, GREEN_BIND_BUDGET_MS);
+    // Early-exit on child death so a wrong-death (e.g. an unrelated boot
+    // preflight) surfaces its log immediately instead of burning the budget.
+    await waitFor(
+      async () => (await healthUp()) || logSink.exitCode !== undefined,
+      GREEN_BIND_BUDGET_MS,
+    );
     assert.ok(
-      up,
-      `WITH the hunk the server must bind within ${GREEN_BIND_BUDGET_MS / 1000}s — it did not.\n` +
-      `--- server log ---\n${log()}`,
+      await healthUp(),
+      `WITH the hunk the server must bind within ${GREEN_BIND_BUDGET_MS / 1000}s — it did not ` +
+      `(exitCode=${logSink.exitCode}).\n--- server log ---\n${log()}`,
     );
     // BM25 degrades on the pre-hybrid collection (spec F8): the exists-branch
     // verifies the sparse slot is absent and warns.
@@ -185,14 +194,18 @@ test('legacy qdrant 1.7.x: pre-existing collection → the hunk decides server l
   } else {
     // RED leg — bare 3.1.6: init's duplicate create throws the raw 400, the
     // warmup burns its 30×2s retries re-hitting it, then boot dies (#157).
-    const sawFatal = await waitFor(
-      async () => /FATAL: Qdrant unreachable after 30 attempts/.test(log()),
+    // Early-exit on child death so a DIFFERENT death (wrong preflight, port
+    // clash) fails fast with its log instead of burning the budget.
+    await waitFor(
+      async () =>
+        /FATAL: Qdrant unreachable after 30 attempts/.test(log()) ||
+        logSink.exitCode !== undefined,
       RED_FATAL_BUDGET_MS,
     );
-    assert.ok(
-      sawFatal,
-      `WITHOUT the hunk the boot must die the #157 death (warmup FATAL after 30 attempts).\n` +
-      `--- server log ---\n${log()}`,
+    assert.match(
+      log(), /FATAL: Qdrant unreachable after 30 attempts/,
+      `WITHOUT the hunk the boot must die the #157 death (warmup FATAL after 30 attempts; ` +
+      `exitCode=${logSink.exitCode}).\n--- server log ---\n${log()}`,
     );
     assert.equal(await healthUp(), false, 'server must NOT be serving /health on the RED leg');
     // The underlying error is the legacy 400 — pin that it is the duplicate-

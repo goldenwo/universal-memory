@@ -427,12 +427,12 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
       // '/control' so a direct unit call (no requestCtx) still labels the
       // in-process build correctly rather than inheriting '/api/stats'.
       const {
-        memory, userId, endpoint = '/control', readCounters,
+        memory, userId, endpoint = '/control', readCounters, listAll,
       } = requestCtx;
       const nonce = newNonce();
       const token = ensureCsrf(req, res);
       const stats = await buildStats({
-        now: now(), memory, userId, endpoint, readCounters,
+        now: now(), memory, userId, endpoint, readCounters, listAll,
       });
       return sendControlHtml(res, 200, renderControlPage({ stats, nonce, csrf: token }), nonce);
     }

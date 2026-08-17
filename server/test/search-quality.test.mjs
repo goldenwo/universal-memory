@@ -267,9 +267,14 @@ test('doSearch handles missing metadata.title (fallback to metadata.id)', async 
 // emits compact shape; doList(full=true) returns raw mem0 items (backward compat).
 // ---------------------------------------------------------------------------
 
+// #231 mem0 3.x seam: doList enumerates through ctx._umGetAll (a native qdrant
+// scroll in production) instead of memory.getAll. The getAll fake stays exactly
+// as it was — the bridge just routes the new seam back onto it, so every
+// projection/limit assertion below runs against the same fixture data.
 function buildFakeMemoryGetAll(results) {
   return {
     getAll: async (_opts) => ({ results }),
+    _umGetAll: async (m, a) => m.getAll(a),
   };
 }
 
@@ -454,9 +459,13 @@ function buildFakeSearchMemory() {
 
 // Fake memoryClient for list (doList DI) — returns the Phase 0 canonical
 // pre-B.1 memory_list response shape. doList reads getAll().results || getAll().
+// #231 mem0 3.x seam: doList now enumerates through ctx._umGetAll; bridging it
+// onto the same getAll fake keeps the measured token payload identical to the
+// one the B.1 baseline was captured against.
 function buildFakeListMemory() {
   return {
     getAll: async (_opts) => ({ results: RESPONSE_SAMPLES.memory_list }),
+    _umGetAll: async (m, a) => m.getAll(a),
   };
 }
 

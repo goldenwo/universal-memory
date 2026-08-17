@@ -137,6 +137,11 @@ const fakeMemory = {
   }),
 };
 
+// #231 mem0ai 3.x seam: /api/list and /health enumerate through lib/mem0-read's
+// native scroll instead of memory.getAll(); ctx._umGetAll is the production DI
+// override, bridged back onto fakeMemory so the fixture above stays authoritative.
+const fakeGetAll = async (memory, args) => memory.getAll(args);
+
 // Start a server with UM_AUTH_TOKEN and UM_MEM0_COMPAT_ENABLED pinned,
 // plus any extra env overrides (e.g. rate-limit knobs — createRateLimiter
 // reads env at handler-construction time). Saves/restores ALL touched env
@@ -153,7 +158,7 @@ async function startServer({ token, compatFlag, memory, env = {} }) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

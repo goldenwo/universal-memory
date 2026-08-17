@@ -193,7 +193,8 @@ async function main() {
     for (let i = 0; i < row.facts.length; i++) {
       await mem.add(row.facts[i], { userId: EVAL_USER, infer: false });
       const depth = i + 1;
-      const raw = await mem.search(row.query, { userId: EVAL_USER, limit: 10 });
+      // #231 mem0 3.x: control arm uses mem0's NATIVE idiom (its add() writes snake user_id; default threshold kept — mem0-as-shipped).
+      const raw = await mem.search(row.query, { filters: { user_id: EVAL_USER }, topK: 10 });
       const arr = Array.isArray(raw) ? raw : (raw?.results ?? []);
       const bodies = arr.map((x) => norm(x.memory ?? x.text ?? ''));
       snapshots.push({ depth, retrieval: retrievalPurity(bodies, row.facts.map(norm), depth) });

@@ -88,7 +88,12 @@ async function startServer({ memory, env = {} }) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  const srv = createServer(createRequestHandler({ memory }));
+  // #231 mem0 3.x seam: doList, the /health corpus count and buildStats all
+  // enumerate through ctx._umGetAll (native qdrant scroll in production)
+  // instead of memory.getAll. Bridging the seam back onto the injected stub
+  // reuses makeFakeMemory's limit=100 mimic and its getAllThrows behavior
+  // verbatim, so the limit-fix and degraded-mode pins below stay live.
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: (m, a) => m.getAll(a) }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -382,7 +387,9 @@ test('A4 compat: a post-processing throw ⇒ 500 AND no recall counter (emit-aft
 
 test('A4 compat: /v2/memories/ (list read) also counts as a recall', async () => {
   await withTelemetryDb(async (dbPath) => {
-    const ctx = { memory: makeFakeMemory(5), userId: 'op' };
+    // #231 mem0 3.x seam: the compat list read scans via ctx._umGetAll (native
+    // qdrant scroll in production) — bridged onto the same fake client.
+    const ctx = { memory: makeFakeMemory(5), userId: 'op', _umGetAll: (m, a) => m.getAll(a) };
     const req = { method: 'POST', headers: {} };
     const out = await handleMem0Compat(req, new URL('/v2/memories/', 'http://x'), {}, ctx);
     assert.equal(out.status, 200);

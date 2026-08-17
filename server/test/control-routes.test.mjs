@@ -82,6 +82,16 @@ function makeExplodingMemory() {
   };
 }
 
+// #231 mem0ai 3.x seam: the corpus is no longer enumerated through
+// `memory.getAll` — buildStats() (and /health, /api/list) go through an
+// injectable enumerator whose production default is the native qdrant scroll
+// in lib/mem0-read.mjs, which needs a REAL client. `_umGetAll` is the ctx
+// override the entrypoint threads into /control's `listAll` (and its own
+// routes); bridging it back onto the fake memory's getAll keeps every fixture
+// in this file — the exploding one included — working verbatim, so an A1
+// sentinel still fires the instant a pre-auth path touches the corpus.
+const umGetAllBridge = async (memory, args) => memory.getAll(args);
+
 async function startControl({ env = {}, memory = makeExplodingMemory(), readCounters } = {}) {
   const overrides = {
     UM_AUTH_TOKEN: TOKEN,
@@ -103,7 +113,7 @@ async function startControl({ env = {}, memory = makeExplodingMemory(), readCoun
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  const srv = createServer(createRequestHandler({ memory, readCounters }));
+  const srv = createServer(createRequestHandler({ memory, readCounters, _umGetAll: umGetAllBridge }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
