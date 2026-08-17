@@ -19,6 +19,15 @@ server/test/token-cost-baseline.txt text eol=lf
 # Exception: SQLite DB fixtures are binary — LF-normalization would corrupt them.
 server/test/fixtures/*.db binary
 
+# server/patches/ reconciliation artifacts must be byte-exact LF: patch-package
+# applies *.patch on Alpine (CRLF breaks hunk matching) and the Dockerfile +
+# deps-guard compare *.source.sha256 content with `[ "$computed" = "$expected" ]`
+# (a trailing \r fails the string compare). Both committed files are already LF
+# (verified), so this is a no-op pin on today's tree, not a renormalization —
+# it protects the Windows-authored re-derivation in the #231 mem0ai 3.x arc.
+server/patches/*.patch text eol=lf
+server/patches/*.source.sha256 text eol=lf
+
 # NOT pinned: `*.mjs text eol=lf`. It was added in #218 on the claim that every
 # .mjs was already LF so the rule was a no-op. That claim was wrong — FOUR files
 # are committed with CRLF bytes (server/lib/ranking.mjs, server/openapi.mjs,

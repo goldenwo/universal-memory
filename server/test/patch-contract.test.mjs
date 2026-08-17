@@ -1,132 +1,184 @@
 /**
- * server/test/patch-contract.test.mjs — locks the W6.2 patch's
- * boot-tier contract: importing `mem0ai/oss` must not throw, AND the
- * patched-import shape must produce the documented `[mem0-patch]` warns
- * when peerDeps are absent.
+ * server/test/patch-contract.test.mjs — locks the mem0ai@3.1.6 patch
+ * contract (#231 reconciliation): the pg import hunk + the legacy-qdrant
+ * 400-tolerance hunk, at the 3.1.6 canonical counts.
  *
- * Distinct from `provider-matrix.test.mjs` (which exercises the
- * provider registry's clean-error path BEFORE mem0 is touched, so it
- * doesn't actually verify the patch fired). This file imports mem0
- * directly so a patch regression — silent no-op apply, hunk-shape
- * mismatch, future mem0 bump that adds an unpatched static import —
- * fails loud at unit-test time instead of at boot in production.
+ * Distinct from `provider-matrix.test.mjs` (which exercises the provider
+ * registry's clean-error path BEFORE mem0 is touched, so it doesn't verify
+ * the patch fired). This file inspects and imports mem0 directly so a patch
+ * regression — silent no-op apply, hunk-shape mismatch, future mem0 bump
+ * that adds an unpatched static import — fails loud at unit-test time
+ * instead of at boot in production.
  *
- * Cite: docs/plans/2026-05-07-w6.2-image-size-spec.md §Test strategy
- * "Boot tier"; server/patches/README.md §Reconciliation step 6.
+ * Cite: docs/plans/2026-08-18-mem0ai-3x-spec.md §1.4 (canonical counts),
+ * §1.8 (allowlist + red-control mutation), §1.3 (preserved invariant);
+ * server/patches/README.md §Reconciliation.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MEM0_INDEX = resolve(__dirname, '..', 'node_modules', 'mem0ai', 'dist', 'oss', 'index.mjs');
 
-// W6.2 canonical counts for mem0ai@2.4.6 (also documented in
-// server/Dockerfile and server/patches/README.md).
-// awaitImports: count of `await import(` in the patched module
-// memPatchLogs: count of `[mem0-patch]` warn-line strings
-const EXPECTED_AWAIT_IMPORTS = 14;
-const EXPECTED_MEMPATCH_LOGS = 14;
+// Canonical counts for mem0ai@3.1.6 (spec §1.4; mirrored in server/Dockerfile
+// and server/patches/README.md): upstream ships 6 lazy `await import(` sites;
+// the pg hunk adds the 7th. Exactly ONE `[mem0-patch]` warn line (pg) — the
+// other 13 W6.2 hunks are retired (upstream moved those providers to optional
+// peers and/or lazy loading).
+const EXPECTED_AWAIT_IMPORTS = 7;
+const EXPECTED_MEMPATCH_LOGS = 1;
 
-test('W6.2 patch is applied to mem0ai/dist/oss/index.mjs', () => {
+// §1.8 pinned ALLOWLIST: the only bare package specifiers permitted as
+// top-level STATIC imports in the patched bundle. Node builtins are always
+// allowed. `openai`/`axios`/`uuid`/`zod` are mem0ai@3.1.6 regular deps
+// (nested under mem0ai, always installed); `better-sqlite3` ships in the
+// image (mem0 history default + UM's own counters DB) so its two eager
+// imports are legitimately static. ANY other bare static import — e.g. a
+// future mem0 bump re-adding an eager provider import — fails this test and
+// routes to server/patches/README.md §Reconciliation. This preserves the
+// test's original purpose (catch unpatched static imports) as an allowlist
+// rather than a denylist that rots as upstream's provider set churns.
+const ALLOWED_STATIC_PACKAGES = new Set([
+  'openai', 'axios', 'uuid', 'zod', 'better-sqlite3',
+]);
+
+// The legacy-qdrant guard's two contract regexes. Shared by the positive
+// asserts AND the red-control mutation below so they cannot drift apart.
+// Spec §1.3 preserved invariant: the guard must keep BOTH conjuncts — the
+// 400-status check AND the "already exists" body match. A bare
+// `status === 400` guard is out of bounds no matter what error shape a
+// future qdrant client emits.
+const QDRANT_GUARD_RE = /const legacyQdrantAlreadyExists = error\?\.status === 400 &&[^\n]*already exists/;
+const QDRANT_ORED_RE = /=== 403 \|\| legacyQdrantAlreadyExists\)/;
+
+function readSource() {
   if (!existsSync(MEM0_INDEX)) {
     assert.fail(`mem0ai not installed at ${MEM0_INDEX} — run npm ci first`);
   }
-  const src = readFileSync(MEM0_INDEX, 'utf-8');
+  return readFileSync(MEM0_INDEX, 'utf-8');
+}
+
+/** Package root of a bare specifier: '@scope/pkg/sub' → '@scope/pkg', 'pkg/sub' → 'pkg'. */
+function packageRoot(spec) {
+  const parts = spec.split('/');
+  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+test('patch applied at mem0ai@3.1.6 canonical counts (7 await-imports / 1 mem0-patch warn)', () => {
+  const src = readSource();
   const awaitImports = (src.match(/await import\(/g) || []).length;
   const memPatchLogs = (src.match(/\[mem0-patch\]/g) || []).length;
-
-  // The patch is applied via `npx patch-package` (in Docker build OR
-  // explicit CI step OR local npm test run). If counts are 0 here,
-  // the patch wasn't applied; if they're nonzero but != expected,
-  // something has drifted from the canonical count.
   assert.equal(
     awaitImports, EXPECTED_AWAIT_IMPORTS,
     `expected ${EXPECTED_AWAIT_IMPORTS} \`await import(\` in patched mem0ai (got ${awaitImports}); ` +
-    `if 0, run \`cd server && npx patch-package\`; if drifted, see server/patches/README.md §Reconciliation`,
+    `6 = bare upstream 3.1.6 (patch not applied — run \`cd server && npx patch-package\`); ` +
+    `other values = drift, see server/patches/README.md §Reconciliation`,
   );
   assert.equal(
     memPatchLogs, EXPECTED_MEMPATCH_LOGS,
-    `expected ${EXPECTED_MEMPATCH_LOGS} [mem0-patch] strings in patched mem0ai (got ${memPatchLogs})`,
+    `expected ${EXPECTED_MEMPATCH_LOGS} [mem0-patch] string in patched mem0ai (got ${memPatchLogs}); ` +
+    `0 = patch not applied; if drifted, see server/patches/README.md §Reconciliation`,
   );
 });
 
-test('W6.2 patch: no eager imports of unused-provider packages remain', () => {
-  if (!existsSync(MEM0_INDEX)) return; // covered by previous test's failure
-  const src = readFileSync(MEM0_INDEX, 'utf-8');
-  // Match top-level `import ... from "<unused-pkg>"` (single-line OR
-  // first line of a multi-line import block). Multi-line imports start
-  // with `import {\n` and end with `} from "<pkg>";` — we check the
-  // `from "..."` line via regex on the full source.
-  const unusedPkgRe = /(groq-sdk|@mistralai\/mistralai|better-sqlite3|cloudflare|@supabase\/supabase-js|@langchain\/core|@azure\/identity|@azure\/search-documents|neo4j-driver|^pg|redis)/;
-  const lines = src.split('\n');
-  const eagerLines = [];
-  for (let i = 0; i < lines.length; i++) {
-    const ln = lines[i];
-    // single-line eager: `import ... from "<unused>";` at start of line
-    if (/^import\s/.test(ln) && unusedPkgRe.test(ln) && /from\s+"[^"]+";/.test(ln)) {
-      eagerLines.push(`L${i + 1}: ${ln.trim()}`);
+test('allowlist: no top-level static import of any non-allowlisted bare package', () => {
+  const src = readSource();
+  // Whole import statements, including multi-line named blocks: `^import` at a
+  // line start through the closing `;`. Dynamic `await import(` never starts a
+  // line with `import\s`, so only static statements match.
+  const stmts = src.match(/^import\s[^;]*;/gm) || [];
+  const offenders = [];
+  for (const stmt of stmts) {
+    const m = stmt.match(/["']([^'"]+)["']\s*;$/);
+    if (!m) continue; // e.g. `import x = ...` shapes — none in this bundle
+    const spec = m[1];
+    if (spec.startsWith('.') || spec.startsWith('/')) continue; // relative
+    const root = packageRoot(spec.replace(/^node:/, ''));
+    if (builtinModules.includes(root)) continue;
+    if (!ALLOWED_STATIC_PACKAGES.has(packageRoot(spec))) {
+      offenders.push(stmt.replace(/\s+/g, ' ').slice(0, 120));
     }
   }
   assert.deepEqual(
-    eagerLines, [],
-    `expected 0 eager top-level imports of unused-provider packages, found:\n${eagerLines.join('\n')}\n` +
-    `See server/patches/README.md §Reconciliation`,
+    offenders, [],
+    `non-allowlisted top-level static import(s) in mem0ai bundle — a mem0 bump ` +
+    `re-added an eager import the image cannot satisfy. Re-derive the patch per ` +
+    `server/patches/README.md §Reconciliation:\n${offenders.join('\n')}`,
   );
 });
 
-test('W6.2 patch: mem0ai/oss imports cleanly (module load succeeds)', async () => {
-  // The whole point of the patch: with peer-skipped providers absent,
-  // module load must not throw. Locally we typically have all peers
-  // installed so the dynamic imports succeed silently — the assertion
-  // here is just "import resolves without error" + minimum exports.
-  // The CI smoke job exercises the absent-peer path via the prod
-  // Docker image where the rm step fires.
-  const mod = await import('mem0ai/oss');
-  // Sanity exports the patched module surfaces. These names are stable
-  // across mem0 minor versions; if a major bump removes them, the
-  // patch reconciliation procedure is needed.
-  // Memory class is the primary entrypoint; LLMFactory/EmbedderFactory
-  // are the registries we depend on indirectly via Memory's constructor.
-  assert.equal(typeof mod.Memory, 'function', 'mem0ai/oss must export Memory class');
-  assert.equal(typeof mod.LLMFactory, 'function', 'mem0ai/oss must export LLMFactory');
-  assert.equal(typeof mod.EmbedderFactory, 'function', 'mem0ai/oss must export EmbedderFactory');
-});
-
-test('legacy-qdrant patch: ensureCollection tolerates a 400 "already exists"', () => {
-  // qdrant ≤1.7 (e.g. the Pi's y0mg/qdrant-raspberry-pi v1.7.3) returns
-  // HTTP 400 — not 409 — for a duplicate createCollection. mem0ai's
-  // ensureCollection catches only 409/401/403, so against a legacy
-  // server with an existing collection, init throws and the HTTP server
-  // never binds. The patch adds a guarded 400 case that matches the
-  // qdrant error body ("already exists") and keeps genuine 400s throwing.
-  if (!existsSync(MEM0_INDEX)) return;
-  const src = readFileSync(MEM0_INDEX, 'utf-8');
+test('pg hunk: fail-soft dynamic import with `let pkg = {}` init for the two-name destructure', () => {
+  const src = readSource();
+  // 3.1.6's module-init destructure pulls TWO names — `var { Client,
+  // escapeIdentifier } = pkg;` — so the catch default `let pkg = {}` is what
+  // keeps module load non-throwing when pg is rm'd from the image (spec §1.3;
+  // README §"Known reconciliation hazards").
   assert.match(
     src,
-    /const legacyQdrantAlreadyExists = error\?\.status === 400 &&[^\n]*already exists/,
+    /let pkg = \{\}; try \{ pkg = \(await import\("pg"\)\)/,
+    'pg hunk must initialize `let pkg = {}` so the module-init destructure is non-throwing on absent pg',
+  );
+  assert.match(
+    src,
+    /var \{ Client, escapeIdentifier \} = pkg;/,
+    'expected 3.1.6\'s two-name pg destructure (`Client, escapeIdentifier`) after the patched import',
+  );
+});
+
+test('legacy-qdrant hunk: ensureCollection tolerates a 400 "already exists"', () => {
+  // qdrant ≤1.7 (the Pi's y0mg v1.7.3) returns HTTP 400 — not 409 — for a
+  // duplicate createCollection. mem0ai's ensureCollection catches only
+  // 409/401/403, so against a legacy server with an existing collection init
+  // throws and the HTTP server never binds (the #157 failure). The hunk adds
+  // a guarded 400 case matching the body ("already exists"); genuine 400s
+  // still throw.
+  const src = readSource();
+  assert.match(
+    src, QDRANT_GUARD_RE,
     'ensureCollection must treat a 400 whose body says "already exists" like a 409 (legacy qdrant ≤1.7); see server/patches/README.md',
   );
   assert.match(
-    src,
-    /=== 403 \|\| legacyQdrantAlreadyExists\)/,
+    src, QDRANT_ORED_RE,
     'the legacy-400 guard must be OR-ed into the existing 409/401/403 exists-branch, not replace it',
   );
 });
 
-test('W6.2 patch: pg destructure has defensive `let pkg = {}` init', () => {
-  // The pg patch is special-cased: `var { Client } = pkg;` immediately
-  // follows the patched import at module load, so the catch block must
-  // initialize pkg to {} (not leave it undefined) to keep the
-  // destructure non-throwing. This pattern is documented in
-  // server/patches/README.md §"Known reconciliation hazards".
-  if (!existsSync(MEM0_INDEX)) return;
-  const src = readFileSync(MEM0_INDEX, 'utf-8');
-  assert.match(
-    src,
-    /let pkg = \{\}; try \{ pkg = \(await import\("pg"\)\)/,
-    'pg patch must initialize `let pkg = {}` so the `var { Client } = pkg;` destructure that follows is non-throwing on absent pg',
+test('red control: the qdrant contract regexes REJECT a body-match-stripped guard', () => {
+  // Mutation control (spec §1.8, red-controls precedent): prove the contract
+  // has teeth against exactly the erosion §1.3 forbids — weakening the guard
+  // to a bare `status === 400`. String-level mutation copy; no file writes.
+  const src = readSource();
+  // Anchor must match the real patched source first — a drifted anchor means
+  // this control silently stopped controlling (fail LOUD instead).
+  const anchorRe = /const legacyQdrantAlreadyExists = error\?\.status === 400 &&[^\n]*\n/;
+  assert.match(src, anchorRe, 'mutation anchor drifted — the guard line is not in the patched source');
+  const mutated = src.replace(
+    anchorRe,
+    'const legacyQdrantAlreadyExists = error?.status === 400;\n',
   );
+  assert.notEqual(mutated, src, 'mutation was a no-op — the control proved nothing');
+  assert.doesNotMatch(
+    mutated, QDRANT_GUARD_RE,
+    'contract regex FAILED to reject the weakened bare-400 guard — the §1.3 invariant has no teeth',
+  );
+  // The OR-wiring regex must still pass on the mutated copy — the mutation
+  // targets ONLY the body-match conjunct, proving the two regexes carry
+  // independent load (one pins the predicate, one pins the wiring).
+  assert.match(mutated, QDRANT_ORED_RE);
+});
+
+test('mem0ai/oss imports cleanly (module load succeeds)', async () => {
+  // The point of the pg hunk: with pg absent from the image, module load must
+  // not throw. Locally pg is typically installed (required peer) so the
+  // dynamic import succeeds silently — the assertion here is "import resolves
+  // + minimum exports". The CI smoke job exercises the absent-pg path via the
+  // prod Docker image where the rm step fires.
+  const mod = await import('mem0ai/oss');
+  assert.equal(typeof mod.Memory, 'function', 'mem0ai/oss must export Memory class');
+  assert.equal(typeof mod.LLMFactory, 'function', 'mem0ai/oss must export LLMFactory');
+  assert.equal(typeof mod.EmbedderFactory, 'function', 'mem0ai/oss must export EmbedderFactory');
 });
