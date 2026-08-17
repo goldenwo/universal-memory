@@ -106,7 +106,8 @@ async function main() {
     for (const r of rows) await m0.add(r.session_summary, { userId: EVAL_USER, infer: false });
     const m0Per = [];
     for (const r of rows) {
-      const sr = await m0.search(r.query, { userId: EVAL_USER, limit: 10 });
+      // #231 mem0 3.x: control arm uses mem0's NATIVE idiom (its add() writes snake user_id; default threshold kept — mem0-as-shipped).
+      const sr = await m0.search(r.query, { filters: { user_id: EVAL_USER }, topK: 10 });
       const arr = Array.isArray(sr) ? sr : (sr?.results ?? []);
       m0Per.push({ id: r.id, answerNorm: norm(r.answer), bodies: arr.map((x) => norm(x.memory ?? x.text ?? '')) });
     }

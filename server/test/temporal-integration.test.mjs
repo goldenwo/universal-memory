@@ -18,15 +18,19 @@ const IN_WINDOW = Date.UTC(2026, 6, 29, 12, 0);  // inside "last week" (07-27..0
 const OUT_WINDOW = Date.UTC(2026, 5, 1, 12, 0);  // June — far outside
 
 /**
- * Stub engine that HONORS opts.limit — the shared decay stub does not, which is
- * why E1's flag-off arm is unwritable against it (spec F17).
+ * Stub engine that HONORS the fetch width — the shared decay stub does not, which
+ * is why E1's flag-off arm is unwritable against it (spec F17).
+ *
+ * #231 mem0 3.x seam: doSearch now passes searchConfig(...), which carries the
+ * fetch width as `topK` (2.4.6's `limit`, renamed). Same value, same meaning —
+ * only the key on the received args moved.
  */
 function stubMemory(canned) {
 	let lastCall = null;
 	return {
 		search: async (query, opts) => {
 			lastCall = { query, opts };
-			return { results: canned.slice(0, opts?.limit ?? canned.length) };
+			return { results: canned.slice(0, opts?.topK ?? canned.length) };
 		},
 		get lastCall() { return lastCall; },
 	};
@@ -141,7 +145,8 @@ test('E1c: fetch width is EXACT per caller limit, not merely >= base', async () 
 	for (const [limit, expected] of [[5, 25], [10, 50], [50, 50], [51, 51], [100, 100]]) {
 		const mem = stubMemory(corpus());
 		await withFlag(true, () => doSearch(TEMPORAL_Q, limit, false, false, { memory: mem, now: NOW }));
-		assert.equal(mem.lastCall.opts.limit, expected,
+		// #231 mem0 3.x seam: the fetch width reaches the engine as `topK`.
+		assert.equal(mem.lastCall.opts.topK, expected,
 			`limit=${limit} must fetch ${expected} (min(base*5,50) alone under-fetches above 50)`);
 	}
 });
@@ -150,7 +155,8 @@ test('E1c: flag-off fetch width is always exactly the caller limit', async () =>
 	for (const limit of [5, 10, 51, 100]) {
 		const mem = stubMemory(corpus());
 		await withFlag(false, () => doSearch(TEMPORAL_Q, limit, false, false, { memory: mem, now: NOW }));
-		assert.equal(mem.lastCall.opts.limit, limit);
+		// #231 mem0 3.x seam: the fetch width reaches the engine as `topK`.
+		assert.equal(mem.lastCall.opts.topK, limit);
 	}
 });
 
@@ -162,7 +168,10 @@ test('E2: a query that parses to null is byte-identical flag-on vs flag-off', as
 	const memOn = stubMemory(corpus());
 	const on = await withFlag(true, () => doSearch(PLAIN_Q, 5, false, true, { memory: memOn, now: NOW }));
 	assert.deepEqual(on, off, 'results must be deep-equal');
-	assert.equal(memOn.lastCall.opts.limit, memOff.lastCall.opts.limit, 'engine limit must be identical');
+	// #231 mem0 3.x seam: the fetch width reaches the engine as `topK`. Reading
+	// the old `limit` key here would compare undefined to undefined and pass on
+	// any width regression, so the pin moves with the key.
+	assert.equal(memOn.lastCall.opts.topK, memOff.lastCall.opts.topK, 'engine limit must be identical');
 });
 
 test('E2b: degenerate limits — registered set, flag-off, against captured values', async () => {

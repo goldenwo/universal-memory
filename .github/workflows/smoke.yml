@@ -111,13 +111,18 @@ jobs:
       # 2077 of the tree's 2170 tests. Those 90 need no secrets and pass clean;
       # they were simply never named.
       #
+      # ../cli/test/ added in #231: no CI glob ever ran the cli suites, which
+      # is exactly how two un-migrated mem0 getAll() call sites in
+      # cli/reindex.mjs survived to code review (round-1 CRITICAL). The cli
+      # suites are stub-based (no secrets, no docker; ~40 tests).
+      #
       # test/perf/ stays OUT deliberately: the C.10 perf-budget tests are
       # load-flaky on shared runners (they pass standalone). A timing assertion
       # on a noisy runner produces failures that teach nothing, and this job's
       # job is to be trustworthy enough that a red result means something.
       - name: Unit suite
         working-directory: server
-        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs test/red-controls/*.test.mjs
+        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs test/red-controls/*.test.mjs ../cli/test/*.test.mjs
 
   smoke:
     name: build + smoke
@@ -204,22 +209,24 @@ jobs:
           chmod 0777 "$UM_VAULT_DIR"
           bash ./install.sh
 
-      # W6.2 patch contract — the patch fires `[mem0-patch] <pkg> not
-      # installed (peer-skipped) — expected on boot per W6.2` warns at
-      # module load for each peer-skipped provider. mem0ai@2.4.6 has 14
-      # patched imports, of which 12 fire warns at runtime (better-sqlite3
-      # ×2 succeed because the package is retained for SQLiteManager).
-      # Asserting >= 12 (not = 12) so adding a future patched import in
-      # a mem0 bump doesn't break this gate; CHANGELOG/Dockerfile carry
-      # the canonical count. A regression to 0 = patch silently no-op'd
-      # (see spec §Test strategy "Boot tier" + spec Phase 1 step 4
-      # "patch-package returns success on no-op apply").
-      - name: Verify W6.2 patch fired (boot-tier [mem0-patch] count >= 12)
+      # W6.2-lineage patch contract, reconciled for mem0ai@3.1.6 (#231) —
+      # the patch fires `[mem0-patch] pg not installed (peer-skipped) —
+      # expected on boot per W6.2` at module load: mem0 3.x collapsed the
+      # patch to ONE import hunk (pg — the sole surviving required-peer
+      # static import whose package the image removes), so the canonical
+      # bootRuntimeWarns is 1 (server/Dockerfile W6.2-reconciliation-counts
+      # + server/patches/README.md). Asserting >= 1 (not = 1) so a future
+      # bump that adds a patched import doesn't break this gate; EXACT
+      # counts live in test/patch-contract.test.mjs (== 7 await-imports /
+      # == 1 warn) — same gate split as before the bump. A count of 0 =
+      # patch silently no-op'd (patch-package returns success on no-op
+      # apply), which is exactly what this boot-tier gate exists to catch.
+      - name: Verify W6.2 patch fired (boot-tier [mem0-patch] count >= 1)
         working-directory: server
         run: |
           set -o pipefail
-          timeout 30 sh -c 'until [ "$(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")" -ge 12 ]; do sleep 1; done' \
-            || { echo "::error::W6.2 patch contract regressed — expected >=12 [mem0-patch] log lines within 30s, got $(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")"; docker compose logs memory-server 2>&1 | tail -50; exit 1; }
+          timeout 30 sh -c 'until [ "$(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")" -ge 1 ]; do sleep 1; done' \
+            || { echo "::error::W6.2 patch contract regressed — expected >=1 [mem0-patch] log line within 30s, got $(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")"; docker compose logs memory-server 2>&1 | tail -50; exit 1; }
           echo "[ci] W6.2 patch contract OK ($(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]") [mem0-patch] log lines)"
 
       # v0.6 (Phase C C.6/C.7): rate limiter is per-IP token bucket with
@@ -335,7 +342,9 @@ jobs:
           # assertions pass is the exact defect this change was written to fix,
           # and a gate that skips itself on failure repeats it one level up.
           suite_rc=0
-          node --test test/*.test.mjs test/lint/*.test.mjs test/red-controls/*.test.mjs || suite_rc=$?
+          # ../cli/test/ added in #231 — mirrors the deps-guard step (see the
+          # Unit-suite comment there for why the cli suites must be named).
+          node --test test/*.test.mjs test/lint/*.test.mjs test/red-controls/*.test.mjs ../cli/test/*.test.mjs || suite_rc=$?
 
           if [ ! -d "$TMPDIR" ]; then
             echo "::error::leak check could not run — temp root $TMPDIR is missing"

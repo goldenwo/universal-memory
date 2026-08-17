@@ -39,6 +39,7 @@ import { D3_SERVER_MANAGED_STATUS_FIELDS } from './dedup-constants.mjs';
 import { embed as defaultEmbed } from './embed.mjs';
 import { getLogger } from './logger.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
+import { searchConfig, umGetAll } from './mem0-read.mjs';
 import { normalizeReactionMetadata } from './reaction-signal.mjs';
 import { isRecallable } from './recallable.mjs';
 import { noteRecallSearch, noteTemporalQuery } from './recall-telemetry.mjs';
@@ -340,10 +341,14 @@ function resolveCompatCtx(ctx) {
  */
 const COMPAT_SCAN_LIMIT = 10000;
 
-/** Raw getAll for the operator → system docs stripped (read-path parity). */
-async function scanAll(memory, operatorId) {
+/** Raw enumeration for the operator → system docs stripped (read-path parity).
+ *  #231: native scroll (lib/mem0-read) — mem0 3.x getAll's snake_case filter
+ *  requirement can never match UM's camelCase payloads. `ctx?._umGetAll` is
+ *  the DI override, same convention as ctx?._umAdd below. */
+async function scanAll(memory, operatorId, ctx) {
+  const listAll = ctx?._umGetAll ?? umGetAll;
   const all = await withRetry(
-    () => memory.getAll({ userId: operatorId, limit: COMPAT_SCAN_LIMIT }),
+    () => listAll(memory, { userId: operatorId, limit: COMPAT_SCAN_LIMIT }),
     { op: 'compat-getAll' },
   );
   return filterSystemDocs(all?.results ?? all ?? []);
@@ -596,7 +601,7 @@ async function handleSearch({ req, body, ctx }) {
   // U2 R6). Duration measured around the underlying engine call.
   const recallStartedAt = Date.now();
   const raw = await withRetry(
-    () => memory.search(b.query, { userId: operatorId, limit: fetchLimit }),
+    () => memory.search(b.query, searchConfig({ userId: operatorId, limit: fetchLimit })),
     { op: 'compat-search' },
   );
   const engineMs = Date.now() - recallStartedAt;
@@ -664,7 +669,7 @@ async function handleList({ req, url, body, ctx }) {
   // telemetry as R3 (emitting here, not inside scanAll, keeps the R8/R9
   // bulk-delete scans OUT of the recall counters — plan U2 audit).
   const recallStartedAt = Date.now();
-  const scanned = await scanAll(memory, operatorId);
+  const scanned = await scanAll(memory, operatorId, ctx);
   const engineMs = Date.now() - recallStartedAt;
   const items = scanned.filter(isRecallable);
   const records = applyMem0Filters(items.map((r) => toMem0Record(r)), descriptor);
@@ -763,8 +768,8 @@ async function handleDeleteById({ params, ctx }) {
  * present entries must match the stored metadata (AND). System docs are
  * excluded by scanAll — a user-scope wipe never deletes the embedding stamp.
  */
-async function scanDelete(memory, operatorId, metadataScopes) {
-  const items = await scanAll(memory, operatorId);
+async function scanDelete(memory, operatorId, metadataScopes, ctx) {
+  const items = await scanAll(memory, operatorId, ctx);
   const entries = Object.entries(metadataScopes);
   const matches = items.filter((r) => entries.every(([k, v]) => r?.metadata?.[k] === v));
   for (const r of matches) {
@@ -793,7 +798,7 @@ async function handleBulkDelete({ url, ctx }) {
   for (const k of scopeKeys) {
     if (k !== 'user_id') metadataScopes[k] = qp.get(k);
   }
-  return scanDelete(memory, operatorId, metadataScopes);
+  return scanDelete(memory, operatorId, metadataScopes, ctx);
 }
 
 // --- R9 ---------------------------------------------------------------------
@@ -807,11 +812,11 @@ async function handleEntityDelete({ params, ctx }) {
     // §6 no-leak: a foreign user entity 404s (not 400) — its existence is
     // exactly as undisclosed as a foreign point id.
     if (id !== operatorId) return notFound();
-    return scanDelete(memory, operatorId, {});
+    return scanDelete(memory, operatorId, {}, ctx);
   }
   const metadataKey = ENTITY_METADATA_KEYS[type];
   if (!metadataKey) return detailError(400, `unknown entity type "${type}" — expected user/agent/app/run`);
-  return scanDelete(memory, operatorId, { [metadataKey]: id });
+  return scanDelete(memory, operatorId, { [metadataKey]: id }, ctx);
 }
 
 // --- R10 --------------------------------------------------------------------
@@ -820,7 +825,7 @@ async function handleEntities({ ctx }) {
   const { operatorId, memory } = resolveCompatCtx(ctx);
   // Count what a read can actually see (R4 parity): superseded points are
   // excluded, so total_memories always equals the R4 full-list length.
-  const items = (await scanAll(memory, operatorId)).filter(isRecallable);
+  const items = (await scanAll(memory, operatorId, ctx)).filter(isRecallable);
   return {
     status: 200,
     body: { results: [{ type: 'user', id: operatorId, total_memories: items.length }] },

@@ -61,6 +61,14 @@ const fakeMemory = {
   search: async () => ({ results: [] }),
 };
 
+// #231 mem0ai 3.x seam: enumeration (the /health corpus count, /api/list)
+// no longer calls `memory.getAll` — it goes through lib/mem0-read's native
+// qdrant scroll, which needs a REAL client. `_umGetAll` is the ctx override
+// the entrypoint honors; bridging it onto the fake memory's getAll keeps the
+// fixture above intact so these logging assertions still run against a
+// healthy (non-500) request path.
+const umGetAllBridge = async (memory, args) => memory.getAll(args);
+
 // Spin up an ephemeral server with a captured sink. Returns
 // { close, url, captured } — captured is the live array of parsed
 // log lines (pushed during request handling).
@@ -71,7 +79,7 @@ async function startServerWithSink({ token, memory } = {}) {
   const prevTok = process.env.UM_AUTH_TOKEN;
   if (token !== undefined) process.env.UM_AUTH_TOKEN = token;
 
-  const srv = createServer(createRequestHandler({ memory: memory ?? fakeMemory }));
+  const srv = createServer(createRequestHandler({ memory: memory ?? fakeMemory, _umGetAll: umGetAllBridge }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

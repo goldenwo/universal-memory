@@ -50,6 +50,14 @@ function makeFakeMemory(pointCount, { getAllThrows = false } = {}) {
   };
 }
 
+// #231 mem0ai 3.x seam: buildStats no longer calls `memory.getAll` itself — it
+// enumerates through the injectable `listAll` param (production default: the
+// native qdrant scroll in lib/mem0-read.mjs, which needs a REAL client). Every
+// buildStats() call below bridges `listAll` straight onto the fake memory's
+// getAll, so the fixtures above — the throwing one included — are reused
+// verbatim and each assertion still exercises the corpus path it always did.
+const listAll = async (memory, args) => memory.getAll(args);
+
 async function withEnv(overrides, fn) {
   const prev = {};
   for (const [k, v] of Object.entries(overrides)) {
@@ -92,7 +100,7 @@ test('buildStats: documented body shape — every §3 field present and correctl
   ]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({
-      now: NOW, memory: makeFakeMemory(9), userId: 'op', endpoint: '/api/stats',
+      now: NOW, memory: makeFakeMemory(9), userId: 'op', endpoint: '/api/stats', listAll,
     });
 
     assert.equal(body.schema_version, 1);
@@ -132,35 +140,35 @@ test('buildStats: documented body shape — every §3 field present and correctl
 
 test('capture_freshness_threshold_hours: defaults to 26 when UM_FRESHNESS_MAX_AGE_HOURS is unset', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: undefined }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 26);
   });
 });
 
 test('capture_freshness_threshold_hours: honors a positive env override', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '48' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 48);
   });
 });
 
 test('capture_freshness_threshold_hours: "0" stays 0 — never coerced to 26 by a plain || fallback', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '0' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 0);
   });
 });
 
 test('capture_freshness_threshold_hours: negative env value falls back to 26', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '-5' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 26);
   });
 });
 
 test('capture_freshness_threshold_hours: non-numeric env value (NaN) falls back to 26', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: 'not-a-number' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 26);
   });
 });
@@ -171,14 +179,14 @@ test('capture_freshness_threshold_hours: non-numeric env value (NaN) falls back 
 // a deliberate '0' (tested above) must still survive as 0.
 test('capture_freshness_threshold_hours: empty-string env value ("" — set but blank) falls back to 26, NOT 0', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 26);
   });
 });
 
 test('capture_freshness_threshold_hours: whitespace-only env value falls back to 26, NOT 0', async () => {
   await withEnv({ UM_FRESHNESS_MAX_AGE_HOURS: '   ' }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.capture_freshness_threshold_hours, 26);
   });
 });
@@ -188,19 +196,21 @@ test('capture_freshness_threshold_hours: whitespace-only env value falls back to
 // ---------------------------------------------------------------------------
 
 test('scan_saturated: false when the pre-filter corpus is well under FULL_SCAN_LIMIT', async () => {
-  const body = await buildStats({ now: NOW, memory: makeFakeMemory(5), userId: 'op', endpoint: '/x' });
+  const body = await buildStats({ now: NOW, memory: makeFakeMemory(5), userId: 'op', endpoint: '/x', listAll });
   assert.equal(body.corpus.scan_saturated, false);
 });
 
 test('scan_saturated: true when the pre-filter corpus length hits FULL_SCAN_LIMIT exactly (>= boundary)', async () => {
-  const body = await buildStats({ now: NOW, memory: makeFakeMemory(FULL_SCAN_LIMIT), userId: 'op', endpoint: '/x' });
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(FULL_SCAN_LIMIT), userId: 'op', endpoint: '/x', listAll,
+  });
   assert.equal(body.corpus.points, FULL_SCAN_LIMIT, 'sanity: no system docs to filter out of this fixture');
   assert.equal(body.corpus.scan_saturated, true);
 });
 
 test('scan_saturated: false one point under the cap (boundary is >=, not >)', async () => {
   const body = await buildStats({
-    now: NOW, memory: makeFakeMemory(FULL_SCAN_LIMIT - 1), userId: 'op', endpoint: '/x',
+    now: NOW, memory: makeFakeMemory(FULL_SCAN_LIMIT - 1), userId: 'op', endpoint: '/x', listAll,
   });
   assert.equal(body.corpus.scan_saturated, false);
 });
@@ -213,7 +223,7 @@ test('growth_docs_7d: present + zero-filled 7-key map when no capture.checkpoint
   const dbPath = await tempDbPath();
   seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 3 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', listAll });
     assert.equal(Object.keys(body.corpus.growth_docs_7d).length, 7);
     assert.equal(body.corpus.growth_docs_7d[TODAY], 0);
   });
@@ -223,7 +233,7 @@ test('growth_docs_7d: a capture.checkpoint stored row today is counted', async (
   const dbPath = await tempDbPath();
   seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.checkpoint', outcome: 'stored', count: 5 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.corpus.growth_docs_7d[TODAY], 5);
   });
 });
@@ -231,7 +241,7 @@ test('growth_docs_7d: a capture.checkpoint stored row today is counted', async (
 test('growth_docs_7d: null when counters are degraded (missing db)', async () => {
   const missing = path.join(tempDir('um-stats-payload-miss-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.corpus.growth_docs_7d, null);
     assert.equal(body.corpus.growth_7d, null);
     assert.equal(body.capture, null);
@@ -245,7 +255,7 @@ test('growth_docs_7d: null when counters are degraded (missing db)', async () =>
 test('degraded: counters-unavailable only — corpus fields stay live', async () => {
   const missing = path.join(tempDir('um-stats-payload-miss2-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', listAll });
     assert.deepEqual(body.degraded, ['counters-unavailable']);
     assert.equal(body.corpus.points, 3);
     assert.equal(typeof body.corpus.points_by_project, 'object');
@@ -262,7 +272,7 @@ test('degraded: corpus-unavailable only — counters fields stay live, scan_satu
   seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.turn', outcome: 'stored', count: 1 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
     const body = await buildStats({
-      now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x',
+      now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x', listAll,
     });
     assert.deepEqual(body.degraded, ['corpus-unavailable']);
     assert.equal(body.corpus.points, null);
@@ -276,7 +286,7 @@ test('degraded: both sources down at once — degraded lists both markers', asyn
   const missing = path.join(tempDir('um-stats-payload-miss3-'), 'nope.db');
   await withEnv({ UM_COUNTERS_DB_PATH: missing }, async () => {
     const body = await buildStats({
-      now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x',
+      now: NOW, memory: makeFakeMemory(3, { getAllThrows: true }), userId: 'op', endpoint: '/x', listAll,
     });
     assert.deepEqual(body.degraded, ['corpus-unavailable', 'counters-unavailable']);
     assert.equal(body.corpus.points, null);
@@ -299,6 +309,7 @@ test('endpoint param is threaded into the degraded corpus-fetch log, not hardcod
       memory: { getAll: async () => { throw new Error('qdrant down'); } },
       userId: 'op',
       endpoint: '/control/stats-in-process',
+      listAll,
     });
     const line = captured.find((l) => l.msg === 'stats corpus fetch failed — serving degraded');
     assert.ok(line, 'the degraded corpus-fetch log line was emitted');
@@ -345,7 +356,7 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
   // counters-unavailable instead of reflecting fakeShape.
   await withEnv({ UM_COUNTERS_DB_PATH: path.join(os.tmpdir(), 'um-stats-payload-seam-does-not-exist.db') }, async () => {
     const body = await buildStats({
-      now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', readCounters,
+      now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', readCounters, listAll,
     });
     assert.equal(calledWithNow, NOW, 'buildStats forwards its own `now` seam to the injected reader');
     assert.deepEqual(body.capture, fakeShape.capture);
@@ -364,7 +375,7 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
 // ---------------------------------------------------------------------------
 
 test('layers: always present, even as {} — vaultDir omitted (the common test/dev shape)', async () => {
-  const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+  const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
   assert.deepEqual(body.layers, {});
   assert.equal(body.degraded, undefined, 'an absent vaultDir must not degrade every pre-existing caller — see lib/layers.mjs');
 });
@@ -376,7 +387,7 @@ test('layers: an explicit vaultDir with a real captures fixture populates the bl
   await fs.writeFile(path.join(rawDir, '2026-08-01.md'), 'x'.repeat(600), 'utf8');
 
   const body = await buildStats({
-    now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', vaultDir: vault,
+    now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', vaultDir: vault, listAll,
   });
   assert.ok(body.layers['demo-project'], 'the project appears in the block');
   assert.equal(typeof body.layers['demo-project'].last_capture_at, 'string');
@@ -391,7 +402,7 @@ test('layers: a per-project I/O error degrades the payload (layers-partial) with
   await fs.writeFile(path.join(badDir, 'raw'), 'not a directory', 'utf8'); // forces ENOTDIR under raw/
 
   const body = await buildStats({
-    now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', vaultDir: vault,
+    now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', vaultDir: vault, listAll,
   });
   assert.ok(body.degraded.includes('layers-partial'));
   assert.deepEqual(body.layers, {}, 'the broken project is omitted, not guessed at');
@@ -402,7 +413,7 @@ test('readCounters: omitting the param falls back to readCounterStats — zero b
   const dbPath = await tempDbPath();
   seedCountersDb(dbPath, [{ day: TODAY, event: 'capture.extraction', outcome: 'stored', count: 2 }]);
   await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
-    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x' });
+    const body = await buildStats({ now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/x', listAll });
     assert.equal(body.corpus.growth_7d[TODAY], 2, 'no readCounters param ⇒ the real readCounterStats reads the seeded db');
     assert.equal(body.degraded, undefined);
   });

@@ -22,6 +22,7 @@
 
 import { SYSTEM_METADATA_IDS } from './system-docs.mjs';
 import { umAdd } from './add.mjs';
+import { umGetAll } from './mem0-read.mjs';
 
 const STAMP_ID = SYSTEM_METADATA_IDS[0];  // '_um_embedding_stamp'
 const STAMP_TEXT = 'embedding-stamp';
@@ -35,9 +36,17 @@ const DIM_PROBE_TEXT = '_um_dim_probe';
 // stub memory clients didn't surface the contract violation.
 const SYSTEM_USER_ID = '_um_system';
 
-export async function readStamp({ memory, collection } = {}) {
-  if (!memory?.getAll) throw new Error('readStamp: memory.getAll required');
-  const items = await memory.getAll({ userId: SYSTEM_USER_ID, collection });
+export async function readStamp({ memory, collection } = {}, { getAll = umGetAll } = {}) {
+  // #231: mem0 3.x getAll requires snake_case entity filters that can never
+  // match UM's camelCase payloads (the stamp was written natively by umAdd),
+  // so the read goes through lib/mem0-read.mjs's native scroll. `collection`
+  // stays in the signature for callers but the scroll derives it from
+  // memory.config (it was inert in mem0 2.4.6's getAll too). The second
+  // param is the test seam (stub the scroll, not a memory.getAll fake).
+  if (!memory?.config?.vectorStore?.config?.collectionName) {
+    throw new Error('readStamp: memory.config.vectorStore.config required');
+  }
+  const items = await getAll(memory, { userId: SYSTEM_USER_ID });
   const list = Array.isArray(items) ? items : (items?.results ?? []);
   for (const item of list) {
     if (item?.metadata?.id === STAMP_ID) {

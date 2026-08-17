@@ -31,12 +31,17 @@ const fakeMemory = {
   }),
 };
 
+// #231 mem0ai 3.x seam: /api/list and /health enumerate through lib/mem0-read's
+// native scroll instead of memory.getAll(); ctx._umGetAll is the production DI
+// override, bridged back onto fakeMemory so the fixture above stays authoritative.
+const fakeGetAll = async (memory, args) => memory.getAll(args);
+
 // Start a server with UM_AUTH_TOKEN pinned to the given value. Returns
 // { port, close, url } — url(path) builds a full loopback URL.
 async function startServer({ token, memory }) {
   const prev = process.env.UM_AUTH_TOKEN;
   process.env.UM_AUTH_TOKEN = token;
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -116,7 +121,7 @@ test('server with no UM_AUTH_TOKEN env set → 500 SERVER_INTERNAL', async () =>
   // "no token configured" branch and returns 500 SERVER_INTERNAL.
   const prev = process.env.UM_AUTH_TOKEN;
   delete process.env.UM_AUTH_TOKEN;
-  const srv = createServer(createRequestHandler({ memory: fakeMemory }));
+  const srv = createServer(createRequestHandler({ memory: fakeMemory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -174,7 +179,7 @@ async function startServerWithCap({ capBytes, token, memory }) {
   const prevTok = process.env.UM_AUTH_TOKEN;
   if (capBytes !== undefined) process.env.UM_HTTP_MAX_REQUEST_BYTES = String(capBytes);
   if (token !== undefined) process.env.UM_AUTH_TOKEN = token;
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -334,7 +339,7 @@ async function startServerWithRateLimit({ rpm, burst, token, memory }) {
   if (rpm !== undefined) process.env.UM_RATE_LIMIT_RPM = String(rpm);
   if (burst !== undefined) process.env.UM_RATE_LIMIT_BURST = String(burst);
   if (token !== undefined) process.env.UM_AUTH_TOKEN = token;
-  const srv = createServer(createRequestHandler({ memory }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: fakeGetAll }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

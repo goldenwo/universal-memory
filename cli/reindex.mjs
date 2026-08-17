@@ -120,6 +120,7 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { ProviderError } from '../server/lib/provider/errors.mjs';
 import { umAdd } from '../server/lib/add.mjs';
+import { umGetAll, FULL_SCAN_LIMIT } from '../server/lib/mem0-read.mjs';
 import { runPhase4Stamp, runPhase5Swap, runPhase6Verify } from './lib/swap.mjs';
 import { runPhase7Report } from './lib/archive.mjs';
 
@@ -712,7 +713,8 @@ export { runPhase4Stamp, runPhase5Swap, runPhase6Verify, runPhase7Report };
 //     but parameterised so reindex can construct two instances (old + new).
 //   - createVaultAdapter({vaultDir, oldMemory, userId}) — { dir, read(id) }
 //     adapter consumed by phase 2/3. Reads .md from disk for vault-backed
-//     entries; synthesizes fact-only payloads from oldMemory.getAll().
+//     entries; synthesizes fact-only payloads via the native umGetAll
+//     enumeration (#231 — mem0 3.x getAll cannot scope UM's payloads).
 //   - wrapOldMemoryForReindex(memory, {userId, vaultPaths}) — adds a
 //     listFactIds() method to a Memory instance (the snapshot-time set
 //     diff against vault paths). Phase 2's contract.
@@ -756,22 +758,34 @@ export async function createMemoryInstance({ env, collection }) {
  *
  * Resolves IDs via two paths:
  *   - `*.md` IDs → read file from `vaultDir`, return `parseFrontmatter()` shape.
- *   - non-`.md` IDs (mem0 UUIDs for fact-only entries) → look up in
- *     `oldMemory.getAll({userId})` and synthesize `{frontmatter:{id, ...meta},
- *     body:<text>}`. Mirrors the test-stub shape used in
- *     `cli/test/reindex-phase2-3.test.mjs`.
+ *   - non-`.md` IDs (mem0 UUIDs for fact-only entries) → look up via the
+ *     native enumeration (`umGetAll`, #231 — mem0 3.x getAll cannot scope
+ *     UM's camelCase payloads) and synthesize `{frontmatter:{id, ...meta},
+ *     body:<text>}`.
  *
- * The fact-only fallback caches the `getAll()` result on first miss so
- * repeated lookups don't re-pull the entire collection.
+ * The fact-only fallback caches the enumeration on first miss so repeated
+ * lookups don't re-pull the entire collection. `_listAll` is the DI seam
+ * (round-2 #231 review — both snapshot enumerations were seam-less and
+ * therefore untestable without a live qdrant).
  */
-export async function createVaultAdapter({ vaultDir, oldMemory, userId }) {
+export async function createVaultAdapter({ vaultDir, oldMemory, userId, _listAll = umGetAll }) {
   const { parseFrontmatter } = await import('../server/lib/frontmatter.mjs');
   let factCache = null;
   async function loadFactCache() {
     if (factCache != null) return factCache;
-    const all = await oldMemory.getAll({ userId });
+    // #231: native enumeration (mem0 3.x getAll rejects camelCase entity
+    // params and can never scope UM's payloads). FULL_SCAN_LIMIT: the old
+    // bare getAll silently capped at mem0's default 100 — a latent U2-class
+    // truncation for any corpus past 100 facts on this SNAPSHOT path.
+    const all = await _listAll(oldMemory, { userId, limit: FULL_SCAN_LIMIT });
+    const rows = all?.results || all || [];
+    // A saturated scan on a SNAPSHOT path is data loss, not a page — fail
+    // loud (round-2 #231 review; reindex needs paging past this scale).
+    if (rows.length >= FULL_SCAN_LIMIT) {
+      throw new Error(`reindex fact-cache scan saturated at FULL_SCAN_LIMIT=${FULL_SCAN_LIMIT} — refusing a truncated snapshot`);
+    }
     const byId = new Map();
-    for (const item of all?.results || all || []) {
+    for (const item of rows) {
       if (item?.id) byId.set(item.id, item);
     }
     factCache = byId;
@@ -805,15 +819,22 @@ export async function createVaultAdapter({ vaultDir, oldMemory, userId }) {
  *
  * Implemented as a Proxy so all other Memory methods pass through unchanged.
  */
-export function wrapOldMemoryForReindex(memory, { userId, vaultPaths }) {
+export function wrapOldMemoryForReindex(memory, { userId, vaultPaths, _listAll = umGetAll }) {
   const vaultPathSet = new Set((vaultPaths || []).map((p) => p.replace(/\\/g, '/')));
   return new Proxy(memory, {
     get(target, prop, receiver) {
       if (prop === 'listFactIds') {
         return async () => {
-          const all = await target.getAll({ userId });
+          // #231: same native enumeration + full-scan limit + loud
+          // saturation as loadFactCache above (the two must see the SAME
+          // point set).
+          const all = await _listAll(target, { userId, limit: FULL_SCAN_LIMIT });
+          const rows = all?.results || all || [];
+          if (rows.length >= FULL_SCAN_LIMIT) {
+            throw new Error(`reindex listFactIds scan saturated at FULL_SCAN_LIMIT=${FULL_SCAN_LIMIT} — refusing a truncated snapshot`);
+          }
           const out = [];
-          for (const item of all?.results || all || []) {
+          for (const item of rows) {
             const id = item?.id;
             if (!id) continue;
             const metaId = item?.metadata?.id;

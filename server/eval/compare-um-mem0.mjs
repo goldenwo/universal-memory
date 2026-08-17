@@ -98,7 +98,8 @@ async function main() {
     for (const f of facts) await m0.add(f.text, { userId: EVAL_USER, infer: false });
     const m0Per = [];
     for (const f of facts) {
-      const sr = await m0.search(f.query, { userId: EVAL_USER, limit: 10 });
+      // #231 mem0 3.x: control arm uses mem0's NATIVE idiom (its add() writes snake user_id; default threshold kept — mem0-as-shipped).
+      const sr = await m0.search(f.query, { filters: { user_id: EVAL_USER }, topK: 10 });
       const arr = Array.isArray(sr) ? sr : (sr?.results ?? []);
       m0Per.push({ id: f.id, targetNorm: norm(f.text), resultNorms: arr.map((r) => norm(r.memory ?? r.text ?? '')) });
     }

@@ -2,10 +2,11 @@ name: universal-memory
 
 services:
   qdrant:
-    # v0.8 G2 — bump to 1.13.0 to match @qdrant/js-client-rest@1.13.0 pulled
-    # transitively by mem0ai 2.4.6 (see server/package.json). Mismatched minor
-    # versions (1.11 ↔ 1.13) emit a runtime warning per qdrant client; bumping
-    # the server eliminates the warning and any future filter-syntax drift.
+    # v1.13.0 stays as a DELIBERATE server pin (#231 D7 — a server bump is
+    # its own compat arc; the Pi runs 1.7.3 regardless and the legacy-qdrant
+    # patch hunk covers it). The js client moved to 1.18.0 with mem0ai 3.x
+    # (1.19 removed the legacy search API — #231 F19); the 1.18↔1.13 minor
+    # skew emits a harmless client version warning.
     image: qdrant/qdrant:v1.13.0
     restart: unless-stopped
     volumes:

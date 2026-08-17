@@ -49,7 +49,11 @@ async function startServer({ env = {}, memory = fakeMemory, token = 'secret-toke
   prevEnv.UM_AUTH_TOKEN = process.env.UM_AUTH_TOKEN;
   if (token !== null) process.env.UM_AUTH_TOKEN = token;
 
-  const srv = createServer(createRequestHandler({ memory }));
+  // #231 mem0 3.x seam: /api/list and the /health corpus count enumerate
+  // through ctx._umGetAll (native qdrant scroll in production) instead of
+  // memory.getAll — bridge it onto the injected stub so the counter/histogram
+  // pins below still exercise real 200 responses.
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: (m, a) => m.getAll(a) }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();

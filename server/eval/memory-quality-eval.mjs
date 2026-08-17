@@ -38,6 +38,7 @@ import { resolveWindowRows } from './lib/window-arm-fixture.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
+import { wrapMem0Read } from '../lib/mem0-read.mjs';
 import { percentile, summarize } from './lib/stats.mjs';
 
 // ---------------------------------------------------------------------------
@@ -2125,11 +2126,14 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
   assertScratchSafe(recallCol);
   assertScratchSafe(stalenessCol);
 
-  const makeMemory = (collectionName) => new Memory({
+  // #231: wrapMem0Read mirrors production initMemory — .search routes
+  // through the native read (mem0 3.x's search validator cannot scope UM's
+  // camelCase payloads; spec D8).
+  const makeMemory = (collectionName) => wrapMem0Read(new Memory({
     embedder: getEmbedderConfig(process.env),
     llm: getFactsLlmConfig(process.env),
     vectorStore: { provider: 'qdrant', config: { host, port, collectionName } },
-  });
+  }));
 
   const cost = { embedTokensIn: 0, embedTokensOut: 0, embedCostUsd: 0 };
   const latency = { umAdd: [], doSearch: [] };
@@ -2266,11 +2270,14 @@ async function runCorpusSweepDecayPinned({ recallRows = [], sweepSizes, seed = 0
   const host = process.env.QDRANT_HOST ?? 'localhost';
   const port = parseInt(process.env.QDRANT_PORT ?? '6333', 10);
   const client = new QdrantClient({ host, port });
-  const makeMemory = (collectionName) => new Memory({
+  // #231: wrapMem0Read mirrors production initMemory — .search routes
+  // through the native read (mem0 3.x's search validator cannot scope UM's
+  // camelCase payloads; spec D8).
+  const makeMemory = (collectionName) => wrapMem0Read(new Memory({
     embedder: getEmbedderConfig(process.env),
     llm: getFactsLlmConfig(process.env),
     vectorStore: { provider: 'qdrant', config: { host, port, collectionName } },
-  });
+  }));
 
   const targetCount = recallRows.reduce((n, r) => n + (r.seed_facts?.length ?? 0), 0);
   const lanes = lanesFromRows(recallRows);
@@ -2534,11 +2541,12 @@ async function cliMain() {
     let result;
     try {
       await ensureCollection(client, collection, VECTOR_DIM);
-      const memory = new Memory({
+      // #231: same wrap as production initMemory (native .search read).
+      const memory = wrapMem0Read(new Memory({
         embedder: getEmbedderConfig(process.env),
         llm: getFactsLlmConfig(process.env),
         vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
-      });
+      }));
       result = await runUndatedArm({
         rows, collection, decay: true,
         umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,
@@ -2629,11 +2637,12 @@ async function cliMain() {
     let result;
     try {
       await ensureCollection(client, collection, VECTOR_DIM);
-      const memory = new Memory({
+      // #231: same wrap as production initMemory (native .search read).
+      const memory = wrapMem0Read(new Memory({
         embedder: getEmbedderConfig(process.env),
         llm: getFactsLlmConfig(process.env),
         vectorStore: { provider: 'qdrant', config: { host, port, collectionName: collection } },
-      });
+      }));
       result = await runWindowArm({
         rows, collection, decay: decayArg, now,
         umAdd, memory, client, doSearch, embed, cosineStrict, NOOP_METRICS,

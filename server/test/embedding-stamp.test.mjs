@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import {
   readStamp,
   writeStamp,
@@ -8,13 +10,21 @@ import {
   createStampClient,
 } from '../lib/embedding-stamp.mjs';
 
+// #231 mem0 3.x seam: readStamp no longer calls memory.getAll — it enumerates
+// through lib/mem0-read's native qdrant scroll (overridable via readStamp's
+// second-param DI seam), and its guard now requires memory.config.vectorStore.
+// `stubMemory()` supplies exactly that guard input; `enumerating()` hands back
+// the same items the old memory.getAll fakes returned, so both cases below pin
+// the same null-vs-found behaviour against the same fixture data.
+const stubMemory = () => ({ config: { vectorStore: { config: { collectionName: 'memories_test' } } } });
+const enumerating = (items) => ({ getAll: async () => items });
+
 test('readStamp returns null when no stamp doc exists', async () => {
-  const memory = { getAll: async () => [] };
-  assert.equal(await readStamp({ memory }), null);
+  assert.equal(await readStamp({ memory: stubMemory() }, enumerating([])), null);
 });
 test('readStamp returns stamp when present', async () => {
-  const memory = { getAll: async () => [{ metadata: { id: '_um_embedding_stamp', stamp: { provider: 'openai', model: 'text-embedding-3-small', dim: 1536, schema_version: 1 } } }] };
-  const s = await readStamp({ memory });
+  const items = [{ metadata: { id: '_um_embedding_stamp', stamp: { provider: 'openai', model: 'text-embedding-3-small', dim: 1536, schema_version: 1 } } }];
+  const s = await readStamp({ memory: stubMemory() }, enumerating(items));
   assert.equal(s.provider, 'openai');
   assert.equal(s.dim, 1536);
 });
@@ -104,12 +114,38 @@ test('verifyDim tags probe failure distinctly from dim mismatch', async () => {
 });
 
 test('createStampClient binds memory + collection, returns DI-friendly object', async () => {
-  const memory = { getAll: async () => [], add: async () => {} };
-  const client = createStampClient({ memory, collection: 'memories_test' });
-  assert.equal(typeof client.read, 'function');
-  assert.equal(typeof client.write, 'function');
-  assert.equal(typeof client.verifyDim, 'function');
-  assert.equal(typeof client.compare, 'function');
-  // client.read() and .write() should not require memory re-pass
-  await assert.doesNotReject(() => client.read());
+  // #231 mem0 3.x seam: createStampClient deliberately does NOT forward
+  // readStamp's DI seam, so the bound read() runs the real native scroll off
+  // memory.config. Substituting a stub enumerator here would test a re-passed
+  // dependency — the exact opposite of what this test pins — so the fixture
+  // instead speaks the one qdrant call the scroll makes over loopback, leaving
+  // `doesNotReject` exercising the genuinely bound path.
+  const qdrant = createServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    // GET / is the qdrant client's version handshake (the version string only
+    // silences its cosmetic compat warning — nothing here asserts on it);
+    // POST /collections/<name>/points/scroll is the enumeration itself.
+    res.end(JSON.stringify(req.method === 'GET'
+      ? { title: 'qdrant - vector search engine', version: '1.19.0' }
+      : { result: { points: [], next_page_offset: null }, status: 'ok', time: 0 }));
+  });
+  qdrant.listen(0, '127.0.0.1');
+  await once(qdrant, 'listening');
+  const { port } = qdrant.address();
+  try {
+    const memory = {
+      config: { vectorStore: { config: { host: '127.0.0.1', port, collectionName: 'memories_test' } } },
+      add: async () => {},
+    };
+    const client = createStampClient({ memory, collection: 'memories_test' });
+    assert.equal(typeof client.read, 'function');
+    assert.equal(typeof client.write, 'function');
+    assert.equal(typeof client.verifyDim, 'function');
+    assert.equal(typeof client.compare, 'function');
+    // client.read() and .write() should not require memory re-pass
+    await assert.doesNotReject(() => client.read());
+  } finally {
+    await new Promise((resolve) => qdrant.close(resolve));
+  }
 });

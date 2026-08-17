@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Memory } from 'mem0ai/oss';
 import { QdrantClient } from '@qdrant/js-client-rest';
+import { searchConfig, umGetAll, wrapMem0Read } from '../lib/mem0-read.mjs';
 import { umAdd } from '../lib/add.mjs';
 import { getEmbedderConfig } from '../lib/embed.mjs';
 import { getFactsLlmConfig } from '../lib/facts.mjs';
@@ -43,7 +44,7 @@ test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip:
   // Without an explicit vectorStore config, mem0 falls back to an in-memory
   // vector store — read paths (mem0.getAll/search) would never see umAdd's
   // qdrant writes. Mirror production's wiring at server/mem0-mcp-http.mjs:362.
-  const memory = new Memory({
+  const memory = wrapMem0Read(new Memory({
     embedder: getEmbedderConfig(env),
     llm: getFactsLlmConfig(env),
     vectorStore: {
@@ -54,7 +55,7 @@ test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip:
         collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
       },
     },
-  });
+  }));
   const userId = `g2-roundtrip-${Date.now()}`;
 
   // 0. Pre-create the qdrant collection. Production boots through a guard
@@ -78,14 +79,16 @@ test('umAdd write → mem0.getAll round-trip (payload schema verifier)', { skip:
   assert.ok(Array.isArray(writeResult.results));
   console.log(`  [g2-roundtrip] umAdd wrote ${writeResult.results.length} fact(s)`);
 
-  // 2. Read via mem0.getAll — MUST find what umAdd wrote.
-  // If payload field names diverge (snake_case userId), this returns empty.
-  const all = await memory.getAll({ userId });
+  // 2. Read via the production enumeration path (#231 D8: mem0 3.x getAll
+  // filters snake keys and can never see UM's camelCase payloads — umGetAll
+  // IS the production list read now). MUST find what umAdd wrote.
+  const all = await umGetAll(memory, { userId });
   const items = Array.isArray(all) ? all : (all?.results ?? []);
   assert.ok(items.length >= 1, `mem0.getAll returned 0 items — payload schema likely diverged from mem0 (spec §4.3 camelCase userId)`);
 
-  // 3. Read via mem0.search — MUST find them by query.
-  const search = await memory.search('Tokyo', { userId });
+  // 3. Read via mem0.search with the #231 camel-filter passthrough — the
+  // production recall path; MUST find them by query.
+  const search = await memory.search('Tokyo', searchConfig({ userId }));
   const found = Array.isArray(search) ? search : (search?.results ?? []);
   assert.ok(found.length >= 1, 'mem0.search returned 0 — payload "data" field name may have drifted');
 
@@ -120,7 +123,7 @@ test('umAdd writeStamp → mem0.getAll DE5 roundtrip', { skip: SKIP }, async () 
   // Without an explicit vectorStore config, mem0 falls back to an in-memory
   // vector store — read paths (mem0.getAll/search) would never see umAdd's
   // qdrant writes. Mirror production's wiring at server/mem0-mcp-http.mjs:362.
-  const memory = new Memory({
+  const memory = wrapMem0Read(new Memory({
     embedder: getEmbedderConfig(env),
     llm: getFactsLlmConfig(env),
     vectorStore: {
@@ -131,7 +134,7 @@ test('umAdd writeStamp → mem0.getAll DE5 roundtrip', { skip: SKIP }, async () 
         collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
       },
     },
-  });
+  }));
   const collection = memory.config.vectorStore.config.collectionName;
   // Same pre-create as the first test (production: boot guard ensures it
   // via readStamp before writeStamp).
@@ -158,7 +161,7 @@ test('L1: D1 end-to-end identical-write — write A twice → ONE qdrant point w
   process.env.UM_DEDUP_ENABLED = 'true';
   try {
     const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
-    const memory = new Memory({
+    const memory = wrapMem0Read(new Memory({
       embedder: getEmbedderConfig(env),
       llm: getFactsLlmConfig(env),
       vectorStore: {
@@ -169,7 +172,7 @@ test('L1: D1 end-to-end identical-write — write A twice → ONE qdrant point w
           collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
         },
       },
-    });
+    }));
     const userId = `d1-l1-${Date.now()}`;
     const collection = memory.config.vectorStore.config.collectionName;
     await ensureCollection({
@@ -238,7 +241,7 @@ test('L2: D1 end-to-end embedding-near-miss — high-similarity but not exact te
   process.env.UM_DEDUP_EMBEDDING_THRESHOLD = '0.85';
   try {
     const env = { ...process.env, UM_EMBEDDING_PROVIDER: 'openai', UM_FACTS_PROVIDER: 'openai' };
-    const memory = new Memory({
+    const memory = wrapMem0Read(new Memory({
       embedder: getEmbedderConfig(env),
       llm: getFactsLlmConfig(env),
       vectorStore: {
@@ -249,7 +252,7 @@ test('L2: D1 end-to-end embedding-near-miss — high-similarity but not exact te
           collectionName: process.env.QDRANT_COLLECTION ?? 'memories',
         },
       },
-    });
+    }));
     const userId = `d1-l2-${Date.now()}`;
     const collection = memory.config.vectorStore.config.collectionName;
     await ensureCollection({
