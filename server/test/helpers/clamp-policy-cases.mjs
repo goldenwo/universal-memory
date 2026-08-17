@@ -14,8 +14,11 @@
 //
 // Flip matrix (declared in run.mjs, certified by the union gate):
 //   RCC1 (clamp removed)            flips C1, C2; passes C3 (exp(0)=1 either way).
-//   RC3  (dated factor → UNDATED_FACTOR) flips C1, C3; passes C2 (equal factors
-//        still tie).
+//   RC3  (dated factor → UNDATED_FACTOR) flips ALL THREE: C1/C3 on parity values,
+//        and C2 too — C2 asserts ABSOLUTE parity (0.5 exactly), deliberately
+//        stronger than tie-only, so any factor change reddens it even though the
+//        tie itself survives at equal factors. If C2 reds under a factor change,
+//        the fix is NEVER to weaken it to tie-only.
 
 import assert from 'node:assert/strict';
 import { H, withFixedNow, datedItem } from './undated-policy-fixtures.mjs';
@@ -24,9 +27,20 @@ export const CASES = {
   C1: [
     ['a FUTURE-dated item ranks at cosine parity — factor exactly 1, never inflated', (decay) => {
       withFixedNow(() => {
-        const [out] = decay([datedItem('future', -10, 0.5)], H);
+        // The past-dated companion makes this case SELF-SUFFICIENT: an inert decay
+        // (passthrough) would leave the future item at 0.5 anyway, but it cannot
+        // produce the companion's decayed value — parity-because-clamped and
+        // parity-because-nothing-ran are distinguishable in one call.
+        const out = decay([datedItem('future', -10, 0.5), datedItem('past', 30, 0.5)], H);
+        const future = out.find((r) => r.id === 'future');
+        const past = out.find((r) => r.id === 'past');
         // Exact identity, not <=: 0.5 * 1. Pre-#238 this was 0.5 * exp(10/30) ≈ 0.6978.
-        assert.equal(out.score, 0.5);
+        assert.equal(future.score, 0.5);
+        assert.equal(past.score, 0.5 * Math.exp(-30 / H));
+        // The headline #238 symptom: a FAR-future date used to overflow exp() to
+        // Infinity (age below the ~-21,270-day threshold at H=30). Clamped: parity.
+        const [far] = decay([datedItem('far-future', -30000, 0.5)], H);
+        assert.equal(far.score, 0.5);
       });
     }],
   ],

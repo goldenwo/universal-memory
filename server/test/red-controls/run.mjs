@@ -152,10 +152,11 @@ const CONTROLS = [
     // Breaking the whole dated branch necessarily reddens every case carrying a dated
     // assertion: U4 and U7 assert dated scores directly, and V2's second sub-case asserts
     // the dated/undated interleaving. Named so a FURTHER broadening is still caught.
-    // Cross-table (clamp): C1 reddens (0.7788 != the clamped 1 at a future age) and C3
-    // reddens (0.7788 != 1 at age 0); C2 SURVIVES because both items take the same
-    // 0.7788 factor and the exact tie holds. Expected-by-mechanism, so named here —
-    // the RC1 -> W11 precedent.
+    // Cross-table (clamp): C1 reddens (0.7788 != the clamped 1 at a future age), C3
+    // reddens (0.7788 != 1 at age 0), and C2 reddens too — its ABSOLUTE parity
+    // assertions (0.5 exactly) see the factor change even though the tie itself
+    // survives at equal factors. Expected-by-mechanism, so named here — the
+    // RC1 -> W11 precedent.
     alsoFlip: ['U4', 'U7', 'V2', 'C1', 'C2', 'C3'],
     why: 'the dated cohort is genuinely guarded — this is only derivable because the fixture carries a decay-induced rank inversion. C1-C3 are the clamp-table cases scoped to the same dated factor this control replaces: C2 asserts ABSOLUTE cosine parity (0.5 exactly), deliberately stronger than a tie-only check, so the factor swap reddens it even though the tie itself survives at equal factors.',
   },

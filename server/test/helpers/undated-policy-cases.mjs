@@ -69,7 +69,7 @@ export const CASES = {
       assert.equal(out.score, 0.5 * Math.exp(-ageDays / H));
       assert.notEqual(out.score, 0.5 * Math.exp(-0.25), 'must NOT take the undated factor');
     })],
-    ['an ALL-DATED set is untouched — the dated branch is byte-identical', (decay) => withFixedNow(() => {
+    ['an ALL-DATED set is untouched by the UNDATED policy — dated scores come from the dated factor alone', (decay) => withFixedNow(() => {
       const spec = [
         { id: 'old-high', age: 120, score: 0.9 },
         { id: 'new-low', age: 1, score: 0.3 },
@@ -122,7 +122,7 @@ export const CASES = {
   ],
 
   U7: [
-    ['a score-less DATED item is still MINTED 1 x factor — the unchanged dated branch', (decay) => withFixedNow(() => {
+    ['a score-less DATED item is still MINTED 1 x factor — the dated mint rule', (decay) => withFixedNow(() => {
       const item = { id: 'd-noscore', metadata: { valid_from: new Date(FIXED_NOW - 10 * DAY).toISOString() } };
       const [out] = decay([item], H);
       assert.equal(out.score, 1 * Math.exp(-10 / H));

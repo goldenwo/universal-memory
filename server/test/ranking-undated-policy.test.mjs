@@ -32,7 +32,7 @@ import assert from 'node:assert/strict';
 import * as ranking from '../lib/ranking.mjs';
 import { applyTemporalDecay } from '../lib/ranking.mjs';
 import {
-  H, withFixedNow, datedItem, datedExpect, mixedSet,
+  withFixedNow, datedExpect, mixedSet,
 } from './helpers/undated-policy-fixtures.mjs';
 import { CASES } from './helpers/undated-policy-cases.mjs';
 import { CASES as CLAMP_CASES } from './helpers/clamp-policy-cases.mjs';

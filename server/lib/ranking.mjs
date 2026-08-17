@@ -34,7 +34,8 @@
  * decay by exp(-age/H) under decay — a window is query-expressed intent and overrides
  * recency; out of scope here.
  *
- * Decay:  score = originalScore * exp(-ageDays / halfLifeDays), anchored at now.
+ * Decay:  score = originalScore * min(1, exp(-ageDays / halfLifeDays)), anchored at
+ *         now — the #238 upper clamp: a future valid_from ranks at cosine parity.
  *         Enabled via UM_TEMPORAL_DECAY=true; timescale UM_DECAY_HALF_LIFE_DAYS
  *         (default 30). NAMING: that variable is an E-FOLDING time, not a
  *         half-life — exp(-age/H) reaches 0.5 at H*ln2 ~= 0.69*H, not at H. The
@@ -53,7 +54,7 @@ const DAY_MS = 86400000;
  *
  * WHY THIS EXISTS. `applyTemporalDecay` used to return an undated result with its score
  * untouched, defended as "undated means neutral, never penalised". That was true while
- * nothing decayed. Once every DATED point is multiplied by `exp(-age/H) < 1`, a factor of
+ * nothing decayed. Once every PAST-dated point is multiplied by `exp(-age/H) < 1`, a factor of
  * 1.0 stops being the middle of the range and becomes the TOP of it: undated points became
  * strictly better than every dated one, without anyone choosing that.
  *

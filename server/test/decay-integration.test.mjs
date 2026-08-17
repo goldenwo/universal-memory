@@ -285,11 +285,20 @@ test('decay: mixed set — absolute top-1 score is the post-decay value the boun
 // this doc surfaced at 0.5 * exp(10/30) ≈ 0.6978 — an inflated score was what the
 // bouncer gate (and every other consumer of the surfaced value) actually read.
 test('decay: a FUTURE-dated top hit surfaces at cosine parity — the #238 clamp end-to-end', async () => {
-	const canned = [result({ id: 'future-doc', score: 0.5, daysOld: -10 })];
+	// The past-dated companion distinguishes parity-because-clamped from decay-not-
+	// running at all: an inert decay leaves the future doc at 0.5 too, but cannot
+	// produce the companion's decayed value.
+	const canned = [
+		result({ id: 'future-doc', score: 0.5, daysOld: -10 }),
+		result({ id: 'past-doc', score: 0.45, daysOld: 3 }),
+	];
 	const mock = mockMemory(canned);
 
 	await withEnv({ UM_TEMPORAL_DECAY: 'true', UM_DECAY_HALF_LIFE_DAYS: '30' }, async () => {
 		const { results } = await doSearch('q', 5, false, false, mock);
 		assert.equal(results[0].score, 0.5, 'future-dated score must be the raw cosine, factor exactly 1');
+		const past = results.find((r) => r.id === 'past-doc');
+		assert.ok(Math.abs(past.score - 0.45 * Math.exp(-3 / 30)) < 1e-6,
+			'the past-dated companion must actually decay — proves the ranker ran');
 	});
 });
