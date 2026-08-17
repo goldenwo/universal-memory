@@ -3315,9 +3315,20 @@ assert info.get('freshness_hours') == 0, 'expected freshness_hours == 0 (turns l
 # events_today breaks on a UTC-midnight straddle between legs 1 and 4 (the
 # turns land on the previous day). The 7-day rollup spans both days, and the
 # run-scoped surface means it counts ONLY this run's turns -- no vacuity.
+# spec §7 (2026-08-15 instrumented-truth fix): outcomes_7d is landing-only
+# (capture.extraction + capture.checkpoint) -- S10 leg 1's turns are NOT a
+# landing, so on a straddle the outcomes_7d-only sum would silently read 0
+# even though the turns genuinely rolled into the 7-day window. turns_7d
+# (additive, same fix) is where that volume now lives, so the fallback must
+# include it or this guard reintroduces the exact dropped-view class the
+# component exists to close -- especially reachable in keyless-local-rig mode
+# (UM_SMOKE_REMOTE_RT_LLM=0), where leg 3's checkpoint (a real landing event)
+# is skipped and turns are the ONLY capture activity this run produces.
 events_today = info.get('events_today', 0)
 outcomes = info.get('outcomes_7d') or {}
-events_7d = sum(v for v in outcomes.values() if isinstance(v, (int, float)))
+outcomes_7d_sum = sum(v for v in outcomes.values() if isinstance(v, (int, float)))
+turns_7d = info.get('turns_7d', 0)
+events_7d = outcomes_7d_sum + (turns_7d if isinstance(turns_7d, (int, float)) else 0)
 assert events_today >= 2 or events_7d >= 2, 'expected >= 2 capture events (today or 7d rollup), got today=%r 7d=%r' % (events_today, events_7d)
 assert isinstance(data.get('recall'), dict), 'recall section missing'
 points = (data.get('corpus') or {}).get('points')
