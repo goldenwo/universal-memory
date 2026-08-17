@@ -37,8 +37,10 @@ export const undatedItem = (id, score, createdAtAge = 120) => ({
   createdAt: new Date(FIXED_NOW - createdAtAge * DAY).toISOString(),
 });
 
-/** The analytic oracle for the dated branch — never a vendored copy of the function. */
-export const datedExpect = (age, score) => (score || 1) * Math.exp(-age / H);
+/** The analytic oracle for the dated branch — never a vendored copy of the function.
+ *  Carries the #238 upper clamp: a future age (negative) yields factor exactly 1, never
+ *  an inflation. Past-age consumers are bit-identical (min(1, ·) is a no-op there). */
+export const datedExpect = (age, score) => (score || 1) * Math.min(1, Math.exp(-age / H));
 
 /**
  * The two dated members of `mixedSet`, as (age, score) pairs. Exported so the inversion

@@ -979,12 +979,13 @@ export function materialiseValidFrom(rows, now = Date.now()) {
  */
 export function backdatedIso(daysAgo, now = Date.now()) {
   if (!Number.isFinite(daysAgo)) throw new Error(`mq-eval: backdatedIso needs a finite daysAgo (got ${daysAgo})`);
-  // NEGATIVE is refused, not merely odd: a forward-dated point yields a NEGATIVE age, and
-  // applyTemporalDecay has no upper clamp (unlike applyTemporalWindow, which documents
-  // "a score is only ever multiplied by a factor <= 1"). So a sign typo in a fixture would
-  // silently INFLATE a seed's score above its true value — the opposite of the degenerate
-  // case this helper exists to prevent, and far harder to notice.
-  if (daysAgo < 0) throw new Error(`mq-eval: backdatedIso refuses a negative daysAgo (${daysAgo}) — a future date inflates the decay factor above 1`);
+  // NEGATIVE is refused, not merely odd: a forward-dated point yields a NEGATIVE age,
+  // which the #238 clamp pins to factor exactly 1 (both re-rankers now share "a score is
+  // only ever multiplied by a factor <= 1"). So a sign typo in a fixture would silently
+  // hold a seed at cosine parity instead of the intended aging — the degradation this
+  // helper exists to produce would quietly not happen, which is far harder to notice
+  // than a loud failure.
+  if (daysAgo < 0) throw new Error(`mq-eval: backdatedIso refuses a negative daysAgo (${daysAgo}) — a future date defeats the intended aging (the #238 clamp holds it at factor 1)`);
   const ms = now - daysAgo * 86400000;
   if (!Number.isFinite(ms) || Number.isNaN(new Date(ms).getTime())) {
     throw new Error(`mq-eval: backdatedIso(${daysAgo}) falls outside the representable Date range`);

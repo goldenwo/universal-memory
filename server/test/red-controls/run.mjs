@@ -59,6 +59,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 
 import { CASES as DECAY_CASES, runCase as runDecayCase } from '../helpers/undated-policy-cases.mjs';
 import { CASES as WINDOW_CASES, runCase as runWindowCase } from '../helpers/window-policy-cases.mjs';
+import { CASES as CLAMP_CASES, runCase as runClampCase } from '../helpers/clamp-policy-cases.mjs';
 
 const RANKING = fileURLToPath(new URL('../../lib/ranking.mjs', import.meta.url));
 
@@ -76,6 +77,11 @@ const TABLES = {
   window: {
     CASES: WINDOW_CASES, runCase: runWindowCase, fnName: 'applyTemporalWindow',
     banner: 'window baseline', baselineSuffix: '',
+  },
+  // #238's upper clamp — the third seat this registry's header reserved.
+  clamp: {
+    CASES: CLAMP_CASES, runCase: runClampCase, fnName: 'applyTemporalDecay',
+    banner: 'clamp baseline', baselineSuffix: '',
   },
 };
 
@@ -138,16 +144,20 @@ const CONTROLS = [
   {
     id: 'RC3',
     table: 'decay',
-    what: 'UNDATED_FACTOR replaces the dated exp(-age/H) factor',
-    mutate: (src) => replaceOnce(src, '    const factor = Math.exp(-ageDays / halfLifeDays);',
+    what: 'UNDATED_FACTOR replaces the dated min(1, exp(-age/H)) factor',
+    mutate: (src) => replaceOnce(src, '    const factor = Math.min(1, Math.exp(-ageDays / halfLifeDays));',
       '    const factor = UNDATED_FACTOR;'),
     mustFlip: ['U3', 'V1', 'V3'],
     mustPass: ['U1', 'U5'],
     // Breaking the whole dated branch necessarily reddens every case carrying a dated
     // assertion: U4 and U7 assert dated scores directly, and V2's second sub-case asserts
     // the dated/undated interleaving. Named so a FURTHER broadening is still caught.
-    alsoFlip: ['U4', 'U7', 'V2'],
-    why: 'the dated cohort is genuinely guarded — this is only derivable because the fixture carries a decay-induced rank inversion',
+    // Cross-table (clamp): C1 reddens (0.7788 != the clamped 1 at a future age) and C3
+    // reddens (0.7788 != 1 at age 0); C2 SURVIVES because both items take the same
+    // 0.7788 factor and the exact tie holds. Expected-by-mechanism, so named here —
+    // the RC1 -> W11 precedent.
+    alsoFlip: ['U4', 'U7', 'V2', 'C1', 'C2', 'C3'],
+    why: 'the dated cohort is genuinely guarded — this is only derivable because the fixture carries a decay-induced rank inversion. C1-C3 are the clamp-table cases scoped to the same dated factor this control replaces: C2 asserts ABSOLUTE cosine parity (0.5 exactly), deliberately stronger than a tie-only check, so the factor swap reddens it even though the tie itself survives at equal factors.',
   },
   {
     id: 'RC4',
@@ -208,6 +218,22 @@ const CONTROLS = [
     // one case in the table no mutation could redden, so nothing proved it bites.
     alsoFlip: [],
     why: 'purity is a documented contract (a new array, items never mutated) and callers rely on it — but a value-only test suite cannot distinguish a copy from an in-place write',
+  },
+  {
+    id: 'RCC1',
+    table: 'clamp',
+    what: 'the #238 upper clamp removed — dated factor back to bare exp(-age/H)',
+    mutate: (src) => replaceOnce(src, '    const factor = Math.min(1, Math.exp(-ageDays / halfLifeDays));',
+      '    const factor = Math.exp(-ageDays / halfLifeDays);'),
+    mustFlip: ['C1', 'C2'],
+    mustPass: ['C3'],
+    // C3 is genuinely unreachable by THIS mutant (exp(0) is already 1, clamped or not) —
+    // its certification comes from RC3's declared cross-table flip instead, so no clamp
+    // case is certifiable-by-nothing. Cross-table (decay): V3's property domain forces
+    // future ages (its counters assert future > 50), so the unclamped identity reddens
+    // it — expected-by-mechanism, the RC1 -> W11 precedent.
+    alsoFlip: ['V3'],
+    why: 'unclamping inflates future-dated factors (C1: 1.395 != 1; C2: 1.034 vs 1.395 breaks the exact tie) while every past-age case is untouched — min(1, ·) is a no-op on the past domain.',
   },
   {
     id: 'RCW1',

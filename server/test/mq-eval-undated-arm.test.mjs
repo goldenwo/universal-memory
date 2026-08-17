@@ -122,7 +122,7 @@ test('fixture: stores days_ago and NOT a hardcoded valid_from', async () => {
   for (const r of await load(FIXTURE)) {
     for (const f of r.seed_facts) {
       assert.equal(typeof f.days_ago, 'number', `${r.id} seed fact has no numeric days_ago`);
-      assert.ok(f.days_ago >= 0, `${r.id} has a negative age — a future date inflates the decay factor`);
+      assert.ok(f.days_ago >= 0, `${r.id} has a negative age — a future date defeats the intended aging (factor clamps to 1, #238)`);
       assert.equal(f.valid_from, undefined, `${r.id} hardcodes a valid_from; it must be derived from days_ago`);
     }
   }

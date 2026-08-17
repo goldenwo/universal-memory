@@ -237,9 +237,10 @@ export const CASES = {
   V3: [
     ['200 seeded iterations satisfy the four exact identities', (decay) => {
       // EXACT IDENTITIES, deliberately not `output <= input`: that weaker formulation is
-      // FALSE on this very domain, twice over — a future date gives a factor above 1 (the
-      // deliberately-unfixed missing upper clamp), and any negative score times a factor
-      // in (0,1) increases.
+      // FALSE on this very domain — a negative score times a factor in (0,1) increases.
+      // The dated identity carries the #238 upper clamp: a future date yields factor
+      // exactly 1 (cosine parity), never an inflation — pinned here as the property-level
+      // clamp witness (the human-readable cases live in the clamp table, C1-C3).
       const rnd = xorshift32(V3_SEED);
       const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
       const seen = { items: 0, dated: 0, undated: 0, future: 0, negative: 0, scoreless: 0, maxN: 0 };
@@ -277,7 +278,7 @@ export const CASES = {
           for (const r of out) {
             const m = meta.get(r.id);
             if (m.dated) {
-              assert.equal(r.score, (m.score || 1) * Math.exp(-m.age / H), `iter ${iter}: dated ${r.id}`);
+              assert.equal(r.score, (m.score || 1) * Math.min(1, Math.exp(-m.age / H)), `iter ${iter}: dated ${r.id}`);
             } else if (typeof m.score === 'number') {
               assert.equal(r.score, m.score * Math.exp(-0.25), `iter ${iter}: undated ${r.id}`);
             } else {
@@ -296,7 +297,7 @@ export const CASES = {
       assert.ok(seen.items > 500, `too few items generated (${seen.items})`);
       assert.equal(seen.maxN, 20, 'the 0..20 item range must be exercised at its top');
       assert.ok(seen.dated > 100 && seen.undated > 100, `cohorts unbalanced: ${seen.dated}/${seen.undated}`);
-      assert.ok(seen.future > 50, `too few FUTURE-dated items (${seen.future}) — the missing-clamp path`);
+      assert.ok(seen.future > 50, `too few FUTURE-dated items (${seen.future}) — the clamp-witness path`);
       assert.ok(seen.negative > 50, `too few NEGATIVE scores (${seen.negative}) — the other falsifier`);
       assert.ok(seen.scoreless > 50, `too few score-less items (${seen.scoreless}) — the mint guard`);
     }],

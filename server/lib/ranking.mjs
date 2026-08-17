@@ -247,6 +247,13 @@ export function windowFalloffDays(window) {
 /**
  * Apply temporal decay re-ranking to a list of search results.
  *
+ * Contract (shared with applyTemporalWindow): a score is only ever multiplied by a
+ * factor ≤ 1 — consumers never see an inflated score. The dated factor is
+ * min(1, exp(-age/H)), so a FUTURE valid_from (negative age) ranks at cosine parity,
+ * never above it (#238; pre-clamp a far-future date overflowed exp() to Infinity).
+ * As everywhere in this module, the never-inflated claim is scoped to the positive
+ * half-line — see UNDATED_EFOLDINGS' scope note above.
+ *
  * @param {Array<object>} results  - Search result objects with optional score
  *                                   and metadata.valid_from.
  * @param {number}        halfLifeDays - Decay timescale in days (an e-folding time, not a half-life).
@@ -268,7 +275,7 @@ export function applyTemporalDecay(results, halfLifeDays) {
       return { ...r, score: r.score * UNDATED_FACTOR };
     }
     const ageDays = (now - ms) / DAY_MS;
-    const factor = Math.exp(-ageDays / halfLifeDays);
+    const factor = Math.min(1, Math.exp(-ageDays / halfLifeDays));
     return { ...r, score: (r.score || 1) * factor };
   });
 

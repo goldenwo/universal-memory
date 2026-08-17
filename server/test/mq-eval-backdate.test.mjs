@@ -62,9 +62,10 @@ test('backdatedIso: refuses a non-finite daysAgo instead of minting Invalid Date
   }
 });
 
-test('backdatedIso: refuses a NEGATIVE daysAgo — a future date inflates the decay factor above 1', () => {
-  // applyTemporalDecay has no upper clamp, so a sign typo would silently BOOST a seed
-  // rather than degrade it — the failure mode hardest to spot in a result table.
+test('backdatedIso: refuses a NEGATIVE daysAgo — a future date would silently mask the intended backdating', () => {
+  // applyTemporalDecay clamps the dated factor at 1 (#238), so a sign typo would give the
+  // seed cosine PARITY instead of the intended degradation — a silently-undegraded seed
+  // is still the failure mode hardest to spot in a result table, so the refusal stays.
   for (const bad of [-1, -0.5, -19]) {
     assert.throws(() => backdatedIso(bad, NOW), /negative daysAgo/);
   }

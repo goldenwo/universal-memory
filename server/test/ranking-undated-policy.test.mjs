@@ -22,7 +22,8 @@
 // each case can actually fail. Two hand-maintained copies would drift, and a drifted red
 // control certifies nothing about the tests that really run.
 //
-// The oracle is ANALYTIC — `(score || 1) * Math.exp(-age/H)` with a pinned Date.now —
+// The oracle is ANALYTIC — `(score || 1) * Math.min(1, Math.exp(-age/H))` with a pinned
+// Date.now (the min(1, ·) is #238's upper clamp: future dates rank at cosine parity) —
 // never a vendored copy of the pre-change function, which would rot silently.
 
 import { test } from 'node:test';
@@ -34,10 +35,19 @@ import {
   H, withFixedNow, datedItem, datedExpect, mixedSet,
 } from './helpers/undated-policy-fixtures.mjs';
 import { CASES } from './helpers/undated-policy-cases.mjs';
+import { CASES as CLAMP_CASES } from './helpers/clamp-policy-cases.mjs';
 
 // --- the shared case table (U1-U10, V1-V3) ---------------------------------
 
 for (const [id, subCases] of Object.entries(CASES)) {
+  for (const [label, run] of subCases) {
+    test(`${id}: ${label}`, () => run(applyTemporalDecay, ranking));
+  }
+}
+
+// The #238 clamp table (C1-C3) — same shared-table pattern, same reason: red-controls/
+// run.mjs certifies these very cases against deliberately-broken ranking.mjs copies.
+for (const [id, subCases] of Object.entries(CLAMP_CASES)) {
   for (const [label, run] of subCases) {
     test(`${id}: ${label}`, () => run(applyTemporalDecay, ranking));
   }
@@ -65,16 +75,5 @@ test('the fixture really does invert the dated cohort under decay (guards the gu
       Math.sign(cosineOrder) !== Math.sign(decayedOrder),
       'decay must INVERT the dated cohort\'s order, or order-only assertions are insensitive',
     );
-  });
-});
-
-test('V3 corollary: a FUTURE-dated item is inflated above 1 — the unfixed clamp, pinned', () => {
-  // Deliberately NOT fixed by this change: an upper clamp would alter the DATED cohort's
-  // ordering and break the "dated order unchanged" invariant. Pinned here so the separate
-  // issue that fixes it has a ready witness, and so it cannot be "fixed" here unnoticed.
-  withFixedNow(() => {
-    const [out] = applyTemporalDecay([datedItem('future', -10, 0.5)], H);
-    assert.equal(out.score, 0.5 * Math.exp(10 / H));
-    assert.ok(out.score > 0.5, 'a future date currently INFLATES the score');
   });
 });
