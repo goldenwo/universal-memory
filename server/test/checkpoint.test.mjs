@@ -48,6 +48,16 @@ async function makeVault() {
   return dir;
 }
 
+// Task 6 (PR-1 cursor/chunking rewrite): `filename` must be the real raw
+// day-file convention append-turn.mjs actually writes — `YYYY-MM-DD.md`
+// (server/lib/append-turn.mjs:124-125). Fixtures in this file used to append
+// a spurious `T00` hour suffix (e.g. `2026-01-01T00.md`); that never matched
+// any production filename, it only ever worked because the pre-chunking
+// reader filtered on `f.endsWith('.md')` + a loose `f.slice(0,10)` date
+// prefix. checkpoint-cursor.mjs/chunk-builder.mjs now require the exact
+// `^\d{4}-\d{2}-\d{2}\.md$` shape (CURSOR_FILE_RE / RAW_DAY_FILE_RE) — a
+// `T00`-suffixed fixture is invisible to both and silently reads as "no
+// pending raw files". All such fixtures were renamed to drop the suffix.
 async function seedCapture(vaultDir, project, filename, content) {
   const rawDir = path.join(vaultDir, 'captures', project, 'raw');
   await fs.mkdir(rawDir, { recursive: true });
@@ -92,7 +102,7 @@ const BASE_CONFIG = {
 // 1. Happy path: result shape contains all required fields
 test('checkpoint: happy path returns complete result shape', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nSome work done.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome work done.');
 
   const reindexCalls = [];
   const result = await doCheckpoint(
@@ -115,6 +125,13 @@ test('checkpoint: happy path returns complete result shape', async () => {
   assert.ok(typeof result.tokens_in === 'number', 'tokens_in must be a number');
   assert.ok(typeof result.tokens_out === 'number', 'tokens_out must be a number');
   assert.ok(typeof result.duration_ms === 'number' && result.duration_ms >= 0, 'duration_ms must be non-negative number');
+  // Task-6 review MINOR 13: the additive chunked-mode fields on the basic
+  // success envelope (§4.6) — a single tiny fixture always fully drains the
+  // backlog in one committed chunk.
+  assert.equal(result.chunks_done, 1, 'exactly one chunk committed');
+  assert.equal(result.backlog_remaining, false, 'the backlog is fully drained after this one chunk');
+  assert.equal(result.stopped, undefined, 'no stop reason on a clean, fully-drained run');
+  assert.equal(result.truncated, undefined, 'the deprecated alias only appears when backlog remains');
   assert.equal(reindexCalls.length, 1, 'reindex should be called once');
 
   // Verify on-disk content of summary file
@@ -135,7 +152,7 @@ test('checkpoint: happy path returns complete result shape', async () => {
 // 2. Stale lockdir recovery: pre-create a stale lockdir; should detect and recover
 test('checkpoint: stale lockdir is detected and removed', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nContent.');
 
   // Create stale lockdir with old mtime
   const staleTimeout = 100; // ms — very small for test
@@ -165,7 +182,7 @@ test('checkpoint: stale lockdir is detected and removed', async () => {
 // 3. Concurrent checkpoint race: two concurrent calls for the same project — one completes, other fails cleanly
 test('checkpoint: concurrent calls — second sees lockdir, returns checkpoint_in_progress', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nContent.');
 
   let resolveFirst;
   const firstStarted = new Promise((res) => { resolveFirst = res; });
@@ -221,7 +238,7 @@ test('checkpoint: concurrent calls — second sees lockdir, returns checkpoint_i
 // 4. Cost cap hit: cost cap = 0; doCheckpoint skips with {ok:false, error:'cost cap hit'}
 test('checkpoint: cost cap hit returns {ok:false, error:"cost cap hit"}', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nContent.');
 
   // Pre-populate telemetry file to be >= cap
   const today = new Date().toISOString().slice(0, 10);
@@ -249,7 +266,7 @@ test('checkpoint: cost cap hit returns {ok:false, error:"cost cap hit"}', async 
 // 5. State-merge preserves human edits
 test('checkpoint: state-merge preserves human-added sections in old state.md', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nSome work.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome work.');
 
   const humanSection = '## Human Notes\nThis was added manually by the dev.';
   const stateDir = path.join(vaultDir, 'state', 'myproj');
@@ -291,7 +308,7 @@ test('checkpoint: state-merge preserves human-added sections in old state.md', a
 // 6. claude-agent-sdk fallback emits expected warning log
 test('checkpoint: UM_SUMMARIZER=claude-agent-sdk emits warning log', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nContent.');
 
   const captured = _attachLogCapture();
 
@@ -332,7 +349,7 @@ test('checkpoint: UM_SUMMARIZER=claude-agent-sdk emits warning log', async () =>
 // 7. skip_state_merge: true — produces summary, does NOT touch state.md
 test('checkpoint: skip_state_merge=true produces summary but skips state.md', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nContent.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nContent.');
 
   let updateStateCalled = false;
   const result = await doCheckpoint(
@@ -362,6 +379,24 @@ test('checkpoint: since/until filter reads only files within window', async () =
   await seedCapture(vaultDir, 'myproj', '2026-01-02.md', '# Session B\nContent B only.');
   await seedCapture(vaultDir, 'myproj', '2026-01-03.md', '# Session C\nContent C only.');
 
+  // §4.8 / Task-6 review IMPORTANT 3: windowed mode bypasses the durable
+  // cursor entirely — no read, no write. Pin BOTH directions: (a) a
+  // windowed run on a project that has never had a cursor must not create
+  // one; (b) a windowed run on a project that ALREADY has one must leave it
+  // byte-for-byte untouched.
+  const cursorPath = path.join(vaultDir, 'state', 'myproj', 'checkpoint-cursor.json');
+  await fs.mkdir(path.dirname(cursorPath), { recursive: true });
+  const preexistingCursor = JSON.stringify({
+    schema_version: 1,
+    file: '2025-12-31.md',
+    offset: 42,
+    boundary: 'turn',
+    last_turn_iso: '2025-12-31T23:59:00.000Z',
+    last_summary_id: 'session-2025-12-31-deadbeef',
+    updated_at: '2025-12-31T23:59:59.000Z',
+  }, null, 2);
+  await fs.writeFile(cursorPath, preexistingCursor, 'utf8');
+
   let capturedTranscript = '';
   const spySummarizeFn = async (transcript, ctx) => {
     capturedTranscript = transcript;
@@ -387,6 +422,68 @@ test('checkpoint: since/until filter reads only files within window', async () =
   assert.ok(!capturedTranscript.includes('Content A only'), 'day1 should be filtered out by since');
   assert.ok(capturedTranscript.includes('Content B only'), 'day2 should be included');
   assert.ok(capturedTranscript.includes('Content C only'), 'day3 should be included');
+
+  const cursorAfter = await fs.readFile(cursorPath, 'utf8');
+  assert.equal(cursorAfter, preexistingCursor, 'windowed mode must leave a pre-existing cursor file byte-for-byte unchanged (no write)');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// §4.8 / Task-6 review IMPORTANT 3, other direction: a windowed run on a
+// project that has NEVER had a cursor must not create one either — the
+// no-cursor sentinel (skipCursorAdvance) means "no read, no write", not
+// merely "no write when one already exists".
+test('checkpoint: windowed run on a project with no prior cursor creates none', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'windowproj', '2026-01-01.md', '# Session\nWindowed, no cursor ever.');
+
+  const result = await doCheckpoint(
+    { project: 'windowproj', since: '2026-01-01T00:00:00Z' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  const cursorPath = path.join(vaultDir, 'state', 'windowproj', 'checkpoint-cursor.json');
+  const cursorStat = await fs.stat(cursorPath).catch(() => null);
+  assert.equal(cursorStat, null, 'windowed mode must never create a cursor file');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Task-6 review MINOR 12: an empty or whitespace-only since/until must be
+// treated exactly like an absent field — NOT silently select windowed mode
+// (§4.8 bypasses the cursor entirely; a caller-supplied `since: ''`, e.g.
+// from an unfilled form field, must not disable dedup for that run).
+test('checkpoint: since:"" and until:"  " are treated as absent — default (cursor) mode runs, not windowed', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'blankwindowproj', '2026-01-01.md', '# Session\nBlank since/until probe.');
+
+  const result = await doCheckpoint(
+    { project: 'blankwindowproj', since: '', until: '   ' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: makeSummarizeFn(),
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  // Only the default (cursor-driven) path ever creates a cursor file and
+  // reports chunks_done/backlog_remaining as a genuine drain — a windowed
+  // run bypasses the cursor entirely (see the two tests just above).
+  assert.equal(result.chunks_done, 1);
+  assert.equal(result.backlog_remaining, false);
+  const cursorPath = path.join(vaultDir, 'state', 'blankwindowproj', 'checkpoint-cursor.json');
+  const cursorStat = await fs.stat(cursorPath).catch(() => null);
+  assert.ok(cursorStat, 'a blank since/until must still run the default cursor-driven path, which creates a cursor file');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -513,7 +610,7 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
   // This path uses the SHIPPED config (no ctx.config override), so the #185
   // gate is armed — seed substantive multi-turn content that clears the
   // floors; the concern here is dispatch wiring, not admission semantics.
-  await seedCapture(vaultDir, 'dispatchproj', '2026-01-01T00.md', SUBSTANTIVE_RAW);
+  await seedCapture(vaultDir, 'dispatchproj', '2026-01-01.md', SUBSTANTIVE_RAW);
 
   const origWriteEnabled = process.env.UM_MCP_WRITE_ENABLED;
   const origVaultDir = process.env.UM_VAULT_DIR;
@@ -578,7 +675,7 @@ test('checkpoint: handleToolCall memory_checkpoint is wired to doCheckpoint (not
 // 11. systemPrompt is passed to summarizeFn (Fix 1 — post-review integration bug)
 test('checkpoint: systemPrompt is passed to summarizeFn', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nSome work done.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nSome work done.');
 
   let capturedCtx = null;
   const spySummarizeFn = async (transcript, ctx) => {
@@ -611,7 +708,7 @@ test('checkpoint: systemPrompt is passed to summarizeFn', async () => {
 test('POST /api/checkpoint 200 happy path (writesEnabled:true) → ok:true, schema_version:1', async () => {
   const vaultDir = await makeVault();
   // Seed a capture file so doCheckpoint has something to summarize
-  await seedCapture(vaultDir, 'rest-ck-proj', '2026-01-01T00.md', '# Session\nREST checkpoint test.');
+  await seedCapture(vaultDir, 'rest-ck-proj', '2026-01-01.md', '# Session\nREST checkpoint test.');
 
   const req = { body: { project: 'rest-ck-proj' } };
   const res = mockRes();
@@ -685,12 +782,35 @@ test('POST /api/checkpoint STATE_LOCK_CONTENTION result → HTTP 503', async () 
   assert.equal(res.jsonBody.error.code, 'STATE_LOCK_CONTENTION');
 });
 
+// Task-6 review MINOR 5: SERVER_INTERNAL (cursor-write failure, spec §4.5
+// step 5) → HTTP 500, mirroring the UPSTREAM_FAILURE/502 and
+// STATE_LOCK_CONTENTION/503 siblings above. Also pins the additive `stage`
+// passthrough the same handler change adds.
+test('POST /api/checkpoint SERVER_INTERNAL result → HTTP 500 with stage passed through', async () => {
+  const req = { body: { project: 'cursor-write-fail-proj' } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    writesEnabled: true,
+    _doCheckpoint: async () => ({
+      schema_version: 1,
+      ok: false,
+      error: { code: 'SERVER_INTERNAL', stage: 'cursor_write', message: 'checkpoint cursor write failed (ENOSPC) — check free space on the vault volume' },
+    }),
+  });
+
+  assert.equal(res.statusCode, 500, 'SERVER_INTERNAL should map to HTTP 500');
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'SERVER_INTERNAL');
+  assert.equal(res.jsonBody.error.stage, 'cursor_write', 'the additive stage field must pass through untouched');
+  assert.match(res.jsonBody.error.message, /ENOSPC/);
+});
+
 // Fix 2 (round-9): reindexFn must receive a STRING path, not {path, project} object.
 // reindexDoc(relPath) in mem0-mcp-http.mjs takes a string; passing an object silently coerced
 // to "[object Object]" and caused every checkpoint reindex to fail silently.
 test('checkpoint: reindexFn receives a string path (not object) — round-9 blocker fix', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'reindex-proj', '2026-01-01T00.md', '# Session\nReindex wiring test.');
+  await seedCapture(vaultDir, 'reindex-proj', '2026-01-01.md', '# Session\nReindex wiring test.');
 
   const reindexArgs = [];
   const result = await doCheckpoint(
@@ -742,17 +862,27 @@ test('handleCheckpointRequest: _reindexFn spy is forwarded to doCheckpoint (stri
   assert.ok(reindexCalls[0].includes('rest-reindex-proj'), `path must mention project, got: ${reindexCalls[0]}`);
 });
 
-// Fix 1 (DoS cap): MAX_TRANSCRIPT_BYTES — fixture exceeds 1MB; result.truncated=true
-test('checkpoint: MAX_TRANSCRIPT_BYTES cap sets truncated:true in result', async () => {
+// §8 row 3: `truncated: true` survives as a DEPRECATED ALIAS for
+// `backlog_remaining: true` in the default (cursor) path — MAX_TRANSCRIPT_BYTES
+// itself retired from that path (chunk math caps each chunk well below 1MB;
+// nothing is ever dropped there, only deferred to a later run). This
+// replaces the old "MAX_TRANSCRIPT_BYTES cap sets truncated:true" pin (which
+// exercised a mechanism the default path no longer has) with the surviving
+// contract: hitting max_chunks_per_run with more backlog pending sets BOTH
+// `stopped:{reason:'chunk_cap'}` AND the `truncated:true` alias. Small
+// chunk_max_bytes/max_chunks_per_run injected via the existing config DI seam
+// (§8's sanctioned mechanism) so one small chunk is enough to prove it.
+test('checkpoint: backlog_remaining after chunk_cap sets truncated:true (deprecated alias, §8 row 3)', async () => {
   const vaultDir = await makeVault();
-  // Write a file larger than 1MB (1.1MB of content)
+  // Content comfortably exceeds one small chunk, so real backlog remains
+  // after the single chunk this run is allowed to commit.
   const bigContent = 'x'.repeat(1100 * 1024);
   await seedCapture(vaultDir, 'bigproj', '2026-01-01.md', bigContent);
 
   const result = await doCheckpoint(
     { project: 'bigproj' },
     {
-      config: BASE_CONFIG,
+      config: { ...BASE_CONFIG, chunk_max_bytes: 200000, max_chunks_per_run: 1 },
       vaultDir,
       summarizeFn: makeSummarizeFn(),
       updateStateFn: makeUpdateStateFn(),
@@ -761,7 +891,70 @@ test('checkpoint: MAX_TRANSCRIPT_BYTES cap sets truncated:true in result', async
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.truncated, true, 'truncated should be true when transcript exceeds cap');
+  assert.equal(result.chunks_done, 1, 'exactly one chunk committed before hitting max_chunks_per_run');
+  assert.equal(result.backlog_remaining, true, 'the 1.1MB fixture has far more than one 200KB chunk pending');
+  assert.equal(result.stopped?.reason, 'chunk_cap', `expected stopped.reason 'chunk_cap', got: ${JSON.stringify(result.stopped)}`);
+  assert.equal(result.truncated, true, 'truncated is the deprecated alias for backlog_remaining:true — nothing was dropped, just deferred');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// Task-6 review MINOR 6 (original pin) + final whole-branch review IMPORTANT 2
+// (spec §4.8, amended 2026-08-15): windowed mode's own MAX_TRANSCRIPT_BYTES
+// 1MB guard is still exercised here (two files together > 1MB — the second
+// file's content must never even enter `transcript`), but I2 ("chunk.text
+// never exceeds chunkMaxBytes") is ABSOLUTE in every mode, not just the
+// default cursor path — the pre-clamp behavior let this window feed up to
+// ~1MB (~250k tokens) straight to the summarizer, which would 500 on exactly
+// the provider-context-limit outage class this arc exists to dissolve. This
+// pin now asserts the STRONGER, CURRENT contract: what actually reaches the
+// summarizer is clamped a second time at `chunkMaxBytes` (BASE_CONFIG sets no
+// override, so the resolveChunkingConfig default of 200_000 bytes applies),
+// cut at a clean line boundary (chunk-builder.mjs's shared
+// newline-else-UTF-8 splitter, `computeSplitPoint`, exported and reused here
+// — never re-derived), and `truncated: true` still fires.
+test('checkpoint: windowed mode clamps summarize input at chunkMaxBytes (§4.8), cut at a clean boundary, truncated:true', async () => {
+  const vaultDir = await makeVault();
+  // 137-byte lines (136 'A's + '\n') so chunkMaxBytes (200_000) does NOT land
+  // on an exact line multiple — proves the splitter actually backs off to the
+  // nearest newline rather than the clamp coincidentally landing clean.
+  const LINE = 'A'.repeat(136) + '\n';
+  const fileAContent = LINE.repeat(5000); // 685,000 bytes — well over chunkMaxBytes, well under 1MB alone.
+  await seedCapture(vaultDir, 'windowbigproj', '2026-01-01.md', fileAContent);
+  // Second file: together with the first, exceeds the 1MB assembly ceiling —
+  // must never even enter `transcript` (unchanged legacy guard).
+  await seedCapture(vaultDir, 'windowbigproj', '2026-01-02.md', 'B'.repeat(700 * 1024));
+
+  let capturedTranscript = '';
+  const spySummarizeFn = async (transcript) => {
+    capturedTranscript = transcript;
+    return { summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 };
+  };
+
+  const result = await doCheckpoint(
+    { project: 'windowbigproj', since: '2026-01-01T00:00:00Z', until: '2026-01-02T23:59:59Z' },
+    {
+      config: BASE_CONFIG,
+      vaultDir,
+      summarizeFn: spySummarizeFn,
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true, 'either the 1MB assembly ceiling or the chunkMaxBytes clamp must set truncated:true');
+  assert.ok(!capturedTranscript.includes('B'), 'the second file must be excluded once the running total would exceed 1MB');
+
+  const chunkMaxBytes = 200_000; // resolveChunkingConfig's shipped default (BASE_CONFIG sets no override)
+  const capturedBytes = Buffer.byteLength(capturedTranscript, 'utf8');
+  assert.ok(capturedBytes <= chunkMaxBytes, `I2: summarize input must never exceed chunkMaxBytes, got ${capturedBytes}`);
+  assert.ok(capturedBytes < fileAContent.length, 'the full 685,000-byte window must actually have been clamped, not passed through');
+  // Clean-boundary: the clamp backs off to the last newline strictly under
+  // the limit, so the captured transcript is exactly N whole lines — never a
+  // line sliced mid-'A'.
+  assert.equal(capturedTranscript, LINE.repeat(1459), 'must be cut at the last full line under chunkMaxBytes, not mid-line');
+  assert.ok(capturedTranscript.endsWith('\n'), 'a clean-boundary cut always ends on a full line');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -838,6 +1031,102 @@ test('checkpoint: reindex retries 3x on transient failure with backoff timing >=
   // 100 + 200 + 400 = 700ms minimum (no jitter floor); allow some slack
   assert.ok(elapsed >= 700,
     `retry budget should enforce >= 700ms total wait, got ${elapsed}ms`);
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// §4.7 / §8 NEW pin: a summarizer throw with 0 chunks committed this run is
+// now a structured UPSTREAM_FAILURE (502) — the `summarize` stage disambiguates
+// it from the reindex-exhausted 502. Pre-PR-1 this path had NO catch at all
+// (the throw propagated uncaught to a generic 500); no test ever pinned that
+// accident, so this is new coverage, not a changed pin.
+test('checkpoint: summarizer throw with 0 chunks committed -> structured UPSTREAM_FAILURE (502), §4.7 new pin', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'summarizer-throw-proj', '2026-01-01.md', '# Session\nSome content.');
+
+  const captured = _attachLogCapture();
+  let result;
+  try {
+    result = await doCheckpoint(
+      { project: 'summarizer-throw-proj' },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: async () => { throw new Error('provider exploded'); },
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+      },
+    );
+  } finally {
+    _detachLogCapture();
+  }
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'UPSTREAM_FAILURE', `expected UPSTREAM_FAILURE, got: ${JSON.stringify(result.error)}`);
+  assert.equal(result.error?.stage, 'summarize', 'stage disambiguates from the reindex-exhausted 502');
+  assert.match(result.error?.message ?? '', /provider exploded/);
+
+  // HTTP mapping: 502, with stage/provider_class passed through untouched.
+  const res = mockRes();
+  await handleCheckpointRequest(
+    { body: { project: 'summarizer-throw-proj' } },
+    res,
+    { writesEnabled: true, _doCheckpoint: async () => result },
+  );
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.jsonBody.error.code, 'UPSTREAM_FAILURE');
+  assert.equal(res.jsonBody.error.stage, 'summarize');
+
+  // capture.checkpoint outcome=failed is the new additive counter value (§4.7).
+  const evt = captured.find((l) => l.event === 'capture.checkpoint' && l.project === 'summarizer-throw-proj');
+  assert.ok(evt, 'capture.checkpoint event must be emitted on a summarizer failure');
+  assert.equal(evt.outcome, 'failed');
+
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+// §4.7: the flip side of the pin above — a summarizer throw AFTER >=1 chunk
+// already committed this run must NOT lose that committed work behind an
+// error envelope. 200 partial, stopped:{reason:'provider_failure'} (or
+// 'provider_ratelimit' for a ProviderError classed PROVIDER_RATELIMIT).
+test('checkpoint: summarizer throw after 1 committed chunk -> 200 partial, stopped:provider_failure', async () => {
+  const vaultDir = await makeVault();
+  // Filler sized above checkpoint-config.mjs's resolvePositiveInt `min:1024`
+  // floor for chunk_max_bytes — a smaller configValue silently falls through
+  // to the 200_000 shipped default instead of being honored.
+  const t1 = '## 2026-01-01T00:00:01.000Z user\n' + 'a'.repeat(1000) + '\n\n';
+  const t2 = '## 2026-01-01T00:00:02.000Z assistant\n' + 'b'.repeat(1000) + '\n\n';
+  await seedCapture(vaultDir, 'partial-ratelimit-proj', '2026-01-01.md', t1 + t2);
+
+  // chunk_max_bytes sized so t1 alone fills a chunk but t1+t2 doesn't — two
+  // chunks, one turn each, deterministically.
+  const chunkMaxBytes = Buffer.byteLength(t1, 'utf8') + 20;
+
+  let calls = 0;
+  const summarizeFn = async () => {
+    calls += 1;
+    if (calls === 1) return { summary: 'first chunk summary', costUsd: 0.001, tokensIn: 10, tokensOut: 5 };
+    const { ProviderError } = await import('../lib/provider/errors.mjs');
+    throw new ProviderError({ class: 'PROVIDER_RATELIMIT', provider: 'openai', status: 429, message: 'rate limited', retryable: true });
+  };
+
+  const result = await doCheckpoint(
+    { project: 'partial-ratelimit-proj' },
+    {
+      config: { ...BASE_CONFIG, chunk_max_bytes: chunkMaxBytes, max_chunks_per_run: 5 },
+      vaultDir,
+      summarizeFn,
+      updateStateFn: makeUpdateStateFn(),
+      reindexFn: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true, `partial success must stay ok:true, got: ${JSON.stringify(result)}`);
+  assert.equal(result.chunks_done, 1, 'exactly the first chunk committed before the throw');
+  assert.equal(result.backlog_remaining, true);
+  assert.equal(result.stopped?.reason, 'provider_ratelimit', `expected provider_ratelimit, got: ${JSON.stringify(result.stopped)}`);
+  assert.ok(result.summary_id, 'the one committed chunk still reports a real summary_id');
+  assert.equal(calls, 2, 'summarizeFn called for both the committed chunk and the throwing one');
 
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
@@ -931,7 +1220,7 @@ test('checkpoint: lockdir-migrated path serializes concurrent calls cleanly', as
 // This test catches the 'new URL("../../", import.meta.url)' = "/" regression in Docker.
 test('checkpoint: default config path resolves correctly (no ctx.config — Docker-safe path fix)', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'defaultcfg-proj', '2026-01-01T00.md', '# Session\nDefault config test.');
+  await seedCapture(vaultDir, 'defaultcfg-proj', '2026-01-01.md', '# Session\nDefault config test.');
 
   // Do NOT pass ctx.config — doCheckpoint must read the real checkpoint.json from disk
   const result = await doCheckpoint(
@@ -958,7 +1247,7 @@ test('checkpoint: default config path resolves correctly (no ctx.config — Dock
 // so reindexDoc can parse type/id/title and index into mem0.
 test('checkpoint: summary file written to disk starts with YAML frontmatter', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'fm-proj', '2026-01-01T00.md', '# Session\nFrontmatter test.');
+  await seedCapture(vaultDir, 'fm-proj', '2026-01-01.md', '# Session\nFrontmatter test.');
 
   const result = await doCheckpoint(
     { project: 'fm-proj' },
@@ -987,7 +1276,7 @@ test('checkpoint: summary file written to disk starts with YAML frontmatter', as
 // that reindexDoc checks: fm.type, fm.id, fm.title must all be present and truthy.
 test('checkpoint: frontmatter satisfies reindexDoc required fields (type, id, title)', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'reindex-fm-proj', '2026-01-01T00.md', '# Session\nReindex frontmatter test.');
+  await seedCapture(vaultDir, 'reindex-fm-proj', '2026-01-01.md', '# Session\nReindex frontmatter test.');
 
   // Spy: capture whatever the reindexFn receives so we can read the file ourselves
   let capturedPath = null;
@@ -1028,7 +1317,7 @@ test('checkpoint: frontmatter satisfies reindexDoc required fields (type, id, ti
 // Omit ctx.systemPrompt so doCheckpoint reads DEFAULT_SUMMARIZE_PROMPT_PATH from disk.
 test('checkpoint: default summarize prompt path resolves correctly (no ctx.systemPrompt — Docker-safe)', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'defaultprompt-proj', '2026-01-01T00.md', '# Session\nDefault prompt test.');
+  await seedCapture(vaultDir, 'defaultprompt-proj', '2026-01-01.md', '# Session\nDefault prompt test.');
 
   // Omit ctx.systemPrompt — doCheckpoint must find the file at server/config/prompts/summarize.txt
   const result = await doCheckpoint(
@@ -1065,7 +1354,7 @@ test('checkpoint: default summarize prompt path resolves correctly (no ctx.syste
 // no-op). Skip on win32; the lstat-refusal layer covers cross-platform.
 test('checkpoint: O_NOFOLLOW rejects symlink at state.md.tmp path (kernel-level defense)', { skip: process.platform === 'win32' }, async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'symswap-proj', '2026-01-01T00.md', '# Session\nWork.');
+  await seedCapture(vaultDir, 'symswap-proj', '2026-01-01.md', '# Session\nWork.');
 
   const outside = tempDir('um-ck-out-');
   try {
@@ -1129,7 +1418,7 @@ test('F1: checkpoint with missing project writes under "default" (env unset)', a
   const prev = process.env.UM_DEFAULT_PROJECT;
   delete process.env.UM_DEFAULT_PROJECT;
   try {
-    await seedCapture(vaultDir, 'default', '2026-05-10T00.md', '# Session\nF1 probe.');
+    await seedCapture(vaultDir, 'default', '2026-05-10.md', '# Session\nF1 probe.');
     const result = await doCheckpoint(
       {}, // project omitted
       {
@@ -1155,7 +1444,7 @@ test('F1: checkpoint honors UM_DEFAULT_PROJECT env on the falsy arm', async () =
   const prev = process.env.UM_DEFAULT_PROJECT;
   process.env.UM_DEFAULT_PROJECT = 'env-bucket';
   try {
-    await seedCapture(vaultDir, 'env-bucket', '2026-05-10T00.md', '# Session\nF1 env probe.');
+    await seedCapture(vaultDir, 'env-bucket', '2026-05-10.md', '# Session\nF1 env probe.');
     const result = await doCheckpoint(
       { project: '' }, // empty string → falsy arm
       {
@@ -1210,7 +1499,7 @@ test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () 
 for (const flagValue of ['false', ' false ', '\tfalse\n']) {
   test(`D3.3 flag-off: UM_AUTOSUPERSEDE_ENABLED=${JSON.stringify(flagValue)} → detector NOT invoked, checkpoint ok:true`, async () => {
     const vaultDir = await makeVault();
-    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 flag-off probe.');
+    await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nD3.3 flag-off probe.');
 
     const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
     process.env.UM_AUTOSUPERSEDE_ENABLED = flagValue;
@@ -1250,7 +1539,7 @@ for (const flagValue of [undefined, '', 'true', '0', 'FALSE', 'yes']) {
   const label = flagValue === undefined ? 'undefined' : JSON.stringify(flagValue);
   test(`D3.3 flag default-on: UM_AUTOSUPERSEDE_ENABLED=${label} → detector INVOKED, checkpoint ok:true`, async () => {
     const vaultDir = await makeVault();
-    await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.3 default-on probe.');
+    await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nD3.3 default-on probe.');
 
     const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
     if (flagValue === undefined) {
@@ -1293,7 +1582,7 @@ for (const flagValue of [undefined, '', 'true', '0', 'FALSE', 'yes']) {
 // summary file on disk contains the digest; reindexFn called AFTER supersession.
 test('D3.2 flag-on: detector called, supersede called, digest in file, reindex runs after', async () => {
   const vaultDir = await makeVault();
-  await seedCapture(vaultDir, 'myproj', '2026-01-01T00.md', '# Session\nD3.2 flag-on probe.');
+  await seedCapture(vaultDir, 'myproj', '2026-01-01.md', '# Session\nD3.2 flag-on probe.');
 
   const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
   process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
@@ -1563,8 +1852,18 @@ test('#185: turn counting matches append-turn headers (incl. conversation_id), w
 test('#185: floor of 0 disables the gate (config opt-out preserves old behavior)', async () => {
   const vaultDir = await makeVault();
   try {
-    // BASE_CONFIG carries no floors → explicit 0s here; empty transcript stores
-    // (the pre-#185 behavior, now an operator choice instead of the default).
+    // BASE_CONFIG carries no floors → explicit 0s here; a transcript that
+    // trims to 0 bytes / 0 turns still stores (the pre-#185 behavior, now an
+    // operator choice instead of the default). Task 6 fixture note: this
+    // must seed a REAL (if whitespace-only) raw file, not leave the project
+    // captures-free — the cursor architecture's buildNextChunk treats "no
+    // pending raw files at all" as `exhausted` unconditionally (§4.6: it
+    // reads identically to the abstention envelope regardless of floor
+    // config, since there is no content to evaluate ANY floor against — see
+    // the "no captures dir" abstention test above). A present-but-thin file
+    // is what actually exercises the floor-disable path through the #185
+    // gate itself.
+    await seedCapture(vaultDir, 'optoutproj', '2026-01-01.md', '   \n\n  \n');
     const result = await doCheckpoint(
       { project: 'optoutproj' },
       {
@@ -1583,12 +1882,21 @@ test('#185: floor of 0 disables the gate (config opt-out preserves old behavior)
   }
 });
 
+// Task-6 review round 2 IMPORTANT 1: this test previously seeded NO raw
+// captures at all for 'envproj' — under the cursor architecture that reads
+// as `exhausted` unconditionally (the SAME abstention envelope regardless of
+// floor config, see the "no captures dir" test above), so the assertion
+// passed even with the env vars deleted — vacuous, not proving env-beats-
+// config at all. Fixed the same way as its 'optoutproj' sibling just above:
+// seed a REAL whitespace-only file so there's an actual chunk for the #185
+// gate to evaluate the (env-overridden) floors against.
 test('#185: env overrides beat config floors (UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES/TURNS)', async () => {
   const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'envproj', '2026-01-01.md', '   \n\n  \n');
   const savedBytes = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES;
   const savedTurns = process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS;
   try {
-    // Config disables the gate; env re-arms it → empty transcript must abstain.
+    // Config disables the gate; env re-arms it → thin content must abstain.
     process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES = '500';
     process.env.UM_CHECKPOINT_MIN_TRANSCRIPT_TURNS = '2';
     const result = await doCheckpoint(

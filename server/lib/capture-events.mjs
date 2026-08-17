@@ -199,7 +199,7 @@ export function surfaceFromHeaders(headers, fallback = 'unknown') {
  * @param {string} evt.event     - Pinned name (CAPTURE_EVENTS.*) — required; no-op when absent.
  * @param {string} [evt.surface] - Capture surface; absent ⇒ 'unknown' (spec §6).
  * @param {string} [evt.project] - Project slug; absent ⇒ '' (spec §6: '' where inapplicable).
- * @param {string} [evt.outcome] - stored|abstained|deduped|superseded|error; absent ⇒ ''.
+ * @param {string} [evt.outcome] - stored|abstained|deduped|superseded|error|failed; absent ⇒ ''.
  */
 export function recordCaptureEvent({ surface, project, event, outcome } = {}) {
   try {

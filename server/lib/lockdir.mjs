@@ -21,7 +21,12 @@ import { rmdirSync, statSync, statfsSync } from 'node:fs';
 
 const HELD = new Set();
 const DEFAULT_STALE_MS = 10 * 60_000;
-const DEFAULT_LOW_DISK_STALE_MS = 2 * 60_000;
+// Exported (additive, Task 8 / spec §9 I6(a)): the checkpoint chunking arc's
+// whole-run lock heartbeat (checkpoint-config.mjs's HEARTBEAT_INTERVAL_MS)
+// must stay strictly below this value by import, so a future default bump on
+// either side fails that pin's own test rather than silently reopening the
+// stale-takeover race under low disk.
+export const DEFAULT_LOW_DISK_STALE_MS = 2 * 60_000;
 const DEFAULT_LOW_DISK_BYTES = 100 * 1024 * 1024;
 
 // Transient, RETRYABLE mkdir(2) failures (distinct from EEXIST = lock currently

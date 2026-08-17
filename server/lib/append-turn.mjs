@@ -89,10 +89,11 @@ export async function doAppendTurn(args, ctx = {}) {
   }
 
   // C.8 (§4.2): typeof-string guard — Date.parse() coerces numeric/boolean
-  // inputs to ms-since-epoch which silently shifts the date prefix and breaks
-  // since/until windowing across Node major releases. Hard-fail at the lib
-  // boundary with stable code:'INPUT_INVALID' so the HTTP layer maps to 400
-  // via the unified envelope (B.13).
+  // inputs to ms-since-epoch, which would silently corrupt the turn header's
+  // ISO content truth (and, pre-§4.3b, the file-date prefix itself) across
+  // Node major releases. Hard-fail at the lib boundary with stable
+  // code:'INPUT_INVALID' so the HTTP layer maps to 400 via the unified
+  // envelope (B.13).
   if (timestamp !== undefined && timestamp !== null && typeof timestamp !== 'string') {
     return {
       schema_version: 1,
@@ -101,15 +102,26 @@ export async function doAppendTurn(args, ctx = {}) {
       code: 'INPUT_INVALID',
     };
   }
-  const now = timestamp ? new Date(timestamp) : clock();
-  if (Number.isNaN(now.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp', code: 'INPUT_INVALID' };
+  // §4.3b (checkpoint chunked-summarization spec): file PLACEMENT always uses
+  // the server date — never the client-supplied timestamp's date. The
+  // checkpoint cursor's lexical file-order semantics (§4.1) require day
+  // files to be append-monotonic; deriving placement from the client
+  // timestamp let a session flushing just after midnight UTC write
+  // yesterday-dated turns into yesterday's file, which can sit below an
+  // already-advanced cursor = silent loss. `serverNow` alone drives
+  // placement; the turn HEADER keeps the client-supplied ISO (headerNow) as
+  // content truth, unchanged. When no timestamp is supplied both coincide
+  // (single clock() call, as before).
+  const serverNow = clock();
+  const headerNow = timestamp ? new Date(timestamp) : serverNow;
+  if (Number.isNaN(headerNow.getTime())) return { schema_version: 1, ok: false, error: 'invalid timestamp', code: 'INPUT_INVALID' };
   // Fix 2: reject timestamps outside safe year range to prevent dash-prefixed filenames + broken since/until
-  const year = now.getUTCFullYear();
+  const year = headerNow.getUTCFullYear();
   if (year < 1970 || year > 9999) {
     return { schema_version: 1, ok: false, error: `timestamp year ${year} out of range (1970-9999)`, code: 'INPUT_INVALID' };
   }
 
-  const date = now.toISOString().slice(0, 10);
+  const date = serverNow.toISOString().slice(0, 10);
   const relPath = `captures/${effectiveProject}/raw/${date}.md`;
   const absPath = path.join(vaultDir, relPath);
   await fs.mkdir(path.dirname(absPath), { recursive: true });
@@ -119,8 +131,8 @@ export async function doAppendTurn(args, ctx = {}) {
   // <content>
   // <blank line>
   const header = conversation_id
-    ? `## ${now.toISOString()} ${role} (conversation_id: ${conversation_id})`
-    : `## ${now.toISOString()} ${role}`;
+    ? `## ${headerNow.toISOString()} ${role} (conversation_id: ${conversation_id})`
+    : `## ${headerNow.toISOString()} ${role}`;
   const payload = `${header}\n${content}\n\n`;
 
   // Cross-process advisory lock via sibling `.lockdir` (atomic mkdir).

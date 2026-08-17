@@ -531,21 +531,55 @@ const SCHEMAS = {
       {
         type: 'object',
         title: 'CheckpointSuccess',
-        required: ['schema_version', 'ok', 'summary_id', 'summary_path', 'state_updated', 'cost_usd', 'tokens_in', 'tokens_out', 'duration_ms'],
+        description: 'Chunked-checkpoint result (spec §4.6). One run digests at most max_chunks_per_run chunks of the pending backlog; backlog_remaining:true means the cursor has more to digest — repeat the call (or the next session-end) to continue draining.',
+        required: ['schema_version', 'ok', 'summary_id', 'summary_path', 'state_updated', 'cost_usd', 'tokens_in', 'tokens_out', 'duration_ms', 'chunks_done', 'backlog_remaining'],
         properties: {
           schema_version: { type: 'integer', enum: [1] },
           ok: { type: 'boolean', enum: [true] },
-          summary_id: { type: 'string', description: 'Filename stem of the written session summary' },
-          summary_path: { type: 'string', description: 'Vault-relative path of the written session summary' },
+          summary_id: {
+            oneOf: [{ type: 'string' }, { type: 'null' }],
+            description: "Filename stem of the last committed chunk's session summary this run. Null when zero chunks committed (e.g. the run stopped on raw_lock or cost_cap before any chunk committed).",
+          },
+          summary_path: {
+            oneOf: [{ type: 'string' }, { type: 'null' }],
+            description: "Vault-relative path of the last committed chunk's session summary this run. Null when zero chunks committed.",
+          },
           state_updated: { type: 'boolean', description: 'Whether state.md was updated' },
           state_path: {
             oneOf: [{ type: 'string' }, { type: 'null' }],
             description: 'Vault-relative path of state.md, or null when skip_state_merge=true',
           },
-          cost_usd: { type: 'number', description: 'Total LLM cost in USD for this checkpoint' },
-          tokens_in: { type: 'integer', description: 'Total input tokens consumed' },
-          tokens_out: { type: 'integer', description: 'Total output tokens produced' },
+          cost_usd: { type: 'number', description: 'Total LLM cost in USD, summed across every chunk committed this run' },
+          tokens_in: { type: 'integer', description: 'Total input tokens consumed, summed across every chunk committed this run' },
+          tokens_out: { type: 'integer', description: 'Total output tokens produced, summed across every chunk committed this run' },
           duration_ms: { type: 'integer', minimum: 0, description: 'Wall-clock duration in milliseconds' },
+          chunks_done: { type: 'integer', minimum: 0, description: 'Count of chunks durably committed this run.' },
+          backlog_remaining: {
+            type: 'boolean',
+            description: 'True when pending backlog remains after this run — repeat the call (or the next session-end) to keep draining; false when the digest is caught up.',
+          },
+          thin_tail: {
+            type: 'boolean',
+            enum: [true],
+            description: 'True only when a thin end-of-corpus tail followed at least one committed chunk this run. The tail itself was not summarized; it digests once more content arrives.',
+          },
+          stopped: {
+            type: 'object',
+            description: 'Present when the run stopped before exhausting the backlog for a reason other than a caught-up finish. Open enum — new reason values are additive.',
+            required: ['reason'],
+            properties: {
+              reason: {
+                type: 'string',
+                description: 'Why the run stopped short. Documented: raw_lock (next raw file locked by another writer), cost_cap (daily cost cap hit mid-run), provider_ratelimit / provider_failure (summarizer failed after >=1 chunk committed), chunk_cap (max_chunks_per_run reached, backlog remains). Open enum — additive.',
+              },
+            },
+          },
+          truncated: {
+            type: 'boolean',
+            enum: [true],
+            deprecated: true,
+            description: 'Deprecated alias of backlog_remaining (or, in windowed since/until mode, the legacy 1MB transcript-assembly cap). Removal tracked in #247 — read backlog_remaining instead.',
+          },
         },
       },
       {
@@ -561,6 +595,22 @@ const SCHEMAS = {
               code: { type: 'string', pattern: '^(AUTH|INPUT|STATE|LIMIT|UPSTREAM|SERVER)_' },
               message: { type: 'string' },
               retryable: { type: 'boolean' },
+              stage: {
+                type: 'string',
+                description: 'Which pipeline stage failed. Open enum — documented: summarize (0-chunk summarizer failure), reindex (post-commit reindex exhausted retries), cursor_write (cursor persist failed, e.g. ENOSPC). Additive.',
+              },
+              provider_class: {
+                type: 'string',
+                description: 'Summarizer failure class, present alongside stage:"summarize". Open enum — documented: ratelimit, config, upstream. Additive.',
+              },
+              summary_id: {
+                type: 'string',
+                description: 'Filename stem of the durably-written summary whose reindex failed. Present alongside stage:"reindex" — the doc committed but its index write did not.',
+              },
+              summary_path: {
+                type: 'string',
+                description: 'Vault-relative path of the durably-written summary whose reindex failed. Present alongside stage:"reindex"; retry via a per-doc /api/reindex.',
+              },
             },
             required: ['code', 'message', 'retryable'],
           },
@@ -1078,6 +1128,18 @@ function pathCheckpoint() {
         403: {
           ...ERROR_RESPONSE,
           description: 'Writes disabled (UM_MCP_WRITE_ENABLED not set)',
+        },
+        // Task 8: these two codes are live behavior today (mem0-mcp-http.mjs's
+        // handleCheckpointRequest, spec §8's pinned-behavior table) but were
+        // never declared here — a pre-existing doc/reality gap. See
+        // CheckpointFailure for the shared error-object shape.
+        502: {
+          ...ERROR_RESPONSE,
+          description: 'Upstream failure (UPSTREAM_FAILURE): summarizer failed with zero chunks committed this run, or a post-commit reindex exhausted its retries. `stage`/`provider_class` on the error object disambiguate; a reindex failure also carries `summary_id`/`summary_path` for the drain\'s per-doc retry.',
+        },
+        503: {
+          ...ERROR_RESPONSE,
+          description: 'State lock contention (STATE_LOCK_CONTENTION): a concurrent checkpoint already holds this project\'s state.md lock during the two-phase summary write. Safe to retry.',
         },
         ...RESP_500,
       },

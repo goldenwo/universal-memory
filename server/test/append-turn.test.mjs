@@ -119,18 +119,66 @@ test('doAppendTurn rejects unknown role', async () => {
 
 // ---------- timestamp + conversation_id ----------
 
-test('doAppendTurn honors explicit timestamp arg', async () => {
+// §4.3b: placement (the day-file the turn lands in) uses the server date,
+// never the client-supplied timestamp's date — the header keeps the client
+// ISO as content truth. Updated per spec §4.3b (was pinning
+// placement-by-timestamp; strengthened to assert the new invariant instead
+// of deleting the coverage).
+test('doAppendTurn honors explicit timestamp in the turn header; placement is server-date per §4.3b', async () => {
   const vault = await makeTempVault();
   const result = await doAppendTurn({
     project: 'ts-proj',
     content: 'explicit ts',
     role: 'user',
     timestamp: '2025-01-15T08:30:00Z',
-  }, { vaultDir: vault });
+  }, { vaultDir: vault, clock: () => new Date('2026-04-22T12:00:00Z') });
   assert.equal(result.ok, true);
-  assert.match(result.path, /2025-01-15\.md$/);
+  // Placement: server (injected clock) date, NOT the client timestamp's date.
+  assert.match(result.path, /2026-04-22\.md$/);
   const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  // Header: client ISO preserved as content truth, unchanged.
   assert.match(on_disk, /2025-01-15T08:30:00\.000Z/);
+});
+
+// §4.3b load-bearing regression test: the cursor's lexical file-order
+// semantics (§4.1) require day files to be append-monotonic. Before this
+// fix, a session flushing just after midnight UTC with a client timestamp
+// still dated "yesterday" would write into yesterday's file — which can sit
+// below an already-advanced checkpoint cursor = silent loss. Placement must
+// always follow the server clock.
+test('§4.3b: yesterday client timestamp lands in TODAY server-date file; header keeps client ISO', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'placement-proj',
+    content: 'flushed just after midnight',
+    role: 'user',
+    timestamp: '2026-04-21T23:00:00Z', // yesterday relative to the injected clock
+  }, { vaultDir: vault, clock: () => new Date('2026-04-22T00:40:00Z') });
+
+  assert.equal(result.ok, true);
+  assert.match(result.path, /^captures\/placement-proj\/raw\/2026-04-22\.md$/);
+
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /^## 2026-04-21T23:00:00\.000Z user$/m);
+});
+
+// §4.3b: symmetric case — a future-dated client timestamp must not cause
+// placement to "jump ahead" either; the file order == write order invariant
+// requires placement to track the server clock in both directions.
+test('§4.3b: future client timestamp also lands in TODAY server-date file', async () => {
+  const vault = await makeTempVault();
+  const result = await doAppendTurn({
+    project: 'placement-proj',
+    content: 'backfilled from the future',
+    role: 'user',
+    timestamp: '2026-04-25T00:00:00Z', // future relative to the injected clock
+  }, { vaultDir: vault, clock: () => new Date('2026-04-22T12:00:00Z') });
+
+  assert.equal(result.ok, true);
+  assert.match(result.path, /^captures\/placement-proj\/raw\/2026-04-22\.md$/);
+
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /^## 2026-04-25T00:00:00\.000Z user$/m);
 });
 
 test('doAppendTurn stores conversation_id in turn header', async () => {
@@ -294,14 +342,20 @@ test('conversation_id at 255 bytes accepted', async () => {
   assert.equal(result.ok, true, `expected ok=true at 255-byte conversation_id, got error: ${result.error}`);
 });
 
-test('timestamp year 1970 accepted (epoch boundary)', async () => {
+// Placement pin updated per spec §4.3b: file order must equal write order for
+// cursor safety, so the epoch-boundary client timestamp is still validated
+// (accepted) but no longer determines placement — the server date does.
+test('timestamp year 1970 accepted (epoch boundary); placement is server-date per §4.3b', async () => {
   const vault = await makeTempVault();
   const result = await doAppendTurn(
     { project: 'p', content: 'epoch', role: 'user', timestamp: '1970-01-01T00:00:00Z' },
-    { vaultDir: vault },
+    { vaultDir: vault, clock: () => new Date('2026-04-22T12:00:00Z') },
   );
   assert.equal(result.ok, true, `expected ok=true for year 1970, got error: ${result.error}`);
-  assert.match(result.path, /1970-01-01\.md$/);
+  // §4.3b: placement uses the server date, not the validated-but-ancient client year.
+  assert.match(result.path, /2026-04-22\.md$/);
+  const on_disk = await fs.readFile(path.join(vault, result.path), 'utf8');
+  assert.match(on_disk, /1970-01-01T00:00:00\.000Z/);
 });
 
 test('timestamp year 1969 rejected', async () => {
@@ -419,6 +473,9 @@ test('doAppendTurn rejects object timestamp (typeof-string guard, §4.2)', async
   assert.equal(result.code, 'INPUT_INVALID');
 });
 
+// Clock injected (spec §4.3b: placement no longer follows the client
+// timestamp, so pinning the file date requires a fixed server clock — an
+// unpinned real clock would only pass by calendar-date coincidence).
 test('doAppendTurn accepts ISO 8601 string timestamp (positive case, §4.2)', async () => {
   const vault = await makeTempVault();
   const result = await doAppendTurn({
@@ -426,7 +483,7 @@ test('doAppendTurn accepts ISO 8601 string timestamp (positive case, §4.2)', as
     content: 'c',
     role: 'user',
     timestamp: '2026-04-24T12:00:00Z',
-  }, { vaultDir: vault });
+  }, { vaultDir: vault, clock: () => new Date('2026-04-24T18:00:00Z') });
   assert.equal(result.ok, true);
   assert.match(result.path, /2026-04-24\.md$/);
 });
