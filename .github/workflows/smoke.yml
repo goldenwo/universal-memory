@@ -111,13 +111,18 @@ jobs:
       # 2077 of the tree's 2170 tests. Those 90 need no secrets and pass clean;
       # they were simply never named.
       #
+      # ../cli/test/ added in #231: no CI glob ever ran the cli suites, which
+      # is exactly how two un-migrated mem0 getAll() call sites in
+      # cli/reindex.mjs survived to code review (round-1 CRITICAL). The cli
+      # suites are stub-based (no secrets, no docker; ~40 tests).
+      #
       # test/perf/ stays OUT deliberately: the C.10 perf-budget tests are
       # load-flaky on shared runners (they pass standalone). A timing assertion
       # on a noisy runner produces failures that teach nothing, and this job's
       # job is to be trustworthy enough that a red result means something.
       - name: Unit suite
         working-directory: server
-        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs test/red-controls/*.test.mjs
+        run: node --test test/*.test.mjs test/lint/*.test.mjs test/provider/*.test.mjs test/red-controls/*.test.mjs ../cli/test/*.test.mjs
 
   smoke:
     name: build + smoke
@@ -337,7 +342,9 @@ jobs:
           # assertions pass is the exact defect this change was written to fix,
           # and a gate that skips itself on failure repeats it one level up.
           suite_rc=0
-          node --test test/*.test.mjs test/lint/*.test.mjs test/red-controls/*.test.mjs || suite_rc=$?
+          # ../cli/test/ added in #231 — mirrors the deps-guard step (see the
+          # Unit-suite comment there for why the cli suites must be named).
+          node --test test/*.test.mjs test/lint/*.test.mjs test/red-controls/*.test.mjs ../cli/test/*.test.mjs || suite_rc=$?
 
           if [ ! -d "$TMPDIR" ]; then
             echo "::error::leak check could not run — temp root $TMPDIR is missing"

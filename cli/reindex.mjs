@@ -120,6 +120,7 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { ProviderError } from '../server/lib/provider/errors.mjs';
 import { umAdd } from '../server/lib/add.mjs';
+import { umGetAll } from '../server/lib/mem0-read.mjs';
 import { runPhase4Stamp, runPhase5Swap, runPhase6Verify } from './lib/swap.mjs';
 import { runPhase7Report } from './lib/archive.mjs';
 
@@ -769,7 +770,12 @@ export async function createVaultAdapter({ vaultDir, oldMemory, userId }) {
   let factCache = null;
   async function loadFactCache() {
     if (factCache != null) return factCache;
-    const all = await oldMemory.getAll({ userId });
+    // #231: native enumeration (mem0 3.x getAll rejects camelCase entity
+    // params and can never scope UM's payloads). Explicit 10000 limit: the
+    // old bare getAll silently capped at mem0's default 100 — a latent
+    // U2-class truncation for any corpus past 100 facts on this SNAPSHOT
+    // path; the reconciliation fixes it rather than preserving it.
+    const all = await umGetAll(oldMemory, { userId, limit: 10000 });
     const byId = new Map();
     for (const item of all?.results || all || []) {
       if (item?.id) byId.set(item.id, item);
@@ -811,7 +817,9 @@ export function wrapOldMemoryForReindex(memory, { userId, vaultPaths }) {
     get(target, prop, receiver) {
       if (prop === 'listFactIds') {
         return async () => {
-          const all = await target.getAll({ userId });
+          // #231: same native enumeration + explicit full-scan limit as
+          // loadFactCache above (the two must see the SAME point set).
+          const all = await umGetAll(target, { userId, limit: 10000 });
           const out = [];
           for (const item of all?.results || all || []) {
             const id = item?.id;

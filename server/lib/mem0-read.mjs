@@ -9,13 +9,13 @@
  * carried `user_id`). Two adapters keep UM's payload schema authoritative
  * WITHOUT any vault data migration:
  *
- * - searchConfig(): mem0 3.x's filter normalizer passes NON-entity keys
- *   through verbatim to the vector store, so `filters: { userId }` filters
- *   qdrant on UM's actual payload key. `topK` replaces 2.4.6's `limit`
- *   (which 3.x silently ignores → default 20), and `threshold: 0` disables
- *   3.x's NEW default relevance floor (0.1) — 2.4.6 had none, and relevance
- *   policy belongs to UM's own ranking pipeline (cf. the measured-negative
- *   score-floor result that parked PR #130 and the bouncer cost decision).
+ * - searchConfig(): the cfg shape read call sites emit ({filters:{userId},
+ *   topK}) — consumed by wrapMem0Read's translation into umSearch. No
+ *   threshold field: the native read applies none, restoring 2.4.6's
+ *   no-floor semantics (relevance policy belongs to UM's own ranking
+ *   pipeline — cf. the measured-negative score-floor result that parked
+ *   PR #130 and the bouncer cost decision; mem0 3.x's NEW default 0.1
+ *   floor never runs because mem0's search() is never invoked).
  *
  * - umGetAll(): 3.x getAll() HARD-REQUIRES a snake_case entity key in
  *   filters ("filters must contain at least one of: user_id, agent_id,
@@ -38,10 +38,11 @@ import { getRealClient } from './qdrant-client-resolver.mjs';
  * mem0 3.x search() config for a UM-scoped query.
  * @param {Object} args
  * @param {string} args.userId  UM operator id (camelCase payload key)
- * @param {number} [args.limit] page size; maps to 3.x `topK` (omit → mem0 default)
+ * @param {number} [args.limit] page size; maps to `topK` in the cfg (omit →
+ *   umSearch's 2.4.6-parity default of 100 applies at execution)
  */
 export function searchConfig({ userId, limit } = {}) {
-  const cfg = { filters: { userId }, threshold: 0 };
+  const cfg = { filters: { userId } };
   if (limit !== undefined) cfg.topK = limit;
   return cfg;
 }
@@ -57,18 +58,21 @@ const EXCLUDED_KEYS = new Set(['userId', 'agentId', 'runId', 'hash', 'data', 'cr
 
 /** mem0 2.4.6 result-entry projection, shared by umGetAll and umSearch. */
 function projectPoint(mem) {
+  // Guard like mem0's own projections (payload || {}): a payload-less point
+  // must degrade to sparse fields, never TypeError out of a read endpoint.
+  const payload = mem.payload || {};
   return {
     id: mem.id,
-    memory: mem.payload.data,
-    hash: mem.payload.hash,
-    createdAt: mem.payload.createdAt,
-    updatedAt: mem.payload.updatedAt,
-    metadata: Object.entries(mem.payload)
+    memory: payload.data,
+    hash: payload.hash,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+    metadata: Object.entries(payload)
       .filter(([key]) => !EXCLUDED_KEYS.has(key))
       .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {}),
-    ...(mem.payload.userId && { userId: mem.payload.userId }),
-    ...(mem.payload.agentId && { agentId: mem.payload.agentId }),
-    ...(mem.payload.runId && { runId: mem.payload.runId }),
+    ...(payload.userId && { userId: payload.userId }),
+    ...(payload.agentId && { agentId: payload.agentId }),
+    ...(payload.runId && { runId: payload.runId }),
   };
 }
 
@@ -108,20 +112,30 @@ export async function umGetAll(memory, { userId, limit = DEFAULT_LIMIT } = {}, {
  *
  * @param {Object} memory  mem0 Memory instance (embedder + vectorStore config)
  * @param {string} query
- * @param {Object} args    { userId, limit? }
+ * @param {Object} args    { userId, limit? } — limit defaults to 100 (2.4.6's
+ *                         search default; the qdrant client's own default is 10)
  * @param {Object} [deps]  DI seam for tests: { getClient }
  */
-export async function umSearch(memory, query, { userId, limit } = {}, { getClient = getRealClient } = {}) {
+export async function umSearch(memory, query, { userId, limit = DEFAULT_LIMIT } = {}, { getClient = getRealClient } = {}) {
   const vector = await memory.embedder.embed(query);
   const client = await getClient(memory);
   const collection = memory.config.vectorStore.config.collectionName;
+  // limit defaults to 2.4.6's search default (100) — NEVER omit the key:
+  // the qdrant client would apply its own default of 10 and silently
+  // shrink the candidate pool (round-1 code-review catch).
   const hits = await client.search(collection, {
     vector,
     filter: scopeFilter(userId),
-    ...(limit !== undefined && { limit }),
+    limit,
     with_payload: true,
   });
-  return { results: (hits ?? []).map((hit) => ({ ...projectPoint(hit), score: hit.score })) };
+  return {
+    // Data-less points never surface from search (parity with mem0's own
+    // search projection, which filters on payload?.data).
+    results: (hits ?? [])
+      .filter((hit) => hit.payload?.data)
+      .map((hit) => ({ ...projectPoint(hit), score: hit.score })),
+  };
 }
 
 /**

@@ -245,7 +245,7 @@ test('R3 search: over-fetch max(top_k*3,30), threshold drop, top_k truncate, mem
   assert.equal(memory.calls.search[0].query, 'lisbon');
   // #231 mem0ai 3.x seam: over-fetch max(2*3, 30) now rides searchConfig's topK,
   // with the operator scope in filters and threshold pinned at 0 (UM owns relevance).
-  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 30, threshold: 0 });
+  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 30 });
   assert.deepEqual(out.body.results.map((r) => r.id), ['s1', 's2']); // truncated to top_k
   // mem0-dialect projection from the REAL raw shape (top-level camelCase)
   const first = out.body.results[0];
@@ -263,7 +263,7 @@ test('R3 search: top_k default 10 → over-fetch limit 30; explicit threshold ho
   const out = await call('POST', '/v2/memories/search/', { query: 'q', threshold: 0.85 }, ctxOf({ memory }));
   // #231 mem0ai 3.x seam. The CALLER's threshold stays facade-side (applied to the
   // projected results below) — the engine call always carries threshold 0.
-  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 30, threshold: 0 });
+  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 30 });
   assert.deepEqual(out.body.results.map((r) => r.id), ['s1']);
 });
 
@@ -274,7 +274,7 @@ test('R3 search: oversized top_k clamps to 500 (mirrors the R4 page_size cap)', 
   // fetchLimit = max(clampedTopK*3, 30) = 1500 — attacker-supplied top_k
   // cannot drive unbounded over-fetch. #231 mem0ai 3.x seam: the ceiling now
   // rides topK (3.x ignores `limit` outright and would silently fall back to 20).
-  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 1500, threshold: 0 });
+  assert.deepEqual(memory.calls.search[0].opts, { filters: { userId: OP }, topK: 1500 });
 });
 
 test('R3 search: transient search failure retried to success (withRetry wrap)', async () => {

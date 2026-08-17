@@ -1,35 +1,36 @@
 /**
  * server/test/mem0-read.test.mjs — pins the #231 mem0ai-3.x read adapters.
  *
- * Two seams, both born from the 3.x API break (spec F15/F16):
- * - searchConfig(): 3.x rejects top-level entity params and silently ignores
- *   2.4.6's `limit` (renamed topK) + adds a default 0.1 relevance floor.
- *   UM's payloads keep camelCase `userId`, which 3.x's filter normalizer
- *   passes through verbatim — this test pins ALL THREE conversions so a
- *   future "simplification" (dropping threshold:0, renaming back to limit,
- *   snake_casing the filter key) fails loud instead of silently returning
- *   20 thresholded rows scoped to a key no UM point carries.
- * - umGetAll(): 3.x getAll() hard-requires snake_case filters that can never
- *   match UM's payloads, so enumeration is a native scroll projecting the
- *   EXACT 2.4.6 getAll shape. The projection contract (excluded keys,
- *   metadata nesting, conditional entity fields) is what doList/stats/
- *   compat/purge consumers were built against.
+ * The seams, all born from the 3.x API break (spec F15/F16/F18):
+ * - searchConfig(): the cfg shape call sites emit ({filters:{userId}, topK})
+ *   — translated by wrapMem0Read into umSearch. Pins the camel filter key
+ *   and the topK rename so a future "simplification" (renaming back to
+ *   limit, snake_casing the key) fails loud.
+ * - umSearch(): the native dense read (mem0 3.x's search validator can
+ *   never scope UM's camel payloads). Pins: embedder-driven vector, the
+ *   scope filter, the EXPLICIT limit key (omitted → 100, 2.4.6 parity —
+ *   never the qdrant client's own default of 10), payload guards, and the
+ *   data-less filter.
+ * - umGetAll(): native scroll projecting the EXACT 2.4.6 getAll shape. The
+ *   projection contract (excluded keys, metadata nesting, conditional
+ *   entity fields, payload-less degradation) is what doList/stats/compat/
+ *   purge consumers were built against.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { searchConfig, umGetAll, umSearch, wrapMem0Read } from '../lib/mem0-read.mjs';
 
-test('searchConfig: camel userId filter passthrough + topK rename + threshold 0 parity', () => {
+test('searchConfig: camel userId filter passthrough + topK rename (no threshold field — the native read has no floor)', () => {
   assert.deepEqual(
     searchConfig({ userId: 'op', limit: 25 }),
-    { filters: { userId: 'op' }, topK: 25, threshold: 0 },
+    { filters: { userId: 'op' }, topK: 25 },
   );
 });
 
-test('searchConfig: omitted limit stays omitted (mem0 default topK applies)', () => {
+test("searchConfig: omitted limit stays omitted (umSearch's 2.4.6-parity default applies at execution)", () => {
   assert.deepEqual(
     searchConfig({ userId: 'op' }),
-    { filters: { userId: 'op' }, threshold: 0 },
+    { filters: { userId: 'op' } },
   );
 });
 
@@ -105,6 +106,46 @@ test('umSearch: embeds via mem0\'s embedder, dense-searches on the camel userId 
       score: 0.87, metadata: { lane: 'work' }, userId: 'op',
     }],
   });
+});
+
+test('umSearch: omitted limit sends 100 (2.4.6 parity) — NEVER the qdrant client default of 10', async () => {
+  // Round-1 code-review catch: omitting the key entirely let the client's
+  // own default (10) silently shrink the candidate pool.
+  const memory = {
+    embedder: { embed: async () => [0.1] },
+    config: { vectorStore: { config: { host: 'h', port: 1, collectionName: 'c' } } },
+  };
+  const calls = [];
+  const client = { search: async (_c, args) => { calls.push(args); return []; } };
+  await umSearch(memory, 'q', { userId: 'op' }, { getClient: async () => client });
+  assert.equal(calls[0].limit, 100);
+});
+
+test('umSearch: payload-less and data-less hits degrade, never throw or surface', async () => {
+  const memory = {
+    embedder: { embed: async () => [0.1] },
+    config: { vectorStore: { config: { host: 'h', port: 1, collectionName: 'c' } } },
+  };
+  const client = {
+    search: async () => [
+      { id: 'p0', score: 0.9, payload: null },
+      { id: 'p1', score: 0.8, payload: { hash: 'h', userId: 'op' } },
+      { id: 'p2', score: 0.7, payload: { data: 'kept', userId: 'op' } },
+    ],
+  };
+  const out = await umSearch(memory, 'q', { userId: 'op' }, { getClient: async () => client });
+  // Only the data-bearing hit survives (mem0-search parity); the null-payload
+  // hit must not TypeError the whole read.
+  assert.deepEqual(out.results.map((r) => r.id), ['p2']);
+});
+
+test('umGetAll: a payload-less point projects sparse instead of throwing (enumeration keeps ALL rows)', async () => {
+  const client = {
+    scroll: async () => ({ points: [{ id: 'p0', payload: null }, { id: 'p1', payload: { data: 'd', userId: 'op' } }] }),
+  };
+  const out = await umGetAll(fakeMemory(), { userId: 'op' }, { getClient: async () => client });
+  assert.equal(out.results.length, 2);
+  assert.deepEqual(out.results[0], { id: 'p0', memory: undefined, hash: undefined, createdAt: undefined, updatedAt: undefined, metadata: {} });
 });
 
 test('wrapMem0Read: .search routes native (searchConfig args translated); everything else delegates', async () => {

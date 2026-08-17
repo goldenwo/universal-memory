@@ -44,6 +44,10 @@ const EXPECTED_MEMPATCH_LOGS = 1;
 // rather than a denylist that rots as upstream's provider set churns.
 const ALLOWED_STATIC_PACKAGES = new Set([
   'openai', 'axios', 'uuid', 'zod', 'better-sqlite3',
+  // Self-references: the fail-closed scanner also picks up `from "mem0ai/oss"`
+  // inside the bundle's own usage-hint STRINGS. The self-package is
+  // definitionally resolvable, so allowlisting it costs nothing.
+  'mem0ai',
 ]);
 
 // The legacy-qdrant guard's two contract regexes. Shared by the positive
@@ -85,30 +89,64 @@ test('patch applied at mem0ai@3.1.6 canonical counts (7 await-imports / 1 mem0-p
   );
 });
 
-test('allowlist: no top-level static import of any non-allowlisted bare package', () => {
-  const src = readSource();
-  // Whole import statements, including multi-line named blocks: `^import` at a
-  // line start through the closing `;`. Dynamic `await import(` never starts a
-  // line with `import\s`, so only static statements match.
-  const stmts = src.match(/^import\s[^;]*;/gm) || [];
+/**
+ * Every module specifier referenced by STATIC import/export syntax.
+ * FAIL-CLOSED scanner (round-1 code-review fold): rather than parsing whole
+ * statements (which failed open on `export … from`, semicolon-less
+ * statements, and multi-statement lines), collect every `from "<spec>"`
+ * clause — in JS that clause exists ONLY on static import/export-from
+ * syntax (dynamic `import("x")` has no `from`) — plus bare side-effect
+ * `import "<spec>"`. A string literal that happens to contain `from "pkg"`
+ * would be flagged for a human look, which is the correct failure
+ * direction for a gate.
+ */
+function collectStaticSpecifiers(src) {
+  const specs = [];
+  for (const m of src.matchAll(/\bfrom\s*["']([^'"\n]+)["']/g)) specs.push(m[1]);
+  for (const m of src.matchAll(/(?:^|[;\s])import\s*["']([^'"\n]+)["']/g)) specs.push(m[1]);
+  return specs;
+}
+
+/** Offending (non-allowlisted, non-builtin, non-relative) bare specifiers. */
+function allowlistOffenders(src) {
   const offenders = [];
-  for (const stmt of stmts) {
-    const m = stmt.match(/["']([^'"]+)["']\s*;$/);
-    if (!m) continue; // e.g. `import x = ...` shapes — none in this bundle
-    const spec = m[1];
+  for (const spec of collectStaticSpecifiers(src)) {
     if (spec.startsWith('.') || spec.startsWith('/')) continue; // relative
     const root = packageRoot(spec.replace(/^node:/, ''));
     if (builtinModules.includes(root)) continue;
-    if (!ALLOWED_STATIC_PACKAGES.has(packageRoot(spec))) {
-      offenders.push(stmt.replace(/\s+/g, ' ').slice(0, 120));
-    }
+    if (!ALLOWED_STATIC_PACKAGES.has(packageRoot(spec))) offenders.push(spec);
   }
+  return offenders;
+}
+
+test('allowlist: no static import/export-from of any non-allowlisted bare package', () => {
+  const offenders = allowlistOffenders(readSource());
   assert.deepEqual(
     offenders, [],
-    `non-allowlisted top-level static import(s) in mem0ai bundle — a mem0 bump ` +
+    `non-allowlisted static module reference(s) in mem0ai bundle — a mem0 bump ` +
     `re-added an eager import the image cannot satisfy. Re-derive the patch per ` +
-    `server/patches/README.md §Reconciliation:\n${offenders.join('\n')}`,
+    `server/patches/README.md §Reconciliation: ${offenders.join(', ')}`,
   );
+});
+
+test('red control: the allowlist scanner catches smuggled static imports in every syntax shape', () => {
+  // Mutation copies (string-level, no file writes): each shape the OLD
+  // statement-parsing scanner failed OPEN on must now be flagged.
+  const src = readSource();
+  const shapes = [
+    ['plain import', src + '\nimport { X } from "smuggled-provider";'],
+    ['export-from', src + '\nexport { Y } from "smuggled-provider";'],
+    ['semicolon-less', src + '\nimport Z from "smuggled-provider"\n'],
+    ['side-effect', src + '\nimport "smuggled-provider";'],
+  ];
+  for (const [label, mutated] of shapes) {
+    assert.ok(
+      allowlistOffenders(mutated).includes('smuggled-provider'),
+      `allowlist scanner FAILED to flag a ${label} of a non-allowlisted package — the gate fails open`,
+    );
+  }
+  // And the unmutated source stays clean (the control controls itself).
+  assert.deepEqual(allowlistOffenders(src), []);
 });
 
 test('pg hunk: fail-soft dynamic import with `let pkg = {}` init for the two-name destructure', () => {
