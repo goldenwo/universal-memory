@@ -567,7 +567,8 @@ test('R6 update: server-managed attribution/partition/supersession keys stripped
 // VF-R6 — valid_from is the ONLY field temporal query-resolution ranks on, and
 // handleUpdate bypasses buildPayload, so R6_PROTECTED_KEYS is the sole guard on
 // this path. Unprotected, a caller sets the ranking date at will; with
-// UM_TEMPORAL_DECAY on, a far-future value yields score Infinity. Protected
+// UM_TEMPORAL_DECAY on, a far-future value pins the factor at the #238 clamp's
+// cosine parity — an arbitrary rank date is still an arbitrary rank date. Protected
 // exactly as its sibling createdAt is — both branches, since sanitizeUpdateMetadata
 // feeds the upsert and the setPayload merge alike.
 test('R6 update: client metadata cannot clobber valid_from (re-embed branch)', async () => {

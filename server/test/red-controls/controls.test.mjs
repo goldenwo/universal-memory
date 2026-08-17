@@ -49,6 +49,9 @@ const TABLES = {
   window: {
     controls: ['RCW1', 'RCW2', 'RCW3', 'RCW4', 'RCW5'], cases: 11, subcases: 13, banner: 'window baseline',
   },
+  clamp: {
+    controls: ['RCC1'], cases: 3, subcases: 3, banner: 'clamp baseline',
+  },
 };
 
 function runControls() {
