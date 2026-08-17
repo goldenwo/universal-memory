@@ -54,6 +54,13 @@ write nothing.
 Every fire logs to `~/.um/hook.log` (`posted http=<code>` / `skip=<reason>` /
 `error=<reason>`) — capture problems are never silent.
 
+Checkpoint synthesis is chunked server-side (bounded input per call, regardless of backlog size), so
+a single `SessionEnd` fire (or `/um-checkpoint`) may leave `backlog_remaining: true` on a project
+with a large undigested backlog — the next fire simply resumes from a durable cursor and continues.
+For catching up many calls or many projects at once, see the operator tool `bin/um-drain.sh`
+(progressive drain: loops the same POST, with a cost estimate and confirm gate, until every project
+reports `backlog_remaining: false`).
+
 ## Configuration
 
 Endpoint resolution (first match wins):

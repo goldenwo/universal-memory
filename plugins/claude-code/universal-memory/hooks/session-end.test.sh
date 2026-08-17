@@ -124,7 +124,12 @@ code=$(sed -n "${count}p" "$CAP_DIR/codes" 2>/dev/null)
 if [ "$code" = "000" ]; then
   exit 7
 fi
-printf '{"ok":true}\n__UM_HTTP_CODE__%s' "$code"
+# Response body override (Task 11: stage-keyed 502 note tests need control
+# over the JSON body, not just the HTTP code) — default stays exactly
+# {"ok":true} so every pre-existing test's mock behavior is unchanged.
+resp_body=$(cat "$CAP_DIR/response_body" 2>/dev/null)
+[ -n "$resp_body" ] || resp_body='{"ok":true}'
+printf '%s\n__UM_HTTP_CODE__%s' "$resp_body" "$code"
 exit 0
 MOCK_EOF
 chmod +x "$MOCK_BIN/curl"
@@ -133,9 +138,16 @@ chmod +x "$MOCK_BIN/curl"
 # code sequence (one code per line; calls past the list get 200).
 reset_calls() {
   rm -f "$CAP_DIR"/url_* "$CAP_DIR"/body_* "$CAP_DIR"/args_* \
-        "$CAP_DIR/count" "$CAP_DIR/codes" "$CAP_DIR/sleep"
+        "$CAP_DIR/count" "$CAP_DIR/codes" "$CAP_DIR/sleep" "$CAP_DIR/response_body"
   local c
   for c in "$@"; do echo "$c" >> "$CAP_DIR/codes"; done
+}
+
+# set_response_body <json> — override the response body every mock curl call
+# in this test case serves (until the next reset_calls). Task 11: the
+# stage-keyed 502 note tests need to control error.stage in the body.
+set_response_body() {
+  printf '%s' "$1" > "$CAP_DIR/response_body"
 }
 
 call_count() { cat "$CAP_DIR/count" 2>/dev/null || echo 0; }
@@ -375,6 +387,69 @@ if wait_for_log "$H" "state-written-index-stale"; then
   pass "E8: partial-success note (state written, index stale)"
 else
   fail "E8: partial-success note (state written, index stale)" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# E9/E10/E11 (Task 11, checkpoint chunked summarization spec §4.7): the 502
+# note is now keyed off the response body's additive error.stage field, not
+# blanket-printed on every 502. E8 above (default mock body {"ok":true}, no
+# error object at all) already covers the THIRD case — legacy server, no
+# stage field — and still gets the note; these three make the other two
+# explicit and prove stage="summarize" suppresses it.
+# ===========================================================================
+echo "=== E9: 502 error.stage=reindex ⇒ note PRESENT (state written, index stale) ==="
+H=$(fresh_home e9)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 502
+set_response_body '{"ok":false,"error":{"code":"UPSTREAM_FAILURE","stage":"reindex","message":"reindex retries exhausted"}}'
+run_session_end "$H" "$STDIN"
+assert_eq "E9: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-502"; then
+  pass "E9: error=http-502 logged"
+else
+  fail "E9: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+if wait_for_log "$H" "state-written-index-stale"; then
+  pass "E9: note present for stage=reindex"
+else
+  fail "E9: note present for stage=reindex" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+echo "=== E10: 502 error.stage=summarize ⇒ note ABSENT (nothing was written) ==="
+H=$(fresh_home e10)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 502
+set_response_body '{"ok":false,"error":{"code":"UPSTREAM_FAILURE","stage":"summarize","provider_class":"ratelimit","message":"rate limited"}}'
+run_session_end "$H" "$STDIN"
+assert_eq "E10: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-502"; then
+  pass "E10: error=http-502 logged"
+else
+  fail "E10: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+if wait_for_log "$H" "stage=summarize"; then
+  pass "E10: stage=summarize logged plainly"
+else
+  fail "E10: stage=summarize logged plainly" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_not_contains "E10: NOT the partial-success note (nothing was written)" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "state-written-index-stale"
+
+echo "=== E11: 502 with an unparseable body ⇒ still degrades to the note (fail toward the safe legacy reading) ==="
+H=$(fresh_home e11)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 502
+set_response_body 'not valid json {'
+run_session_end "$H" "$STDIN"
+assert_eq "E11: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "state-written-index-stale"; then
+  pass "E11: unparseable body degrades to the note (same as absent stage)"
+else
+  fail "E11: unparseable body degrades to the note (same as absent stage)" \
     "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 

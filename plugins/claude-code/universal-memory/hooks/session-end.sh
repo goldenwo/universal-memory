@@ -18,9 +18,18 @@
 #     (same as stop.sh, spec §5 T3-review amendment): skip=writes-disabled
 #     (403, + G7 banner text), error=input-invalid (400), error=auth (401),
 #     skip=server-too-old (other non-403 4xx), error=http-<code> (5xx,
-#     000=unreachable + G7 banner text). Checkpoint-specific: 502
-#     UPSTREAM_FAILURE means state.md WAS written and only the vector index
-#     is stale — the log carries note=state-written-index-stale.
+#     000=unreachable + G7 banner text). Checkpoint-specific: a 502 means
+#     UPSTREAM_FAILURE, but its TWO possible meanings disambiguate on the
+#     response body's additive `error.stage` field (checkpoint chunked
+#     summarization spec §4.7): stage "reindex" (or ABSENT — a legacy
+#     pre-chunking server never sent stage at all, and for it every 502 WAS
+#     the reindex-exhausted case) means state.md WAS written and only the
+#     vector index is stale — the log carries note=state-written-index-stale.
+#     stage "summarize" means nothing was written at all (a 0-chunk
+#     summarizer failure) — logged plainly, no note. This requires the
+#     response BODY, not just $UM_API_HTTP_CODE — see the mktemp
+#     body-capture pattern below (um_api_post outside command substitution;
+#     UM_API_HTTP_CODE does not survive a subshell — bin/um-alert.sh:134-136).
 #   - Project = cwd basename, sanitized to [A-Za-z0-9._-] client-side
 #     (mirrors the server's PROJECT_SLUG_RE; unsanitized slugs 400).
 #   - Fail-open: the parent always exits 0 — CC session integrity beats
@@ -69,10 +78,28 @@ BODY="{\"project\":\"$PROJECT\"}"
 # test harness's command substitution) never waits on the child; um_log is
 # the child's only output channel. `disown` drops it from job control so a
 # parent-shell teardown can't HUP it mid-checkpoint.
+#
+# STRUCTURAL change (checkpoint chunked summarization spec §4.7): the body is
+# now captured to a temp file (um_api_post OUTSIDE command substitution —
+# UM_API_HTTP_CODE does not survive a subshell, same mktemp pattern
+# bin/um-alert.sh uses) instead of discarded via >/dev/null, so the 502
+# branch can read `error.stage` and disambiguate its two meanings. Every
+# other reason-taxonomy branch, and the detached + fail-open structure, are
+# unchanged byte-for-byte.
 # ---------------------------------------------------------------------------
 ENDPOINT=$(um_api_endpoint 2>/dev/null)
 (
-  if um_api_post '/api/checkpoint' "$BODY" 120 </dev/null >/dev/null 2>&1; then
+  # Review round 1, MINOR 2: a bare `mktemp` failure (disk full, unwritable
+  # TMPDIR) would leave CKPT_BODY_FILE empty; `> "$CKPT_BODY_FILE"` then
+  # redirects to "" and fails BEFORE um_api_post ever runs, so
+  # UM_API_HTTP_CODE is never set — under this script's `set -u`, the `case`
+  # below would hit an unbound-variable error and the child would exit with
+  # NOTHING logged. Fall back to /dev/null: the POST still fires and
+  # UM_API_HTTP_CODE still gets set; only the 502 stage-parse degrades (to
+  # the same safe "note present" reading an absent/legacy stage already
+  # gets), never a silent, unlogged death.
+  CKPT_BODY_FILE=$(mktemp 2>/dev/null) || CKPT_BODY_FILE=/dev/null
+  if um_api_post '/api/checkpoint' "$BODY" 120 > "$CKPT_BODY_FILE" 2>/dev/null </dev/null; then
     um_log "posted http=$UM_API_HTTP_CODE"
   else
     case "$UM_API_HTTP_CODE" in
@@ -97,15 +124,34 @@ ENDPOINT=$(um_api_endpoint 2>/dev/null)
         um_log "skip=server-too-old http=$UM_API_HTTP_CODE"
         ;;
       502)
-        # Checkpoint UPSTREAM_FAILURE: state.md WAS written; only the
-        # reindex/vector step failed — partial success, not a lost session.
-        um_log "error=http-502 note=state-written-index-stale"
+        # Two 502 meanings disambiguate on error.stage (spec §4.7):
+        #   "reindex" or ABSENT (legacy server, predates the field) ->
+        #     state.md WAS written; only the reindex/vector step failed ->
+        #     partial success, not a lost session -> the note.
+        #   "summarize" -> nothing was written at all (0-chunk summarizer
+        #     failure) -> logged plainly, no note.
+        CKPT_STAGE=$("$PY" -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    err = d.get("error") if isinstance(d.get("error"), dict) else {}
+    print(err.get("stage") or "")
+except Exception:
+    print("")
+' "$CKPT_BODY_FILE" 2>/dev/null)
+        if [ "$CKPT_STAGE" = "reindex" ] || [ -z "$CKPT_STAGE" ]; then
+          um_log "error=http-502 note=state-written-index-stale"
+        else
+          um_log "error=http-502 stage=$CKPT_STAGE"
+        fi
         ;;
       *)
         um_log "error=http-$UM_API_HTTP_CODE"
         ;;
     esac
   fi
+  # Never rm the /dev/null fallback itself (the mktemp-failure leg above).
+  [ "$CKPT_BODY_FILE" = "/dev/null" ] || rm -f "$CKPT_BODY_FILE"
 ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
