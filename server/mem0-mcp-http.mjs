@@ -96,7 +96,8 @@ import { noteTemporalQuery, noteRecallSearch } from './lib/recall-telemetry.mjs'
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
 import { isWriteEnabled } from './lib/write-enabled.mjs';
-// FULL_SCAN_LIMIT: owned by stats-payload.mjs (U2.5); imported back here for /health's own getAll call.
+// FULL_SCAN_LIMIT: owned by lib/mem0-read.mjs since #231 round-2 (re-exported
+// by stats-payload for its consumers); imported here for /health + delete-scan.
 import { buildStats, FULL_SCAN_LIMIT } from './lib/stats-payload.mjs';
 
 // ---------------------------------------------------------------------------
@@ -782,8 +783,11 @@ async function deleteByMetadataId(targetId) {
 	// R1 review A1, fix #1: thread op label so um_mem0_ops_total increments.
 	// #231: mem0 3.x getAll requires snake_case entity filters that can never
 	// match UM's camelCase payloads — enumeration goes native (lib/mem0-read).
+	// Round-2 review: FULL_SCAN_LIMIT, not the 100 default — past 100 points
+	// the delete-then-rewrite path silently left stale points (the same
+	// latent-cap class fixed on the cli reindex snapshot path).
 	const allMemories = await withRetry(() =>
-		umGetAll(memory, { userId: USER_ID }).catch((e) => { throw tagRetryable(e); })
+		umGetAll(memory, { userId: USER_ID, limit: FULL_SCAN_LIMIT }).catch((e) => { throw tagRetryable(e); })
 	, { op: 'getAll' });
 	const allItems = allMemories?.results || allMemories || [];
 	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);

@@ -23,7 +23,7 @@
 // Date.now(); tests pass frozen values.
 
 import { filterSystemDocs } from './system-docs.mjs';
-import { umGetAll } from './mem0-read.mjs';
+import { umGetAll, FULL_SCAN_LIMIT } from './mem0-read.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { getLogger } from './logger.mjs';
 import { currentRequestId } from './request-context.mjs';
@@ -41,7 +41,7 @@ import { buildLayers } from './layers.mjs';
 // needs it internally and this module cannot import back from the
 // entrypoint (see the isWriteEnabled note below); the entrypoint's /health
 // route imports it back from here.
-export const FULL_SCAN_LIMIT = 10000;
+export { FULL_SCAN_LIMIT };  // re-export; single owner is lib/mem0-read.mjs (#231 round-2)
 
 // Default capture-freshness alert threshold (hours) — R1 B2. Operator-
 // overridable via UM_FRESHNESS_MAX_AGE_HOURS; a plain `|| 26` would eat a

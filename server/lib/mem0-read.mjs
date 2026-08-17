@@ -50,6 +50,15 @@ export function searchConfig({ userId, limit } = {}) {
 // mem0ai 2.4.6's getAll defaulted to limit=100; preserved so enumeration
 // callers keep their measured behavior (the U2 #171 audit note documents
 // the explicit FULL_SCAN_LIMIT escape for true full scans).
+
+/**
+ * The "true full scan" cap for enumeration callers that must see the whole
+ * corpus (stats, compat scan, /health count, reindex snapshots). Owned here
+ * (the read module) since #231 round-2 review — previously duplicated as
+ * bare literals. Callers on DESTRUCTIVE/snapshot paths must fail loud on
+ * saturation rather than proceed on a silently truncated view.
+ */
+export const FULL_SCAN_LIMIT = 10000;
 const DEFAULT_LIMIT = 100;
 
 // Mirror of mem0ai 2.4.6's getAll projection `excludedKeys` — everything

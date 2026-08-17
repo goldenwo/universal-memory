@@ -102,8 +102,13 @@ test('patch applied at mem0ai@3.1.6 canonical counts (7 await-imports / 1 mem0-p
  */
 function collectStaticSpecifiers(src) {
   const specs = [];
-  for (const m of src.matchAll(/\bfrom\s*["']([^'"\n]+)["']/g)) specs.push(m[1]);
-  for (const m of src.matchAll(/(?:^|[;\s])import\s*["']([^'"\n]+)["']/g)) specs.push(m[1]);
+  // `from` clause: tolerate an interposed block comment (`from/*c*/"x"`).
+  for (const m of src.matchAll(/\bfrom\s*(?:\/\*[^]*?\*\/\s*)?["']([^'"\n]+)["']/g)) specs.push(m[1]);
+  // Side-effect import: `[;\s})]` covers statement, brace-adjacent
+  // (`function f(){}import"x"` — valid ESM the round-2 review proved the
+  // old class missed), and paren-adjacent predecessors; `m` flag anchors
+  // line starts.
+  for (const m of src.matchAll(/(?:^|[;\s})])import\s*(?:\/\*[^]*?\*\/\s*)?["']([^'"\n]+)["']/gm)) specs.push(m[1]);
   return specs;
 }
 
@@ -138,6 +143,9 @@ test('red control: the allowlist scanner catches smuggled static imports in ever
     ['export-from', src + '\nexport { Y } from "smuggled-provider";'],
     ['semicolon-less', src + '\nimport Z from "smuggled-provider"\n'],
     ['side-effect', src + '\nimport "smuggled-provider";'],
+    // Round-2 catch: valid ESM the newline-prefixed shapes above cannot see.
+    ['brace-adjacent side-effect', src + '\nfunction __rc(){}import"smuggled-provider";'],
+    ['comment-interposed from', src + '\nimport { W } from/*c*/"smuggled-provider";'],
   ];
   for (const [label, mutated] of shapes) {
     assert.ok(

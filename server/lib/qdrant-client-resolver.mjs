@@ -12,8 +12,11 @@
 // (lib/mem0-read.mjs) resolve a client on EVERY search/list/stats/health
 // call, and each QdrantClient construction fires an unawaited version-
 // compatibility probe (an extra round-trip + a raw console.warn per call
-// against a version-skewed server). One client per Memory is the correct
-// lifetime: host/port are constructor-fixed on the config this key wraps.
+// against a version-skewed server). One client per RESOLUTION IDENTITY:
+// a wrapMem0Read proxy and its target are distinct WeakMap keys, so a
+// wrapped Memory may hold up to two cached clients (harmless — host/port
+// are constructor-fixed on the shared config); concurrent first misses may
+// briefly double-construct (last write wins, equally harmless).
 const clientCache = new WeakMap();
 
 /**
