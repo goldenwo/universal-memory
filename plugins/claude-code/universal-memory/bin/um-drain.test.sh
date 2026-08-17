@@ -616,6 +616,29 @@ assert_contains "T31: both projects in report" "$output" "proj-a: complete"
 assert_contains "T31: both projects in report (2)" "$output" "proj-c: complete"
 assert_eq "T31: 2 checkpoint calls total" "$(cat "$CAP_DIR/checkpoint_count")" "2"
 
+echo ""
+echo "=== T32 (Task 11 deferred follow-up): thin-first + genuine-chunking-second => both complete, exit 0 ==="
+# The positive-path mirror of T2b: a worklist [proj-quiet, proj-big] where
+# proj-quiet abstains (thin_transcript) FIRST and proj-big then does GENUINE
+# multi-call chunking (backlog_remaining:true -> complete). T2b pinned the
+# negative half (thin-first must not disarm the version gate for a LEGACY
+# second project); this pins the positive half — the gate is satisfied by
+# proj-big's own chunking-aware response and the whole worklist completes.
+reset_endpoints
+q_stats 200 '{"schema_version":1,"layers":{"proj-quiet":{"last_capture_at":"2026-08-15T00:00:00Z","last_summary_at":null,"last_state_at":null,"pending_bytes":10,"stale":true,"lag_hours":1},"proj-big":{"last_capture_at":"2026-08-15T00:00:00Z","last_summary_at":null,"last_state_at":null,"pending_bytes":900000,"stale":true,"lag_hours":100}}}'
+q_ckpt 200 '{"ok":true,"skipped":"thin_transcript","transcript_bytes":10,"transcript_turns":1}'
+q_ckpt 200 "$CKPT_OK_CONTINUE"
+q_ckpt 200 "$(ckpt_complete proj-big)"
+run_drain --yes proj-quiet proj-big
+assert_eq "T32: exit 0" "$rc" "0"
+assert_contains "T32: thin branch on the first project" "$output" "BRANCH=complete_thin_transcript"
+assert_contains "T32: genuine chunking on the second project" "$output" "BRANCH=continue_backlog_remaining"
+assert_contains "T32: second project completes" "$output" "BRANCH=complete"
+assert_contains "T32: report shows both complete" "$output" "proj-quiet: complete"
+assert_contains "T32: report shows both complete (2)" "$output" "proj-big: complete"
+assert_not_contains "T32: no abort anywhere" "$output" "ABORT"
+assert_eq "T32: 3 checkpoint calls total (1 thin + 2 chunking)" "$(cat "$CAP_DIR/checkpoint_count")" "3"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════

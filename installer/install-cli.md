@@ -75,14 +75,23 @@ $HOME/.local/share/um/
     um-forget             # forget subcommand (delegates to binary)
     um-supersede          # supersede subcommand (delegates to binary)
     um-preview            # preview subcommand (delegates to binary)
+    um-tunnel             # Tailscale funnel/serve helper
+    um-alert.sh           # staleness alert (cron-friendly; per-layer freshness)
+    um-drain.sh           # operator backlog drain (repeated /api/checkpoint)
   lib/
     vault.sh              # vault path helpers
     frontmatter.sh        # YAML frontmatter parsing
     resolve-project.sh    # project name resolution
     config.sh             # KEY=value config loader
+    endpoint.sh           # server endpoint resolution
+    verify-endpoint.sh    # endpoint reachability probe
     summarize.sh          # summarizer invocation
     update-state.sh       # state.md regeneration
+    um-api.sh             # HTTP API helpers (um_api_get/um_api_post)
 ```
+
+The libs' `*.test.sh` self-tests are copied alongside them — the installer
+copies every `*.sh` in the source lib dir.
 
 The dispatcher at `$HOME/.local/bin/um` is a direct copy (not a symlink). This is intentional: when invoked through a symlink, `BASH_SOURCE[0]` resolves to the symlink path, causing `PLUGIN_DIR` to be computed incorrectly. Copying `um` directly into `$HOME/.local/bin` keeps `PLUGIN_DIR = $HOME/.local`, which is where `plugin.json` is installed.
 
@@ -93,7 +102,7 @@ $ which um
 /home/<user>/.local/bin/um
 
 $ um --version
-0.7.0-alpha
+1.16.0        # whatever version the copied plugin.json carries
 ```
 
 Note: `um --version` outputs the bare version string from `plugin.json` (no `um ` prefix).

@@ -28,6 +28,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { doCheckpoint } from '../lib/checkpoint.mjs';
+import { handleCheckpointRequest } from '../mem0-mcp-http.mjs';
 import { buildSpec } from '../openapi.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
@@ -246,4 +247,118 @@ test('drift-gate: abstention envelope matches CheckpointAbstained openapi.mjs de
   assert.equal(result.ok, true, `expected ok:true, got: ${JSON.stringify(result)}`);
   assert.equal(result.skipped, 'thin_transcript', 'fixture must actually exercise the abstention envelope');
   assertNoDrift(result, getCheckpointSchema('CheckpointAbstained'), 'abstention');
+});
+
+// ---------------------------------------------------------------------------
+// CheckpointFailure — the WIRE failure envelopes (Task 7 deferred follow-up:
+// the gate covered Success+Abstained only; failure variants were ungated).
+// These run the REAL exported handleCheckpointRequest so the lib->wire
+// mapping (error-envelope.mjs errorResponse + the handler's extra
+// passthrough of stage/provider_class/summary_id/summary_path into the
+// error object) sits INSIDE the gate — drift in either the lib envelope or
+// the handler mapping surfaces here. DI rides the ctx._doCheckpoint seam
+// (house pattern: checkpoint.test.mjs) wrapping the REAL doCheckpoint with
+// per-case seams; nothing is stubbed except the provider-shaped functions.
+// ---------------------------------------------------------------------------
+
+function mockRes() {
+  return {
+    statusCode: null,
+    jsonBody: null,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.jsonBody = body; return this; },
+  };
+}
+
+/** CheckpointFailure's nested error object as an assertNoDrift-shaped schema. */
+function getCheckpointFailureSchemas() {
+  const failure = getCheckpointSchema('CheckpointFailure');
+  const errorObj = failure.properties.error;
+  return {
+    top: failure,
+    error: { title: 'CheckpointFailure.error', properties: errorObj.properties, required: errorObj.required },
+  };
+}
+
+/** Drive the REAL handler with the real doCheckpoint extended by `seams`. */
+async function runFailureCase(vaultDir, project, seams) {
+  const req = { body: { project } };
+  const res = mockRes();
+  await handleCheckpointRequest(req, res, {
+    vaultDir,
+    writesEnabled: true,
+    _doCheckpoint: (args, ctx) => doCheckpoint(args, { ...ctx, ...seams }),
+  });
+  return res;
+}
+
+test('drift-gate: summarizer-failure wire envelope (502 UPSTREAM_FAILURE stage:summarize) matches CheckpointFailure', async () => {
+  const vaultDir = await makeVault();
+  const t1 = makeTurn('2026-01-01T00:00:01.000Z', 'user', 'a'.repeat(1000));
+  const t2 = makeTurn('2026-01-01T00:00:02.000Z', 'assistant', 'b'.repeat(1000));
+  await seedCapture(vaultDir, 'driftfailsum', '2026-01-01.md', t1 + t2);
+
+  const res = await runFailureCase(vaultDir, 'driftfailsum', {
+    config: { ...BASE_CONFIG },
+    summarizeFn: async () => { throw new Error('synthetic summarizer failure'); },
+    updateStateFn: makeUpdateStateFn(),
+    reindexFn: async () => {},
+  });
+
+  assert.equal(res.statusCode, 502, `expected 502, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+  assert.equal(res.jsonBody.ok, false);
+  assert.equal(res.jsonBody.error.code, 'UPSTREAM_FAILURE');
+  assert.equal(res.jsonBody.error.stage, 'summarize', 'fixture must actually exercise the 0-chunk summarizer variant');
+  const schemas = getCheckpointFailureSchemas();
+  assertNoDrift(res.jsonBody, schemas.top, 'wire summarizer-failure');
+  assertNoDrift(res.jsonBody.error, schemas.error, 'wire summarizer-failure error object');
+});
+
+test('drift-gate: reindex-failure wire envelope (502 with summary_id/summary_path) matches CheckpointFailure', async () => {
+  const vaultDir = await makeVault();
+  const t1 = makeTurn('2026-01-01T00:00:01.000Z', 'user', 'a'.repeat(1000));
+  const t2 = makeTurn('2026-01-01T00:00:02.000Z', 'assistant', 'b'.repeat(1000));
+  await seedCapture(vaultDir, 'driftfailreindex', '2026-01-01.md', t1 + t2);
+
+  const res = await runFailureCase(vaultDir, 'driftfailreindex', {
+    config: { ...BASE_CONFIG },
+    summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+    updateStateFn: makeUpdateStateFn(),
+    reindexFn: async () => { throw new Error('synthetic reindex failure'); },
+    retryDelaysMs: [0],
+    retryJitterMaxMs: 0,
+  });
+
+  assert.equal(res.statusCode, 502, `expected 502, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+  assert.equal(res.jsonBody.error.code, 'UPSTREAM_FAILURE');
+  assert.equal(res.jsonBody.error.stage, 'reindex', 'fixture must actually exercise the retry-exhausted reindex variant');
+  assert.ok(res.jsonBody.error.summary_id, 'reindex failure must carry summary_id for the drain per-doc retry');
+  assert.ok(res.jsonBody.error.summary_path, 'reindex failure must carry summary_path for the drain per-doc retry');
+  const schemas = getCheckpointFailureSchemas();
+  assertNoDrift(res.jsonBody, schemas.top, 'wire reindex-failure');
+  assertNoDrift(res.jsonBody.error, schemas.error, 'wire reindex-failure error object');
+});
+
+test('drift-gate: checkpoint_in_progress wire envelope (400 INPUT_INVALID) matches CheckpointFailure', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, 'driftfaillock', '2026-01-01.md',
+    makeTurn('2026-01-01T00:00:01.000Z', 'user', 'a'.repeat(1000)));
+
+  // A FRESH (non-stale) held lockdir: the legacy plain-string error branch.
+  const lockdir = path.join(vaultDir, 'state', 'driftfaillock', 'state.md.lockdir');
+  await fs.mkdir(lockdir, { recursive: true });
+
+  const res = await runFailureCase(vaultDir, 'driftfaillock', {
+    config: { ...BASE_CONFIG },
+    summarizeFn: async () => ({ summary: 'x', costUsd: 0.001, tokensIn: 10, tokensOut: 5 }),
+    updateStateFn: makeUpdateStateFn(),
+    reindexFn: async () => {},
+  });
+
+  assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+  assert.equal(res.jsonBody.error.code, 'INPUT_INVALID');
+  assert.match(res.jsonBody.error.message, /checkpoint_in_progress/, 'fixture must actually exercise the in-progress branch');
+  const schemas = getCheckpointFailureSchemas();
+  assertNoDrift(res.jsonBody, schemas.top, 'wire in-progress');
+  assertNoDrift(res.jsonBody.error, schemas.error, 'wire in-progress error object');
 });
