@@ -79,9 +79,10 @@ jobs:
       cancel-in-progress: false
 
     # Pinned to match server/docker-compose.yml (deliberate server pin, #231
-    # D7 — a server bump is its own compat arc). The js client is 1.19.0 now;
-    # the 1.19↔1.13 minor skew emits a client warning only, and mem0 3.x's
-    # hybrid paths are structurally inert under UM's orchestrated writes.
+    # D7 — a server bump is its own compat arc). The js client is 1.18.0 now
+    # (1.19 removed the legacy search API — #231 F19); the 1.18↔1.13 skew
+    # emits a client warning only, and mem0 3.x's hybrid paths are
+    # structurally inert under UM's orchestrated writes.
     services:
       qdrant:
         image: qdrant/qdrant:v1.13.0

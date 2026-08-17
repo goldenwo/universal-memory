@@ -55,22 +55,9 @@ const DEFAULT_LIMIT = 100;
 // else in the payload lands under `metadata`.
 const EXCLUDED_KEYS = new Set(['userId', 'agentId', 'runId', 'hash', 'data', 'createdAt', 'updatedAt']);
 
-/**
- * Native-scroll replacement for mem0 getAll(), 2.4.6-shape-compatible.
- * @param {Object} memory  mem0 Memory instance (config carries host/port/collection)
- * @param {Object} args    { userId, limit? }
- * @param {Object} [deps]  DI seam for tests: { getClient }
- */
-export async function umGetAll(memory, { userId, limit = DEFAULT_LIMIT } = {}, { getClient = getRealClient } = {}) {
-  const client = await getClient(memory);
-  const collection = memory.config.vectorStore.config.collectionName;
-  const res = await client.scroll(collection, {
-    filter: { must: [{ key: 'userId', match: { value: userId } }] },
-    limit,
-    with_payload: true,
-    with_vector: false,
-  });
-  const results = (res?.points ?? []).map((mem) => ({
+/** mem0 2.4.6 result-entry projection, shared by umGetAll and umSearch. */
+function projectPoint(mem) {
+  return {
     id: mem.id,
     memory: mem.payload.data,
     hash: mem.payload.hash,
@@ -82,6 +69,81 @@ export async function umGetAll(memory, { userId, limit = DEFAULT_LIMIT } = {}, {
     ...(mem.payload.userId && { userId: mem.payload.userId }),
     ...(mem.payload.agentId && { agentId: mem.payload.agentId }),
     ...(mem.payload.runId && { runId: mem.payload.runId }),
-  }));
-  return { results };
+  };
+}
+
+/** UM's camel-key qdrant scope filter. */
+const scopeFilter = (userId) => ({ must: [{ key: 'userId', match: { value: userId } }] });
+
+/**
+ * Native-scroll replacement for mem0 getAll(), 2.4.6-shape-compatible.
+ * @param {Object} memory  mem0 Memory instance (config carries host/port/collection)
+ * @param {Object} args    { userId, limit? }
+ * @param {Object} [deps]  DI seam for tests: { getClient }
+ */
+export async function umGetAll(memory, { userId, limit = DEFAULT_LIMIT } = {}, { getClient = getRealClient } = {}) {
+  const client = await getClient(memory);
+  const collection = memory.config.vectorStore.config.collectionName;
+  const res = await client.scroll(collection, {
+    filter: scopeFilter(userId),
+    limit,
+    with_payload: true,
+    with_vector: false,
+  });
+  return { results: (res?.points ?? []).map(projectPoint) };
+}
+
+/**
+ * Native dense search replacement for mem0 search() (#231 A9 finding).
+ *
+ * mem0 3.x's search() UNCONDITIONALLY requires a snake entity key in its
+ * normalized filters (even empty filters throw) — so no filter shape can
+ * both satisfy the validator AND match UM's camelCase payloads. The native
+ * read composes the pieces mem0 would have used anyway: mem0's OWN embedder
+ * instance (config-driven, provider-correct, dims preset) + a qdrant dense
+ * search scoped on UM's actual payload key + the 2.4.6 projection with the
+ * raw cosine score. Behaviorally identical to 2.4.6's search for UM data
+ * (spec F17: no sparse vectors / entity records / expiration payloads on
+ * any UM point; no threshold — 2.4.6 had none).
+ *
+ * @param {Object} memory  mem0 Memory instance (embedder + vectorStore config)
+ * @param {string} query
+ * @param {Object} args    { userId, limit? }
+ * @param {Object} [deps]  DI seam for tests: { getClient }
+ */
+export async function umSearch(memory, query, { userId, limit } = {}, { getClient = getRealClient } = {}) {
+  const vector = await memory.embedder.embed(query);
+  const client = await getClient(memory);
+  const collection = memory.config.vectorStore.config.collectionName;
+  const hits = await client.search(collection, {
+    vector,
+    filter: scopeFilter(userId),
+    ...(limit !== undefined && { limit }),
+    with_payload: true,
+  });
+  return { results: (hits ?? []).map((hit) => ({ ...projectPoint(hit), score: hit.score })) };
+}
+
+/**
+ * Wrap a real mem0 Memory so `.search` routes through umSearch while every
+ * other member delegates untouched. Installed ONCE at initMemory — the
+ * `ctx?.memory ?? memory` DI seam and every `.search(query, searchConfig(...))`
+ * call site keep their shapes (searchConfig's cfg is translated here), and
+ * test fakes substitute wholesale exactly as before. `.getAll` is
+ * DELIBERATELY not wrapped: the warmup must keep driving mem0's real public
+ * surface (spec F14 — the legacy-gate discriminator), and enumeration
+ * callers use umGetAll explicitly. Methods bind to the TARGET so mem0's
+ * internal state/privates never see the proxy.
+ */
+export function wrapMem0Read(memory, deps) {
+  return new Proxy(memory, {
+    get(target, prop) {
+      if (prop === 'search') {
+        return (query, cfg = {}) =>
+          umSearch(target, query, { userId: cfg?.filters?.userId, limit: cfg?.topK }, deps);
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }

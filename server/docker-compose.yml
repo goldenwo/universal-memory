@@ -4,8 +4,9 @@ services:
   qdrant:
     # v1.13.0 stays as a DELIBERATE server pin (#231 D7 — a server bump is
     # its own compat arc; the Pi runs 1.7.3 regardless and the legacy-qdrant
-    # patch hunk covers it). The js client moved to 1.19.0 with mem0ai 3.x;
-    # the 1.19↔1.13 minor skew emits a harmless client version warning.
+    # patch hunk covers it). The js client moved to 1.18.0 with mem0ai 3.x
+    # (1.19 removed the legacy search API — #231 F19); the 1.18↔1.13 minor
+    # skew emits a harmless client version warning.
     image: qdrant/qdrant:v1.13.0
     restart: unless-stopped
     volumes:

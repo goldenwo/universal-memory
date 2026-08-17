@@ -42,7 +42,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
-import { searchConfig, umGetAll } from './lib/mem0-read.mjs';
+import { searchConfig, umGetAll, wrapMem0Read } from './lib/mem0-read.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, UNDATED_FACTOR } from './lib/ranking.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
@@ -513,6 +513,13 @@ export async function initMemory() {
 		env: process.env,
 		embedder: embedderAdapter,
 	});
+	// #231: route .search through the native read (umSearch) — mem0 3.x's
+	// search validator hard-requires snake entity filters that can never
+	// match UM's camelCase payloads (spec D8; caught live by the A9 eval).
+	// Wrapped LAST so the warmup above drove mem0's PRISTINE public surface
+	// (the F14 init-failure discriminator). Everything except .search
+	// delegates untouched.
+	memory = wrapMem0Read(memory);
 	return memory;
 }
 

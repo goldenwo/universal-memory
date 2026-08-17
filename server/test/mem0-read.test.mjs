@@ -17,7 +17,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchConfig, umGetAll } from '../lib/mem0-read.mjs';
+import { searchConfig, umGetAll, umSearch, wrapMem0Read } from '../lib/mem0-read.mjs';
 
 test('searchConfig: camel userId filter passthrough + topK rename + threshold 0 parity', () => {
   assert.deepEqual(
@@ -66,6 +66,71 @@ test('umGetAll: explicit limit is passed through (FULL_SCAN_LIMIT callers)', asy
   const client = stubClient([]);
   await umGetAll(fakeMemory(), { userId: 'op', limit: 10000 }, { getClient: async () => client });
   assert.equal(client.calls[0].args.limit, 10000);
+});
+
+test('umSearch: embeds via mem0\'s embedder, dense-searches on the camel userId filter, projects with score', async () => {
+  // mem0 3.x search() UNCONDITIONALLY requires a snake entity filter
+  // (effectiveFilters check, index.mjs ~L17795) — even empty filters throw —
+  // so the camel passthrough can never reach search. The native read is the
+  // D8 continuation: mem0's embedder (config-driven, provider-correct) +
+  // qdrant dense search on UM's actual payload key. Caught live by the A9
+  // modern-arm eval; unit mocks were blind to the validator (the
+  // seam-contracts lesson, again).
+  const embedCalls = [];
+  const memory = {
+    embedder: { embed: async (text) => { embedCalls.push(text); return [0.1, 0.2]; } },
+    config: { vectorStore: { config: { host: 'h', port: 1, collectionName: 'memories_test' } } },
+  };
+  const calls = [];
+  const client = {
+    search: async (collection, args) => {
+      calls.push({ collection, args });
+      return [
+        { id: 'p1', score: 0.87, payload: { data: 'fact', hash: 'h1', createdAt: 'c1', userId: 'op', lane: 'work' } },
+      ];
+    },
+  };
+  const out = await umSearch(memory, 'where is tokyo', { userId: 'op', limit: 25 }, { getClient: async () => client });
+  assert.deepEqual(embedCalls, ['where is tokyo']);
+  assert.equal(calls[0].collection, 'memories_test');
+  assert.deepEqual(calls[0].args, {
+    vector: [0.1, 0.2],
+    filter: { must: [{ key: 'userId', match: { value: 'op' } }] },
+    limit: 25,
+    with_payload: true,
+  });
+  assert.deepEqual(out, {
+    results: [{
+      id: 'p1', memory: 'fact', hash: 'h1', createdAt: 'c1', updatedAt: undefined,
+      score: 0.87, metadata: { lane: 'work' }, userId: 'op',
+    }],
+  });
+});
+
+test('wrapMem0Read: .search routes native (searchConfig args translated); everything else delegates', async () => {
+  const client = {
+    search: async (_c, args) => { client.lastArgs = args; return []; },
+  };
+  const target = {
+    embedder: { embed: async () => [0.5] },
+    config: { vectorStore: { config: { host: 'h', port: 1, collectionName: 'c' } } },
+    delete: async (id) => `deleted:${id}`,
+    getAll: async () => 'real-mem0-getAll',
+  };
+  const wrapped = wrapMem0Read(target, { getClient: async () => client });
+  // search: consumes the searchConfig() shape the call sites already emit.
+  const res = await wrapped.search('q', searchConfig({ userId: 'op', limit: 7 }));
+  assert.deepEqual(res, { results: [] });
+  assert.equal(client.lastArgs.limit, 7);
+  assert.deepEqual(client.lastArgs.filter, { must: [{ key: 'userId', match: { value: 'op' } }] });
+  // delegation: methods bind to the target (mem0 privates stay intact),
+  // plain props read through.
+  assert.equal(await wrapped.delete('x'), 'deleted:x');
+  assert.equal(wrapped.config.vectorStore.config.collectionName, 'c');
+  // getAll stays MEM0'S OWN — the warmup discriminator must keep driving the
+  // real public surface (spec F14); enumeration callers use umGetAll, not
+  // the instance method.
+  assert.equal(await wrapped.getAll(), 'real-mem0-getAll');
 });
 
 test('umGetAll: projects the exact 2.4.6 getAll result shape', async () => {
