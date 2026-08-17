@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import { buildStats, FULL_SCAN_LIMIT } from '../lib/stats-payload.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
@@ -354,6 +355,47 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
     assert.equal(body.recall.searches_7d, 2);
     assert.equal(body.degraded, undefined, 'the injected reader reports available:true — no degraded marker');
   });
+});
+
+// ---------------------------------------------------------------------------
+// `layers` (Task 10, spec §6) — the top-level key is always present, wired
+// through buildLayers(). The stale-rule matrix itself is layers.test.mjs's
+// job; this suite covers the buildStats() INTEGRATION contract only.
+// ---------------------------------------------------------------------------
+
+test('layers: always present, even as {} — vaultDir omitted (the common test/dev shape)', async () => {
+  const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x' });
+  assert.deepEqual(body.layers, {});
+  assert.equal(body.degraded, undefined, 'an absent vaultDir must not degrade every pre-existing caller — see lib/layers.mjs');
+});
+
+test('layers: an explicit vaultDir with a real captures fixture populates the block end-to-end', async () => {
+  const vault = tempDir('um-stats-payload-layers-');
+  const rawDir = path.join(vault, 'captures', 'demo-project', 'raw');
+  await fs.mkdir(rawDir, { recursive: true });
+  await fs.writeFile(path.join(rawDir, '2026-08-01.md'), 'x'.repeat(600), 'utf8');
+
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', vaultDir: vault,
+  });
+  assert.ok(body.layers['demo-project'], 'the project appears in the block');
+  assert.equal(typeof body.layers['demo-project'].last_capture_at, 'string');
+  assert.equal(body.layers['demo-project'].pending_bytes, 600);
+  assert.equal(body.layers['demo-project'].stale, true, 'no cursor, no summary, pending over the default 500-byte floor, ∞ lag');
+});
+
+test('layers: a per-project I/O error degrades the payload (layers-partial) without throwing or dropping other sections', async () => {
+  const vault = tempDir('um-stats-payload-layers-partial-');
+  const badDir = path.join(vault, 'captures', 'bad');
+  await fs.mkdir(badDir, { recursive: true });
+  await fs.writeFile(path.join(badDir, 'raw'), 'not a directory', 'utf8'); // forces ENOTDIR under raw/
+
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', vaultDir: vault,
+  });
+  assert.ok(body.degraded.includes('layers-partial'));
+  assert.deepEqual(body.layers, {}, 'the broken project is omitted, not guessed at');
+  assert.equal(body.corpus.points, 3, 'other sections stay live — one bad layers project must not sink the payload');
 });
 
 test('readCounters: omitting the param falls back to readCounterStats — zero behavior change', async () => {

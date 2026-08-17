@@ -70,6 +70,11 @@ function emitLockContentionMetric(lockPath) {
 }
 
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
+// Kept as a local computation deliberately (review round 1, MINOR 5): this
+// module is the arc's write path, and this fix does not touch it beyond
+// this comment. checkpoint-config.mjs now exports the SAME resolved path
+// (`DEFAULT_CONFIG_PATH`) for read-only consumers (layers.mjs, spec §6) —
+// the two literals must stay byte-identical if this path ever moves.
 const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.json');
 const DEFAULT_SUMMARIZE_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/summarize.txt');
 

@@ -255,8 +255,121 @@ if [ -n "$LEDGER_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
+# Task 10 (spec §6): LAYERS section — per-project filesystem-mtime freshness,
+# independent of the counters-derived verdict above (the exact ground truth
+# that would have caught the 2026-08-04 outage: capture.turn kept the
+# counters-derived surface reading 0h "fresh" while nothing downstream
+# advanced for five days). Mirrors the #201 LEDGER_ALERT pattern: a FRESH
+# capture verdict is ESCALATED to exit 1 when the layers block names a stale
+# project.
+#
+# Three-way taxonomy (python, same BODY_FILE, no jq — house pattern):
+#   ABSENT — no `layers` key at all: an old server (predates v1.16). Skip the
+#     check WITH a breadcrumb; the exit code is left to the capture verdict
+#     above. A rollback to a pre-layers server must not silently disable this
+#     arc's own monitor by going quiet about what it stopped checking.
+#   ERROR  — `layers` present but unparseable/malformed. A malformed
+#     monitoring payload is itself a loud CHECK-FAILED (exit 2), unconditionally
+#     — this arc's own root failure mode was a silently-dropped broken monitor.
+#   STALE/OK — `layers` present and well-shaped; STALE names every project
+#     whose own `stale` flag is true.
+LAYERS_VERDICT=$("$PY" -c '
+import json, sys
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+if "layers" not in stats:
+    emit("ABSENT", "layers key absent — server predates v1.16; per-layer freshness NOT checked")
+
+layers = stats.get("layers")
+if not isinstance(layers, dict):
+    emit("ERROR", "layers key present but malformed (expected an object)")
+
+stale = []
+try:
+    for name, info in layers.items():
+        if not isinstance(info, dict) or not isinstance(info.get("stale"), bool):
+            raise ValueError("project %r has a malformed or missing stale field" % name)
+        if info["stale"]:
+            # MINOR 7 (review round 1): the JSON sentinel for an infinite lag
+            # is the STRING "Infinity" (see layers.mjs) — printed verbatim it
+            # reads as the nonsensical "Infinityh"; render it as "never"
+            # instead, same idea as um-alert.sh already applying its own
+            # float()-coercion discipline to threshold/freshness values
+            # elsewhere in this file.
+            lag = info.get("lag_hours")
+            lag_str = "never" if lag == "Infinity" else "%sh" % lag
+            stale.append("%s (lag %s, pending %s bytes)" % (name, lag_str, info.get("pending_bytes")))
+except Exception as e:
+    emit("ERROR", "layers payload malformed: %s" % e)
+
+if stale:
+    emit("STALE", "; ".join(sorted(stale)))
+emit("OK", "no stale projects")
+' < "$BODY_FILE" 2>/dev/null) || LAYERS_VERDICT=""
+
+LAYERS_STATUS="${LAYERS_VERDICT%%|*}"
+LAYERS_MESSAGE="${LAYERS_VERDICT#*|}"
+
+# Review round 1, IMPORTANT 2: the STALE/OK/ERROR taxonomy above says
+# NOTHING about whether `layers` was fully computed — a payload can be a
+# perfectly well-shaped `{}` (or a partial map) while stats.degraded names
+# 'layers-unavailable'/'layers-partial'/'layers_saturated', meaning the
+# check above just evaluated INCOMPLETE (or entirely absent) data and
+# happily emitted "OK — no stale projects". That is exactly this arc's own
+# silent-monitor failure mode: a broken layers computation going quiet
+# because what little (or nothing) it COULD see looked fine. Independent,
+# best-effort, NEVER fatal and NEVER changes STATUS/LAYERS_STATUS/the exit
+# code decided below (same discipline as the ABSENT-key breadcrumb) — purely
+# a breadcrumb naming which flag(s) fired.
+LAYERS_DEGRADED_NOTE=$("$PY" -c '
+import json, sys
+try:
+    stats = json.load(sys.stdin)
+    degraded = stats.get("degraded") if isinstance(stats, dict) else None
+    flags = sorted(d for d in degraded if isinstance(d, str) and d.startswith("layers")) if isinstance(degraded, list) else []
+    print(", ".join(flags))
+except Exception:
+    print("")
+' < "$BODY_FILE" 2>/dev/null) || LAYERS_DEGRADED_NOTE=""
+
+if [ -n "$LAYERS_DEGRADED_NOTE" ]; then
+  echo "um-alert: layers check degraded ($LAYERS_DEGRADED_NOTE) — per-layer freshness may be INCOMPLETE" >&2
+fi
+
+case "$LAYERS_STATUS" in
+  ABSENT)
+    echo "um-alert: $LAYERS_MESSAGE" >&2 ;;
+  OK|STALE)
+    : ;;
+  *)
+    # Unconditional, BEFORE the capture-verdict case below: a malformed
+    # layers payload (or an EMPTY LAYERS_STATUS — the python process itself
+    # crashed uncaught) is worth its own CHECK-FAILED regardless of what the
+    # counters-derived verdict says (spec §6) — an operator seeing exit 2
+    # here should investigate the monitor itself, not read it as "the
+    # pipeline is stale". A garbage/empty status is folded into this same
+    # branch rather than silently no-op'ing the layers check: this arc's own
+    # root failure mode was exactly a broken monitor going quiet.
+    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2
+    exit 2 ;;
+esac
+
 case "$STATUS" in
   FRESH)
+    if [ "$LAYERS_STATUS" = "STALE" ]; then
+      echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE (capture freshness itself OK: $MESSAGE)" >&2
+      exit 1
+    fi
     if [ -n "$LEDGER_ALERT" ]; then
       echo "um-alert: LEDGER-ERRORS — $LEDGER_ALERT (capture freshness itself OK: $MESSAGE)" >&2
       exit 1
@@ -264,7 +377,11 @@ case "$STATUS" in
     echo "um-alert: OK — $MESSAGE"
     exit 0 ;;
   STALE)
-    echo "um-alert: STALE — $MESSAGE" >&2
+    if [ "$LAYERS_STATUS" = "STALE" ]; then
+      echo "um-alert: STALE — $MESSAGE; also layers stale: $LAYERS_MESSAGE" >&2
+    else
+      echo "um-alert: STALE — $MESSAGE" >&2
+    fi
     exit 1 ;;
   ERROR)
     echo "um-alert: CHECK FAILED — $MESSAGE" >&2
