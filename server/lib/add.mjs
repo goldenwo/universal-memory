@@ -114,7 +114,7 @@ export function computeFactId({ userId, text, lane, persona }) {
   return uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM);
 }
 
-function buildPayload({ userId, text, metadata, surface, lane, persona, stampValidFrom }) {
+function buildPayload({ userId, text, metadata, surface, lane, persona, stampValidFrom, trustedServerPath }) {
   // Capture metadata.project BEFORE the flatten-spread so we can ALSO seed
   // the `projects` Set field. Both forms (scalar + Set) coexist for backward
   // compat — existing project-scoped readers use the scalar; new readers
@@ -150,7 +150,21 @@ function buildPayload({ userId, text, metadata, surface, lane, persona, stampVal
     ...(projects ? { projects } : {}),
     dedupCount: 1,
     dedupVersion: 1,
-    status: 'current',
+    // D3.1 §3.2: on the TRUSTED server path (_systemMigration — vault reindex
+    // and bulk import) a vault-authored lifecycle status is AUTHORITATIVE and
+    // must survive. assertNoReservedFields already exempts `status` there for
+    // exactly this reason; an unconditional 'current' here silently undid that
+    // exemption and RESURRECTED every deprecated/superseded doc on reindex:
+    // memory_forget wrote status:deprecated to the vault, reindexDoc fed the
+    // file back through umAdd, and the doc returned to the index as current —
+    // so forgetting appeared to succeed and changed nothing a reader could see.
+    // Untrusted callers are unaffected: they cannot reach this line carrying a
+    // status at all, because assertNoReservedFields rejects it first.
+    // Mirrors the valid_from guard above — the GUARD, not the spread ordering,
+    // is what preserves a caller value.
+    status: trustedServerPath && typeof metadata?.status === 'string' && metadata.status
+      ? metadata.status
+      : 'current',
   };
 }
 
@@ -515,6 +529,7 @@ export async function umAdd({
           lane: itemLane,
           persona,
           stampValidFrom,
+          trustedServerPath: _systemMigration === true,
         }),
       };
       // Errors propagate raw — outer call sites (mem0-mcp-http) wrap in
