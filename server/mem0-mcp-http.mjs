@@ -42,7 +42,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
-import { searchConfig, umGetAll, wrapMem0Read } from './lib/mem0-read.mjs';
+import { assertScanNotSaturated, searchConfig, umGetAll, wrapMem0Read } from './lib/mem0-read.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, UNDATED_FACTOR } from './lib/ranking.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
@@ -790,6 +790,9 @@ async function deleteByMetadataId(targetId) {
 		umGetAll(memory, { userId: USER_ID, limit: FULL_SCAN_LIMIT }).catch((e) => { throw tagRetryable(e); })
 	, { op: 'getAll' });
 	const allItems = allMemories?.results || allMemories || [];
+	// #262: refuse to delete off a possibly-truncated view — at the cap the
+	// target may sit past the window and the caller's rewrite would duplicate.
+	assertScanNotSaturated(allItems, 'deleteByMetadataId');
 	const existingItems = allItems.filter((r) => (r.metadata || {}).id === targetId);
 	for (const item of existingItems) {
 		await withRetry(() =>
