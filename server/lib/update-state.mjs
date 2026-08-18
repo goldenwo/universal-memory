@@ -20,6 +20,35 @@ import { fileURLToPath } from 'node:url';
 import { summarize as defaultSummarize } from './summarize.mjs';
 
 const STATE_CAP_CHARS = 3000;
+
+/**
+ * Re-stamp server-owned frontmatter on a merged state doc.
+ *
+ * The merge prompt asks the model to emit "the updated state.md (frontmatter + body)",
+ * so WITHOUT this the document's `valid_from` is whatever date the model invented.
+ * Observed in a live vault: 25 of 27 state docs carried 2023 dates (a plausible
+ * training-era default) while their real mtimes were all 2026-07/08 — and one
+ * re-merge produced a date three months in the FUTURE, because the model kept the
+ * month-day it had invented earlier and moved the year to the current one. A
+ * future-dated doc out-ranks everything in any recency comparison, which is worse
+ * than an obviously-broken old one.
+ *
+ * The model owns the BODY; the server owns the metadata. This mirrors
+ * checkpoint-chunk-txn.mjs, which already clock-stamps `valid_from` for session
+ * summaries — state docs simply never got the same treatment.
+ *
+ * No frontmatter block => returns the text untouched. Fabricating frontmatter here
+ * would be a different (and larger) behaviour change than fixing the timestamp.
+ */
+function stampServerOwnedFrontmatter(md, nowIso) {
+  const m = /^---\n([\s\S]*?)\n---/.exec(md);
+  if (!m) return md;
+  const block = m[1];
+  const stamped = /^valid_from:.*$/m.test(block)
+    ? block.replace(/^valid_from:.*$/m, `valid_from: ${nowIso}`)
+    : `${block}\nvalid_from: ${nowIso}`;
+  return `---\n${stamped}\n---${md.slice(m[0].length)}`;
+}
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/update-state.txt');
 
@@ -111,6 +140,13 @@ export async function updateState(args, ctx = {}) {
   if (mergedMd.length > STATE_CAP_CHARS) {
     mergedMd = truncateToCap(mergedMd, STATE_CAP_CHARS);
   }
+
+  // Server owns the timestamp, not the model. Applied AFTER the cap so the value
+  // that reaches disk is always the stamped one (truncateToCap preserves the
+  // frontmatter block, so ordering is belt-and-braces rather than load-bearing).
+  // Also applied on the llmFailure path, whose frontmatter is inherited from the
+  // OLD state doc and would otherwise carry a stale valid_from forward.
+  mergedMd = stampServerOwnedFrontmatter(mergedMd, (ctx.now?.() ?? new Date()).toISOString());
 
   // §4.8 hardening (checkpoint-chunk-txn.mjs): additive explicit ok:true on
   // the success return. Previously only the prompt-missing failure path set
