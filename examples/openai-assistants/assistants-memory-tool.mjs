@@ -168,7 +168,7 @@ async function main() {
 	console.log('[openai] starting run (createAndPoll)...');
 
 	// SDK helper: creates run, polls until terminal state or requires_action.
-	// openai-node v6 signatures — see https://github.com/openai/openai-node.
+	// openai-node v7 signatures — see https://github.com/openai/openai-node.
 	// Note: Assistants API is marked deprecated in the SDK in favor of the
 	// Responses API, but it still works end-to-end. A Responses-API version of
 	// this example is tracked for v0.4.

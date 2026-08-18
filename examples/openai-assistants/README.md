@@ -28,7 +28,7 @@ pieces into your own code.
 2. **OpenAI API key** in the environment. Both examples read `OPENAI_API_KEY`
    directly — no hardcoded secrets.
 
-3. **Node 20+** or **Python 3.10+**. Smoke-tested on Node 25.2 and Python 3.11.
+3. **Node 22+** (openai v7 requires it) or **Python 3.10+**. Smoke-tested on Node 25.2 and Python 3.11.
 
 ## Run — Node
 
@@ -116,16 +116,16 @@ your OpenAI account and do **not** appear in UM's cost-log; check them via the
 ## Known issues
 
 - **Assistants API deprecation warnings.** OpenAI has marked the Assistants
-  API as deprecated in both SDK 6.x (Node) and SDK 2.x (Python) in favor of
+  API as deprecated in both SDK 7.x (Node) and SDK 2.x (Python) in favor of
   the Responses API. The API itself still works and this example runs
   end-to-end, but the Python SDK emits `DeprecationWarning` on every call.
   We suppress duplicates with `warnings.filterwarnings("once", ...)`. A
   Responses-API variant of this example is tracked for the v0.4 milestone.
 
-- **SDK signature drift (openai-node 4.x → 6.x).** If you're pinning an older
+- **SDK signature drift (openai-node 4.x → 7.x).** If you're pinning an older
   SDK, `submitToolOutputsAndPoll` used to take `(threadId, runId, params)`;
-  in v6 it's `(runId, params)` with `thread_id` inside `params`. This example
-  uses the v6 shape. The Python SDK 2.x is fully keyword-arg-based, so this
+  in v6+ it's `(runId, params)` with `thread_id` inside `params`. This example
+  uses the v6+ shape (unchanged in v7). The Python SDK 2.x is fully keyword-arg-based, so this
   doesn't apply there.
 
 - **Windows paths.** If you're running on Windows and your UM vault contains

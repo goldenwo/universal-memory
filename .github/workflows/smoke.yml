@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install
         working-directory: server
@@ -158,6 +158,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # #255: the unit-suite step below runs `node --test` ON THE RUNNER
+      # (not in the container), and so does the host-side npx patch-package
+      # — without this pin the job silently rides the runner's floating
+      # default Node and "CI green" is not Node-22 evidence. Placement is
+      # load-bearing: before every step that invokes node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       # v0.8 G2: forbid mem0.add() / memoryClient.add() / resolvedMemory().add()
       # / newMemory.add() reappearing in server/+cli/. Reintroducing one
@@ -576,6 +585,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # #255: the openclaw reaction-producer step below runs `node --test`
+      # over repo code documented Node >= 22 native — that is a unit suite,
+      # not a host-portability probe, so it gets the same pin as the other
+      # node-invoking jobs. (installer-test stays unpinned on purpose: it
+      # exercises the installer on the runner's default Node.)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Run hooks/*.test.sh + hooks/lib/*.test.sh
         run: |
           set -u
