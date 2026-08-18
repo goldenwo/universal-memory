@@ -1113,3 +1113,71 @@ test('umAdd VF-W1d: a normal (non-migration) add emits no such warn — it gets 
   });
   assert.equal(warns.filter((w) => w.obj?.event === 'valid_from.missing_on_index').length, 0);
 });
+
+// ── Vault-authored lifecycle status on the trusted path ─────────────────────
+// D3.1 §3.2 exempts `status`/`supersededBy`/`supersededAt` from reserved-field
+// rejection on _systemMigration so that vault-authored supersession survives a
+// reindex. buildPayload then forced status:'current' unconditionally, undoing
+// the exemption: memory_forget wrote status:deprecated to the vault, reindexDoc
+// fed it back through umAdd, and the doc was RESURRECTED as current in the
+// index — the forget reported success and no reader could observe it.
+
+test('umAdd VF-S1: _systemMigration preserves a vault-authored status:deprecated', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { id: 'doc-s1', status: 'deprecated', invalidated_at: '2026-08-18T02:06:00.239Z' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.status, 'deprecated', 'a forgotten doc must NOT come back as current');
+  assert.equal(payload.invalidated_at, '2026-08-18T02:06:00.239Z', 'invalidated_at rides along');
+});
+
+test('umAdd VF-S2: _systemMigration preserves a vault-authored status:superseded', async () => {
+  // The exact case D3_SERVER_MANAGED_STATUS_FIELDS names in its contract comment.
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { id: 'doc-s2', status: 'superseded', supersededBy: 'doc-s3' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  const payload = qdrant.upserts[0].body.points[0].payload;
+  assert.equal(payload.status, 'superseded');
+  assert.equal(payload.supersededBy, 'doc-s3');
+});
+
+test('umAdd VF-S3: _systemMigration with NO status still defaults to current', async () => {
+  const qdrant = makeMockQdrantD2();
+  await umAdd({
+    memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+    metadata: { id: 'doc-s4' },
+    _systemMigration: true,
+    _factsProviderOverride: factsPassthrough,
+    _embedProviderOverride: embedDummy,
+    _qdrantClient: qdrant.client,
+  });
+  assert.equal(qdrant.upserts[0].body.points[0].payload.status, 'current');
+});
+
+test('umAdd VF-S4: an UNTRUSTED caller still cannot forge a status', async () => {
+  // Unchanged behaviour: without _systemMigration, assertNoReservedFields rejects
+  // `status` before buildPayload is ever reached (spec R5/G11).
+  const qdrant = makeMockQdrantD2();
+  await assert.rejects(
+    () => umAdd({
+      memory: makeMockMemory(), text: 'hello', userId: 'u', infer: false,
+      metadata: { id: 'doc-s5', status: 'deprecated' },
+      _factsProviderOverride: factsPassthrough,
+      _embedProviderOverride: embedDummy,
+      _qdrantClient: qdrant.client,
+    }),
+    (err) => err.name === 'ReservedMetadataFieldError' && err.field === 'status',
+  );
+});
