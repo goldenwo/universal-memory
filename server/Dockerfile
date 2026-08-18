@@ -81,13 +81,16 @@ try { import.meta.resolve('mem0ai/oss'); } catch (e) { console.error('FAIL post-
 /* #255: LOAD the native binding, not just existsSync — prune damage to the */ \
 /* .node prebuild is invisible to existence checks (the v1.8.0 class), and */ \
 /* better-sqlite3 13.x moved missing-prebuild failures from npm ci to */ \
-/* require() time. Runs under QEMU on the arm64 buildx leg, so both arches */ \
-/* prove the ABI-127 musl binding at build time. */ \
-const { default: Database } = await import('better-sqlite3'); \
-const db = new Database(':memory:'); \
-db.exec('create table t(x)'); db.prepare('insert into t values (1)').run(); \
-const row = db.prepare('select count(*) n from t').get(); db.close(); \
-if (row.n !== 1) { console.error('FAIL post-prune integrity: better-sqlite3 binding loaded but misbehaved'); process.exit(1); } \
+/* require() time. Under QEMU this runs on the arm64 legs: nightly's */ \
+/* build-only job (standing pre-tag signal) and release.yml's multi-arch */ \
+/* push — so both arches prove the ABI-127 musl binding at build time. */ \
+try { \
+  const { default: Database } = await import('better-sqlite3'); \
+  const db = new Database(':memory:'); \
+  db.exec('create table t(x)'); db.prepare('insert into t values (1)').run(); \
+  const row = db.prepare('select count(*) n from t').get(); db.close(); \
+  if (row.n !== 1) { console.error('FAIL post-prune integrity: better-sqlite3 binding loaded but misbehaved'); process.exit(1); } \
+} catch (e) { console.error('FAIL post-prune integrity: better-sqlite3 binding failed to load/open -> ' + e.message); process.exit(1); } \
 console.log('post-prune integrity OK (' + need.length + ' runtime deps present, mem0ai/oss resolves, better-sqlite3 binding loads)');"
 
 FROM node:22-alpine

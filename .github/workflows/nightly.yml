@@ -225,3 +225,20 @@ jobs:
           name: extraction-gate-result
           path: server/eval/results/ci-extraction-gate.json
           if-no-files-found: ignore
+
+  # #255: standing arm64 signal for the Dockerfile's post-prune gate.
+  # The gate LOADS the better-sqlite3 native binding (v1.8.0-class
+  # protection), but before this job the only arm64 execution was
+  # release.yml's tag-triggered multi-arch push — a release-blocking
+  # failure mode with zero pre-tag signal (the #211 split-gate shape).
+  # Build-only, no push, no secrets.
+  arm64-image-build:
+    name: arm64 image build (QEMU, build-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build arm64 (no push)
+        run: docker buildx build --platform linux/arm64 server
