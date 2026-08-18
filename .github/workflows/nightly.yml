@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install server deps
         working-directory: server
@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install server deps
         working-directory: server
@@ -182,7 +182,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # NO qdrant service and NO patch-package: the eval imports only facts()
       # (+ the pure scorers) and never builds a mem0 Memory — it structurally

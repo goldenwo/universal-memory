@@ -18,6 +18,13 @@
 // a second qdrant client that mem0's vector store actually USES at runtime
 // (worse than the SDK case). Same detector, near-zero cost.
 //
+// better-sqlite3 added in #255: mem0 peers ^12.6.2 (NON-optional) and our
+// direct ^12.9.0 satisfies it — no override exists or is needed today. But a
+// future major divergence (the gated 13.x arc) would nest a second NATIVE
+// addon, and mem0's SQLiteManager would then open the history db through a
+// different binding than UM's counters db uses — strictly worse than the SDK
+// skew case. Dedup here rests on direct-dep satisfaction, not an override.
+//
 // Runs in the same suite the deps-guard CI job executes → standing gate.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,6 +40,7 @@ const FORBIDDEN_NESTED = [
   '@anthropic-ai/sdk',
   '@google/genai',
   '@qdrant/js-client-rest',
+  'better-sqlite3',
 ];
 
 test('no provider SDK is nested under node_modules/mem0ai (overrides dedupe holds)', () => {
@@ -47,9 +55,11 @@ test('no provider SDK is nested under node_modules/mem0ai (overrides dedupe hold
   );
   assert.deepEqual(
     nested, [],
-    `provider SDK(s) nested under node_modules/mem0ai/node_modules: ${nested.join(', ')} — ` +
-    `the package.json overrides for mem0ai's peer ranges are not deduplicating; ` +
-    `mem0 would run a different SDK version than UM's provider registry. ` +
-    `See docs/plans/2026-08-18-mem0ai-3x-spec.md §1.2.`,
+    `package(s) nested under node_modules/mem0ai/node_modules: ${nested.join(', ')} — ` +
+    `dedupe is broken (package.json overrides for the SDKs, direct-dep peer ` +
+    `satisfaction for better-sqlite3); mem0 would run a different copy than ` +
+    `UM loads at top level (for better-sqlite3: a second native binding on ` +
+    `the same history db). ` +
+    `See docs/plans/2026-08-18-mem0ai-3x-spec.md §1.2 and #255.`,
   );
 });

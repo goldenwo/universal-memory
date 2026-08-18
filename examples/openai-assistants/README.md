@@ -28,7 +28,7 @@ pieces into your own code.
 2. **OpenAI API key** in the environment. Both examples read `OPENAI_API_KEY`
    directly — no hardcoded secrets.
 
-3. **Node 20+** or **Python 3.10+**. Smoke-tested on Node 25.2 and Python 3.11.
+3. **Node 22+** (openai v7 requires it) or **Python 3.10+**. Smoke-tested on Node 25.2 and Python 3.11.
 
 ## Run — Node
 

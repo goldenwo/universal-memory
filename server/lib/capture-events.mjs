@@ -20,11 +20,12 @@
 //   • Surface attribution: X-UM-Source header (X-Mem0-Source accepted as an
 //     alias); absent ⇒ 'unknown'.
 //
-// Driver: better-sqlite3 (plan T5 resolution — the Docker image is
-// node:20-alpine, which does not ship node:sqlite; better-sqlite3 is already
-// in the image as a mem0ai transitive dep and is now a pinned DIRECT dep).
-// better-sqlite3 is synchronous — the upsert is microseconds and the caller
-// is never blocked beyond it.
+// Driver: better-sqlite3 (plan T5 resolution, rationale refreshed for #255:
+// Node 22 does ship node:sqlite, but mem0's SQLiteManager requires
+// better-sqlite3 regardless — it is in the image either way, so a
+// node:sqlite migration would add a second SQLite binding, not remove one;
+// moot while mem0 depends on it). better-sqlite3 is synchronous — the
+// upsert is microseconds and the caller is never blocked beyond it.
 //
 // Path: UM_COUNTERS_DB_PATH, defaulting NEXT TO the history DB's configured
 // location so an existing history-DB bind mount covers both files. When only

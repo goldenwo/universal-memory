@@ -142,7 +142,7 @@ if command -v docker >/dev/null 2>&1; then
 	UM_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'memory-server' | head -1 || true)
 	if [ -n "$UM_CONTAINER" ]; then
 		echo "[smoke]     scraping /metrics inside container: $UM_CONTAINER"
-		# wget ships with busybox in node:20-alpine; fall back to node fetch
+		# wget ships with busybox in node:22-alpine; fall back to node fetch
 		# if a future base image drops it.
 		METRICS=$(docker exec -i "$UM_CONTAINER" sh -c \
 			'wget -qO- "http://localhost:6335/metrics" 2>/dev/null \
