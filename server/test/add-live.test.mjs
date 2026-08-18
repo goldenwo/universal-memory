@@ -32,7 +32,14 @@ async function ensureCollection({ host, port, name, dim }) {
     await client.getCollection(name);
   } catch (e) {
     if (e?.status === 404) {
-      await client.createCollection(name, { vectors: { size: dim, distance: 'Cosine' } });
+      try {
+        await client.createCollection(name, { vectors: { size: dim, distance: 'Cosine' } });
+      } catch (createErr) {
+        // On a fresh collection, mem0's Memory constructor races us with its
+        // own async collection-create; a 409 Conflict here means it won —
+        // the collection exists, which is all this helper guarantees.
+        if (createErr?.status !== 409) throw createErr;
+      }
     } else {
       throw e;
     }
