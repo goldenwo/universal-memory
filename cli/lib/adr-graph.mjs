@@ -97,7 +97,7 @@ export function parseAdrFile(name, text) {
     listKey = null;
 
     if (key === 'supersedes') {
-      if (value === '' ) { listKey = 'supersedes'; continue; }      // block list follows
+      if (value === '') { listKey = 'supersedes'; continue; }       // block list follows
       const flow = /^\[(.*)\]$/.exec(value);                        // inline flow list
       if (flow) {
         for (const part of flow[1].split(',')) {
