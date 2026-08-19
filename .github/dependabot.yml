@@ -21,3 +21,31 @@ updates:
       # Dependabot security ALERTS for mem0ai still surface in the Security
       # tab, which remains the advisory path (#231 compensating control).
       - dependency-name: "mem0ai"
+
+      # ollama must stay on 0.5.x: mem0ai@3.1.6 declares `peerOptional
+      # ollama@^0.5.14`, so anything >=0.6 fails `npm ci` outright with
+      # ERESOLVE (measured on PR #258, which bumped it to 0.6.3). This is a
+      # HARD install failure, not a preference — the ceiling moves only when
+      # a mem0ai reconciliation widens that peer range.
+      - dependency-name: "ollama"
+        versions: [">=0.6.0"]
+
+      # @qdrant/js-client-rest must stay on 1.18.x: 1.19 removed the legacy
+      # search API this codebase calls. Unlike the ollama pin this would NOT
+      # fail install or the deps guard — it resolves cleanly and breaks
+      # recall at runtime, which is exactly why it needs an ignore rather
+      # than a failing PR to catch it. Revisit only alongside a deliberate
+      # migration to the query API.
+      - dependency-name: "@qdrant/js-client-rest"
+        versions: [">=1.19.0"]
+
+      # better-sqlite3 must stay on ^12: 13.x is an N-API rewrite that ships
+      # binding.gyp with no install script, so `npm ci` (NOT `npm install` —
+      # the verb difference IS the trap) fires the implicit node-gyp rule and
+      # dies in the toolchain-free alpine image; reproduced under npm 10.9 and
+      # 11.19, and 13.x releases carry zero prebuild assets. Measured during
+      # #255; PR #212 was closed on it but no ignore was ever added, so the
+      # bump kept re-proposing. Re-take when upstream drops binding.gyp from
+      # the tarball or restores a prebuild-aware install.
+      - dependency-name: "better-sqlite3"
+        versions: [">=13.0.0"]
