@@ -61,6 +61,28 @@ export function searchConfig({ userId, limit } = {}) {
 export const FULL_SCAN_LIMIT = 10000;
 const DEFAULT_LIMIT = 100;
 
+/**
+ * Fail-loud guard for destructive full-scan callers (#262).
+ *
+ * A scan that returns exactly FULL_SCAN_LIMIT items may be TRUNCATED — the
+ * corpus can be larger than the window. Proceeding with a delete-then-rewrite
+ * on that view is how #262 happened at the old 100-point default: the target
+ * doc sat past the window, the delete pass saw nothing, and the rewrite added
+ * a duplicate point. The cap is 100x larger now; the failure class is the
+ * same. Destructive callers throw here instead of acting on a possibly-
+ * truncated view (mirrors the cli reindex snapshot-saturation throw from
+ * #231). Remedy at that scale is paginated scroll, not a bigger constant.
+ */
+export function assertScanNotSaturated(items, op) {
+  if ((items?.length ?? 0) >= FULL_SCAN_LIMIT) {
+    throw new Error(
+      `[${op}] full scan saturated at FULL_SCAN_LIMIT=${FULL_SCAN_LIMIT} — ` +
+      'the view may be truncated; refusing destructive action. ' +
+      'Corpus has outgrown single-page enumeration: paginate the scroll.',
+    );
+  }
+}
+
 // Mirror of mem0ai 2.4.6's getAll projection `excludedKeys` — everything
 // else in the payload lands under `metadata`.
 const EXCLUDED_KEYS = new Set(['userId', 'agentId', 'runId', 'hash', 'data', 'createdAt', 'updatedAt']);
