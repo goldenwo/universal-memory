@@ -12,9 +12,15 @@
  *   1. Git is authoritative. The index is a lossy copy: `create-adr.sh` builds
  *      its registration payload from a hardcoded metadata set that omits
  *      `supersedes`/`superseded_by` entirely, so the relations never arrive.
- *   2. universal-memory carries a `.um-self-host` marker, and create-adr
- *      deliberately skips registration for self-host repos — this repo's own
- *      ADRs are absent from the index by design, not by accident.
+ *   2. [CORRECTED 2026-08-19 — this reason was FALSE and is retained only so the
+ *      claim is not silently reintroduced.] It previously read: "universal-memory
+ *      carries a `.um-self-host` marker, and create-adr deliberately skips
+ *      registration for self-host repos — this repo's own ADRs are absent from
+ *      the index by design." The self-host check (`_detect_self_application`)
+ *      is called from `cmd_create` ONLY, and only when `--commit` was not
+ *      passed; `cmd_sync` never calls it. This repo's ADRs 0004 and 0008 are in
+ *      fact registered, carrying `repo_path` of this repo. Reasons 1 and 3 are
+ *      each independently sufficient, so deriving from files remains correct.
  *   3. Even a fixed registration path would land nothing on re-registration:
  *      a dedup hit routes through mergeSurface, whose payload patch touches
  *      only surfaces/projects/dedupCount/dedupLastSeenAt and drops caller
