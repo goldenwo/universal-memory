@@ -400,7 +400,9 @@ components:
                 type: string
               event:
                 type: string
-                description: ADD | UPDATE | DELETE | NONE
+                description: ADD | DEDUP_MERGED | SUPERSEDED_INBAND | IDENTITY_UPSERT (an
+                  abstained extraction returns an empty results array, not an
+                  event)
     DeleteRequest:
       description: "Two shapes: A) `{ metadata: { id } }` to delete every mem0 entry
         whose metadata.id matches; B) `{ id }` to delete a single entry by mem0
