@@ -61,29 +61,44 @@ export const D3_SERVER_MANAGED_STATUS_FIELDS = Object.freeze([
 /**
  * Fields the #279 identity-addressed ADR write carries forward from the
  * existing point across its full-replace upsert (spec D5,
- * docs/plans/2026-08-23-adr-identity-upsert-spec.md).
+ * docs/plans/2026-08-23-adr-identity-upsert-spec.md). This is the single
+ * source of the carry rationale — add.mjs's performIdentityUpsert keeps
+ * only a pointer here.
  *
- * Anchored to the READ-path suppression predicate `isRecallable`
- * (lib/recallable.mjs) — every metadata field that can suppress a point on
- * read MUST be listed here, or an ADR re-sync silently un-suppresses the
- * record (the resurrection incident class, see buildPayload's status
- * comment in add.mjs). The agreement is pinned by test T2l in
- * adr-identity-upsert.test.mjs, which extracts isRecallable's field reads
- * from source. `supersededBy`/`supersededAt` ride along as the status
- * trio's bookkeeping; `createdAt`/`valid_from` are the event-time pair
- * (an idempotent upsert must not make a record look newer).
+ * Three field families, each with its own reason to survive the replace:
+ *
+ * 1. Suppression state — anchored to the READ-path predicate `isRecallable`
+ *    (lib/recallable.mjs): every metadata field that can suppress a point
+ *    on read MUST be carried, or an ADR re-sync silently un-suppresses the
+ *    record (the resurrection incident class, see buildPayload's status
+ *    comment in add.mjs). The agreement is pinned by test T2l in
+ *    adr-identity-upsert.test.mjs, which extracts isRecallable's field
+ *    reads from source. The status trio comes from
+ *    D3_SERVER_MANAGED_STATUS_FIELDS by SPREAD, not by copy (review
+ *    round; R6_PROTECTED_KEYS precedent — "so the two guards cannot
+ *    drift"): a fourth server-managed supersession field lands here
+ *    automatically, which T2l's isRecallable tripwire could not catch.
+ * 2. Event time — `createdAt` / `valid_from`: an idempotent upsert must
+ *    not make a record look newer. (`valid_from` has one guarded
+ *    exception at the use site: a USABLE caller-supplied value wins,
+ *    mirroring buildPayload's own RC2 guard — otherwise a deliberate
+ *    event-time correction would be silently discarded.)
+ * 3. Reaction projection — `reaction_count` / `reaction_types`, the #187
+ *    fields reaction-attach.mjs setPayload-patches onto existing points
+ *    (review round): a full replace would silently diverge the payload
+ *    from the reaction ledger until the next reaction event re-attaches.
  *
  * Carry gates on VALUE-presence (`!= null`), never key-presence:
  * unsupersedePoint writes `supersededBy: null`, and null payload keys are
  * forbidden repo-wide.
  */
 export const IDENTITY_CARRY_FORWARD_FIELDS = Object.freeze([
+  ...D3_SERVER_MANAGED_STATUS_FIELDS,
+  'invalidated_at',
   'createdAt',
   'valid_from',
-  'status',
-  'supersededBy',
-  'supersededAt',
-  'invalidated_at',
+  'reaction_count',
+  'reaction_types',
 ]);
 
 /**

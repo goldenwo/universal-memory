@@ -277,6 +277,10 @@ const COMPAT_EVENT_MAP = Object.freeze({
   // "an existing memory changed" to a mem0 client → UPDATE. Without this
   // entry the unknown-event default reported a SUCCESSFUL write as NONE
   // (nothing-happened), the same silent-success class #279 fixed.
+  // Known imprecision, accepted (spec D1: compat carrying ADR metadata is a
+  // degenerate shape no real client sends): a FIRST registration also reads
+  // UPDATE, because the result envelope does not carry hadPrior and growing
+  // it for this path isn't warranted.
   IDENTITY_UPSERT: 'UPDATE',
   NONE: 'NONE',
 });

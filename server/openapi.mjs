@@ -317,7 +317,7 @@ const SCHEMAS = {
           properties: {
             id: { type: 'string' },
             memory: { type: 'string' },
-            event: { type: 'string', description: 'ADD | DEDUP_MERGED | SUPERSEDED_INBAND | IDENTITY_UPSERT | NONE' },
+            event: { type: 'string', description: 'ADD | DEDUP_MERGED | SUPERSEDED_INBAND | IDENTITY_UPSERT (an abstained extraction returns an empty results array, not an event)' },
           },
         },
       },
