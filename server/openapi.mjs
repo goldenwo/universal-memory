@@ -317,7 +317,7 @@ const SCHEMAS = {
           properties: {
             id: { type: 'string' },
             memory: { type: 'string' },
-            event: { type: 'string', description: 'ADD | UPDATE | DELETE | NONE' },
+            event: { type: 'string', description: 'ADD | DEDUP_MERGED | SUPERSEDED_INBAND | IDENTITY_UPSERT | NONE' },
           },
         },
       },

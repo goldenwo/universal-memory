@@ -273,6 +273,11 @@ const COMPAT_EVENT_MAP = Object.freeze({
   ADD: 'ADD',
   DEDUP_MERGED: 'UPDATE',
   SUPERSEDED_INBAND: 'UPDATE',
+  // #279: an identity-addressed ADR write full-replaces an existing point —
+  // "an existing memory changed" to a mem0 client → UPDATE. Without this
+  // entry the unknown-event default reported a SUCCESSFUL write as NONE
+  // (nothing-happened), the same silent-success class #279 fixed.
+  IDENTITY_UPSERT: 'UPDATE',
   NONE: 'NONE',
 });
 

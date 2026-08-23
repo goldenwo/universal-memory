@@ -61,7 +61,7 @@ import { umFactsExtractedTotal, umInbandSupersedeTotal, umInbandSupersedeDuratio
 import { getLogger, getRequestLogger } from './logger.mjs';
 import { isSystemDoc } from './system-docs.mjs';
 import { isUsableDate } from './ranking.mjs';
-import { assertNoReservedFields, NAMESPACE_UM } from './dedup-constants.mjs';
+import { assertNoReservedFields, NAMESPACE_UM, IDENTITY_CARRY_FORWARD_FIELDS } from './dedup-constants.mjs';
 import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface } from './dedup.mjs';
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
@@ -112,6 +112,43 @@ export function computeFactId({ userId, text, lane, persona }) {
       ? `:${lane ?? ''}:${persona ?? ''}`
       : '';
   return uuidv5(`${itemHash}:${userId}${seedSuffix}`, NAMESPACE_UM);
+}
+
+/**
+ * Deterministic point id for an IDENTITY-addressed ADR write (#279, spec D3:
+ * docs/plans/2026-08-23-adr-identity-upsert-spec.md).
+ *
+ * ⚠ ONE-WAY DOOR — seed format AND content are permanent (pinned by an
+ * exact-uuid test in adr-identity-upsert.test.mjs). The JSON-array seed is
+ * unambiguous under any field content (a Windows repoPath contains ':';
+ * plain concatenation would be ambiguous), and the leading 'adr' kind
+ * discriminator leaves room for future identity-addressed record types
+ * without perturbing existing ids. `repoPath` is the machine-local absolute
+ * toplevel path — a deliberate splits-beat-collisions trade (spec A4);
+ * revisit trigger: the first observed cross-device duplicate, surfaced by
+ * the legacy-cleanup script's adr_id-grouping report.
+ *
+ * @param {{ userId: string, adrId: string, repoPath?: string|null }} opts
+ * @returns {string} uuidv5-derived identity point ID
+ */
+export function computeAdrIdentityId({ userId, adrId, repoPath }) {
+  return uuidv5(JSON.stringify(['adr', repoPath ?? null, adrId, userId]), NAMESPACE_UM);
+}
+
+/**
+ * D1 predicate (#279 spec): identity-addressed treatment applies only to
+ * untrusted-path writes carrying type:'adr' with a usable adr_id. The
+ * `_systemMigration` exclusion is load-bearing: vault-doc reindexes
+ * (memory_capture type:adr → reindexDoc) legitimately carry type:'adr'
+ * frontmatter and belong to the doc tier, whose replace-on-reindex
+ * machinery is untouched. type:'adr' WITHOUT adr_id has no identity to
+ * address and falls through to the content-addressed pipeline unchanged.
+ */
+function isIdentityAddressed({ metadata, _systemMigration }) {
+  return _systemMigration !== true
+    && metadata?.type === 'adr'
+    && typeof metadata.adr_id === 'string'
+    && metadata.adr_id !== '';
 }
 
 function buildPayload({ userId, text, metadata, surface, lane, persona, stampValidFrom, trustedServerPath }) {
@@ -335,6 +372,89 @@ export async function umAdd({
   const supersedeFn = _supersedePoint ?? supersedePoint;
 
   return withRequestContext({ id: currentRequestId(), userId, collection, infer }, async () => {
+    // #279 identity-addressed ADR writes (spec D1–D7,
+    // docs/plans/2026-08-23-adr-identity-upsert-spec.md). Short-circuits
+    // BEFORE extraction, dedup, and lane classification: an authored record
+    // registers verbatim at a deterministic identity id and is idempotently
+    // FULL-REPLACED on every sync — content dedup is the wrong primitive for
+    // a record whose body is stable while its lifecycle changes (the exact
+    // mechanism that made /adr sync a silent no-op). Entry guards
+    // (assertNoReservedFields, lane/persona validation) already ran above;
+    // this branch cannot bypass them.
+    if (isIdentityAddressed({ metadata, _systemMigration })) {
+      const client = _qdrantClient ?? await getRealClient(memory);
+      // D2: verbatim, never extracted — facts() can return 0 or N facts,
+      // neither of which maps onto ONE identity, and extraction paraphrases
+      // authored titles (#277's measured hazard).
+      const { vector } = await embedOrchestrator(text, { _providerOverride: _embedProviderOverride, metrics });
+      const repoPath = typeof metadata.repo_path === 'string' && metadata.repo_path !== ''
+        ? metadata.repo_path
+        : undefined;
+      const id = computeAdrIdentityId({ userId, adrId: metadata.adr_id, repoPath });
+
+      // D6: retrieve-before-upsert, fail CLOSED on error. Proceeding with
+      // fresh values on a failed retrieve would silently re-date the record
+      // or resurrect a demoted one — the error propagates to the caller's
+      // withRetry wrap and, past that, to the operator's visible re-run.
+      const existing = await client.retrieve(collection, { ids: [id], with_payload: true });
+      const prior = Array.isArray(existing) && existing[0]?.payload ? existing[0].payload : null;
+
+      const base = buildPayload({
+        userId,
+        text,
+        metadata: stagedMetadata,
+        surface,
+        // D4: identity points are unpartitioned BY CONSTRUCTION — an
+        // unpartitioned point is ineligible for auto-supersession (the
+        // R1-B1 gate), which #272 measured resolving the one real ADR
+        // contradiction backwards. Caller lane/persona are dropped here.
+        lane: undefined,
+        persona: undefined,
+        stampValidFrom,
+        trustedServerPath: false,
+      });
+      // D5: carry-forward override AFTER buildPayload returns — buildPayload
+      // writes `createdAt: nowIso` after its metadata spread with no guard,
+      // so a value passed in via metadata would be clobbered. The carry set
+      // (IDENTITY_CARRY_FORWARD_FIELDS) is anchored to isRecallable's
+      // suppression fields (agreement pinned by test T2l): a full replace
+      // that dropped them would resurrect demoted points. Value-presence
+      // (`!= null`) gates each carry — unsupersedePoint writes null keys,
+      // and null payload keys are forbidden repo-wide.
+      const carry = {};
+      if (prior) {
+        for (const field of IDENTITY_CARRY_FORWARD_FIELDS) {
+          if (prior[field] != null) carry[field] = prior[field];
+        }
+      }
+      const surfacesUnion = [...new Set([...(prior?.surfaces ?? []), ...(base.surfaces ?? [])])];
+      const projectsUnion = [...new Set([...(prior?.projects ?? []), ...(base.projects ?? [])])];
+      const payload = {
+        ...base,
+        ...carry,
+        ...(surfacesUnion.length ? { surfaces: surfacesUnion } : {}),
+        ...(projectsUnion.length ? { projects: projectsUnion } : {}),
+      };
+      logger.info(
+        // Identifiers only — never text/data (logs are an egress surface).
+        { event: 'adr.identity_write', id, adr_id: metadata.adr_id, hadPrior: prior !== null },
+        'identity-addressed ADR write (verbatim, dedup-bypassed, full-replace upsert)',
+      );
+      await client.upsert(collection, { points: [{ id, vector, payload }] });
+
+      // T5 counters: this branch is untrusted-path by construction (D1
+      // excludes _systemMigration), so the capture.extraction row always
+      // emits — IDENTITY_UPSERT maps to 'stored' via extractionOutcomeFor's
+      // default, keeping counter semantics identical to today's.
+      recordCaptureEvent({
+        surface,
+        project: metadata?.project,
+        event: CAPTURE_EVENTS.EXTRACTION,
+        outcome: extractionOutcomeFor('IDENTITY_UPSERT'),
+      });
+      return { results: [{ id, memory: text, event: 'IDENTITY_UPSERT' }] };
+    }
+
     let items;
     if (infer) {
       const factsResult = await factsOrchestrator(text, { _providerOverride: _factsProviderOverride, metrics });
