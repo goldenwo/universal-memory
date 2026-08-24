@@ -335,36 +335,62 @@ if not isinstance(fam, dict):
 
 alerts = []
 try:
-    for surface in sorted(fam, key=lambda s: -float(fam[s].get("count_7d") or 0)):
-        info = fam[surface]
+    # VALIDATE BEFORE SORTING (review catch, twice over): a sort key that
+    # calls .get() or negates a value runs BEFORE any isinstance guard in a
+    # comprehension, so a malformed entry would crash with a generic
+    # TypeError/AttributeError instead of reaching the purpose-written
+    # per-surface error — or, for reason values, escalate a junk entry into
+    # a whole-section exit 2 where ignoring it keeps the ALERT actionable.
+    entries = []
+    for surface, info in fam.items():
         if not isinstance(info, dict):
             raise ValueError("surface %r malformed" % surface)
         n = info.get("count_7d")
         if not isinstance(n, (int, float)) or isinstance(n, bool):
             raise ValueError("surface %r has a bad count_7d" % surface)
         if n > 0:
-            reasons = info.get("reasons_7d") or {}
-            parts = ["%s x%d" % (k, v) for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])
-                     if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
-            alerts.append("%s: %d anomalous empty read(s) in 7d (%s; last %s)" % (
-                surface, n, ", ".join(parts) or "unlabeled", info.get("last_day_seen")))
+            entries.append((surface, n, info))
+    for surface, n, info in sorted(entries, key=lambda e: -e[1]):
+        reasons = info.get("reasons_7d") or {}
+        parts = sorted(
+            ((k, v) for k, v in reasons.items()
+             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
+            key=lambda kv: -kv[1])
+        breakdown = ", ".join("%s x%d" % kv for kv in parts) or "unlabeled"
+        # Neutral noun (review catch): the vocabulary spans transcript reads
+        # AND hook-startup failures (no-python, bad-stdin) — "empty read"
+        # would misdirect the diagnosis; the reason breakdown carries the
+        # specifics.
+        alerts.append("%s: %d capture anomaly(ies) in 7d (%s; last %s)" % (
+            surface, n, breakdown, info.get("last_day_seen")))
 except Exception as e:
     emit("ERROR", "signals payload malformed: %s" % e)
 
 if alerts:
-    emit("ALERT", "; ".join(alerts) + " — the capture client is reading transcripts and finding nothing (the 2026-07-16 class, #267)")
+    emit("ALERT", "; ".join(alerts) + " — the capture client is firing but not capturing (the 2026-07-16 class, #267; see the reason breakdown)")
 emit("OK", "no capture anomalies in the last 7 days")
 ' < "$BODY_FILE" 2>/dev/null) || SIG_VERDICT=""
 
 SIG_STATUS="${SIG_VERDICT%%|*}"
 SIG_MESSAGE="${SIG_VERDICT#*|}"
 
-# print_escalations — echo EVERY applicable escalation line (#267 print-all;
-# message order SIGNALS → LAYERS → LEDGER: active capture loss is the most
-# actionable headline). Called from every exit arm below, exit-2 paths
-# included — replacing the old first-wins chain that let LAYERS mask LEDGER
-# on the FRESH arm and dropped LEDGER entirely on the STALE arm.
+# print_escalations — echo EVERY applicable alert line (#267 print-all;
+# order: the primary capture verdict first, then SIGNALS → LAYERS → LEDGER —
+# active capture loss is the most actionable of the add-on sections). Called
+# from every exit arm below, exit-2 paths included — replacing the old
+# first-wins chain that let LAYERS mask LEDGER on the FRESH arm, dropped
+# LEDGER entirely on the STALE arm, and (review catch) let a monitor fault
+# swallow the capture-STALE text itself.
+# LAYERS_STATUS is defensively initialized here (it is assigned below): a
+# future early exit between this definition and that assignment must never
+# turn into an unbound-variable abort — which under the `|| <notify>` cron
+# shape would page as a pipeline death instead of a monitor fault.
+LAYERS_STATUS=""
+LAYERS_MESSAGE=""
 print_escalations() {
+  if [ "$STATUS" = "STALE" ]; then
+    echo "um-alert: STALE — $MESSAGE" >&2
+  fi
   if [ "$SIG_STATUS" = "ALERT" ]; then
     echo "um-alert: SIGNALS — $SIG_MESSAGE" >&2
   fi
@@ -472,15 +498,24 @@ fi
 # LAYERS case below. The ERROR arm prints the OTHER sections' live alert
 # text first (the mirror of the layers-malformed direction): a broken
 # signals monitor must not hide a stale layer or ledger growth.
+# Monitor-fault handling is COMBINED (review catch — sequential exit-2 arms
+# masked each other): BOTH sections' breadcrumbs and BOTH sections' CHECK
+# FAILED lines print before the single exit 2, and every applicable live
+# alert line prints too (print_escalations includes the capture-STALE text).
+# A malformed monitoring payload is worth its own CHECK-FAILED regardless of
+# the counters-derived verdict (spec §6) — an operator seeing exit 2 should
+# investigate the monitor, not read it as "the pipeline is stale"; a
+# garbage/EMPTY status folds into the fault arm rather than no-op'ing (this
+# arc's root failure mode was a broken monitor going quiet).
+MONITOR_FAULT=""
 case "$SIG_STATUS" in
   ABSENT)
     echo "um-alert: $SIG_MESSAGE" >&2 ;;
   OK|ALERT|DEGRADED)
     : ;;
   *)
-    print_escalations
-    echo "um-alert: CHECK FAILED — ${SIG_MESSAGE:-signals verdict parser produced no output}" >&2
-    exit 2 ;;
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${SIG_MESSAGE:-signals verdict parser produced no output}" >&2 ;;
 esac
 
 case "$LAYERS_STATUS" in
@@ -489,32 +524,29 @@ case "$LAYERS_STATUS" in
   OK|STALE)
     : ;;
   *)
-    # Unconditional, BEFORE the capture-verdict case below: a malformed
-    # layers payload (or an EMPTY LAYERS_STATUS — the python process itself
-    # crashed uncaught) is worth its own CHECK-FAILED regardless of what the
-    # counters-derived verdict says (spec §6) — an operator seeing exit 2
-    # here should investigate the monitor itself, not read it as "the
-    # pipeline is stale". A garbage/empty status is folded into this same
-    # branch rather than silently no-op'ing the layers check: this arc's own
-    # root failure mode was exactly a broken monitor going quiet.
-    # #267 print-all: an applicable SIGNALS ALERT (or LEDGER growth) line is
-    # echoed FIRST — the monitor fault defers the alert's exit-code
-    # semantics but must not hide its text.
-    print_escalations
-    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2
-    exit 2 ;;
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2 ;;
 esac
+
+if [ -n "$MONITOR_FAULT" ]; then
+  print_escalations
+  exit 2
+fi
 
 case "$STATUS" in
   FRESH)
     if [ "$SIG_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
       print_escalations
+      # Context restored (review catch — the old suffix was deleted with
+      # first-wins): the one mail a cron sends must say whether freshness
+      # itself was evaluated-and-green.
+      echo "um-alert: (capture freshness itself OK: $MESSAGE)" >&2
       exit 1
     fi
     echo "um-alert: OK — $MESSAGE"
     exit 0 ;;
   STALE)
-    echo "um-alert: STALE — $MESSAGE" >&2
+    # The STALE line itself comes from print_escalations (first line).
     print_escalations
     exit 1 ;;
   ERROR)

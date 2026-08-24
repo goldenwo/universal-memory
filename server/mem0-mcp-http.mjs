@@ -3550,6 +3550,7 @@ export function createRequestHandler(ctx = {}) {
 			try {
 				reqBody = JSON.parse(await readBody(req));
 			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));

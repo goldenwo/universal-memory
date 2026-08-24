@@ -188,6 +188,10 @@ call_count() { cat "$CAP_DIR/count" 2>/dev/null || echo 0; }
 # global call_count() can no longer distinguish capture traffic from the
 # anomaly self-report POSTs — anomalous fires now emit exactly one
 # /api/capture-anomaly POST and zero /api/append-turn POSTs.
+# CONTRACT NOTE: continuity.sh's same-named helper additionally excludes
+# '{}' G7-probe bodies; stop.sh never posts probes, so this suite's version
+# deliberately has no body filter — do not copy assertions between the two
+# suites without accounting for that difference.
 _url_post_count() {
   local needle="$1" n=0 f
   for f in "$CAP_DIR"/url_*; do
@@ -313,6 +317,9 @@ run_stop "$H" "$STDIN"
 assert_eq "S2: exit 0" "$RUN_EXIT" "0"
 assert_eq "S2: zero append-turn POSTs on unchanged transcript" "$(append_post_count)" "0"
 assert_eq "S2: exactly one anomaly self-report" "$(signal_post_count)" "1"
+# Total re-pinned (review catch — dropping it would let a stray POST to a
+# THIRD endpoint pass): the signal POST is the fire's ONLY wire traffic.
+assert_eq "S2: total wire traffic is exactly the one signal POST" "$(call_count)" "1"
 assert_eq "S2: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "13"
 assert_contains "S2: split reason + signal token logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-stalled signal=sent"
 
@@ -678,6 +685,7 @@ run_stop "$H" "$STDIN"
 assert_eq "S19: exit 0" "$RUN_EXIT" "0"
 assert_eq "S19: zero append-turn POSTs" "$(append_post_count)" "0"
 assert_eq "S19: one anomaly self-report" "$(signal_post_count)" "1"
+assert_eq "S19: total wire traffic is exactly the one signal POST" "$(call_count)" "1"
 assert_contains "S19: signal POST targets /api/capture-anomaly" "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/capture-anomaly"
 assert_eq "S19: body reason" "$(body_field 1 reason)" "no-transcript"
 assert_eq "S19: body project (post-project site carries the slug)" "$(body_field 1 project)" "example-project"

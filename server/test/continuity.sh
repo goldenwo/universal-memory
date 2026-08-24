@@ -424,7 +424,7 @@ fi
 # re-fire an unchanged transcript (cursor == total) ⇒ stalled, each carrying
 # the #267 ` signal=<token>` field (token varies with the target server's
 # version in live mode — presence, not value, is the contract here).
-EMPTY_DELTAS=$(grep -Ec " stop skip=empty-delta-(stalled|filtered) " "$HOOK_LOG" 2>/dev/null || true)
+EMPTY_DELTAS=$(grep -Ec " stop skip=empty-delta-(stalled|filtered)( |\$)" "$HOOK_LOG" 2>/dev/null || true)
 [ "$EMPTY_DELTAS" = 4 ] \
   || fail "Step 1: expected 4 split empty-delta fires (2-5), hook.log has $EMPTY_DELTAS"
 # Zero-count guard: a silent regression to the UNSPLIT token must FAIL.

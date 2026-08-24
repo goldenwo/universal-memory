@@ -99,12 +99,13 @@ print(res)
 ' 2>/dev/null)
 
 case "$META" in
-  # #267: bad-stdin is anomalous and self-reports; every OTHER SKIP sentinel
-  # (bad-session-id, the non-project guards) is a benign class and stays
-  # exactly as before. Exact match — the benign sentinels carry suffixes.
-  SKIP:bad-stdin) um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
+  # #267: bad-stdin is anomalous and self-reports (the empty-META arm — the
+  # pass-1 interpreter died — shares the reason and the body); every OTHER
+  # SKIP sentinel (bad-session-id, the non-project guards) is a benign class
+  # and stays exactly as before. Exact match — benign sentinels carry
+  # suffixes.
+  SKIP:bad-stdin|'') um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
   SKIP:*) um_log "skip=${META#SKIP:}"; exit 0 ;;
-  '')     um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
 esac
 
 SESSION_ID=$(printf '%s\n' "$META" | sed -n '1p')
@@ -178,11 +179,21 @@ fi
 #                                          eligibility filters
 #   END\t<total-lines>                   — cursor target on full clean success
 # ---------------------------------------------------------------------------
+# Pass-2 stderr goes to a per-fire diagnostic file (see the nothing-extracted
+# note below) — but ONLY if it is writable: a failed redirect would abort the
+# substitution and mint a FALSE nothing-extracted alarm on read-only homes.
+PASS2_ERR="$STATE_DIR/stop-pass2.err"
+: > "$PASS2_ERR" 2>/dev/null || PASS2_ERR=/dev/null
 MANIFEST=$(UM_STOP_TRANSCRIPT="$TRANSCRIPT_PATH" UM_STOP_CURSOR="$CURSOR" \
   UM_STOP_PROJECT="$PROJECT" UM_STOP_CAP="$UM_STOP_CAP" \
   UM_STOP_WINDOW="$UM_STOP_WINDOW" \
   UM_STOP_MAXBYTES="$UM_STOP_MAXBYTES" "$PY" -c '
 import json, os, sys
+
+# Windows python translates \n to \r\n on pipes; emit clean LF at the source
+# (the C8 spirit) so no manifest field can carry a stray \r into the read
+# loop. The bash-side strip below stays as a belt.
+sys.stdout.reconfigure(newline="\n")
 
 path = os.environ["UM_STOP_TRANSCRIPT"]
 cursor = os.environ.get("UM_STOP_CURSOR", "")
@@ -249,7 +260,10 @@ with fh:
             continue
         msgs.append((lineno, role, text, e.get("timestamp")))
 
-if cursor.isdigit():
+# isascii() guard (review catch): str.isdigit() is True for Unicode digits
+# where int() raises — bash pre-validates ^[0-9]+$, but this block must not
+# depend on that distant guard.
+if cursor.isascii() and cursor.isdigit():
     delta = [m for m in msgs if m[0] > int(cursor)]
 else:
     # Cursor absent/unreadable: bounded trailing window (spec §5, "last 6
@@ -264,7 +278,7 @@ else:
 # cursor/total orderings (spec D10). Emitted UNCONDITIONALLY whenever the
 # delta is empty, so the bash-side default can only ever be a tripwire.
 if not delta:
-    if cursor.isdigit():
+    if cursor.isascii() and cursor.isdigit():
         shape = "stalled" if total <= int(cursor) else "filtered"
     else:
         shape = "filtered" if total > 0 else "stalled"
@@ -288,15 +302,20 @@ for lineno, role, text, ts in delta:
 if dropped:
     print("CAPPED\t%d" % dropped)
 print("END\t%d" % total)
-' 2>/dev/null)
+' 2>"$PASS2_ERR")
 
+# Diagnostic residue for the nothing-extracted alarm (review catch): an
+# empty MANIFEST means the pass-2 interpreter DIED, and #267 turns that
+# into a 7-day alarm — the traceback that explains it must exist somewhere.
+# Overwritten per fire; empty on healthy fires.
 if [ -z "$MANIFEST" ]; then um_log "skip=nothing-extracted signal=$(um_signal_anomaly nothing-extracted "$PROJECT")"; exit 0; fi
 
-# Windows python writes \r\n to pipes; $() strips only the TRAILING pair, so
-# every non-last manifest line's final field would carry a stray \r into the
-# read loop (#267 caught this via the EMPTY record's shape token; MSG bodies
-# had merely tolerated it — json.dumps never emits a raw \r, so this strip
-# can only remove the newline artifact, never content).
+# Belt for the CRLF-to-pipe class (primary fix: the reconfigure at the top
+# of pass 2): $() strips only the TRAILING \r\n pair, so an interior
+# manifest line's final field would otherwise carry a stray \r into the
+# read loop (#267 caught this via the EMPTY shape token; it also corrupted
+# BASELINE/END cursor writes latently). json.dumps never emits a raw \r —
+# the strip can only remove the newline artifact, never content.
 MANIFEST="${MANIFEST//$'\r'/}"
 
 # ---------------------------------------------------------------------------
@@ -388,7 +407,10 @@ elif [ "$FAILED" = 0 ]; then
   # SENT=0 && FAILED=0 ⟺ zero MSG records ⟺ empty delta ⟺ EMPTY record
   # present (pass 2 emits it unconditionally) — the :-stalled default is a
   # tripwire for a pass-2 bug, pinned conservative (a frozen file's shape).
-  um_log "skip=empty-delta-${SHAPE:-stalled} signal=$(um_signal_anomaly "empty-delta-${SHAPE:-stalled}" "$PROJECT")"
+  # ONE expansion feeds both the log token and the wire reason (the
+  # one-vocabulary contract must not be driftable between them).
+  EMPTY_REASON="empty-delta-${SHAPE:-stalled}"
+  um_log "skip=$EMPTY_REASON signal=$(um_signal_anomaly "$EMPTY_REASON" "$PROJECT")"
 fi
 
 exit 0

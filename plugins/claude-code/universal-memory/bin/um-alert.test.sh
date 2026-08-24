@@ -611,11 +611,14 @@ if [ "$rc" -eq 1 ]; then
 else
   fail "T28-exit-1 (rc=$rc, out=$output)"
 fi
-# #267 print-all re-contract (deliberate, review-logged — NOT a relaxation):
-# the old inline "; also layers stale: X" combined string became a separate
-# "um-alert: LAYERS-STALE — X" escalation line when the STALE arm went
-# print-all. Same semantic content pinned: both sections named, exit 1.
-if echo "$output" | grep -q "STALE —" && echo "$output" | grep -q "LAYERS-STALE" \
+# #267 print-all re-contract: the old inline "; also layers stale: X"
+# combined string became separate STALE + LAYERS-STALE lines. MUTATION-
+# HARDENED (review catch — a first draft's "STALE —" grep was satisfied by
+# the LAYERS-STALE substring alone): the capture arm is pinned by its own
+# unmistakable text ("no surface captured"), which only the capture-STALE
+# message contains.
+if echo "$output" | grep -q "no surface captured" \
+  && echo "$output" | grep -q "LAYERS-STALE" \
   && echo "$output" | grep -q "universal-memory"; then
   pass "T28-message-names-both"
 else
@@ -720,6 +723,13 @@ if echo "$output" | grep -q "SIGNALS" && echo "$output" | grep -q "claude-code-p
   pass "T33-signals-text"
 else
   fail "T33-signals-text: $output"
+fi
+# Review catch: the escalation mail must still say whether freshness itself
+# was evaluated-and-green (the old FRESH-arm suffix, restored as its own line).
+if echo "$output" | grep -q "capture freshness itself OK"; then
+  pass "T33-freshness-context-line"
+else
+  fail "T33-freshness-context-line: $output"
 fi
 
 # ─── T34: signals empty ⇒ exit 0 unchanged ──────────────────────────────────
@@ -827,6 +837,50 @@ echo "=== T43: --surface names a fresh surface, signals alert present ⇒ still 
 mock="$TMPDIR_ROOT/t43"; _make_mock_curl "$mock" 200 "$SIG_ALERT_FRESH"
 run_alert "$mock" --surface claude-code-plugin
 if [ "$rc" -eq 1 ]; then pass "T43-exit-1"; else fail "T43-exit-1 (rc=$rc, out=$output)"; fi
+
+# ─── T44: BOTH monitors malformed ⇒ exit 2 with BOTH CHECK FAILED lines ─────
+BOTH_MALFORMED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":"garbage","signals":"garbage"}'
+echo ""
+echo "=== T44: signals AND layers both malformed ⇒ exit 2, both faults named (no masking) ==="
+mock="$TMPDIR_ROOT/t44"; _make_mock_curl "$mock" 200 "$BOTH_MALFORMED"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T44-exit-2"; else fail "T44-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "signals key present but malformed" \
+  && echo "$output" | grep -q "layers key present but malformed"; then
+  pass "T44-both-faults-named"
+else
+  fail "T44-both-faults-named: $output"
+fi
+
+# ─── T45: signals malformed on a PRE-LAYERS server ⇒ the layers ABSENT ──────
+# breadcrumb still prints (the rollback breadcrumb must survive a sibling
+# monitor fault — review catch).
+SIG_MALFORMED_NO_LAYERS='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":"garbage"}'
+echo ""
+echo "=== T45: signals malformed + no layers key ⇒ exit 2 AND the layers ABSENT breadcrumb prints ==="
+mock="$TMPDIR_ROOT/t45"; _make_mock_curl "$mock" 200 "$SIG_MALFORMED_NO_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T45-exit-2"; else fail "T45-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "layers key absent"; then
+  pass "T45-absent-breadcrumb-survives"
+else
+  fail "T45-absent-breadcrumb-survives: $output"
+fi
+
+# ─── T46: signals malformed + captures genuinely STALE ⇒ exit 2 AND the ─────
+# capture-STALE text still prints (a monitor fault must not hide the
+# primary alarm — review catch).
+SIG_MALFORMED_CAPTURE_STALE='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-10","freshness_hours":150.5,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":"garbage"}'
+echo ""
+echo "=== T46: signals malformed + stale captures ⇒ exit 2, capture-STALE text present ==="
+mock="$TMPDIR_ROOT/t46"; _make_mock_curl "$mock" 200 "$SIG_MALFORMED_CAPTURE_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T46-exit-2"; else fail "T46-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "no surface captured"; then
+  pass "T46-capture-stale-text-survives"
+else
+  fail "T46-capture-stale-text-survives: $output"
+fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""

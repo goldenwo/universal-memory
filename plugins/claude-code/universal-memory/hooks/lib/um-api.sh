@@ -204,6 +204,13 @@ um_find_python() {
 # (fail-open: CC session integrity beats reporting).
 um_signal_anomaly() {
   local reason="$1" project="${2:-}"
+  # Local charset guard (review catch): the no-untrusted-interpolation
+  # guarantee must live IN the helper, not 100 lines away in stop.sh — the
+  # header invites a second signal family to clone this call, and a caller
+  # that skips the sanitize would otherwise mint malformed JSON and loop on
+  # permanent per-fire 400s. Out-of-charset ⇒ omit the label ('' on the
+  # server side), never break the report.
+  case "$project" in *[!A-Za-z0-9._-]*) project="" ;; esac
   local body
   if [ -n "$project" ]; then
     body=$(printf '{"reason":"%s","project":"%s"}' "$reason" "$project")
@@ -211,7 +218,10 @@ um_signal_anomaly() {
     body=$(printf '{"reason":"%s"}' "$reason")
   fi
   um_api_post '/api/capture-anomaly' "$body" 5 </dev/null >/dev/null 2>&1
-  case "$UM_API_HTTP_CODE" in
+  # ${:-000} (review catch): defensive like um-alert's read of the same
+  # global — a future early-return in _um_api_request must degrade to the
+  # http-000 arm, never an unbound-variable abort inside the caller's $( ).
+  case "${UM_API_HTTP_CODE:-000}" in
     2[0-9][0-9]) echo "sent" ;;
     000)         echo "http-000" ;;
     403)         echo "writes-disabled" ;;

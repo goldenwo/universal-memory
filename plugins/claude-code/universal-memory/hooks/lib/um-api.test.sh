@@ -401,6 +401,51 @@ assert_contains "G1: auth variant names the token" "$GOT" "token"
 assert_contains "G1: auth variant has captures-OFF prefix" "$GOT" "UM: captures are OFF"
 assert_contains "G1: auth variant carries docs link" "$GOT" "https://"
 
+# ===========================================================================
+# #267 um_signal_anomaly — library-level contract (review catch: the helper
+# is in a lib five hooks source; it needs a contract of its own, not only
+# stop.test.sh's end-to-end coverage)
+# ===========================================================================
+echo ""
+echo "=== SA1: token map + body shape + local project guard ==="
+H=$(fresh_home sa1)
+
+write_mock_curl 200
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly no-transcript proj')
+assert_eq "SA1: 200 => sent" "$GOT" "sent"
+assert_contains "SA1: body carries reason+project" "$(cat "$TMPDIR_ROOT/curl_args")" '{"reason":"no-transcript","project":"proj"}'
+assert_contains "SA1: posts /api/capture-anomaly" "$(cat "$TMPDIR_ROOT/curl_args")" "/api/capture-anomaly"
+
+write_mock_curl 404
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly no-transcript')
+assert_eq "SA1: 404 => server-too-old" "$GOT" "server-too-old"
+assert_contains "SA1: no-project body omits the field" "$(cat "$TMPDIR_ROOT/curl_args")" '{"reason":"no-transcript"}'
+
+write_mock_curl 429
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly bad-stdin')
+assert_eq "SA1: 429 => http-429 (never the server-too-old residual)" "$GOT" "http-429"
+
+write_mock_curl 000 7
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly no-python')
+assert_eq "SA1: transport failure => http-000" "$GOT" "http-000"
+
+write_mock_curl 403
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly empty-stdin')
+assert_eq "SA1: 403 => writes-disabled" "$GOT" "writes-disabled"
+
+# Local charset guard: an out-of-charset project is dropped IN the helper
+# (the guarantee must not live only in stop.sh — a future caller may skip
+# the sanitize), and the report still goes out.
+write_mock_curl 200
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'um_signal_anomaly no-transcript "bad proj\"x"')
+assert_eq "SA1: hostile project still reports (sent)" "$GOT" "sent"
+assert_contains "SA1: hostile project dropped from the body" "$(cat "$TMPDIR_ROOT/curl_args")" '{"reason":"no-transcript"}'
+
+# set -u safety: one-arg call under set -u must not abort.
+write_mock_curl 200
+GOT=$(run_api "$H" UM_SERVER_URL=http://mock:1 -- 'set -u; um_signal_anomaly nothing-extracted')
+assert_eq "SA1: one-arg call under set -u" "$GOT" "sent"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

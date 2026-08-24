@@ -298,34 +298,64 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     // Queries are event-EQUALITY (never LIKE): the capture.% boundary stays
     // untouched by construction, and the namespace-isolation test pins the
     // whole output byte-identical modulo this section.
-    const anomalyLastSeen = db.prepare(`
-      SELECT surface, MAX(day) AS last_day_seen
-      FROM counters
-      WHERE event = ?
-      GROUP BY surface
-    `).all(ANOMALY_EVENT);
-    const anomalyWindowRows = db.prepare(`
-      SELECT surface, outcome, SUM(count) AS n
-      FROM counters
-      WHERE event = ? AND day >= ? AND day <= ?
-      GROUP BY surface, outcome
-    `).all(ANOMALY_EVENT, windowStart, today);
+    // FAIL-ISOLATED in its own try (review catch): "independent" must also
+    // mean independently degradable — a defect in this newest reader must
+    // never dark the capture-freshness sections it exists to protect. On
+    // error: anomalies:null alone, which um-alert's signals-null-with-
+    // capture-present tripwire reports as a LOUD exit-2 monitor fault.
+    let anomalies = null;
+    try {
+      // Snapshot both reads in one transaction (review catch): the writer
+      // shares this WAL DB (and operators are documented running their own
+      // in-container sessions), so two bare SELECTs could see a first-ever
+      // anomaly surface appear between them.
+      const anomalyKeys = Object.freeze([...ANOMALY_REASON_KEYS, ANOMALY_OTHER]);
+      const readAnomalies = db.transaction(() => ({
+        lastSeen: db.prepare(`
+          SELECT surface, MAX(day) AS last_day_seen
+          FROM counters
+          WHERE event = ?
+          GROUP BY surface
+        `).all(ANOMALY_EVENT),
+        windowRows: db.prepare(`
+          SELECT surface, outcome, SUM(count) AS n
+          FROM counters
+          WHERE event = ? AND day >= ? AND day <= ?
+          GROUP BY surface, outcome
+        `).all(ANOMALY_EVENT, windowStart, today),
+      }));
+      const snap = readAnomalies();
 
-    // Null-prototype map — surface is caller-controlled (same v1.8.1
-    // '__proto__' hazard as the capture map above).
-    const anomalies = Object.create(null);
-    for (const { surface, last_day_seen } of anomalyLastSeen) {
-      anomalies[surface] = {
-        last_day_seen,
-        count_7d: 0,
-        reasons_7d: Object.fromEntries([...ANOMALY_REASON_KEYS, ANOMALY_OTHER].map((k) => [k, 0])),
-      };
-    }
-    for (const { surface, outcome, n } of anomalyWindowRows) {
-      const a = anomalies[surface]; // always present: window rows ⊆ last-seen surfaces
-      a.count_7d += n;
-      const key = Object.hasOwn(a.reasons_7d, outcome) ? outcome : ANOMALY_OTHER;
-      a.reasons_7d[key] += n;
+      // Null-prototype maps THROUGHOUT — surface AND outcome are writer-
+      // controlled (the v1.8.1 '__proto__' hazard; reasons_7d is served to
+      // external readers, so it gets the same discipline as the outer map).
+      const built = Object.create(null);
+      for (const { surface, last_day_seen } of snap.lastSeen) {
+        built[surface] = {
+          last_day_seen,
+          count_7d: 0,
+          reasons_7d: Object.assign(Object.create(null), Object.fromEntries(anomalyKeys.map((k) => [k, 0]))),
+        };
+      }
+      for (const { surface, outcome, n } of snap.windowRows) {
+        const a = built[surface];
+        // Tripwire, unreachable under the transaction (window rows ⊆
+        // last-seen within one snapshot): skipping defers the row to the
+        // next read — rows are durable — rather than throwing this section
+        // dark at the first-ever anomaly.
+        if (!a) continue;
+        a.count_7d += n;
+        const key = Object.hasOwn(a.reasons_7d, outcome) ? outcome : ANOMALY_OTHER;
+        a.reasons_7d[key] += n;
+      }
+      anomalies = built;
+    } catch (err) {
+      safeLog(() => getLogger().warn({
+        component: 'stats',
+        err_class: err?.code ?? err?.name ?? 'Error',
+        err_message: err?.message ?? String(err),
+      }, 'anomaly section unreadable — serving anomalies:null (capture sections stay live)'),
+      'log:stats:anomalies-unreadable');
     }
 
     return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies };

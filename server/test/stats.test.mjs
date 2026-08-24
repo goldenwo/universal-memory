@@ -477,11 +477,16 @@ test('reaction-only surface: rows are SKIPPED (no capture entry, no throw, stats
 
 // ---------- #267: anomalies section (signal.capture_anomaly) ----------
 
+// Null-prototype expected shape — reasons_7d is served with the same
+// hostile-key discipline as the surface maps, and strict deepEqual
+// compares prototypes.
 const EMPTY_REASONS = {
+  __proto__: null,
   'no-transcript': 0, 'empty-delta-stalled': 0, 'empty-delta-filtered': 0,
   'nothing-extracted': 0, 'bad-stdin': 0, 'empty-stdin': 0, 'no-python': 0,
   other: 0,
 };
+const reasonsWith = (overrides = {}) => Object.assign({ __proto__: null }, EMPTY_REASONS, overrides);
 
 test('NAMESPACE ISOLATION (#267 pin, mirror of the R3 pin): signal.capture_anomaly rows leave the WHOLE readCounterStats output byte-identical modulo anomalies', async () => {
   // Capture rows deliberately OFF today (the R3 pin's own mutation-verified
@@ -511,7 +516,7 @@ test('NAMESPACE ISOLATION (#267 pin, mirror of the R3 pin): signal.capture_anoma
   assert.deepEqual(anom.anomalies['claude-code-plugin'], {
     last_day_seen: TODAY,
     count_7d: 3,
-    reasons_7d: { ...EMPTY_REASONS, 'empty-delta-filtered': 2, 'no-transcript': 1 },
+    reasons_7d: reasonsWith({ 'empty-delta-filtered': 2, 'no-transcript': 1 }),
   });
 });
 
@@ -529,7 +534,7 @@ test('D6 both directions: an anomaly-only surface appears in anomalies AND stays
   assert.deepEqual(stats.anomalies['claude-code-plugin'], {
     last_day_seen: TODAY,
     count_7d: 1,
-    reasons_7d: { ...EMPTY_REASONS, 'empty-stdin': 1 },
+    reasons_7d: reasonsWith({ 'empty-stdin': 1 }),
   });
 });
 
@@ -543,7 +548,7 @@ test('anomalies: out-of-vocabulary outcomes FOLD INTO other and COUNT (never ski
   const stats = readCounterStats({ now: NOW, dbPath });
   const a = stats.anomalies.s;
   assert.equal(a.count_7d, 4, 'folded rows count toward the alarm sum');
-  assert.deepEqual(a.reasons_7d, { ...EMPTY_REASONS, other: 3, 'bad-stdin': 1 });
+  assert.deepEqual(a.reasons_7d, reasonsWith({ other: 3, 'bad-stdin': 1 }));
 });
 
 test('anomalies window edge: day 8 is outside count_7d/reasons_7d but still owns last_day_seen when latest', async () => {
@@ -555,7 +560,7 @@ test('anomalies window edge: day 8 is outside count_7d/reasons_7d but still owns
   const a = stats.anomalies.s;
   assert.equal(a.last_day_seen, daysAgo(8), 'all-history MAX(day), like capture freshness');
   assert.equal(a.count_7d, 0, 'no longer alarms — bounded 7-day persistence');
-  assert.deepEqual(a.reasons_7d, EMPTY_REASONS);
+  assert.deepEqual(a.reasons_7d, reasonsWith());
 });
 
 test('anomalies: missing db ⇒ null (null-shaped), empty db ⇒ {} (empty-but-not-null)', async () => {

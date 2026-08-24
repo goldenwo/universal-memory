@@ -552,8 +552,9 @@ jobs:
       # leg's fires 2-5 seed signal.capture_anomaly rows into the CI
       # server's counters DB by construction, which makes um-alert exit 1
       # for the rest of this server's life. The smoke.sh um-alert legs
-      # (inside "Run install smoke" above) MUST keep running BEFORE this
-      # step — today true by position only; this comment pins it.
+      # (inside the "Run smoke test" step above — S10 legs 4/5) MUST keep
+      # running BEFORE this step — today true by position only; this
+      # comment pins it.
       - name: Run continuity test (live OpenAI)
         working-directory: server
         env:

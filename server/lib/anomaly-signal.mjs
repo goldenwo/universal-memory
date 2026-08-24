@@ -30,14 +30,17 @@
 //   dimension. REVISIT TRIGGER: a THIRD signal family (rule-of-three)
 //   reopens the shared-ingest question.
 //
-// • THE SET, NOT THE REGEX, GATES THE OUTCOME COLUMN: JS `$` matches before
-//   a trailing newline, so ANOMALY_REASON_RE.test('no-transcript\n') is
-//   TRUE — a regex-only gate would admit newline variants into the counters
-//   PK. The regex is defense-in-depth for the 400 arm; Set membership
-//   decides verbatim-vs-`other`. An unknown-but-well-formed reason (a NEWER
-//   hook posting to this server) clamps to 'other' and still lands a row —
-//   the row's existence is the alarm, its label is secondary; dropping it
-//   would be a missed alarm (the read side in stats.mjs folds the same way).
+// • THE SET, NOT THE REGEX, DECIDES WHAT REACHES THE OUTCOME COLUMN: the
+//   regex is a SHAPE gate (400 arm) — and, verified empirically, JS `$`
+//   without the m flag anchors at end-of-input, so newline variants like
+//   'no-transcript\n' are REJECTED there (unlike Python's re.$, which
+//   matches before a trailing newline — do not reason about this regex
+//   from Python semantics). Set membership then decides verbatim-vs-
+//   `other`: an unknown-but-well-formed reason (a NEWER hook posting to
+//   this server) clamps to 'other' and still lands a row — the row's
+//   existence is the alarm, its label is secondary; dropping (or 400ing)
+//   it would be a missed alarm, and the read side in stats.mjs folds the
+//   same way. Never "harden" the clamp into a rejection.
 //
 // • ADDITIVE-ONLY BODY EVOLUTION: unknown top-level body fields are IGNORED,
 //   never 400d — plugin clients update out of band, so a future additive
@@ -74,14 +77,19 @@ export const ANOMALY_REASON_KEYS = Object.freeze([
 /** Read/write clamp bucket for out-of-vocabulary reasons (see header). */
 export const ANOMALY_OTHER = 'other';
 
-/** Shape gate for the 400 arm ONLY — the Set gates the outcome column. */
-export const ANOMALY_REASON_RE = /^[a-z0-9-]{1,64}$/;
+// Shape gate for the 400 arm ONLY — the Set gates the outcome column.
+// Deliberately NOT exported (review catch): a caller importing this to
+// re-validate would bypass the Set clamp this module's header pins.
+const ANOMALY_REASON_RE = /^[a-z0-9-]{1,64}$/;
 
 const REASON_SET = new Set(ANOMALY_REASON_KEYS);
 
-// Same charset the hooks sanitize to client-side (stop.sh) and the counter
-// column convention expects; label-only here — see header.
-const PROJECT_RE = /^[A-Za-z0-9._-]{1,64}$/;
+// Same charset the hooks sanitize to client-side (stop.sh); label-only here
+// — see header. Charset-only (no length anchor): over-long slugs are SLICED
+// to 64, never clamped to '' (review catch — stop.sh applies no length cap,
+// and dropping the label loses the row's only per-project attribution; same
+// posture as surfaceFromHeaders's slice).
+const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
  * POST /api/capture-anomaly — record one client-observed capture anomaly as
@@ -119,7 +127,7 @@ export async function handleCaptureAnomalyRequest(req, res, ctx) {
   const outcome = REASON_SET.has(reason) ? reason : ANOMALY_OTHER;
 
   const project = typeof b.project === 'string' && PROJECT_RE.test(b.project)
-    ? b.project
+    ? b.project.slice(0, 64)
     : '';
 
   // Fire-and-forget shared writer (never throws, never fails the response);

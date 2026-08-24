@@ -28,7 +28,7 @@ import {
   ANOMALY_REASON_KEYS,
   ANOMALY_OTHER,
   handleCaptureAnomalyRequest,
-} from '../lib/anomaly-signal.mjs';
+} from '../lib/anomaly-signal.mjs'; // NOTE: the reason regex is deliberately unexported
 import { _resetCaptureEventsForTest } from '../lib/capture-events.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
@@ -187,23 +187,24 @@ test('well-formed unknown reason records as other and echoes the clamp', async (
   assert.equal(rows[0].outcome, ANOMALY_OTHER);
 });
 
-test('the SET, not the regex, gates the outcome column (trailing-newline PK guard)', async () => {
-  // JS: /^[a-z0-9-]{1,64}$/.test('no-transcript\n') is TRUE ('$' matches
-  // before a final newline). A regex-only gate would admit the newline
-  // into the PK; Set membership must clamp it to 'other' instead.
+test('trailing-newline reason variant is REJECTED at the shape gate (JS $ anchors end-of-input)', async () => {
+  // Pins actual JS semantics (review catch — an earlier draft asserted the
+  // PYTHON behavior here): /^...$/.test('no-transcript\n') is FALSE without
+  // the m flag, so the newline variant 400s and never reaches the PK. The
+  // Set clamp's job is version-skew forward-compat (see the separate
+  // 'well-formed unknown reason' test), not newline defense.
   const dbPath = freshDb();
   const res = await call({ reason: 'no-transcript\n' });
-  if (res.statusCode === 200) {
-    assert.equal(res.body.outcome, ANOMALY_OTHER);
-    const rows = anomalyRows(dbPath);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].outcome, ANOMALY_OTHER, 'newline variant must never reach the PK verbatim');
-  } else {
-    // Rejecting it outright (400) is also PK-safe — either posture passes,
-    // a verbatim row does not.
-    assert.equal(res.statusCode, 400);
-    assert.equal(rowCount(dbPath), 0);
-  }
+  assert.equal(res.statusCode, 400);
+  assert.equal(rowCount(dbPath), 0, 'newline variant must never reach the PK in any form');
+});
+
+test('over-64-char project with a valid charset is SLICED, not dropped (attribution preserved)', async () => {
+  const dbPath = freshDb();
+  const long = 'p'.repeat(80);
+  const res = await call({ reason: 'no-transcript', project: long });
+  assert.equal(res.statusCode, 200);
+  assert.equal(anomalyRows(dbPath)[0].project, 'p'.repeat(64));
 });
 
 // ---------------------------------------------------------------------------
@@ -222,7 +223,6 @@ for (const [label, project] of [
   ['non-string', 7],
   ['charset-invalid (space)', 'my project'],
   ['charset-invalid (quote)', 'a"b'],
-  ['over-64-chars', 'p'.repeat(65)],
 ]) {
   test(`project ${label} clamps to '' and the signal still lands (200)`, async () => {
     const dbPath = freshDb();
