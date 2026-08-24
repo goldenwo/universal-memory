@@ -24,6 +24,19 @@
 #     truncated client-side, multibyte-safe (skip=truncated logged).
 #   - Log reasons: skip=writes-disabled (403) / skip=server-too-old
 #     (404/other non-403 4xx) / error=http-<code> (5xx, 000=unreachable).
+#   - #267 anomaly self-report: the six measured-zero anomalous reasons
+#     (empty-stdin, no-python, bad-stdin, no-transcript, nothing-extracted,
+#     and the empty-delta split below) POST one signal.capture_anomaly row
+#     via um_signal_anomaly and append ` signal=<token>` to their log line
+#     (first token stays skip=<reason> — frequency-analysis contract).
+#     Benign guards and the transport-error family do NOT self-report.
+#   - #267 empty-delta SPLIT: skip=empty-delta is REPLACED by
+#     skip=empty-delta-stalled (file did not grow past the cursor; includes
+#     zero-byte and replaced-shorter, which also rewinds the cursor via END)
+#     vs skip=empty-delta-filtered (new lines existed, none survived the
+#     eligibility filters — the format-drift family, the 2026-07-16 class).
+#     Pass 2 ALWAYS emits an EMPTY record when the delta is empty; the bash
+#     ${SHAPE:-stalled} default is a set-u-safe tripwire, not a path.
 #   - Age sweep: cursor files >7 days old are removed in the same pass.
 #   - Fail-open: never exits non-zero — CC session integrity beats capture.
 
@@ -44,9 +57,12 @@ UM_STOP_MAXBYTES=8192
 # stdin = hook metadata JSON, NOT the transcript.
 # ---------------------------------------------------------------------------
 HOOK_INPUT=$(cat)
-if [ -z "$HOOK_INPUT" ]; then um_log "skip=empty-stdin"; exit 0; fi
+# #267: the anomalous classes below self-report (measured-zero benign base
+# rate — any occurrence is signal). PRE-PROJECT sites pass NO project arg:
+# $PROJECT is unbound here under set -u, and the helper reads "${2:-}".
+if [ -z "$HOOK_INPUT" ]; then um_log "skip=empty-stdin signal=$(um_signal_anomaly empty-stdin)"; exit 0; fi
 
-PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
+PY=$(um_find_python) || { um_log "skip=no-python signal=$(um_signal_anomaly no-python)"; exit 0; }
 
 # ---------------------------------------------------------------------------
 # Pass 1: extract metadata fields. One field per line (session_id is
@@ -83,14 +99,26 @@ print(res)
 ' 2>/dev/null)
 
 case "$META" in
+  # #267: bad-stdin is anomalous and self-reports; every OTHER SKIP sentinel
+  # (bad-session-id, the non-project guards) is a benign class and stays
+  # exactly as before. Exact match — the benign sentinels carry suffixes.
+  SKIP:bad-stdin) um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
   SKIP:*) um_log "skip=${META#SKIP:}"; exit 0 ;;
-  '')     um_log "skip=bad-stdin";     exit 0 ;;
+  '')     um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
 esac
 
 SESSION_ID=$(printf '%s\n' "$META" | sed -n '1p')
 STOP_ACTIVE=$(printf '%s\n' "$META" | sed -n '2p')
 TRANSCRIPT_PATH=$(printf '%s\n' "$META" | sed -n '3p')
 PROJECT=$(printf '%s\n' "$META" | sed -n '4p')
+# Sanitize the derived project slug AT ASSIGNMENT (#267 hoist — this used to
+# sit below the no-transcript guard, but that site now interpolates $PROJECT
+# into the self-report JSON, and the guard's slug is a raw basename(cwd)
+# that may legally carry quotes/spaces/backticks). The server hard-fails
+# non-[A-Za-z0-9._-] projects (400), which would otherwise loop as permanent
+# per-fire errors (T3 review IMPORTANT-2 / spec §5 amendment). Empty stays
+# empty, so the guard-failed check below is unaffected.
+PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
 # Loop guard: a fire caused by a previous stop-hook continuation must exit
 # early (fixtures/README.md field contract) — otherwise hook loops.
@@ -100,15 +128,12 @@ if [ "$STOP_ACTIVE" = "true" ]; then um_log "skip=stop-hook-active"; exit 0; fi
 if ! [[ "$SESSION_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
   um_log "skip=bad-session-id"; exit 0
 fi
-if [ -z "$TRANSCRIPT_PATH" ]; then um_log "skip=no-transcript"; exit 0; fi
+if [ -z "$TRANSCRIPT_PATH" ]; then um_log "skip=no-transcript signal=$(um_signal_anomaly no-transcript "$PROJECT")"; exit 0; fi
 # #186: no unguarded fallback — the guard already resolved meta.cwd →
 # $CLAUDE_CWD → pwd and emits a SKIP sentinel for every non-project outcome.
 # An empty slug here means the guard step itself broke: fail closed.
+# (Benign-unmeasured class — deliberately NOT self-reported, #267 D11.)
 if [ -z "$PROJECT" ]; then um_log "skip=guard-failed"; exit 0; fi
-# Sanitize the derived project slug client-side — the server hard-fails
-# non-[A-Za-z0-9._-] projects (400), which would otherwise loop as permanent
-# per-fire errors (T3 review IMPORTANT-2 / spec §5 amendment).
-PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
 # ---------------------------------------------------------------------------
 # Cursor state dir + age sweep (>7d) in the same pass. The sweep applies the
@@ -144,6 +169,13 @@ fi
 #                                          immediately (not an ack claim)
 #   MSG\t<line>\t<truncated 0|1>\t<json> — one POST body per record
 #   CAPPED\t<dropped>                    — messages beyond the per-fire cap
+#   EMPTY\t<stalled|filtered>            — #267: ALWAYS emitted when the
+#                                          delta is empty; stalled = the file
+#                                          did not grow past the cursor
+#                                          (zero-byte and replaced-shorter
+#                                          included), filtered = new lines
+#                                          existed but none survived the
+#                                          eligibility filters
 #   END\t<total-lines>                   — cursor target on full clean success
 # ---------------------------------------------------------------------------
 MANIFEST=$(UM_STOP_TRANSCRIPT="$TRANSCRIPT_PATH" UM_STOP_CURSOR="$CURSOR" \
@@ -228,6 +260,16 @@ else:
     if delta:
         print("BASELINE\t%d" % (delta[0][0] - 1))
 
+# #267: classify the empty delta — the shape rule is exhaustive over the
+# cursor/total orderings (spec D10). Emitted UNCONDITIONALLY whenever the
+# delta is empty, so the bash-side default can only ever be a tripwire.
+if not delta:
+    if cursor.isdigit():
+        shape = "stalled" if total <= int(cursor) else "filtered"
+    else:
+        shape = "filtered" if total > 0 else "stalled"
+    print("EMPTY\t%s" % shape)
+
 dropped = 0
 if len(delta) > cap:
     dropped = len(delta) - cap
@@ -248,7 +290,14 @@ if dropped:
 print("END\t%d" % total)
 ' 2>/dev/null)
 
-if [ -z "$MANIFEST" ]; then um_log "skip=nothing-extracted"; exit 0; fi
+if [ -z "$MANIFEST" ]; then um_log "skip=nothing-extracted signal=$(um_signal_anomaly nothing-extracted "$PROJECT")"; exit 0; fi
+
+# Windows python writes \r\n to pipes; $() strips only the TRAILING pair, so
+# every non-last manifest line's final field would carry a stray \r into the
+# read loop (#267 caught this via the EMPTY record's shape token; MSG bodies
+# had merely tolerated it — json.dumps never emits a raw \r, so this strip
+# can only remove the newline artifact, never content).
+MANIFEST="${MANIFEST//$'\r'/}"
 
 # ---------------------------------------------------------------------------
 # POST loop. um_api_post is called OUTSIDE command substitution (it sets
@@ -259,12 +308,26 @@ SENT=0
 FAILED=0
 CAPPED=0
 LAST_CODE=""
+# #267: initialized BEFORE the loop, read via ${SHAPE:-stalled} — the
+# tripwire case is exactly the case where the EMPTY arm never ran, and a
+# bare $SHAPE would be an unbound-variable crash under set -u, violating
+# the fail-open contract this file opens with.
+SHAPE=""
 
 while IFS=$'\t' read -r kind f1 f2 f3; do
   case "$kind" in
     SKIP)
-      um_log "skip=$f1"
+      # #267: pass-2's no-transcript (open failed) is anomalous and
+      # self-reports; any other SKIP record stays as-is.
+      if [ "$f1" = "no-transcript" ]; then
+        um_log "skip=no-transcript signal=$(um_signal_anomaly no-transcript "$PROJECT")"
+      else
+        um_log "skip=$f1"
+      fi
       exit 0
+      ;;
+    EMPTY)
+      SHAPE="$f1"
       ;;
     BASELINE)
       printf '%s' "$f1" > "$CURSOR_FILE" 2>/dev/null || true
@@ -322,7 +385,10 @@ done <<< "$MANIFEST"
 if [ "$SENT" -gt 0 ]; then
   um_log "posted http=${LAST_CODE:-000} n=$SENT"
 elif [ "$FAILED" = 0 ]; then
-  um_log "skip=empty-delta"
+  # SENT=0 && FAILED=0 ⟺ zero MSG records ⟺ empty delta ⟺ EMPTY record
+  # present (pass 2 emits it unconditionally) — the :-stalled default is a
+  # tripwire for a pass-2 bug, pinned conservative (a frozen file's shape).
+  um_log "skip=empty-delta-${SHAPE:-stalled} signal=$(um_signal_anomaly "empty-delta-${SHAPE:-stalled}" "$PROJECT")"
 fi
 
 exit 0

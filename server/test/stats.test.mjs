@@ -321,14 +321,14 @@ test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes 
 test('missing db file ⇒ null-shaped result, no throw', async () => {
   const dbPath = path.join(tempDir('um-stats-missing-'), 'nope.db');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null });
 });
 
 test('unreadable (corrupt) db ⇒ null-shaped result, no throw', async () => {
   const dbPath = await tempDbPath();
   await fs.writeFile(dbPath, 'not a sqlite database — garbage bytes');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null });
 });
 
 test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
@@ -473,4 +473,120 @@ test('reaction-only surface: rows are SKIPPED (no capture entry, no throw, stats
   assert.equal(stats.available, true);
   assert.ok(!('ghost-surface' in stats.capture));
   assert.ok(!('reactions_7d' in stats.capture['claude-code']));
+});
+
+// ---------- #267: anomalies section (signal.capture_anomaly) ----------
+
+const EMPTY_REASONS = {
+  'no-transcript': 0, 'empty-delta-stalled': 0, 'empty-delta-filtered': 0,
+  'nothing-extracted': 0, 'bad-stdin': 0, 'empty-stdin': 0, 'no-python': 0,
+  other: 0,
+};
+
+test('NAMESPACE ISOLATION (#267 pin, mirror of the R3 pin): signal.capture_anomaly rows leave the WHOLE readCounterStats output byte-identical modulo anomalies', async () => {
+  // Capture rows deliberately OFF today (the R3 pin's own mutation-verified
+  // lesson): TODAY anomaly rows would visibly advance freshness AND
+  // events_today if any capture query were ever widened to match signal.% —
+  // the exact regression that would re-poison freshness with anomaly rows,
+  // the 2026-07-16 incident class this event exists to expose.
+  const baseRows = [
+    { day: daysAgo(2), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 7 },
+    { day: daysAgo(2), surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'abstained', count: 1 },
+    { day: daysAgo(1), surface: 'claude-code-plugin', event: 'recall.search', outcome: '', count: 3 },
+  ];
+  const cleanPath = await tempDbPath('um-stats-anom-clean-');
+  seedCountersDb(cleanPath, baseRows);
+  const clean = readCounterStats({ now: NOW, dbPath: cleanPath });
+
+  const anomPath = await tempDbPath('um-stats-anom-dirty-');
+  seedCountersDb(anomPath, [
+    ...baseRows,
+    { day: TODAY, surface: 'claude-code-plugin', event: 'signal.capture_anomaly', outcome: 'empty-delta-filtered', count: 2 },
+    { day: TODAY, surface: 'claude-code-plugin', event: 'signal.capture_anomaly', outcome: 'no-transcript', count: 1 },
+  ]);
+  const anom = readCounterStats({ now: NOW, dbPath: anomPath });
+
+  const strip = (stats) => JSON.parse(JSON.stringify({ ...stats, anomalies: undefined }));
+  assert.deepEqual(strip(anom), strip(clean));
+  assert.deepEqual(anom.anomalies['claude-code-plugin'], {
+    last_day_seen: TODAY,
+    count_7d: 3,
+    reasons_7d: { ...EMPTY_REASONS, 'empty-delta-filtered': 2, 'no-transcript': 1 },
+  });
+});
+
+test('D6 both directions: an anomaly-only surface appears in anomalies AND stays absent from capture', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', event: 'signal.capture_anomaly', outcome: 'empty-stdin', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.available, true);
+  // The broken-from-day-one install: anomaly rows, ZERO capture rows. The
+  // reactions-style skip-if-no-capture-surface posture would reproduce the
+  // blindness this arc removes — anomalies must be independent.
+  assert.ok(!('claude-code-plugin' in stats.capture), 'no capture entry may be minted');
+  assert.deepEqual(stats.anomalies['claude-code-plugin'], {
+    last_day_seen: TODAY,
+    count_7d: 1,
+    reasons_7d: { ...EMPTY_REASONS, 'empty-stdin': 1 },
+  });
+});
+
+test('anomalies: out-of-vocabulary outcomes FOLD INTO other and COUNT (never skipped — a dropped row is a missed alarm)', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 's', event: 'signal.capture_anomaly', outcome: 'some-newer-reason', count: 2 },
+    { day: daysAgo(1), surface: 's', event: 'signal.capture_anomaly', outcome: 'other', count: 1 },
+    { day: TODAY, surface: 's', event: 'signal.capture_anomaly', outcome: 'bad-stdin', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const a = stats.anomalies.s;
+  assert.equal(a.count_7d, 4, 'folded rows count toward the alarm sum');
+  assert.deepEqual(a.reasons_7d, { ...EMPTY_REASONS, other: 3, 'bad-stdin': 1 });
+});
+
+test('anomalies window edge: day 8 is outside count_7d/reasons_7d but still owns last_day_seen when latest', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: daysAgo(8), surface: 's', event: 'signal.capture_anomaly', outcome: 'no-python', count: 5 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const a = stats.anomalies.s;
+  assert.equal(a.last_day_seen, daysAgo(8), 'all-history MAX(day), like capture freshness');
+  assert.equal(a.count_7d, 0, 'no longer alarms — bounded 7-day persistence');
+  assert.deepEqual(a.reasons_7d, EMPTY_REASONS);
+});
+
+test('anomalies: missing db ⇒ null (null-shaped), empty db ⇒ {} (empty-but-not-null)', async () => {
+  const missing = readCounterStats({ now: NOW, dbPath: path.join(tempDir('um-stats-none-'), 'nope.db') });
+  assert.equal(missing.anomalies, null);
+
+  const emptyPath = await tempDbPath();
+  seedCountersDb(emptyPath, []);
+  const empty = readCounterStats({ now: NOW, dbPath: emptyPath });
+  // Null-prototype map (hostile-key fix); strict deepEqual compares protos.
+  assert.deepEqual(empty.anomalies, { __proto__: null }, 'zero anomalies ever — empty object, not null');
+});
+
+test('anomalies: __proto__ as a surface name is an own key, not prototype pollution', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: '__proto__', event: 'signal.capture_anomaly', outcome: 'bad-stdin', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.ok(Object.keys(stats.anomalies).includes('__proto__'));
+  assert.equal(stats.anomalies['__proto__'].count_7d, 1);
+});
+
+test('anomalies writer-compat: a recordCaptureEvent-written anomaly row is readable end-to-end', async () => {
+  const dbPath = await tempDbPath();
+  process.env.UM_COUNTERS_DB_PATH = dbPath;
+  _resetCaptureEventsForTest();
+  recordCaptureEvent({ surface: 'claude-code-plugin', project: 'proj', event: 'signal.capture_anomaly', outcome: 'empty-delta-stalled' });
+  _resetCaptureEventsForTest();
+  const stats = readCounterStats({ now: Date.now(), dbPath });
+  const a = stats.anomalies['claude-code-plugin'];
+  assert.equal(a.count_7d, 1);
+  assert.equal(a.reasons_7d['empty-delta-stalled'], 1);
 });

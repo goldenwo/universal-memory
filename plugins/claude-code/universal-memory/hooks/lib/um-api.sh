@@ -15,6 +15,9 @@
 #   um_api_get         — curl GET wrapper, same wire contract as um_api_post
 #   um_log             — one-line-per-fire append to ~/.um/hook.log
 #   um_find_python     — py → python3 → python interpreter probe (Windows-aware)
+#   um_signal_anomaly  — #267 capture-anomaly self-report (POST
+#                        /api/capture-anomaly; pure bash+curl; echoes the
+#                        ` signal=<token>` result for the caller's log line)
 #   um_g7_message      — the pinned "captures are OFF" actionable banner (spec §5 G7)
 #
 # Endpoint resolution SUBSUMES endpoint.sh (single source of truth for the env
@@ -171,6 +174,54 @@ um_find_python() {
     fi
   done
   return 1
+}
+
+# um_signal_anomaly <reason> [project]
+# #267: self-report one anomalous stop.sh empty-read as a
+# signal.capture_anomaly counter row (POST /api/capture-anomaly). Pure
+# bash+curl BY CONTRACT — the no-python anomaly class must still be able to
+# report. Args are read set-u-safely: this file is SOURCED into stop.sh's
+# `set -uo pipefail` shell, and the three pre-project call sites
+# (empty-stdin, bad-stdin, no-python) pass NO second argument. `reason` is a
+# shell literal at every call site and `project` is post-sanitization
+# [A-Za-z0-9._-] (stop.sh sanitizes at assignment — BEFORE the first call
+# site), so bare interpolation into the JSON body carries no untrusted
+# content. One POST, no retry (anomalies recur per fire; a persistent
+# condition re-reports on the next exchange), 5s budget inside the 120s
+# Stop-hook budget.
+#
+# Echoes a result token for the caller's ` signal=<token>` log field.
+# Tokens REUSE the established hook.log taxonomy vocabulary — one name per
+# condition across fields (stop.sh's 400/401 carve-outs, session-start's
+# http-429, the shared server-too-old skew prescription):
+#   sent | http-000 | writes-disabled | auth | input-invalid | http-429 |
+#   server-too-old | http-<code>
+# ORDER IS LOAD-BEARING: every exact arm (429 included) precedes the
+# 4[0-9][0-9] residual — a rate-limited report must never read as version
+# skew, and an old server's route 404 lands in server-too-old, which IS the
+# right prescription (upgrade the server; a future signal family's client
+# gets the same correct answer from the same map). Never returns non-zero
+# (fail-open: CC session integrity beats reporting).
+um_signal_anomaly() {
+  local reason="$1" project="${2:-}"
+  local body
+  if [ -n "$project" ]; then
+    body=$(printf '{"reason":"%s","project":"%s"}' "$reason" "$project")
+  else
+    body=$(printf '{"reason":"%s"}' "$reason")
+  fi
+  um_api_post '/api/capture-anomaly' "$body" 5 </dev/null >/dev/null 2>&1
+  case "$UM_API_HTTP_CODE" in
+    2[0-9][0-9]) echo "sent" ;;
+    000)         echo "http-000" ;;
+    403)         echo "writes-disabled" ;;
+    401)         echo "auth" ;;
+    400)         echo "input-invalid" ;;
+    429)         echo "http-429" ;;
+    4[0-9][0-9]) echo "server-too-old" ;;
+    *)           echo "http-$UM_API_HTTP_CODE" ;;
+  esac
+  return 0
 }
 
 # um_g7_message <reason> [endpoint]

@@ -9,6 +9,18 @@
 #        UM_ENDPOINT / UM_SERVER_URL  server URL for live mode + the /api/search
 #                              soft check (default: http://localhost:6335)
 #
+# #267 LIVE-MODE COUNTERS HYGIENE: fires 2-5 are empty-delta fires BY
+# CONSTRUCTION (this test asserts exactly 4 of them), and since #267 each
+# one self-reports a signal.capture_anomaly counter row to the target
+# server — which makes that server's um-alert ALERT (exit 1) for up to
+# SEVEN DAYS. Run live mode only against a server whose UM_COUNTERS_DB_PATH
+# is scratch (CI's per-run server qualifies); a live run against a durable
+# server seeds 4 benign rows — clean them with the in-container node +
+# better-sqlite3 DELETE idiom (see the #267 spec's D4/§14; NOT bare
+# `sqlite3`, which the server image does not ship). In CI, smoke.yml's
+# um-alert leg MUST run before this file's live leg (ordering comment
+# pinned there).
+#
 # #159 rewrite (spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5): the
 # hooks are now thin HTTP clients — stop.sh reads a metadata JSON on stdin,
 # parses the transcript JSONL at transcript_path, and POSTs one
@@ -406,9 +418,22 @@ fi
 # hook.log evidence (both modes): one posted n=5 line + four empty-delta skips.
 [ "$(log_count "stop posted http=2[0-9][0-9] n=$EXPECT_MSGS_1")" -ge 1 ] \
   || fail "Step 1: hook.log missing 'stop posted … n=$EXPECT_MSGS_1' (got: $(grep ' stop ' "$HOOK_LOG" 2>/dev/null | tail -5 | tr '\n' '|'))"
-EMPTY_DELTAS=$(log_count "stop skip=empty-delta")
+# #267 re-anchor: DIRECT anchored grep, deliberately NOT log_count (that
+# helper is substring-by-design, and the old "stop skip=empty-delta" count
+# would keep passing vacuously after the stalled/filtered split). Fires 2-5
+# re-fire an unchanged transcript (cursor == total) ⇒ stalled, each carrying
+# the #267 ` signal=<token>` field (token varies with the target server's
+# version in live mode — presence, not value, is the contract here).
+EMPTY_DELTAS=$(grep -Ec " stop skip=empty-delta-(stalled|filtered) " "$HOOK_LOG" 2>/dev/null || true)
 [ "$EMPTY_DELTAS" = 4 ] \
-  || fail "Step 1: expected 4 empty-delta fires (2-5), hook.log has $EMPTY_DELTAS"
+  || fail "Step 1: expected 4 split empty-delta fires (2-5), hook.log has $EMPTY_DELTAS"
+# Zero-count guard: a silent regression to the UNSPLIT token must FAIL.
+BARE_EMPTY=$(grep -Ec " stop skip=empty-delta( |\$)" "$HOOK_LOG" 2>/dev/null || true)
+[ "$BARE_EMPTY" = 0 ] \
+  || fail "Step 1: $BARE_EMPTY bare 'skip=empty-delta' line(s) — the #267 split regressed"
+SIGNAL_FIELDS=$(grep -Ec " stop skip=empty-delta-[a-z]+ signal=" "$HOOK_LOG" 2>/dev/null || true)
+[ "$SIGNAL_FIELDS" = 4 ] \
+  || fail "Step 1: expected the signal= field on all 4 empty-delta lines, got $SIGNAL_FIELDS"
 
 # Cursor advanced to the full transcript line count and held there.
 [ -f "$CURSOR_FILE" ] || fail "Step 1: cursor file not created at $CURSOR_FILE"

@@ -199,6 +199,15 @@ export async function buildStats({
     // predates the layers block" apart from "this server has zero projects
     // with captures".
     layers: layersResult.layers,
+    // #267: client-reported anomaly signals (signal.capture_anomaly rows,
+    // outside capture.%). Same always-present contract as `layers`: the
+    // ABSENT key ⇔ a pre-#267 server (um-alert's ABSENT breadcrumb), null ⇔
+    // counters degraded (mirrors capture: null), {} ⇔ healthy zero. LOOSE
+    // null-check, never `===`: readCounters is a DI seam and a fake that
+    // omits `anomalies` must degrade to the honest null, not mint the
+    // malformed `{capture_anomaly: undefined}` shape (the banked
+    // undefined-vs-null seam-contract class).
+    signals: counters.anomalies == null ? null : { capture_anomaly: counters.anomalies },
     recall: {
       searches_today: counters.recall?.searches_today ?? null,
       searches_7d: counters.recall?.searches_7d ?? null,

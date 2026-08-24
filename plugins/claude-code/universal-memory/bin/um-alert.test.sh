@@ -611,7 +611,11 @@ if [ "$rc" -eq 1 ]; then
 else
   fail "T28-exit-1 (rc=$rc, out=$output)"
 fi
-if echo "$output" | grep -q "STALE" && echo "$output" | grep -q "also layers stale" \
+# #267 print-all re-contract (deliberate, review-logged — NOT a relaxation):
+# the old inline "; also layers stale: X" combined string became a separate
+# "um-alert: LAYERS-STALE — X" escalation line when the STALE arm went
+# print-all. Same semantic content pinned: both sections named, exit 1.
+if echo "$output" | grep -q "STALE —" && echo "$output" | grep -q "LAYERS-STALE" \
   && echo "$output" | grep -q "universal-memory"; then
   pass "T28-message-names-both"
 else
@@ -688,6 +692,141 @@ if echo "$output" | grep -q "Infinityh"; then
 else
   pass "T32-no-literal-infinityh"
 fi
+
+# ─── #267 SIGNALS section fixtures ──────────────────────────────────────────
+# Fresh capture base reused; signals grafted per-case. The existing fixtures
+# above carry NO `signals` key and take the ABSENT branch — that is the
+# pass-2 FCP "safety fact": the pre-#267 matrix stays green untouched.
+FRESH_CAPTURE_ONLY='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}}}'
+SIG_OK='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{}}}'
+SIG_ALERT_FRESH='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{"claude-code-plugin":{"last_day_seen":"2026-07-17","count_7d":3,"reasons_7d":{"no-transcript":0,"empty-delta-stalled":0,"empty-delta-filtered":2,"nothing-extracted":0,"bad-stdin":0,"empty-stdin":0,"no-python":0,"other":1}}}}}'
+SIG_ALERT_STALE='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-10","freshness_hours":150.5,"events_today":0,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{"claude-code-plugin":{"last_day_seen":"2026-07-17","count_7d":1,"reasons_7d":{"empty-delta-stalled":1}}}}}'
+SIG_MALFORMED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":"garbage"}'
+SIG_NULL_CAPTURE_PRESENT='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":null}'
+SIG_MISSING_FAMILY_KEY='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{}}'
+SIG_NULL_CAPTURE_NULL='{"schema_version":1,"capture":null,"degraded":["counters-unavailable"],"signals":null}'
+SIG_ALERT_PLUS_LAYERS_STALE='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":{"universal-memory":{"stale":true,"lag_hours":40.2,"pending_bytes":9000}},"signals":{"capture_anomaly":{"claude-code-plugin":{"last_day_seen":"2026-07-17","count_7d":2,"reasons_7d":{"no-transcript":2}}}}}'
+LAYERS_MALFORMED_SIG_ALERT='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":"garbage","signals":{"capture_anomaly":{"claude-code-plugin":{"last_day_seen":"2026-07-17","count_7d":1,"reasons_7d":{"no-python":1}}}}}'
+SIG_MALFORMED_LAYERS_STALE='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"layers":{"universal-memory":{"stale":true,"lag_hours":40.2,"pending_bytes":9000}},"signals":"garbage"}'
+
+# ─── T33: signals ALERT on a FRESH capture verdict ⇒ exit 1, SIGNALS text ───
+echo ""
+echo "=== T33: signals count_7d>0 + fresh capture ⇒ exit 1, SIGNALS line names surface+reason ==="
+mock="$TMPDIR_ROOT/t33"; _make_mock_curl "$mock" 200 "$SIG_ALERT_FRESH"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T33-exit-1"; else fail "T33-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "SIGNALS" && echo "$output" | grep -q "claude-code-plugin" \
+  && echo "$output" | grep -q "empty-delta-filtered"; then
+  pass "T33-signals-text"
+else
+  fail "T33-signals-text: $output"
+fi
+
+# ─── T34: signals empty ⇒ exit 0 unchanged ──────────────────────────────────
+echo ""
+echo "=== T34: signals {capture_anomaly:{}} + fresh ⇒ exit 0, OK ==="
+mock="$TMPDIR_ROOT/t34"; _make_mock_curl "$mock" 200 "$SIG_OK"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T34-exit-0"; else fail "T34-exit-0 (rc=$rc, out=$output)"; fi
+
+# ─── T35: signals key ABSENT (old server) ⇒ breadcrumb, verdict untouched ───
+echo ""
+echo "=== T35: no signals key ⇒ ABSENT breadcrumb, exit 0 unchanged ==="
+mock="$TMPDIR_ROOT/t35"; _make_mock_curl "$mock" 200 "$FRESH_CAPTURE_ONLY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T35-exit-0-unchanged"; else fail "T35-exit-0-unchanged (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "signals key absent"; then
+  pass "T35-breadcrumb"
+else
+  fail "T35-breadcrumb: $output"
+fi
+
+# ─── T36: malformed signals ⇒ CHECK FAILED exit 2 ───────────────────────────
+echo ""
+echo "=== T36: signals garbage string ⇒ exit 2 CHECK FAILED ==="
+mock="$TMPDIR_ROOT/t36"; _make_mock_curl "$mock" 200 "$SIG_MALFORMED"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T36-exit-2"; else fail "T36-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED"; then pass "T36-check-failed-text"; else fail "T36-check-failed-text: $output"; fi
+
+# ─── T37: signals null while capture present ⇒ exit 2 (drift tripwire) ──────
+echo ""
+echo "=== T37: signals:null + capture present ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t37"; _make_mock_curl "$mock" 200 "$SIG_NULL_CAPTURE_PRESENT"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T37-exit-2"; else fail "T37-exit-2 (rc=$rc, out=$output)"; fi
+
+# ─── T38: signals present but missing capture_anomaly key ⇒ exit 2 ──────────
+echo ""
+echo "=== T38: signals:{} (no capture_anomaly key) ⇒ exit 2 (D9 drift tripwire) ==="
+mock="$TMPDIR_ROOT/t38"; _make_mock_curl "$mock" 200 "$SIG_MISSING_FAMILY_KEY"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T38-exit-2"; else fail "T38-exit-2 (rc=$rc, out=$output)"; fi
+
+# ─── T39: signals null + capture null ⇒ counters-degraded path ──────────────
+echo ""
+echo "=== T39: signals:null + capture:null ⇒ exit 2 via the capture verdict ==="
+mock="$TMPDIR_ROOT/t39"; _make_mock_curl "$mock" 200 "$SIG_NULL_CAPTURE_NULL"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T39-exit-2"; else fail "T39-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "freshness cannot be assessed"; then
+  pass "T39-capture-verdict-carries-it"
+else
+  fail "T39-capture-verdict-carries-it: $output"
+fi
+
+# ─── T40: PRINT-ALL — signals alert + layers stale both named, one exit 1 ───
+echo ""
+echo "=== T40: signals alert + layers stale on FRESH capture ⇒ exit 1, BOTH lines present ==="
+mock="$TMPDIR_ROOT/t40"; _make_mock_curl "$mock" 200 "$SIG_ALERT_PLUS_LAYERS_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T40-exit-1"; else fail "T40-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "SIGNALS" && echo "$output" | grep -q "LAYERS-STALE"; then
+  pass "T40-both-sections-named"
+else
+  fail "T40-both-sections-named: $output"
+fi
+
+# ─── T41: STALE capture + signals alert ⇒ exit 1, both named ────────────────
+echo ""
+echo "=== T41: stale capture + signals alert ⇒ exit 1, STALE and SIGNALS both present ==="
+mock="$TMPDIR_ROOT/t41"; _make_mock_curl "$mock" 200 "$SIG_ALERT_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T41-exit-1"; else fail "T41-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "STALE" && echo "$output" | grep -q "SIGNALS"; then
+  pass "T41-both-present"
+else
+  fail "T41-both-present: $output"
+fi
+
+# ─── T42: exit-2 paths still echo live alert text ───────────────────────────
+echo ""
+echo "=== T42a: layers malformed + signals alert ⇒ exit 2 AND the SIGNALS line echoed ==="
+mock="$TMPDIR_ROOT/t42a"; _make_mock_curl "$mock" 200 "$LAYERS_MALFORMED_SIG_ALERT"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T42a-exit-2"; else fail "T42a-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "SIGNALS" && echo "$output" | grep -q "no-python"; then
+  pass "T42a-signals-echoed"
+else
+  fail "T42a-signals-echoed: $output"
+fi
+echo ""
+echo "=== T42b: signals malformed + layers stale ⇒ exit 2 AND the LAYERS-STALE line echoed (mirror) ==="
+mock="$TMPDIR_ROOT/t42b"; _make_mock_curl "$mock" 200 "$SIG_MALFORMED_LAYERS_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T42b-exit-2"; else fail "T42b-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "LAYERS-STALE"; then
+  pass "T42b-layers-echoed"
+else
+  fail "T42b-layers-echoed: $output"
+fi
+
+# ─── T43: --surface does NOT suppress SIGNALS (health sections are global) ──
+echo ""
+echo "=== T43: --surface names a fresh surface, signals alert present ⇒ still exit 1 ==="
+mock="$TMPDIR_ROOT/t43"; _make_mock_curl "$mock" 200 "$SIG_ALERT_FRESH"
+run_alert "$mock" --surface claude-code-plugin
+if [ "$rc" -eq 1 ]; then pass "T43-exit-1"; else fail "T43-exit-1 (rc=$rc, out=$output)"; fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
