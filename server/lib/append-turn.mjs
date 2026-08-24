@@ -52,20 +52,6 @@ export async function doAppendTurn(args, ctx = {}) {
   const { project, content, timestamp, conversation_id } = args;
   // Trim whitespace from role before validation
   const role = typeof args.role === 'string' ? args.role.trim() : args.role;
-  // v1.1 F1 unification: falsy `project` → soft-default to UM_DEFAULT_PROJECT
-  // (caller omitted the project; previously this was a hard-fail — the worst
-  // UX in the matrix per A1 audit finding F5). Wrong-type or regex-mismatch
-  // values still hard-fail, since silently substituting an arbitrary user
-  // value with the default would be both surprising and a data-routing risk.
-  const effectiveProject = applyDefaultProject({
-    project,
-    tool: TOOL_IDS.MEMORY_APPEND_TURN,
-    logger: ctx.logger ?? getLogger(),
-    requestId: ctx.requestId ?? currentRequestId(),
-  });
-  if (effectiveProject === null) {
-    return { schema_version: 1, ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
-  }
   if (!content || typeof content !== 'string') {
     return { schema_version: 1, ok: false, error: 'content is required and must be a string' };
   }
@@ -119,6 +105,26 @@ export async function doAppendTurn(args, ctx = {}) {
   const year = headerNow.getUTCFullYear();
   if (year < 1970 || year > 9999) {
     return { schema_version: 1, ok: false, error: `timestamp year ${year} out of range (1970-9999)`, code: 'INPUT_INVALID' };
+  }
+
+  // v1.1 F1 unification: falsy `project` → soft-default to UM_DEFAULT_PROJECT
+  // (caller omitted the project; previously this was a hard-fail — the worst
+  // UX in the matrix per A1 audit finding F5). Wrong-type or regex-mismatch
+  // values still hard-fail, since silently substituting an arbitrary user
+  // value with the default would be both surprising and a data-routing risk.
+  // Runs AFTER field validation (2026-08-24): the F4 observability warn must
+  // describe a write that actually lands under the defaulted project. The
+  // session-start/um-setup G7 probe POSTs `{}` here on every session start
+  // and expects 400 = "writes enabled" — defaulting-then-rejecting logged a
+  // misleading warn-then-400 pair for every healthy probe.
+  const effectiveProject = applyDefaultProject({
+    project,
+    tool: TOOL_IDS.MEMORY_APPEND_TURN,
+    logger: ctx.logger ?? getLogger(),
+    requestId: ctx.requestId ?? currentRequestId(),
+  });
+  if (effectiveProject === null) {
+    return { schema_version: 1, ok: false, error: `invalid project slug: ${JSON.stringify(String(project).slice(0, 64))}` };
   }
 
   const date = serverNow.toISOString().slice(0, 10);

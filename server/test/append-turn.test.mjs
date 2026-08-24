@@ -46,6 +46,49 @@ test('doAppendTurn writes to captures/<project>/raw/<date>.md', async () => {
 
 // ---------- validation ----------
 
+// Contract (G7 probe fallout, 2026-08-24): the F1 omitted-project warn is
+// observability for writes that actually LAND under the defaulted project.
+// The session-start/um-setup G7 probe POSTs `{}` to /api/append-turn and
+// reads 400 as "healthy, writes enabled" — by design, on every session
+// start. Field validation must therefore run BEFORE the soft-default is
+// applied, so a rejected body never emits the misleading
+// "defaulting to <slug>" warn-then-400 pair in server logs.
+test('doAppendTurn: empty probe body {} is rejected WITHOUT the omitted-project warn', async () => {
+  const vault = await makeTempVault();
+  const warns = [];
+  const logger = { warn: (...args) => { warns.push(args); } };
+  const result = await doAppendTurn({}, { vaultDir: vault, logger });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /content.*required/i);
+  assert.equal(warns.length, 0,
+    'a validation-rejected request must not emit the caller_omitted_project warn');
+});
+
+test('doAppendTurn: omitted project on a VALID body still warns and lands under the default', async () => {
+  const prevEnv = process.env.UM_DEFAULT_PROJECT;
+  delete process.env.UM_DEFAULT_PROJECT;
+  try {
+    const vault = await makeTempVault();
+    const warns = [];
+    const logger = { warn: (...args) => { warns.push(args); } };
+    const result = await doAppendTurn({
+      content: 'real turn, caller forgot project',
+      role: 'user',
+    }, { vaultDir: vault, logger, clock: () => new Date('2026-08-24T12:00:00Z') });
+
+    assert.equal(result.ok, true);
+    assert.match(result.path, /^captures\/default\/raw\/2026-08-24\.md$/);
+    assert.equal(warns.length, 1, 'exactly one soft-default warn for a landing write');
+    const [bindings] = warns[0];
+    assert.equal(bindings.reason, 'caller_omitted_project');
+    assert.equal(bindings.project_effective, 'default');
+  } finally {
+    if (prevEnv === undefined) delete process.env.UM_DEFAULT_PROJECT;
+    else process.env.UM_DEFAULT_PROJECT = prevEnv;
+  }
+});
+
 test('doAppendTurn rejects invalid project slug', async () => {
   const vault = await makeTempVault();
   const result = await doAppendTurn({
