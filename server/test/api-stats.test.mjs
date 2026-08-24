@@ -580,3 +580,75 @@ test('#187: reactions_7d appears on a reacted surface with the fixed zero-filled
     assert.ok(!('ghost' in body.capture));
   } finally { await close(); }
 });
+
+// ---------------------------------------------------------------------------
+// #267: POST /api/capture-anomaly route (T2) + signals in /api/stats
+// ---------------------------------------------------------------------------
+
+test('POST /api/capture-anomaly: end-to-end — 200, row lands, /api/stats signals section reports it', async () => {
+  const dbPath = await tempDbPath('um-anomaly-route-');
+  process.env.UM_COUNTERS_DB_PATH = dbPath;
+  _resetCaptureEventsForTest();
+  const { close, url } = await startServer({
+    memory: makeFakeMemory(1),
+    env: { UM_COUNTERS_DB_PATH: dbPath, UM_MCP_WRITE_ENABLED: 'true' },
+  });
+  try {
+    const r = await fetch(url('/api/capture-anomaly'), {
+      method: 'POST',
+      headers: { ...authed.headers, 'Content-Type': 'application/json', 'X-UM-Source': 'Claude-Code-Plugin' },
+      body: JSON.stringify({ reason: 'empty-delta-filtered', project: 'universal-memory' }),
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { schema_version: 1, ok: true, outcome: 'empty-delta-filtered' });
+
+    const s = await fetch(url('/api/stats'), authed);
+    const body = await s.json();
+    const a = body.signals.capture_anomaly['claude-code-plugin']; // surface lowercased
+    assert.equal(a.count_7d, 1);
+    assert.equal(a.reasons_7d['empty-delta-filtered'], 1);
+    // and the row NEVER touches capture freshness (namespace boundary)
+    assert.ok(!(body.capture && body.capture['claude-code-plugin']), 'no capture entry minted by an anomaly');
+  } finally { await close(); _resetCaptureEventsForTest(); delete process.env.UM_COUNTERS_DB_PATH; }
+});
+
+test('endpoint-class: /api/capture-anomaly rides the /api/* catch-all (auth + rate-limit on, loopback bypass allowed — the standard posture, NOT /api/stats\'s noLoopbackBypass)', () => {
+  const policy = endpointClassRoute({ url: '/api/capture-anomaly' }, {}, '203.0.113.9');
+  assert.deepEqual(policy, { bypassAuth: false, bypassRateLimit: false });
+});
+
+test('GET /api/capture-anomaly falls to the STATE_NOT_FOUND tail (no method handling of its own)', async () => {
+  const { close, url } = await startServer({ memory: makeFakeMemory(1), env: { UM_MCP_WRITE_ENABLED: 'true' } });
+  try {
+    const r = await fetch(url('/api/capture-anomaly'), authed);
+    assert.equal(r.status, 404);
+    assert.equal((await r.json()).error.code, 'STATE_NOT_FOUND');
+  } finally { await close(); }
+});
+
+test('POST /api/capture-anomaly: invalid JSON body ⇒ 400 INPUT_INVALID', async () => {
+  const { close, url } = await startServer({ memory: makeFakeMemory(1), env: { UM_MCP_WRITE_ENABLED: 'true' } });
+  try {
+    const r = await fetch(url('/api/capture-anomaly'), {
+      method: 'POST',
+      headers: { ...authed.headers, 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    assert.equal(r.status, 400);
+    assert.equal((await r.json()).error.code, 'INPUT_INVALID');
+  } finally { await close(); }
+});
+
+test('route template: /api/capture-anomaly buckets under its own endpoint label, not /__unknown__', async () => {
+  const { close, url } = await startServer({ memory: makeFakeMemory(1), env: { UM_MCP_WRITE_ENABLED: 'true' } });
+  try {
+    const r = await fetch(url('/api/capture-anomaly'), {
+      method: 'POST',
+      headers: { ...authed.headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'bad-stdin' }),
+    });
+    assert.equal(r.status, 200);
+    const text = await registry.metrics();
+    assert.match(text, /um_http_requests_total\{[^}]*endpoint="\/api\/capture-anomaly"/);
+  } finally { await close(); }
+});

@@ -35,7 +35,26 @@
 #        byte-exact through the POSTed body.
 #   S18. Multibyte truncation — content straddling 8192 bytes stays valid
 #        UTF-8 and ≤8192 bytes.
-#   S19. Missing transcript file ⇒ skip=no-transcript, zero POSTs.
+#   S19. Missing transcript file ⇒ skip=no-transcript + ONE anomaly
+#        self-report POST (#267; body carries reason + sanitized project).
+#
+# #267 additions (S2 and S19 were MIGRATED to per-URL counts — an anomalous
+# fire now emits exactly one /api/capture-anomaly POST and zero append-turns):
+#   S21. empty-delta split: cursor==total ⇒ stalled; grew-all-filtered ⇒
+#        filtered (cursor still advances, END semantics unchanged);
+#        zero-byte ⇒ stalled; replaced-shorter ⇒ stalled + cursor rewind.
+#   S22. Benign guards (stop-hook-active, bad-session-id) post NOTHING.
+#   S23. signal= token map per HTTP code (404⇒server-too-old, 429⇒http-429,
+#        000⇒http-000, 403⇒writes-disabled, 401⇒auth, 400⇒input-invalid,
+#        5xx⇒http-<code>, 2xx⇒sent) — codes-file invariant: an anomalous
+#        fire's signal POST is always global call index 1.
+#   S24. no-python still reports (helper is pure bash+curl; pre-project site
+#        omits the project field; exit 0 under the hook's real set -u).
+#   S26. empty-stdin + bad-stdin self-report, exit 0 under set -u.
+#   S27. SHAPE tripwire: EMPTY arm stubbed out of a tree-copy ⇒ still exit 0
+#        with the conservative stalled default (never an unbound-var crash).
+#   S28. Hostile cwd basename ($, space, backtick) ⇒ well-formed signal body
+#        carrying the SANITIZED slug (the sanitize-at-assignment hoist).
 
 set -uo pipefail
 
@@ -165,6 +184,25 @@ reset_calls() {
 
 call_count() { cat "$CAP_DIR/count" 2>/dev/null || echo 0; }
 
+# #267 per-URL counters (continuity.sh append_post_count precedent): the
+# global call_count() can no longer distinguish capture traffic from the
+# anomaly self-report POSTs — anomalous fires now emit exactly one
+# /api/capture-anomaly POST and zero /api/append-turn POSTs.
+# CONTRACT NOTE: continuity.sh's same-named helper additionally excludes
+# '{}' G7-probe bodies; stop.sh never posts probes, so this suite's version
+# deliberately has no body filter — do not copy assertions between the two
+# suites without accounting for that difference.
+_url_post_count() {
+  local needle="$1" n=0 f
+  for f in "$CAP_DIR"/url_*; do
+    [ -f "$f" ] || continue
+    case "$(cat "$f")" in *"$needle"*) n=$((n+1)) ;; esac
+  done
+  printf '%s' "$n"
+}
+append_post_count() { _url_post_count "/api/append-turn"; }
+signal_post_count() { _url_post_count "/api/capture-anomaly"; }
+
 # fresh_home <name> → prints a new isolated HOME path
 fresh_home() {
   local d="$TMPDIR_ROOT/home_$1"
@@ -270,11 +308,20 @@ assert_contains "S1: hook.log records posted" "$(cat "$H/.um/hook.log" 2>/dev/nu
 # S2: A2 happy half — second fire, same transcript ⇒ zero new POSTs
 # ===========================================================================
 echo "=== S2: A2 happy half (no dup across fires) ==="
+# #267 migration (round-3 audit): a second fire on an unchanged transcript
+# IS an empty-delta fire (cursor == total), so it now self-reports exactly
+# one /api/capture-anomaly POST — and still ZERO append-turn POSTs (the
+# no-dup contract this test pins).
 reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "S2: exit 0" "$RUN_EXIT" "0"
-assert_eq "S2: zero POSTs on unchanged transcript" "$(call_count)" "0"
+assert_eq "S2: zero append-turn POSTs on unchanged transcript" "$(append_post_count)" "0"
+assert_eq "S2: exactly one anomaly self-report" "$(signal_post_count)" "1"
+# Total re-pinned (review catch — dropping it would let a stray POST to a
+# THIRD endpoint pass): the signal POST is the fire's ONLY wire traffic.
+assert_eq "S2: total wire traffic is exactly the one signal POST" "$(call_count)" "1"
 assert_eq "S2: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "13"
+assert_contains "S2: split reason + signal token logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-stalled signal=sent"
 
 # ===========================================================================
 # S3: A2 failure half — 5xx on POST #2 of 3 ⇒ resend exactly the remainder
@@ -630,11 +677,19 @@ echo "=== S19: missing transcript ==="
 H=$(fresh_home s19)
 STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/does-not-exist.jsonl")" "$(native_path "$CWD_N")")
 
+# #267 migration (round-3 audit): no-transcript is an anomalous class and
+# now self-reports — one signal POST with the exact body (reason + the
+# sanitized project slug), zero append-turn POSTs.
 reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "S19: exit 0" "$RUN_EXIT" "0"
-assert_eq "S19: zero POSTs" "$(call_count)" "0"
-assert_contains "S19: skip=no-transcript logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-transcript"
+assert_eq "S19: zero append-turn POSTs" "$(append_post_count)" "0"
+assert_eq "S19: one anomaly self-report" "$(signal_post_count)" "1"
+assert_eq "S19: total wire traffic is exactly the one signal POST" "$(call_count)" "1"
+assert_contains "S19: signal POST targets /api/capture-anomaly" "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/capture-anomaly"
+assert_eq "S19: body reason" "$(body_field 1 reason)" "no-transcript"
+assert_eq "S19: body project (post-project site carries the slug)" "$(body_field 1 project)" "example-project"
+assert_contains "S19: skip + signal token logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-transcript signal=sent"
 
 # ===========================================================================
 # G1 (#186 follow-up): cwd == $HOME ⇒ turns captured under the catch-all
@@ -696,6 +751,209 @@ run_stop "$H" "$STDIN"
 assert_eq "G3: exit 0" "$RUN_EXIT" "0"
 assert_eq "G3: two POSTs (one per message)" "$(call_count)" "2"
 assert_eq "G3: slug is the cwd basename" "$(body_field 1 project)" "dir"
+
+# ===========================================================================
+# #267 S21: the empty-delta split — four fixture shapes (spec D10)
+# ===========================================================================
+echo "=== S21: empty-delta split (stalled/filtered/zero-byte/replaced) ==="
+
+# (a) cursor == total ⇒ stalled; cursor unchanged by END
+H=$(fresh_home s21a)
+TP="$TMPDIR_ROOT/s21a.jsonl"
+write_transcript "$TP" 4 "s21a"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '4' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21a: exit 0" "$RUN_EXIT" "0"
+assert_eq "S21a: one signal POST, zero append-turns" "$(signal_post_count)/$(append_post_count)" "1/0"
+assert_eq "S21a: reason empty-delta-stalled" "$(body_field 1 reason)" "empty-delta-stalled"
+assert_eq "S21a: cursor holds at 4" "$(cat "$H/.um/state/stop-cursor-$SID")" "4"
+
+# (b) file grew but every new line filters away ⇒ filtered; cursor advances
+H=$(fresh_home s21b)
+TP="$TMPDIR_ROOT/s21b.jsonl"
+write_transcript "$TP" 2 "s21b"
+"$PYBIN" -c '
+import json, sys
+with open(sys.argv[1], "a", encoding="utf-8") as fh:
+    for i in (3, 4):
+        fh.write(json.dumps({"type": "user", "isMeta": True,
+                             "message": {"role": "user", "content": "meta"},
+                             "uuid": "m%d" % i}) + "\n")' "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '2' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21b: one signal POST" "$(signal_post_count)" "1"
+assert_eq "S21b: reason empty-delta-filtered (grew, all ineligible)" "$(body_field 1 reason)" "empty-delta-filtered"
+assert_eq "S21b: cursor advances past ineligible tail (END semantics unchanged)" "$(cat "$H/.um/state/stop-cursor-$SID")" "4"
+assert_contains "S21b: log" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-filtered signal=sent"
+
+# (c) zero-byte transcript, no cursor ⇒ stalled
+H=$(fresh_home s21c)
+TP="$TMPDIR_ROOT/s21c.jsonl"; : > "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21c: one signal POST" "$(signal_post_count)" "1"
+assert_eq "S21c: reason empty-delta-stalled (zero-byte = never grew)" "$(body_field 1 reason)" "empty-delta-stalled"
+
+# (d) transcript REPLACED by a shorter file (cursor > total) ⇒ stalled + rewind
+H=$(fresh_home s21d)
+TP="$TMPDIR_ROOT/s21d.jsonl"
+write_transcript "$TP" 3 "s21d"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '40' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21d: one signal POST" "$(signal_post_count)" "1"
+assert_eq "S21d: reason empty-delta-stalled (replaced-shorter folds into stalled)" "$(body_field 1 reason)" "empty-delta-stalled"
+assert_eq "S21d: cursor REWINDS to the new total (correct baseline for the new file)" "$(cat "$H/.um/state/stop-cursor-$SID")" "3"
+
+# ===========================================================================
+# #267 S22: benign guards self-report NOTHING
+# ===========================================================================
+echo "=== S22: benign guards post no signal ==="
+H=$(fresh_home s22)
+STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/na.jsonl")" "$(native_path "$CWD_N")" "true")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S22: stop-hook-active posts nothing" "$(call_count)" "0"
+STDIN=$(make_stdin "bad session!!" "$(native_path "$TMPDIR_ROOT/na.jsonl")" "$(native_path "$CWD_N")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S22: bad-session-id posts nothing" "$(call_count)" "0"
+
+# ===========================================================================
+# #267 S23: signal= token map per HTTP code (single-fire anomalous cases put
+# the signal POST at global index 1 — the codes-file invariant)
+# ===========================================================================
+echo "=== S23: signal token map ==="
+H=$(fresh_home s23)
+STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/absent-s23.jsonl")" "$(native_path "$CWD_N")")
+for pair in "404:server-too-old" "429:http-429" "000:http-000" "403:writes-disabled" "401:auth" "400:input-invalid" "500:http-500"; do
+  code="${pair%%:*}"; tok="${pair#*:}"
+  reset_calls "$code"
+  run_stop "$H" "$STDIN"
+  if grep -q "skip=no-transcript signal=$tok" "$H/.um/hook.log" 2>/dev/null; then
+    pass "S23: $code => signal=$tok"
+  else
+    fail "S23: $code => signal=$tok" "log: $(tail -1 "$H/.um/hook.log" 2>/dev/null)"
+  fi
+done
+reset_calls
+run_stop "$H" "$STDIN"
+if grep -q "skip=no-transcript signal=sent" "$H/.um/hook.log" 2>/dev/null; then
+  pass "S23: 200 => signal=sent"
+else
+  fail "S23: 200 => signal=sent" "log: $(tail -1 "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# #267 S24: the no-python class still reports (helper is pure bash+curl)
+# ===========================================================================
+echo "=== S24: no-python still self-reports ==="
+NOPY_BIN="$TMPDIR_ROOT/nopy_bin"
+mkdir -p "$NOPY_BIN"
+for stub in py python3 python; do
+  printf '#!/bin/bash\nexit 1\n' > "$NOPY_BIN/$stub"
+  chmod +x "$NOPY_BIN/$stub"
+done
+H=$(fresh_home s24)
+STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/na24.jsonl")" "$(native_path "$CWD_N")")
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$NOPY_BIN:$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_TOKEN_FILE="$H/.um/auth-token" \
+  bash "$STOP" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+assert_eq "S24: exit 0 under set -u (pre-project site, no PROJECT arg)" "$RUN_EXIT" "0"
+assert_eq "S24: one signal POST" "$(signal_post_count)" "1"
+assert_eq "S24: reason no-python" "$(body_field 1 reason)" "no-python"
+S24_PROJ=$("$PYBIN" -c '
+import json, sys
+b = json.load(open(sys.argv[1], encoding="utf-8"))
+print("omitted" if "project" not in b else "present")' "$CAP_DIR/body_1")
+assert_eq "S24: project field OMITTED (pre-project class)" "$S24_PROJ" "omitted"
+assert_contains "S24: log" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=no-python signal=sent"
+
+# ===========================================================================
+# #267 S26: the other two pre-project sites under the real set -u
+# ===========================================================================
+echo "=== S26: empty-stdin + bad-stdin self-report, exit 0 under set -u ==="
+H=$(fresh_home s26a)
+reset_calls
+run_stop "$H" ""
+assert_eq "S26: empty-stdin exit 0" "$RUN_EXIT" "0"
+assert_eq "S26: empty-stdin one signal POST" "$(signal_post_count)" "1"
+assert_eq "S26: empty-stdin reason" "$(body_field 1 reason)" "empty-stdin"
+assert_contains "S26: empty-stdin log" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-stdin signal=sent"
+
+H=$(fresh_home s26b)
+reset_calls
+run_stop "$H" "this is {{ not json"
+assert_eq "S26: bad-stdin exit 0" "$RUN_EXIT" "0"
+assert_eq "S26: bad-stdin one signal POST" "$(signal_post_count)" "1"
+assert_eq "S26: bad-stdin reason" "$(body_field 1 reason)" "bad-stdin"
+assert_contains "S26: bad-stdin log" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=bad-stdin signal=sent"
+
+# ===========================================================================
+# #267 S27: SHAPE tripwire — EMPTY arm stubbed out of a COPY, still exit 0
+# and the conservative stalled default (spec D10: set-u-safe tripwire)
+# ===========================================================================
+echo "=== S27: SHAPE tripwire under set -u ==="
+# Copy the WHOLE hooks tree so the stubbed copy still resolves lib/um-api.sh
+# relative to itself (stop.sh sources via its own dirname).
+STUB_TREE="$TMPDIR_ROOT/stub_hooks"
+rm -rf "$STUB_TREE"; mkdir -p "$STUB_TREE"
+cp -r "$SCRIPT_DIR/lib" "$STUB_TREE/lib"
+STOP_STUBBED="$STUB_TREE/stop.sh"
+sed 's/print("EMPTY\\t%s" % shape)/pass/' "$STOP" > "$STOP_STUBBED"
+if cmp -s "$STOP" "$STOP_STUBBED"; then
+  fail "S27: stub sed matched nothing — the EMPTY emission line moved; update this test" ""
+else
+  H=$(fresh_home s27)
+  TP="$TMPDIR_ROOT/s27.jsonl"
+  write_transcript "$TP" 2 "s27"
+  STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+  mkdir -p "$H/.um/state"; printf '2' > "$H/.um/state/stop-cursor-$SID"
+  reset_calls
+  RUN_EXIT=0
+  RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+    UM_SERVER_URL="http://mock.example:6335" \
+    UM_TOKEN_FILE="$H/.um/auth-token" \
+    bash "$STOP_STUBBED" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+  assert_eq "S27: exit 0 (tripwire must not crash the hook under set -u)" "$RUN_EXIT" "0"
+  assert_contains "S27: conservative stalled default logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-stalled"
+fi
+
+# ===========================================================================
+# #267 S28: hostile cwd basename ($ + space + backtick — NTFS-legal) yields a
+# well-formed signal body carrying the SANITIZED slug (the hoist, spec D11)
+# ===========================================================================
+echo "=== S28: hostile basename sanitized before interpolation ==="
+H=$(fresh_home s28)
+HOSTILE_DIR="$TMPDIR_ROOT/pro\$j \`x"
+mkdir -p "$HOSTILE_DIR/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/absent-s28.jsonl")" "$(native_path "$HOSTILE_DIR")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S28: exit 0" "$RUN_EXIT" "0"
+assert_eq "S28: one signal POST" "$(signal_post_count)" "1"
+assert_eq "S28: body parses and reason survives" "$(body_field 1 reason)" "no-transcript"
+S28_PROJ=$(body_field 1 project)
+case "$S28_PROJ" in
+  *'$'*|*'`'*|*' '*)
+    fail "S28: project NOT sanitized: '$S28_PROJ'" ""
+    ;;
+  pro-j*)
+    pass "S28: project sanitized to '$S28_PROJ'"
+    ;;
+  *)
+    fail "S28: unexpected project value: '$S28_PROJ'" ""
+    ;;
+esac
 
 # ===========================================================================
 # Summary

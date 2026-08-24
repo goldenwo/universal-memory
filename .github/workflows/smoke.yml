@@ -547,6 +547,14 @@ jobs:
       # runs for real. Adds ~1¢/run of API cost on top of mock — worth the
       # cross-section coverage of state.md round-trip with real LLM output
       # variability. See issue #7.
+      #
+      # #267 ORDERING CONSTRAINT (load-bearing, do not reorder): this live
+      # leg's fires 2-5 seed signal.capture_anomaly rows into the CI
+      # server's counters DB by construction, which makes um-alert exit 1
+      # for the rest of this server's life. The smoke.sh um-alert legs
+      # (inside the "Run smoke test" step above — S10 legs 4/5) MUST keep
+      # running BEFORE this step — today true by position only; this
+      # comment pins it.
       - name: Run continuity test (live OpenAI)
         working-directory: server
         env:

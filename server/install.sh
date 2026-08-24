@@ -346,6 +346,12 @@ if [ "${1:-}" = "--verify" ]; then
   # scratch HOME (cursor + hook.log stay out of the real ~/.um), endpoint
   # pinned to the same server the server-health check probed, real token file
   # honored. Pass = the hook's own log records a 2xx POST.
+  # #267 note: the scratch HOME isolates hook.log but NOT the server — an
+  # ANOMALOUS verify fire (e.g. an unreadable transcript path) now
+  # self-reports one TRUE signal.capture_anomaly row to the real server,
+  # which um-alert surfaces for 7 days. That row reflects a real broken
+  # verify and deserves the alarm; if deliberately re-testing, clean up with
+  # the in-container node + better-sqlite3 DELETE idiom (#267 spec D4/§14).
   _HOOK_SCRIPT="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/stop.sh"
   _SMOKE_HOME=$(mktemp -d 2>/dev/null || echo "")
 

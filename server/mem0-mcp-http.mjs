@@ -54,6 +54,7 @@ const TEMPORAL_FETCH_CAP = 50;
 import { writeVaultFile, findDocByIdInVault } from './lib/vault-write.mjs';
 import { doAppendTurn } from './lib/append-turn.mjs';
 import { handleReactionRequest } from './lib/reaction-attach.mjs';
+import { handleCaptureAnomalyRequest } from './lib/anomaly-signal.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { surfaceFromHeaders } from './lib/capture-events.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
@@ -128,6 +129,7 @@ function resolveRouteTemplate(pathname, method) {
   if (pathname === '/api/reindex') return '/api/reindex';
   if (pathname === '/api/append-turn') return '/api/append-turn';
   if (pathname === '/api/reaction') return '/api/reaction';
+  if (pathname === '/api/capture-anomaly') return '/api/capture-anomaly';
   if (pathname === '/api/checkpoint') return '/api/checkpoint';
   if (pathname === '/api/delete') return '/api/delete';
   if (pathname.startsWith('/api/recent/')) return '/api/recent/:project';
@@ -3533,6 +3535,39 @@ export function createRequestHandler(ctx = {}) {
 					// reactions_7d only to surfaces that have ever captured.
 					surface: surfaceFromHeaders(req.headers, 'mem0-compat'),
 				},
+			);
+			return;
+		}
+		if (url.pathname === '/api/capture-anomaly' && req.method === 'POST') {
+			// #267 stop.sh capture-anomaly self-report. Thin delegate — the wire
+			// contract (reason shape→clamp, project clamp, writes gate) lives in
+			// lib/anomaly-signal.mjs handleCaptureAnomalyRequest. Bearer auth +
+			// rate limiting ride the /api/* endpoint-class catch-all like every
+			// sibling route. Deliberately NOT in openapi.yaml (the /api/stats
+			// first-party-channel precedent). Surface uses the BARE default
+			// fallback ('unknown') — never the reaction route's 'mem0-compat'.
+			let reqBody;
+			try {
+				reqBody = JSON.parse(await readBody(req));
+			} catch (e) {
+				// B.6b: re-throw INPUT_TOO_LARGE — see /api/reindex above.
+				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
+				res.writeHead(400, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify(errorResponse('INPUT_INVALID', 'invalid JSON body')));
+				return;
+			}
+			const httpRes = {
+				statusCode: 200,
+				status(code) { this.statusCode = code; return this; },
+				json(obj) {
+					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify(obj));
+				},
+			};
+			await handleCaptureAnomalyRequest(
+				{ body: reqBody },
+				httpRes,
+				{ writesEnabled: isWriteEnabled(), surface: surfaceFromHeaders(req.headers) },
 			);
 			return;
 		}

@@ -1,13 +1,36 @@
 #!/usr/bin/env bash
-# bin/um-alert.sh — cron-able capture-freshness check (#171 Stage A, spec §4).
+# bin/um-alert.sh — cron-able capture-pipeline health check (#171 Stage A +
+# #267 SIGNALS). GETs /api/stats and evaluates FOUR sections, each covering a
+# failure class the others structurally cannot see:
 #
-# GETs /api/stats and exits per the A3 taxonomy:
-#   0  fresh — some surface (or the --surface one) has freshness_hours ≤ N
-#   1  STALE — captures exceed the threshold (or none have ever happened);
-#      the direct alarm for the 2026-07-16 silent-capture-death incident
+#   FRESHNESS (counters-derived, #171): server-side / transport / total
+#     capture death — day-granular rows stop landing and the surface ages
+#     out. NOT sufficient for the 2026-07-16 class on its own: a stop.sh-only
+#     client death keeps freshness green indefinitely, because session-end's
+#     abstained checkpoints stamp capture.% rows on the same surface.
+#   LEDGER (#201): reaction-addressability errors, scraped from /metrics via
+#     docker exec — HONESTY NOTE: this section runs only where
+#     UM_LEDGER_ERRORS_CONTAINER names the real server container; its stock
+#     default (um-server) is a name the shipped compose never mints
+#     (universal-memory-memory-server-1), so on a stock deployment this
+#     section is inert until the env var is set.
+#   LAYERS (v1.16): downstream digestion stalls WITH pending bytes (the
+#     2026-08-04 class) — blind to upstream death, which produces none.
+#   SIGNALS (#267): client-side anomalous empty transcript reads,
+#     self-reported by stop.sh as signal.capture_anomaly counter rows —
+#     THE direct alarm for the 2026-07-16 silent-capture-death class
+#     (measured-zero benign base rate; any windowed count is real signal).
+#
+# Exit taxonomy (A3, unchanged):
+#   0  healthy — freshness within threshold AND no section escalates
+#   1  ALARM — stale captures, a stale layer, ledger-error growth, or a
+#      capture anomaly in the 7-day window
 #   2  the check itself couldn't run (unreachable / auth / bad response /
-#      degraded counters) — distinguishable from staleness by design: a
-#      dark counters source means we can't SEE freshness, not that it's bad
+#      degraded counters / malformed section) — a broken monitor is loud
+#
+# Escalation output is PRINT-ALL (#267): every applicable section line is
+# echoed before the single exit — on exit-2 paths too, so a monitor fault
+# defers an alert's exit-code semantics but never hides its text.
 #
 # Cron shape: `26 6 * * * ~/.local/share/um/cli/um-alert.sh || <notify>`.
 # Config comes from um-api.sh's tiers (UM_SERVER_URL env → ~/.um/endpoint
@@ -44,8 +67,12 @@ _usage() {
   cat <<EOF
 Usage: um-alert.sh [options]
 
-Capture-freshness check against GET /api/stats. Cron-able: silent-ish on
-success, one actionable line + non-zero exit otherwise.
+Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
+on success, actionable line(s) + non-zero exit otherwise. Four sections:
+capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls), and
+SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
+alarm for a stop.sh-only capture death). Every applicable escalation line is
+printed before the single exit (print-all, no masking).
 
 Options:
   --max-age-hours N   Freshness threshold in hours. Default: the server's
@@ -62,11 +89,13 @@ Options:
   --help, -h          Show this message
 
 Exit codes:
-  0  fresh   — captures within the threshold
-  1  STALE   — all (or the named) surfaces exceed the threshold, or no
-               captures have ever been recorded
+  0  healthy — captures within the threshold, no section escalating
+  1  ALARM   — stale captures (all, or the named surface), a stale layer,
+               ledger-error growth, or a capture anomaly reported in the
+               last 7 days (SIGNALS)
   2  check couldn't run — server unreachable, auth rejected, non-200,
-               unparseable response, or capture counters degraded
+               unparseable response, degraded counters, or a malformed
+               monitoring section
 EOF
 }
 
@@ -255,6 +284,125 @@ if [ -n "$LEDGER_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
+# #267 SIGNALS section — client-reported capture anomalies
+# (signal.capture_anomaly rows, self-reported by stop.sh via
+# POST /api/capture-anomaly, exposed as the top-level `signals` key).
+# Computed HERE, before any exit decision, so every exit-2 path below can
+# echo an applicable ALERT line (print-all: a monitor fault must never hide
+# an active alert's text — in either direction). Taxonomy mirrors LAYERS:
+#   ABSENT   — no `signals` key: pre-#267 server. Breadcrumb, verdict
+#              untouched (a rollback must say what it stopped checking).
+#   DEGRADED — signals null WITH capture null: the counters-degraded path;
+#              the capture verdict carries the exit (no double report).
+#   ERROR    — malformed in any way, INCLUDING signals:null while capture
+#              is present and a missing capture_anomaly key (both are
+#              production-unreachable drift tripwires — stats-payload nulls
+#              all counters sections together) ⇒ CHECK FAILED, exit 2.
+#   ALERT    — any surface with count_7d > 0. The measured-zero benign base
+#              rate (0 anomalous stop.sh reads in 1,424 fires; the only 3
+#              ever were the 2026-07-16/17 deploy window) makes ANY windowed
+#              count real signal; the 7-day window is the dead-man margin.
+#   OK       — zero anomalies in the window.
+SIG_VERDICT=$("$PY" -c '
+import json, sys
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+if "signals" not in stats:
+    emit("ABSENT", "signals key absent — server predates the #267 anomaly self-report; client-side capture anomalies NOT checked")
+
+signals = stats.get("signals")
+if signals is None:
+    if stats.get("capture") is None:
+        emit("DEGRADED", "counters degraded — anomaly signals cannot be assessed")
+    emit("ERROR", "signals is null while capture is present — malformed payload (both derive from the same counters DB)")
+if not isinstance(signals, dict):
+    emit("ERROR", "signals key present but malformed (expected an object)")
+if "capture_anomaly" not in signals:
+    emit("ERROR", "signals present but missing the capture_anomaly key — malformed payload")
+fam = signals["capture_anomaly"]
+if not isinstance(fam, dict):
+    emit("ERROR", "signals.capture_anomaly malformed (expected an object)")
+
+alerts = []
+try:
+    # VALIDATE BEFORE SORTING (review catch, twice over): a sort key that
+    # calls .get() or negates a value runs BEFORE any isinstance guard in a
+    # comprehension, so a malformed entry would crash with a generic
+    # TypeError/AttributeError instead of reaching the purpose-written
+    # per-surface error — or, for reason values, escalate a junk entry into
+    # a whole-section exit 2 where ignoring it keeps the ALERT actionable.
+    entries = []
+    for surface, info in fam.items():
+        if not isinstance(info, dict):
+            raise ValueError("surface %r malformed" % surface)
+        n = info.get("count_7d")
+        if not isinstance(n, (int, float)) or isinstance(n, bool):
+            raise ValueError("surface %r has a bad count_7d" % surface)
+        if n > 0:
+            entries.append((surface, n, info))
+    for surface, n, info in sorted(entries, key=lambda e: -e[1]):
+        reasons = info.get("reasons_7d") or {}
+        parts = sorted(
+            ((k, v) for k, v in reasons.items()
+             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
+            key=lambda kv: -kv[1])
+        breakdown = ", ".join("%s x%d" % kv for kv in parts) or "unlabeled"
+        # Neutral noun (review catch): the vocabulary spans transcript reads
+        # AND hook-startup failures (no-python, bad-stdin) — "empty read"
+        # would misdirect the diagnosis; the reason breakdown carries the
+        # specifics.
+        alerts.append("%s: %d capture anomaly(ies) in 7d (%s; last %s)" % (
+            surface, n, breakdown, info.get("last_day_seen")))
+except Exception as e:
+    emit("ERROR", "signals payload malformed: %s" % e)
+
+if alerts:
+    emit("ALERT", "; ".join(alerts) + " — the capture client is firing but not capturing (the 2026-07-16 class, #267; see the reason breakdown)")
+emit("OK", "no capture anomalies in the last 7 days")
+' < "$BODY_FILE" 2>/dev/null) || SIG_VERDICT=""
+
+SIG_STATUS="${SIG_VERDICT%%|*}"
+SIG_MESSAGE="${SIG_VERDICT#*|}"
+
+# print_escalations — echo EVERY applicable alert line (#267 print-all;
+# order: the primary capture verdict first, then SIGNALS → LAYERS → LEDGER —
+# active capture loss is the most actionable of the add-on sections). Called
+# from every exit arm below, exit-2 paths included — replacing the old
+# first-wins chain that let LAYERS mask LEDGER on the FRESH arm, dropped
+# LEDGER entirely on the STALE arm, and (review catch) let a monitor fault
+# swallow the capture-STALE text itself.
+# LAYERS_STATUS is defensively initialized here (it is assigned below): a
+# future early exit between this definition and that assignment must never
+# turn into an unbound-variable abort — which under the `|| <notify>` cron
+# shape would page as a pipeline death instead of a monitor fault.
+LAYERS_STATUS=""
+LAYERS_MESSAGE=""
+print_escalations() {
+  if [ "$STATUS" = "STALE" ]; then
+    echo "um-alert: STALE — $MESSAGE" >&2
+  fi
+  if [ "$SIG_STATUS" = "ALERT" ]; then
+    echo "um-alert: SIGNALS — $SIG_MESSAGE" >&2
+  fi
+  if [ "$LAYERS_STATUS" = "STALE" ]; then
+    echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE" >&2
+  fi
+  if [ -n "$LEDGER_ALERT" ]; then
+    echo "um-alert: LEDGER-ERRORS — $LEDGER_ALERT" >&2
+  fi
+  return 0
+}
+
 # Task 10 (spec §6): LAYERS section — per-project filesystem-mtime freshness,
 # independent of the counters-derived verdict above (the exact ground truth
 # that would have caught the 2026-08-04 outage: capture.turn kept the
@@ -346,47 +494,67 @@ if [ -n "$LAYERS_DEGRADED_NOTE" ]; then
   echo "um-alert: layers check degraded ($LAYERS_DEGRADED_NOTE) — per-layer freshness may be INCOMPLETE" >&2
 fi
 
+# SIGNALS wiring (#267) — breadcrumb / no-op / CHECK-FAILED, mirroring the
+# LAYERS case below. The ERROR arm prints the OTHER sections' live alert
+# text first (the mirror of the layers-malformed direction): a broken
+# signals monitor must not hide a stale layer or ledger growth.
+# Monitor-fault handling is COMBINED (review catch — sequential exit-2 arms
+# masked each other): BOTH sections' breadcrumbs and BOTH sections' CHECK
+# FAILED lines print before the single exit 2, and every applicable live
+# alert line prints too (print_escalations includes the capture-STALE text).
+# A malformed monitoring payload is worth its own CHECK-FAILED regardless of
+# the counters-derived verdict (spec §6) — an operator seeing exit 2 should
+# investigate the monitor, not read it as "the pipeline is stale"; a
+# garbage/EMPTY status folds into the fault arm rather than no-op'ing (this
+# arc's root failure mode was a broken monitor going quiet).
+MONITOR_FAULT=""
+case "$SIG_STATUS" in
+  ABSENT)
+    echo "um-alert: $SIG_MESSAGE" >&2 ;;
+  OK|ALERT|DEGRADED)
+    : ;;
+  *)
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${SIG_MESSAGE:-signals verdict parser produced no output}" >&2 ;;
+esac
+
 case "$LAYERS_STATUS" in
   ABSENT)
     echo "um-alert: $LAYERS_MESSAGE" >&2 ;;
   OK|STALE)
     : ;;
   *)
-    # Unconditional, BEFORE the capture-verdict case below: a malformed
-    # layers payload (or an EMPTY LAYERS_STATUS — the python process itself
-    # crashed uncaught) is worth its own CHECK-FAILED regardless of what the
-    # counters-derived verdict says (spec §6) — an operator seeing exit 2
-    # here should investigate the monitor itself, not read it as "the
-    # pipeline is stale". A garbage/empty status is folded into this same
-    # branch rather than silently no-op'ing the layers check: this arc's own
-    # root failure mode was exactly a broken monitor going quiet.
-    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2
-    exit 2 ;;
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${LAYERS_MESSAGE:-layers verdict parser produced no output}" >&2 ;;
 esac
+
+if [ -n "$MONITOR_FAULT" ]; then
+  print_escalations
+  exit 2
+fi
 
 case "$STATUS" in
   FRESH)
-    if [ "$LAYERS_STATUS" = "STALE" ]; then
-      echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE (capture freshness itself OK: $MESSAGE)" >&2
-      exit 1
-    fi
-    if [ -n "$LEDGER_ALERT" ]; then
-      echo "um-alert: LEDGER-ERRORS — $LEDGER_ALERT (capture freshness itself OK: $MESSAGE)" >&2
+    if [ "$SIG_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
+      print_escalations
+      # Context restored (review catch — the old suffix was deleted with
+      # first-wins): the one mail a cron sends must say whether freshness
+      # itself was evaluated-and-green.
+      echo "um-alert: (capture freshness itself OK: $MESSAGE)" >&2
       exit 1
     fi
     echo "um-alert: OK — $MESSAGE"
     exit 0 ;;
   STALE)
-    if [ "$LAYERS_STATUS" = "STALE" ]; then
-      echo "um-alert: STALE — $MESSAGE; also layers stale: $LAYERS_MESSAGE" >&2
-    else
-      echo "um-alert: STALE — $MESSAGE" >&2
-    fi
+    # The STALE line itself comes from print_escalations (first line).
+    print_escalations
     exit 1 ;;
   ERROR)
+    print_escalations
     echo "um-alert: CHECK FAILED — $MESSAGE" >&2
     exit 2 ;;
   *)
+    print_escalations
     echo "um-alert: CHECK FAILED — internal parser produced no verdict" >&2
     exit 2 ;;
 esac

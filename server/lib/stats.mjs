@@ -39,6 +39,7 @@ import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { countersDbPath } from './capture-events.mjs';
 import { REACTION_OUTCOME_KEYS, SIGNAL_EVENTS } from './reaction-signal.mjs';
+import { ANOMALY_EVENT, ANOMALY_REASON_KEYS, ANOMALY_OTHER } from './anomaly-signal.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -60,7 +61,7 @@ const LANDING_EVENTS = Object.freeze(['capture.extraction', 'capture.checkpoint'
 
 /** Degraded shape (A5): counters unavailable ⇒ nulls, never a throw. */
 function nullShaped() {
-  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null };
+  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null };
 }
 
 function utcDayString(epochMs) {
@@ -108,6 +109,8 @@ export function freshnessHours(lastDaySeen, nowMs) {
  *     turns_7d: number }>,
  *   growth_7d: null | Record<string, number>,
  *   recall: null | { searches_today: number, searches_7d: number },
+ *   anomalies: null | Record<string, { last_day_seen: string, count_7d: number,
+ *     reasons_7d: Record<string, number> }>,
  * }} Null-shaped ({available:false}, all sections null) when the counters db
  *    is missing or unreadable — never throws for db-state reasons.
  */
@@ -281,7 +284,81 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       if (day === today) searches_today = n;
     }
 
-    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d } };
+    // #267 anomalies — signal.capture_anomaly, an INDEPENDENT section that
+    // deliberately INVERTS the reactions reader's posture on BOTH axes 20
+    // lines up (do not "harmonize" them — the divergence is the point):
+    //   • Independence, not nesting: a reaction row without a capture
+    //     surface is safely skipped; an anomaly row without one is the
+    //     broken-from-day-one install — the exact blindness this event
+    //     exists to expose — so anomalies NEVER key through the capture map.
+    //   • Fold, not skip: an out-of-vocabulary outcome (a NEWER hook's
+    //     reason read by this server) counts under 'other' — for an alarm
+    //     feed a dropped row is a missed alarm, the inverse of the
+    //     annotation-safe reaction skip.
+    // Queries are event-EQUALITY (never LIKE): the capture.% boundary stays
+    // untouched by construction, and the namespace-isolation test pins the
+    // whole output byte-identical modulo this section.
+    // FAIL-ISOLATED in its own try (review catch): "independent" must also
+    // mean independently degradable — a defect in this newest reader must
+    // never dark the capture-freshness sections it exists to protect. On
+    // error: anomalies:null alone, which um-alert's signals-null-with-
+    // capture-present tripwire reports as a LOUD exit-2 monitor fault.
+    let anomalies = null;
+    try {
+      // Snapshot both reads in one transaction (review catch): the writer
+      // shares this WAL DB (and operators are documented running their own
+      // in-container sessions), so two bare SELECTs could see a first-ever
+      // anomaly surface appear between them.
+      const anomalyKeys = Object.freeze([...ANOMALY_REASON_KEYS, ANOMALY_OTHER]);
+      const readAnomalies = db.transaction(() => ({
+        lastSeen: db.prepare(`
+          SELECT surface, MAX(day) AS last_day_seen
+          FROM counters
+          WHERE event = ?
+          GROUP BY surface
+        `).all(ANOMALY_EVENT),
+        windowRows: db.prepare(`
+          SELECT surface, outcome, SUM(count) AS n
+          FROM counters
+          WHERE event = ? AND day >= ? AND day <= ?
+          GROUP BY surface, outcome
+        `).all(ANOMALY_EVENT, windowStart, today),
+      }));
+      const snap = readAnomalies();
+
+      // Null-prototype maps THROUGHOUT — surface AND outcome are writer-
+      // controlled (the v1.8.1 '__proto__' hazard; reasons_7d is served to
+      // external readers, so it gets the same discipline as the outer map).
+      const built = Object.create(null);
+      for (const { surface, last_day_seen } of snap.lastSeen) {
+        built[surface] = {
+          last_day_seen,
+          count_7d: 0,
+          reasons_7d: Object.assign(Object.create(null), Object.fromEntries(anomalyKeys.map((k) => [k, 0]))),
+        };
+      }
+      for (const { surface, outcome, n } of snap.windowRows) {
+        const a = built[surface];
+        // Tripwire, unreachable under the transaction (window rows ⊆
+        // last-seen within one snapshot): skipping defers the row to the
+        // next read — rows are durable — rather than throwing this section
+        // dark at the first-ever anomaly.
+        if (!a) continue;
+        a.count_7d += n;
+        const key = Object.hasOwn(a.reasons_7d, outcome) ? outcome : ANOMALY_OTHER;
+        a.reasons_7d[key] += n;
+      }
+      anomalies = built;
+    } catch (err) {
+      safeLog(() => getLogger().warn({
+        component: 'stats',
+        err_class: err?.code ?? err?.name ?? 'Error',
+        err_message: err?.message ?? String(err),
+      }, 'anomaly section unreadable — serving anomalies:null (capture sections stay live)'),
+      'log:stats:anomalies-unreadable');
+    }
+
+    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies };
   } catch (err) {
     // Unreadable (corrupt/locked-exotic) db ⇒ same degraded shape as missing
     // (spec §3 errors clause: stats must not 500 over the counters file).

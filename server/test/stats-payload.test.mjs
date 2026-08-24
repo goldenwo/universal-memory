@@ -418,3 +418,64 @@ test('readCounters: omitting the param falls back to readCounterStats — zero b
     assert.equal(body.degraded, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #267: the `signals` key (T4)
+// ---------------------------------------------------------------------------
+
+test('signals: ALWAYS present; empty DB ⇒ { capture_anomaly: {} } (the ABSENT-key ⇔ old-server contract)', async () => {
+  // Review catch (was a dead fixture): the DEFAULT reader must be pointed
+  // at the scratch DB via env, or it silently reads the machine-default
+  // counters DB — the exact #279 hazard — and the titled empty-DB shape
+  // goes unpinned.
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, []);
+  await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
+    const body = await buildStats({
+      now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/test',
+      listAll,
+      checkpointConfig: {},
+    });
+    assert.ok('signals' in body, 'key must exist from this version forward');
+    // Null-prototype inner map (hostile-surface discipline); strict
+    // deepEqual compares prototypes.
+    assert.deepEqual(body.signals, { capture_anomaly: { __proto__: null } },
+      'healthy-zero shape — distinguishes {} from null (degraded) and from ABSENT (old server)');
+  });
+});
+
+test('signals: nests counters.anomalies under capture_anomaly', async () => {
+  const fakeCounters = {
+    available: true,
+    capture: {}, growth_7d: {}, growth_docs_7d: {}, recall: { searches_today: 0, searches_7d: 0 },
+    anomalies: { 'claude-code-plugin': { last_day_seen: TODAY, count_7d: 2, reasons_7d: { other: 2 } } },
+  };
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/test',
+    listAll, readCounters: () => fakeCounters, checkpointConfig: {},
+  });
+  assert.deepEqual(body.signals, { capture_anomaly: fakeCounters.anomalies });
+});
+
+test('signals: null when counters degraded (anomalies null)', async () => {
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/test',
+    listAll,
+    readCounters: () => ({ available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null }),
+    checkpointConfig: {},
+  });
+  assert.equal(body.signals, null);
+});
+
+test('signals: a DI fake that OMITS anomalies degrades to the honest null, never {"signals":{}} (the banked undefined-vs-null seam class)', async () => {
+  // Every pre-#267 injected fake omits `anomalies`; strict `=== null` would
+  // emit {signals:{}} — the D9-malformed shape — and exit-2 um-alert in
+  // unit rigs. Loose null-ness must degrade to signals: null.
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/test',
+    listAll,
+    readCounters: () => ({ available: true, capture: {}, growth_7d: {}, growth_docs_7d: {}, recall: { searches_today: 0, searches_7d: 0 } }),
+    checkpointConfig: {},
+  });
+  assert.equal(body.signals, null);
+});
