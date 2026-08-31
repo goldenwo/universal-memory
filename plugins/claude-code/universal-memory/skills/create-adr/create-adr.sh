@@ -182,6 +182,7 @@ _render_frontmatter() {
 schema_version: 1
 id: $id
 title: $title_q
+# status: bare token — Proposed | Accepted | Superseded | Deprecated | Rejected (anything else = no recall change; /adr sync propagates it)
 status: Proposed
 supersedes: []
 superseded_by: null

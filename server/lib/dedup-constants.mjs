@@ -69,9 +69,20 @@ export const D3_SERVER_MANAGED_STATUS_FIELDS = Object.freeze([
  *
  * 1. Suppression state — anchored to the READ-path predicate `isRecallable`
  *    (lib/recallable.mjs): every metadata field that can suppress a point
- *    on read MUST be carried, or an ADR re-sync silently un-suppresses the
- *    record (the resurrection incident class, see buildPayload's status
- *    comment in add.mjs). The agreement is pinned by test T2l in
+ *    on read MUST be carried (the resurrection incident class, see
+ *    buildPayload's status comment in add.mjs). Post-#275 the protection
+ *    this buys is CONDITIONAL, not absolute: the adr_status→status
+ *    derivation (performIdentityUpsert) may overwrite a carried BARE
+ *    status — bare = no supersededBy/supersededAt/invalidated_at — because
+ *    a bare status on an identity point is the derivation's own prior
+ *    output. A status accompanied by demotion provenance, or an
+ *    invalidated_at, survives every CLEAR-intent re-sync (a SUPPRESS-intent
+ *    sync may still relabel the status VALUE — never un-suppress — with the
+ *    provenance riding along). CONSTRAINT on future
+ *    code: any mechanism that demotes an identity point MUST write
+ *    provenance (supersededAt at minimum) or use invalidated_at — a bare
+ *    status write reads as derivation-owned and is cleared by the next
+ *    CLEAR-intent sync. The carry agreement is pinned by test T2l in
  *    adr-identity-upsert.test.mjs, which extracts isRecallable's field
  *    reads from source. The status trio comes from
  *    D3_SERVER_MANAGED_STATUS_FIELDS by SPREAD, not by copy (review
