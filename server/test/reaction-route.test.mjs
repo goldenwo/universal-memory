@@ -27,7 +27,12 @@ const Database = require('better-sqlite3');
 
 const OP = 'op';
 const RUN = 'agent:main:discord:channel:42';
-const T0 = '2026-07-30T12:00:00.000Z';
+// Relative, not pinned: an absolute T0 ages out of the ledger's 30-day
+// retention window and the fixture silently vanishes (2026-08-31 CI breakage).
+const T0 = new Date(Date.now() - 3_600_000).toISOString();
+function tPlus(seconds) {
+  return new Date(Date.parse(T0) + seconds * 1000).toISOString();
+}
 
 function freshDb() {
   const dir = tempDir('um-rroute-');
@@ -64,7 +69,7 @@ function seedCapture(overrides = {}) {
 const goodBody = (overrides = {}) => ({
   run_id: RUN,
   message_id: 'm1',
-  message_ts: '2026-07-30T11:59:50.000Z',
+  message_ts: tPlus(-10),
   reaction_count: 2,
   reaction_types: ['👍'],
   ...overrides,
