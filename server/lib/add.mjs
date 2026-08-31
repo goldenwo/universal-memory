@@ -204,8 +204,11 @@ const ADR_STATUS_DERIVATION = Object.freeze(Object.assign(Object.create(null), {
  * silent by design (spec #275 D2 — mirrors adr.identity_skipped's scope).
  */
 function deriveAdrLifecycleIntent(adrStatus) {
-  if (typeof adrStatus !== 'string' || adrStatus === '') return { intent: 'none' };
+  if (typeof adrStatus !== 'string') return { intent: 'none' };
   const normalized = adrStatus.trim().toLowerCase();
+  // Normalized-empty (covers '' AND whitespace-only) is the silent no-signal
+  // arm, not the WARN arm — a blank is not an authored token (review).
+  if (normalized === '') return { intent: 'none' };
   if (!Object.prototype.hasOwnProperty.call(ADR_STATUS_DERIVATION, normalized)) {
     return { intent: 'none', unrecognized: adrStatus };
   }

@@ -421,14 +421,11 @@ test('T2g: number-typed adr_id falls through WITH a warn breadcrumb', async () =
   // mistake) silently diverging into content-addressing is the #279 hazard
   // class — the fallthrough is correct, the silence was not.
   const warns = [];
-  const logger = {
-    info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }), error: () => {}, debug: () => {},
-  };
   const qdrant = makeMockQdrant();
   const { result } = await identityAdd({
     qdrant,
     metadata: { ...ADR_META, adr_id: 42 },
-    extra: { _logger: logger },
+    extra: { _logger: warnCapturingLogger(warns) },
   });
   assert.equal(result.results[0].event, 'ADD', 'legacy pipeline taken');
   const breadcrumbs = warns.filter((w) => w.obj?.event === 'adr.identity_skipped');
@@ -586,8 +583,9 @@ function priorPoint(payload) {
 
 async function derivedPayload({ adrStatus, prior, warns } = {}) {
   const qdrant = makeMockQdrant(prior ? { retrievePoints: [prior] } : {});
+  const { adr_status, ...metaWithoutStatus } = ADR_META;
   const metadata = adrStatus === undefined
-    ? (() => { const { adr_status: _dropped, ...rest } = ADR_META; return rest; })()
+    ? metaWithoutStatus
     : { ...ADR_META, adr_status: adrStatus };
   await identityAdd({ qdrant, metadata, ...(warns ? { extra: { _logger: warnCapturingLogger(warns) } } : {}) });
   return qdrant.calls.upserts[0].body.points[0].payload;
@@ -617,6 +615,20 @@ test('T2m-4: Accepted re-sync over mechanism-demoted prior stays superseded (pro
   assert.equal(payload.supersededBy, 'point-b');
 });
 
+test('T2m-4b: SUPPRESS intent over a mechanism-demoted prior relabels status; provenance rides along, still suppressed', async () => {
+  // The provenance gate protects against UN-suppression only — a
+  // suppress-intent sync may relabel the status VALUE (dedup-constants
+  // family-1 docblock, corrected wording). Pinned so a future refactor
+  // cannot "helpfully" gate the suppress branch on provenanceClear.
+  const payload = await derivedPayload({
+    adrStatus: 'Rejected',
+    prior: priorPoint({ status: 'superseded', supersededBy: 'point-b', supersededAt: '2026-02-01T00:00:00.000Z' }),
+  });
+  assert.equal(payload.status, 'rejected', 'suppress wins over the carry unconditionally');
+  assert.equal(payload.supersededBy, 'point-b', 'provenance carried untouched');
+  assert.equal(isRecallable({ metadata: payload }), false, 'suppressed either way — never a resurrection');
+});
+
 test('T2m-5: invalidated_at alone blocks the clear; carried regardless (forward-looking pin)', async () => {
   // No live mechanism writes invalidated_at to identity points today — this
   // pins the D3 constraint for the mechanism that eventually does.
@@ -642,11 +654,18 @@ test('T2m-6: unrecognized value derives nothing in either direction; exactly one
   assert.equal(warnsB.filter((w) => w.obj?.event === 'adr.status_unrecognized').length, 1);
 });
 
-test('T2m-6b: absent adr_status derives nothing and does not WARN (no-signal arm)', async () => {
+test('T2m-6b: absent, empty, and whitespace-only adr_status derive nothing and do not WARN (no-signal arm)', async () => {
   const warns = [];
   const payload = await derivedPayload({ prior: priorPoint({ status: 'superseded' }), warns });
   assert.equal(payload.status, 'superseded', 'carry semantics unchanged when no signal');
   assert.equal(warns.filter((w) => w.obj?.event === 'adr.status_unrecognized').length, 0);
+  for (const blank of ['', '   ']) {
+    const w = [];
+    const p = await derivedPayload({ adrStatus: blank, prior: priorPoint({ status: 'superseded' }), warns: w });
+    assert.equal(p.status, 'superseded', `blank '${blank}' must not change status`);
+    assert.equal(w.filter((x) => x.obj?.event === 'adr.status_unrecognized').length, 0,
+      `blank '${blank}' is no-signal, not unrecognized (review: a blank is not an authored token)`);
+  }
 });
 
 test('T2m-7: matching is trim + case-insensitive', async () => {
