@@ -52,7 +52,13 @@ function freshDb() {
   return dbPath;
 }
 
-const T0 = '2026-07-30T12:00:00.000Z';
+// T0 must be RELATIVE to the wall clock: recordCapture's throttled prune and
+// resolveCapture's windows compare against real now, so an absolute pinned
+// date ages out of UM_CAPTURE_LEDGER_RETENTION_DAYS (30d) and the whole
+// fixture silently vanishes (the 2026-08-31 CI breakage — tests authored
+// against a 2026-07-30 pin went red 32 days later with zero code changes).
+// now-1h keeps every tPlus() offset in the past and far inside retention.
+const T0 = new Date(Date.now() - 3_600_000).toISOString();
 function tPlus(seconds) {
   return new Date(Date.parse(T0) + seconds * 1000).toISOString();
 }

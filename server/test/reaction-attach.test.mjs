@@ -36,7 +36,12 @@ const Database = require('better-sqlite3');
 const OP = 'op';
 const RUN = 'agent:main:discord:channel:42';
 const COLLECTION = 'memories';
-const T0 = '2026-07-30T12:00:00.000Z';
+// Relative, not pinned: an absolute T0 ages out of the ledger's 30-day
+// retention window and the fixture silently vanishes (2026-08-31 CI breakage).
+const T0 = new Date(Date.now() - 3_600_000).toISOString();
+function tPlus(seconds) {
+  return new Date(Date.parse(T0) + seconds * 1000).toISOString();
+}
 
 function freshDb() {
   const dir = tempDir('um-attach-');
@@ -74,7 +79,7 @@ function signalRows(dbPath) {
 const baseArgs = (mock, overrides = {}) => ({
   userId: OP,
   runId: RUN,
-  messageTs: '2026-07-30T11:59:50.000Z',
+  messageTs: tPlus(-10),
   messageId: 'm1',
   count: 2,
   types: ['👍'],
@@ -129,10 +134,10 @@ test('cap_exceeded passes through without a counter emit', async () => {
 test('cross-capture dedup survivor: two captures onto ONE point accumulate the distinct-capture sum (anti-clobber)', async () => {
   freshDb();
   seedCapture({ createdAt: T0 });
-  seedCapture({ createdAt: '2026-07-30T12:05:00.000Z' });
+  seedCapture({ createdAt: tPlus(300) });
   const mock = makeMockQdrant({ points: [{ id: 'p1', payload: { userId: OP, hash: 'h1' } }] });
-  await attachReaction(baseArgs(mock, { messageTs: '2026-07-30T11:59:50.000Z', messageId: 'mA', count: 2 }));
-  const res = await attachReaction(baseArgs(mock, { messageTs: '2026-07-30T12:04:50.000Z', messageId: 'mB', count: 3 }));
+  await attachReaction(baseArgs(mock, { messageTs: tPlus(-10), messageId: 'mA', count: 2 }));
+  const res = await attachReaction(baseArgs(mock, { messageTs: tPlus(290), messageId: 'mB', count: 3 }));
   assert.equal(res.outcome, 'stored');
   assert.equal(mock.client._get('p1').payload.reaction_count, 5);
 });
@@ -237,8 +242,8 @@ test('setPayload failure: ledger already committed, counter already emitted, fai
 
 test('refiner disagreement increments the calibration counter', async () => {
   freshDb();
-  seedCapture({ createdAt: '2026-07-30T12:00:10.000Z', messageHashes: ['aaa'], pointRefs: [{ id: 'p1', hash: 'h1' }] });
-  seedCapture({ createdAt: '2026-07-30T12:00:20.000Z', messageHashes: ['bbb'], pointRefs: [{ id: 'p2', hash: 'h2' }] });
+  seedCapture({ createdAt: tPlus(10), messageHashes: ['aaa'], pointRefs: [{ id: 'p1', hash: 'h1' }] });
+  seedCapture({ createdAt: tPlus(20), messageHashes: ['bbb'], pointRefs: [{ id: 'p2', hash: 'h2' }] });
   const mock = makeMockQdrant({ points: [
     { id: 'p1', payload: { userId: OP, hash: 'h1' } },
     { id: 'p2', payload: { userId: OP, hash: 'h2' } },
