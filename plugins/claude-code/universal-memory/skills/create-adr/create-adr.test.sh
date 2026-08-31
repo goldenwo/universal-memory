@@ -15,6 +15,11 @@
 
 set -uo pipefail
 
+# #285: the token-file tier reads ${UM_TOKEN_FILE:-$HOME/.um/auth-token}.
+# HOME is isolated per-test, but an operator-exported UM_TOKEN_FILE would
+# leak through every cmd_create/cmd_sync run — pin it off for the whole file.
+export UM_TOKEN_FILE=""
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/create-adr.sh"
 
@@ -185,16 +190,38 @@ trap 'rm -rf "$tmp" "$TEST_HOME"' EXIT
 mkdir -p "$TEST_HOME/.claude/skills/create-adr"
 printf '{"auth_token":"from-config"}\n' > "$TEST_HOME/.claude/skills/create-adr/config.json"
 
-got=$(HOME="$TEST_HOME" UM_AUTH_TOKEN="from-env" _resolve_auth_token)
+got=$(HOME="$TEST_HOME" UM_AUTH_TOKEN="from-env" UM_TOKEN_FILE="" _resolve_auth_token)
 assert_eq "_resolve_auth_token env precedence" "from-env" "$got"
 
-got=$(HOME="$TEST_HOME" UM_AUTH_TOKEN="" _resolve_auth_token)
+got=$(HOME="$TEST_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
 assert_eq "_resolve_auth_token config fallback" "from-config" "$got"
 
 EMPTY_HOME=$(mktemp -d)
-got=$(HOME="$EMPTY_HOME" UM_AUTH_TOKEN="" _resolve_auth_token)
+got=$(HOME="$EMPTY_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
 assert_eq "_resolve_auth_token empty default" "" "$got"
 rm -rf "$EMPTY_HOME"
+
+# #285: token-file tier — ${UM_TOKEN_FILE:-$HOME/.um/auth-token}, trimmed,
+# same semantics as um-api.sh's um_api_token. FINAL fallback: env and
+# config.json both win over it.
+TOKFILE_HOME=$(mktemp -d)
+mkdir -p "$TOKFILE_HOME/.um"
+printf '  from-file\n' > "$TOKFILE_HOME/.um/auth-token"
+
+got=$(HOME="$TOKFILE_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
+assert_eq "_resolve_auth_token file tier (default path, trimmed)" "from-file" "$got"
+
+ALT_TOKFILE=$(mktemp)
+printf 'from-alt-file\n' > "$ALT_TOKFILE"
+got=$(HOME="$EMPTY_HOME-x" UM_AUTH_TOKEN="" UM_TOKEN_FILE="$ALT_TOKFILE" _resolve_auth_token)
+assert_eq "_resolve_auth_token file tier (UM_TOKEN_FILE override)" "from-alt-file" "$got"
+rm -f "$ALT_TOKFILE"
+
+mkdir -p "$TOKFILE_HOME/.claude/skills/create-adr"
+printf '{"auth_token":"from-config"}\n' > "$TOKFILE_HOME/.claude/skills/create-adr/config.json"
+got=$(HOME="$TOKFILE_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
+assert_eq "_resolve_auth_token config wins over file" "from-config" "$got"
+rm -rf "$TOKFILE_HOME"
 
 # ─── Unit tests: _detect_self_application ───────────────────────────────────
 echo ""

@@ -260,6 +260,15 @@ _resolve_auth_token() {
       return 0
     fi
   fi
+  # #285: final fallback — the hooks' canonical token file, same semantics as
+  # um-api.sh's um_api_token (${UM_TOKEN_FILE:-~/.um/auth-token}, all
+  # whitespace stripped). Without this tier a bare `/adr sync` 401'd on a
+  # machine where the stop hook auths fine seconds earlier.
+  local token_file="${UM_TOKEN_FILE:-$HOME/.um/auth-token}"
+  if [ -r "$token_file" ]; then
+    tr -d '[:space:]' < "$token_file" 2>/dev/null || true
+    return 0
+  fi
   printf ''
 }
 
@@ -394,7 +403,7 @@ _post_memory_add() {
       ;;
     401|403)
       # Auth-class: bucket 403 with 401. Both mean "fix auth and sync."
-      printf 'WARNING: not registered with universal-memory — auth failed (HTTP %s; set UM_AUTH_TOKEN, see <repo>/server/.env). Run /adr sync %s after fixing.' "$http_code" "$id"
+      printf 'WARNING: not registered with universal-memory — auth failed (HTTP %s; set UM_AUTH_TOKEN or put the token in ~/.um/auth-token, see <repo>/server/.env). Run /adr sync %s after fixing.' "$http_code" "$id"
       return 0
       ;;
     400|422)
@@ -660,7 +669,7 @@ cmd_sync() {
       # DELIBERATE asymmetry vs cmd_create: sync IS the recovery command,
       # so an auth failure here means the operator's auth config is still
       # broken. Loud-fail surfaces "you still need to fix UM_AUTH_TOKEN."
-      _die 77 "auth failed (HTTP $http_code) re-registering ADR-${fm_adr_id}; set UM_AUTH_TOKEN (see <repo>/server/.env) and re-run"
+      _die 77 "auth failed (HTTP $http_code) re-registering ADR-${fm_adr_id}; set UM_AUTH_TOKEN or put the token in ~/.um/auth-token (see <repo>/server/.env) and re-run"
       ;;
     400|422)
       _die 65 "payload rejected (HTTP $http_code) re-registering ADR-${fm_adr_id}; this is not retryable — check server logs and/or file an issue"
