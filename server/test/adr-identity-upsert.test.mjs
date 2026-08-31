@@ -3,6 +3,8 @@
  *
  * Spec: docs/plans/2026-08-23-adr-identity-upsert-spec.md (D1–D7).
  * Test ids (T1*, T2a–T2l) map 1:1 to the paired plan's test contract.
+ * T2m (#275, docs/plans/2026-08-31-adr-status-derivation-spec.md §5) pins
+ * the adr_status → status derivation on the same real-write-path terms.
  *
  * All payload assertions run against the REAL buildPayload output (the
  * production umAdd path with stub qdrant/provider seams) — never a stubbed
@@ -17,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { v5 as uuidv5 } from 'uuid';
 import { umAdd, computeAdrIdentityId, computeFactId } from '../lib/add.mjs';
+import { isRecallable } from '../lib/recallable.mjs';
 import { NAMESPACE_UM, IDENTITY_CARRY_FORWARD_FIELDS, D3_SERVER_MANAGED_STATUS_FIELDS } from '../lib/dedup-constants.mjs';
 import { _resetCaptureEventsForTest } from '../lib/capture-events.mjs';
 import { toMem0AddResults } from '../lib/mem0-compat.mjs';
@@ -566,4 +569,120 @@ test('T2l: IDENTITY_CARRY_FORWARD_FIELDS covers every metadata field isRecallabl
   assert.ok(IDENTITY_CARRY_FORWARD_FIELDS.includes('reaction_count'));
   assert.ok(IDENTITY_CARRY_FORWARD_FIELDS.includes('reaction_types'));
   assert.ok(Object.isFrozen(IDENTITY_CARRY_FORWARD_FIELDS));
+});
+
+// ---------------------------------------------------------------------------
+// T2m — #275 adr_status → status derivation (spec §5 items 1-10). All through
+// the REAL umAdd path (identityAdd) against the actually-upserted payload —
+// a hardcoded map copy cannot satisfy these (§5 item 9's pinning rule).
+// ---------------------------------------------------------------------------
+function warnCapturingLogger(warns) {
+  return { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }), error: () => {}, debug: () => {} };
+}
+
+function priorPoint(payload) {
+  return { id: 'x', payload: { createdAt: '2026-01-01T00:00:00.000Z', ...payload } };
+}
+
+async function derivedPayload({ adrStatus, prior, warns } = {}) {
+  const qdrant = makeMockQdrant(prior ? { retrievePoints: [prior] } : {});
+  const metadata = adrStatus === undefined
+    ? (() => { const { adr_status: _dropped, ...rest } = ADR_META; return rest; })()
+    : { ...ADR_META, adr_status: adrStatus };
+  await identityAdd({ qdrant, metadata, ...(warns ? { extra: { _logger: warnCapturingLogger(warns) } } : {}) });
+  return qdrant.calls.upserts[0].body.points[0].payload;
+}
+
+test('T2m-1: Superseded on fresh registration (MISS) lands status superseded', async () => {
+  const payload = await derivedPayload({ adrStatus: 'Superseded' });
+  assert.equal(payload.status, 'superseded', 'an already-retired ADR registers suppressed');
+});
+
+test('T2m-2: Superseded re-sync over prior current lands superseded (the carry-clobber core)', async () => {
+  const payload = await derivedPayload({ adrStatus: 'Superseded', prior: priorPoint({ status: 'current' }) });
+  assert.equal(payload.status, 'superseded', 'the carried current must NOT clobber the derivation');
+});
+
+test('T2m-3: Accepted re-sync over prior BARE superseded un-suppresses (spec D3, pinned deliberately)', async () => {
+  const payload = await derivedPayload({ adrStatus: 'Accepted', prior: priorPoint({ status: 'superseded' }) });
+  assert.equal(payload.status, 'current', 'bare status = derivation-owned; frontmatter is authoritative');
+});
+
+test('T2m-4: Accepted re-sync over mechanism-demoted prior stays superseded (provenance gates the clear)', async () => {
+  const payload = await derivedPayload({
+    adrStatus: 'Accepted',
+    prior: priorPoint({ status: 'superseded', supersededBy: 'point-b', supersededAt: '2026-02-01T00:00:00.000Z' }),
+  });
+  assert.equal(payload.status, 'superseded', 'mechanism demotions are one-way under sync (T2e restated at the derivation boundary)');
+  assert.equal(payload.supersededBy, 'point-b');
+});
+
+test('T2m-5: invalidated_at alone blocks the clear; carried regardless (forward-looking pin)', async () => {
+  // No live mechanism writes invalidated_at to identity points today — this
+  // pins the D3 constraint for the mechanism that eventually does.
+  const payload = await derivedPayload({
+    adrStatus: 'Accepted',
+    prior: priorPoint({ status: 'superseded', invalidated_at: '2026-03-01T00:00:00.000Z' }),
+  });
+  assert.equal(payload.status, 'superseded', 'clear gate must not fire while invalidated_at is present');
+  assert.equal(payload.invalidated_at, '2026-03-01T00:00:00.000Z');
+});
+
+test('T2m-6: unrecognized value derives nothing in either direction; exactly one WARN with the offending value', async () => {
+  const warnsA = [];
+  const a = await derivedPayload({ adrStatus: 'Superseded by ADR-0008', prior: priorPoint({ status: 'current' }), warns: warnsA });
+  assert.equal(a.status, 'current', 'prose-style status must not suppress');
+  const warnRowsA = warnsA.filter((w) => w.obj?.event === 'adr.status_unrecognized');
+  assert.equal(warnRowsA.length, 1, 'exactly one adr.status_unrecognized warn per call');
+  assert.equal(warnRowsA[0].obj.adr_status, 'Superseded by ADR-0008');
+
+  const warnsB = [];
+  const b = await derivedPayload({ adrStatus: 'Superceded', prior: priorPoint({ status: 'superseded' }), warns: warnsB });
+  assert.equal(b.status, 'superseded', 'a typo must not resurrect a suppressed point');
+  assert.equal(warnsB.filter((w) => w.obj?.event === 'adr.status_unrecognized').length, 1);
+});
+
+test('T2m-6b: absent adr_status derives nothing and does not WARN (no-signal arm)', async () => {
+  const warns = [];
+  const payload = await derivedPayload({ prior: priorPoint({ status: 'superseded' }), warns });
+  assert.equal(payload.status, 'superseded', 'carry semantics unchanged when no signal');
+  assert.equal(warns.filter((w) => w.obj?.event === 'adr.status_unrecognized').length, 0);
+});
+
+test('T2m-7: matching is trim + case-insensitive', async () => {
+  for (const v of [' Superseded ', 'SUPERSEDED', 'superseded']) {
+    const payload = await derivedPayload({ adrStatus: v });
+    assert.equal(payload.status, 'superseded', `'${v}' must suppress`);
+  }
+});
+
+test('T2m-8: Deprecated / Rejected map to their lowercase read-side values', async () => {
+  assert.equal((await derivedPayload({ adrStatus: 'Deprecated' })).status, 'deprecated');
+  assert.equal((await derivedPayload({ adrStatus: 'Rejected' })).status, 'rejected');
+});
+
+test('T2m-9: every suppressing derivation is non-recallable — lockstep via the REAL write path', async () => {
+  // §5 item 9's pinning rule: a typo'd map value must fail HERE, so the
+  // assertion runs against the actually-upserted payload, never the D2 table.
+  for (const v of ['Superseded', 'Deprecated', 'Rejected']) {
+    const payload = await derivedPayload({ adrStatus: v });
+    assert.equal(
+      isRecallable({ metadata: payload }),
+      false,
+      `adr_status '${v}' must leave the point non-recallable (write-side map drifted from recallable.mjs?)`,
+    );
+  }
+  // And the clear side stays recallable.
+  const cleared = await derivedPayload({ adrStatus: 'Accepted' });
+  assert.equal(isRecallable({ metadata: cleared }), true);
+});
+
+test('T2m-10: prototype-chain keys are unrecognized — never a suppress, never a resurrect (D2 own-keys-only)', async () => {
+  for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    const warns = [];
+    const payload = await derivedPayload({ adrStatus: key, prior: priorPoint({ status: 'superseded' }), warns });
+    assert.equal(payload.status, 'superseded', `'${key}' must not clear a suppressed point`);
+    assert.equal(typeof payload.status, 'string', `'${key}' must not assign a non-string status`);
+    assert.equal(warns.filter((w) => w.obj?.event === 'adr.status_unrecognized').length, 1, `one WARN for '${key}'`);
+  }
 });

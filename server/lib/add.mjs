@@ -175,6 +175,45 @@ function isIdentityAddressed({ metadata, _systemMigration }) {
 }
 
 /**
+ * #275 D2 — adr_status → lifecycle intent for the identity path.
+ *
+ * The suppressing values are the LITERAL strings isRecallable
+ * (lib/recallable.mjs) matches; the lockstep is pinned by T2m-9 through the
+ * real write path, not by a shared constant (refactoring recallable.mjs
+ * would blind T2l's source-extraction tripwire). null = CLEAR intent
+ * (Proposed/Accepted); an ABSENT key = unrecognized. Null-prototype table +
+ * own-key check because the lookup key is attacker-influenceable frontmatter:
+ * a plain-object lookup leaks Object.prototype, so `status: __proto__` would
+ * take the suppress branch and assign a non-string to payload.status —
+ * resurrecting a suppressed point (same anti-smuggling class as
+ * assertNoReservedFields).
+ */
+const ADR_STATUS_DERIVATION = Object.freeze(Object.assign(Object.create(null), {
+  superseded: 'superseded',
+  deprecated: 'deprecated',
+  rejected: 'rejected',
+  proposed: null,
+  accepted: null,
+}));
+
+/**
+ * Returns { intent: 'suppress', status } | { intent: 'clear' } |
+ * { intent: 'none', unrecognized? } — always an object, never a bare
+ * string/null. `unrecognized` is present only for a non-empty string value
+ * that matched no table key (the WARN arm); non-string/absent adr_status is
+ * silent by design (spec #275 D2 — mirrors adr.identity_skipped's scope).
+ */
+function deriveAdrLifecycleIntent(adrStatus) {
+  if (typeof adrStatus !== 'string' || adrStatus === '') return { intent: 'none' };
+  const normalized = adrStatus.trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(ADR_STATUS_DERIVATION, normalized)) {
+    return { intent: 'none', unrecognized: adrStatus };
+  }
+  const mapped = ADR_STATUS_DERIVATION[normalized];
+  return mapped === null ? { intent: 'clear' } : { intent: 'suppress', status: mapped };
+}
+
+/**
  * #279 identity-addressed ADR write (spec D1–D7,
  * docs/plans/2026-08-23-adr-identity-upsert-spec.md). Module-level rather
  * than inline in umAdd (review round): the generic machinery — retrieve →
@@ -190,6 +229,14 @@ function isIdentityAddressed({ metadata, _systemMigration }) {
  * idempotently FULL-REPLACED on every sync with the
  * IDENTITY_CARRY_FORWARD_FIELDS carry (see that constant's docblock for
  * the preservation rationale).
+ *
+ * #275: after the carry, the server-managed `status` is DERIVED from the
+ * posted adr_status (deriveAdrLifecycleIntent + the precedence block below)
+ * so a retired ADR actually leaves recall, dedup targeting, and D3
+ * candidacy. For derivation-owned state, status is a pure function of
+ * frontmatter — un-suppression = flip frontmatter + re-sync; mechanism
+ * demotions (provenance-bearing) stay one-way. Spec:
+ * docs/plans/2026-08-31-adr-status-derivation-spec.md D1-D5.
  */
 async function performIdentityUpsert({
   memory, text, userId, metadata, stagedMetadata, surface, stampValidFrom,
@@ -259,9 +306,45 @@ async function performIdentityUpsert({
     ...(surfacesUnion ? { surfaces: surfacesUnion } : {}),
     ...(projectsUnion ? { projects: projectsUnion } : {}),
   };
+  // #275 D3 — derive the server-managed `status` from the operator-authored
+  // adr_status, AFTER the carry (a carried prior 'current' would clobber a
+  // buildPayload-time derivation — the exact posted-value-never-lands class
+  // #279 fixed). Precedence: SUPPRESS always wins; CLEAR wins only over
+  // derivation-owned suppression — a BARE carried status with no demotion
+  // provenance (supersededBy/supersededAt/invalidated_at all absent). A bare
+  // suppressing status on an identity point can only be this derivation's own
+  // prior output (D3 auto-supersession is partition-gated and identity points
+  // are unpartitioned; memory_supersede's forward action needs a vault doc),
+  // so re-deriving it from current frontmatter is a full-replace of a derived
+  // value, not a resurrection. Mechanism demotions stay one-way under sync.
+  // The derivation writes status ONLY — never supersededAt/supersededBy:
+  // bare-ness IS its provenance marker (spec #275 D4).
+  const derived = deriveAdrLifecycleIntent(metadata?.adr_status);
+  const provenanceClear = payload.supersededBy == null
+    && payload.supersededAt == null
+    && payload.invalidated_at == null;
+  const clearBlocked = derived.intent === 'clear' && !provenanceClear;
+  if (derived.intent === 'suppress') {
+    payload.status = derived.status;
+  } else if (derived.intent === 'clear' && provenanceClear) {
+    payload.status = 'current';
+  } else if (derived.unrecognized !== undefined) {
+    // Operator-authored metadata value, not corpus text — loggable. Exactly
+    // one WARN per call (T2g's warn-count discipline).
+    logger.warn(
+      { event: 'adr.status_unrecognized', adr_id: metadata.adr_id, adr_status: derived.unrecognized },
+      'unrecognized adr_status — no lifecycle derivation applied (recognized bare tokens: Proposed/Accepted/Superseded/Deprecated/Rejected)',
+    );
+  }
   logger.info(
     // Identifiers only — never text/data (logs are an egress surface).
-    { event: 'adr.identity_write', id, adr_id: metadata.adr_id, hadPrior: prior !== null },
+    // adrStatusIntent/clearBlocked/status make the clear-blocked outcome
+    // distinguishable from a suppress at the log (spec #275: "flipped back to
+    // Accepted, re-synced, still hidden" must be a one-line diagnosis).
+    {
+      event: 'adr.identity_write', id, adr_id: metadata.adr_id, hadPrior: prior !== null,
+      adrStatusIntent: derived.intent, clearBlocked, status: payload.status ?? null,
+    },
     'identity-addressed ADR write (verbatim, dedup-bypassed, full-replace upsert)',
   );
   await client.upsert(collection, { points: [{ id, vector, payload }] });
