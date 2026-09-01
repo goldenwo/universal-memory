@@ -1032,6 +1032,82 @@ EOF
     fail "INT26 stub start" "could not start"
   fi
 
+  # ─── INT27: zero-indent block list, blank line, null/~ items (#271 review) ─
+  echo ""
+  echo "--- INT27: cmd_sync zero-indent block list ---"
+  if start_stub 200; then
+    crepo="$tmp/int27-repo"
+    setup_consumer_repo "$crepo"
+    mkdir -p "$crepo/docs/decisions"
+    # Flush-left items are valid YAML and accepted by cli/lib/adr-graph.mjs's
+    # parser — the two readers must agree. Blank lines inside the list are
+    # legal; null/~ items are filtered like the scalar arms.
+    cat > "$crepo/docs/decisions/0005-relations-flushleft.md" <<'EOF'
+---
+schema_version: 1
+id: 0005-relations-flushleft
+title: "Relations flush-left block list"
+status: Accepted
+supersedes:
+- 0001-first-decision
+
+- null
+- ~
+- 0002-second-decision
+decided_at: 2026-08-18T00:00:00Z
+---
+
+Body
+EOF
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 5 2>&1)
+    rc=$?
+    assert_rc "INT27 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    assert_contains "INT27 flush-left items survive blank line, null/~ dropped" "$body" \
+      '"supersedes":["0001-first-decision","0002-second-decision"]'
+    assert_contains "INT27 decided_at still parsed" "$body" '"decided_at":"2026-08-18T00:00:00Z"'
+    stop_stub
+  else
+    fail "INT27 stub start" "could not start"
+  fi
+
+  # ─── INT28: CRLF frontmatter parses (#271 review; adr-graph.mjs:70 class) ─
+  echo ""
+  echo "--- INT28: cmd_sync CRLF frontmatter ---"
+  if start_stub 200; then
+    crepo="$tmp/int28-repo"
+    setup_consumer_repo "$crepo"
+    mkdir -p "$crepo/docs/decisions"
+    # CRLF line endings made the whole parse silently no-op ("---\r" never
+    # equals "---" — ADR-0004 hit that live, per cli/lib/adr-graph.mjs:70).
+    printf '%s\r\n' \
+      '---' \
+      'schema_version: 1' \
+      'id: 0006-relations-crlf' \
+      'title: "Relations CRLF"' \
+      'status: Accepted' \
+      'supersedes: ["0001-first-decision"]' \
+      'superseded_by: 0007-newer' \
+      'decided_at: 2026-08-18T00:00:00Z' \
+      '---' \
+      '' \
+      'Body' > "$crepo/docs/decisions/0006-relations-crlf.md"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 6 2>&1)
+    rc=$?
+    assert_rc "INT28 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    assert_contains "INT28 CRLF supersedes parsed" "$body" \
+      '"supersedes":["0001-first-decision"]'
+    assert_contains "INT28 CRLF superseded_by parsed" "$body" \
+      '"superseded_by":"0007-newer"'
+    assert_contains "INT28 CRLF status parsed" "$body" '"adr_status":"Accepted"'
+    stop_stub
+  else
+    fail "INT28 stub start" "could not start"
+  fi
+
   # ─── INT14: skill.md frontmatter sanity ───────────────────────────────────
   echo ""
   echo "--- INT14: skill.md frontmatter sanity ---"

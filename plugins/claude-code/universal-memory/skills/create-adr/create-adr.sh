@@ -160,9 +160,11 @@ _fm_list_items() {
   # into newline-separated items, each dequoted via _fm_value. Prints
   # nothing for an empty list or a non-list tail (block lists are handled
   # by cmd_sync's continuation-line state, not here). Split-on-comma is
-  # exact for every value this file can hold: list items are ADR ids
-  # (NNNN-slug, see _slug's charset), which cannot contain commas or
-  # brackets.
+  # exact for the NNNN-slug id convention (_slug's charset has no commas
+  # or brackets); the convention is not enforced on read, so a
+  # hand-authored quoted item containing a comma mis-splits. Accepted:
+  # relations are labels, not keys, and a full quote-aware YAML parser in
+  # bash is not worth that edge.
   local s item out=""
   local -a items=()
   s=$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
@@ -615,6 +617,11 @@ cmd_sync() {
   local fm_id="" fm_title="" fm_status="" fm_decided_at="" fm_schema_version=""
   local fm_supersedes="" fm_superseded_by="" in_supersedes_block=0 sup_tail="" sup_item=""
   while IFS= read -r line; do
+    # CRLF tolerance: cli/lib/adr-graph.mjs:70 documents this exact parser
+    # failing on CRLF files (`"---\r"` never equals `"---"` — ADR-0004 hit
+    # that live, silently no-opping the whole frontmatter parse). Stripping
+    # the CR costs one line and heals every field below.
+    line="${line%$'\r'}"
     if [ "$fm_done" -eq 1 ]; then break; fi
     if [ "$line" = "---" ]; then
       if [ "$in_fm" -eq 0 ]; then
@@ -625,14 +632,22 @@ cmd_sync() {
     fi
     [ "$in_fm" -eq 1 ] || continue
     if [ "$in_supersedes_block" -eq 1 ]; then
-      # Inside a `supersedes:` YAML block list — collect `- item` lines;
-      # the first non-item line closes the list and falls through to the
-      # key matching below.
-      if [[ "$line" =~ ^[[:space:]]+-[[:space:]]*(.*)$ ]]; then
+      # Inside a `supersedes:` YAML block list — collect `- item` lines at
+      # ANY indentation including zero (valid YAML, and the sibling parser
+      # cli/lib/adr-graph.mjs:93 accepts flush-left items for this same
+      # convention — the two readers must not disagree). Blank lines inside
+      # the list are legal YAML and skipped; the `---` close delimiter is
+      # consumed above and never reaches this branch. The first other
+      # non-item line closes the list and falls through to the key
+      # matching below. `null`/`~` items mirror the scalar arms' filter.
+      if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*(.*)$ ]]; then
         sup_item=$(_fm_value "${BASH_REMATCH[1]}")
-        if [ -n "$sup_item" ] && [ "$sup_item" != "null" ]; then
+        if [ -n "$sup_item" ] && [ "$sup_item" != "null" ] && [ "$sup_item" != "~" ]; then
           fm_supersedes="${fm_supersedes}${fm_supersedes:+$'\n'}${sup_item}"
         fi
+        continue
+      fi
+      if [[ "$line" =~ ^[[:space:]]*$ ]]; then
         continue
       fi
       in_supersedes_block=0
