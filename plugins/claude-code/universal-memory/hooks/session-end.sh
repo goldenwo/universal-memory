@@ -100,7 +100,11 @@ ENDPOINT=$(um_api_endpoint 2>/dev/null)
   # gets), never a silent, unlogged death.
   CKPT_BODY_FILE=$(mktemp 2>/dev/null) || CKPT_BODY_FILE=/dev/null
   if um_api_post '/api/checkpoint' "$BODY" 120 > "$CKPT_BODY_FILE" 2>/dev/null </dev/null; then
-    um_log "posted http=$UM_API_HTTP_CODE"
+    # #294 D7: the resolved slug rides the success line, APPENDED as the
+    # LAST field (never inserted — continuity.sh's order-sensitive greps
+    # match the existing prefix as a substring). $PROJECT is sanitized
+    # above before BODY is built.
+    um_log "posted http=$UM_API_HTTP_CODE project=$PROJECT"
   else
     case "$UM_API_HTTP_CODE" in
       403)

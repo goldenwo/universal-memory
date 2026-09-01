@@ -402,7 +402,9 @@ while IFS=$'\t' read -r kind f1 f2 f3; do
 done <<< "$MANIFEST"
 
 if [ "$SENT" -gt 0 ]; then
-  um_log "posted http=${LAST_CODE:-000} n=$SENT"
+  # #294 D7: resolved slug appended as the LAST field (see session-end.sh's
+  # twin comment; naming rule: project_guard.py guard()).
+  um_log "posted http=${LAST_CODE:-000} n=$SENT project=$PROJECT"
 elif [ "$FAILED" = 0 ]; then
   # SENT=0 && FAILED=0 ⟺ zero MSG records ⟺ empty delta ⟺ EMPTY record
   # present (pass 2 emits it unconditionally) — the :-stalled default is a

@@ -737,10 +737,14 @@ assert_contains "G2: skip=non-project-cwd logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=non-project-cwd"
 
 # ===========================================================================
-# G3 (#186): subdir of a project ⇒ marker walk-up qualifies it; POSTs with
-# the subdir basename (slug behavior unchanged).
+# G3 (#186; pin REWRITTEN by #294 D1/D6): subdir of a project ⇒ marker
+# walk-up qualifies it and the slug is the ROOT basename. The pre-#294 pin
+# asserted the subdir basename ("dir") — the behavior that minted misrouted
+# junk layers; this rewrite is the deliberate pin-revisit spec D6 requires.
+# Also pins D7 on this suite's success line: `project=` appended LAST after
+# the existing `n=` field.
 # ===========================================================================
-echo "=== G3 (#186): project subdir posts ==="
+echo "=== G3 (#294): project subdir posts the ROOT basename ==="
 H=$(fresh_home g3)
 CWD_SUB="$CWD_N/nested/dir"; mkdir -p "$CWD_SUB"
 TP="$TMPDIR_ROOT/g3.jsonl"; write_transcript "$TP" 2
@@ -750,7 +754,46 @@ reset_calls
 run_stop "$H" "$STDIN"
 assert_eq "G3: exit 0" "$RUN_EXIT" "0"
 assert_eq "G3: two POSTs (one per message)" "$(call_count)" "2"
-assert_eq "G3: slug is the cwd basename" "$(body_field 1 project)" "dir"
+assert_eq "G3: slug is the marker-root basename (not the subdir)" \
+  "$(body_field 1 project)" "example-project"
+assert_contains "G3: success line carries the slug appended last (D7)" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=2 project=example-project"
+
+# ===========================================================================
+# G10-mirror (#294 D1): interior non-git marker vs the .git root — .git
+# dominates on the write path too (mirrors session-end.test.sh G10).
+# ===========================================================================
+echo "=== G10 (#294): .git root beats an interior package.json ==="
+H=$(fresh_home g10)
+CWD_INTERIOR="$CWD_N/server"; mkdir -p "$CWD_INTERIOR"
+touch "$CWD_INTERIOR/package.json"
+TP="$TMPDIR_ROOT/g10.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_INTERIOR")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "G10: exit 0" "$RUN_EXIT" "0"
+assert_eq "G10: .git root's name wins over the interior marker" \
+  "$(body_field 1 project)" "example-project"
+
+# ===========================================================================
+# G11-mirror (#294 D1 rule 2 + D4 delta 2): marker-only project under the
+# synthetic $HOME ⇒ boundary exit returns the remembered marker dir
+# (mirrors session-end.test.sh G11 — hermetic + the branch with no other
+# CI coverage on the write path).
+# ===========================================================================
+echo "=== G11 (#294): marker-only project under \$HOME names the marker dir ==="
+H=$(fresh_home g11)
+CWD_MARKER_SUB="$H/dev/marker-proj/sub"; mkdir -p "$CWD_MARKER_SUB"
+touch "$H/dev/marker-proj/package.json"
+TP="$TMPDIR_ROOT/g11.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_MARKER_SUB")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "G11: exit 0" "$RUN_EXIT" "0"
+assert_eq "G11: slug is the nearest marker dir, not SKIP and not the subdir" \
+  "$(body_field 1 project)" "marker-proj"
 
 # ===========================================================================
 # #267 S21: the empty-delta split — four fixture shapes (spec D10)

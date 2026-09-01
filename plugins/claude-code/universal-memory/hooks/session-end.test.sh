@@ -520,10 +520,13 @@ assert_contains "G2: skip=non-project-cwd logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=non-project-cwd"
 
 # ===========================================================================
-# G3 (#186): subdir of a project (marker at the root) ⇒ walk-up finds it,
-# POSTs with the SUBDIR basename (slug behavior unchanged from pre-guard).
+# G3 (#186; pin REWRITTEN by #294 D1/D6): subdir of a project (marker at the
+# root) ⇒ walk-up finds it and the slug is the ROOT basename. The pre-#294
+# pin asserted the subdir basename ("deep") — that behavior minted misrouted
+# junk layers and split a repo's captures (the #294 evidence); this rewrite
+# is the deliberate pin-revisit the spec's D6 requires, not a silent edit.
 # ===========================================================================
-echo "=== G3 (#186): project subdir posts via marker walk-up ==="
+echo "=== G3 (#294): project subdir posts the ROOT basename ==="
 H=$(fresh_home g3)
 CWD_SUB="$CWD_N/src/deep"; mkdir -p "$CWD_SUB"
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SUB")")
@@ -535,8 +538,8 @@ if wait_for_log "$H" "posted http=200"; then
 else
   fail "G3: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
-assert_eq "G3: slug is the cwd basename (not the project root)" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"deep"}'
+assert_eq "G3: slug is the marker-root basename (not the subdir)" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
 
 # ===========================================================================
 # G4 (#186): MSYS-form home cwd (/c/Users/<u>) must normalize and route to
@@ -634,6 +637,145 @@ else
 fi
 assert_eq "G6b: slug from fallback pwd" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+
+# ===========================================================================
+# G10 (#294 D1): interior non-git marker vs a .git root — .git dominates.
+# The live evidence case: this repo's server/ (package.json) minted a
+# "server" layer; under D1 the .git root's name wins over the nearer marker.
+# ===========================================================================
+echo "=== G10 (#294): .git root beats an interior package.json ==="
+H=$(fresh_home g10)
+CWD_INTERIOR="$CWD_N/server"; mkdir -p "$CWD_INTERIOR"
+touch "$CWD_INTERIOR/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_INTERIOR")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G10: child posted"
+else
+  fail "G10: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G10: .git root's name wins over the interior marker" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+
+# ===========================================================================
+# G11 (#294 D1 rule 2 + D4 delta 2): marker-only project (no .git anywhere
+# below the boundary) ⇒ the nearest marker dir names it. Fixture sits UNDER
+# the synthetic $HOME deliberately: that caps the walk at the home boundary
+# (hermetic against the runner's real /tmp ancestry) AND exercises the
+# boundary exit's NEW remembered-marker return — the branch the spec's D4
+# correction exists for (a literal pre-#294 freeze would SKIP here).
+# ===========================================================================
+echo "=== G11 (#294): marker-only project under \$HOME names the marker dir ==="
+H=$(fresh_home g11)
+CWD_MARKER_SUB="$H/dev/marker-proj/sub"; mkdir -p "$CWD_MARKER_SUB"
+touch "$H/dev/marker-proj/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_MARKER_SUB")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G11: child posted (boundary exit returns the remembered marker)"
+else
+  fail "G11: child posted (boundary exit returns the remembered marker)" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G11: slug is the nearest marker dir, not SKIP and not the subdir" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"marker-proj"}'
+
+# ===========================================================================
+# G12 (#294 D1): nested repos — the NEAREST .git wins (git's own
+# --show-toplevel semantics; a vendored inner repo is its own project).
+# ===========================================================================
+echo "=== G12 (#294): nested repo resolves to the inner repo ==="
+H=$(fresh_home g12)
+CWD_INNER="$CWD_N/vendor/inner-repo"; mkdir -p "$CWD_INNER/.git" "$CWD_INNER/lib"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_INNER/lib")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G12: child posted"
+else
+  fail "G12: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G12: nearest .git names the project" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner-repo"}'
+
+# ===========================================================================
+# G13 (#294 D5 no-op pin): cwd AT the repo root ⇒ slug unchanged from the
+# pre-#294 behavior (the dominant production case is a no-op by design).
+# Also pins D7: the success log line carries the resolved slug, appended
+# as the LAST field.
+# ===========================================================================
+echo "=== G13 (#294): repo-root cwd is a no-op + D7 slug in the log line ==="
+H=$(fresh_home g13)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200 project=example-project"; then
+  pass "G13: success line carries the resolved slug appended last (D7)"
+else
+  fail "G13: success line carries the resolved slug appended last (D7)" \
+    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G13: repo-root slug unchanged" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+
+# ===========================================================================
+# G14 (#294 D1): .git as a FILE (worktree/submodule form) qualifies —
+# os.path.exists semantics, the guard stats and never parses.
+# ===========================================================================
+echo "=== G14 (#294): .git FILE (worktree form) qualifies and names ==="
+H=$(fresh_home g14)
+CWD_WT="$TMPDIR_ROOT/wt-checkout"; mkdir -p "$CWD_WT/nested"
+printf 'gitdir: /somewhere/else\n' > "$CWD_WT/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_WT/nested")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G14: child posted"
+else
+  fail "G14: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G14: .git-file dir names the project" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-checkout"}'
+
+# ===========================================================================
+# G15 (#294 D1 ruling + fixed-point exit): markers on SEPARATE levels so the
+# case DISCRIMINATES — outer15 has .git, inner15 has the custom marker, and
+# the active set (override) contains ONLY the custom marker. A correct
+# implementation ignores the excluded .git and names inner15 via the
+# fixed-point exit; an implementation that hardcodes .git dominance
+# regardless of the active set names outer15 and goes red. Fixture sits
+# OUTSIDE the synthetic $HOME (suite default) so the walk runs to the
+# filesystem fixed point; hermeticity comes from the override — nothing in
+# real CI ancestry can carry .um-g15-marker, and every real .git is inert
+# when excluded from the active set.
+# ===========================================================================
+echo "=== G15 (#294): excluded .git exerts no dominance (fixed-point exit) ==="
+H=$(fresh_home g15)
+CWD_G15="$TMPDIR_ROOT/outer15/inner15/sub"; mkdir -p "$CWD_G15" "$TMPDIR_ROOT/outer15/.git"
+touch "$TMPDIR_ROOT/outer15/inner15/.um-g15-marker"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_G15")")
+
+reset_calls
+RUN_EXIT=0
+RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" \
+  UM_TOKEN_FILE="$H/.um/auth-token" \
+  UM_PROJECT_MARKERS=".um-g15-marker" \
+  bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
+if wait_for_log "$H" "posted http=200"; then
+  pass "G15: child posted"
+else
+  fail "G15: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G15: nearest ACTIVE marker names it; excluded .git has no dominance" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner15"}'
 
 # ===========================================================================
 # Summary
