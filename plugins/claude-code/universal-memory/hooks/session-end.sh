@@ -30,8 +30,10 @@
 #     response BODY, not just $UM_API_HTTP_CODE — see the mktemp
 #     body-capture pattern below (um_api_post outside command substitution;
 #     UM_API_HTTP_CODE does not survive a subshell — bin/um-alert.sh:134-136).
-#   - Project = cwd basename, sanitized to [A-Za-z0-9._-] client-side
-#     (mirrors the server's PROJECT_SLUG_RE; unsanitized slugs 400).
+#   - Project = the guard's ROOT-derived slug (#294 D1; naming rule:
+#     project_guard.py guard() — the canonical statement), sanitized to
+#     [A-Za-z0-9._-] client-side (mirrors the server's PROJECT_SLUG_RE;
+#     unsanitized slugs 400).
 #   - Fail-open: the parent always exits 0 — CC session integrity beats
 #     capture.
 

@@ -67,10 +67,12 @@ PY=$(um_find_python) || { um_log "skip=no-python signal=$(um_signal_anomaly no-p
 # ---------------------------------------------------------------------------
 # Pass 1: extract metadata fields. One field per line (session_id is
 # regex-validated IN python so a newline-smuggling value can't shift fields).
-# #186: the project slug now runs through the non-project guard
+# #186/#294: the project slug runs through the non-project guard
 # (lib/project_guard.py — home-check + marker walk-up on the FULL cwd, with
-# the $CLAUDE_CWD/pwd fallback guarded too). A skip prints the SKIP sentinel
-# as the ONLY output line, preserving the `case "$META" in SKIP:*)` contract.
+# the $CLAUDE_CWD/pwd fallback guarded too; #294: the slug names the project
+# ROOT the walk finds — naming rule: guard()'s docstring, the canonical
+# statement). A skip prints the SKIP sentinel as the ONLY output line,
+# preserving the `case "$META" in SKIP:*)` contract.
 # ---------------------------------------------------------------------------
 UM_GUARD_LIB="$SCRIPT_DIR/lib"
 if command -v cygpath >/dev/null 2>&1; then UM_GUARD_LIB=$(cygpath -w "$UM_GUARD_LIB"); fi
@@ -114,11 +116,12 @@ TRANSCRIPT_PATH=$(printf '%s\n' "$META" | sed -n '3p')
 PROJECT=$(printf '%s\n' "$META" | sed -n '4p')
 # Sanitize the derived project slug AT ASSIGNMENT (#267 hoist — this used to
 # sit below the no-transcript guard, but that site now interpolates $PROJECT
-# into the self-report JSON, and the guard's slug is a raw basename(cwd)
-# that may legally carry quotes/spaces/backticks). The server hard-fails
-# non-[A-Za-z0-9._-] projects (400), which would otherwise loop as permanent
-# per-fire errors (T3 review IMPORTANT-2 / spec §5 amendment). Empty stays
-# empty, so the guard-failed check below is unaffected.
+# into the self-report JSON, and the guard's slug is a directory basename
+# (#294: an ANCESTOR dir's, the project root) that may legally carry
+# quotes/spaces/backticks). The server hard-fails non-[A-Za-z0-9._-]
+# projects (400), which would otherwise loop as permanent per-fire errors
+# (T3 review IMPORTANT-2 / spec §5 amendment). Empty stays empty, so the
+# guard-failed check below is unaffected.
 PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
 # Loop guard: a fire caused by a previous stop-hook continuation must exit

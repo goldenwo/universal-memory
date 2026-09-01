@@ -51,8 +51,9 @@ write nothing.
 | **`/um-checkpoint`** | On demand | Forces a checkpoint now |
 | **`/um-setup`** | First run | Setup flow above |
 
-Every fire logs to `~/.um/hook.log` (`posted http=<code>` / `skip=<reason>` /
-`error=<reason>`) — capture problems are never silent.
+Every fire logs to `~/.um/hook.log` (`posted http=<code> … project=<slug>` /
+`skip=<reason>` / `error=<reason>`) — capture problems are never silent, and
+since #294 the resolved project slug rides every success line.
 
 Checkpoint synthesis is chunked server-side (bounded input per call, regardless of backlog size), so
 a single `SessionEnd` fire (or `/um-checkpoint`) may leave `backlog_remaining: true` on a project
