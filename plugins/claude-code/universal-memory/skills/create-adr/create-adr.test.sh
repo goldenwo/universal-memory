@@ -313,6 +313,19 @@ done
 assert_eq "_fm_value unquoted plain"  "Proposed"  "$(_fm_value " Proposed ")"
 assert_eq "_fm_value trims whitespace"  "x"         "$(_fm_value "    x   ")"
 
+# ─── Unit tests: _fm_list_items (#271 flow-list parsing) ────────────────────
+echo ""
+echo "=== unit: _fm_list_items ==="
+
+assert_eq "_fm_list_items empty list"       ""            "$(_fm_list_items ' []')"
+assert_eq "_fm_list_items single quoted"    "0004-kuzu"   "$(_fm_list_items ' ["0004-kuzu"]')"
+assert_eq "_fm_list_items single bare"      "0004-kuzu"   "$(_fm_list_items ' [0004-kuzu]')"
+assert_eq "_fm_list_items two items"        $'0004-a\n0005-b' \
+  "$(_fm_list_items ' ["0004-a", "0005-b"]')"
+assert_eq "_fm_list_items inner whitespace" "0004-a"      "$(_fm_list_items ' [  0004-a  ]')"
+assert_eq "_fm_list_items non-list tail"    ""            "$(_fm_list_items ' null')"
+assert_eq "_fm_list_items bare-key tail"    ""            "$(_fm_list_items '   ')"
+
 # ─── Unit tests: _json_escape ───────────────────────────────────────────────
 echo ""
 echo "=== unit: _json_escape ==="
@@ -912,6 +925,111 @@ print(fm['title'])
     stop_stub
   else
     fail "INT23 stub start" "could not start"
+  fi
+
+  # ─── INT24: cmd_sync posts supersedes/superseded_by (#271) ───────────────
+  echo ""
+  echo "--- INT24: cmd_sync relations in payload ---"
+  if start_stub 200; then
+    crepo="$tmp/int24-repo"
+    setup_consumer_repo "$crepo"
+    mkdir -p "$crepo/docs/decisions"
+    # Quoted 'EOF': the \" item survives to the file literally — YAML-unescaped
+    # by _fm_value, then re-escaped by _json_escape on the way into the payload.
+    cat > "$crepo/docs/decisions/0008-relations-flow.md" <<'EOF'
+---
+schema_version: 1
+id: 0008-relations-flow
+title: "Relations flow list"
+status: Accepted
+supersedes: ["0004-kuzu-for-graph-memory", "0005-x\"y"]
+superseded_by: 0009-newer-decision
+decided_at: 2026-08-18T00:00:00Z
+---
+
+Body
+EOF
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 8 2>&1)
+    rc=$?
+    assert_rc "INT24 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    assert_contains "INT24 payload supersedes array" "$body" \
+      '"supersedes":["0004-kuzu-for-graph-memory","0005-x\"y"]'
+    assert_contains "INT24 payload superseded_by" "$body" \
+      '"superseded_by":"0009-newer-decision"'
+    stop_stub
+  else
+    fail "INT24 stub start" "could not start"
+  fi
+
+  # ─── INT25: template defaults omit relation keys (#271) ──────────────────
+  echo ""
+  echo "--- INT25: cmd_sync omits empty relations ---"
+  if start_stub 200; then
+    crepo="$tmp/int25-repo"
+    setup_consumer_repo "$crepo"
+    # Real template path: supersedes: [] + superseded_by: null must land as
+    # ABSENT payload keys (null payload keys are forbidden server-side).
+    ( cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+        bash "$HELPER" create --title "No relations yet" >/dev/null 2>&1 )
+    : > "$STUB_BODYF"
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 1 2>&1)
+    rc=$?
+    assert_rc "INT25 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    case "$body" in
+      *'"supersedes"'*) fail "INT25 no supersedes key" "found in: $body" ;;
+      *) pass "INT25 no supersedes key" ;;
+    esac
+    case "$body" in
+      *'"superseded_by"'*) fail "INT25 no superseded_by key" "found in: $body" ;;
+      *) pass "INT25 no superseded_by key" ;;
+    esac
+    stop_stub
+  else
+    fail "INT25 stub start" "could not start"
+  fi
+
+  # ─── INT26: block-list supersedes + null superseded_by (#271) ────────────
+  echo ""
+  echo "--- INT26: cmd_sync block-list supersedes ---"
+  if start_stub 200; then
+    crepo="$tmp/int26-repo"
+    setup_consumer_repo "$crepo"
+    mkdir -p "$crepo/docs/decisions"
+    cat > "$crepo/docs/decisions/0003-relations-block.md" <<'EOF'
+---
+schema_version: 1
+id: 0003-relations-block
+title: "Relations block list"
+status: Accepted
+supersedes:
+  - 0001-first-decision
+  - "0002-second-decision"
+superseded_by: null
+decided_at: 2026-08-18T00:00:00Z
+---
+
+Body
+EOF
+    out=$(cd "$crepo" && UM_SERVER_URL="$STUB_URL" \
+            bash "$HELPER" sync 3 2>&1)
+    rc=$?
+    assert_rc "INT26 cmd_sync rc=0" "0" "$rc"
+    body=$(head -1 "$STUB_BODYF")
+    assert_contains "INT26 payload block-list items" "$body" \
+      '"supersedes":["0001-first-decision","0002-second-decision"]'
+    case "$body" in
+      *'"superseded_by"'*) fail "INT26 null superseded_by omitted" "found in: $body" ;;
+      *) pass "INT26 null superseded_by omitted" ;;
+    esac
+    # The key AFTER the block list must still parse (list-exit fall-through).
+    assert_contains "INT26 decided_at still parsed" "$body" '"decided_at":"2026-08-18T00:00:00Z"'
+    stop_stub
+  else
+    fail "INT26 stub start" "could not start"
   fi
 
   # ─── INT14: skill.md frontmatter sanity ───────────────────────────────────
