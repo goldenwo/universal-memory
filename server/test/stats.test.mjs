@@ -375,6 +375,11 @@ test('capture: a surface named __proto__ is reported as data, not swallowed by t
     errors_today: 0,
     outcomes_7d: { ...EMPTY_OUTCOMES, stored: 2 },
     turns_7d: 0,
+    // #283: the two crash-dead fields ride every entry (spec §7) — this
+    // exact-shape assert EXTENDS with them (never relaxes; the strictness
+    // is the point of this test).
+    checkpoint_abstained_7d: 0,
+    last_turn_day: null,
   });
   // Neighbouring surface unpoisoned by the hostile key.
   assert.equal(served['claude-code'].events_today, 1);
@@ -594,4 +599,100 @@ test('anomalies writer-compat: a recordCaptureEvent-written anomaly row is reada
   const a = stats.anomalies['claude-code-plugin'];
   assert.equal(a.count_7d, 1);
   assert.equal(a.reasons_7d['empty-delta-stalled'], 1);
+});
+
+// ---------- #283: crash-dead fields — checkpoint_abstained_7d + last_turn_day ----------
+// Spec 2026-09-01-crash-dead-alarm D1/D3/D4 + §7: two additive per-surface
+// fields so the crash-dead signature (session-end stamping abstains while no
+// turn lands) is expressible from /api/stats. checkpoint_abstained_7d is
+// scoped by EVENT EQUALITY — the mem0-compat confound lives only in
+// outcomes_7d's landing-merged view; last_turn_day is all-history like
+// last_day_seen (the arming condition + the death date need pre-window data).
+
+test('#283 confound pin (D4): extraction-abstain and checkpoint-abstain on the same surface/day — '
+  + 'checkpoint_abstained_7d counts ONLY the checkpoint row; outcomes_7d.abstained still merges both', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'mem0-compat', event: 'capture.extraction', outcome: 'abstained', count: 5 },
+    { day: TODAY, surface: 'mem0-compat', event: 'capture.checkpoint', outcome: 'abstained', count: 2 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['mem0-compat'];
+  assert.equal(s.checkpoint_abstained_7d, 2, 'checkpoint-scoped: the 5 extraction abstains must not count');
+  assert.deepEqual(s.outcomes_7d, { ...EMPTY_OUTCOMES, abstained: 7 }, 'outcomes_7d semantics unchanged (merged)');
+});
+
+test('#283: non-abstained checkpoint outcomes do not count toward checkpoint_abstained_7d', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'stored', count: 3 },
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'error', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.capture['claude-code-plugin'].checkpoint_abstained_7d, 0);
+});
+
+test('#283 window edge: checkpoint-abstain row on the oldest in-window day counts; one day older does not', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: daysAgo(6), surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'abstained', count: 1 },
+    { day: daysAgo(7), surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'abstained', count: 10 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.capture['claude-code-plugin'].checkpoint_abstained_7d, 1, 'day 8 (daysAgo(7)) is outside the 7-day window');
+});
+
+test('#283 last_turn_day is ALL-HISTORY (D3 arming): a turn row 30 days old — far outside the window — '
+  + 'still reports its day, with turns_7d 0 (the armed-dead shape)', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: daysAgo(30), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 6 },
+    { day: TODAY, surface: 'claude-code-plugin', event: 'capture.checkpoint', outcome: 'abstained', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['claude-code-plugin'];
+  assert.equal(s.last_turn_day, daysAgo(30));
+  assert.equal(s.turns_7d, 0);
+  assert.equal(s.checkpoint_abstained_7d, 1);
+});
+
+test('#283 last_turn_day: newest turn day wins across several', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: daysAgo(20), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 1 },
+    { day: daysAgo(2), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 1 },
+    { day: daysAgo(9), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['claude-code-plugin'];
+  assert.equal(s.last_turn_day, daysAgo(2));
+  assert.equal(s.turns_7d, 1, 'only the in-window row counts toward turns_7d');
+});
+
+test('#283: a checkpoint-only surface (never a turn — the mem0-compat/verify-185 shape) reads '
+  + 'last_turn_day null — the UNARMED shape that must never alert', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'verify-185', event: 'capture.checkpoint', outcome: 'abstained', count: 3 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  const s = stats.capture['verify-185'];
+  assert.equal(s.last_turn_day, null);
+  assert.equal(s.checkpoint_abstained_7d, 3);
+});
+
+test('#283 field presence: both fields on EVERY surface entry (uniform builder), including the 0/null shapes', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'a-turny', event: 'capture.turn', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'b-quiet', event: 'capture.extraction', outcome: 'stored', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  for (const surface of ['a-turny', 'b-quiet']) {
+    assert.ok(Object.hasOwn(stats.capture[surface], 'checkpoint_abstained_7d'), `${surface} missing checkpoint_abstained_7d`);
+    assert.ok(Object.hasOwn(stats.capture[surface], 'last_turn_day'), `${surface} missing last_turn_day`);
+  }
+  assert.equal(stats.capture['a-turny'].last_turn_day, TODAY);
+  assert.equal(stats.capture['b-quiet'].last_turn_day, null);
+  assert.equal(stats.capture['b-quiet'].checkpoint_abstained_7d, 0);
 });

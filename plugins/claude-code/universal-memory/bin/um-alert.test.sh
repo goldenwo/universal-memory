@@ -882,6 +882,220 @@ else
   fail "T46-capture-stale-text-survives: $output"
 fi
 
+# ─── #283 CRASH-DEAD section fixtures ───────────────────────────────────────
+# New-format capture entries carry checkpoint_abstained_7d + last_turn_day
+# (spec §7). Every LEGACY fixture above lacks them and rides the ABSENT
+# branch — the pre-#283 matrix stays green untouched (the spec-§11 safety
+# fact, mirroring the #267 SIGNALS pattern).
+CD_ENTRY_HEALTHY='{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":2,"deduped":0,"superseded":0,"error":0},"turns_7d":41,"checkpoint_abstained_7d":2,"last_turn_day":"2026-07-17"}'
+CD_ENTRY_DEAD='{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":5,"deduped":0,"superseded":0,"error":0},"turns_7d":0,"checkpoint_abstained_7d":5,"last_turn_day":"2026-06-20"}'
+CD_ENTRY_UNARMED='{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":3,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":3,"deduped":0,"superseded":0,"error":0},"turns_7d":0,"checkpoint_abstained_7d":3,"last_turn_day":null}'
+CD_OK="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY}}"
+CD_UNARMED="{\"schema_version\":1,\"capture\":{\"verify-185\":$CD_ENTRY_UNARMED}}"
+CD_ALERT="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_DEAD}}"
+CD_ALERT_UNKNOWN="{\"schema_version\":1,\"capture\":{\"unknown\":$CD_ENTRY_DEAD}}"
+CD_MIXED="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY,\"old-shape\":{\"last_day_seen\":\"2026-07-17\",\"freshness_hours\":0,\"events_today\":1,\"errors_today\":0,\"outcomes_7d\":{\"stored\":1,\"abstained\":0,\"deduped\":0,\"superseded\":0,\"error\":0}}}}"
+CD_BAD_COUNT="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":{\"last_day_seen\":\"2026-07-17\",\"freshness_hours\":0,\"events_today\":1,\"errors_today\":0,\"outcomes_7d\":{\"stored\":1,\"abstained\":0,\"deduped\":0,\"superseded\":0,\"error\":0},\"turns_7d\":1,\"checkpoint_abstained_7d\":\"three\",\"last_turn_day\":\"2026-07-17\"}}}"
+CD_BAD_TURNS="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":{\"last_day_seen\":\"2026-07-17\",\"freshness_hours\":0,\"events_today\":1,\"errors_today\":0,\"outcomes_7d\":{\"stored\":1,\"abstained\":0,\"deduped\":0,\"superseded\":0,\"error\":0},\"turns_7d\":\"many\",\"checkpoint_abstained_7d\":0,\"last_turn_day\":\"2026-07-17\"}}}"
+CD_CAPTURE_ARRAY='{"schema_version":1,"capture":[]}'
+CD_CAPTURE_NONDICT_ENTRY='{"schema_version":1,"capture":{"a":5}}'
+CD_ALERT_PLUS_LAYERS="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_DEAD},\"layers\":{\"universal-memory\":{\"stale\":true,\"lag_hours\":40.2,\"pending_bytes\":9000}}}"
+CD_ALERT_PLUS_SIG="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_DEAD},\"signals\":{\"capture_anomaly\":{\"claude-code-plugin\":{\"last_day_seen\":\"2026-07-17\",\"count_7d\":1,\"reasons_7d\":{\"no-python\":1}}}}}"
+CD_MALFORMED_PLUS_LAYERS_STALE="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":{\"last_day_seen\":\"2026-07-17\",\"freshness_hours\":0,\"events_today\":1,\"errors_today\":0,\"outcomes_7d\":{\"stored\":1,\"abstained\":0,\"deduped\":0,\"superseded\":0,\"error\":0},\"turns_7d\":1,\"checkpoint_abstained_7d\":\"three\",\"last_turn_day\":\"2026-07-17\"}},\"layers\":{\"universal-memory\":{\"stale\":true,\"lag_hours\":40.2,\"pending_bytes\":9000}}}"
+
+# ─── T47: explicit ABSENT — old payload, breadcrumb, verdict untouched ──────
+echo ""
+echo "=== T47: no crash-dead fields (old server) ⇒ ABSENT breadcrumb, exit 0 unchanged ==="
+mock="$TMPDIR_ROOT/t47"; _make_mock_curl "$mock" 200 "$FRESH_CAPTURE_ONLY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T47-exit-0-unchanged"; else fail "T47-exit-0-unchanged (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "crash-dead class NOT checked"; then
+  pass "T47-breadcrumb"
+else
+  fail "T47-breadcrumb: $output"
+fi
+
+# ─── T48: OK arms — armed-healthy and unarmed-with-abstains (the D3 pin) ────
+echo ""
+echo "=== T48a: armed surface, turns_7d>0 ⇒ exit 0, no CRASH-DEAD line ==="
+mock="$TMPDIR_ROOT/t48a"; _make_mock_curl "$mock" 200 "$CD_OK"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T48a-exit-0"; else fail "T48a-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CRASH-DEAD"; then fail "T48a-no-line: $output"; else pass "T48a-no-line"; fi
+echo ""
+echo "=== T48b: UNARMED surface with abstains>0 (last_turn_day null — the mem0-compat/verify-185 shape) ⇒ NO alert ==="
+mock="$TMPDIR_ROOT/t48b"; _make_mock_curl "$mock" 200 "$CD_UNARMED"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T48b-exit-0"; else fail "T48b-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CRASH-DEAD"; then fail "T48b-no-line: $output"; else pass "T48b-no-line"; fi
+
+# ─── T49: ALERT — armed-dead on FRESH capture ⇒ exit 1, full message ────────
+echo ""
+echo "=== T49: armed + turns_7d 0 + abstains>0 on FRESH capture ⇒ exit 1, message names surface/count/last_turn_day ==="
+mock="$TMPDIR_ROOT/t49"; _make_mock_curl "$mock" 200 "$CD_ALERT"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T49-exit-1"; else fail "T49-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CRASH-DEAD" && echo "$output" | grep -q "claude-code-plugin" \
+  && echo "$output" | grep -q "5 abstained" && echo "$output" | grep -q "2026-06-20"; then
+  pass "T49-message-content"
+else
+  fail "T49-message-content: $output"
+fi
+if echo "$output" | grep -q "capture freshness itself OK"; then
+  pass "T49-freshness-context-line"
+else
+  fail "T49-freshness-context-line: $output"
+fi
+
+# ─── T50: D5 conditional-prescription + self-diagnosing-tail pins ───────────
+echo ""
+echo "=== T50a: alerting claude-code-plugin message CONTAINS the stop.sh prescription + the tail ==="
+mock="$TMPDIR_ROOT/t50a"; _make_mock_curl "$mock" 200 "$CD_ALERT"
+run_alert "$mock"
+if echo "$output" | grep -q "hooks.json still binds Stop"; then
+  pass "T50a-prescription-present"
+else
+  fail "T50a-prescription-present: $output"
+fi
+if echo "$output" | grep -q "clears itself"; then
+  pass "T50a-tail-present"
+else
+  fail "T50a-tail-present: $output"
+fi
+echo ""
+echo "=== T50b: alerting unknown-surface message does NOT contain the stop.sh prescription (neutral core) but keeps the tail ==="
+mock="$TMPDIR_ROOT/t50b"; _make_mock_curl "$mock" 200 "$CD_ALERT_UNKNOWN"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T50b-exit-1"; else fail "T50b-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "hooks.json"; then
+  fail "T50b-no-prescription: $output"
+else
+  pass "T50b-no-prescription"
+fi
+if echo "$output" | grep -q "clears itself"; then
+  pass "T50b-tail-present"
+else
+  fail "T50b-tail-present: $output"
+fi
+
+# ─── T51: ERROR arms — mixed presence, bad count, bad turns ─────────────────
+echo ""
+echo "=== T51a: mixed field presence across surfaces ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t51a"; _make_mock_curl "$mock" 200 "$CD_MIXED"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T51a-exit-2"; else fail "T51a-exit-2 (rc=$rc, out=$output)"; fi
+echo ""
+echo "=== T51b: non-number checkpoint_abstained_7d ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t51b"; _make_mock_curl "$mock" 200 "$CD_BAD_COUNT"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T51b-exit-2"; else fail "T51b-exit-2 (rc=$rc, out=$output)"; fi
+echo ""
+echo "=== T51c: bad turns_7d type alongside new fields ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t51c"; _make_mock_curl "$mock" 200 "$CD_BAD_TURNS"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T51c-exit-2"; else fail "T51c-exit-2 (rc=$rc, out=$output)"; fi
+echo ""
+echo "=== T51d: new-format entry MISSING the last_turn_day key ⇒ exit 2 (a dropped key must not read as unarmed) ==="
+CD_MISSING_LAST_TURN='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":1,"errors_today":0,"outcomes_7d":{"stored":0,"abstained":5,"deduped":0,"superseded":0,"error":0},"turns_7d":0,"checkpoint_abstained_7d":5}}}'
+mock="$TMPDIR_ROOT/t51d"; _make_mock_curl "$mock" 200 "$CD_MISSING_LAST_TURN"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T51d-exit-2"; else fail "T51d-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "missing last_turn_day"; then
+  pass "T51d-error-names-field"
+else
+  fail "T51d-error-names-field: $output"
+fi
+
+# ─── T52: presence-scan ordering pins (spec D6 rounds 4+7) ──────────────────
+echo ""
+echo "=== T52a: capture:[] ⇒ crash-dead CHECK-FAILED text, NOT the ABSENT breadcrumb (dict-guard before scan) ==="
+mock="$TMPDIR_ROOT/t52a"; _make_mock_curl "$mock" 200 "$CD_CAPTURE_ARRAY"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T52a-exit-2"; else fail "T52a-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "crash-dead class NOT checked"; then
+  fail "T52a-not-absent: $output"
+else
+  pass "T52a-not-absent"
+fi
+if echo "$output" | grep -q "crash-dead fields cannot be read"; then
+  pass "T52a-error-text"
+else
+  fail "T52a-error-text: $output"
+fi
+echo ""
+echo "=== T52b: capture:{\"a\":5} (non-dict entry, no new fields anywhere) ⇒ ABSENT breadcrumb, exit class unchanged ==="
+mock="$TMPDIR_ROOT/t52b"; _make_mock_curl "$mock" 200 "$CD_CAPTURE_NONDICT_ENTRY"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T52b-exit-2-from-freshness"; else fail "T52b-exit-2-from-freshness (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "crash-dead class NOT checked"; then
+  pass "T52b-absent-breadcrumb"
+else
+  fail "T52b-absent-breadcrumb: $output"
+fi
+
+# ─── T53: quiet arms (spec §11 round-6) ─────────────────────────────────────
+echo ""
+echo "=== T53a: capture:{} ⇒ crash-dead stays quiet-OK (no breadcrumb, no line); freshness never-captured STALE carries the exit ==="
+mock="$TMPDIR_ROOT/t53a"; _make_mock_curl "$mock" 200 "$EMPTY_CAPTURE"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T53a-exit-1-stale"; else fail "T53a-exit-1-stale (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -qi "crash-dead"; then fail "T53a-quiet: $output"; else pass "T53a-quiet"; fi
+echo ""
+echo "=== T53b: capture:null (degraded) ⇒ crash-dead DEGRADED-quiet, no double report ==="
+mock="$TMPDIR_ROOT/t53b"; _make_mock_curl "$mock" 200 "$DEGRADED"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T53b-exit-2"; else fail "T53b-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -qi "crash-dead"; then fail "T53b-quiet: $output"; else pass "T53b-quiet"; fi
+
+# ─── T54: print-all combinations ────────────────────────────────────────────
+echo ""
+echo "=== T54a: crash-dead ALERT + layers STALE ⇒ exit 1, BOTH lines ==="
+mock="$TMPDIR_ROOT/t54a"; _make_mock_curl "$mock" 200 "$CD_ALERT_PLUS_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T54a-exit-1"; else fail "T54a-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CRASH-DEAD" && echo "$output" | grep -q "LAYERS-STALE"; then
+  pass "T54a-both-lines"
+else
+  fail "T54a-both-lines: $output"
+fi
+echo ""
+echo "=== T54b: crash-dead ALERT + signals ALERT ⇒ exit 1, BOTH lines ==="
+mock="$TMPDIR_ROOT/t54b"; _make_mock_curl "$mock" 200 "$CD_ALERT_PLUS_SIG"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T54b-exit-1"; else fail "T54b-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CRASH-DEAD" && echo "$output" | grep -q "SIGNALS"; then
+  pass "T54b-both-lines"
+else
+  fail "T54b-both-lines: $output"
+fi
+echo ""
+echo "=== T54c: crash-dead MALFORMED + layers STALE ⇒ exit 2 AND the LAYERS-STALE line still prints ==="
+mock="$TMPDIR_ROOT/t54c"; _make_mock_curl "$mock" 200 "$CD_MALFORMED_PLUS_LAYERS_STALE"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T54c-exit-2"; else fail "T54c-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "LAYERS-STALE"; then
+  pass "T54c-layers-echoed"
+else
+  fail "T54c-layers-echoed: $output"
+fi
+
+# ─── T55: --surface does not suppress; --help carries the tail facts ────────
+echo ""
+echo "=== T55a: --surface names a fresh surface, crash-dead alert elsewhere in the map ⇒ still exit 1 ==="
+mock="$TMPDIR_ROOT/t55a"; _make_mock_curl "$mock" 200 "$CD_ALERT"
+run_alert "$mock" --surface claude-code-plugin
+if [ "$rc" -eq 1 ]; then pass "T55a-exit-1"; else fail "T55a-exit-1 (rc=$rc, out=$output)"; fi
+echo ""
+echo "=== T55b: --help content-asserts the crash-dead section + both tail facts ==="
+output=$(bash "$BIN" --help 2>&1) && rc=0 || rc=$?
+if [ "$rc" -eq 0 ]; then pass "T55b-exit-0"; else fail "T55b-exit-0 (rc=$rc)"; fi
+if echo "$output" | grep -qi "crash-dead" && echo "$output" | grep -q "clears itself" \
+  && echo "$output" | grep -qi "idle week"; then
+  pass "T55b-help-content"
+else
+  fail "T55b-help-content: $output"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

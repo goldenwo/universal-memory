@@ -106,7 +106,8 @@ export function freshnessHours(lastDaySeen, nowMs) {
  *   capture: null | Record<string, { last_day_seen: string, freshness_hours: number,
  *     events_today: number, errors_today: number,
  *     outcomes_7d: Record<'stored'|'abstained'|'deduped'|'superseded'|'error'|'failed', number>,
- *     turns_7d: number }>,
+ *     turns_7d: number,
+ *     checkpoint_abstained_7d: number, last_turn_day: string|null }>,
  *   growth_7d: null | Record<string, number>,
  *   recall: null | { searches_today: number, searches_7d: number },
  *   anomalies: null | Record<string, { last_day_seen: string, count_7d: number,
@@ -161,13 +162,39 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       GROUP BY surface, outcome
     `).all(...LANDING_EVENTS, windowStart, today);
 
-    // Additive turns_7d (spec §7): the honest volume label — the same
-    // capture.turn rows outcomes_7d now excludes, summed per surface over the
-    // window (no outcome breakdown; turn always emits 'stored').
-    const turnRows = db.prepare(`
+    // #283 crash-dead fields (spec D1/D3/D4) + turns_7d (spec §7), ONE
+    // atomic statement over the capture.turn rows. DELIBERATELY inside the
+    // SHARED try, unlike the anomalies section's fail-isolation below (spec
+    // D4a): per-field isolation has no coherent degraded shape — um-alert's
+    // mixed-presence rule reads any partial field set as a malformed
+    // payload (exit 2) — so a fault here degrades the counters sections
+    // wholesale via nullShaped(), which um-alert already reports loudly.
+    // Do NOT "fix" this into its own try.
+    //
+    // ATOMICITY IS LOAD-BEARING (spec D3, strengthened at code review):
+    // last_turn_day (all-time MAX) and turns_7d (windowed SUM) back the
+    // conjunctive crash-dead rule, and the writer shares this WAL DB — two
+    // separate SELECTs could interleave with a landing turn and mint the
+    // contradictory "turns_7d=0 + last_turn_day=today" shape at exactly
+    // the recovery moment. One statement = one snapshot; the race is
+    // structurally impossible, not ordered-around.
+    const turnAggRows = db.prepare(`
+      SELECT surface,
+             MAX(day) AS last_turn_day,
+             SUM(CASE WHEN day >= ? AND day <= ? THEN count ELSE 0 END) AS n
+      FROM counters
+      WHERE event = 'capture.turn'
+      GROUP BY surface
+    `).all(windowStart, today);
+
+    // #283: windowed checkpoint-scoped abstain count — event EQUALITY, never
+    // outcome-only (spec D4: extraction abstains on the same surface must not
+    // count; the mem0-compat confound lives only in outcomes_7d's merged view).
+    const checkpointAbstainedRows = db.prepare(`
       SELECT surface, SUM(count) AS n
       FROM counters
-      WHERE event = 'capture.turn' AND day >= ? AND day <= ?
+      WHERE event = 'capture.checkpoint' AND outcome = 'abstained'
+        AND day >= ? AND day <= ?
       GROUP BY surface
     `).all(windowStart, today);
 
@@ -215,6 +242,11 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
         errors_today: 0,
         outcomes_7d: emptyOutcomes(),
         turns_7d: 0,
+        // #283: both crash-dead fields on EVERY entry (spec §7 uniform
+        // builder) — 0/null are the unarmed/never-turned shapes um-alert's
+        // D3 arming condition keys on.
+        checkpoint_abstained_7d: 0,
+        last_turn_day: null,
       };
     }
     // events_today/errors_today (spec §7: UNCHANGED) — still every capture.%
@@ -234,9 +266,16 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       // Outcome '' (inapplicable, spec §6) has no outcomes_7d bucket by design.
       if (Object.hasOwn(s.outcomes_7d, outcome)) s.outcomes_7d[outcome] += n;
     }
-    for (const { surface, n } of turnRows) {
-      const s = capture[surface]; // always present: turn rows are a subset of last-seen surfaces
+    // turns_7d + last_turn_day land together — same row, same snapshot
+    // (the atomicity comment at the query).
+    for (const { surface, last_turn_day, n } of turnAggRows) {
+      const s = capture[surface]; // always present: turn rows are capture.% ⊆ last-seen surfaces
       s.turns_7d = n;
+      s.last_turn_day = last_turn_day;
+    }
+    for (const { surface, n } of checkpointAbstainedRows) {
+      const s = capture[surface]; // always present: checkpoint rows are capture.% ⊆ last-seen surfaces
+      s.checkpoint_abstained_7d = n;
     }
 
     // #187 reactions_7d: signal.reaction lives OUTSIDE the capture.* namespace

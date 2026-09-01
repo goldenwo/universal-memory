@@ -3354,6 +3354,15 @@ assert isinstance(points, int) and points >= 1, 'expected corpus.points numeric 
 			_s10_alert_rc=0
 			_s10_alert_out=$(UM_SERVER_URL="$ENDPOINT" UM_TOKEN_FILE="$_s10_tokfile" UM_LIB_DIR="$_s10_lib_dir" \
 				bash "$_s10_alert" --surface "$S10_SURFACE" --max-age-hours 26 2>&1) || _s10_alert_rc=$?
+			# #283 coupling note: um-alert's health sections (SIGNALS, LAYERS,
+			# CRASH-DEAD) are GLOBAL — --surface scopes only the freshness
+			# question — so this exit-0 assert is coupled to the WHOLE counters
+			# DB's state, not just $S10_SURFACE. Safe in CI (compose down
+			# --volumes ⇒ fresh DB; smoke's own rows are same-day ⇒ can never
+			# satisfy the crash-dead rule). On a long-lived dev stack, a
+			# failure here with a CRASH-DEAD/SIGNALS/LAYERS line in the output
+			# is that section CORRECTLY firing on pre-existing state — read
+			# the line before blaming the S10 round-trip.
 			[ "$_s10_alert_rc" -eq 0 ] || s10_fail "um-alert.sh --surface $S10_SURFACE expected exit 0 (fresh), got exit $_s10_alert_rc: $_s10_alert_out"
 			echo "[smoke]     S10 leg 5a OK: um-alert.sh exit 0 on the fresh surface — $_s10_alert_out"
 			_s10_never="s10-never-existed-$$"
