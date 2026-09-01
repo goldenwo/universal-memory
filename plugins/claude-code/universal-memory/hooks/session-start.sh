@@ -114,7 +114,9 @@ fi
 # ---------------------------------------------------------------------------
 AUTO_START_SCRIPT="$SCRIPT_DIR/auto-start.sh"
 if [ -x "$AUTO_START_SCRIPT" ]; then
-  bash "$AUTO_START_SCRIPT" || true  # fail-soft
+  # </dev/null (#294 review catch): the hook's stdin carries the SessionStart
+  # envelope (read FIRST, above) — a child must never inherit-and-consume it.
+  bash "$AUTO_START_SCRIPT" </dev/null || true  # fail-soft
 fi
 
 # First-session welcome banner TEXT. Whether it is shown is decided in the
@@ -148,13 +150,56 @@ fi
 endpoint=$(um_api_endpoint 2>/dev/null)
 
 # ---------------------------------------------------------------------------
-# 3. Project slug — cwd basename, sanitized to [A-Za-z0-9._-] client-side
-# (mirrors the server's PROJECT_SLUG_RE; same guard as the capture hooks,
-# spec §5 amendment).
+# 3. Project slug — the SAME guard the capture hooks use (#294 D2: recall
+# must read the slug capture writes; before #294 this comment CLAIMED guard
+# parity while running a raw basename — false since #186). Naming rule:
+# project_guard.py guard() — the canonical statement; root-named per D1.
+# stdin meta.cwd is PRIMARY (the envelope field Stop/SessionEnd consume),
+# the guard's fallback chain covers absence; the guard() FUNCTION is
+# imported (stop.sh's pattern) so empty stdin falls to the fallback instead
+# of main()'s SKIP:bad-stdin. The `[ -t 0 ]` gate keeps an interactive
+# manual run from blocking on a TTY read. Fail closed: SKIP or guard
+# failure ⇒ the state fetch is skipped (D7 `state skip=` line), never an
+# unguarded slug; everything not project-scoped (rubric, G7 banner) is
+# still emitted. Charset sweep stays as defense in depth (server
+# PROJECT_SLUG_RE).
 # ---------------------------------------------------------------------------
-_cwd="${CLAUDE_CWD:-$(pwd)}"
-PROJECT=$(basename "${_cwd//\\//}")
-PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
+HOOK_INPUT=""
+[ -t 0 ] || HOOK_INPUT=$(cat)
+UM_GUARD_LIB="$LIB_DIR"
+if command -v cygpath >/dev/null 2>&1; then UM_GUARD_LIB=$(cygpath -w "$UM_GUARD_LIB"); fi
+PROJECT=$(printf '%s' "$HOOK_INPUT" | \
+  UM_GUARD_LIB="$UM_GUARD_LIB" UM_GUARD_FALLBACK="${CLAUDE_CWD:-$(pwd)}" "$PY" -c '
+import json, os, sys
+sys.path.insert(0, os.environ["UM_GUARD_LIB"])
+from project_guard import guard
+try:
+    meta = json.load(sys.stdin)
+    cwd = meta.get("cwd") or ""
+except Exception:
+    cwd = ""
+fallback = os.environ.get("UM_GUARD_FALLBACK", "")
+res = guard(cwd, fallback)
+if res.startswith("SKIP:"):
+    shown = (cwd or fallback or "<none>").replace("\n", " ").replace("\r", " ")
+    print(f"{res} cwd={shown}")
+else:
+    print(res)
+' 2>/dev/null)
+case "$PROJECT" in
+  SKIP:*)
+    # D7 read-side token shape: probe-style sub-prefix, path carried.
+    um_log "state skip=${PROJECT#SKIP:}"
+    PROJECT=""
+    ;;
+  '')
+    um_log "state skip=guard-failed"
+    ;;
+  *)
+    PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
+    um_log "state project=$PROJECT"
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 4. G7 visibility assessment (spec §5) — cheap side-effect-free write-path
@@ -208,7 +253,9 @@ esac
 # ---------------------------------------------------------------------------
 UM_STATE_FETCH_OK=0
 response='{}'
-if [ "$PROBE_CODE" != "000" ]; then
+# #294 D2: an empty PROJECT is the guard's SKIP outcome — no project, no
+# fetch (the skip reason is already on the D7 `state skip=` line above).
+if [ "$PROBE_CODE" != "000" ] && [ -n "$PROJECT" ]; then
   if response=$(um_api_get "/api/state/$PROJECT" 3 2>/dev/null); then
     UM_STATE_FETCH_OK=1
   else

@@ -88,7 +88,15 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
 FAKE_HOME="$TMPDIR_ROOT/home"
 mkdir -p "$FAKE_HOME"
+# #294 T2 step 0: the fixture cwd is a REAL marker-bearing directory — the
+# root-naming guard walks the path, and a never-created string (the old
+# fixture) walks to SKIP, failing every fetch-dependent case on fixture
+# shape rather than on the change. The marker sits AT testproject (a marker
+# at $TMPDIR_ROOT would name the temp dir and break the mock's
+# "project":"testproject" response contract below); FAKE_HOME stays a
+# sibling so the home boundary never enters the walk.
 export CLAUDE_CWD="$TMPDIR_ROOT/testproject"
+mkdir -p "$CLAUDE_CWD/.git"
 
 MOCK_BIN="$TMPDIR_ROOT/mock_bin"
 mkdir -p "$MOCK_BIN"
@@ -96,9 +104,21 @@ mkdir -p "$MOCK_BIN"
 # run_hook [extra ENV=val ...] — runs session-start.sh with the mock PATH,
 # isolated HOME, and the standard configured endpoint. Prints stdout.
 run_hook() {
+  # </dev/null: #294 — the hook now consumes stdin (meta.cwd primary);
+  # feeding EOF exercises the CLAUDE_CWD fallback leg every pre-#294 test
+  # was already written against, and can never block on a TTY.
   PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
     UM_SERVER_URL="http://localhost:19999" CLAUDE_CWD="$CLAUDE_CWD" \
-    env "$@" bash "$SESSION_START" 2>/dev/null
+    env "$@" bash "$SESSION_START" </dev/null 2>/dev/null
+}
+
+# run_hook_stdin <stdin_json> [extra ENV=val ...] — #294: run with a real
+# SessionStart metadata envelope on stdin (meta.cwd is the PRIMARY source).
+run_hook_stdin() {
+  local stdin_json="$1"; shift
+  PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
+    UM_SERVER_URL="http://localhost:19999" CLAUDE_CWD="$CLAUDE_CWD" \
+    env "$@" bash "$SESSION_START" <<< "$stdin_json" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -113,8 +133,16 @@ run_hook() {
 # ---------------------------------------------------------------------------
 write_mock_api() {
   local probe_code="$1" state_file="$2" state_code="${3:-200}"
+  # #294 T2 step 0: argv recording (the unreachable-mock's pattern,
+  # INCLUDING its rm -f reset at mock-write time — 14 call sites share this
+  # mock and the suite has no reset helper, so without the reset the URL
+  # pins would false-pass on residue from earlier cases). Note the escaped
+  # \$* below: this heredoc is unquoted, so a bare $* would expand at
+  # mock-write time to write_mock_api's own args.
+  rm -f "$MOCK_BIN/curl_calls"
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/bin/bash
+echo "\$*" >> "$MOCK_BIN/curl_calls"
 is_post=false
 for a in "\$@"; do [ "\$a" = "POST" ] && is_post=true; done
 if \$is_post; then
@@ -440,11 +468,14 @@ printf '\nTest 11: UM_IN_SUMMARIZER_SUBPROCESS no longer short-circuits\n'
 
 # ---------------------------------------------------------------------------
 # Test 12: return time < 1500ms (mocked curl)
-# Threshold accommodates Windows/MSYS process-spawn overhead: the hook now
-# runs an interpreter PROBE (um_find_python executes `py -c ''`, T6a review
-# IMPORTANT-1) plus one python invocation, auto-start, and two curl calls —
-# ~900-1150ms observed baseline on this platform. Still catches real
-# regressions: a hang or leaked network call shows as 3s+ (curl timeouts).
+# Threshold accommodates Windows/MSYS process-spawn overhead: the hook runs
+# an interpreter PROBE (um_find_python executes `py -c ''`, T6a review
+# IMPORTANT-1) plus TWO python invocations (#294 added the project-guard
+# call, plus a cygpath spawn for its lib path on Windows), auto-start, and
+# two curl calls — ~1150ms observed baseline on this platform post-#294
+# (was ~900-1150 with one python invocation; measured 1156ms 2026-09-01).
+# Still catches real regressions: a hang or leaked network call shows as
+# 3s+ (curl timeouts).
 # ---------------------------------------------------------------------------
 printf '\nTest 12: Return time < 1500ms\n'
 {
@@ -648,6 +679,118 @@ MOCK
   # cleanup — later tests need the real interpreters
   rm -f "$MOCK_BIN/py" "$MOCK_BIN/python3" "$MOCK_BIN/python"
 }
+
+# ---------------------------------------------------------------------------
+# T20 (#294 D2): subdir cwd → the state fetch targets the ROOT slug, and the
+# D7 read-side log line carries it (probe-style `state project=<slug>`).
+# ---------------------------------------------------------------------------
+# Interpreter for the #294 blocks (same probe idiom as the sibling suites —
+# `command -v python3` alone can hit a broken Windows Store stub).
+PY294=""
+for _c in py python3 python; do
+  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c '' >/dev/null 2>&1; then
+    PY294="$_c"; break
+  fi
+done
+
+echo "=== T20 (#294): subdir cwd fetches the root slug ==="
+SUBDIR="$CLAUDE_CWD/nested/deep"; mkdir -p "$SUBDIR"
+rm -f "$FAKE_HOME/.um/hook.log"
+write_mock_api 400 -
+output=$(CLAUDE_CWD="$SUBDIR" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
+  UM_SERVER_URL="http://localhost:19999" bash "$SESSION_START" </dev/null 2>/dev/null)
+assert_contains "T20: state fetch targets the ROOT slug" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/testproject"
+assert_not_contains "T20: no subdir-named fetch" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/deep"
+assert_contains "T20: D7 read-side log line (state project=)" \
+  "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null)" "state project=testproject"
+
+# ---------------------------------------------------------------------------
+# T21 (#294 D2): stdin meta.cwd is PRIMARY — divergent-source pin. stdin and
+# CLAUDE_CWD point at DIFFERENT marked projects; the fetch follows stdin,
+# the same envelope field the write hooks consume (seam-contract rule).
+# ---------------------------------------------------------------------------
+echo "=== T21 (#294): stdin meta.cwd beats CLAUDE_CWD (divergent-source pin) ==="
+PROJ_A="$TMPDIR_ROOT/proj-a"; mkdir -p "$PROJ_A/.git"
+STDIN_A=$("$PY294" -c '
+import json, sys
+print(json.dumps({"session_id": "s-294", "transcript_path": "t.jsonl",
+                  "cwd": sys.argv[1], "hook_event_name": "SessionStart",
+                  "source": "startup"}))' "$PROJ_A")
+write_mock_api 400 -
+output=$(run_hook_stdin "$STDIN_A")
+assert_contains "T21: fetch follows stdin meta.cwd (primary)" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/proj-a"
+assert_not_contains "T21: CLAUDE_CWD (fallback) not consulted when stdin has cwd" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/testproject"
+
+# ---------------------------------------------------------------------------
+# T22 (#294 D2): marker-less cwd → NO state fetch, skip logged with the D7
+# token shape, rubric still emitted (fail closed on the slug, never on the
+# non-project-scoped output).
+# ---------------------------------------------------------------------------
+echo "=== T22 (#294): marker-less cwd skips the fetch, keeps the rubric ==="
+# UNDER the synthetic FAKE_HOME (review catch): a TMPDIR_ROOT sibling
+# walks past the synthetic home into the REAL profile tree on Windows and
+# SKIPs only because the ambient AppData chain happens to be marker-free —
+# host state, not a fixture. Under FAKE_HOME the synthetic boundary caps
+# the walk on both platforms.
+NOMARK="$FAKE_HOME/scratch-nomark"; mkdir -p "$NOMARK"
+rm -f "$FAKE_HOME/.um/hook.log"
+write_mock_api 400 -
+output=$(CLAUDE_CWD="$NOMARK" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
+  UM_SERVER_URL="http://localhost:19999" bash "$SESSION_START" </dev/null 2>/dev/null)
+assert_not_contains "T22: no /api/state fetch for a non-project cwd" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state"
+assert_contains "T22: D7 skip line with cwd (state skip=)" \
+  "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null)" "state skip=non-project-cwd cwd="
+ac=$(extract_additional_context "$output")
+assert_rubric_present "$ac" "T22: rubric still emitted on skip — "
+
+# ---------------------------------------------------------------------------
+# T23 (#294 D2): home cwd → the desktop catch-all is fetched (recall reads
+# what capture writes; pre-#294 recall fetched the home basename).
+# ---------------------------------------------------------------------------
+echo "=== T23 (#294): home cwd fetches the desktop catch-all ==="
+write_mock_api 400 -
+output=$(CLAUDE_CWD="$FAKE_HOME" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
+  UM_SERVER_URL="http://localhost:19999" bash "$SESSION_START" </dev/null 2>/dev/null)
+assert_contains "T23: home cwd fetches /api/state/desktop" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/desktop"
+
+# ---------------------------------------------------------------------------
+# T24 (#294 T2 step 5): the cross-hook write==read pin — the #294 defect
+# class itself. session-end.sh (write) and session-start.sh (read) are
+# driven against the SAME subdir cwd; the checkpoint body's project and the
+# state-fetch URL slug must be IDENTICAL. Both ride the same mock, whose
+# argv log carries the POST body (-d) and the GET URL.
+# ---------------------------------------------------------------------------
+echo "=== T24 (#294): write-slug == read-slug for the same cwd ==="
+SESSION_END_HOOK="$SCRIPT_DIR/session-end.sh"
+CROSS_SUB="$CLAUDE_CWD/cross/pin"; mkdir -p "$CROSS_SUB"
+STDIN_SE=$("$PY294" -c '
+import json, sys
+print(json.dumps({"session_id": "s-294x", "transcript_path": "t.jsonl",
+                  "cwd": sys.argv[1], "hook_event_name": "SessionEnd",
+                  "reason": "other"}))' "$CROSS_SUB")
+write_mock_api 200 -
+# write side (detached child — wait for its log line before reading argv)
+rm -f "$FAKE_HOME/.um/hook.log"
+PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" UM_SERVER_URL="http://localhost:19999" \
+  bash "$SESSION_END_HOOK" <<< "$STDIN_SE" >/dev/null 2>&1
+_i=0
+while [ "$_i" -lt 100 ]; do
+  grep -q "posted http=" "$FAKE_HOME/.um/hook.log" 2>/dev/null && break
+  sleep 0.1; _i=$((_i + 1))
+done
+WRITE_SLUG=$(grep -o '{"project":"[^"]*"}' "$MOCK_BIN/curl_calls" 2>/dev/null | head -1 | sed 's/.*:"\([^"]*\)".*/\1/')
+# read side (same cwd, stdin-absent → fallback)
+output=$(CLAUDE_CWD="$CROSS_SUB" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
+  UM_SERVER_URL="http://localhost:19999" bash "$SESSION_START" </dev/null 2>/dev/null)
+READ_SLUG=$(grep -o '/api/state/[A-Za-z0-9._-]*' "$MOCK_BIN/curl_calls" 2>/dev/null | head -1 | sed 's|/api/state/||')
+assert_eq "T24: write slug and read slug are non-empty and identical" \
+  "w=${WRITE_SLUG:-EMPTY} r=${READ_SLUG:-EMPTY}" "w=testproject r=testproject"
 
 # ---------------------------------------------------------------------------
 # Summary

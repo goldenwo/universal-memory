@@ -3,6 +3,12 @@
 #
 # Usage: um-preview [--project <name>]
 #
+# Project defaults to the CWD BASENAME (not the hooks' #294 root naming —
+# vault.sh project_name(), accepted divergence): from a repo subdirectory
+# the capture layer is root-named while this preview looks under the subdir
+# name, so run from the repo root or pass --project <name> (the env form
+# PROJECT= is inert — reset during arg parsing).
+#
 # Reads today's raw captures from $VAULT/captures/<project>/raw/YYYY-MM-DD.md,
 # summarizes them via summarize.sh, then merges into a draft state.md via
 # update-state.sh --stdout. The draft is printed to stdout.
@@ -51,6 +57,11 @@ Env vars:
   UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY)
   UM_SUMMARIZER       - summarizer backend (default: openai)
   CLAUDE_CWD          - override for project name inference
+
+Note (#294): the project defaults to the CWD BASENAME, while capture layers
+are named after the project ROOT — from a repo subdirectory this preview
+looks under the subdir name and comes up empty. Run from the repo root or
+pass --project <name> (PROJECT= env is ignored).
 EOF
       exit 0
       ;;

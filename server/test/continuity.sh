@@ -630,6 +630,15 @@ case "$AC" in
 esac
 
 if [ "$LIVE" != "1" ]; then
+  # Hard (mock, #294): the state GET must target THIS project's slug — the
+  # mock answers */api/state/* for ANY project, so without this pin the
+  # suite is blind to a read-slug regression (it would stay green if
+  # session-start fetched /api/state/anything).
+  if grep -l "/api/state/continuity-test" "$CAP_DIR"/url_* >/dev/null 2>&1; then
+    info "Step 5: state GET targeted /api/state/continuity-test (#294 read-slug pin)"
+  else
+    fail "Step 5: no captured URL targets /api/state/continuity-test (read slug diverged — got: $(cat "$CAP_DIR"/url_* 2>/dev/null | grep state || echo none))"
+  fi
   # Hard (mock): the canned state body must be injected verbatim-fresh.
   case "$AC" in
     *"State of play"*) : ;;

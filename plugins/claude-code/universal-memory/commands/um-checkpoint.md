@@ -8,8 +8,8 @@ This fires the same detached `POST /api/checkpoint {project}` that `SessionEnd` 
 on a clean exit — running it on demand just doesn't require exiting first. The hook returns
 immediately (the POST itself is DETACHED, on its own 120s client-side `curl --max-time` — not a
 server-side budget; server-side synthesis can still take a while, this just bounds how long the
-detached child waits for it); the outcome lands in `~/.um/hook.log` (`posted http=200` / `error=...`
-/ `skip=...`), not in this command's own output. There is no client-side summarizer or `state.md`
+detached child waits for it); the outcome lands in `~/.um/hook.log` (`posted http=200 project=<slug>` /
+`error=...` / `skip=...`), not in this command's own output. There is no client-side summarizer or `state.md`
 merge anymore — the server's checkpoint pipeline owns synthesis end to end.
 
 **Chunked semantics.** Server-side, checkpoint synthesis is chunked: each call digests at most a

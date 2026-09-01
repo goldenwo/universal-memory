@@ -151,8 +151,15 @@ _um_api_request() {
 }
 
 # um_log <msg...>
-# Appends one line to ~/.um/hook.log (spec §5 format:
-# `<ts> <hook> posted http=<code> …` / `<ts> <hook> skip=<reason>`).
+# Appends one line to ~/.um/hook.log. Line grammar (canonical in-code
+# definition; #294 D7 added the project field, always APPENDED LAST —
+# consumers grep these lines as substrings/prefixes, never end-anchored):
+#   `<ts> <hook> posted http=<code> [n=<count>] project=<slug>`
+#   `<ts> <hook> skip=<reason> [cwd=<path>]` / `<ts> <hook> error=<reason>`
+#   `<ts> session-start probe …` / `<ts> session-start state project=<slug>`
+#   `<ts> session-start state skip=<reason> cwd=<path>`
+# (Formerly cited "spec §5" — that doc is archived; this comment is the
+# living definition.)
 # Hook name comes from $UM_HOOK_NAME (set it before sourcing/calling) else the
 # executing script's basename. Best-effort: never fails the caller.
 um_log() {

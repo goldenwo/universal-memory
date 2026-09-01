@@ -14,7 +14,15 @@ vault_path() {
   echo "${UM_VAULT_DIR:-$HOME/.um/vault}"
 }
 
-# Return project name derived from cwd.
+# Return project name derived from cwd — DELIBERATELY the raw cwd basename,
+# DIVERGING from the hooks' root-naming guard (#294 D3 ruling; naming rule:
+# project_guard.py guard()). Aligning this helper was priced out: ~12
+# synthetic-path fixtures across summarize/update-state tests would break, a
+# SKIP sentinel returned into path-segment consumers needs its own mapping,
+# and the guard shell-out would add a python-probe dependency — all for
+# um-preview, a display-only consumer whose wrongness is visible at use.
+# Revisit triggers: a live consumer of this helper joins the capture/recall
+# path, or an operator reports a wrong-project preview.
 # Priority: CLAUDE_CWD (set by CC), then pwd.
 project_name() {
   local cwd="${CLAUDE_CWD:-$(pwd)}"
