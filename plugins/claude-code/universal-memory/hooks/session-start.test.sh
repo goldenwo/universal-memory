@@ -88,7 +88,15 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
 FAKE_HOME="$TMPDIR_ROOT/home"
 mkdir -p "$FAKE_HOME"
+# #294 T2 step 0: the fixture cwd is a REAL marker-bearing directory — the
+# root-naming guard walks the path, and a never-created string (the old
+# fixture) walks to SKIP, failing every fetch-dependent case on fixture
+# shape rather than on the change. The marker sits AT testproject (a marker
+# at $TMPDIR_ROOT would name the temp dir and break the mock's
+# "project":"testproject" response contract below); FAKE_HOME stays a
+# sibling so the home boundary never enters the walk.
 export CLAUDE_CWD="$TMPDIR_ROOT/testproject"
+mkdir -p "$CLAUDE_CWD/.git"
 
 MOCK_BIN="$TMPDIR_ROOT/mock_bin"
 mkdir -p "$MOCK_BIN"
@@ -113,8 +121,16 @@ run_hook() {
 # ---------------------------------------------------------------------------
 write_mock_api() {
   local probe_code="$1" state_file="$2" state_code="${3:-200}"
+  # #294 T2 step 0: argv recording (the unreachable-mock's pattern,
+  # INCLUDING its rm -f reset at mock-write time — 14 call sites share this
+  # mock and the suite has no reset helper, so without the reset the URL
+  # pins would false-pass on residue from earlier cases). Note the escaped
+  # \$* below: this heredoc is unquoted, so a bare $* would expand at
+  # mock-write time to write_mock_api's own args.
+  rm -f "$MOCK_BIN/curl_calls"
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/bin/bash
+echo "\$*" >> "$MOCK_BIN/curl_calls"
 is_post=false
 for a in "\$@"; do [ "\$a" = "POST" ] && is_post=true; done
 if \$is_post; then
