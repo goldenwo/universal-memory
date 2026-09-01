@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/um-alert.sh — cron-able capture-pipeline health check (#171 Stage A +
-# #267 SIGNALS). GETs /api/stats and evaluates FOUR sections, each covering a
-# failure class the others structurally cannot see:
+# #267 SIGNALS + #283 CRASH-DEAD). GETs /api/stats and evaluates FIVE
+# sections, each covering a failure class the others structurally cannot see:
 #
 #   FRESHNESS (counters-derived, #171): server-side / transport / total
 #     capture death — day-granular rows stop landing and the surface ages
@@ -20,11 +20,19 @@
 #     self-reported by stop.sh as signal.capture_anomaly counter rows —
 #     THE direct alarm for the 2026-07-16 silent-capture-death class
 #     (measured-zero benign base rate; any windowed count is real signal).
+#   CRASH-DEAD (#283): the class SIGNALS structurally cannot see — the
+#     capture hook never fires at all (deregistered/deleted/dies before it
+#     can report), while session-end keeps stamping abstained checkpoints
+#     that hold freshness green. Detected server-side: an ARMED surface
+#     (has ever posted a turn — last_turn_day != null) with ZERO turns in
+#     the 7-day window but checkpoint abstains present. Clears itself on
+#     the next check after a turn lands.
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
-#   1  ALARM — stale captures, a stale layer, ledger-error growth, or a
-#      capture anomaly in the 7-day window
+#   1  ALARM — stale captures, a stale layer, ledger-error growth, a
+#      capture anomaly in the 7-day window, or an armed surface gone
+#      turn-dead while checkpoints stamp (crash-dead)
 #   2  the check itself couldn't run (unreachable / auth / bad response /
 #      degraded counters / malformed section) — a broken monitor is loud
 #
@@ -68,10 +76,15 @@ _usage() {
 Usage: um-alert.sh [options]
 
 Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
-on success, actionable line(s) + non-zero exit otherwise. Four sections:
-capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls), and
+on success, actionable line(s) + non-zero exit otherwise. Five sections:
+capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls),
 SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
-alarm for a stop.sh-only capture death). Every applicable escalation line is
+alarm for a stop.sh-only capture death), and CRASH-DEAD (#283 — an armed
+surface whose turns stopped while session-end keeps stamping abstained
+checkpoints: the hook died without being able to self-report; the alert
+clears itself on the next check after a turn lands, and a fire on a healthy
+client can be a fully-idle week — sessions but no captured exchanges — or
+stray header-less traffic). Every applicable escalation line is
 printed before the single exit (print-all, no masking).
 
 Options:
@@ -91,8 +104,12 @@ Options:
 Exit codes:
   0  healthy — captures within the threshold, no section escalating
   1  ALARM   — stale captures (all, or the named surface), a stale layer,
-               ledger-error growth, or a capture anomaly reported in the
-               last 7 days (SIGNALS)
+               ledger-error growth, a capture anomaly reported in the
+               last 7 days (SIGNALS), or a crash-dead surface (CRASH-DEAD:
+               armed but zero turns in 7d with checkpoint abstains — the
+               alert clears itself on the next check after a turn lands;
+               if the client checks out healthy, suspect a fully-idle week
+               or stray header-less traffic, see #283)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -374,6 +391,117 @@ emit("OK", "no capture anomalies in the last 7 days")
 SIG_STATUS="${SIG_VERDICT%%|*}"
 SIG_MESSAGE="${SIG_VERDICT#*|}"
 
+# #283 CRASH-DEAD section — the class SIGNALS structurally cannot see: the
+# capture hook never fires (deregistered/deleted/dies pre-report) while
+# session-end keeps stamping abstained checkpoints that hold freshness
+# green. Server-side signature over the capture map's #283 fields:
+#   ARMED   — last_turn_day != null (the surface has EVER posted a turn;
+#             never-turn surfaces like mem0-compat can never fire).
+#   ALERT   — armed AND turns_7d == 0 AND checkpoint_abstained_7d > 0.
+# Computed HERE — before any exit decision AND before print_escalations is
+# even defined, so CD_STATUS/CD_MESSAGE are always bound under `set -u`
+# (the same unbound-abort hazard the LAYERS pre-init below documents,
+# closed by construction: assignment precedes the function definition).
+# Taxonomy mirrors SIGNALS/LAYERS:
+#   ABSENT   — no capture entry carries the #283 fields: pre-#283 server.
+#              Breadcrumb, verdict untouched. The presence scan is
+#              TYPE-GUARDED and runs FIRST (spec D6): a non-dict entry
+#              counts as "does not carry the key" during the scan, so an
+#              old-format oddity lands here, never in a swallowed-crash
+#              exit 2; per-entry type errors are judged only after the
+#              payload proves new-format.
+#   DEGRADED — capture null: the counters-degraded path; the capture
+#              verdict carries the exit (no double report).
+#   ERROR    — capture non-object (guard BEFORE the scan — `capture: []`
+#              must not read as ABSENT), mixed field presence, or bad
+#              field types ⇒ CHECK FAILED, exit 2.
+#   ALERT    — any armed-dead surface ⇒ exit 1. Message core is
+#              SURFACE-NEUTRAL; the stop.sh prescription is appended ONLY
+#              for claude-code-plugin — the one surface whose turn
+#              producer is known (um-api.sh's X-UM-Source literal; a
+#              rename there must update this branch, see the marker
+#              comment at that literal). The self-diagnosing tail names
+#              the auto-clear mechanics + the two accepted false-positive
+#              shapes (idle week / header-less traffic).
+#   OK       — no armed surface is turn-dead.
+CD_VERDICT=$("$PY" -c '
+import json, sys
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+capture = stats.get("capture")
+if capture is None:
+    emit("DEGRADED", "counters degraded — crash-dead check cannot be assessed")
+if not isinstance(capture, dict):
+    emit("ERROR", "capture is not an object — crash-dead fields cannot be read")
+if not capture:
+    emit("OK", "no capture surfaces yet — no armed surfaces to check")
+
+def has_field(info):
+    return isinstance(info, dict) and "checkpoint_abstained_7d" in info
+carrying = [s for s, info in capture.items() if has_field(info)]
+if not carrying:
+    emit("ABSENT", "capture entries lack the #283 fields — server predates them; crash-dead class NOT checked")
+if len(carrying) != len(capture):
+    missing = ", ".join(sorted(set(capture) - set(carrying)))
+    emit("ERROR", "crash-dead fields present on some surfaces but not others (%s) — malformed payload" % missing)
+
+def num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+alerts = []
+try:
+    for surface, info in capture.items():
+        n = info.get("checkpoint_abstained_7d")
+        turns = info.get("turns_7d")
+        # KEY-presence required, not just null-tolerated (review catch):
+        # last_turn_day is the one field whose VALID sentinel is null, so a
+        # bare .get() cannot tell "legitimately unarmed" from "key silently
+        # dropped" — and a dropped key would read as unarmed forever, the
+        # exact monitor-goes-quiet class this section exists to be loud
+        # about. The payload proved new-format above; a missing key here is
+        # drift, not an old server.
+        if "last_turn_day" not in info:
+            raise ValueError("surface %r is missing last_turn_day" % surface)
+        last_turn = info.get("last_turn_day")
+        if not num(n):
+            raise ValueError("surface %r has a bad checkpoint_abstained_7d" % surface)
+        if not num(turns):
+            raise ValueError("surface %r has a bad turns_7d" % surface)
+        if last_turn is not None and not isinstance(last_turn, str):
+            raise ValueError("surface %r has a bad last_turn_day" % surface)
+        if last_turn is not None and turns == 0 and n > 0:
+            msg = ("%s: session-end is stamping (%d abstained checkpoint(s) in 7d) "
+                   "but ZERO turns landed; last turn ever %s — the client owning "
+                   "this surface is completing sessions without capturing "
+                   "exchanges (crash-dead class, #283)") % (surface, n, last_turn)
+            if surface == "claude-code-plugin":
+                msg += (": check hooks.json still binds Stop, and that the "
+                        "plugin update kept stop.sh executable")
+            alerts.append(msg)
+except Exception as e:
+    emit("ERROR", "crash-dead payload malformed: %s" % e)
+
+if alerts:
+    emit("ALERT", "; ".join(alerts)
+         + " — clears itself on the next check after a turn lands; if the "
+           "client checks out healthy this can be a fully-idle week (sessions "
+           "but no captured exchanges) or stray header-less traffic — see #283")
+emit("OK", "no armed surface is turn-dead with checkpoint activity")
+' < "$BODY_FILE" 2>/dev/null) || CD_VERDICT=""
+
+CD_STATUS="${CD_VERDICT%%|*}"
+CD_MESSAGE="${CD_VERDICT#*|}"
+
 # print_escalations — echo EVERY applicable alert line (#267 print-all;
 # order: the primary capture verdict first, then SIGNALS → LAYERS → LEDGER —
 # active capture loss is the most actionable of the add-on sections). Called
@@ -393,6 +521,9 @@ print_escalations() {
   fi
   if [ "$SIG_STATUS" = "ALERT" ]; then
     echo "um-alert: SIGNALS — $SIG_MESSAGE" >&2
+  fi
+  if [ "$CD_STATUS" = "ALERT" ]; then
+    echo "um-alert: CRASH-DEAD — $CD_MESSAGE" >&2
   fi
   if [ "$LAYERS_STATUS" = "STALE" ]; then
     echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE" >&2
@@ -518,6 +649,18 @@ case "$SIG_STATUS" in
     echo "um-alert: CHECK FAILED — ${SIG_MESSAGE:-signals verdict parser produced no output}" >&2 ;;
 esac
 
+# #283 CRASH-DEAD wiring — same breadcrumb / no-op / CHECK-FAILED contract
+# as SIGNALS above; a garbage/empty status folds into the fault arm.
+case "$CD_STATUS" in
+  ABSENT)
+    echo "um-alert: $CD_MESSAGE" >&2 ;;
+  OK|ALERT|DEGRADED)
+    : ;;
+  *)
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${CD_MESSAGE:-crash-dead verdict parser produced no output}" >&2 ;;
+esac
+
 case "$LAYERS_STATUS" in
   ABSENT)
     echo "um-alert: $LAYERS_MESSAGE" >&2 ;;
@@ -535,7 +678,7 @@ fi
 
 case "$STATUS" in
   FRESH)
-    if [ "$SIG_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
+    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
       print_escalations
       # Context restored (review catch — the old suffix was deleted with
       # first-wins): the one mail a cron sends must say whether freshness

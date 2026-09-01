@@ -76,8 +76,10 @@ $HOME/.local/share/um/
     um-supersede          # supersede subcommand (delegates to binary)
     um-preview            # preview subcommand (delegates to binary)
     um-tunnel             # Tailscale funnel/serve helper
-    um-alert.sh           # pipeline alarm (cron-friendly; freshness, per-layer
-                          # staleness, and #267 client-reported capture anomalies)
+    um-alert.sh           # pipeline alarm (cron-friendly; five sections:
+                          # capture freshness, LEDGER reaction errors, per-layer
+                          # staleness, #267 client-reported capture anomalies,
+                          # and #283 crash-dead — armed surfaces gone turn-dead)
     um-drain.sh           # operator backlog drain (repeated /api/checkpoint)
   lib/
     vault.sh              # vault path helpers

@@ -127,6 +127,10 @@ _um_api_request() {
     --connect-timeout 3
     --max-time "$max_time"
     -H 'Content-Type: application/json'
+    # um-alert.sh's CRASH-DEAD prescription branch keys on this EXACT surface
+    # string (#283 spec D5): renaming it silently degrades that alarm's
+    # message to the neutral core (every suite stays green — the test
+    # fixtures hardcode the same string). Rename both together.
     -H 'X-UM-Source: claude-code-plugin'
     -w '\n__UM_HTTP_CODE__%{http_code}'
   )
