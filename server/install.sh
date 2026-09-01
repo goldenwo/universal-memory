@@ -375,13 +375,23 @@ if [ "${1:-}" = "--verify" ]; then
   else
     _SMOKE_TRANSCRIPT="$_SMOKE_HOME/transcript.jsonl"
     printf '%s\n' '{"type":"user","message":{"role":"user","content":"verify smoke transcript"},"timestamp":"2026-01-01T00:00:00Z"}' > "$_SMOKE_TRANSCRIPT"
-    # Metadata built via json.dumps so the temp path survives spaces/backslashes.
-    _SMOKE_META=$(UM_VERIFY_TRANSCRIPT="$_SMOKE_TRANSCRIPT" "$_VERIFY_PY" -c '
+    # #294: the smoke cwd is a REAL marker-bearing dir nested under the smoke
+    # HOME, not the old relative string "install-verify" — the root-naming
+    # guard realpaths a relative cwd against the operator's invocation dir
+    # and would land this synthetic turn in their REAL project (with the
+    # hardcoded cleanup below silently no-op'ing). A `.git` AT the dir makes
+    # both the old algorithm (basename of the cwd) and the new one (basename
+    # of the nearest marker dir) name it `install-verify`, and nesting under
+    # $_SMOKE_HOME reuses the existing rm -rf cleanup.
+    _SMOKE_CWD="$_SMOKE_HOME/install-verify"
+    mkdir -p "$_SMOKE_CWD/.git" 2>/dev/null || true
+    # Metadata built via json.dumps so the temp paths survive spaces/backslashes.
+    _SMOKE_META=$(UM_VERIFY_TRANSCRIPT="$_SMOKE_TRANSCRIPT" UM_VERIFY_CWD="$_SMOKE_CWD" "$_VERIFY_PY" -c '
 import json, os
 print(json.dumps({
     "session_id": "install-verify",
     "transcript_path": os.environ["UM_VERIFY_TRANSCRIPT"],
-    "cwd": "install-verify",
+    "cwd": os.environ["UM_VERIFY_CWD"],
     "stop_hook_active": False,
 }))' 2>/dev/null) || true
     _SMOKE_TOKEN_FILE="${UM_TOKEN_FILE:-$HOME/.um/auth-token}"
