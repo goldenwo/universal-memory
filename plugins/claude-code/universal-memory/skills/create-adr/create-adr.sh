@@ -155,6 +155,34 @@ _fm_value() {
   printf '%s' "$s"
 }
 
+_fm_list_items() {
+  # Parse a YAML flow-list frontmatter tail (`["a", "b"]`, `[a, b]`, `[]`)
+  # into newline-separated items, each dequoted via _fm_value. Prints
+  # nothing for an empty list or a non-list tail (block lists are handled
+  # by cmd_sync's continuation-line state, not here). Split-on-comma is
+  # exact for the NNNN-slug id convention (_slug's charset has no commas
+  # or brackets); the convention is not enforced on read, so a
+  # hand-authored quoted item containing a comma mis-splits. Accepted:
+  # relations are labels, not keys, and a full quote-aware YAML parser in
+  # bash is not worth that edge.
+  local s item out=""
+  local -a items=()
+  s=$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  case "$s" in
+    \[*\]) ;;
+    *) return 0 ;;
+  esac
+  s="${s#\[}"
+  s="${s%\]}"
+  IFS=',' read -r -a items <<< "$s"
+  for item in "${items[@]}"; do
+    item=$(_fm_value "$item")
+    [ -n "$item" ] || continue
+    out="${out}${out:+$'\n'}${item}"
+  done
+  printf '%s' "$out"
+}
+
 _yaml_dq() {
   # Double-quote a YAML scalar: escape `\` and `"`. Caller wraps in quotes.
   # We always quote the scalars where the value is operator-supplied (title,
@@ -437,6 +465,7 @@ cmd_help() {
 Usage:
   /adr [<title>]              Create a new ADR with the given title
   /adr sync NNNN              Re-register existing ADR with UM server
+                              (propagates status + supersedes/superseded_by)
 
 Flags:
   --commit                    Force commit even when running in universal-memory itself
@@ -586,7 +615,13 @@ cmd_sync() {
   # Parse the YAML frontmatter (between --- delimiters).
   local in_fm=0 fm_done=0
   local fm_id="" fm_title="" fm_status="" fm_decided_at="" fm_schema_version=""
+  local fm_supersedes="" fm_superseded_by="" in_supersedes_block=0 sup_tail="" sup_item=""
   while IFS= read -r line; do
+    # CRLF tolerance: cli/lib/adr-graph.mjs:70 documents this exact parser
+    # failing on CRLF files (`"---\r"` never equals `"---"` — ADR-0004 hit
+    # that live, silently no-opping the whole frontmatter parse). Stripping
+    # the CR costs one line and heals every field below.
+    line="${line%$'\r'}"
     if [ "$fm_done" -eq 1 ]; then break; fi
     if [ "$line" = "---" ]; then
       if [ "$in_fm" -eq 0 ]; then
@@ -596,6 +631,27 @@ cmd_sync() {
       fi
     fi
     [ "$in_fm" -eq 1 ] || continue
+    if [ "$in_supersedes_block" -eq 1 ]; then
+      # Inside a `supersedes:` YAML block list — collect `- item` lines at
+      # ANY indentation including zero (valid YAML, and the sibling parser
+      # cli/lib/adr-graph.mjs:93 accepts flush-left items for this same
+      # convention — the two readers must not disagree). Blank lines inside
+      # the list are legal YAML and skipped; the `---` close delimiter is
+      # consumed above and never reaches this branch. The first other
+      # non-item line closes the list and falls through to the key
+      # matching below. `null`/`~` items mirror the scalar arms' filter.
+      if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*(.*)$ ]]; then
+        sup_item=$(_fm_value "${BASH_REMATCH[1]}")
+        if [ -n "$sup_item" ] && [ "$sup_item" != "null" ] && [ "$sup_item" != "~" ]; then
+          fm_supersedes="${fm_supersedes}${fm_supersedes:+$'\n'}${sup_item}"
+        fi
+        continue
+      fi
+      if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        continue
+      fi
+      in_supersedes_block=0
+    fi
     case "$line" in
       'schema_version:'*)
         fm_schema_version=$(_fm_value "${line#schema_version:}") ;;
@@ -607,6 +663,35 @@ cmd_sync() {
         fm_status=$(_fm_value "${line#status:}") ;;
       'decided_at:'*)
         fm_decided_at=$(_fm_value "${line#decided_at:}") ;;
+      'supersedes:'*)
+        sup_tail="${line#supersedes:}"
+        fm_supersedes=$(_fm_list_items "$sup_tail")
+        if [ -z "$fm_supersedes" ]; then
+          sup_item=$(_fm_value "$sup_tail")
+          case "$sup_item" in
+            '')
+              # Bare `supersedes:` opens a YAML block list; the
+              # continuation-line branch above collects its items.
+              in_supersedes_block=1 ;;
+            null|'~'|\[*)
+              # Empty flow list or explicit null — no relations.
+              ;;
+            *)
+              # Off-convention scalar (`supersedes: 0004-x`): accept as a
+              # single item rather than silently dropping an authored
+              # relation — silent drops are the defect this parsing
+              # exists to fix (#271).
+              fm_supersedes="$sup_item" ;;
+          esac
+        fi
+        ;;
+      'superseded_by:'*)
+        fm_superseded_by=$(_fm_value "${line#superseded_by:}")
+        # `null` is the template default; `~` is YAML's other null spelling.
+        case "$fm_superseded_by" in
+          null|'~') fm_superseded_by="" ;;
+        esac
+        ;;
     esac
   done < "$adr_file"
 
@@ -642,9 +727,29 @@ cmd_sync() {
   if [ "$no_path_flag" -eq 0 ]; then
     repo_path_field=$(printf '"repo_path":"%s",' "$esc_toplevel")
   fi
+  # #271: authored supersession relations ride the registration payload as
+  # label-only metadata — snake_case, matching the vault-doc convention the
+  # server already declares (openapi.mjs MemoryMetadata: supersedes =
+  # array of ids, superseded_by = id). Empty/null values are OMITTED (null
+  # payload keys are forbidden server-side), and the identity full-replace
+  # (#279) keeps stored relations tracking the file on every re-sync.
+  # Lifecycle stays driven solely by adr_status (#290); these fields
+  # change no recall behavior. Items are operator-controllable frontmatter
+  # like every field above — each one flows through _json_escape.
+  local relations_field="" sup_items_json=""
+  if [ -n "$fm_supersedes" ]; then
+    while IFS= read -r sup_item; do
+      [ -n "$sup_item" ] || continue
+      sup_items_json="${sup_items_json}${sup_items_json:+,}\"$(_json_escape "$sup_item")\""
+    done <<< "$fm_supersedes"
+    relations_field="\"supersedes\":[${sup_items_json}],"
+  fi
+  if [ -n "$fm_superseded_by" ]; then
+    relations_field="${relations_field}\"superseded_by\":\"$(_json_escape "$fm_superseded_by")\","
+  fi
   local payload
-  payload=$(printf '{"text":"%s","metadata":{"schema_version":1,"type":"adr","adr_id":"%s","adr_status":"%s",%s"decided_at":"%s","file_path":"%s"}}' \
-    "$esc_title" "$esc_id" "$esc_status" "$repo_path_field" "$esc_decided_at" "$esc_target")
+  payload=$(printf '{"text":"%s","metadata":{"schema_version":1,"type":"adr","adr_id":"%s","adr_status":"%s",%s%s"decided_at":"%s","file_path":"%s"}}' \
+    "$esc_title" "$esc_id" "$esc_status" "$relations_field" "$repo_path_field" "$esc_decided_at" "$esc_target")
   local curl_out http_code
   curl_out=$(mktemp)
   local curl_args=(

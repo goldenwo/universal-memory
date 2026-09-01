@@ -7,11 +7,19 @@
  * — see the "Measured supply" section of ADR-0008 for the counts and method.
  *
  * This module derives that fourth layer from `docs/decisions/*.md` directly,
- * NOT from the qdrant index, for three reasons the index cannot overcome today:
+ * NOT from the qdrant index. Of the three reasons originally given, all have
+ * since expired or been corrected (retained below so the claims are not
+ * silently reintroduced); the standing rationale follows them.
  *
- *   1. Git is authoritative. The index is a lossy copy: `create-adr.sh` builds
- *      its registration payload from a hardcoded metadata set that omits
- *      `supersedes`/`superseded_by` entirely, so the relations never arrive.
+ *   1. [CORRECTED 2026-09-01 — the omission is FIXED by #271 and this reason is
+ *      retained only so the claim is not silently reintroduced.] It previously
+ *      read: "Git is authoritative. The index is a lossy copy: `create-adr.sh`
+ *      builds its registration payload from a hardcoded metadata set that omits
+ *      `supersedes`/`superseded_by` entirely, so the relations never arrive."
+ *      Since #271, `/adr sync` parses both fields and posts them as label-only
+ *      metadata. Git remains authoritative: the index copy refreshes only on
+ *      explicit re-sync, and ADRs registered before #271 carry no relations
+ *      until re-synced.
  *   2. [CORRECTED 2026-08-19 — this reason was FALSE and is retained only so the
  *      claim is not silently reintroduced.] It previously read: "universal-memory
  *      carries a `.um-self-host` marker, and create-adr deliberately skips
@@ -19,18 +27,25 @@
  *      the index by design." The self-host check (`_detect_self_application`)
  *      is called from `cmd_create` ONLY, and only when `--commit` was not
  *      passed; `cmd_sync` never calls it. This repo's ADRs 0004 and 0008 are in
- *      fact registered, carrying `repo_path` of this repo. Reasons 1 and 3 are
- *      each independently sufficient, so deriving from files remains correct.
- *   3. Even a fixed registration path would land nothing on re-registration:
- *      a dedup hit routes through mergeSurface, whose payload patch touches
- *      only surfaces/projects/dedupCount/dedupLastSeenAt and drops caller
- *      metadata on the floor.
+ *      fact registered, carrying `repo_path` of this repo.
+ *   3. [CORRECTED 2026-09-01 — this reason expired with #279 (2026-08-23) and is
+ *      retained only so the claim is not silently reintroduced.] It previously
+ *      read: "Even a fixed registration path would land nothing on
+ *      re-registration: a dedup hit routes through mergeSurface, whose payload
+ *      patch touches only surfaces/projects/dedupCount/dedupLastSeenAt and
+ *      drops caller metadata on the floor." Since #279, a type:'adr' write with
+ *      a usable adr_id bypasses dedup entirely and full-replaces its identity
+ *      point, so re-registration lands caller metadata.
  *
- * Reading files sidesteps all three, and has no cache to invalidate. It also
- * sidesteps the cross-repo identity collision that would bite an index-based
- * walk: `adr_id` is a per-repo counter, so ADR-0001 exists in both
- * universal-memory and claude-harness-toolkit. A per-repo file walk is scoped
- * to one counter space by construction.
+ * Standing rationale for reading files: git authority without sync discipline
+ * (the file walk is always current; the index copy is only as fresh as the
+ * last `/adr sync`, and pre-#271 registrations hold no relations at all), and
+ * the cross-repo identity collision that would bite an index-based walk:
+ * `adr_id` is a per-repo counter, so ADR-0001 exists in both universal-memory
+ * and claude-harness-toolkit — and relation targets are full `NNNN-slug`
+ * labels while `adr_id` is the bare prefix, so an index walk would also need
+ * toKey()-style normalization. A per-repo file walk is scoped to one counter
+ * space by construction.
  *
  * Zero dependencies and zero schema changes, per ADR-0008's binding
  * constraints (no graph engine, no new store, no standalone viewer).
