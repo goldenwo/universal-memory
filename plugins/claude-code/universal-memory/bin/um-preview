@@ -57,6 +57,11 @@ Env vars:
   UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY)
   UM_SUMMARIZER       - summarizer backend (default: openai)
   CLAUDE_CWD          - override for project name inference
+
+Note (#294): the project defaults to the CWD BASENAME, while capture layers
+are named after the project ROOT — from a repo subdirectory this preview
+looks under the subdir name and comes up empty. Run from the repo root or
+pass --project <name> (PROJECT= env is ignored).
 EOF
       exit 0
       ;;

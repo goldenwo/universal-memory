@@ -35,7 +35,10 @@
 #      would never terminate for drive-rooted projects; same for UNC roots).
 #   4. Symlinked-home edge (accepted): a project reached through a symlink
 #      that realpaths outside $HOME walks to the root instead of the home
-#      boundary — strictly more permissive, never a wrong skip.
+#      boundary. (#294 correction: under D1 this is no longer "never a
+#      wrong skip" — a marker AT a filesystem/drive root names basename ''
+#      and the naming helper SKIPs, the spec §4 total-SKIP residual. See
+#      the D1 algorithm comment inside guard().)
 
 import json
 import os
@@ -62,6 +65,29 @@ def _norm(p):
     return os.path.normcase(os.path.normpath(p))
 
 
+def _walkpath(p):
+    """Case-PRESERVING resolution for the walk and the naming site (#294
+    review catch: normcase lowercases the whole path on Windows, so naming
+    from a _norm()'d value returned `myrepo` for `MyRepo` — a slug that
+    never existed on disk, splitting layers against the CLI's
+    `git rev-parse` naming and against case-preserving platforms). Same
+    MSYS rewrite + realpath as _norm(), WITHOUT normcase: the walk carries
+    this form; every comparison against home candidates folds BOTH sides
+    through normcase at the comparison site instead."""
+    if not p:
+        return ""
+    p = p.replace("\\", "/")
+    if os.name == "nt":
+        m = re.match(r"^/([A-Za-z])(/|$)", p)
+        if m:
+            p = m.group(1).upper() + ":" + (p[2:] or "/")
+    try:
+        p = os.path.realpath(p)
+    except OSError:
+        pass
+    return os.path.normpath(p)
+
+
 def _home_candidates():
     """Every plausible home spelling, normalized. HOME covers git-bash;
     USERPROFILE / HOMEDRIVE+HOMEPATH cover native-Windows interpreters
@@ -85,11 +111,29 @@ def _root_name(marker_dir):
 
 
 def guard(cwd_raw, fallback_raw=""):
-    cwd = _norm(cwd_raw) or _norm(fallback_raw)
-    if not cwd or cwd == ".":
+    # Candidate selection (#294 review catch — the old `cwd == "."` check
+    # was dead: realpath absolutizes "." against the hook PROCESS's cwd, so
+    # a relative meta.cwd silently resolved to whatever project the process
+    # sat in — under D1 that names the operator's REAL project root, the
+    # exact P11 hazard install.sh had to be patched for). A candidate must
+    # be absolute AFTER the MSYS rewrite (a git-bash `/e/...` form rewrites
+    # to `E:/...`); a bare relative string like "install-verify" is
+    # discarded, falling to the next candidate or SKIP.
+    def usable(p):
+        if not p:
+            return ""
+        q = p.replace("\\", "/")
+        if os.name == "nt":
+            m = re.match(r"^/([A-Za-z])(/|$)", q)
+            if m:
+                q = m.group(1).upper() + ":" + (q[2:] or "/")
+        return _walkpath(p) if os.path.isabs(q) else ""
+
+    cwd = usable(cwd_raw) or usable(fallback_raw)
+    if not cwd:
         return "SKIP:non-project-cwd"
     homes = _home_candidates()
-    if cwd in homes:
+    if os.path.normcase(cwd) in homes:
         # #186 follow-up (operator decision 2026-07-28): a session running AT
         # $HOME is a general desktop-app chat — real content the operator
         # wants captured — so it routes to a CATCH-ALL project instead of a
@@ -130,10 +174,10 @@ def guard(cwd_raw, fallback_raw=""):
     # empty-basename guard (a marker at a drive root yields basename '',
     # which must SKIP, never POST {"project":""} into a server 400).
     git_active = ".git" in markers
-    cur = cwd
+    cur = cwd  # case-preserving (_walkpath); homes comparisons fold both sides
     remembered = None  # nearest non-git-marker dir seen so far
     while True:
-        if cur in homes:
+        if os.path.normcase(cur) in homes:
             # Home boundary (exclusive, unchanged): markers AT or above
             # $HOME (e.g. ~/.claude) must not qualify a home subdir — but
             # a marker dir remembered BELOW the boundary names the project.
@@ -165,8 +209,12 @@ def main():
     res = guard(cwd, fallback)
     if res.startswith("SKIP:"):
         # Carry the offending cwd into hook.log (#186 asked for the raw value
-        # at debug level — the skip line is that channel).
-        print(f"{res} cwd={cwd or fallback or '<none>'}")
+        # at debug level — the skip line is that channel). Newlines/CRs are
+        # flattened (#294 review catch): a path may legally carry them on
+        # POSIX, and a raw newline here forges extra well-formed-looking
+        # hook.log lines that substring-grepping consumers cannot tell apart.
+        shown = (cwd or fallback or "<none>").replace("\n", " ").replace("\r", " ")
+        print(f"{res} cwd={shown}")
     else:
         print(res)
 

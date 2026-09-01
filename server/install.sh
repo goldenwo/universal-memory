@@ -384,7 +384,11 @@ if [ "${1:-}" = "--verify" ]; then
     # of the nearest marker dir) name it `install-verify`, and nesting under
     # $_SMOKE_HOME reuses the existing rm -rf cleanup.
     _SMOKE_CWD="$_SMOKE_HOME/install-verify"
-    mkdir -p "$_SMOKE_CWD/.git" 2>/dev/null || true
+    # A failed mkdir must surface as ITSELF (review catch): the guard fails
+    # closed on a markerless dir (SKIP, no misattribution), but the smoke
+    # would then fail with "Check server/token." — a wrong lead.
+    mkdir -p "$_SMOKE_CWD/.git" 2>/dev/null || \
+      _vfail "hook-smoke" "could not stage the smoke cwd (mkdir $_SMOKE_CWD/.git failed) — the failure below is local, not server/token"
     # Metadata built via json.dumps so the temp paths survive spaces/backslashes.
     _SMOKE_META=$(UM_VERIFY_TRANSCRIPT="$_SMOKE_TRANSCRIPT" UM_VERIFY_CWD="$_SMOKE_CWD" "$_VERIFY_PY" -c '
 import json, os

@@ -786,6 +786,9 @@ echo "=== G11 (#294): marker-only project under \$HOME names the marker dir ==="
 H=$(fresh_home g11)
 CWD_MARKER_SUB="$H/dev/marker-proj/sub"; mkdir -p "$CWD_MARKER_SUB"
 touch "$H/dev/marker-proj/package.json"
+# Second marker level (review catch): nearest-wins discriminated on the
+# write path too — farthest-wins would return dev.
+touch "$H/dev/package.json"
 TP="$TMPDIR_ROOT/g11.jsonl"; write_transcript "$TP" 2
 STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_MARKER_SUB")")
 

@@ -70,8 +70,8 @@ PY=$(um_find_python) || { um_log "skip=no-python signal=$(um_signal_anomaly no-p
 # #186/#294: the project slug runs through the non-project guard
 # (lib/project_guard.py — home-check + marker walk-up on the FULL cwd, with
 # the $CLAUDE_CWD/pwd fallback guarded too; #294: the slug names the project
-# ROOT the walk finds — naming rule: guard()'s docstring, the canonical
-# statement). A skip prints the SKIP sentinel as the ONLY output line,
+# ROOT the walk finds — naming rule: the D1 algorithm comment inside
+# guard(), the canonical statement). A skip prints the SKIP sentinel as the ONLY output line,
 # preserving the `case "$META" in SKIP:*)` contract.
 # ---------------------------------------------------------------------------
 UM_GUARD_LIB="$SCRIPT_DIR/lib"
@@ -92,7 +92,7 @@ cwd = meta.get("cwd") or ""
 fallback = os.environ.get("UM_GUARD_FALLBACK", "")
 res = guard(cwd, fallback)
 if res.startswith("SKIP:"):
-    shown = cwd or fallback or "<none>"
+    shown = (cwd or fallback or "<none>").replace("\n", " ").replace("\r", " ")
     print(f"{res} cwd={shown}"); sys.exit(0)
 print(sid)
 print("true" if meta.get("stop_hook_active") else "false")

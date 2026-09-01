@@ -731,7 +731,12 @@ assert_not_contains "T21: CLAUDE_CWD (fallback) not consulted when stdin has cwd
 # non-project-scoped output).
 # ---------------------------------------------------------------------------
 echo "=== T22 (#294): marker-less cwd skips the fetch, keeps the rubric ==="
-NOMARK="$TMPDIR_ROOT/scratch-nomark"; mkdir -p "$NOMARK"
+# UNDER the synthetic FAKE_HOME (review catch): a TMPDIR_ROOT sibling
+# walks past the synthetic home into the REAL profile tree on Windows and
+# SKIPs only because the ambient AppData chain happens to be marker-free —
+# host state, not a fixture. Under FAKE_HOME the synthetic boundary caps
+# the walk on both platforms.
+NOMARK="$FAKE_HOME/scratch-nomark"; mkdir -p "$NOMARK"
 rm -f "$FAKE_HOME/.um/hook.log"
 write_mock_api 400 -
 output=$(CLAUDE_CWD="$NOMARK" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \

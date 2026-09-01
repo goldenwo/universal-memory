@@ -671,6 +671,11 @@ echo "=== G11 (#294): marker-only project under \$HOME names the marker dir ==="
 H=$(fresh_home g11)
 CWD_MARKER_SUB="$H/dev/marker-proj/sub"; mkdir -p "$CWD_MARKER_SUB"
 touch "$H/dev/marker-proj/package.json"
+# TWO marker levels on one walk path (review catch — a farthest-wins
+# mutation survived every suite): dev/ also carries a marker; D1 rule 2
+# says the NEAREST names it, so the expected slug stays marker-proj and a
+# farthest/last-seen implementation returns dev and goes red.
+touch "$H/dev/package.json"
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_MARKER_SUB")")
 
 reset_calls
@@ -751,15 +756,22 @@ assert_eq "G14: .git-file dir names the project" \
 # implementation ignores the excluded .git and names inner15 via the
 # fixed-point exit; an implementation that hardcodes .git dominance
 # regardless of the active set names outer15 and goes red. Fixture sits
-# OUTSIDE the synthetic $HOME (suite default) so the walk runs to the
-# filesystem fixed point; hermeticity comes from the override — nothing in
-# real CI ancestry can carry .um-g15-marker, and every real .git is inert
+# OUTSIDE the synthetic $HOME (suite default) so on Linux CI the walk runs
+# to the filesystem fixed point (the branch this case covers THERE); on
+# Windows dev boxes the walk exits at the REAL USERPROFILE boundary
+# instead (review catch — only HOME is synthetic), so treat the
+# fixed-point coverage claim as CI-scoped. The ASSERTION is platform-
+# independent either way; hermeticity comes from the override — nothing
+# in real ancestry can carry .um-g15-marker, and every real .git is inert
 # when excluded from the active set.
 # ===========================================================================
 echo "=== G15 (#294): excluded .git exerts no dominance (fixed-point exit) ==="
 H=$(fresh_home g15)
 CWD_G15="$TMPDIR_ROOT/outer15/inner15/sub"; mkdir -p "$CWD_G15" "$TMPDIR_ROOT/outer15/.git"
 touch "$TMPDIR_ROOT/outer15/inner15/.um-g15-marker"
+# outer15 carries the custom marker TOO (review catch): nearest-active-
+# marker selection is pinned here as well — farthest-wins returns outer15.
+touch "$TMPDIR_ROOT/outer15/.um-g15-marker"
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_G15")")
 
 reset_calls
@@ -776,6 +788,27 @@ else
 fi
 assert_eq "G15: nearest ACTIVE marker names it; excluded .git has no dominance" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner15"}'
+
+# ===========================================================================
+# G16 (#294 review catch): slug case is PRESERVED. The first cut named from
+# a normcase()'d path — Windows lowercased every slug (MyRepo -> myrepo),
+# splitting layers against the CLI's git-rev-parse naming and against
+# case-preserving platforms; every other fixture in this suite is lowercase,
+# which is why 338 green assertions never noticed.
+# ===========================================================================
+echo "=== G16 (#294): mixed-case root name survives verbatim ==="
+H=$(fresh_home g16)
+CWD_MC="$TMPDIR_ROOT/MixedCase-Proj"; mkdir -p "$CWD_MC/.git" "$CWD_MC/sub"
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_MC/sub")")
+
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "posted http=200"; then
+  pass "G16: child posted"
+else
+  fail "G16: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G16: slug preserves the on-disk case"   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"MixedCase-Proj"}'
 
 # ===========================================================================
 # Summary

@@ -114,7 +114,9 @@ fi
 # ---------------------------------------------------------------------------
 AUTO_START_SCRIPT="$SCRIPT_DIR/auto-start.sh"
 if [ -x "$AUTO_START_SCRIPT" ]; then
-  bash "$AUTO_START_SCRIPT" || true  # fail-soft
+  # </dev/null (#294 review catch): the hook's stdin carries the SessionStart
+  # envelope (read FIRST, above) — a child must never inherit-and-consume it.
+  bash "$AUTO_START_SCRIPT" </dev/null || true  # fail-soft
 fi
 
 # First-session welcome banner TEXT. Whether it is shown is decided in the
@@ -179,7 +181,7 @@ except Exception:
 fallback = os.environ.get("UM_GUARD_FALLBACK", "")
 res = guard(cwd, fallback)
 if res.startswith("SKIP:"):
-    shown = cwd or fallback or "<none>"
+    shown = (cwd or fallback or "<none>").replace("\n", " ").replace("\r", " ")
     print(f"{res} cwd={shown}")
 else:
     print(res)

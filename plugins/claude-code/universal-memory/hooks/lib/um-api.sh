@@ -157,6 +157,7 @@ _um_api_request() {
 #   `<ts> <hook> posted http=<code> [n=<count>] project=<slug>`
 #   `<ts> <hook> skip=<reason> [cwd=<path>]` / `<ts> <hook> error=<reason>`
 #   `<ts> session-start probe …` / `<ts> session-start state project=<slug>`
+#   `<ts> session-start state skip=<reason> cwd=<path>`
 # (Formerly cited "spec §5" — that doc is archived; this comment is the
 # living definition.)
 # Hook name comes from $UM_HOOK_NAME (set it before sourcing/calling) else the
