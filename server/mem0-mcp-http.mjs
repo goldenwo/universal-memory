@@ -44,7 +44,12 @@ import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
 import { assertScanNotSaturated, searchConfig, umGetAll, wrapMem0Read } from './lib/mem0-read.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
-import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, UNDATED_FACTOR } from './lib/ranking.mjs';
+import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, undatedFactorFor } from './lib/ranking.mjs';
+// #297: the undated factor is corpus-relative — a per-request read of the H-independent
+// statistic cache plus a derivation at the request's own H (lib/decay-env.mjs is the ONE
+// owner of the two decay env reads, shared with buildStats — spec D25).
+import { undatedImputation } from './lib/undated-imputation.mjs';
+import { isDecayEnabled, resolveHalfLifeDays } from './lib/decay-env.mjs';
 import { parseTemporalWindow } from './lib/temporal-query.mjs';
 
 // Temporal over-fetch constants (spec D-a). The cap borrows
@@ -454,6 +459,11 @@ export async function initMemory() {
 		// can set MEM0_HISTORY_DB_PATH to a bind-mounted path.
 		historyDbPath: process.env.MEM0_HISTORY_DB_PATH || '/tmp/mem0-history.db',
 	});
+	// #297 (spec D16): the undated-imputation singleton is built unconfigured at import time;
+	// hand it the full-corpus scan as a THUNK over the live `memory` binding (never a captured
+	// value), scoped exactly like /api/stats' own scan. Inert until a decay-enabled search or
+	// the boot kick calls refreshIfDue() — with decay off nothing runs (I2).
+	undatedImputation.configure({ scan: () => umGetAll(memory, { userId: USER_ID, limit: FULL_SCAN_LIMIT }) });
 	// Retry warmup — Qdrant may not be fully ready the instant the container reports healthy,
 	// and compose's depends_on/service_healthy cannot be fully trusted across all Qdrant image
 	// tags (some image variants don't ship the binaries their healthchecks would need).
@@ -1841,6 +1851,8 @@ export async function handleCheckpointRequest(req, res, ctx) {
  *   Phase B/C/D will extend ctx with `ctx.logger`, `ctx.metrics`,
  *   `ctx.rateLimiter`, `ctx.auth`, etc. — unified contract across all list/state
  *   handlers keeps middleware injection consistent (A.8 sweep).
+ *   `ctx._undatedImputation` (#297) overrides the module-level undated-imputation cache — the
+ *   seam the keyed eval threads a scratch-scoped instance (or the D19 fixed-policy stub) through.
  */
 export async function doSearch(query, limit, includeSuperseded, full = false, ctx = {}) {
 	// U2 (#171 Stage A): recall telemetry — serving duration measured across the
@@ -1924,7 +1936,23 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// (D-b0). Gating on "a window parsed" alone would put D-b1's skip inside
 	// this arm, silently disabling decay for exactly the zero-in-window queries
 	// D-b1 predicts are common.
-	const decayEnabled = process.env.UM_TEMPORAL_DECAY === 'true';
+	const decayEnabled = isDecayEnabled();
+	// #297 (spec §4.2 step 4): H is read PER REQUEST through the one owner (D25 — the previous
+	// `parseInt(... || '30', 10) || 30` let a negative H through, D18) and hoisted above the
+	// branch so both arms see the same value. The undated factor is ONE cache read + ONE
+	// derivation per request: the read path's ctx DI convention resolves the instance
+	// (`ctx?._undatedImputation` — the eval harness never runs initMemory(), so the module
+	// singleton would sit in fallback for a whole keyed run), `get()` is synchronous (never
+	// awaits a scan), `refreshIfDue()` is fire-and-forget and never rejects. Both arms receive
+	// the same `uf` even if a refresh lands mid-request (I5), derived from this request's H (I3).
+	const halfLife = resolveHalfLifeDays();
+	let uf = 1;
+	if (decayEnabled) {
+		const ui = ctx?._undatedImputation ?? undatedImputation;
+		const imp = ui.get();
+		ui.refreshIfDue();
+		uf = undatedFactorFor(imp.ageDaysAtQuantile, halfLife);
+	}
 	const inWindowCount = windowFetch ? countInWindow(items, temporalWindow) : 0;
 	const temporalActive = windowFetch && inWindowCount > 0;
 	if (temporalActive) {
@@ -1932,9 +1960,11 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		// the scan (it resolves + parses a date per candidate, on the hottest path).
 		items = applyTemporalWindow(items, temporalWindow, {
 			inWindowCount,
-			// DJ-1/DJ-2: decay's exact constant, conditionally — see ranking.mjs header for why
+			// DJ-1/DJ-2: decay's exact value, conditionally — see ranking.mjs header for why
 			// neither a window-native value nor an unconditional demotion survives review.
-			undatedFactor: decayEnabled ? UNDATED_FACTOR : 1,
+			// #297: the value is the per-request corpus-derived factor (or the fallback), the
+			// same number the decay arm receives below (I5).
+			undatedFactor: decayEnabled ? uf : 1,
 		});
 	} else {
 		// D-b1: a window resolved but nothing falls inside it. The fetch was
@@ -1946,11 +1976,10 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 		// flag-off output" as an actual property rather than a claim.
 		if (windowFetch) items = items.slice(0, baseLimit);
 		if (decayEnabled) {
-			// Unchanged from before this arc: UM_DECAY_HALF_LIFE_DAYS controls the
-			// rate (default 30d). Applied after the status filter so only allowed
-			// results are re-ranked.
-			const halfLife = parseInt(process.env.UM_DECAY_HALF_LIFE_DAYS || '30', 10) || 30;
-			items = applyTemporalDecay(items, halfLife);
+			// UM_DECAY_HALF_LIFE_DAYS controls the rate (default 30d; hoisted above through
+			// resolveHalfLifeDays). Applied after the status filter so only allowed results are
+			// re-ranked. #297: the undated branch takes the per-request corpus-derived factor.
+			items = applyTemporalDecay(items, halfLife, { undatedFactor: uf });
 		}
 	}
 	// DE3 / spec §6.1: strip internal system docs (e.g. _um_embedding_stamp)
@@ -3758,5 +3787,10 @@ if (IS_MAIN) {
 	server.listen(PORT, '0.0.0.0', () => {
 		console.log(`[mem0-mcp] HTTP server listening on 0.0.0.0:${PORT}`);
 		console.log('[mem0-mcp] Endpoints: /health, /openapi.yaml, /mcp (JSON-RPC), /api/*');
+		// #297 boot kick (spec §4.2 step 4, P10): with decay ON, start the first corpus refresh
+		// so the first query is not on fallback; initMemory() above has already configured the
+		// scan thunk. Gated on the flag — with decay off nothing runs and no log line appears
+		// (the CI smoke gate greps for exactly that, spec §6.6). Fire-and-forget; never rejects.
+		if (isDecayEnabled()) undatedImputation.refreshIfDue();
 	});
 }
