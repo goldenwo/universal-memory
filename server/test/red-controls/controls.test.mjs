@@ -52,6 +52,11 @@ const TABLES = {
   clamp: {
     controls: ['RCC1'], cases: 3, subcases: 3, banner: 'clamp baseline',
   },
+  // #297 relative undated imputation (spec §6.3 Roster pin): RCR1-RCR6 over the eight
+  // table-resident R cases (R1, R2, R3-pure, R4, R5, R9, R12, R13).
+  relative: {
+    controls: ['RCR1', 'RCR2', 'RCR3', 'RCR4', 'RCR5', 'RCR6'], cases: 8, subcases: 12, banner: 'relative baseline',
+  },
 };
 
 function runControls() {
