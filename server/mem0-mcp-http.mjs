@@ -3078,7 +3078,9 @@ export function createRequestHandler(ctx = {}) {
 		if (url.pathname === '/api/stats' && req.method === 'GET') {
 			// #231: listAll defaults inside buildStats to the native scroll;
 			// ctx?._umGetAll is the test seam (same convention as ctx.memory).
-			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats', listAll: ctx?._umGetAll });
+			// #297: `imputation` is the same test seam shape (buildStats defaults it to the module
+			// singleton, exactly as listAll defaults to umGetAll — spec D16).
+			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats', listAll: ctx?._umGetAll, imputation: ctx?._undatedImputation });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(body));
 			return;

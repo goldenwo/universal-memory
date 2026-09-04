@@ -191,7 +191,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-0.25)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor; with decay also enabled, undated results inside the window take the same imputed factor (exp(-0.25)) as under decay.',
+          'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by an imputed factor — relative to the dated cohort\'s age at the policy quantile when the corpus statistic is available, else exp(-0.25) — rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor; with decay also enabled, undated results inside the window take the same imputed factor as under decay.',
       },
       metadata: ref('MemoryMetadata'),
       hash: { type: 'string' },
@@ -216,7 +216,7 @@ const SCHEMAS = {
       score: {
         type: 'number',
         description:
-          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take a fixed imputed factor rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead; with decay also enabled, undated results inside the window take the same imputed factor (exp(-0.25)) as under decay.',
+          'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take an imputed factor (relative to the dated cohort\'s age at the policy quantile when the corpus statistic is available, else exp(-0.25)) rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead; with decay also enabled, undated results inside the window take the same imputed factor as under decay.',
       },
     },
   },
@@ -1392,15 +1392,15 @@ const GPT_DESCRIPTION_OVERRIDES = [
     // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
     at: 'components.schemas.CompactMemoryResult.properties.score.description',
     expect:
-      'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take a fixed imputed factor rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead; with decay also enabled, undated results inside the window take the same imputed factor (exp(-0.25)) as under decay.',
-    text: 'Relevance score (search results only; absent on list/recent). With UM_TEMPORAL_DECAY=true this is the decayed score - undated results take a fixed imputed factor. With UM_TEMPORAL_QUERY=true and a resolved date expression the window re-rank applies; both on: undated take the same factor in-window.',
+      'Optional relevance score (present on search results; absent on list/recent). When UM_TEMPORAL_DECAY=true this is the decayed score — undated results take an imputed factor (relative to the dated cohort\'s age at the policy quantile when the corpus statistic is available, else exp(-0.25)) rather than being left unscaled; when UM_TEMPORAL_QUERY=true and a date expression resolves, it is the window-re-ranked score instead; with decay also enabled, undated results inside the window take the same imputed factor as under decay.',
+    text: 'Relevance score (search results only). With UM_TEMPORAL_DECAY=true this is the decayed score; undated results take an imputed factor, corpus-relative when available, else exp(-0.25). With UM_TEMPORAL_QUERY=true a resolved date window re-ranks instead; both on, undated take the same factor.',
   },
   {
     // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
     at: 'components.schemas.MemoryResult.properties.score.description',
     expect:
-      'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by a fixed imputed factor (exp(-0.25)) rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor; with decay also enabled, undated results inside the window take the same imputed factor (exp(-0.25)) as under decay.',
-    text: 'Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed score: dated results scale by exp(-age/halfLife), undated ones by a fixed imputed factor. With UM_TEMPORAL_QUERY=true and a resolved date expression the window re-rank applies instead; both on: undated take the same factor in-window.',
+      'Relevance score. When UM_TEMPORAL_DECAY=true this is the decayed score: a result with a resolvable event time is scaled by exp(-age/halfLife), and a result WITHOUT one is scaled by an imputed factor — relative to the dated cohort\'s age at the policy quantile when the corpus statistic is available, else exp(-0.25) — rather than left unscaled. When UM_TEMPORAL_QUERY=true and the query resolves a date expression, the window re-rank applies INSTEAD of decay and out-of-window results carry a demotion factor; with decay also enabled, undated results inside the window take the same imputed factor as under decay.',
+    text: 'Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed score: dated results scale by exp(-age/halfLife), undated ones by an imputed factor (corpus-relative, else exp(-0.25)). With UM_TEMPORAL_QUERY=true a resolved date window re-ranks instead; both on, undated take the same factor.',
   },
 ];
 

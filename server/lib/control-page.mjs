@@ -821,6 +821,17 @@ function corpusTile(stats) {
   const projectMap = asPlainObject(corpus.points_by_project);
   const byProject = projectMap === null ? null : Object.keys(projectMap);
 
+  // #297 (spec D21): the ONE imputation row, in WIRE names, behind the same shape guard as
+  // every other block — absent or malformed ⇒ no row, never a throw. `mode` is untrusted
+  // payload text and reaches the page only through t() (entity-escaped element text).
+  const imputation = asPlainObject(stats.undated_imputation);
+  const imputationRow = imputation === null
+    ? ''
+    : `          <tr><th scope="row">Undated imputation</th><td>${t(String(imputation.mode))}`
+      + ` · cohort ${cell(imputation.cohort_n)} · A_q ${cell(imputation.age_days_at_quantile)} d`
+      + ` · applied ${cell(imputation.applied_factor)} · computed ${cell(imputation.computed_age_ms)} ms ago`
+      + ` · ${imputation.last_refresh_failed === true ? '<span class="s-red">last refresh FAILED</span>' : 'last refresh ok'}</td></tr>\n`;
+
   // The `(unknown)` fallback bucket (buildStats' catch-all for a point with
   // no readable `metadata.project`) renders as "unattributed" and visually
   // distinct — every OTHER bucket, including the operator-named `$HOME`
@@ -843,7 +854,7 @@ function corpusTile(stats) {
       <table>
         <tbody>
           <tr><th scope="row">Points</th><td>${pointsCell}</td></tr>
-        </tbody>
+${imputationRow}        </tbody>
       </table>
       <table>
         <thead>
