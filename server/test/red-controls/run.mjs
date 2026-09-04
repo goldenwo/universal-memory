@@ -28,7 +28,7 @@
 // cross-table leak, and the `unexpected` gate below catches it mechanically UNLESS the
 // control names it in `alsoFlip` as expected-by-mechanism. Only two entries do:
 //   RC1 → alsoFlip includes 'W11': W11 is the window table's retune tripwire and reddens
-//         on ANY change to UNDATED_FACTOR/UNDATED_EFOLDINGS BY DESIGN, so RC1's hardcoded
+//         on ANY change to UNDATED_FACTOR/UNDATED_FALLBACK_EFOLDINGS BY DESIGN, so RC1's hardcoded
 //         magnitude necessarily reaches it.
 //   RC5 → alsoFlip includes 'W8': W8 pins JOINTNESS by calling `mod.applyTemporalDecay`
 //         directly on its own undated item, so a mutant of decay's own conditionality
@@ -116,7 +116,7 @@ const CONTROLS = [
     id: 'RC1',
     table: 'decay',
     what: 'UNDATED_FACTOR hardcoded to 1.0 (the pre-policy behaviour)',
-    mutate: (src) => replaceOnce(src, 'export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);',
+    mutate: (src) => replaceOnce(src, 'export const UNDATED_FACTOR = Math.exp(-UNDATED_FALLBACK_EFOLDINGS);',
       'export const UNDATED_FACTOR = 1.0;'),
     mustFlip: ['U1', 'U2', 'U4', 'U10', 'V3'],
     mustPass: ['U3', 'U5', 'U6', 'U7'],
@@ -134,8 +134,8 @@ const CONTROLS = [
     table: 'decay',
     what: 'score guard removed — undated branch uses (r.score || 1) * f',
     mutate: (src) => replaceOnce(src,
-      "      if (typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * UNDATED_FACTOR };",
-      '      return { ...r, score: (r.score || 1) * UNDATED_FACTOR };'),
+      "      if (typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * imputedFactor };",
+      '      return { ...r, score: (r.score || 1) * imputedFactor };'),
     mustFlip: ['U5', 'U6', 'V3'],
     mustPass: ['U1', 'U3'],
     alsoFlip: [],
@@ -165,10 +165,10 @@ const CONTROLS = [
     table: 'decay',
     what: 'undated branch grades on createdAt (the fallback D-h removed)',
     mutate: (src) => replaceOnce(src,
-      '      return { ...r, score: r.score * UNDATED_FACTOR };',
+      '      return { ...r, score: r.score * imputedFactor };',
       '      const ca = Date.parse(r.createdAt ?? r.created_at ?? "");\n'
       + '      if (Number.isFinite(ca)) return { ...r, score: r.score * Math.exp(-((now - ca) / DAY_MS) / halfLifeDays) };\n'
-      + '      return { ...r, score: r.score * UNDATED_FACTOR };'),
+      + '      return { ...r, score: r.score * imputedFactor };'),
     mustFlip: ['U1', 'V3'],
     mustPass: ['U3'],
     // Every undated fixture item carries a 120-day-old createdAt (deliberately, so this
@@ -207,9 +207,9 @@ const CONTROLS = [
     table: 'decay',
     what: 'the undated branch MUTATES in place instead of returning a copy',
     mutate: (src) => replaceOnce(src,
-      '      return { ...r, score: r.score * UNDATED_FACTOR };',
+      '      return { ...r, score: r.score * imputedFactor };',
       [
-        '      r.score = r.score * UNDATED_FACTOR;',
+        '      r.score = r.score * imputedFactor;',
         '      return r;',
       ].join('\n')),
     mustFlip: ['U9'],
@@ -245,8 +245,12 @@ const CONTROLS = [
       '  const uf = UNDATED_FACTOR;'),
     mustFlip: ['W2', 'W3', 'JV1'],
     mustPass: ['W1', 'W11', 'W5', 'W4'],
-    alsoFlip: [],
-    why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items',
+    // W8 (#297 spec §6.1): jointness is now pinned at a NON-constant factor passed to both arms,
+    // so a window that ignores the opt and imputes the module constant necessarily diverges from
+    // decay's side. Expected-by-mechanism (measured at plan T6(a)); declared per spec §6.3, never
+    // absorbed by weakening W8 back to the constant.
+    alsoFlip: ['W8'],
+    why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items; W8 now passes a non-constant factor and so reddens by design',
   },
   {
     id: 'RCW2',

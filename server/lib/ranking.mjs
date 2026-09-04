@@ -4,7 +4,9 @@
  * Exports:
  *   resolveItemDate(r)                          → epoch ms | null
  *   isUsableDate(v)                             → boolean (write-side guard)
- *   applyTemporalDecay(results, halfLifeDays)   → sorted results[]
+ *   datedAgeQuantile(items, opts)               → {n, ageDays, belowMinCohort, futureExcluded} (#297, pure)
+ *   undatedFactorFor(ageDays, halfLifeDays)     → the undated factor for a request's H (#297, pure)
+ *   applyTemporalDecay(results, halfLifeDays, {undatedFactor}) → sorted results[]
  *   applyTemporalWindow(results, window, opts)  → sorted results[]
  *   countInWindow(results, window)              → number
  *
@@ -12,20 +14,22 @@
  * `createdAt` / `created_at` are deliberately not consulted — see resolveItemDate
  * for the measurement behind that.
  *
- * The undated cohort's factor is now a function of CONFIGURATION ONLY (spec §3, the joint
- * policy): when the window is active and UM_TEMPORAL_DECAY is enabled, applyTemporalWindow
- * imputes the SAME UNDATED_FACTOR decay uses (0.7788) — not an independently-tuned window
- * constant. When decay is disabled the window leaves undated results untouched, today's
+ * The undated cohort's factor is a function of CONFIGURATION and the CORPUS, never of the
+ * returned set (spec 2026-08-05 §3, the joint policy; #297 the relative rule): when the window
+ * is active and UM_TEMPORAL_DECAY is enabled, applyTemporalWindow imputes the SAME factor decay
+ * uses — the per-request read doSearch derives from the corpus statistic (`undatedFactorFor`,
+ * relative mode) or the pinned fallback UNDATED_FACTOR (0.7788) — not an independently-tuned
+ * window constant. When decay is disabled the window leaves undated results untouched, today's
  * behaviour, byte-identical. Three call-site paths, one factor per configuration (§4.2):
- *   1. window resolves, ≥1 in-window candidate → window re-rank: 0.7788 (decay on) / 1.0
- *      (decay off);
- *   2. window resolves, 0 in-window → falls through to the decay arm: 0.7788 (decay on) /
- *      1.0, no re-rank (decay off);
+ *   1. window resolves, ≥1 in-window candidate → window re-rank: the request's factor (decay
+ *      on) / 1.0 (decay off);
+ *   2. window resolves, 0 in-window → falls through to the decay arm: the request's factor
+ *      (decay on) / 1.0, no re-rank (decay off);
  *   3. no window (incl. parser fail-open) → decay arm, same as 2.
  * Phrasing moves a query between rows; pool composition and `limit` move it between rows 1
  * and 2 — none of the three changes the factor anymore (resolves #237). Measured, not
- * inferred — see UNDATED_FACTOR.
- * The window imputes decay's exact constant, not its own: any other value reproduces the
+ * inferred — see the UNDATED IMPUTATION block below.
+ * The window imputes decay's exact value, not its own: any other value reproduces the
  * per-query factor flip at smaller magnitude — equality is the only fixed point. It imputes
  * conditionally (only when decay is enabled) because an unconditional demotion would spend
  * recall in configurations where no inconsistency exists.
@@ -50,7 +54,7 @@
 const DAY_MS = 86400000;
 
 /**
- * Imputed age for an undated point, in e-foldings of the decay timescale.
+ * UNDATED IMPUTATION — a CORPUS STATISTIC with a pinned fallback (#297).
  *
  * WHY THIS EXISTS. `applyTemporalDecay` used to return an undated result with its score
  * untouched, defended as "undated means neutral, never penalised". That was true while
@@ -58,7 +62,20 @@ const DAY_MS = 86400000;
  * 1.0 stops being the middle of the range and becomes the TOP of it: undated points became
  * strictly better than every dated one, without anyone choosing that.
  *
- * WHY A FIXED CONSTANT, and not a median of the result set: on the decay path the fetch
+ * WHY A CORPUS STATISTIC, and why not the result set. No FIXED constant can be neutral at the
+ * median: the dated cohort is dominated by write-side-stamped session summaries accumulating
+ * at ~7.8/day with no pruning, so the median dated age — and with it the factor that would
+ * place an undated point in the middle of the range — moves monotonically (measured 08-05 →
+ * 08-18 → 09-03: median age 6.3 → 17.3 → 28.7 d; factor at the median 0.811 → 0.562 →
+ * 0.384). A retuned constant is stale on arrival. So the undated factor is derived from the
+ * CORPUS: `datedAgeQuantile` computes the type-7 quantile A_q of the recallable, non-system,
+ * non-future dated cohort's ages, a cache module (lib/undated-imputation.mjs) refreshes it
+ * lazily on a TTL, and doSearch derives `undatedFactorFor(A_q, H) = min(1, exp(-A_q/H))` per
+ * request and passes it to BOTH re-rankers as `undatedFactor`. UNDATED_FACTOR survives as the
+ * FALLBACK — before the first successful statistic, below UNDATED_MIN_COHORT, or for a
+ * non-finite / non-positive H.
+ *
+ * WHY NOT A MEDIAN OF THE RESULT SET (P2, kept verbatim — the reason the set is never consulted): on the decay path the fetch
  * limit equals the result limit, so the dated sample is typically 1-3 points — the
  * estimator would be noisiest exactly where it runs, would be an ordering no-op at n=1,
  * and one very old point would annihilate the undated cohort. It is applied
@@ -66,50 +83,89 @@ const DAY_MS = 86400000;
  * item's factor depend on the rest of the returned set: the same point would score 1.0x at
  * limit=5 and 0.779x at limit=10.
  *
+ * The requirement that survives both: ONE factor per configuration, never a function of the
+ * returned set (I1). The statistic is corpus-level for exactly that reason.
+ *
  * ⚠ SCOPE OF THAT CLAIM — it is a property of THIS FUNCTION, not of the system, and an
  * earlier version of this comment overstated it. `doSearch` chooses between the two
  * re-rankers on `temporalActive` (a window parsed AND at least one candidate dated-and-
  * in-window), so with UM_TEMPORAL_QUERY also enabled the *choice* is set-dependent even
  * though this function is not. Measured end-to-end with both flags on (2026-08-07, at the
- * pre-retune UNDATED_EFOLDINGS = 1): the same undated point on the same query scored 0.80
+ * pre-retune e-foldings E = 1): the same undated point on the same query scored 0.80
  * (factor 1.000) when the pool held a dated in-window candidate and 0.294 (factor 0.368)
  * when it did not — and because the window path widens the fetch, the literal limit=5 vs
  * limit=10 case above reproduces, with the factors the other way round. At that constant, the
  * retune to 0.25 would only have narrowed the flip (1.000 vs 0.779), not removed it — this
  * function alone was set-independent, the pair was not.
  *
- * That cross-pair flip is now resolved (#237): `applyTemporalWindow` imputes this same
- * constant on its own undated branch when decay is enabled — see the module header and its
- * `undatedFactor` opt for the mechanism.
+ * That cross-pair flip is resolved (#237): `applyTemporalWindow` imputes the same value on its
+ * own undated branch when decay is enabled — see the module header and its `undatedFactor`
+ * opt — and #297 makes it the per-request corpus-derived value on both arms (I5).
  *
- * Deliberately NOT an env knob: this module is pure and takes `halfLifeDays` as a
- * parameter. The feature already has a kill switch (UM_TEMPORAL_DECAY), and a knob's only
- * distinct capability would be "decay on, undated at 1.0" — i.e. re-enabling the defect.
+ * Deliberately NOT env knobs (spec #297 §3.3 R-f, D5): this module is pure and takes
+ * `halfLifeDays` as a parameter; the quantile / min-cohort / TTL are POLICY constants pinned by
+ * tests (R13 / R3 / R6). The feature already has a kill switch (UM_TEMPORAL_DECAY), and a
+ * factor knob's only distinct capability would be "decay on, undated at 1.0" — i.e.
+ * re-enabling the defect.
  *
- * MAGNITUDE — RETUNED 1 → 0.25 (2026-08-07), still re-decided at flip time. Measured on
- * the live corpus (2026-08-05, 215 dated points): median age 6.3d, median factor 0.811,
- * ZERO points below exp(-1) — one e-folding demoted undated points below the WHOLE dated
- * cohort. The before-arm capture (eval/results/2026-08-07-undated-arm-run{1,2}.json) then
- * measured gold headroom at median 2.41x / min 1.42x against exp(-1)'s 2.72x demotion:
- * 16 of 24 undated golds had less headroom than the policy applied, projecting the
- * after-arm gate G2 near 0.33 against a floor near 0.94 — the policy would have failed
- * its own recall-safety gate. E = 0.25 sits above the live median imputed age
- * (−ln(0.811) ≈ 0.21 e-foldings, so undated still ranks below the typical dated point)
- * and below the all-golds-survive bound (ln(1.4247) ≈ 0.354), with margin for the ~1-2%
- * run-to-run score drift the doubled capture showed. The size must STILL be re-decided
- * against a re-measured age distribution before decay is enabled in production (the
- * flip-precondition issue): today's distribution is transient (the write-side stamp is
- * younger than the spread it produced), so any constant chosen now — including this one —
- * is calibrated against doc-rewrite recency, not corpus age.
+ * MAGNITUDE HISTORY: E = 1 → 0.25 (2026-08-07, measured against the 2026-08-05 live spread;
+ * the before-arm capture eval/results/2026-08-07-undated-arm-run{1,2}.json projected G2 ≈ 0.33
+ * at exp(-1) against a floor near 0.94). Re-measured 2026-08-18 and 2026-09-03 (#239): the
+ * neutral E moved 0.21 → 0.58 → 0.96, which is why the constant became the fallback and the
+ * statistic the rule (#297).
  *
  * SCOPE OF THE "DEMOTION" CLAIM: it holds on the positive half-line. A NEGATIVE score
  * would be moved toward zero, i.e. promoted — a property inherited symmetrically from the
  * dated branch's own `(r.score || 1) * factor`, which is left byte-identical here.
  * Unreachable in practice: embedding cosines against real text are positive, and the
  * bouncer's absolute gate already assumes a positive range.
+ *
+ * ---- WHAT THE FLIP-OWNER CONTROLS (spec #297 §4.6, carried VERBATIM — docs/ is gitignored, so
+ * this comment, .env.example and the #239 issue comment are the durable homes) ----
+ *
+ * ### 4.6 What the flip-owner controls (documented, pinned, no env)
+ *
+ * - `UNDATED_QUANTILE = 0.5` — the placement target. Higher q (e.g. 0.25 from
+ *   the top is q = 0.75 in age) demotes undated LESS. It is a one-line CODE
+ *   change **plus the text sites that must move in the same commit** (round
+ *   9): R1's and R12's hand-computed literals, the §6.4 property oracle, and
+ *   every prose site that names the quantile — `.env.example` (§7 item 4)
+ *   and the `ranking.mjs` header. The two openapi schema strings and the two
+ *   GPT texts are written q-AGNOSTIC ("corpus-relative" / "the dated
+ *   cohort's age at the policy quantile") so they do NOT move. Pinned by
+ *   R13 (`UNDATED_QUANTILE === 0.5`, the U10 pattern — the one other place
+ *   the never-the-import discipline is suspended), whose comment enumerates
+ *   those sites.
+ * - `UNDATED_FALLBACK_EFOLDINGS = 0.25` — the pre-refresh / small-cohort
+ *   value. Pinned by U10.
+ * - `UNDATED_MIN_COHORT = 20` (in `ranking.mjs`, D14) and
+ *   `UNDATED_IMPUTATION_TTL_MS = 3_600_000` (in the cache module) —
+ *   correctness floor and cadence. Pinned by R3-pure + R3-cache / R6. TTL
+ *   = 1 h because `A_q` drifts ~0.042 d per hour by pure ageing (composition
+ *   adds ~0.33 points/hour to a 400-point cohort), i.e. ~0.14 % factor
+ *   drift per hour and ~3.4 % per day: one hour bounds the served factor
+ *   within ~0.2 % of live at 24 scans/day, chosen for operator legibility
+ *   during the #239 window, not from a cost constraint (round 7).
+ *   `CLOCK_SKEW_TOLERANCE_MS` is reused as the future-exclusion boundary
+ *   (D11), not a new constant.
+ *
+ * Durable homes (round 9 — `docs/` is gitignored, `git ls-files docs` is
+ * empty, so this section is NOT where the flip-owner will read it): this
+ * §4.6 is carried VERBATIM as the constants' block comment in the
+ * `ranking.mjs` header (plan T1 step 4), summarised in the `.env.example`
+ * decay paragraph (§7 item 4: "the levers are code constants by decision;
+ * read the live value from `/api/stats.undated_imputation.applied_factor`
+ * once enabled — with decay off it reads 1 and `factor` is null; there is
+ * no pre-flip preview, D20"),
+ * and pasted with §4.5's two alert conditions into the #239 comment at
+ * ship (plan T7 step 3).
  */
-export const UNDATED_EFOLDINGS = 0.25;
-export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);   // 0.7788007830714049
+export const UNDATED_FALLBACK_EFOLDINGS = 0.25;
+export const UNDATED_FACTOR = Math.exp(-UNDATED_FALLBACK_EFOLDINGS);   // 0.7788007830714049 — the FALLBACK
+/** Placement target for the corpus statistic — an age quantile (0.5 = the median). Pinned by R13. */
+export const UNDATED_QUANTILE = 0.5;
+/** Below this many dated points the statistic is not trusted and the fallback applies. Pinned by R3-pure. */
+export const UNDATED_MIN_COHORT = 20;
 
 /**
  * Items dated up to this far past a window's end edge still count as in-window.
@@ -191,6 +247,75 @@ export function isUsableDate(v) {
   return typeof v === 'string' && Number.isFinite(new Date(v).getTime());
 }
 
+/** Type-7 (linear-interpolation) quantile of a non-empty numeric array — the method the 09-03 measurement used (spec Q1). */
+function quantileType7(values, q) {
+  const a = [...values].sort((x, y) => x - y);
+  const h = (a.length - 1) * q;
+  const lo = Math.floor(h);
+  const hi = Math.ceil(h);
+  return a[lo] + (h - lo) * (a[hi] - a[lo]);
+}
+
+/**
+ * The corpus statistic (#297 spec §4.1 / §4.2 step 1): the age quantile of the dated cohort C.
+ *
+ * C = items whose `metadata.valid_from` passes `isUsableDate` (the write-side contract — a
+ * parseable STRING; `true`/`1` are refused here even though `resolveItemDate` would read them as
+ * 1970-01-01) AND resolves to at most `now + skewMs`. FUTURE-dated points beyond the skew window
+ * are EXCLUDED and counted, never clamped in (D11): a per-item clamp is a local safety property,
+ * but inside a population statistic it is a global lever — N future-stamped writes would drag A_q
+ * toward 0 and the factor toward 1.0, the exact defect this policy removes. Within-skew negatives
+ * clamp to age 0. The caller has already applied `filterSystemDocs` + `isRecallable` (P4: the
+ * cohort is what search can RETURN). H does not enter — the statistic is H-independent (D12).
+ *
+ * The min-cohort decision lives HERE, not in the cache module, so the red controls can reach it
+ * (D14). `ageDays` is null when n = 0 or n < minCohort (the latter with `belowMinCohort: true`).
+ *
+ * Pure: no I/O, no clock of its own (`now` is a parameter defaulting to Date.now()).
+ *
+ * @param {Array<object>} items
+ * @param {{q?: number, now?: number, skewMs?: number, minCohort?: number}} [opts]
+ * @returns {{n: number, ageDays: number|null, belowMinCohort: boolean, futureExcluded: number}}
+ */
+export function datedAgeQuantile(items, {
+  q = UNDATED_QUANTILE, now = Date.now(), skewMs = CLOCK_SKEW_TOLERANCE_MS, minCohort = UNDATED_MIN_COHORT,
+} = {}) {
+  const ages = [];
+  let futureExcluded = 0;
+  for (const r of Array.isArray(items) ? items : []) {
+    const vf = r?.metadata?.valid_from;
+    if (!isUsableDate(vf)) continue;
+    const ms = new Date(vf).getTime();
+    if (ms > now + skewMs) { futureExcluded++; continue; }
+    ages.push(Math.max(0, (now - ms) / DAY_MS));
+  }
+  const n = ages.length;
+  const belowMinCohort = n < minCohort;
+  if (n === 0 || belowMinCohort) return { n, ageDays: null, belowMinCohort, futureExcluded };
+  return { n, ageDays: quantileType7(ages, q), belowMinCohort, futureExcluded };
+}
+
+/**
+ * The undated factor for ONE request (#297 spec §4.2 step 1, D12/D18): derived at read time from
+ * the cached H-independent statistic and the request's own H, so I3 (an undated item and a dated
+ * item aged exactly A_q receive the same factor) holds for every H — including one changed at
+ * runtime. Self-defending: a null statistic OR a non-finite / non-positive H returns the FALLBACK
+ * constant (a negative H would make `exp(-A_q/H)` clamp to exactly 1.0 — the inflation this
+ * policy exists to prevent). A non-finite `ageDays` is treated the same, so this function never
+ * hands the two re-rankers a NaN their guards would resolve DIFFERENTLY (decay → fallback,
+ * window → 1), which would break I5.
+ *
+ * @param {number|null|undefined} ageDays - A_q from `datedAgeQuantile`, or null (fallback).
+ * @param {number} halfLifeDays - the request's decay timescale (an e-folding time).
+ * @returns {number} a factor in (0, 1].
+ */
+export function undatedFactorFor(ageDays, halfLifeDays) {
+  if (ageDays == null || !Number.isFinite(ageDays) || !Number.isFinite(halfLifeDays) || halfLifeDays <= 0) {
+    return UNDATED_FACTOR;
+  }
+  return Math.min(1, Math.exp(-ageDays / halfLifeDays));
+}
+
 /**
  * Is `r` inside `window`?
  *
@@ -253,27 +378,39 @@ export function windowFalloffDays(window) {
  * min(1, exp(-age/H)), so a FUTURE valid_from (negative age) ranks at cosine parity,
  * never above it (#238; pre-clamp a far-future date overflowed exp() to Infinity).
  * As everywhere in this module, the never-inflated claim is scoped to the positive
- * half-line — see UNDATED_EFOLDINGS' scope note above.
+ * half-line — see the UNDATED IMPUTATION block's scope note above.
  *
  * @param {Array<object>} results  - Search result objects with optional score
  *                                   and metadata.valid_from.
  * @param {number}        halfLifeDays - Decay timescale in days (an e-folding time, not a half-life).
+ * @param {{undatedFactor?: number}} [opts] - `= {}` default is load-bearing (every existing
+ *   two-argument call stays byte-identical — spec #297 I2). `undatedFactor`: the factor
+ *   doSearch derived for THIS request via `undatedFactorFor` (relative mode); a finite value in
+ *   (0, 1] is used, anything else falls back to UNDATED_FACTOR — a degenerate value must not
+ *   become a hard filter (0) or an inflation (> 1), the same self-validation contract as the
+ *   window's DJ-4 guard.
  * @returns {Array<object>} New array sorted by decayed score descending.
  *                          Input array and its items are NOT mutated.
  */
-export function applyTemporalDecay(results, halfLifeDays) {
+export function applyTemporalDecay(results, halfLifeDays, { undatedFactor } = {}) {
   const now = Date.now();
+  // Named `imputedFactor` (not `uf` as in applyTemporalWindow) so the two undated-branch lines
+  // stay textually distinct — the red controls anchor each one by exact text.
+  const imputedFactor = Number.isFinite(undatedFactor) && undatedFactor > 0 && undatedFactor <= 1
+    ? undatedFactor
+    : UNDATED_FACTOR;
   const decayed = results.map((r) => {
     const ms = resolveItemDate(r);
     if (ms === null) {
-      // No resolvable date — impute a fixed fraction of the decay timescale (see UNDATED_FACTOR).
+      // No resolvable date — impute the request's undated factor (corpus-relative when a
+      // statistic exists, else the pinned fallback — see the UNDATED IMPUTATION block).
       // GUARD: never MINT a score. `(r.score || 1) * f` would give a score-less item a
       // score and lift it from last place to first, and would turn a genuine `score: 0`
       // into `1 * f` — an item scoring 0.0 outranking one scoring 0.1. Both invert
       // ordering in the exact direction this policy exists to correct. Multiplying a
       // numeric 0 yields 0, which is right.
       if (typeof r.score !== 'number') return { ...r };
-      return { ...r, score: r.score * UNDATED_FACTOR };
+      return { ...r, score: r.score * imputedFactor };
     }
     const ageDays = (now - ms) / DAY_MS;
     const factor = Math.min(1, Math.exp(-ageDays / halfLifeDays));

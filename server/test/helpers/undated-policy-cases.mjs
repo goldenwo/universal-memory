@@ -189,9 +189,9 @@ export const CASES = {
 
   U10: [
     // The ONE place the import is compared to the literal.
-    ['UNDATED_FACTOR is exactly Math.exp(-0.25)', (_decay, mod) => {
+    ['UNDATED_FACTOR is exactly Math.exp(-0.25) — the FALLBACK pin (#297: the live factor is corpus-relative)', (_decay, mod) => {
       assert.equal(mod.UNDATED_FACTOR, Math.exp(-0.25));
-      assert.equal(mod.UNDATED_EFOLDINGS, 0.25);
+      assert.equal(mod.UNDATED_FALLBACK_EFOLDINGS, 0.25);
     }],
     ['UNDATED_FACTOR is a constant strictly inside (0,1)', (_decay, mod) => {
       assert.ok(mod.UNDATED_FACTOR > 0 && mod.UNDATED_FACTOR < 1);
