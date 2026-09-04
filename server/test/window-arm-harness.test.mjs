@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { undatedFactorFor, UNDATED_FACTOR } from '../lib/ranking.mjs';
+import { createUndatedImputation } from '../lib/undated-imputation.mjs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
@@ -219,10 +221,33 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
 
   const embed = async () => ({ vector: [1, 0, 0], tokensIn: 1, tokensOut: 0, costUsd: 0 });
   const cosineStrict = () => 0.1;
+  // #297: the engagement precondition (spec §6.5) runs BEFORE recallPass on every decay-ON run
+  // and needs the full-corpus scan seam (umGetAll's `{results}` shape) plus a cache factory.
+  const goldIds = () => new Set([...refToId].filter(([ref]) => ref.startsWith('w1:0')).map(([, id]) => id));
+  const listAll = async (_memory, args) => {
+    calls.push({ op: 'listAll', args });
+    return { results: [...payloads].map(([id, p]) => ({ id, metadata: { eval_ref: p.eval_ref, lane: p.lane, ...(p.valid_from !== undefined ? { valid_from: p.valid_from } : {}) } })) };
+  };
+  const createImputation = (o) => createUndatedImputation({ ...o, log: { info: () => {}, warn: () => {} }, retry: (fn) => fn() });
   // Records the LIVE UM_TEMPORAL_DECAY the wrapper pinned, so the --decay off test can
   // assert doSearch actually observed 'false' rather than just trusting the return value.
-  const doSearch = async (query) => {
+  // The precondition's TWO probe searches (decay-off raw, then decay-on through the seam)
+  // always see the correct, factor-aware shape — the read path's contract — so the guard
+  // tests below still reach the projection guards they pin; `resultIdsMode` shapes only
+  // the MEASURED searches that follow.
+  const doSearch = async (query, _limit, _inc, _full, ctx) => {
     calls.push({ op: 'doSearch', query, decayEnv: process.env.UM_TEMPORAL_DECAY });
+    const searchesSoFar = calls.filter((c) => c.op === 'doSearch').length;
+    const rowId0 = query.split(' ')[0];
+    const target0 = refToId.get(`${rowId0}:0`);
+    if (searchesSoFar <= 2 && goldIds().has(target0)) {
+      let score = 0.9;
+      if (process.env.UM_TEMPORAL_DECAY === 'true') {
+        const seam = ctx?._undatedImputation;
+        score = 0.9 * (seam ? undatedFactorFor(seam.get().ageDaysAtQuantile, 30) : UNDATED_FACTOR);
+      }
+      return { _temporalWidened: true, results: [{ id: target0, score }, { id: 'noise', score: 0.1 }] };
+    }
     if (resultIdsMode === 'mismatched') {
       return { _temporalWidened: true, results: [{ id: 'unrelated-1', score: 0.9 }, { id: 'unrelated-2', score: 0.1 }] };
     }
@@ -248,7 +273,7 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
   const generateDistractors = (count, { seed }) => Array.from({ length: count }, (_, i) => ({ text: `distractor ${seed}-${i}`, lane: 'work' }));
   const lanesFromRows = () => ['work', 'dev'];
 
-  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
+  return { calls, payloads, refToId, umAdd, client, listAll, createImputation, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
 }
 
 const runWindowArgs = (f, over = {}) => ({
@@ -256,7 +281,10 @@ const runWindowArgs = (f, over = {}) => ({
   umAdd: f.umAdd, memory: f.memory, client: f.client, doSearch: f.doSearch,
   embed: f.embed, cosineStrict: f.cosineStrict, NOOP_METRICS: f.NOOP_METRICS,
   generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
-  distractors: 3, distractorSeed: 1,
+  createImputation: f.createImputation, listAll: f.listAll,
+  // #297: companion + w2 + 25 distractors = 27 dated points ≥ UNDATED_MIN_COHORT, so the
+  // engagement precondition (decay-ON runs) reaches `mode: relative` before the guards.
+  distractors: 25, distractorSeed: 1,
   ...over,
 });
 
