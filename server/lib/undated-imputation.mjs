@@ -1,0 +1,193 @@
+/**
+ * server/lib/undated-imputation.mjs — the corpus-statistic cache behind relative undated
+ * imputation (#297 spec §4.2 step 3).
+ *
+ * WHAT IT HOLDS. The H-INDEPENDENT statistic only (spec D12): the dated cohort's age at the
+ * policy quantile (`ageDaysAtQuantile` = A_q), its size, the future-excluded count, and the
+ * attempt/success bookkeeping. NEVER a factor and NEVER an H — `doSearch` derives the factor per
+ * request with `undatedFactorFor(A_q, halfLife)` from the request's own H, so I3 (an undated item
+ * and a dated item aged exactly A_q receive the same factor) holds even when H changes at runtime.
+ *
+ * HOW IT REFRESHES (spec D3/D13/D17, invariant I7 — at most ONE scan ATTEMPT per TTL per
+ * instance, success or failure):
+ *   - `get()` is synchronous and never awaits a scan; it returns the same frozen value object
+ *     between refreshes, so one request's single read sees one epoch (I5).
+ *   - `refreshIfDue()` is single-flight and fire-and-forget; its returned promise NEVER rejects
+ *     (the whole body sits in one try/catch, and even the log calls are guarded). It runs when
+ *     `now − lastAttemptAt ≥ UNDATED_IMPUTATION_TTL_MS` or nothing was ever attempted.
+ *     `lastAttemptAt` is stamped BEFORE the scan, whatever the outcome (D13): a never-succeeding
+ *     cache costs one attempt per TTL, not one per request.
+ *   - Inside that ONE attempt the scan runs under the house `withRetry` (D17), so a transient
+ *     qdrant blip is absorbed within the attempt while a real outage still costs at most the hour.
+ *   - The scan's resolved value is normalised `Array.isArray(raw) ? raw : raw?.results`
+ *     (`umGetAll` returns `{results}`; the stats-payload precedent). Any other shape — and a
+ *     throw after retries — is a FAILED attempt: the last good value is kept, `lastRefreshFailed`
+ *     and `lastError` are set, ONE warn is logged per failed attempt. `computedAt` is freshness:
+ *     it moves only on success, and it is stamped with the attempt's START instant (the statistic
+ *     reflects the corpus as of scan start), so `lastAttemptAt ≥ computedAt` holds exactly and
+ *     the stats block's `computed_age_ms − attempt_age_ms` is the attempt-minus-success gap the
+ *     stuck-cache alert reads (spec §4.5).
+ *   - The cohort is what search can RETURN: `filterSystemDocs` + `isRecallable` are applied
+ *     BEFORE `datedAgeQuantile` (P4). A `belowMinCohort` result is `mode: 'fallback'` with
+ *     `cohortN` shown; the min-cohort decision itself lives in ranking.mjs (D14).
+ *   - Saturation (`≥ FULL_SCAN_LIMIT` items): the quantile is still computed (a 10k sample is a
+ *     fine quantile; qdrant scrolls in point-id order and UM ids are content-hash uuidv5 /
+ *     randomUUID, so the first-10k window is age-unbiased) and `saturated: true` is set for the
+ *     operator.
+ *
+ * LOG CONTRACT (spec §4.2 step 6 — machine-read by the CI smoke gate, the §7 proof-of-life grep,
+ * the post-flip check and the rollback trigger; pinned VERBATIM, R6 asserts the strings):
+ *   info `undated-imputation: refreshed` {mode, cohortN, ageDaysAtQuantile, futureExcluded,
+ *        saturated, scanDurationMs, scanItems}   — H-independent fields only
+ *   warn `undated-imputation: refresh failed — serving <mode>`
+ *
+ * DI SEAMS: `scan`, `now`, `log`, `retry` — no `halfLifeDays` (D12). The module also exports a
+ * module-level SINGLETON created UNCONFIGURED (D16): until `configure({scan})` is called, `get()`
+ * returns the fallback value and `refreshIfDue()` is a no-op that records no attempt.
+ * `initMemory()` in mem0-mcp-http.mjs injects the scan as a THUNK over its live `memory`
+ * binding, so a singleton built at import time is correct after boot; `buildStats` defaults to
+ * the same singleton so both stats callers render the block.
+ */
+
+import { withRetry } from './retry.mjs';
+import { filterSystemDocs } from './system-docs.mjs';
+import { isRecallable } from './recallable.mjs';
+import { datedAgeQuantile, UNDATED_QUANTILE } from './ranking.mjs';
+import { FULL_SCAN_LIMIT } from './mem0-read.mjs';
+import { getLogger } from './logger.mjs';
+
+/**
+ * Refresh cadence. One hour because A_q drifts ~0.042 d per hour by pure ageing (composition
+ * adds ~0.33 points/hour to a 400-point cohort), i.e. ~0.14 % factor drift per hour and ~3.4 %
+ * per day: one hour bounds the served factor within ~0.2 % of live at 24 scans/day — chosen for
+ * operator legibility during the #239 window, not from a cost constraint (spec §4.6, R-f: not
+ * an env knob). Pinned by R6.
+ */
+export const UNDATED_IMPUTATION_TTL_MS = 3_600_000;
+
+const REFRESHED_MSG = 'undated-imputation: refreshed';
+const FAILED_MSG_PREFIX = 'undated-imputation: refresh failed — serving ';
+
+const FALLBACK_VALUE = Object.freeze({
+  mode: 'fallback',
+  quantile: UNDATED_QUANTILE,
+  cohortN: null,
+  ageDaysAtQuantile: null,
+  futureExcluded: null,
+  computedAt: null,
+  lastAttemptAt: null,
+  lastRefreshMs: null,
+  lastScanItems: null,
+  lastRefreshFailed: false,
+  saturated: false,
+  lastError: null,
+});
+
+/** A log call must never turn a refresh into a rejection. */
+function safely(fn) {
+  try { fn(); } catch { /* a throwing logger is not this module's failure to surface */ }
+}
+
+/**
+ * Build a cache instance.
+ *
+ * @param {object} [deps]
+ * @param {(() => Promise<unknown>)|null} [deps.scan] - full-corpus enumerator; production passes a
+ *   thunk over `umGetAll(memory, {userId, limit: FULL_SCAN_LIMIT})`. `null` = unconfigured (D16).
+ * @param {() => number} [deps.now] - clock seam (epoch ms).
+ * @param {{info: Function, warn: Function}} [deps.log] - logger seam (pino-shaped: `(fields, msg)`).
+ * @param {(fn: Function, opts: object) => Promise<unknown>} [deps.retry] - retry seam (the house
+ *   `withRetry` by default — spec D17).
+ */
+export function createUndatedImputation({ scan = null, now = Date.now, log, retry = withRetry } = {}) {
+  let scanFn = typeof scan === 'function' ? scan : null;
+  let value = FALLBACK_VALUE;
+  let inflight = null;
+  const logger = () => log ?? getLogger();
+
+  /** The current value: synchronous, frozen, the same object until a refresh lands. */
+  function get() {
+    return value;
+  }
+
+  /** Inject (or replace) the scan seam — the boot-time step for the module singleton (D16). */
+  function configure({ scan: nextScan }) {
+    scanFn = typeof nextScan === 'function' ? nextScan : null;
+  }
+
+  /** Kick a refresh if the TTL has elapsed (or nothing was ever attempted). Never rejects. */
+  function refreshIfDue() {
+    if (scanFn === null) return Promise.resolve();
+    if (inflight) return inflight;
+    const t = now();
+    if (value.lastAttemptAt != null && t - value.lastAttemptAt < UNDATED_IMPUTATION_TTL_MS) {
+      return Promise.resolve();
+    }
+    inflight = attempt(t).finally(() => { inflight = null; });
+    return inflight;
+  }
+
+  async function attempt(startedAt) {
+    // D13: the attempt is stamped BEFORE the scan, whatever happens next.
+    value = Object.freeze({ ...value, lastAttemptAt: startedAt });
+    try {
+      let scanDurationMs = 0;
+      const raw = await retry(async () => {
+        const s0 = now();
+        const r = await scanFn();
+        scanDurationMs = now() - s0;
+        return r;
+      }, { op: 'undated-imputation-scan' });
+      const items = Array.isArray(raw) ? raw : raw?.results;
+      if (!Array.isArray(items)) {
+        throw new Error('scan resolved to neither an array nor {results: array}');
+      }
+      const cohort = filterSystemDocs(items).filter(isRecallable);
+      const q = datedAgeQuantile(cohort, { now: startedAt });
+      const next = {
+        mode: q.ageDays == null ? 'fallback' : 'relative',
+        quantile: UNDATED_QUANTILE,
+        cohortN: q.n,
+        ageDaysAtQuantile: q.ageDays,
+        futureExcluded: q.futureExcluded,
+        computedAt: startedAt,
+        lastAttemptAt: startedAt,
+        lastRefreshMs: now() - startedAt,
+        lastScanItems: items.length,
+        lastRefreshFailed: false,
+        saturated: items.length >= FULL_SCAN_LIMIT,
+        lastError: null,
+      };
+      value = Object.freeze(next);
+      safely(() => logger().info({
+        mode: next.mode,
+        cohortN: next.cohortN,
+        ageDaysAtQuantile: next.ageDaysAtQuantile,
+        futureExcluded: next.futureExcluded,
+        saturated: next.saturated,
+        scanDurationMs,
+        scanItems: next.lastScanItems,
+      }, REFRESHED_MSG));
+    } catch (err) {
+      value = Object.freeze({
+        ...value,
+        lastRefreshFailed: true,
+        lastError: String(err?.message ?? err),
+      });
+      const mode = value.mode;
+      safely(() => logger().warn({
+        err_class: err?.code ?? err?.name ?? 'Error',
+        err_message: err?.message,
+        mode,
+      }, `${FAILED_MSG_PREFIX}${mode}`));
+    }
+  }
+
+  return { get, refreshIfDue, configure };
+}
+
+/**
+ * The module-level singleton (D16): created UNCONFIGURED. `initMemory()` calls
+ * `undatedImputation.configure({scan})` right after it assigns the module-level `memory`.
+ */
+export const undatedImputation = createUndatedImputation();
