@@ -1264,9 +1264,25 @@ export const AGED_TOLERANCE_DAYS = 2;
  */
 export const PROBE_SCORE_TOLERANCE = 1e-3;
 
+/**
+ * The harness's OWN corpus statistic from the same scan the cache runs — shared by the
+ * engagement precondition (the expected value the cache must reproduce) and by the window
+ * arm's decay-OFF forecast (code review 2026-09-04: a projection needs the corpus factor on the
+ * one run where a projection is meaningful — the unscaled baseline).
+ */
+export async function corpusUndatedStatistic({ listAll, memory, now, halfLifeDays = resolveHalfLifeDays() }) {
+  if (typeof listAll !== 'function') throw new Error('mq-eval: corpusUndatedStatistic needs the listAll scan seam');
+  const raw = await listAll(memory, { userId: EVAL_USER, limit: FULL_SCAN_LIMIT });
+  const items = Array.isArray(raw) ? raw : raw?.results;
+  if (!Array.isArray(items)) throw new Error('mq-eval: the scan resolved to neither an array nor {results: array}');
+  const cohort = filterSystemDocs(items).filter(isRecallable);
+  const q = datedAgeQuantile(cohort, { now });
+  return { items, q, factor: undatedFactorFor(q.ageDays, halfLifeDays) };
+}
+
 export async function engageUndatedImputation({
   policy = 'relative', memory, listAll, createImputation, doSearch, now, halfLifeDays = resolveHalfLifeDays(),
-  agedK = 1, seeds, goldIds, fixtureRefs, probeRows, retry,
+  agedK = 1, seeds, goldIds, fixtureRefs, probeRows, retry, requireWidened = false,
 }) {
   const invalid = (msg) => new Error(`mq-eval INVALID (engagement precondition, policy=${policy}): ${msg}`);
   if (policy !== 'relative' && policy !== 'fixed') throw invalid(`unknown policy '${policy}'`);
@@ -1283,19 +1299,17 @@ export async function engageUndatedImputation({
   const scan = () => listAll(memory, { userId: EVAL_USER, limit: FULL_SCAN_LIMIT });
 
   // Statistic half — computed by the harness first, from its own scan.
-  const raw = await scan();
-  const items = Array.isArray(raw) ? raw : raw?.results;
-  if (!Array.isArray(items)) throw invalid('the scan resolved to neither an array nor {results: array}');
+  let stat;
+  try { stat = await corpusUndatedStatistic({ listAll, memory, now, halfLifeDays }); } catch (err) { throw invalid(err.message); }
+  const { items, q } = stat;
   const goldStillDated = items.filter((it) => goldIdSet.has(it.id) && it.metadata?.valid_from != null);
   if (goldStillDated.length > 0) throw invalid(`${goldStillDated.length} gold id(s) still carry valid_from at the first scan — the strip did not land first`);
-  const cohort = filterSystemDocs(items).filter(isRecallable);
-  const q = datedAgeQuantile(cohort, { now });
   if (q.n !== expectedCohortN) throw invalid(`scanned dated cohort ${q.n} ≠ expected ${expectedCohortN} (|Set(writeId)| − |gold|)`);
   if (q.ageDays == null) throw invalid(`no statistic (n=${q.n}, belowMinCohort=${q.belowMinCohort}) — the seeded corpus must hold ≥ UNDATED_MIN_COHORT dated points`);
   if (agedK !== 1 && Math.abs(q.ageDays - AGED_TARGET_DAYS) > AGED_TOLERANCE_DAYS) {
     throw invalid(`aged run: realised A_q ${q.ageDays.toFixed(2)} d is not within ±${AGED_TOLERANCE_DAYS} d of ${AGED_TARGET_DAYS} d (k=${agedK})`);
   }
-  const ufRel = undatedFactorFor(q.ageDays, halfLifeDays);
+  const ufRel = stat.factor;
 
   let instance;
   if (policy === 'relative') {
@@ -1324,6 +1338,7 @@ export async function engageUndatedImputation({
     delete process.env.UM_TEMPORAL_DECAY;
     for (const row of probeRows) {
       const sr = await doSearch(row.query, 10, false, true, baseCtx);
+      if (requireWidened && sr?._temporalWidened !== true) throw invalid(`probe row ${row.id} did not take the window path (decay-OFF probe)`);
       const top = (sr?.results ?? [])[0];
       if (top && goldIdSet.has(top.id) && typeof top.score === 'number' && top.score > 0) {
         probe = { row, id: top.id, rawScore: top.score };
@@ -1339,15 +1354,17 @@ export async function engageUndatedImputation({
   }
   if (process.env.UM_TEMPORAL_DECAY !== 'true') throw invalid('the decay-ON probe needs UM_TEMPORAL_DECAY pinned to true');
   const on = await doSearch(probe.row.query, 10, false, true, { ...baseCtx, _undatedImputation: instance });
+  if (requireWidened && on?._temporalWidened !== true) throw invalid(`probe row ${probe.row.id} did not take the window path (decay-ON probe)`);
   const hit = (on?.results ?? []).find((r) => r.id === probe.id);
   if (!hit || typeof hit.score !== 'number') throw invalid(`the probe hit ${probe.id} vanished from the decay-ON search`);
   const returnedScore = hit.score;
   if (Math.abs(returnedScore - probe.rawScore * expectedFactor) > PROBE_SCORE_TOLERANCE) {
     throw invalid(`probe ${probe.id}: returned ${returnedScore} ≠ raw ${probe.rawScore} × ${expectedFactor.toFixed(6)} (the seam did not engage the ${policy} policy)`);
   }
-  if (Math.abs(returnedScore - probe.rawScore * otherFactor) <= PROBE_SCORE_TOLERANCE) {
-    throw invalid(`probe ${probe.id}: returned ${returnedScore} matches the OTHER policy's factor ${otherFactor.toFixed(6)}`);
-  }
+  // "…and NOT the other policy's factor" is enforced by the discrimination guard above, not by a
+  // second comparison: with raw × |f_expected − f_other| > 2T and |returned − raw × f_expected|
+  // ≤ T, the other product is provably > T away — a mirror assertion here could never fire
+  // (code review 2026-09-04; the guard has its own test at the exact coincidence cohort).
 
   return {
     instance,
@@ -1462,7 +1479,9 @@ async function runUndatedArmDecayPinned({
   return {
     timestamp: new Date(now).toISOString(),
     arm: 'undated',
-    flags: evalRunFlags({ decay, autosupersede: 'false' }),
+    // UM_TEMPORAL_QUERY is not pinned by this arm; it is RECORDED so a truthy operator value
+    // (which would move the arm onto the window re-ranker) can never hide (code review 2026-09-04).
+    flags: { ...evalRunFlags({ decay, autosupersede: 'false' }), UM_TEMPORAL_QUERY: process.env.UM_TEMPORAL_QUERY ?? null },
     // #297 D26: top-level camelCase, presence = version signal (absent ⇔ a pre-#297 producer).
     undatedImputation: engaged?.stamp ?? null,
     fixture: {
@@ -1780,23 +1799,35 @@ async function runWindowArmTemporalPinned({
       policy: decayPolicy, memory, listAll, createImputation, doSearch, now,
       seeds: seedInfo.seeds, goldIds, fixtureRefs: fixtureRefsW, retry: imputationRetry,
       probeRows: materialised.filter((r) => r.undated_gold === true),
+      requireWidened: true, // the probes must take the window path, like every measured row
     })
     : null;
 
-  // project.factor is a REPORT of what the measured policy applies to these scores (J8): the
-  // corpus-derived factor under `relative`, the constant under `fixed` — P7's import-only
-  // form is gone because the policy is no longer a constant.
-  const projectFactor = engaged?.factor ?? UNDATED_FACTOR;
+  // The PROJECTION (spec 2026-08-13 §7.3 step 3) forecasts the policy's effect on UNSCALED
+  // scores, so it exists only on decay-OFF runs: under decay ON the live path has already
+  // applied the factor and a projection would apply it twice (uf²) — the 2026-08-13 arc's
+  // artifacts double-counted from the day applyTemporalWindow began imputing (code review
+  // 2026-09-04). On the decay-OFF baseline the forecast factor is the CORPUS statistic (#297
+  // P7 — the constant only when the seeded corpus holds no statistic).
+  const forecast = decay === 'true' || typeof listAll !== 'function'
+    ? null
+    : await corpusUndatedStatistic({ listAll, memory, now });
+  const projectFactor = decay === 'true' ? null : (forecast?.factor ?? UNDATED_FACTOR);
+  // The headroom REPORT names the demotion the measured policy applied (decay ON) or would
+  // apply (the decay-OFF forecast).
+  const reportFactor = engaged?.factor ?? projectFactor ?? UNDATED_FACTOR;
   const recall = await recallPass({
     doSearch, embed, cosineStrict, NOOP_METRICS, memory,
     rows: materialised, seeds: seedInfo.seeds, ks, cost, latency, captureScores: true,
     now, requireTemporalWidened: true,
-    project: { cohort: 'undated', factor: projectFactor, writeIds: goldIdSet },
+    ...(decay === 'true' ? {} : { project: { cohort: 'undated', factor: projectFactor, writeIds: goldIdSet } }),
     imputation: engaged?.instance,
   });
 
-  const { g1, g2, headroom } = undatedArmMetrics(recall.details, goldRefs, { factor: projectFactor });
+  const { g1, g2, headroom } = undatedArmMetrics(recall.details, goldRefs, { factor: reportFactor });
 
+  let projection = null;
+  if (recall.projection) {
   // Projection block (spec §7.3 step 3): restricted to the GOLD rows only — a dated row's
   // own target is never scaled, so folding it into the mean would dilute G2W with rows the
   // policy cannot affect.
@@ -1829,6 +1860,16 @@ async function runWindowArmTemporalPinned({
   if (strayEvictions.length > 0) {
     throw new Error(`mq-eval window-arm PROJECTION GUARD (d): ${strayEvictions.length} evicted ref(s) fall outside goldRefs`);
   }
+    projection = {
+      g2wProjected,
+      evictedRefs,
+      undatedCandidatesScaled: recall.projection.undatedCandidatesScaled,
+      datedCandidatesTouched: recall.projection.datedCandidatesTouched,
+      identityG2W,
+      factor: projectFactor,
+      basis: forecast && forecast.q.ageDays != null ? 'corpus-statistic' : 'fallback-constant',
+    };
+  }
 
   return {
     timestamp: new Date(now).toISOString(),
@@ -1858,13 +1899,8 @@ async function runWindowArmTemporalPinned({
     g2,
     g1,
     headroom,
-    projection: {
-      g2wProjected,
-      evictedRefs,
-      undatedCandidatesScaled: recall.projection.undatedCandidatesScaled,
-      datedCandidatesTouched: recall.projection.datedCandidatesTouched,
-      identityG2W,
-    },
+    // null on decay-ON runs (the live path already scaled the scores — nothing to forecast).
+    projection,
     recall: { aggregate: recall.aggregate ?? null, details: recall.details },
     cost,
     latency: { umAdd: summarizeLatency(latency.umAdd), doSearch: summarizeLatency(latency.doSearch) },
@@ -2369,12 +2405,33 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
   let seedInfo = null;
   let answerGrading = null;
   let bouncerSweep = null;
+  // #297: under decay ON the main run measures the SAME policy the arms do — one scratch-scoped
+  // cache over the recall collection, refreshed once, threaded through every doSearch on that
+  // collection (recall, answer-correctness, bounce). Without it those passes would run on the
+  // module singleton, which this process never configures — the fallback policy — while the arms
+  // measured the relative one, a split the artifact could not show (code review 2026-09-04).
+  // The staleness pass runs on its own per-row-cleared collection (never ≥ UNDATED_MIN_COHORT
+  // dated points), so it sits on fallback by construction and is not threaded.
+  let mainImputation;
+  let mainImputationStamp = null;
   try {
     if (recallRows.length > 0) {
       await ensureCollection(client, recallCol, VECTOR_DIM);
       const recallMemory = makeMemory(recallCol);
       seedInfo = await seedCorpus({ umAdd, memory: recallMemory, client, rows: recallRows, latency, metrics: writeCostSink });
-      recall = await recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory: recallMemory, rows: recallRows, seeds: seedInfo.seeds, ks: [1, 3, 5, 10], cost, latency });
+      if (decay === 'true') {
+        const { createUndatedImputation } = await import('../lib/undated-imputation.mjs');
+        const { umGetAll } = await import('../lib/mem0-read.mjs');
+        mainImputation = createUndatedImputation({ scan: () => umGetAll(recallMemory, { userId: EVAL_USER, limit: FULL_SCAN_LIMIT }) });
+        await mainImputation.refreshIfDue();
+        const v = mainImputation.get();
+        const halfLife = resolveHalfLifeDays();
+        mainImputationStamp = {
+          policy: 'relative', mode: v.mode, cohortN: v.cohortN, ageDaysAtQuantile: v.ageDaysAtQuantile,
+          factor: undatedFactorFor(v.ageDaysAtQuantile, halfLife), halfLife, agedK: 1, probeId: null, rawScore: null, returnedScore: null,
+        };
+      }
+      recall = await recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, memory: recallMemory, rows: recallRows, seeds: seedInfo.seeds, ks: [1, 3, 5, 10], cost, latency, imputation: mainImputation });
       recall.seedCount = seedInfo.seeds.length;
       recall.mergedCount = seedInfo.mergedCount;
       recall.distinctIdCount = seedInfo.distinctIdCount;
@@ -2391,12 +2448,12 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
           // Manual gate-pin run (--sweep): grade every top-1 ONCE, then sweep the cost gate
           // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
           // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
-          const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel });
+          const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, imputation: mainImputation });
           bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
         } else {
           // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
           // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.
-          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER });
+          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER, imputation: mainImputation });
           const ag = answerGrading;
           umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
           umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
@@ -2429,6 +2486,8 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
     provider, model, fixtureRev,
     evalUser: EVAL_USER,
     flags: evalRunFlags({ decay }),
+    // #297 D26: the main run's imputation stamp (null on decay-OFF runs; presence = version signal).
+    undatedImputation: mainImputationStamp,
     env: { node: process.version, platform: process.platform },
     fixtures: { recall: recallFixturePath ?? '(inline)', staleness: stalenessFixturePath ?? '(inline)', noAnswer: noAnswerFixturePath ?? '(none)' },
     recall,
@@ -2906,7 +2965,11 @@ async function cliMain() {
     console.log(`  G1 (report)  mean rank ${result.g1.meanRank} (${result.g1.rowsRanked} ranked, ${result.g1.rowsUnranked} unranked)`);
     console.log(`  headroom     median ${result.headroom.median?.toFixed(2)}x, min ${result.headroom.min?.toFixed(2)}x vs the policy ${result.headroom.policyDemotion?.toFixed(2)}x demotion`);
     console.log(`               ${result.headroom.note}`);
-    console.log(`  projection   g2wProjected ${result.projection.g2wProjected} / evicted [${result.projection.evictedRefs.map((r) => r.target_ref).join(', ')}] / scaled ${result.projection.undatedCandidatesScaled}`);
+    if (result.projection) {
+      console.log(`  projection   g2wProjected ${result.projection.g2wProjected} / evicted [${result.projection.evictedRefs.map((r) => r.target_ref).join(', ')}] / scaled ${result.projection.undatedCandidatesScaled} / factor ${result.projection.factor} (${result.projection.basis})`);
+    } else {
+      console.log('  projection   (none — decay ON: the live path already applied the factor; the measured G2 is the number)');
+    }
 
     // Subset floor (plan Task 7.3): --gate evaluates the arm against `windowThresholds`,
     // never the shared `thresholds` block. A gate file WITHOUT the key is refused rather

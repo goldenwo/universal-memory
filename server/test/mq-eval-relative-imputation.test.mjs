@@ -46,7 +46,7 @@ const rows = () => [
  *     and WITHOUT the seam by the module fallback (the unconfigured singleton's value).
  */
 function fakes(opts = {}) {
-  const { dupeDistractors = 0, ignoreSeam = false, resurrectGoldDates = false } = opts;
+  const { dupeDistractors = 0, ignoreSeam = false, resurrectGoldDates = false, distractorEqualsGold = false } = opts;
   const calls = [];
   const payloads = new Map();
   const refToId = new Map();
@@ -100,7 +100,9 @@ function fakes(opts = {}) {
     return { results: [{ id: target, score }, { id: 'noise', score: 0.1 }] };
   };
   const generateDistractors = (count, { seed }) => Array.from({ length: count }, (_, i) => ({
-    text: i < dupeDistractors ? 'colliding distractor' : `distractor text ${seed}-${i}`, lane: 'work',
+    // `distractorEqualsGold`: the first distractor's text IS a gold fact's text, so the write path
+    // dedups it INTO the gold point and it returns the gold's write id.
+    text: (distractorEqualsGold && i === 0) ? 'gold one' : (i < dupeDistractors ? 'colliding distractor' : `distractor text ${seed}-${i}`), lane: 'work',
   }));
   const lanesFromRows = () => ['work', 'home'];
   const createImputation = (o) => createUndatedImputation({ ...o, log: quiet, retry: (fn) => fn() });
@@ -261,6 +263,19 @@ test('abort: too few dated points for a statistic', async () => {
   await assert.rejects(run(fakes(), { distractors: 3 }), /INVALID .*no statistic/);
 });
 
+test('abort: a distractor that dedups INTO a gold point (shares its write id) is refused — the only detector, since the set arithmetic still balances', async () => {
+  await assert.rejects(run(fakes({ distractorEqualsGold: true })), /INVALID .*gold id\(s\) appear among distractor write ids/);
+});
+
+test('abort: the discrimination guard refuses a cohort where the two policies coincide (A_q = 7.5 d ⇒ uf_rel === exp(-0.25)); just above it the run proceeds', async () => {
+  // Every dated point at the same age puts the median exactly there; the golds are stripped.
+  const rowsAt = (days) => rows().map((r) => ({ ...r, seed_facts: r.seed_facts.map((f) => ({ ...f, days_ago: days })) }));
+  await assert.rejects(run(fakes(), { rows: rowsAt(7.5) }), /INVALID .*the two policies' products sit within/);
+  const ok = await run(fakes(), { rows: rowsAt(8) });
+  assert.equal(ok.undatedImputation.ageDaysAtQuantile, 8);
+  assert.equal(ok.undatedImputation.mode, 'relative');
+});
+
 test('abort: golds still dated at the first scan', async () => {
   await assert.rejects(run(fakes({ resurrectGoldDates: true })), /INVALID .*still carry valid_from/);
 });
@@ -298,13 +313,14 @@ test('aged run: a k that lands the median outside ±2 d is INVALID', async () =>
 
 // ── decay-OFF runs have no policy to prove ─────────────────────────────────────
 
-test('decay-off run: no precondition runs (no scan), the stamp is null but the key is PRESENT (version signal)', async () => {
+test('decay-off run: no precondition runs (no scan), the stamp is null but the key is PRESENT (version signal); UM_TEMPORAL_QUERY is recorded', async () => {
   const f = fakes();
   const r = await run(f, { decay: false });
   assert.ok('undatedImputation' in r);
   assert.equal(r.undatedImputation, null);
   assert.equal(f.calls.filter((c) => c.op === 'listAll').length, 0);
   assert.equal(r.headroom.policyDemotion, 1 / UNDATED_FACTOR);
+  assert.ok('UM_TEMPORAL_QUERY' in r.flags, 'the undated arm records the window flag it does not pin');
 });
 
 // ── the corpus-sweep seam sites ────────────────────────────────────────────────

@@ -240,7 +240,9 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
     const searchesSoFar = calls.filter((c) => c.op === 'doSearch').length;
     const rowId0 = query.split(' ')[0];
     const target0 = refToId.get(`${rowId0}:0`);
-    if (searchesSoFar <= 2 && goldIds().has(target0)) {
+    // Only decay-ON runs have a probe pair (the decay-OFF probe DELETES the flag; a decay-OFF
+    // run pins it to 'false'), so the probe branch never masks a decay-OFF run's measured pass.
+    if (searchesSoFar <= 2 && process.env.UM_TEMPORAL_DECAY !== 'false' && goldIds().has(target0)) {
       let score = 0.9;
       if (process.env.UM_TEMPORAL_DECAY === 'true') {
         const seam = ctx?._undatedImputation;
@@ -299,22 +301,36 @@ const windowRowsWithBadTargetRef = () => {
   return rows;
 };
 
+// #297 (code review 2026-09-04): the projection is a decay-OFF forecast — under decay ON the live
+// path has already applied the factor, so there is nothing to project and `projection` is null.
+// The guard tests therefore run the unscaled baseline.
 test('runWindowArm: guard (a) fires when observed recall (raw order) disagrees with the identity re-rank (score order)', async () => {
   const f = windowFakes({ resultIdsMode: 'unsorted-gold' });
-  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(a\)/);
+  await assert.rejects(() => runWindowArm(runWindowArgs(f, { decay: 'off' })), /GUARD \(a\)/);
 });
 
 test('runWindowArm: guard (a) fires on a fully null measurement (target_ref matches no goldRef)', async () => {
   const f = windowFakes();
   await assert.rejects(
-    () => runWindowArm(runWindowArgs(f, { rows: windowRowsWithBadTargetRef() })),
+    () => runWindowArm(runWindowArgs(f, { rows: windowRowsWithBadTargetRef(), decay: 'off' })),
     /GUARD \(a\).*unmeasured/,
   );
 });
 
 test('runWindowArm: guard (b) fires when the live result ids never fall in the gold write-id space', async () => {
   const f = windowFakes({ resultIdsMode: 'mismatched' });
-  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(b\)|undatedCandidatesScaled/);
+  await assert.rejects(() => runWindowArm(runWindowArgs(f, { decay: 'off' })), /GUARD \(b\)|undatedCandidatesScaled/);
+});
+
+test('runWindowArm: decay ON — projection is null (the live path already applied the factor) and the imputation stamp carries the corpus statistic', async () => {
+  const f = windowFakes();
+  const out = await runWindowArm(runWindowArgs(f));
+  assert.equal(out.projection, null);
+  assert.equal(out.undatedImputation.policy, 'relative');
+  assert.equal(out.undatedImputation.mode, 'relative');
+  assert.equal(out.headroom.policyDemotion, 1 / out.undatedImputation.factor);
+  const probes = f.calls.filter((c) => c.op === 'doSearch').slice(0, 2);
+  assert.deepEqual(probes.map((p) => p.decayEnv), [undefined, 'true'], 'decay-OFF probe then decay-ON probe');
 });
 
 test('runWindowArm: --decay off pins UM_TEMPORAL_DECAY=false for doSearch and still runs to completion', async () => {
@@ -327,6 +343,10 @@ test('runWindowArm: --decay off pins UM_TEMPORAL_DECAY=false for doSearch and st
   assert.equal(out.flags.UM_TEMPORAL_DECAY, 'false');
   assert.equal(out.flags.UM_TEMPORAL_QUERY, 'true');
   assert.equal(out.projection.evictedRefs.length, 0, 'the happy-path fixture has no eviction');
+  // #297: the decay-OFF forecast uses the CORPUS statistic (P7), never the constant when one exists.
+  assert.equal(out.projection.basis, 'corpus-statistic');
+  assert.ok(out.projection.factor > 0 && out.projection.factor < 1 && out.projection.factor !== Math.exp(-0.25), `forecast factor ${out.projection.factor} is corpus-derived`);
+  assert.equal(out.headroom.policyDemotion, 1 / out.projection.factor, 'the headroom report names the forecast demotion');
   assert.equal(process.env.UM_TEMPORAL_DECAY, undefined, 'the pin must not leak past the run');
   assert.equal(process.env.UM_TEMPORAL_QUERY, undefined, 'the pin must not leak past the run');
 });

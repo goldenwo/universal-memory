@@ -191,6 +191,9 @@ export const CASES = {
       for (const a of [NaN, Infinity, -Infinity]) {
         assert.equal(mod.undatedFactorFor(a, 30), Math.exp(-0.25), `ageDays=${String(a)}`);
       }
+      // The upper clamp (#238's parity rule on the derivation): a negative age never inflates.
+      assert.equal(mod.undatedFactorFor(-5, 30), 1);
+      assert.equal(mod.undatedFactorFor(0, 30), 1);
     }],
     ['I5 at every value the derivation can emit: both re-rankers scale the same undated item identically, incl. the exp underflow floor', (decay, mod) => withFixedNow(() => {
       // exp(-A_q/H) underflows to exactly 0 past A_q/H ≈ 745; a raw 0 would be REJECTED by both

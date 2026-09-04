@@ -6,10 +6,12 @@
 // dated points — spec §10 / plan T6 step 2), or removes them again (`--cleanup`). Every point
 // carries metadata.project = '297-positive-control' so the cleanup is a filter, never a guess.
 //
-//   node --env-file=.env eval/lib/positive-control-seed.mjs            # seed 24 points, ages 1..24 d
-//   node --env-file=.env eval/lib/positive-control-seed.mjs --cleanup  # delete them
+//   node --env-file=.env eval/lib/positive-control-seed.mjs --yes [--count 24]   # seed N points, ages 1..N d
+//   node --env-file=.env eval/lib/positive-control-seed.mjs --cleanup            # delete them
 //
-// Refuses to run against anything that is not loopback qdrant — this is a verification-rig tool.
+// Refuses to run against anything that is not loopback qdrant — this is a verification-rig tool —
+// and refuses to SEED without an explicit --yes, printing the resolved target first (code review
+// 2026-09-04: it writes recallable dated points into whatever collection/userId the env names).
 
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { Memory } from 'mem0ai/oss';
@@ -37,7 +39,15 @@ if (process.argv.includes('--cleanup')) {
   process.exit(0);
 }
 
-const count = parseInt(process.argv[process.argv.indexOf('--count') + 1] || '24', 10) || 24;
+const argv = process.argv.slice(2);
+const countIdx = argv.indexOf('--count');
+const count = countIdx >= 0 ? parseInt(argv[countIdx + 1], 10) : 24;
+if (!Number.isInteger(count) || count <= 0) throw new Error(`--count needs a positive integer, got '${argv[countIdx + 1]}'`);
+console.log(JSON.stringify({ target: { host, port, collection, userId, count, project: PROJECT } }));
+if (!argv.includes('--yes')) {
+  console.error('refusing to seed without --yes (this writes recallable dated points into the collection above)');
+  process.exit(2);
+}
 const memory = wrapMem0Read(new Memory({
   embedder: getEmbedderConfig(process.env),
   llm: getFactsLlmConfig(process.env),

@@ -388,6 +388,18 @@ test('review: a throw value with no string form, and a throwing now() seam, neve
   await assert.doesNotReject(p);
 });
 
+test('review: computedAt is the attempt START instant — lastAttemptAt ≥ computedAt holds exactly even when the scan consumes clock time', async () => {
+  const now = clock();
+  const scan = async () => { now.advance(5_000); return { results: cohort(30) }; }; // the scan takes 5 s of clock
+  const cache = createUndatedImputation({ scan, now, log: fakeLog(), retry: passRetry });
+  await cache.refreshIfDue();
+  const v = cache.get();
+  assert.equal(v.computedAt, T0, 'stamped with the attempt START, not its end');
+  assert.equal(v.lastAttemptAt, T0);
+  assert.ok(v.lastAttemptAt >= v.computedAt);
+  assert.equal(v.lastRefreshMs, 5_000);
+});
+
 test('the TTL is one hour, a code constant (spec §4.6 / R-f)', () => {
   assert.equal(UNDATED_IMPUTATION_TTL_MS, 3_600_000);
 });
