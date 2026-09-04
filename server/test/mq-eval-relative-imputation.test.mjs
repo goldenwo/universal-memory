@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   runUndatedArm, engageUndatedImputation, parseArgs, materialiseValidFrom, undatedArmMetrics,
-  answerCorrectnessPass, collectBounceRows, AGED_TARGET_DAYS, AGED_TOLERANCE_DAYS,
+  answerCorrectnessPass, collectBounceRows, AGED_TARGET_DAYS, AGED_TOLERANCE_DAYS, PROBE_SCORE_TOLERANCE,
 } from '../eval/memory-quality-eval.mjs';
 import { createUndatedImputation } from '../lib/undated-imputation.mjs';
 import { undatedFactorFor, UNDATED_FACTOR } from '../lib/ranking.mjs';
@@ -217,6 +217,26 @@ test('fixed run: the stub engages the production path — mode fallback, the con
 });
 
 // ── aborts: a failed precondition is INVALID, never a pass ──────────────────────
+
+test('probe tolerance: embedding drift below PROBE_SCORE_TOLERANCE passes; a deviation above it is INVALID', async () => {
+  // Measured 2026-09-04: two embeddings of the same query moved a 0.632 cosine by 3.6e-5 between
+  // the two probe searches. The tolerance must absorb that and still reject a wrong policy.
+  assert.equal(PROBE_SCORE_TOLERANCE, 1e-3);
+  const drifting = (delta) => {
+    const f = fakes();
+    let calls = 0;
+    const doSearch = async (q, l, i, full, ctx) => {
+      const r = await f.doSearch(q, l, i, full, ctx);
+      calls++;
+      if (calls === 2) r.results[0].score += delta; // the decay-ON probe's cosine drifts
+      return r;
+    };
+    return run(f, { doSearch });
+  };
+  const ok = await drifting(3.6e-5);
+  assert.equal(ok.undatedImputation.mode, 'relative');
+  await assert.rejects(drifting(0.02), /INVALID .*did not engage the relative policy/);
+});
 
 test('abort: a read path that ignores the seam (still applying the constant) fails the relative probe', async () => {
   await assert.rejects(run(fakes({ ignoreSeam: true })), /INVALID .*did not engage the relative policy/);

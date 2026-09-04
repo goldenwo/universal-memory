@@ -1239,7 +1239,7 @@ export async function assertDateCohorts(client, collection, { undatedIds = [], d
  *   server knob.
  *   Score half (round 6) — one probe search whose decay-OFF top hit is a known undated seed
  *   (its raw score), then the same query decay-ON through the seam: relative runs assert
- *   `returned == raw × uf_rel` (1e-6) and NOT `raw × exp(-0.25)`; fixed runs assert the
+ *   `returned == raw × uf_rel` (PROBE_SCORE_TOLERANCE) and NOT `raw × exp(-0.25)`; fixed runs assert the
  *   MIRROR. The decay-OFF probe saves and restores UM_TEMPORAL_DECAY INLINE — `withDecayEnv`
  *   is documented NOT RE-ENTRANT and nesting it would run the measured pass decay-off.
  *
@@ -1253,6 +1253,16 @@ export async function assertDateCohorts(client, collection, { undatedIds = [], d
  */
 export const AGED_TARGET_DAYS = 28.7;
 export const AGED_TOLERANCE_DAYS = 2;
+/**
+ * Score-probe tolerance (absolute, on cosine-scaled scores ~0.5-0.7). The spec's draft said 1e-6;
+ * the first keyed runs (2026-09-04, the decisive reviewer) measured that two embeddings of the SAME
+ * query are not bit-identical — a 0.632 cosine moved by 3.6e-5 between the decay-off and decay-on
+ * probes, failing run 2 at 9.4e-6. 1e-3 sits two orders above that drift and two orders below the
+ * smallest policy gap the probe must discriminate (raw × |uf_rel − exp(-0.25)| ≈ 0.025 on the
+ * young cohort); the discrimination guard below refuses a cohort where the two policies' products
+ * would sit within 2× this tolerance of each other.
+ */
+export const PROBE_SCORE_TOLERANCE = 1e-3;
 
 export async function engageUndatedImputation({
   policy = 'relative', memory, listAll, createImputation, doSearch, now, halfLifeDays = resolveHalfLifeDays(),
@@ -1305,7 +1315,6 @@ export async function engageUndatedImputation({
   }
   const expectedFactor = policy === 'relative' ? ufRel : UNDATED_FACTOR;
   const otherFactor = policy === 'relative' ? UNDATED_FACTOR : ufRel;
-  if (Math.abs(expectedFactor - otherFactor) < 1e-6) throw invalid(`the two policies coincide at this cohort (${expectedFactor}) — the probe cannot discriminate`);
 
   // Score half — the decay-OFF probe with INLINE env save/restore (withDecayEnv is not re-entrant).
   const baseCtx = now === undefined ? { memory } : { memory, now };
@@ -1325,15 +1334,18 @@ export async function engageUndatedImputation({
     if (saved === undefined) delete process.env.UM_TEMPORAL_DECAY; else process.env.UM_TEMPORAL_DECAY = saved;
   }
   if (!probe) throw invalid('no probe row has a known undated seed as its decay-OFF top hit');
+  if (probe.rawScore * Math.abs(expectedFactor - otherFactor) <= 2 * PROBE_SCORE_TOLERANCE) {
+    throw invalid(`the two policies' products sit within ${2 * PROBE_SCORE_TOLERANCE} of each other at this cohort (raw ${probe.rawScore}, factors ${expectedFactor.toFixed(6)} / ${otherFactor.toFixed(6)}) — the probe cannot discriminate`);
+  }
   if (process.env.UM_TEMPORAL_DECAY !== 'true') throw invalid('the decay-ON probe needs UM_TEMPORAL_DECAY pinned to true');
   const on = await doSearch(probe.row.query, 10, false, true, { ...baseCtx, _undatedImputation: instance });
   const hit = (on?.results ?? []).find((r) => r.id === probe.id);
   if (!hit || typeof hit.score !== 'number') throw invalid(`the probe hit ${probe.id} vanished from the decay-ON search`);
   const returnedScore = hit.score;
-  if (Math.abs(returnedScore - probe.rawScore * expectedFactor) > 1e-6) {
+  if (Math.abs(returnedScore - probe.rawScore * expectedFactor) > PROBE_SCORE_TOLERANCE) {
     throw invalid(`probe ${probe.id}: returned ${returnedScore} ≠ raw ${probe.rawScore} × ${expectedFactor.toFixed(6)} (the seam did not engage the ${policy} policy)`);
   }
-  if (Math.abs(returnedScore - probe.rawScore * otherFactor) <= 1e-6) {
+  if (Math.abs(returnedScore - probe.rawScore * otherFactor) <= PROBE_SCORE_TOLERANCE) {
     throw invalid(`probe ${probe.id}: returned ${returnedScore} matches the OTHER policy's factor ${otherFactor.toFixed(6)}`);
   }
 
