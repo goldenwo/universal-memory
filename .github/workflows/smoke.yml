@@ -237,6 +237,23 @@ jobs:
           timeout 30 sh -c 'until [ "$(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")" -ge 1 ]; do sleep 1; done' \
             || { echo "::error::W6.2 patch contract regressed — expected >=1 [mem0-patch] log line within 30s, got $(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]")"; docker compose logs memory-server 2>&1 | tail -50; exit 1; }
           echo "[ci] W6.2 patch contract OK ($(docker compose logs memory-server 2>&1 | grep -c "\[mem0-patch\]") [mem0-patch] log lines)"
+      # #297 spec §6.6: the image boots with UM_TEMPORAL_DECAY off, so the undated-imputation
+      # boot kick must NOT run — zero `undated-imputation` log lines. A negative grep passes
+      # vacuously on a misspelled prefix, so this gate is paired with a POSITIVE control run
+      # locally before it is trusted (plan T6 step 2: a decay-ON rig boot showing ≥ 1
+      # `undated-imputation: refreshed` line and mode:relative on /api/stats — recorded in
+      # the PR body). Same boot-tier shape as the [mem0-patch] pin above.
+      - name: Verify #297 boot kick is inert with decay off (undated-imputation log count == 0)
+        working-directory: server
+        run: |
+          set -o pipefail
+          n=$(docker compose logs memory-server 2>&1 | grep -c "undated-imputation" || true)
+          if [ "$n" -ne 0 ]; then
+            echo "::error::#297 inert contract regressed — expected 0 undated-imputation log lines with UM_TEMPORAL_DECAY off, got $n"
+            docker compose logs memory-server 2>&1 | grep "undated-imputation" | tail -20
+            exit 1
+          fi
+          echo "[ci] #297 inert contract OK (0 undated-imputation log lines with decay off)"
 
       # v0.6 (Phase C C.6/C.7): rate limiter is per-IP token bucket with
       # default 60 RPM / 10 burst. Smoke fires dozens of /api/* calls in
