@@ -42,6 +42,7 @@ test('§6.4: factor == min(1, exp(-A_q/H)) with an independent type-7 A_q, and I
   Date.now = () => NOW;
   try {
     let excludedTotal = 0;
+    let clampHits = 0; // within-skew future points clamped to age 0 — the D11/§4.1 clamp branch
     for (let iter = 0; iter < 200; iter++) {
       const n = 20 + Math.floor(rnd() * 381); // 20..400
       const ageDaysList = Array.from({ length: n }, () => -5 + rnd() * 405); // −5..400 d
@@ -54,6 +55,7 @@ test('§6.4: factor == min(1, exp(-A_q/H)) with an independent type-7 A_q, and I
       for (const it of items) {
         const ms = new Date(it.metadata.valid_from).getTime();
         if (ms > NOW + CLOCK_SKEW_TOLERANCE_MS) { excludedTotal++; continue; }
+        if (ms > NOW) clampHits++;
         oracleAges.push(Math.max(0, (NOW - ms) / DAY));
       }
       const q = datedAgeQuantile(items, { now: NOW });
@@ -68,10 +70,19 @@ test('§6.4: factor == min(1, exp(-A_q/H)) with an independent type-7 A_q, and I
       const aq = quantile7(oracleAges, 0.5);
       assert.ok(Math.abs(q.ageDays - aq) < 1e-9, `iter ${iter}: A_q ${q.ageDays} vs oracle ${aq}`);
 
-      for (const h of [7, 30, 90]) {
-        const expected = Math.min(1, Math.exp(-aq / h));
+      // H set includes a SUB-DAY value (0.5 d): at A_q up to 400 d the factor spans 1 down to
+      // e^-800 — below the exp underflow — so the derivation's floor is exercised here too.
+      for (const h of [0.5, 7, 30, 90]) {
+        const expected = Math.min(1, Math.max(Number.MIN_VALUE, Math.exp(-aq / h)));
         const uf = undatedFactorFor(q.ageDays, h);
-        assert.ok(Math.abs(uf - expected) < 1e-12, `iter ${iter} H=${h}: factor ${uf} vs ${expected}`);
+        assert.ok(uf > 0 && uf <= 1, `iter ${iter} H=${h}: ${uf} must sit in (0, 1]`);
+        // Compared in E-FOLDINGS (scale-free): an absolute 1e-12 tolerance is larger than the
+        // factor itself over most of the H=7 domain and would let a 1000x-wrong deep-tail
+        // value through (code review 2026-09-04).
+        // Past the deep tail (< 1e-300: subnormal / underflow territory) double precision carries
+        // only a few bits, so the check is membership in the tail, not e-foldings.
+        if (expected < 1e-300) assert.ok(uf < 1e-300, `iter ${iter} H=${h}: ${uf} must sit in the deep tail`);
+        else assert.ok(Math.abs(Math.log(uf) - Math.log(expected)) < 1e-9, `iter ${iter} H=${h}: -ln factor ${-Math.log(uf)} vs ${-Math.log(expected)}`);
         // I3: an undated item and a dated item aged exactly A_q receive the same factor.
         const pair = applyTemporalDecay([
           { id: 'u', score: 0.5, metadata: {} },
@@ -79,13 +90,32 @@ test('§6.4: factor == min(1, exp(-A_q/H)) with an independent type-7 A_q, and I
         ], h, { undatedFactor: uf });
         const u = pair.find((r) => r.id === 'u').score;
         const d = pair.find((r) => r.id === 'd').score;
-        assert.ok(Math.abs(u - d) < 1e-9, `iter ${iter} H=${h}: I3 undated ${u} vs dated-at-A_q ${d}`);
+        // I3 in e-foldings as well. In the deep tail the DATED branch has no floor (N2 — it may
+        // underflow to exactly 0) while the undated derivation floors at Number.MIN_VALUE, so
+        // there the identity is "both at the floor of the range", never "undated above dated".
+        if (expected < 1e-300) assert.ok(u < 1e-300 && d < 1e-300, `iter ${iter} H=${h}: deep tail — undated ${u}, dated ${d}`);
+        // Tolerance: the dated item's age passes through an ISO string (ms resolution), so its
+        // e-folding count can differ from A_q's by up to ~2 ms / (DAY × H) — 2.3e-8 at H = 0.5 d.
+        else assert.ok(Math.abs(Math.log(u) - Math.log(d)) < 1e-9 + 2 / (DAY * h), `iter ${iter} H=${h}: I3 undated ${u} vs dated-at-A_q ${d}`);
       }
       for (const h of [-30, 0]) {
         assert.equal(undatedFactorFor(q.ageDays, h), Math.exp(-0.25), `iter ${iter} H=${h}: fallback`);
       }
     }
     assert.ok(excludedTotal > 0, 'the domain must have produced beyond-skew future points (D11 exercised)');
+    assert.ok(clampHits > 0, 'the domain must have produced within-skew future points (the clamp branch exercised)');
+
+    // The min-cohort branch is unreachable in the n ∈ [20, 400] domain above, so it is exercised
+    // explicitly here: below-floor cohorts report null with belowMinCohort, and the derived factor
+    // is the fallback constant (spec D4/D14).
+    for (let n = 1; n < 20; n++) {
+      const items = Array.from({ length: n }, (_, i) => ({ id: `s${i}`, score: 0.5, metadata: { valid_from: new Date(NOW - (i + 1) * DAY).toISOString() } }));
+      const q = datedAgeQuantile(items, { now: NOW });
+      assert.equal(q.n, n);
+      assert.equal(q.ageDays, null, `n=${n}`);
+      assert.equal(q.belowMinCohort, true, `n=${n}`);
+      assert.equal(undatedFactorFor(q.ageDays, 30), Math.exp(-0.25));
+    }
   } finally {
     Date.now = originalNow;
   }

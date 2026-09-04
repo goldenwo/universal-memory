@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 import { buildStats } from '../lib/stats-payload.mjs';
 import { createUndatedImputation, undatedImputation, UNDATED_IMPUTATION_TTL_MS } from '../lib/undated-imputation.mjs';
-import { undatedFactorFor } from '../lib/ranking.mjs';
+import { undatedFactorFor, applyTemporalDecay } from '../lib/ranking.mjs';
 import { resolveHalfLifeDays } from '../lib/decay-env.mjs';
 
 const DAY = 86400000;
@@ -110,6 +110,10 @@ test('R8: decay on + relative statistic ⇒ factor === applied_factor === undate
     assert.equal(b.factor, expected);
     assert.equal(b.applied_factor, expected);
     assert.equal(b.applied_factor, Math.exp(-15.5 / 45));
+    // Composed with what a search ACTUALLY applies (code review 2026-09-04): the number on the
+    // wire is the number applyTemporalDecay multiplies an undated score by.
+    const out = applyTemporalDecay([{ id: 'u', score: 0.5, metadata: {} }, { id: 'd', score: 0.5, metadata: { valid_from: new Date(NOW - DAY).toISOString() } }], b.half_life_days, { undatedFactor: b.applied_factor });
+    assert.equal(out.find((r) => r.id === 'u').score, 0.5 * b.applied_factor);
     assert.equal(b.computed_at, refreshedAt);
     assert.equal(b.last_attempt_at, refreshedAt);
     assert.equal(b.computed_age_ms, 25 * 60 * 1000);
@@ -187,6 +191,32 @@ test('R8 (D16): the `imputation` param defaults to the module singleton — both
   } finally {
     undatedImputation.get = origGet;
   }
+});
+
+test('review: an explicit `imputation: null` resolves to the singleton exactly like doSearch\'s `??` (no 500 on /api/stats)', async () => {
+  const body = await stats({ imputation: null });
+  assert.equal(body.undated_imputation.mode, 'fallback');
+});
+
+test('review: a throwing or malformed instance nulls its OWN block and appends a degraded marker — never a 500', async () => {
+  for (const bad of [{ get: () => { throw new Error('seam boom'); } }, { get: () => null }, {}]) {
+    const body = await stats({ imputation: bad });
+    assert.ok(body.degraded.includes('undated-imputation-unavailable'));
+    const b = body.undated_imputation;
+    assert.equal(b.mode, null);
+    assert.equal(b.cohort_n, null);
+    assert.equal(b.factor, null);
+    assert.equal(typeof b.enabled, 'boolean', 'the env-sourced keys still render');
+    assert.equal(b.ttl_ms, UNDATED_IMPUTATION_TTL_MS);
+  }
+});
+
+test('review: last_error is capped at 300 chars', async () => {
+  const inst = createUndatedImputation({ scan: async () => { throw new Error('x'.repeat(5000)); }, now: () => NOW, log: quiet, retry: passRetry });
+  await inst.refreshIfDue();
+  const b = (await stats({ imputation: inst })).undated_imputation;
+  assert.equal(b.last_refresh_failed, true);
+  assert.equal(b.last_error.length, 300);
 });
 
 test('R8: the block is always present and additive — the rest of the payload is unchanged in shape', async () => {

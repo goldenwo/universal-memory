@@ -1853,6 +1853,7 @@ export async function handleCheckpointRequest(req, res, ctx) {
  *   handlers keeps middleware injection consistent (A.8 sweep).
  *   `ctx._undatedImputation` (#297) overrides the module-level undated-imputation cache — the
  *   seam the keyed eval threads a scratch-scoped instance (or the D19 fixed-policy stub) through.
+ *   Contract: `{get(): value, refreshIfDue(): Promise}`; `null` resolves to the singleton.
  */
 export async function doSearch(query, limit, includeSuperseded, full = false, ctx = {}) {
 	// U2 (#171 Stage A): recall telemetry — serving duration measured across the
@@ -1950,7 +1951,10 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	if (decayEnabled) {
 		const ui = ctx?._undatedImputation ?? undatedImputation;
 		const imp = ui.get();
-		ui.refreshIfDue();
+		// The seam contract is {get, refreshIfDue}; refreshIfDue never rejects by contract, and the
+		// call site stays defensive anyway — a rejected fire-and-forget promise would reach
+		// lockdir.mjs's uncaughtException exit (code review 2026-09-04).
+		ui.refreshIfDue?.()?.catch?.(() => {});
 		uf = undatedFactorFor(imp.ageDaysAtQuantile, halfLife);
 	}
 	const inWindowCount = windowFetch ? countInWindow(items, temporalWindow) : 0;
@@ -3793,6 +3797,6 @@ if (IS_MAIN) {
 		// so the first query is not on fallback; initMemory() above has already configured the
 		// scan thunk. Gated on the flag — with decay off nothing runs and no log line appears
 		// (the CI smoke gate greps for exactly that, spec §6.6). Fire-and-forget; never rejects.
-		if (isDecayEnabled()) undatedImputation.refreshIfDue();
+		if (isDecayEnabled()) undatedImputation.refreshIfDue()?.catch?.(() => {});
 	});
 }

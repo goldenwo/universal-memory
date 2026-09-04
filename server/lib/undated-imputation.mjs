@@ -10,8 +10,10 @@
  *
  * HOW IT REFRESHES (spec D3/D13/D17, invariant I7 — at most ONE scan ATTEMPT per TTL per
  * instance, success or failure):
- *   - `get()` is synchronous and never awaits a scan; it returns the same frozen value object
- *     between refreshes, so one request's single read sees one epoch (I5).
+ *   - `get()` is synchronous and never awaits a scan; the STATISTIC fields of the served value
+ *     never change between successful refreshes (the D13 attempt stamp does mint a new frozen
+ *     object when an attempt starts), so one request's single read — taken BEFORE its
+ *     refreshIfDue() kick — sees one epoch (I5).
  *   - `refreshIfDue()` is single-flight and fire-and-forget; its returned promise NEVER rejects
  *     (the whole body sits in one try/catch, and even the log calls are guarded). It runs when
  *     `now − lastAttemptAt ≥ UNDATED_IMPUTATION_TTL_MS` or nothing was ever attempted.
@@ -19,6 +21,11 @@
  *     cache costs one attempt per TTL, not one per request.
  *   - Inside that ONE attempt the scan runs under the house `withRetry` (D17), so a transient
  *     qdrant blip is absorbed within the attempt while a real outage still costs at most the hour.
+ *     Every try is bounded by UNDATED_IMPUTATION_SCAN_TIMEOUT_MS (code review, 2026-09-04): a
+ *     scan that never settles would otherwise hold `inflight` forever — no further attempt, no
+ *     warn, and BOTH §4.5 alert conditions silent (the attempt-minus-success gap pins at one
+ *     TTL). A timed-out try is a failed try; a timed-out attempt is a failed attempt, which
+ *     alert (a) sees. The qdrant client's own 300 s abort is a second, looser bound.
  *   - The scan's resolved value is normalised `Array.isArray(raw) ? raw : raw?.results`
  *     (`umGetAll` returns `{results}`; the stats-payload precedent). Any other shape — and a
  *     throw after retries — is a FAILED attempt: the last good value is kept, `lastRefreshFailed`
@@ -65,6 +72,14 @@ import { getLogger } from './logger.mjs';
  */
 export const UNDATED_IMPUTATION_TTL_MS = 3_600_000;
 
+/**
+ * Per-try bound on the scan (code review 2026-09-04). Generous against the §4.5 budget (a
+ * 10k-point scan is ~250 ms on the Pi; the revisit trigger is 500 ms) and tighter than the qdrant
+ * client's 300 s abort; with withRetry's 3 retries an attempt settles within ~4 minutes worst
+ * case, well inside one TTL. A timed-out attempt is a FAILED attempt — never a hung cache.
+ */
+export const UNDATED_IMPUTATION_SCAN_TIMEOUT_MS = 60_000;
+
 const REFRESHED_MSG = 'undated-imputation: refreshed';
 const FAILED_MSG_PREFIX = 'undated-imputation: refresh failed — serving ';
 
@@ -89,6 +104,28 @@ function safely(fn) {
 }
 
 /**
+ * Bound on `lastError` (code review 2026-09-04): the retry envelope carries the upstream message
+ * verbatim — a qdrant/mem0 SDK error can embed a response body — and the value is re-served on
+ * every /api/stats GET for up to a TTL. Capped, never unbounded.
+ */
+export const UNDATED_IMPUTATION_ERROR_MAX_CHARS = 300;
+
+/** A throw value with no usable string form must not turn the failure path into a rejection. */
+function errorText(err) {
+  try { return String(err?.message ?? err).slice(0, UNDATED_IMPUTATION_ERROR_MAX_CHARS); } catch { return 'unknown error'; }
+}
+
+/** Race a scan call against the per-try bound; the timer never keeps the process alive. */
+function withScanTimeout(promise, ms) {
+  let timer;
+  const bound = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`scan timed out after ${ms} ms`)), ms);
+    if (typeof timer?.unref === 'function') timer.unref();
+  });
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Build a cache instance.
  *
  * @param {object} [deps]
@@ -98,8 +135,10 @@ function safely(fn) {
  * @param {{info: Function, warn: Function}} [deps.log] - logger seam (pino-shaped: `(fields, msg)`).
  * @param {(fn: Function, opts: object) => Promise<unknown>} [deps.retry] - retry seam (the house
  *   `withRetry` by default — spec D17).
+ * @param {number} [deps.scanTimeoutMs] - per-try bound (default UNDATED_IMPUTATION_SCAN_TIMEOUT_MS);
+ *   a DI seam so the hang→failed-attempt path is provable with a short real timer.
  */
-export function createUndatedImputation({ scan = null, now = Date.now, log, retry = withRetry } = {}) {
+export function createUndatedImputation({ scan = null, now = Date.now, log, retry = withRetry, scanTimeoutMs = UNDATED_IMPUTATION_SCAN_TIMEOUT_MS } = {}) {
   let scanFn = typeof scan === 'function' ? scan : null;
   let value = FALLBACK_VALUE;
   let inflight = null;
@@ -110,31 +149,54 @@ export function createUndatedImputation({ scan = null, now = Date.now, log, retr
     return value;
   }
 
-  /** Inject (or replace) the scan seam — the boot-time step for the module singleton (D16). */
-  function configure({ scan: nextScan }) {
+  /**
+   * Inject (or replace) the scan seam — the boot-time step for the module singleton (D16).
+   * Key-present semantics: `configure({})` / `configure()` change nothing; an explicit
+   * non-function `scan` un-configures (code review 2026-09-04 — an absent key must never
+   * silently kill a live cache).
+   */
+  function configure({ scan: nextScan } = {}) {
+    if (nextScan === undefined) return;
     scanFn = typeof nextScan === 'function' ? nextScan : null;
   }
 
-  /** Kick a refresh if the TTL has elapsed (or nothing was ever attempted). Never rejects. */
+  /**
+   * Kick a refresh if the TTL has elapsed (or nothing was ever attempted). Never rejects and
+   * never throws — including a throwing `now()` seam (code review 2026-09-04). A NEGATIVE
+   * elapsed time means the clock stepped backwards (NTP / VM resync): treated as due, so a
+   * step back can never freeze refreshes for its length.
+   */
   function refreshIfDue() {
-    if (scanFn === null) return Promise.resolve();
-    if (inflight) return inflight;
-    const t = now();
-    if (value.lastAttemptAt != null && t - value.lastAttemptAt < UNDATED_IMPUTATION_TTL_MS) {
+    try {
+      if (scanFn === null) return Promise.resolve();
+      if (inflight) return inflight;
+      const t = now();
+      const elapsed = t - value.lastAttemptAt;
+      if (value.lastAttemptAt != null && elapsed >= 0 && elapsed < UNDATED_IMPUTATION_TTL_MS) {
+        return Promise.resolve();
+      }
+      inflight = attempt(t).catch(() => {}).finally(() => { inflight = null; });
+      return inflight;
+    } catch {
       return Promise.resolve();
     }
-    inflight = attempt(t).finally(() => { inflight = null; });
-    return inflight;
   }
 
   async function attempt(startedAt) {
     // D13: the attempt is stamped BEFORE the scan, whatever happens next.
     value = Object.freeze({ ...value, lastAttemptAt: startedAt });
+    // The scan is captured ONCE per attempt: a configure() landing mid-attempt must not be
+    // adopted by this attempt's retries (an attempt started under scan A never commits data
+    // from scan B — code review 2026-09-04).
+    const scan = scanFn;
     try {
       let scanDurationMs = 0;
       const raw = await retry(async () => {
         const s0 = now();
-        const r = await scanFn();
+        // scan() is invoked SYNCHRONOUSLY here (single-flight counts on it: ten concurrent
+        // refreshIfDue() calls must see one in-flight scan before any microtask runs); a
+        // synchronous throw becomes this async closure's rejection, which withRetry handles.
+        const r = await withScanTimeout(scan(), scanTimeoutMs);
         scanDurationMs = now() - s0;
         return r;
       }, { op: 'undated-imputation-scan' });
@@ -172,7 +234,7 @@ export function createUndatedImputation({ scan = null, now = Date.now, log, retr
       value = Object.freeze({
         ...value,
         lastRefreshFailed: true,
-        lastError: String(err?.message ?? err),
+        lastError: errorText(err),
       });
       const mode = value.mode;
       safely(() => logger().warn({

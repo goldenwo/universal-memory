@@ -74,7 +74,7 @@ function captureFreshnessThresholdHours() {
  *   corpus-fetch log (`endpoint` field) — the caller's identity, not a
  *   hardcoded '/api/stats': a future in-process /control caller passes its
  *   own label so logs/metrics attribute to the right surface.
- * @param {{get: Function}} [opts.imputation] - #297 (spec D16): the undated-imputation
+ * @param {{get: Function, refreshIfDue: Function}} [opts.imputation] - #297 (spec D16): the undated-imputation
  *   cache whose H-independent statistic the `undated_imputation` block reports. Defaults to
  *   the module singleton exactly as `listAll` defaults to `umGetAll`, so BOTH callers — the
  *   /api/stats route (which also passes `ctx?._undatedImputation`) and the in-process
@@ -194,8 +194,10 @@ export async function buildStats({
   //   last_refresh_failed  true when the LAST refresh ATTEMPT errored — never "the value is
   //                        old" (the refresh is lazy; a value is legitimately hours old
   //                        overnight on a single-operator install)
-  //   last_error           that attempt's error message, else null
-  //   saturated            the scan hit FULL_SCAN_LIMIT (the quantile is still computed)
+  //   last_error           that attempt's error message (capped at 300 chars), else null
+  //   saturated            the last SUCCESSFUL scan hit FULL_SCAN_LIMIT (the quantile is still
+  //                        computed); like last_refresh_ms / last_scan_items it describes the
+  //                        last success, not a failed attempt
   //   ttl_ms               the refresh cadence (a code constant)
   //   half_life_days       resolveHalfLifeDays() — the request-time H doSearch uses
   //   factor               null until a statistic exists, else undatedFactorFor(A_q, H)
@@ -209,8 +211,28 @@ export async function buildStats({
   //   (b) computed_age_ms − attempt_age_ms > 2 × ttl_ms — the attempt-minus-success gap
   //       (last_attempt_at ≥ computed_at always, so the difference is non-negative);
   //   NOT wall-clock age of computed_at alone.
-  // Presence-keyed like `layers`/`signals`: an ABSENT key ⇔ a pre-#297 server.
-  const imp = imputation.get();
+  // Presence-keyed like `layers`/`signals`: an ABSENT key ⇔ a pre-#297 server. A read failure
+  // nulls the cache-sourced keys and appends 'undated-imputation-unavailable' to degraded[].
+  // `??`, not only the default param: the /api/stats route passes `ctx?._undatedImputation`
+  // explicitly, and a ctx that sets it to null must resolve to the singleton exactly as
+  // doSearch's `??` does — the banked undefined-vs-null seam class (code review 2026-09-04).
+  // The read is guarded like every other source in this builder: a throwing or malformed
+  // instance nulls its OWN section and appends a degraded marker — /api/stats and the whole
+  // /control page must not 500 over one dark block (§5 A5; code review 2026-09-04).
+  let imp;
+  try {
+    imp = (imputation ?? undatedImputation).get();
+    if (imp === null || typeof imp !== 'object') throw new TypeError('undated-imputation get() returned a non-object');
+  } catch (err) {
+    safeLog(() => getLogger().warn({
+      request_id: currentRequestId(),
+      endpoint,
+      err_class: err?.code ?? err?.name ?? 'Error',
+      err_message: err?.message,
+    }, 'stats undated-imputation read failed — serving degraded'), 'log:stats:undated-imputation-unavailable');
+    degraded.push('undated-imputation-unavailable');
+    imp = { mode: null, quantile: null, cohortN: null, ageDaysAtQuantile: null, futureExcluded: null, computedAt: null, lastAttemptAt: null, lastRefreshMs: null, lastScanItems: null, lastRefreshFailed: null, lastError: null, saturated: null };
+  }
   const decayEnabled = isDecayEnabled();
   const halfLifeDays = resolveHalfLifeDays();
   const factor = imp.ageDaysAtQuantile == null ? null : undatedFactorFor(imp.ageDaysAtQuantile, halfLifeDays);

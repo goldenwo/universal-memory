@@ -271,7 +271,9 @@ function quantileType7(values, q) {
  * The min-cohort decision lives HERE, not in the cache module, so the red controls can reach it
  * (D14). `ageDays` is null when n = 0 or n < minCohort (the latter with `belowMinCohort: true`).
  *
- * Pure: no I/O, no clock of its own (`now` is a parameter defaulting to Date.now()).
+ * Pure: no I/O, no clock of its own (`now` is a parameter defaulting to Date.now()). A
+ * `valid_from` string WITHOUT a timezone designator is parsed by `Date` in the process's local
+ * zone — UM's own writes always stamp `Z`; the cohort statistic assumes UTC-stamped dates.
  *
  * @param {Array<object>} items
  * @param {{q?: number, now?: number, skewMs?: number, minCohort?: number}} [opts]
@@ -280,6 +282,14 @@ function quantileType7(values, q) {
 export function datedAgeQuantile(items, {
   q = UNDATED_QUANTILE, now = Date.now(), skewMs = CLOCK_SKEW_TOLERANCE_MS, minCohort = UNDATED_MIN_COHORT,
 } = {}) {
+  // Self-validation (the D-b3 contract this module's other exports already keep — code review
+  // 2026-09-04): defaults cover only `undefined`, and `q: null` would coerce to 0 and return the
+  // YOUNGEST age (the inflating direction). Anything outside the documented domain falls back to
+  // the pinned constants.
+  if (!Number.isFinite(q) || q < 0 || q > 1) q = UNDATED_QUANTILE;
+  if (!Number.isFinite(now)) now = Date.now();
+  if (!Number.isFinite(skewMs) || skewMs < 0) skewMs = CLOCK_SKEW_TOLERANCE_MS;
+  if (!Number.isFinite(minCohort) || minCohort < 0) minCohort = UNDATED_MIN_COHORT;
   const ages = [];
   let futureExcluded = 0;
   for (const r of Array.isArray(items) ? items : []) {
@@ -307,13 +317,21 @@ export function datedAgeQuantile(items, {
  *
  * @param {number|null|undefined} ageDays - A_q from `datedAgeQuantile`, or null (fallback).
  * @param {number} halfLifeDays - the request's decay timescale (an e-folding time).
- * @returns {number} a factor in (0, 1].
+ * @returns {number} a factor in (0, 1] — never 0, never NaN, never above 1.
  */
 export function undatedFactorFor(ageDays, halfLifeDays) {
   if (ageDays == null || !Number.isFinite(ageDays) || !Number.isFinite(halfLifeDays) || halfLifeDays <= 0) {
     return UNDATED_FACTOR;
   }
-  return Math.min(1, Math.exp(-ageDays / halfLifeDays));
+  // `exp(-x)` underflows to exactly 0 past x ≈ 745 (A_q/H — reachable with a sub-day H, or with a
+  // writer-controlled ancient valid_from cohort at the default H). 0 is finite, so it would pass
+  // this guard and then be REJECTED by both re-rankers' range guards — which fall back
+  // DIFFERENTLY (decay → the constant, window → 1): I5 broken and /api/stats reporting 0 while
+  // search applies 0.7788 (code review 2026-09-04). Flooring at the smallest representable
+  // positive double keeps the value inside its documented (0, 1] range, so both arms accept it
+  // identically; the undated cohort then sits at the floor of the range beside the equally
+  // underflowed dated cohort (I3), never at the top of it.
+  return Math.min(1, Math.max(Number.MIN_VALUE, Math.exp(-ageDays / halfLifeDays)));
 }
 
 /**

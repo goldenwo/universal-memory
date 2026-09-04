@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createUndatedImputation, undatedImputation, UNDATED_IMPUTATION_TTL_MS } from '../lib/undated-imputation.mjs';
+import { createUndatedImputation, undatedImputation, UNDATED_IMPUTATION_TTL_MS, UNDATED_IMPUTATION_SCAN_TIMEOUT_MS } from '../lib/undated-imputation.mjs';
 import { FULL_SCAN_LIMIT } from '../lib/mem0-read.mjs';
 
 const DAY = 86400000;
@@ -306,6 +306,86 @@ test('R10: a scan returning exactly FULL_SCAN_LIMIT items → saturated:true, qu
     assert.equal(typeof v.ageDaysAtQuantile, 'number');
     assert.equal(v.lastScanItems, count);
   }
+});
+
+// ── code-review hardening (2026-09-04) ─────────────────────────────────────────
+
+test('review: a scan that never settles times out into a FAILED attempt (the module\'s own race, short DI timer) — no frozen cache, alert (a) fires, the next TTL attempt runs', async () => {
+  assert.equal(UNDATED_IMPUTATION_SCAN_TIMEOUT_MS, 60_000, 'the default bound is generous against the §4.5 budget');
+  const now = clock();
+  const log = fakeLog();
+  let calls = 0;
+  const scan = () => { calls++; return new Promise(() => {}); }; // never settles
+  const cache = createUndatedImputation({ scan, now, log, retry: passRetry, scanTimeoutMs: 20 });
+  const p = cache.refreshIfDue();
+  assert.equal(calls, 1);
+  assert.equal(cache.refreshIfDue(), p, 'single-flight while the hung scan is in flight');
+  await assert.doesNotReject(p);
+  assert.equal(cache.get().lastRefreshFailed, true, 'a timed-out attempt is a FAILED attempt — alert (a)');
+  assert.match(cache.get().lastError, /scan timed out after 20 ms/);
+  assert.equal(log.calls.warn.length, 1);
+  now.advance(UNDATED_IMPUTATION_TTL_MS);
+  await cache.refreshIfDue();
+  assert.equal(calls, 2, 'the next TTL attempt is NOT blocked by the earlier hang');
+});
+
+test('review: configure({}) and configure() are no-ops on a live instance; an explicit non-function scan un-configures', async () => {
+  const scan = scanDouble(() => ({ results: cohort(30) }));
+  const cache = createUndatedImputation({ scan, now: clock(), log: fakeLog(), retry: passRetry });
+  await cache.refreshIfDue();
+  assert.equal(cache.get().mode, 'relative');
+  cache.configure({});
+  cache.configure();
+  const now2 = clock(T0 + UNDATED_IMPUTATION_TTL_MS);
+  const live = createUndatedImputation({ scan, now: now2, log: fakeLog(), retry: passRetry });
+  live.configure({});
+  await live.refreshIfDue();
+  assert.equal(scan.calls(), 2, 'an absent key changed nothing — the scan still runs');
+  live.configure({ scan: null });
+  now2.advance(UNDATED_IMPUTATION_TTL_MS);
+  await live.refreshIfDue();
+  assert.equal(scan.calls(), 2, 'an explicit null un-configures');
+});
+
+test('review: a configure() landing mid-attempt is NOT adopted by that attempt\'s retries', async () => {
+  const now = clock();
+  const seen = [];
+  const oldScan = async () => { seen.push('OLD'); throw new Error('old down'); };
+  const newScan = async () => { seen.push('NEW'); return { results: cohort(30) }; };
+  const cache = createUndatedImputation({ scan: oldScan, now, log: fakeLog(), retry: async (fn) => { try { return await fn(); } catch { cache.configure({ scan: newScan }); return fn(); } } });
+  await cache.refreshIfDue();
+  assert.deepEqual(seen, ['OLD', 'OLD'], 'the retry re-ran the scan captured at attempt start, not the swapped one');
+  assert.equal(cache.get().lastRefreshFailed, true);
+  now.advance(UNDATED_IMPUTATION_TTL_MS);
+  await cache.refreshIfDue();
+  assert.equal(seen.at(-1), 'NEW', 'the NEXT attempt uses the new scan');
+  assert.equal(cache.get().mode, 'relative');
+});
+
+test('review: a backwards clock step is treated as due — refreshes never freeze for the length of the step', async () => {
+  const now = clock(T0 + 10 * UNDATED_IMPUTATION_TTL_MS);
+  const scan = scanDouble(() => ({ results: cohort(30) }));
+  const cache = createUndatedImputation({ scan, now, log: fakeLog(), retry: passRetry });
+  await cache.refreshIfDue();
+  assert.equal(scan.calls(), 1);
+  now.set(T0 + 5 * UNDATED_IMPUTATION_TTL_MS); // NTP step back 5 h
+  await cache.refreshIfDue();
+  assert.equal(scan.calls(), 2, 'a negative elapsed time is due, not "not yet"');
+  now.advance(UNDATED_IMPUTATION_TTL_MS - 1);
+  await cache.refreshIfDue();
+  assert.equal(scan.calls(), 2, 'and the TTL runs normally from the new stamp');
+});
+
+test('review: a throw value with no string form, and a throwing now() seam, never reject or throw out of refreshIfDue()', async () => {
+  const hostile = Object.create(null); // String(hostile) throws
+  const cache = createUndatedImputation({ scan: async () => { throw hostile; }, now: clock(), log: fakeLog(), retry: passRetry });
+  await assert.doesNotReject(cache.refreshIfDue());
+  assert.equal(cache.get().lastRefreshFailed, true);
+  assert.equal(cache.get().lastError, 'unknown error');
+  const broken = createUndatedImputation({ scan: async () => ({ results: [] }), now: () => { throw new Error('clock down'); }, log: fakeLog(), retry: passRetry });
+  let p;
+  assert.doesNotThrow(() => { p = broken.refreshIfDue(); });
+  await assert.doesNotReject(p);
 });
 
 test('the TTL is one hour, a code constant (spec §4.6 / R-f)', () => {

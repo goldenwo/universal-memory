@@ -247,10 +247,15 @@ jobs:
         working-directory: server
         run: |
           set -o pipefail
-          n=$(docker compose logs memory-server 2>&1 | grep -c "undated-imputation" || true)
+          # Capture the log to a file FIRST and require it non-empty: a dead producer must be a
+          # failure, not a vacuous zero (grep -c prints 0 on empty stdin and `|| true` would absorb it).
+          docker compose logs memory-server > /tmp/memory-server.log 2>&1
+          [ -s /tmp/memory-server.log ] || { echo "::error::#297 inert gate: memory-server log is EMPTY — the producer failed, nothing was proven"; exit 1; }
+          n=$(grep -c "undated-imputation" /tmp/memory-server.log || true)
+          case "$n" in ''|*[!0-9]*) echo "::error::#297 inert gate: unexpected count '$n'"; exit 1 ;; esac
           if [ "$n" -ne 0 ]; then
             echo "::error::#297 inert contract regressed — expected 0 undated-imputation log lines with UM_TEMPORAL_DECAY off, got $n"
-            docker compose logs memory-server 2>&1 | grep "undated-imputation" | tail -20
+            grep "undated-imputation" /tmp/memory-server.log | tail -20
             exit 1
           fi
           echo "[ci] #297 inert contract OK (0 undated-imputation log lines with decay off)"

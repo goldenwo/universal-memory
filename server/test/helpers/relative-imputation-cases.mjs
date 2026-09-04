@@ -30,8 +30,10 @@
 import assert from 'node:assert/strict';
 import { filterSystemDocs } from '../../lib/system-docs.mjs';
 import { H, DAY, FIXED_NOW, withFixedNow, datedItem, undatedItem } from './undated-policy-fixtures.mjs';
+import { WINDOW, IN_MS } from './window-policy-fixtures.mjs';
 
 const MIN = 60 * 1000;
+const SKEW_MS = 5 * MIN; // CLOCK_SKEW_TOLERANCE_MS — written as a literal on purpose (the tripwire discipline)
 
 /** A dated item without any `createdAt` — the fixture rule's required member. */
 const dated = (id, ageDays, score = 0.5) => ({
@@ -92,6 +94,18 @@ export const CASES = {
       assert.equal(q.n, 3);
       assert.equal(q.futureExcluded, 0);
       assert.equal(q.ageDays, 0);
+    })],
+    ['the skew boundary: exactly now + skew is INCLUDED (age 0); one millisecond beyond is EXCLUDED', (_decay, mod) => withFixedNow(() => {
+      // Spec §4.1: "at or before now + CLOCK_SKEW_TOLERANCE_MS". Pinned at the edge so a one-
+      // character drift of the comparison (`>` → `>=`) reddens (code review 2026-09-04).
+      const edge = mod.datedAgeQuantile([future('edge', SKEW_MS), dated('d1', 1)], { minCohort: 1, now: FIXED_NOW });
+      assert.equal(edge.n, 2);
+      assert.equal(edge.futureExcluded, 0);
+      assert.equal(edge.ageDays, 0.5); // ages {0, 1} → type-7 median 0.5
+      const beyond = mod.datedAgeQuantile([future('beyond', SKEW_MS + 1), dated('d1', 1)], { minCohort: 1, now: FIXED_NOW });
+      assert.equal(beyond.n, 1);
+      assert.equal(beyond.futureExcluded, 1);
+      assert.equal(beyond.ageDays, 1);
     })],
     ['an all-future cohort → n = 0 → ageDays null → the FALLBACK constant, never factor 1.0', (_decay, mod) => withFixedNow(() => {
       const q = mod.datedAgeQuantile([future('a', DAY), future('b', 2 * DAY), undated('u')], { minCohort: 1, now: FIXED_NOW });
@@ -172,7 +186,27 @@ export const CASES = {
       }
       assert.equal(mod.undatedFactorFor(null, 30), Math.exp(-0.25));
       assert.equal(mod.undatedFactorFor(undefined, 30), Math.exp(-0.25));
+      // A non-finite statistic must never reach the two re-rankers as a NaN their guards would
+      // resolve differently (code review 2026-09-04).
+      for (const a of [NaN, Infinity, -Infinity]) {
+        assert.equal(mod.undatedFactorFor(a, 30), Math.exp(-0.25), `ageDays=${String(a)}`);
+      }
     }],
+    ['I5 at every value the derivation can emit: both re-rankers scale the same undated item identically, incl. the exp underflow floor', (decay, mod) => withFixedNow(() => {
+      // exp(-A_q/H) underflows to exactly 0 past A_q/H ≈ 745; a raw 0 would be REJECTED by both
+      // arms' range guards, which fall back DIFFERENTLY (decay → the constant, window → 1). The
+      // derivation floors at Number.MIN_VALUE so the value stays in (0, 1] (code review 2026-09-04).
+      const item = () => ({ id: 'u', score: 0.6, metadata: {} });
+      for (const [aq, h] of [[0, 30], [28.7, 30], [28.7, 0.02], [1e6, 30], [28.7, 1e-9]]) {
+        const uf = mod.undatedFactorFor(aq, h);
+        assert.ok(uf > 0 && uf <= 1, `A_q=${aq} H=${h}: ${uf} must sit in (0, 1]`);
+        const viaWindow = mod.applyTemporalWindow([{ id: 'd-in', score: 0.9, metadata: { valid_from: new Date(IN_MS).toISOString() } }, item()], WINDOW, { undatedFactor: uf })
+          .find((r) => r.id === 'u').score;
+        const viaDecay = decay([dated('d', 3), item()], h, { undatedFactor: uf }).find((r) => r.id === 'u').score;
+        assert.equal(viaWindow, viaDecay, `A_q=${aq} H=${h}: window ${viaWindow} vs decay ${viaDecay}`);
+      }
+      assert.equal(mod.undatedFactorFor(28.7, 0.02), Number.MIN_VALUE, 'the underflow floor is the smallest positive double, never 0');
+    })],
   ],
 
   R13: [

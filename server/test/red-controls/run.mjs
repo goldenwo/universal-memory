@@ -265,8 +265,10 @@ const CONTROLS = [
     // W8 (#297 spec §6.1): jointness is now pinned at a NON-constant factor passed to both arms,
     // so a window that ignores the opt and imputes the module constant necessarily diverges from
     // decay's side. Expected-by-mechanism (measured at plan T6(a)); declared per spec §6.3, never
-    // absorbed by weakening W8 back to the constant.
-    alsoFlip: ['W8'],
+    // absorbed by weakening W8 back to the constant. R12 (relative table) pins the same I5 identity
+    // at every value undatedFactorFor can emit, so it reddens by the same mechanism (code review
+    // 2026-09-04, declared per spec §6.2's leak rule).
+    alsoFlip: ['W8', 'R12'],
     why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items; W8 now passes a non-constant factor and so reddens by design',
   },
   {
@@ -302,7 +304,9 @@ const CONTROLS = [
       '      return { ...r, score: r.score * Math.exp(-1) };'),
     mustFlip: ['W8', 'W1', 'W11', 'JV1'],
     mustPass: ['W2', 'W5'],
-    alsoFlip: [],
+    // R12 (relative table): its I5 sub-case runs the window at the derived factor, so a window-
+    // native constant necessarily diverges from decay's side (code review 2026-09-04).
+    alsoFlip: ['R12'],
     why: 'the uf === 1 short-circuit is untouched, so the omitted/1 path still returns early',
   },
   {
