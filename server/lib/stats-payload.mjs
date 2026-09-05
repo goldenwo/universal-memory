@@ -206,7 +206,7 @@ export async function buildStats({
   //                        fallback constant printed as if it were a live estimate)
   //   computed_age_ms      now − computed_at (null before the first success)
   //   attempt_age_ms       now − last_attempt_at (null before the first attempt)
-  // Stuck-cache alert conditions for um-alert.sh (spec §4.5, the #239 flip rollout's job):
+  // Stuck-cache alert conditions, wired as um-alert.sh's IMPUTATION-STUCK section (spec §4.5; quiet while enabled is false):
   //   (a) last_refresh_failed === true, or
   //   (b) computed_age_ms − attempt_age_ms > 2 × ttl_ms — the attempt-minus-success gap
   //       (last_attempt_at ≥ computed_at always, so the difference is non-negative);
