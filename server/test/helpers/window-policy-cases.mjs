@@ -98,12 +98,16 @@ export const CASES = {
     const out = applyWindow(pool, WINDOW, { undatedFactor: Math.exp(-0.25) });
     assert.deepEqual(out.map((r) => [r.id, r.score]), [['a', 0.8], ['b', 0.5]]);
   }]],
-  W8: [['jointness: window at UNDATED_FACTOR equals decay on the same undated item', (applyWindow, mod) => {
+  W8: [['jointness: window and decay handed the SAME non-constant factor scale the same undated item identically', (applyWindow, mod) => {
+    // #297 spec §6.1: the factor is now a per-request read of the corpus statistic, so
+    // jointness is pinned at a NON-constant value (exp(-6/30)) passed to BOTH arms — not at
+    // the module constant. Still import-vs-import in spirit: the same `f` on both sides.
+    const f = Math.exp(-6 / 30);
     const item = () => ({ id: 'u', score: 0.6, metadata: {} });
-    const viaWindow = applyWindow([dated('d-in', 0.9, IN_MS), item()], WINDOW, { undatedFactor: mod.UNDATED_FACTOR })
+    const viaWindow = applyWindow([dated('d-in', 0.9, IN_MS), item()], WINDOW, { undatedFactor: f })
       .find((r) => r.id === 'u').score;
-    const viaDecay = mod.applyTemporalDecay([item()], 30).find((r) => r.id === 'u').score;
-    assert.equal(viaWindow, viaDecay); // deliberately import-vs-import: pins JOINTNESS, not magnitude
+    const viaDecay = mod.applyTemporalDecay([item()], 30, { undatedFactor: f }).find((r) => r.id === 'u').score;
+    assert.equal(viaWindow, viaDecay);
   }]],
   W9: [['purity: input array and items not mutated with the new opt', (applyWindow) => {
     const pool = mixedPool();

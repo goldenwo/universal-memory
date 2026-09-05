@@ -22,7 +22,8 @@ import assert from 'node:assert/strict';
 import {
   runUndatedArm, undatedArmCohorts, undatedArmMetrics, materialiseValidFrom,
 } from '../eval/memory-quality-eval.mjs';
-import { isUsableDate } from '../lib/ranking.mjs';
+import { isUsableDate, undatedFactorFor, UNDATED_FACTOR } from '../lib/ranking.mjs';
+import { createUndatedImputation } from '../lib/undated-imputation.mjs';
 
 const COL = 'eval_mq_wiring_test';
 const NOW = Date.parse('2026-08-06T00:00:00.000Z');
@@ -68,14 +69,29 @@ function fakes(fakeOpts = {}) {
     },
   };
 
+  // #297: the engagement precondition (spec §6.5) needs the full-corpus scan seam in umGetAll's
+  // `{results}` shape and a cache factory; the read path's factor contract is modelled in
+  // doSearch below (an UNDATED top hit scales by the seam's statistic when decay is on).
+  const goldIds = () => new Set(['g1:0', 'g2:0'].map((r) => refToId.get(r)));
+  const listAll = async (_memory, args) => {
+    calls.push({ op: 'listAll', args });
+    return { results: [...payloads].map(([id, p]) => ({ id, metadata: { eval_ref: p.eval_ref, lane: p.lane, ...(p.valid_from !== undefined ? { valid_from: p.valid_from } : {}) } })) };
+  };
+  const createImputation = (o) => createUndatedImputation({ ...o, log: { info: () => {}, warn: () => {} }, retry: (fn) => fn() });
+
   // recallPass embeds each seed then searches per row; return the target first every time.
   const embed = async () => ({ vector: [1, 0, 0], tokensIn: 1, tokensOut: 0, costUsd: 0 });
   const cosineStrict = () => 0.1;
-  const doSearch = async (query) => {
+  const doSearch = async (query, _limit, _inc, _full, ctx) => {
     calls.push({ op: 'doSearch', query });
     const ref = `${query.replace(/^q-/, '')}:0`;
     const target = refToId.get(ref);
-    return { results: [{ id: target, score: 0.9 }, { id: 'noise', score: 0.1 }] };
+    let score = 0.9;
+    if (process.env.UM_TEMPORAL_DECAY === 'true' && goldIds().has(target)) {
+      const seam = ctx?._undatedImputation;
+      score = 0.9 * (seam ? undatedFactorFor(seam.get().ageDaysAtQuantile, 30) : UNDATED_FACTOR);
+    }
+    return { results: [{ id: target, score }, { id: 'noise', score: 0.1 }] };
   };
 
   // Distractor generator: deterministic, and `dupes` of them collide so the test can prove
@@ -86,7 +102,7 @@ function fakes(fakeOpts = {}) {
   }));
   const lanesFromRows = () => ['work', 'home'];
 
-  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
+  return { calls, payloads, refToId, umAdd, client, listAll, createImputation, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
 }
 
 const run = (f, over = {}) => runUndatedArm({
@@ -94,7 +110,10 @@ const run = (f, over = {}) => runUndatedArm({
   umAdd: f.umAdd, memory: f.memory, client: f.client, doSearch: f.doSearch,
   embed: f.embed, cosineStrict: f.cosineStrict, NOOP_METRICS: f.NOOP_METRICS,
   generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
-  distractors: 3, distractorSeed: 1,
+  createImputation: f.createImputation, listAll: f.listAll,
+  // #297: 2 dated fixture rows + 25 distractors = 27 dated points ≥ UNDATED_MIN_COHORT, so the
+  // engagement precondition (decay-ON runs) can reach `mode: relative`.
+  distractors: 25, distractorSeed: 1,
   ...over,
 });
 
@@ -144,7 +163,7 @@ test('runUndatedArm: materialises days_ago into valid_from BEFORE seeding', asyn
   const f = fakes();
   await run(f);
   const seeded = f.calls.filter((c) => c.op === 'umAdd');
-  assert.equal(seeded.length, 7, '4 fixture rows + 3 distractors');
+  assert.equal(seeded.length, 29, '4 fixture rows + 25 distractors');
   for (const c of seeded) {
     assert.ok(isUsableDate(c.valid_from), `${c.ref} reached umAdd without a usable valid_from`);
   }
@@ -228,28 +247,32 @@ test('runUndatedArm: distractors ARE seeded but NEVER queried', async () => {
   // Without them every gold wins at rank 1 by a wide margin and the gate sits at ceiling —
   // it would return the same number for any imputed factor, which is not evidence.
   const f = fakes();
-  const out = await run(f, { distractors: 5 });
+  const out = await run(f, { distractors: 25 });
   const seededRefs = f.calls.filter((c) => c.op === 'umAdd').map((c) => c.ref);
-  assert.equal(seededRefs.filter((r) => r.startsWith('distractor:')).length, 5, 'distractors must reach the collection');
+  assert.equal(seededRefs.filter((r) => r.startsWith('distractor:')).length, 25, 'distractors must reach the collection');
   const queried = f.calls.filter((c) => c.op === 'doSearch').map((c) => c.query);
-  assert.deepEqual(queried, ['q-g1', 'q-d1', 'q-g2', 'q-d2'], 'only fixture rows carry queries');
-  assert.equal(out.corpus.distractorsRequested, 5);
+  // #297: the engagement precondition's two probe searches (decay-off raw, decay-on through
+  // the seam) precede the measured pass and target a gold row; the measured pass is unchanged.
+  assert.deepEqual(queried.slice(0, 2), ['q-g1', 'q-g1'], 'the probe pair targets the first gold row');
+  assert.deepEqual(queried.slice(2), ['q-g1', 'q-d1', 'q-g2', 'q-d2'], 'only fixture rows carry queries');
+  assert.equal(out.corpus.distractorsRequested, 25);
   assert.equal(out.corpus.fixtureSeeds, 4);
 });
 
 test('runUndatedArm: distractors are back-dated across the FIXTURE spread, not left at age 0', async () => {
   const f = fakes();
-  await run(f, { distractors: 4 });
+  await run(f, { distractors: 24 });
   const ages = f.calls.filter((c) => c.op === 'umAdd' && c.ref.startsWith('distractor:'))
     .map((c) => Math.round((NOW - Date.parse(c.valid_from)) / 86400000));
-  assert.deepEqual(ages, [6, 3, 13, 19], 'cycles the fixture ages, so the competition looks like the corpus');
+  assert.deepEqual(ages.slice(0, 4), [6, 3, 13, 19], 'cycles the fixture ages, so the competition looks like the corpus');
+  assert.ok(ages.every((a) => [6, 3, 13, 19].includes(a)), 'every distractor sits on the fixture spread');
 });
 
 test('runUndatedArm: a DISTRACTOR collapse is tolerated — only FIXTURE merges abort', async () => {
   // 353 generated distractors really do collapse to ~342 against a live qdrant. Aborting on
   // that would make every run red, and "relax the guard" would be the tempting wrong fix.
   const f = fakes({ dupeDistractors: 3 });
-  const out = await run(f, { distractors: 3 });
+  const out = await run(f, { distractors: 25 });
   assert.equal(out.corpus.fixtureSeeds, 4, 'the cohort split is untouched by distractor collapse');
   assert.ok(out.mergedCount > 0, 'and the collapse is still REPORTED, not hidden');
 });

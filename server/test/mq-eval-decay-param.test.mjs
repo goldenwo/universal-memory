@@ -273,7 +273,9 @@ test('§decay: the undated arm records autosupersede OFF — its distractors sel
   // Pinned because it is easy to "fix" back to the runOnce default. With it ON, a synthetic
   // distractor supersedes a real cohort target (the fixture seeds FIRST, so it is oldest)
   // and a superseded point is filtered out of search entirely. Observed live 2026-08-07.
-  assert.match(UNDATED_HALF, /flags:\s*evalRunFlags\(\{\s*decay,\s*autosupersede:\s*'false'\s*\}\)/);
+  // #297: the undated arm spreads evalRunFlags(...) to ADD a recorded UM_TEMPORAL_QUERY beside
+  // it; the pinned property — autosupersede OFF through evalRunFlags — is unchanged.
+  assert.match(UNDATED_HALF, /flags:\s*(\{\s*\.\.\.)?evalRunFlags\(\{\s*decay,\s*autosupersede:\s*'false'\s*\}\)/);
 });
 
 test('§decay: runOnce records autosupersede ON — in runOnce\'s own half of the file', () => {

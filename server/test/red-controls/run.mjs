@@ -28,7 +28,7 @@
 // cross-table leak, and the `unexpected` gate below catches it mechanically UNLESS the
 // control names it in `alsoFlip` as expected-by-mechanism. Only two entries do:
 //   RC1 → alsoFlip includes 'W11': W11 is the window table's retune tripwire and reddens
-//         on ANY change to UNDATED_FACTOR/UNDATED_EFOLDINGS BY DESIGN, so RC1's hardcoded
+//         on ANY change to UNDATED_FACTOR/UNDATED_FALLBACK_EFOLDINGS BY DESIGN, so RC1's hardcoded
 //         magnitude necessarily reaches it.
 //   RC5 → alsoFlip includes 'W8': W8 pins JOINTNESS by calling `mod.applyTemporalDecay`
 //         directly on its own undated item, so a mutant of decay's own conditionality
@@ -60,6 +60,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { CASES as DECAY_CASES, runCase as runDecayCase } from '../helpers/undated-policy-cases.mjs';
 import { CASES as WINDOW_CASES, runCase as runWindowCase } from '../helpers/window-policy-cases.mjs';
 import { CASES as CLAMP_CASES, runCase as runClampCase } from '../helpers/clamp-policy-cases.mjs';
+import { CASES as RELATIVE_CASES, runCase as runRelativeCase } from '../helpers/relative-imputation-cases.mjs';
 
 const RANKING = fileURLToPath(new URL('../../lib/ranking.mjs', import.meta.url));
 
@@ -82,6 +83,13 @@ const TABLES = {
   clamp: {
     CASES: CLAMP_CASES, runCase: runClampCase, fnName: 'applyTemporalDecay',
     banner: 'clamp baseline', baselineSuffix: '',
+  },
+  // #297's relative undated imputation — the fourth table (spec §6.2/§6.3). The runner passes
+  // `mod` as the third argument, so a table spanning datedAgeQuantile, undatedFactorFor and
+  // applyTemporalDecay picks its function per case, as the clamp table did.
+  relative: {
+    CASES: RELATIVE_CASES, runCase: runRelativeCase, fnName: 'applyTemporalDecay',
+    banner: 'relative baseline', baselineSuffix: '',
   },
 };
 
@@ -116,7 +124,7 @@ const CONTROLS = [
     id: 'RC1',
     table: 'decay',
     what: 'UNDATED_FACTOR hardcoded to 1.0 (the pre-policy behaviour)',
-    mutate: (src) => replaceOnce(src, 'export const UNDATED_FACTOR = Math.exp(-UNDATED_EFOLDINGS);',
+    mutate: (src) => replaceOnce(src, 'export const UNDATED_FACTOR = Math.exp(-UNDATED_FALLBACK_EFOLDINGS);',
       'export const UNDATED_FACTOR = 1.0;'),
     mustFlip: ['U1', 'U2', 'U4', 'U10', 'V3'],
     mustPass: ['U3', 'U5', 'U6', 'U7'],
@@ -126,7 +134,11 @@ const CONTROLS = [
     // DESIGN (spec §6.4 rule-2 correction), so this control's hardcoded magnitude reaches it
     // too. Cross-table and expected-by-mechanism, so it is named here rather than left for the
     // `unexpected` gate to (correctly) fail on.
-    alsoFlip: ['U8', 'W11'],
+    // R2 / R9 / R12 (relative table, #297 spec §6.3): all three assert the FALLBACK magnitude
+    // Math.exp(-0.25) this control mutates — R2's all-future cohort, R9's invalid-option
+    // fallback, and R12's H-sign cases return it through undatedFactorFor. Same mechanism as
+    // W11: scoped to the exact constant, declared rather than tolerated.
+    alsoFlip: ['U8', 'W11', 'R2', 'R9', 'R12'],
     why: 'the policy is scoped to the undated branch and mints no score, so the dated cases and the guard cases are untouched by the magnitude. W11 is the one window-table case that is ALSO scoped to this exact magnitude (by design, as its own tripwire), so it is the sole window-side exception.',
   },
   {
@@ -134,8 +146,8 @@ const CONTROLS = [
     table: 'decay',
     what: 'score guard removed — undated branch uses (r.score || 1) * f',
     mutate: (src) => replaceOnce(src,
-      "      if (typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * UNDATED_FACTOR };",
-      '      return { ...r, score: (r.score || 1) * UNDATED_FACTOR };'),
+      "      if (typeof r.score !== 'number') return { ...r };\n      return { ...r, score: r.score * imputedFactor };",
+      '      return { ...r, score: (r.score || 1) * imputedFactor };'),
     mustFlip: ['U5', 'U6', 'V3'],
     mustPass: ['U1', 'U3'],
     alsoFlip: [],
@@ -157,7 +169,12 @@ const CONTROLS = [
     // assertions (0.5 exactly) see the factor change even though the tie itself
     // survives at equal factors. Expected-by-mechanism, so named here — the
     // RC1 -> W11 precedent.
-    alsoFlip: ['U4', 'U7', 'V2', 'C1', 'C2', 'C3'],
+    // R5 / R12 (relative table, #297 spec §6.3): both compare an undated item against a DATED
+    // item decayed at age A_q — replacing the dated factor breaks the identity by mechanism.
+    // R9 too (measured at plan T6(a), declared per spec §6.2's leak rule): it asserts its dated
+    // companion's own decayed value — the U4/U7 mechanism — as the guard that an invalid option
+    // leaves the dated branch untouched.
+    alsoFlip: ['U4', 'U7', 'V2', 'C1', 'C2', 'C3', 'R5', 'R12', 'R9'],
     why: 'the dated cohort is genuinely guarded — this is only derivable because the fixture carries a decay-induced rank inversion. C1-C3 are the clamp-table cases scoped to the same dated factor this control replaces: C2 asserts ABSOLUTE cosine parity (0.5 exactly), deliberately stronger than a tie-only check, so the factor swap reddens it even though the tie itself survives at equal factors.',
   },
   {
@@ -165,10 +182,10 @@ const CONTROLS = [
     table: 'decay',
     what: 'undated branch grades on createdAt (the fallback D-h removed)',
     mutate: (src) => replaceOnce(src,
-      '      return { ...r, score: r.score * UNDATED_FACTOR };',
+      '      return { ...r, score: r.score * imputedFactor };',
       '      const ca = Date.parse(r.createdAt ?? r.created_at ?? "");\n'
       + '      if (Number.isFinite(ca)) return { ...r, score: r.score * Math.exp(-((now - ca) / DAY_MS) / halfLifeDays) };\n'
-      + '      return { ...r, score: r.score * UNDATED_FACTOR };'),
+      + '      return { ...r, score: r.score * imputedFactor };'),
     mustFlip: ['U1', 'V3'],
     mustPass: ['U3'],
     // Every undated fixture item carries a 120-day-old createdAt (deliberately, so this
@@ -207,9 +224,9 @@ const CONTROLS = [
     table: 'decay',
     what: 'the undated branch MUTATES in place instead of returning a copy',
     mutate: (src) => replaceOnce(src,
-      '      return { ...r, score: r.score * UNDATED_FACTOR };',
+      '      return { ...r, score: r.score * imputedFactor };',
       [
-        '      r.score = r.score * UNDATED_FACTOR;',
+        '      r.score = r.score * imputedFactor;',
         '      return r;',
       ].join('\n')),
     mustFlip: ['U9'],
@@ -245,8 +262,14 @@ const CONTROLS = [
       '  const uf = UNDATED_FACTOR;'),
     mustFlip: ['W2', 'W3', 'JV1'],
     mustPass: ['W1', 'W11', 'W5', 'W4'],
-    alsoFlip: [],
-    why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items',
+    // W8 (#297 spec §6.1): jointness is now pinned at a NON-constant factor passed to both arms,
+    // so a window that ignores the opt and imputes the module constant necessarily diverges from
+    // decay's side. Expected-by-mechanism (measured at plan T6(a)); declared per spec §6.3, never
+    // absorbed by weakening W8 back to the constant. R12 (relative table) pins the same I5 identity
+    // at every value undatedFactorFor can emit, so it reddens by the same mechanism (code review
+    // 2026-09-04, declared per spec §6.2's leak rule).
+    alsoFlip: ['W8', 'R12'],
+    why: 'W1/W11 pass a factor the mutant coincidentally equals; the typeof half of the guard still short-circuits score-less items; W8 now passes a non-constant factor and so reddens by design',
   },
   {
     id: 'RCW2',
@@ -281,7 +304,9 @@ const CONTROLS = [
       '      return { ...r, score: r.score * Math.exp(-1) };'),
     mustFlip: ['W8', 'W1', 'W11', 'JV1'],
     mustPass: ['W2', 'W5'],
-    alsoFlip: [],
+    // R12 (relative table): its I5 sub-case runs the window at the derived factor, so a window-
+    // native constant necessarily diverges from decay's side (code review 2026-09-04).
+    alsoFlip: ['R12'],
     why: 'the uf === 1 short-circuit is untouched, so the omitted/1 path still returns early',
   },
   {
@@ -295,6 +320,81 @@ const CONTROLS = [
     mustPass: ['W1', 'W2'],
     alsoFlip: [],
     why: 'the omitted-opt path is untouched, so the mutant isolates the range check',
+  },
+  // ── #297 relative undated imputation (spec §6.3) ──────────────────────────────────────────
+  {
+    id: 'RCR1',
+    table: 'relative',
+    what: 'datedAgeQuantile ignores the ages and returns the fallback e-foldings as the statistic',
+    mutate: (src) => replaceOnce(src,
+      '  return { n, ageDays: quantileType7(ages, q), belowMinCohort, futureExcluded };',
+      '  return { n, ageDays: UNDATED_FALLBACK_EFOLDINGS, belowMinCohort, futureExcluded };'),
+    mustFlip: ['R1', 'R2', 'R3-pure', 'R5'],
+    mustPass: ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'U10', 'R4'],
+    alsoFlip: [],
+    why: 'the fallback path (no opts) never consults the statistic, and R4 passes its factor explicitly, so only the cases that call datedAgeQuantile can see a wrong A_q',
+  },
+  {
+    id: 'RCR2',
+    table: 'relative',
+    what: 'the within-skew clamp removed — negative ages reach the quantile',
+    mutate: (src) => replaceOnce(src,
+      '    ages.push(Math.max(0, (now - ms) / DAY_MS));',
+      '    ages.push((now - ms) / DAY_MS);'),
+    mustFlip: ['R2'],
+    mustPass: ['R1', 'R4'],
+    alsoFlip: [],
+    why: 'only R2 seeds a within-skew (slightly future) point; every other cohort is strictly past-dated, where the clamp is a no-op',
+  },
+  {
+    id: 'RCR3',
+    table: 'relative',
+    what: "datedAgeQuantile's minCohort check removed (the decision lives in ranking.mjs — spec D14)",
+    mutate: (src) => replaceOnce(src,
+      '  const belowMinCohort = n < minCohort;\n  if (n === 0 || belowMinCohort) return { n, ageDays: null, belowMinCohort, futureExcluded };',
+      '  const belowMinCohort = false;\n  if (n === 0) return { n, ageDays: null, belowMinCohort, futureExcluded };'),
+    mustFlip: ['R3-pure'],
+    mustPass: ['R1', 'R4'],
+    alsoFlip: [],
+    why: 'R1 stays green BECAUSE it passes {minCohort: 1} (deliberate — spec §6.2 R1), so removing the check cannot change it; R3-pure is the only case exercising the default floor',
+  },
+  {
+    id: 'RCR6',
+    table: 'relative',
+    what: 'the future-exclusion removed — beyond-skew points are clamped INTO the cohort (spec D11)',
+    mutate: (src) => replaceOnce(src,
+      '    if (ms > now + skewMs) { futureExcluded++; continue; }\n',
+      '    // (future exclusion removed by RCR6)\n'),
+    mustFlip: ['R2'],
+    mustPass: ['R1', 'R4'],
+    alsoFlip: [],
+    why: 'only R2 seeds beyond-skew future points; a past-dated cohort never reaches the exclusion branch',
+  },
+  {
+    id: 'RCR4',
+    table: 'relative',
+    what: 'the decay branch multiplies by UNDATED_FACTOR regardless of the passed option',
+    mutate: (src) => replaceOnce(src,
+      '      return { ...r, score: r.score * imputedFactor };',
+      '      return { ...r, score: r.score * UNDATED_FACTOR };'),
+    mustFlip: ['R4', 'R5', 'R12'],
+    mustPass: ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'U10', 'R1'],
+    // W8 (window table): jointness at a NON-constant factor passed to both arms — decay ignoring
+    // the option necessarily diverges from the window side. Cross-table, expected-by-mechanism.
+    alsoFlip: ['W8'],
+    why: 'the no-opts calls resolve to UNDATED_FACTOR anyway (byte-identical — I2), R1 never calls applyTemporalDecay, and R9 asserts the FALLBACK, which this mutant also produces',
+  },
+  {
+    id: 'RCR5',
+    table: 'relative',
+    what: 'undatedFactor validation dropped — a degenerate option (0, 1.5, NaN, a string) is applied as-is',
+    mutate: (src) => replaceOnce(src,
+      '  const imputedFactor = Number.isFinite(undatedFactor) && undatedFactor > 0 && undatedFactor <= 1\n    ? undatedFactor\n    : UNDATED_FACTOR;',
+      '  const imputedFactor = undatedFactor ?? UNDATED_FACTOR;'),
+    mustFlip: ['R9'],
+    mustPass: ['R4'],
+    alsoFlip: [],
+    why: 'R4 passes a valid factor; every no-opts caller hits `undefined ?? UNDATED_FACTOR`, so the mutant isolates the validation',
   },
 ];
 

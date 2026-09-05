@@ -32,6 +32,9 @@ import { SERVER_VERSION } from './version.mjs';
 import { latencySinceBoot, LATENCY_LABEL } from './recall-telemetry.mjs';
 import { isWriteEnabled } from './write-enabled.mjs';
 import { buildLayers } from './layers.mjs';
+import { undatedImputation, UNDATED_IMPUTATION_TTL_MS } from './undated-imputation.mjs';
+import { undatedFactorFor } from './ranking.mjs';
+import { isDecayEnabled, resolveHalfLifeDays } from './decay-env.mjs';
 
 // Full-corpus getAll ceiling for /health + /api/stats (#171 Stage A, plan U2
 // audit): mem0ai's getAll defaults to limit=100, which silently truncated
@@ -71,6 +74,13 @@ function captureFreshnessThresholdHours() {
  *   corpus-fetch log (`endpoint` field) — the caller's identity, not a
  *   hardcoded '/api/stats': a future in-process /control caller passes its
  *   own label so logs/metrics attribute to the right surface.
+ * @param {{get: Function, refreshIfDue: Function}} [opts.imputation] - #297 (spec D16): the undated-imputation
+ *   cache whose H-independent statistic the `undated_imputation` block reports. Defaults to
+ *   the module singleton exactly as `listAll` defaults to `umGetAll`, so BOTH callers — the
+ *   /api/stats route (which also passes `ctx?._undatedImputation`) and the in-process
+ *   /control route — render the block with no edit to control-routes. Read-only here: stats
+ *   NEVER triggers a refresh (D7 — a scan per operator pull, and the block would describe an
+ *   epoch searches never saw).
  * @param {Function} [opts.readCounters] - DI seam over the counters-db reader
  *   (U5 / U3-gate finding F5: `readCounterStats` was a direct import with no
  *   seam). Defaults to `readCounterStats` — a caller that omits it gets
@@ -97,6 +107,7 @@ export async function buildStats({
   // (lib/mem0-read); tests inject a canned {results} enumerator the same
   // way readCounters already works.
   listAll = umGetAll,
+  imputation = undatedImputation,
 }) {
   const degraded = [];
 
@@ -159,6 +170,94 @@ export async function buildStats({
   const layersResult = await buildLayers({ vaultDir, config: checkpointConfig });
   if (layersResult.degraded.length > 0) degraded.push(...layersResult.degraded);
 
+  // #297: the relative undated-imputation block (spec §4.2 step 5). The cache's INTERNAL
+  // value is camelCase; it is mapped ONCE here to the payload's snake_case wire spelling (D24 —
+  // the same in/out split readCounterStats already uses), never spread onto the wire. Every
+  // wire key comes from exactly one source:
+  //   enabled              isDecayEnabled() — the ONE owner doSearch also reads (D25)
+  //   mode                 'fallback' | 'relative' — what an undated score is multiplied by
+  //                        RIGHT NOW is `applied_factor`, not this word
+  //   quantile             the policy quantile the statistic sits at (0.5 = median; a code
+  //                        constant, not env — spec §4.6)
+  //   cohort_n             dated, recallable, non-system, non-future points in the statistic
+  //                        (null before the first successful refresh)
+  //   age_days_at_quantile the H-independent statistic A_q (null in fallback)
+  //   future_excluded      dated points beyond the clock-skew window, EXCLUDED from the
+  //                        statistic and counted (D11)
+  //   computed_at          epoch ms of the last SUCCESSFUL refresh (freshness), stamped with
+  //                        that attempt's start instant; null before the first success
+  //   last_attempt_at      epoch ms of the last refresh ATTEMPT, success or failure (the TTL
+  //                        is keyed on it — D13); null before the first attempt
+  //   last_refresh_ms      wall time of the last successful attempt, INCLUDING any retry
+  //                        backoff (the refresh log line's scanDurationMs is the scan alone)
+  //   last_scan_items      raw item count of the last successful scan
+  //   last_refresh_failed  true when the LAST refresh ATTEMPT errored — never "the value is
+  //                        old" (the refresh is lazy; a value is legitimately hours old
+  //                        overnight on a single-operator install)
+  //   last_error           that attempt's error message (capped at 300 chars), else null
+  //   saturated            the last SUCCESSFUL scan hit FULL_SCAN_LIMIT (the quantile is still
+  //                        computed); like last_refresh_ms / last_scan_items it describes the
+  //                        last success, not a failed attempt
+  //   ttl_ms               the refresh cadence (a code constant)
+  //   half_life_days       resolveHalfLifeDays() — the request-time H doSearch uses
+  //   factor               null until a statistic exists, else undatedFactorFor(A_q, H)
+  //   applied_factor       what doSearch multiplies an undated score by RIGHT NOW: 1 with
+  //                        decay off, else factor ?? exp(-0.25) (D20 honesty rule — never the
+  //                        fallback constant printed as if it were a live estimate)
+  //   computed_age_ms      now − computed_at (null before the first success)
+  //   attempt_age_ms       now − last_attempt_at (null before the first attempt)
+  // Stuck-cache alert conditions for um-alert.sh (spec §4.5, the #239 flip rollout's job):
+  //   (a) last_refresh_failed === true, or
+  //   (b) computed_age_ms − attempt_age_ms > 2 × ttl_ms — the attempt-minus-success gap
+  //       (last_attempt_at ≥ computed_at always, so the difference is non-negative);
+  //   NOT wall-clock age of computed_at alone.
+  // Presence-keyed like `layers`/`signals`: an ABSENT key ⇔ a pre-#297 server. A read failure
+  // nulls the cache-sourced keys and appends 'undated-imputation-unavailable' to degraded[].
+  // `??`, not only the default param: the /api/stats route passes `ctx?._undatedImputation`
+  // explicitly, and a ctx that sets it to null must resolve to the singleton exactly as
+  // doSearch's `??` does — the banked undefined-vs-null seam class (code review 2026-09-04).
+  // The read is guarded like every other source in this builder: a throwing or malformed
+  // instance nulls its OWN section and appends a degraded marker — /api/stats and the whole
+  // /control page must not 500 over one dark block (§5 A5; code review 2026-09-04).
+  let imp;
+  try {
+    imp = (imputation ?? undatedImputation).get();
+    if (imp === null || typeof imp !== 'object') throw new TypeError('undated-imputation get() returned a non-object');
+  } catch (err) {
+    safeLog(() => getLogger().warn({
+      request_id: currentRequestId(),
+      endpoint,
+      err_class: err?.code ?? err?.name ?? 'Error',
+      err_message: err?.message,
+    }, 'stats undated-imputation read failed — serving degraded'), 'log:stats:undated-imputation-unavailable');
+    degraded.push('undated-imputation-unavailable');
+    imp = { mode: null, quantile: null, cohortN: null, ageDaysAtQuantile: null, futureExcluded: null, computedAt: null, lastAttemptAt: null, lastRefreshMs: null, lastScanItems: null, lastRefreshFailed: null, lastError: null, saturated: null };
+  }
+  const decayEnabled = isDecayEnabled();
+  const halfLifeDays = resolveHalfLifeDays();
+  const factor = imp.ageDaysAtQuantile == null ? null : undatedFactorFor(imp.ageDaysAtQuantile, halfLifeDays);
+  const undatedImputationBlock = {
+    enabled: decayEnabled,
+    mode: imp.mode,
+    quantile: imp.quantile,
+    cohort_n: imp.cohortN,
+    age_days_at_quantile: imp.ageDaysAtQuantile,
+    future_excluded: imp.futureExcluded,
+    computed_at: imp.computedAt,
+    last_attempt_at: imp.lastAttemptAt,
+    last_refresh_ms: imp.lastRefreshMs,
+    last_scan_items: imp.lastScanItems,
+    last_refresh_failed: imp.lastRefreshFailed,
+    last_error: imp.lastError,
+    saturated: imp.saturated,
+    ttl_ms: UNDATED_IMPUTATION_TTL_MS,
+    half_life_days: halfLifeDays,
+    factor,
+    applied_factor: decayEnabled ? undatedFactorFor(imp.ageDaysAtQuantile, halfLifeDays) : 1,
+    computed_age_ms: imp.computedAt == null ? null : now - imp.computedAt,
+    attempt_age_ms: imp.lastAttemptAt == null ? null : now - imp.lastAttemptAt,
+  };
+
   const body = {
     schema_version: 1,
     generated_at: new Date(now).toISOString(),
@@ -208,6 +307,9 @@ export async function buildStats({
     // malformed `{capture_anomaly: undefined}` shape (the banked
     // undefined-vs-null seam-contract class).
     signals: counters.anomalies == null ? null : { capture_anomaly: counters.anomalies },
+    // #297: always present from this version forward (absent ⇔ a pre-#297 server); the
+    // flip-owner's decision surface — see the block comment above for every key.
+    undated_imputation: undatedImputationBlock,
     recall: {
       searches_today: counters.recall?.searches_today ?? null,
       searches_7d: counters.recall?.searches_7d ?? null,

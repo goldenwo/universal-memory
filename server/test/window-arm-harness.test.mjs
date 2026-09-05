@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { undatedFactorFor, UNDATED_FACTOR } from '../lib/ranking.mjs';
+import { createUndatedImputation } from '../lib/undated-imputation.mjs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolveWindowRows, WINDOW_ARM_ALLOWED_KINDS } from '../eval/lib/window-arm-fixture.mjs';
@@ -219,10 +221,35 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
 
   const embed = async () => ({ vector: [1, 0, 0], tokensIn: 1, tokensOut: 0, costUsd: 0 });
   const cosineStrict = () => 0.1;
+  // #297: the engagement precondition (spec §6.5) runs BEFORE recallPass on every decay-ON run
+  // and needs the full-corpus scan seam (umGetAll's `{results}` shape) plus a cache factory.
+  const goldIds = () => new Set([...refToId].filter(([ref]) => ref.startsWith('w1:0')).map(([, id]) => id));
+  const listAll = async (_memory, args) => {
+    calls.push({ op: 'listAll', args });
+    return { results: [...payloads].map(([id, p]) => ({ id, metadata: { eval_ref: p.eval_ref, lane: p.lane, ...(p.valid_from !== undefined ? { valid_from: p.valid_from } : {}) } })) };
+  };
+  const createImputation = (o) => createUndatedImputation({ ...o, log: { info: () => {}, warn: () => {} }, retry: (fn) => fn() });
   // Records the LIVE UM_TEMPORAL_DECAY the wrapper pinned, so the --decay off test can
   // assert doSearch actually observed 'false' rather than just trusting the return value.
-  const doSearch = async (query) => {
+  // The precondition's TWO probe searches (decay-off raw, then decay-on through the seam)
+  // always see the correct, factor-aware shape — the read path's contract — so the guard
+  // tests below still reach the projection guards they pin; `resultIdsMode` shapes only
+  // the MEASURED searches that follow.
+  const doSearch = async (query, _limit, _inc, _full, ctx) => {
     calls.push({ op: 'doSearch', query, decayEnv: process.env.UM_TEMPORAL_DECAY });
+    const searchesSoFar = calls.filter((c) => c.op === 'doSearch').length;
+    const rowId0 = query.split(' ')[0];
+    const target0 = refToId.get(`${rowId0}:0`);
+    // Only decay-ON runs have a probe pair (the decay-OFF probe DELETES the flag; a decay-OFF
+    // run pins it to 'false'), so the probe branch never masks a decay-OFF run's measured pass.
+    if (searchesSoFar <= 2 && process.env.UM_TEMPORAL_DECAY !== 'false' && goldIds().has(target0)) {
+      let score = 0.9;
+      if (process.env.UM_TEMPORAL_DECAY === 'true') {
+        const seam = ctx?._undatedImputation;
+        score = 0.9 * (seam ? undatedFactorFor(seam.get().ageDaysAtQuantile, 30) : UNDATED_FACTOR);
+      }
+      return { _temporalWidened: true, results: [{ id: target0, score }, { id: 'noise', score: 0.1 }] };
+    }
     if (resultIdsMode === 'mismatched') {
       return { _temporalWidened: true, results: [{ id: 'unrelated-1', score: 0.9 }, { id: 'unrelated-2', score: 0.1 }] };
     }
@@ -248,7 +275,7 @@ function windowFakes({ resultIdsMode = 'correct' } = {}) {
   const generateDistractors = (count, { seed }) => Array.from({ length: count }, (_, i) => ({ text: `distractor ${seed}-${i}`, lane: 'work' }));
   const lanesFromRows = () => ['work', 'dev'];
 
-  return { calls, payloads, refToId, umAdd, client, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
+  return { calls, payloads, refToId, umAdd, client, listAll, createImputation, embed, cosineStrict, doSearch, generateDistractors, lanesFromRows, memory: {}, NOOP_METRICS: {} };
 }
 
 const runWindowArgs = (f, over = {}) => ({
@@ -256,7 +283,10 @@ const runWindowArgs = (f, over = {}) => ({
   umAdd: f.umAdd, memory: f.memory, client: f.client, doSearch: f.doSearch,
   embed: f.embed, cosineStrict: f.cosineStrict, NOOP_METRICS: f.NOOP_METRICS,
   generateDistractors: f.generateDistractors, lanesFromRows: f.lanesFromRows,
-  distractors: 3, distractorSeed: 1,
+  createImputation: f.createImputation, listAll: f.listAll,
+  // #297: companion + w2 + 25 distractors = 27 dated points ≥ UNDATED_MIN_COHORT, so the
+  // engagement precondition (decay-ON runs) reaches `mode: relative` before the guards.
+  distractors: 25, distractorSeed: 1,
   ...over,
 });
 
@@ -271,22 +301,36 @@ const windowRowsWithBadTargetRef = () => {
   return rows;
 };
 
+// #297 (code review 2026-09-04): the projection is a decay-OFF forecast — under decay ON the live
+// path has already applied the factor, so there is nothing to project and `projection` is null.
+// The guard tests therefore run the unscaled baseline.
 test('runWindowArm: guard (a) fires when observed recall (raw order) disagrees with the identity re-rank (score order)', async () => {
   const f = windowFakes({ resultIdsMode: 'unsorted-gold' });
-  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(a\)/);
+  await assert.rejects(() => runWindowArm(runWindowArgs(f, { decay: 'off' })), /GUARD \(a\)/);
 });
 
 test('runWindowArm: guard (a) fires on a fully null measurement (target_ref matches no goldRef)', async () => {
   const f = windowFakes();
   await assert.rejects(
-    () => runWindowArm(runWindowArgs(f, { rows: windowRowsWithBadTargetRef() })),
+    () => runWindowArm(runWindowArgs(f, { rows: windowRowsWithBadTargetRef(), decay: 'off' })),
     /GUARD \(a\).*unmeasured/,
   );
 });
 
 test('runWindowArm: guard (b) fires when the live result ids never fall in the gold write-id space', async () => {
   const f = windowFakes({ resultIdsMode: 'mismatched' });
-  await assert.rejects(() => runWindowArm(runWindowArgs(f)), /GUARD \(b\)|undatedCandidatesScaled/);
+  await assert.rejects(() => runWindowArm(runWindowArgs(f, { decay: 'off' })), /GUARD \(b\)|undatedCandidatesScaled/);
+});
+
+test('runWindowArm: decay ON — projection is null (the live path already applied the factor) and the imputation stamp carries the corpus statistic', async () => {
+  const f = windowFakes();
+  const out = await runWindowArm(runWindowArgs(f));
+  assert.equal(out.projection, null);
+  assert.equal(out.undatedImputation.policy, 'relative');
+  assert.equal(out.undatedImputation.mode, 'relative');
+  assert.equal(out.headroom.policyDemotion, 1 / out.undatedImputation.factor);
+  const probes = f.calls.filter((c) => c.op === 'doSearch').slice(0, 2);
+  assert.deepEqual(probes.map((p) => p.decayEnv), [undefined, 'true'], 'decay-OFF probe then decay-ON probe');
 });
 
 test('runWindowArm: --decay off pins UM_TEMPORAL_DECAY=false for doSearch and still runs to completion', async () => {
@@ -299,6 +343,10 @@ test('runWindowArm: --decay off pins UM_TEMPORAL_DECAY=false for doSearch and st
   assert.equal(out.flags.UM_TEMPORAL_DECAY, 'false');
   assert.equal(out.flags.UM_TEMPORAL_QUERY, 'true');
   assert.equal(out.projection.evictedRefs.length, 0, 'the happy-path fixture has no eviction');
+  // #297: the decay-OFF forecast uses the CORPUS statistic (P7), never the constant when one exists.
+  assert.equal(out.projection.basis, 'corpus-statistic');
+  assert.ok(out.projection.factor > 0 && out.projection.factor < 1 && out.projection.factor !== Math.exp(-0.25), `forecast factor ${out.projection.factor} is corpus-derived`);
+  assert.equal(out.headroom.policyDemotion, 1 / out.projection.factor, 'the headroom report names the forecast demotion');
   assert.equal(process.env.UM_TEMPORAL_DECAY, undefined, 'the pin must not leak past the run');
   assert.equal(process.env.UM_TEMPORAL_QUERY, undefined, 'the pin must not leak past the run');
 });

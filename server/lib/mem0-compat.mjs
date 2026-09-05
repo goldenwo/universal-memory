@@ -639,19 +639,24 @@ async function handleSearch({ req, body, ctx }) {
   // re-ranked — is a recorded v1 limitation, not an oversight: this path's
   // fetch/limit semantics differ and deserve their own decision.
   //
-  // SURFACE-COVERAGE LIMITATION, recorded (undated-decay policy, 2026-08-06).
-  // `applyTemporalDecay` now scales an UNDATED result by a fixed imputed factor
-  // (lib/ranking.mjs, UNDATED_FACTOR) instead of leaving it at 1.0. That runs on the
-  // doSearch path only. So once UM_TEMPORAL_DECAY is enabled, /api/search and MCP
-  // memory_search will scale undated points while THIS facade leaves them unscaled —
-  // the same undated-vs-dated asymmetry reappearing as a BETWEEN-SURFACE divergence.
+  // SURFACE-COVERAGE LIMITATION, recorded (undated-decay policy, 2026-08-06; factor made
+  // corpus-relative by #297, 2026-09-04). `applyTemporalDecay` scales an UNDATED result by
+  // an imputed factor — the dated cohort's age at the policy quantile, exp(-A_q/H),
+  // refreshed hourly (lib/ranking.mjs `undatedFactorFor`, lib/undated-imputation.mjs), with
+  // exp(-0.25) as the fallback — instead of leaving it at 1.0. That runs on the doSearch
+  // path only. So once UM_TEMPORAL_DECAY is enabled, /api/search and MCP memory_search
+  // will scale undated points while THIS facade leaves them unscaled — the same
+  // undated-vs-dated asymmetry reappearing as a BETWEEN-SURFACE divergence, and now a
+  // VARIABLE one: read the live factor from /api/stats.undated_imputation.applied_factor
+  // (0.384 on the 2026-09-03 corpus, i.e. a 2.6x divergence; 1.28x under the old constant).
   //
   // Deliberately not "fixed" here, and the reason is ORDER-DEPENDENT, so state the premise
   // rather than the conclusion: the absolute score threshold (default 0.3) is applied
   // ABOVE, when results are filtered. For the caller's threshold to mean what it says, a
   // demotion would have to run BEFORE that filter — and there any raw score in
-  // [0.30, 0.385) falls under the 0.3 default once scaled by exp(-0.25) (e.g.
-  // 0.36 * 0.779 = 0.280), so the demotion becomes a hard DROP, which the recall-safety
+  // [threshold, threshold / applied_factor) falls under the default once scaled (under
+  // the old constant [0.30, 0.385), e.g. 0.36 * 0.779 = 0.280; at applied_factor 0.384 the
+  // band is [0.30, 0.781)), so the demotion becomes a hard DROP, which the recall-safety
   // rule forbids for missing metadata. Applied AFTER the filter (i.e. here) nothing drops,
   // but the facade would then return scores below its own stated threshold. Either way the
   // threshold interaction has to be decided first; copying the factor across is not enough.
