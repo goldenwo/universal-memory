@@ -1096,6 +1096,165 @@ else
   fail "T55b-help-content: $output"
 fi
 
+# ─── #297/#239 IMPUTATION-STUCK section fixtures ─────────────────────────────
+# The /api/stats undated_imputation block in its wire spelling (spec §4.5 /
+# D24). Every fixture above lacks the key and rides the ABSENT branch, so the
+# pre-#297 matrix stays green untouched (the SIGNALS / CRASH-DEAD safety fact).
+# Capture is the healthy #283 entry throughout, so the exit code below is this
+# section's alone. ttl_ms is the shipped 1 h; ages are ms.
+IMP_OFF='{"enabled":false,"mode":"fallback","quantile":0.5,"cohort_n":null,"age_days_at_quantile":null,"future_excluded":null,"computed_at":null,"last_attempt_at":null,"last_refresh_ms":null,"last_scan_items":null,"last_refresh_failed":false,"last_error":null,"saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":null,"applied_factor":1,"computed_age_ms":null,"attempt_age_ms":null}'
+IMP_OFF_FAILED='{"enabled":false,"mode":"fallback","quantile":0.5,"cohort_n":null,"age_days_at_quantile":null,"future_excluded":null,"computed_at":null,"last_attempt_at":1757003600000,"last_refresh_ms":null,"last_scan_items":null,"last_refresh_failed":true,"last_error":"scan timed out after 60000 ms","saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":null,"applied_factor":1,"computed_age_ms":null,"attempt_age_ms":600000}'
+IMP_OK='{"enabled":true,"mode":"relative","quantile":0.5,"cohort_n":412,"age_days_at_quantile":28.7,"future_excluded":0,"computed_at":1757000000000,"last_attempt_at":1757003600000,"last_refresh_ms":812,"last_scan_items":598,"last_refresh_failed":false,"last_error":null,"saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":0.384,"applied_factor":0.384,"computed_age_ms":5400000,"attempt_age_ms":1800000}'
+IMP_FAILED='{"enabled":true,"mode":"relative","quantile":0.5,"cohort_n":412,"age_days_at_quantile":28.7,"future_excluded":0,"computed_at":1756970000000,"last_attempt_at":1757003600000,"last_refresh_ms":60012,"last_scan_items":598,"last_refresh_failed":true,"last_error":"scan timed out after 60000 ms","saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":0.384,"applied_factor":0.384,"computed_age_ms":30000000,"attempt_age_ms":600000}'
+IMP_GAP='{"enabled":true,"mode":"relative","quantile":0.5,"cohort_n":412,"age_days_at_quantile":28.7,"future_excluded":0,"computed_at":1756990000000,"last_attempt_at":1757003600000,"last_refresh_ms":812,"last_scan_items":598,"last_refresh_failed":false,"last_error":null,"saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":0.384,"applied_factor":0.384,"computed_age_ms":10800001,"attempt_age_ms":600000}'
+IMP_GAP_BOUNDARY='{"enabled":true,"mode":"relative","quantile":0.5,"cohort_n":412,"age_days_at_quantile":28.7,"future_excluded":0,"computed_at":1756990000000,"last_attempt_at":1757003600000,"last_refresh_ms":812,"last_scan_items":598,"last_refresh_failed":false,"last_error":null,"saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":0.384,"applied_factor":0.384,"computed_age_ms":7800000,"attempt_age_ms":600000}'
+IMP_INFLIGHT='{"enabled":true,"mode":"fallback","quantile":0.5,"cohort_n":null,"age_days_at_quantile":null,"future_excluded":null,"computed_at":null,"last_attempt_at":1757003600000,"last_refresh_ms":null,"last_scan_items":null,"last_refresh_failed":false,"last_error":null,"saturated":false,"ttl_ms":3600000,"half_life_days":30,"factor":null,"applied_factor":0.7788,"computed_age_ms":null,"attempt_age_ms":5000}'
+IMP_UNAVAILABLE='{"enabled":true,"mode":null,"quantile":null,"cohort_n":null,"age_days_at_quantile":null,"future_excluded":null,"computed_at":null,"last_attempt_at":null,"last_refresh_ms":null,"last_scan_items":null,"last_refresh_failed":null,"last_error":null,"saturated":null,"ttl_ms":3600000,"half_life_days":30,"factor":null,"applied_factor":0.7788,"computed_age_ms":null,"attempt_age_ms":null}'
+IMP_BAD_TTL='{"enabled":true,"mode":"relative","last_refresh_failed":false,"ttl_ms":"1h","computed_age_ms":5400000,"attempt_age_ms":1800000}'
+IMP_BAD_FLAG='{"enabled":true,"mode":"relative","last_refresh_failed":"yes","ttl_ms":3600000,"computed_age_ms":5400000,"attempt_age_ms":1800000}'
+LAYERS_STALE_ONE='"layers":{"universal-memory":{"stale":true,"lag_hours":40.2,"pending_bytes":9000}}'
+_imp_payload() { echo "{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY},\"undated_imputation\":$1}"; }
+IMP_P_OFF=$(_imp_payload "$IMP_OFF")
+IMP_P_OFF_FAILED=$(_imp_payload "$IMP_OFF_FAILED")
+IMP_P_OK=$(_imp_payload "$IMP_OK")
+IMP_P_FAILED=$(_imp_payload "$IMP_FAILED")
+IMP_P_GAP=$(_imp_payload "$IMP_GAP")
+IMP_P_GAP_BOUNDARY=$(_imp_payload "$IMP_GAP_BOUNDARY")
+IMP_P_INFLIGHT=$(_imp_payload "$IMP_INFLIGHT")
+IMP_P_UNAVAILABLE="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY},\"degraded\":[\"undated-imputation-unavailable\"],\"undated_imputation\":$IMP_UNAVAILABLE}"
+IMP_P_ARRAY="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY},\"undated_imputation\":[]}"
+IMP_P_BAD_TTL=$(_imp_payload "$IMP_BAD_TTL")
+IMP_P_BAD_FLAG=$(_imp_payload "$IMP_BAD_FLAG")
+IMP_P_FAILED_PLUS_LAYERS="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY},\"undated_imputation\":$IMP_FAILED,$LAYERS_STALE_ONE}"
+IMP_P_BAD_TTL_PLUS_LAYERS="{\"schema_version\":1,\"capture\":{\"claude-code-plugin\":$CD_ENTRY_HEALTHY},\"undated_imputation\":$IMP_BAD_TTL,$LAYERS_STALE_ONE}"
+
+# ─── T56: ABSENT — no undated_imputation key ⇒ breadcrumb, verdict untouched ─
+echo ""
+echo "=== T56: pre-#297 payload (no undated_imputation key) ⇒ ABSENT breadcrumb, exit 0 unchanged ==="
+mock="$TMPDIR_ROOT/t56"; _make_mock_curl "$mock" 200 "$CD_OK"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T56-exit-0-unchanged"; else fail "T56-exit-0-unchanged (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "stuck-cache class NOT checked"; then pass "T56-breadcrumb"; else fail "T56-breadcrumb: $output"; fi
+
+# ─── T57: decay OFF ⇒ quiet no matter what the cache says (the block is inert) ─
+echo ""
+echo "=== T57a: enabled:false, healthy-empty cache ⇒ exit 0, no IMPUTATION text at all ==="
+mock="$TMPDIR_ROOT/t57a"; _make_mock_curl "$mock" 200 "$IMP_P_OFF"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T57a-exit-0"; else fail "T57a-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -qi "imputation"; then fail "T57a-quiet: $output"; else pass "T57a-quiet"; fi
+echo ""
+echo "=== T57b: enabled:false but last_refresh_failed:true ⇒ STILL exit 0 and quiet (inert while decay is off) ==="
+mock="$TMPDIR_ROOT/t57b"; _make_mock_curl "$mock" 200 "$IMP_P_OFF_FAILED"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T57b-exit-0"; else fail "T57b-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -qi "imputation"; then fail "T57b-quiet: $output"; else pass "T57b-quiet"; fi
+
+# ─── T58: decay ON, healthy shapes ⇒ exit 0, no line ────────────────────────
+echo ""
+echo "=== T58a: enabled:true, relative, attempt 0.5h after a 1.5h-old success ⇒ exit 0, no line ==="
+mock="$TMPDIR_ROOT/t58a"; _make_mock_curl "$mock" 200 "$IMP_P_OK"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T58a-exit-0"; else fail "T58a-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK"; then fail "T58a-no-line: $output"; else pass "T58a-no-line"; fi
+echo ""
+echo "=== T58b: gap EXACTLY 2 × ttl_ms (7200000) ⇒ not stuck (strict >), exit 0 ==="
+mock="$TMPDIR_ROOT/t58b"; _make_mock_curl "$mock" 200 "$IMP_P_GAP_BOUNDARY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T58b-exit-0"; else fail "T58b-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK"; then fail "T58b-no-line: $output"; else pass "T58b-no-line"; fi
+echo ""
+echo "=== T58c: never-succeeded cache with an attempt in flight (computed_age null, attempt 5s, not failed) ⇒ transient, exit 0 ==="
+mock="$TMPDIR_ROOT/t58c"; _make_mock_curl "$mock" 200 "$IMP_P_INFLIGHT"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T58c-exit-0"; else fail "T58c-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK"; then fail "T58c-no-line: $output"; else pass "T58c-no-line"; fi
+
+# ─── T59: the two §4.5 conditions ⇒ exit 1 with the IMPUTATION-STUCK line ───
+echo ""
+echo "=== T59a: (a) last_refresh_failed:true ⇒ exit 1, line carries last_error + the freshness-OK context line ==="
+mock="$TMPDIR_ROOT/t59a"; _make_mock_curl "$mock" 200 "$IMP_P_FAILED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T59a-exit-1"; else fail "T59a-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK" && echo "$output" | grep -q "scan timed out after 60000 ms" \
+  && echo "$output" | grep -q "capture freshness itself OK"; then
+  pass "T59a-line-content"
+else
+  fail "T59a-line-content: $output"
+fi
+echo ""
+echo "=== T59b: (b) computed_age − attempt_age > 2 × ttl (10800001 − 600000 > 7200000) ⇒ exit 1, gap named ==="
+mock="$TMPDIR_ROOT/t59b"; _make_mock_curl "$mock" 200 "$IMP_P_GAP"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T59b-exit-1"; else fail "T59b-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK" && echo "$output" | grep -q "2 x TTL"; then
+  pass "T59b-line-content"
+else
+  fail "T59b-line-content: $output"
+fi
+
+# ─── T60: the monitor cannot see the cache ⇒ CHECK FAILED, exit 2 ───────────
+echo ""
+echo "=== T60a: server flags its own read degraded (undated-imputation-unavailable) with decay ON ⇒ exit 2, CHECK FAILED names it ==="
+mock="$TMPDIR_ROOT/t60a"; _make_mock_curl "$mock" 200 "$IMP_P_UNAVAILABLE"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T60a-exit-2"; else fail "T60a-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED" && echo "$output" | grep -q "undated-imputation-unavailable"; then
+  pass "T60a-check-failed-text"
+else
+  fail "T60a-check-failed-text: $output"
+fi
+echo ""
+echo "=== T60b: undated_imputation:[] ⇒ exit 2 (dict guard) ==="
+mock="$TMPDIR_ROOT/t60b"; _make_mock_curl "$mock" 200 "$IMP_P_ARRAY"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T60b-exit-2"; else fail "T60b-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED"; then pass "T60b-check-failed"; else fail "T60b-check-failed: $output"; fi
+echo ""
+echo "=== T60c: ttl_ms:\"1h\" ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t60c"; _make_mock_curl "$mock" 200 "$IMP_P_BAD_TTL"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T60c-exit-2"; else fail "T60c-exit-2 (rc=$rc, out=$output)"; fi
+echo ""
+echo "=== T60d: last_refresh_failed:\"yes\" ⇒ exit 2 ==="
+mock="$TMPDIR_ROOT/t60d"; _make_mock_curl "$mock" 200 "$IMP_P_BAD_FLAG"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T60d-exit-2"; else fail "T60d-exit-2 (rc=$rc, out=$output)"; fi
+
+# ─── T61: print-all with the other sections ─────────────────────────────────
+echo ""
+echo "=== T61a: imputation ALERT + layers STALE ⇒ exit 1, BOTH lines ==="
+mock="$TMPDIR_ROOT/t61a"; _make_mock_curl "$mock" 200 "$IMP_P_FAILED_PLUS_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T61a-exit-1"; else fail "T61a-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK" && echo "$output" | grep -q "LAYERS-STALE"; then
+  pass "T61a-both-lines"
+else
+  fail "T61a-both-lines: $output"
+fi
+echo ""
+echo "=== T61b: imputation MALFORMED + layers STALE ⇒ exit 2 AND the LAYERS-STALE line still prints ==="
+mock="$TMPDIR_ROOT/t61b"; _make_mock_curl "$mock" 200 "$IMP_P_BAD_TTL_PLUS_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T61b-exit-2"; else fail "T61b-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "LAYERS-STALE" && echo "$output" | grep -q "CHECK FAILED"; then
+  pass "T61b-layers-echoed"
+else
+  fail "T61b-layers-echoed: $output"
+fi
+
+# ─── T62: --help carries the section + its two conditions ───────────────────
+echo ""
+echo "=== T62: --help names IMPUTATION-STUCK and both stuck-cache conditions ==="
+output=$(bash "$BIN" --help 2>&1) && rc=0 || rc=$?
+if [ "$rc" -eq 0 ]; then pass "T62-exit-0"; else fail "T62-exit-0 (rc=$rc)"; fi
+if echo "$output" | grep -q "IMPUTATION-STUCK" && echo "$output" | grep -qi "last refresh attempt failed" \
+  && echo "$output" | grep -qi "2 × TTL"; then
+  pass "T62-help-content"
+else
+  fail "T62-help-content: $output"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

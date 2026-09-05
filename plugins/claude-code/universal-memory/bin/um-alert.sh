@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bin/um-alert.sh — cron-able capture-pipeline health check (#171 Stage A +
-# #267 SIGNALS + #283 CRASH-DEAD). GETs /api/stats and evaluates FIVE
+# #267 SIGNALS + #283 CRASH-DEAD + #297/#239 IMPUTATION-STUCK). GETs
+# /api/stats and evaluates SIX
 # sections, each covering a failure class the others structurally cannot see:
 #
 #   FRESHNESS (counters-derived, #171): server-side / transport / total
@@ -27,12 +28,21 @@
 #     (has ever posted a turn — last_turn_day != null) with ZERO turns in
 #     the 7-day window but checkpoint abstains present. Clears itself on
 #     the next check after a turn lands.
+#   IMPUTATION-STUCK (#297/#239): the undated-decay cache behind
+#     /api/stats.undated_imputation stopped refreshing while decay is ON —
+#     (a) the last refresh attempt FAILED, or (b) the last attempt ran more
+#     than 2 × TTL after the last SUCCESSFUL statistic (computed_age_ms −
+#     attempt_age_ms > 2 × ttl_ms; spec §4.5). NOT wall-clock age of the
+#     statistic: the refresh is lazy (a decay-path search or the boot kick
+#     triggers it), so an 8-12 h old value every morning is normal on a
+#     single-operator Pi. Quiet while decay is OFF (the block is inert).
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
 #   1  ALARM — stale captures, a stale layer, ledger-error growth, a
 #      capture anomaly in the 7-day window, or an armed surface gone
-#      turn-dead while checkpoints stamp (crash-dead)
+#      turn-dead while checkpoints stamp (crash-dead), or a stuck
+#      undated-imputation cache with decay on (imputation-stuck)
 #   2  the check itself couldn't run (unreachable / auth / bad response /
 #      degraded counters / malformed section) — a broken monitor is loud
 #
@@ -76,7 +86,7 @@ _usage() {
 Usage: um-alert.sh [options]
 
 Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
-on success, actionable line(s) + non-zero exit otherwise. Five sections:
+on success, actionable line(s) + non-zero exit otherwise. Six sections:
 capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls),
 SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
 alarm for a stop.sh-only capture death), and CRASH-DEAD (#283 — an armed
@@ -84,8 +94,13 @@ surface whose turns stopped while session-end keeps stamping abstained
 checkpoints: the hook died without being able to self-report; the alert
 clears itself on the next check after a turn lands, and a fire on a healthy
 client can be a fully-idle week — sessions but no captured exchanges — or
-stray header-less traffic). Every applicable escalation line is
-printed before the single exit (print-all, no masking).
+stray header-less traffic), and IMPUTATION-STUCK (#297/#239 — the
+undated-decay cache behind /api/stats.undated_imputation stopped refreshing
+while decay is ON: the last refresh attempt failed, or the last attempt ran
+more than 2 × TTL after the last successful statistic — a stuck cache serves
+a stale factor to every undated score; quiet while decay is off). Every
+applicable escalation line is printed before the single exit (print-all,
+no masking).
 
 Options:
   --max-age-hours N   Freshness threshold in hours. Default: the server's
@@ -109,7 +124,10 @@ Exit codes:
                armed but zero turns in 7d with checkpoint abstains — the
                alert clears itself on the next check after a turn lands;
                if the client checks out healthy, suspect a fully-idle week
-               or stray header-less traffic, see #283)
+               or stray header-less traffic, see #283), or a stuck
+               undated-imputation cache while decay is on (IMPUTATION-STUCK:
+               last refresh attempt failed, or last attempt > 2 × TTL after
+               the last success — see #239 / spec §4.5)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -502,6 +520,109 @@ emit("OK", "no armed surface is turn-dead with checkpoint activity")
 CD_STATUS="${CD_VERDICT%%|*}"
 CD_MESSAGE="${CD_VERDICT#*|}"
 
+# #297/#239 IMPUTATION-STUCK section — the undated-decay cache behind
+# /api/stats.undated_imputation (spec §4.5; the #239 flip rollout's recorded
+# residual, wired ahead of the flip). Once decay is ON every undated score is
+# multiplied by the factor derived from this cache; a cache that stops
+# refreshing serves a stale (or the fallback) factor silently, and past the
+# 7-day flip window nothing else watches it. Two conditions, in the block's
+# WIRE spelling:
+#   (a) last_refresh_failed == true — the last attempt threw / timed out after
+#       retries (a hung scan is bounded at 60 s per try and lands here too);
+#   (b) computed_age_ms − attempt_age_ms > 2 × ttl_ms — the last attempt ran
+#       more than two TTLs after the last SUCCESS. last_attempt_at ≥
+#       computed_at always (an attempt is stamped before its scan), so
+#       attempt_age_ms ≤ computed_age_ms and the difference IS the
+#       attempt-minus-success gap; the operands the other way round are
+#       unfireable (FCP pass 2 catch). Negative ages (clock skew) clamp to 0.
+#   NOT wall-clock age of computed_at: the refresh is lazy (a decay-path
+#   search or the boot kick triggers it), so on a single-operator Pi the
+#   statistic is legitimately 8-12 h old every morning (spec round 8).
+# Taxonomy mirrors CRASH-DEAD:
+#   ABSENT   — no undated_imputation key: pre-#297 server. Breadcrumb.
+#   DISABLED — enabled false: decay off, the block is inert (applied_factor
+#              is 1 by construction) — quiet whatever the cache says.
+#   ERROR    — key present but not an object; enabled / last_refresh_failed
+#              not booleans; ttl_ms not a positive number; the two age
+#              fields not null-or-number; OR the server flagged its own
+#              cache read as degraded ('undated-imputation-unavailable' in
+#              degraded[]) while decay is on ⇒ CHECK FAILED, exit 2 — a
+#              monitor that cannot see the cache it guards must be loud.
+#   ALERT    — decay on and (a) or (b) ⇒ exit 1.
+#   OK       — decay on, cache healthy. A never-succeeded cache with an
+#              attempt in flight (computed_age_ms null, attempt_age_ms set,
+#              not failed) is transient — quiet.
+IMP_VERDICT=$("$PY" -c '
+import json, sys
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+if "undated_imputation" not in stats:
+    emit("ABSENT", "no undated_imputation block — server predates #297; stuck-cache class NOT checked")
+imp = stats.get("undated_imputation")
+if not isinstance(imp, dict):
+    emit("ERROR", "undated_imputation is not an object — stuck-cache fields cannot be read")
+
+def num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+def num_or_null(v):
+    return v is None or num(v)
+
+try:
+    enabled = imp.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled is not a boolean")
+    if not enabled:
+        emit("DISABLED", "decay off — the undated_imputation block is inert")
+    degraded = stats.get("degraded")
+    if isinstance(degraded, list) and "undated-imputation-unavailable" in degraded:
+        raise ValueError("the server could not read its own cache (degraded: undated-imputation-unavailable)")
+    failed = imp.get("last_refresh_failed")
+    if not isinstance(failed, bool):
+        raise ValueError("last_refresh_failed is not a boolean")
+    ttl = imp.get("ttl_ms")
+    if not num(ttl) or ttl <= 0:
+        raise ValueError("ttl_ms is not a positive number")
+    computed_age = imp.get("computed_age_ms")
+    attempt_age = imp.get("attempt_age_ms")
+    if not num_or_null(computed_age) or not num_or_null(attempt_age):
+        raise ValueError("computed_age_ms / attempt_age_ms are not null-or-number")
+except Exception as e:
+    emit("ERROR", "undated_imputation payload malformed: %s" % e)
+
+def hours(ms):
+    return "%.1fh" % (ms / 3600000.0)
+
+tail = (" — served factor %s (mode %s); check: docker logs um-server 2>&1 | grep undated-imputation;"
+        " rollback = UM_TEMPORAL_DECAY=false + compose up -d --no-deps memory-server (no data change)"
+        " — see #239 / spec 4.5") % (imp.get("applied_factor"), imp.get("mode"))
+if failed:
+    err = imp.get("last_error")
+    last_ok = "never" if computed_age is None else hours(computed_age) + " ago"
+    emit("ALERT", "undated-imputation cache: the last refresh attempt FAILED (%s); last successful statistic %s%s"
+         % (err if err else "no error text", last_ok, tail))
+if computed_age is not None and attempt_age is not None:
+    gap = max(0, computed_age) - max(0, attempt_age)
+    if gap > 2 * ttl:
+        emit("ALERT", ("undated-imputation cache: the last attempt (%s ago) ran %s after the last successful "
+                       "statistic (%s ago) — more than 2 x TTL (%s); the refresh is not landing%s")
+             % (hours(attempt_age), hours(gap), hours(computed_age), hours(ttl), tail))
+emit("OK", "undated-imputation cache healthy")
+' < "$BODY_FILE" 2>/dev/null) || IMP_VERDICT=""
+
+IMP_STATUS="${IMP_VERDICT%%|*}"
+IMP_MESSAGE="${IMP_VERDICT#*|}"
+
 # print_escalations — echo EVERY applicable alert line (#267 print-all;
 # order: the primary capture verdict first, then SIGNALS → LAYERS → LEDGER —
 # active capture loss is the most actionable of the add-on sections). Called
@@ -524,6 +645,9 @@ print_escalations() {
   fi
   if [ "$CD_STATUS" = "ALERT" ]; then
     echo "um-alert: CRASH-DEAD — $CD_MESSAGE" >&2
+  fi
+  if [ "$IMP_STATUS" = "ALERT" ]; then
+    echo "um-alert: IMPUTATION-STUCK — $IMP_MESSAGE" >&2
   fi
   if [ "$LAYERS_STATUS" = "STALE" ]; then
     echo "um-alert: LAYERS-STALE — $LAYERS_MESSAGE" >&2
@@ -661,6 +785,18 @@ case "$CD_STATUS" in
     echo "um-alert: CHECK FAILED — ${CD_MESSAGE:-crash-dead verdict parser produced no output}" >&2 ;;
 esac
 
+# #297/#239 IMPUTATION-STUCK wiring — same breadcrumb / no-op / CHECK-FAILED
+# contract; DISABLED is the decay-off no-op (inert block, nothing to say).
+case "$IMP_STATUS" in
+  ABSENT)
+    echo "um-alert: $IMP_MESSAGE" >&2 ;;
+  OK|ALERT|DISABLED)
+    : ;;
+  *)
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${IMP_MESSAGE:-undated-imputation verdict parser produced no output}" >&2 ;;
+esac
+
 case "$LAYERS_STATUS" in
   ABSENT)
     echo "um-alert: $LAYERS_MESSAGE" >&2 ;;
@@ -678,7 +814,7 @@ fi
 
 case "$STATUS" in
   FRESH)
-    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
+    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$IMP_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
       print_escalations
       # Context restored (review catch — the old suffix was deleted with
       # first-wins): the one mail a cron sends must say whether freshness
