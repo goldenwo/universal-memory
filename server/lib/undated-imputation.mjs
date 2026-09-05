@@ -115,12 +115,14 @@ function errorText(err) {
   try { return String(err?.message ?? err).slice(0, UNDATED_IMPUTATION_ERROR_MAX_CHARS); } catch { return 'unknown error'; }
 }
 
-/** Race a scan call against the per-try bound; the timer never keeps the process alive. */
+/** Race a scan call against the per-try bound; the timer is cleared as soon as the race settles. */
 function withScanTimeout(promise, ms) {
   let timer;
   const bound = new Promise((_, reject) => {
+    // The timer stays ref'd on purpose: an unref'd bound can only fire while something ELSE keeps the loop
+    // alive, so a hung scan in an otherwise idle process would never time out (CI caught this under Node 22).
+    // It is cleared the moment the race settles, so it never outlives the attempt it bounds.
     timer = setTimeout(() => reject(new Error(`scan timed out after ${ms} ms`)), ms);
-    if (typeof timer?.unref === 'function') timer.unref();
   });
   return Promise.race([promise, bound]).finally(() => clearTimeout(timer));
 }
