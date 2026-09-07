@@ -1208,7 +1208,7 @@ function pathMcp() {
       operationId: 'mcpJsonRpc',
       summary: 'MCP (JSON-RPC 2.0) endpoint',
       description:
-        'Accepts MCP protocol messages: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`. The body of a notification (no `id`) is answered with an empty HTTP body. See docs/mcp-tools.md for the tool catalog.',
+        'Accepts MCP protocol messages: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`. A notification (any JSON-RPC message with no `id`) is acknowledged with HTTP 202 Accepted and no body, per the MCP streamable-HTTP transport. See docs/mcp-tools.md for the tool catalog.',
       requestBody: {
         required: true,
         content: {
@@ -1217,11 +1217,14 @@ function pathMcp() {
       },
       responses: {
         200: {
-          description:
-            'JSON-RPC response (or empty body for notifications that do not require a reply)',
+          description: 'JSON-RPC response to a request (a message carrying an `id`)',
           content: {
             'application/json': { schema: ref('JsonRpcResponse') },
           },
+        },
+        202: {
+          description:
+            'Notification accepted (a message with no `id`, e.g. `notifications/initialized`). No body, no Content-Type.',
         },
         ...RESP_500,
       },
