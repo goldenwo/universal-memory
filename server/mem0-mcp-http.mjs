@@ -3033,6 +3033,18 @@ export function createRequestHandler(ctx = {}) {
 			// MCP write tools count through the same shared-lib emit sites as
 			// the REST routes. Spread — never mutate the shared DI ctx.
 			const result = await handleMcpMessage(body, { ...ctx, surface: surfaceFromHeaders(req.headers) });
+			// JSON-RPC notification (no `id` — notifications/initialized and any
+			// other id-less message): the MCP streamable-HTTP transport requires
+			// 202 Accepted with NO body. Previously this fell through to 200 +
+			// Content-Type application/json + empty body, which is not a JSON
+			// document — Codex CLI's rmcp client failed to deserialise it
+			// ("EOF while parsing a value at line 1 column 0, when send
+			// initialized notification") and dropped the server.
+			if (body.id === undefined) {
+				res.writeHead(202);
+				res.end();
+				return;
+			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
 			return;
