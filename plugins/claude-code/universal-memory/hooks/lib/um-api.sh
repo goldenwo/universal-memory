@@ -9,6 +9,8 @@
 #   um_api_configured  — rc 0 iff an endpoint is EXPLICITLY configured
 #                        (env tiers or non-empty ~/.um/endpoint file)
 #   um_api_token       — bearer token from ${UM_TOKEN_FILE:-~/.um/auth-token}
+#   (every request retries ONCE on HTTP 429 after UM_API_RETRY_429_SLEEP s —
+#    UM_API_RETRY_429=0 disables; see _um_api_request)
 #   um_api_post        — curl POST wrapper (connect 3s / total 10s, X-UM-Source,
 #                        Bearer auth when a token exists; body → stdout,
 #                        HTTP code → $UM_API_HTTP_CODE, rc 0 iff 2xx)
@@ -138,8 +140,27 @@ _um_api_request() {
     curl_args+=(-H "Authorization: Bearer $token")
   fi
 
-  raw=$(curl "${curl_args[@]}" 2>/dev/null) || true
-  code=$(printf '%s' "$raw" | grep -o '__UM_HTTP_CODE__[0-9]*' | tail -1 | sed 's/__UM_HTTP_CODE__//')
+  # 429 is transient by construction: the server's per-IP token bucket
+  # (60 rpm, burst 10) answers Retry-After: 1 at that rate, and one machine
+  # restoring eight sessions in a minute trips it (2026-09-10: ~40 calls
+  # inside the burst window; the probe and the MCP handshake were the ones
+  # refused). Retry after the bucket refills instead of dropping the turn,
+  # the checkpoint or the state fetch. Bounded: UM_API_RETRY_429 extra
+  # attempts (default 1; 0 disables), UM_API_RETRY_429_SLEEP seconds
+  # between them (default 1). Nothing else is retried here — the hooks own
+  # their own reporting for every other code.
+  local attempt=0 retries="${UM_API_RETRY_429:-1}" pause="${UM_API_RETRY_429_SLEEP:-1}"
+  case "$retries" in ''|*[!0-9]*) retries=1 ;; esac
+  while :; do
+    raw=$(curl "${curl_args[@]}" 2>/dev/null) || true
+    code=$(printf '%s' "$raw" | grep -o '__UM_HTTP_CODE__[0-9]*' | tail -1 | sed 's/__UM_HTTP_CODE__//')
+    if [ "${code:-000}" = "429" ] && [ "$attempt" -lt "$retries" ]; then
+      attempt=$((attempt + 1))
+      sleep "$pause"
+      continue
+    fi
+    break
+  done
   UM_API_HTTP_CODE="${code:-000}"
 
   printf '%s\n' "$raw" | sed '/^__UM_HTTP_CODE__[0-9]*$/d'

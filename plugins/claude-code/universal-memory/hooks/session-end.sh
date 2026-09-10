@@ -126,6 +126,11 @@ ENDPOINT=$(um_api_endpoint 2>/dev/null)
       401)
         um_log "error=auth"
         ;;
+      429)
+        # Remote rate-limiter — transient, already retried once by um-api.sh;
+        # never the server-too-old prescription (2026-09-10).
+        um_log "error=http-429"
+        ;;
       4[0-9][0-9])
         um_log "skip=server-too-old http=$UM_API_HTTP_CODE"
         ;;

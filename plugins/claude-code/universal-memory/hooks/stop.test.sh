@@ -62,6 +62,7 @@
 #        advert, reasoning / function_call items, event_msg duplicates and a
 #        <system-reminder> block are never POSTed; cursor lands on the last line.
 #   S30. Second fire on the unchanged rollout ⇒ zero new append-turn POSTs.
+#   S31. 429 then 200 on an append POST ⇒ um-api.sh retries once, nothing lost.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -889,7 +890,8 @@ H=$(fresh_home s23)
 STDIN=$(make_stdin "$SID" "$(native_path "$TMPDIR_ROOT/absent-s23.jsonl")" "$(native_path "$CWD_N")")
 for pair in "404:server-too-old" "429:http-429" "000:http-000" "403:writes-disabled" "401:auth" "400:input-invalid" "500:http-500"; do
   code="${pair%%:*}"; tok="${pair#*:}"
-  reset_calls "$code"
+  # 2026-09-10: um-api.sh retries a 429 once, so the exhausted case needs two.
+  if [ "$code" = "429" ]; then reset_calls 429 429; else reset_calls "$code"; fi
   run_stop "$H" "$STDIN"
   if grep -q "skip=no-transcript signal=$tok" "$H/.um/hook.log" 2>/dev/null; then
     pass "S23: $code => signal=$tok"
@@ -1058,6 +1060,25 @@ run_stop "$H" "$STDIN"
 assert_eq "S30: exit 0" "$RUN_EXIT" "0"
 assert_eq "S30: zero append-turn POSTs on unchanged rollout" "$(append_post_count)" "0"
 assert_eq "S30: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "14"
+
+# ===========================================================================
+# S31: 429 then 200 on an append POST ⇒ retried by um-api.sh, no message lost
+# ===========================================================================
+echo "=== S31: 429 retry on append-turn ==="
+H=$(fresh_home s31)
+TP="$TMPDIR_ROOT/s31-transcript.jsonl"
+write_transcript "$TP" 3 "s31"
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+reset_calls 429
+run_stop "$H" "$STDIN"
+assert_eq "S31: exit 0" "$RUN_EXIT" "0"
+assert_eq "S31: 4 wire calls for 3 messages (one retry)" "$(append_post_count)" "4"
+assert_eq "S31: the retry re-sends the SAME message" "$(body_field 2 content)" "$(body_field 1 content)"
+assert_eq "S31: message 2 follows" "$(body_field 3 content)" "s31-2 content"
+assert_eq "S31: zero anomaly signals" "$(signal_post_count)" "0"
+assert_eq "S31: cursor at transcript end" "$(cat "$H/.um/state/stop-cursor-$SID" 2>/dev/null)" "3"
+assert_contains "S31: posted n=3" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=3"
 
 # ===========================================================================
 # Summary

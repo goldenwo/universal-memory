@@ -207,10 +207,30 @@ esac
 # UM_API_HTTP_CODE survives. Short 3s budget: this runs synchronously at
 # session start.
 # ---------------------------------------------------------------------------
+# Probe cache (2026-09-10): a healthy probe is reused for UM_PROBE_CACHE_MIN
+# minutes (default 10; 0 disables) from ~/.um/state/probe-ok, so a burst of
+# session restores costs ONE call per session (the state fetch) instead of
+# two. The server's per-IP bucket is burst 10 / 60 rpm and eight restores
+# inside one minute tripped it. Any non-healthy probe clears the cache; within
+# the TTL, auth / writes-off / unreachable still surface through the capture
+# hooks' own reporting (and um-api.sh retries a 429 once).
+PROBE_CACHE="$HOME/.um/state/probe-ok"
+PROBE_TTL_MIN="${UM_PROBE_CACHE_MIN:-10}"
+case "$PROBE_TTL_MIN" in ''|*[!0-9]*) PROBE_TTL_MIN=10 ;; esac
 UM_G7_BANNER=""
-um_api_post '/api/append-turn' '{}' 3 >/dev/null 2>&1 || true
-PROBE_CODE="$UM_API_HTTP_CODE"
+if [ "$PROBE_TTL_MIN" -gt 0 ] && [ -f "$PROBE_CACHE" ] \
+   && [ -n "$(find "$PROBE_CACHE" -mmin "-$PROBE_TTL_MIN" 2>/dev/null)" ]; then
+  PROBE_CODE="cached"
+else
+  um_api_post '/api/append-turn' '{}' 3 >/dev/null 2>&1 || true
+  PROBE_CODE="$UM_API_HTTP_CODE"
+fi
 case "$PROBE_CODE" in
+  cached)
+    # Fresh healthy verdict on disk — no wire call; the read branch below
+    # keys on != 000, which this satisfies.
+    um_log "probe cached writes=enabled"
+    ;;
   400 | 2[0-9][0-9])
     # Healthy: reachable, authed, writes enabled (400 = the empty probe body
     # was rejected by validation AFTER the write gate passed; nothing written).
@@ -243,6 +263,11 @@ case "$PROBE_CODE" in
     # the capture hooks own the error=http-<code> reporting. No banner.
     um_log "probe error=http-$UM_API_HTTP_CODE"
     ;;
+esac
+case "$PROBE_CODE" in
+  cached) ;;
+  400 | 2[0-9][0-9]) { mkdir -p "${PROBE_CACHE%/*}" && : > "$PROBE_CACHE"; } 2>/dev/null || true ;;
+  *) rm -f "$PROBE_CACHE" 2>/dev/null || true ;;
 esac
 
 # ---------------------------------------------------------------------------

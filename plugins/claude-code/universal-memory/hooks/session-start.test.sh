@@ -24,6 +24,10 @@
 #   12. Return time — full script (mocked curl) completes in <800ms
 #   13. Inline fallback rubric matches canonical docs/memory-routing-rubric.md
 #   14. <external-summary> blocks labeled, not echoed raw
+#   C1-C5. Probe cache (2026-09-10): a healthy probe writes ~/.um/state/probe-ok;
+#       a fresh cache skips the probe POST (one wire call, state still
+#       injected); a stale cache re-probes; UM_PROBE_CACHE_MIN=0 disables; an
+#       unhealthy probe clears it.
 #   15. Probe 429 (remote rate-limiter) → NO banner (transient, not
 #       server-too-old), error=http-429 logged
 #   16. Probe 000 → the state GET is SKIPPED (cannot succeed where the probe
@@ -140,6 +144,9 @@ write_mock_api() {
   # \$* below: this heredoc is unquoted, so a bare $* would expand at
   # mock-write time to write_mock_api's own args.
   rm -f "$MOCK_BIN/curl_calls"
+  # Probe cache (2026-09-10): writing a mock = this case defines the probe
+  # outcome, so a healthy verdict cached by an earlier case must not skip it.
+  rm -f "$FAKE_HOME/.um/state/probe-ok"
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/bin/bash
 echo "\$*" >> "$MOCK_BIN/curl_calls"
@@ -162,6 +169,7 @@ MOCK
 # so tests can assert which endpoints were (not) contacted.
 write_mock_curl_unreachable() {
   rm -f "$MOCK_BIN/curl_calls"
+  rm -f "$FAKE_HOME/.um/state/probe-ok"
   cat > "$MOCK_BIN/curl" <<MOCK
 #!/bin/bash
 echo "\$*" >> "$MOCK_BIN/curl_calls"
@@ -796,6 +804,62 @@ assert_eq "T24: write slug and read slug are non-empty and identical" \
 # Summary
 # ---------------------------------------------------------------------------
 printf '\n---\n'
+# ---------------------------------------------------------------------------
+# Tests C1-C5: probe cache (2026-09-10). A full fire makes THREE wire calls —
+# GET /health, POST /api/append-turn (the probe), GET /api/state/<project>;
+# a cached fire skips the probe: two calls, no POST.
+# ---------------------------------------------------------------------------
+printf '\nTest C1: healthy probe writes the cache\n'
+{
+  state_resp_file 2 "$TMPDIR_ROOT/respc1.json" >/dev/null
+  write_mock_api 400 "$TMPDIR_ROOT/respc1.json"
+  rm -f "$FAKE_HOME/.um/hook.log"
+  output=$(run_hook)
+  assert_contains "C1: probe ran (logged)" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe http=400 writes=enabled"
+  if [ -f "$FAKE_HOME/.um/state/probe-ok" ]; then pass "C1: probe-ok cache written"; else fail "C1: probe-ok cache written" "missing"; fi
+}
+printf '\nTest C2: fresh cache => probe POST skipped, state still fetched\n'
+{
+  rm -f "$MOCK_BIN/curl_calls" "$FAKE_HOME/.um/hook.log"
+  output=$(run_hook)
+  ac=$(extract_additional_context "$output")
+  assert_contains "C2: state still injected" "$ac" "Current focus"
+  assert_contains "C2: hook.log says cached" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe cached writes=enabled"
+  assert_eq "C2: two wire calls (health + state GET), the probe POST skipped" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "2"
+  if grep -q "POST" "$MOCK_BIN/curl_calls" 2>/dev/null; then fail "C2: no probe POST on a fresh cache" "$(cat "$MOCK_BIN/curl_calls")"; else pass "C2: no probe POST on a fresh cache"; fi
+}
+printf '\nTest C3: stale cache => probe runs again\n'
+{
+  if touch -d "20 minutes ago" "$FAKE_HOME/.um/state/probe-ok" 2>/dev/null; then
+    rm -f "$MOCK_BIN/curl_calls" "$FAKE_HOME/.um/hook.log"
+    output=$(run_hook)
+    assert_eq "C3: three wire calls again (probe re-ran)" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "3"
+    assert_contains "C3: probe re-ran" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe http=400 writes=enabled"
+  else
+    echo "  SKIP: C3 (touch -d unsupported on this platform)"
+  fi
+}
+printf '\nTest C4: UM_PROBE_CACHE_MIN=0 => cache ignored\n'
+{
+  : > "$FAKE_HOME/.um/state/probe-ok"
+  rm -f "$MOCK_BIN/curl_calls" "$FAKE_HOME/.um/hook.log"
+  output=$(run_hook UM_PROBE_CACHE_MIN=0)
+  assert_eq "C4: three wire calls with the cache disabled" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "3"
+}
+printf '\nTest C5: unhealthy probe clears the cache\n'
+{
+  state_resp_file 2 "$TMPDIR_ROOT/respc5.json" >/dev/null
+  write_mock_api 403 "$TMPDIR_ROOT/respc5.json"
+  # The mock write clears the cache too — recreate a STALE one so the probe
+  # runs and the HOOK is what removes it.
+  : > "$FAKE_HOME/.um/state/probe-ok"
+  touch -d "20 minutes ago" "$FAKE_HOME/.um/state/probe-ok" 2>/dev/null || rm -f "$FAKE_HOME/.um/state/probe-ok"
+  rm -f "$FAKE_HOME/.um/hook.log"
+  output=$(run_hook)
+  assert_contains "C5: writes-disabled logged" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe skip=writes-disabled"
+  if [ -f "$FAKE_HOME/.um/state/probe-ok" ]; then fail "C5: cache cleared after an unhealthy probe" "still present"; else pass "C5: cache cleared after an unhealthy probe"; fi
+}
+
 printf 'Results: %d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "${#FAILURES[@]}" -gt 0 ]; then

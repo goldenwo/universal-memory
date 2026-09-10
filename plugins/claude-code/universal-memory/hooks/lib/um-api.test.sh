@@ -25,6 +25,9 @@
 #   Y1-Y3. um_find_python probe order (py → python3 → python; none ⇒ rc 1)
 #   L1. um_log appends "<ts> <hook> <msg>" to ~/.um/hook.log (dir auto-created)
 #   G1. G7 message variants (unreachable / writes-disabled / auth)
+#   R1-R4. 429 retry: 429→200 succeeds on the 2nd call; 429→429 stops at 2
+#          calls with code 429; UM_API_RETRY_429=0 makes 1 call; 500 is
+#          never retried
 
 set -uo pipefail
 
@@ -209,6 +212,22 @@ if [ "$curl_exit" -ne 0 ]; then
 fi
 printf '{"ok":true}'
 printf '\n__UM_HTTP_CODE__$http_code'
+MOCK_EOF
+  chmod +x "$MOCK_BIN/curl"
+}
+
+# write_mock_curl_seq <code1> <code2> ... — one HTTP code per curl invocation
+# (call N answers with code N; the last code repeats). Counts calls in
+# $TMPDIR_ROOT/curl_calls so the retry tests can pin the wire-call budget.
+write_mock_curl_seq() {
+  printf '%s\n' "$@" > "$TMPDIR_ROOT/curl_codes"
+  rm -f "$TMPDIR_ROOT/curl_calls"
+  cat > "$MOCK_BIN/curl" <<MOCK_EOF
+#!/usr/bin/env bash
+n=\$(cat "$TMPDIR_ROOT/curl_calls" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$TMPDIR_ROOT/curl_calls"
+code=\$(sed -n "\${n}p" "$TMPDIR_ROOT/curl_codes"); [ -n "\$code" ] || code=\$(tail -1 "$TMPDIR_ROOT/curl_codes")
+printf '{"ok":true}'
+printf '\n__UM_HTTP_CODE__%s' "\$code"
 MOCK_EOF
   chmod +x "$MOCK_BIN/curl"
 }
@@ -450,6 +469,46 @@ assert_eq "SA1: one-arg call under set -u" "$GOT" "sent"
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== R1: 429 then 200 — retried once, succeeds ==="
+H=$(fresh_home r1)
+write_mock_curl_seq 429 200
+# shellcheck disable=SC2016
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" UM_API_RETRY_429_SLEEP=0 -- \
+  'if um_api_post /api/append-turn "{}" >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "R1: rc 0 after the retry" "$OUT" "RC=0"
+assert_contains "R1: code 200 surfaced (the retry's answer)" "$OUT" "CODE=200"
+assert_eq "R1: exactly 2 wire calls" "$(cat "$TMPDIR_ROOT/curl_calls")" "2"
+
+echo "=== R2: 429 twice — bounded, stops at 2 calls with code 429 ==="
+H=$(fresh_home r2)
+write_mock_curl_seq 429 429 200
+# shellcheck disable=SC2016
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" UM_API_RETRY_429_SLEEP=0 -- \
+  'if um_api_post /api/append-turn "{}" >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "R2: rc 1 when the retry is also refused" "$OUT" "RC=1"
+assert_contains "R2: code 429 surfaced to the caller" "$OUT" "CODE=429"
+assert_eq "R2: exactly 2 wire calls (never a third)" "$(cat "$TMPDIR_ROOT/curl_calls")" "2"
+
+echo "=== R3: UM_API_RETRY_429=0 — no retry ==="
+H=$(fresh_home r3)
+write_mock_curl_seq 429 200
+# shellcheck disable=SC2016
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" UM_API_RETRY_429=0 -- \
+  'if um_api_post /api/append-turn "{}" >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "R3: rc 1, retry disabled" "$OUT" "RC=1"
+assert_contains "R3: code 429" "$OUT" "CODE=429"
+assert_eq "R3: exactly 1 wire call" "$(cat "$TMPDIR_ROOT/curl_calls")" "1"
+
+echo "=== R4: 500 is never retried ==="
+H=$(fresh_home r4)
+write_mock_curl_seq 500 200
+# shellcheck disable=SC2016
+OUT=$(run_api "$H" UM_SERVER_URL="http://remote.example:6337" UM_API_RETRY_429_SLEEP=0 -- \
+  'if um_api_get /api/state/x >/dev/null; then echo "RC=0"; else echo "RC=1"; fi; echo "CODE=$UM_API_HTTP_CODE"')
+assert_contains "R4: rc 1" "$OUT" "RC=1"
+assert_contains "R4: code 500" "$OUT" "CODE=500"
+assert_eq "R4: exactly 1 wire call" "$(cat "$TMPDIR_ROOT/curl_calls")" "1"
+
 echo "=================================================="
 echo "Results: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then
