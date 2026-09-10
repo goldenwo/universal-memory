@@ -47,6 +47,14 @@ function freshDb() {
   const dir = tempDir('um-rge-');
   const dbPath = path.join(dir, 'um-counters.db');
   process.env.UM_COUNTERS_DB_PATH = dbPath;
+  // The frozen #215 measurement presupposes UM_CAPTURE_LEDGER_RETENTION_DAYS=400
+  // (the Pi runs with it — v1.13.2 deploy note). Pin it here too: the fixtures
+  // below are dated 2026-08-10..15, and recordCapture's throttled prune folds
+  // unreacted rows older than the 30-day DEFAULT into exchange_tally — which is
+  // exactly what happened on 2026-09-09 when the frame aged past 30 days
+  // (H4 / denominators / H5 went red on unchanged code). A test that models a
+  // frozen frame must model its retention precondition, not the wall clock.
+  process.env.UM_CAPTURE_LEDGER_RETENTION_DAYS = '400';
   _resetCaptureEventsForTest();
   _resetCaptureLedgerForTest();
   return dbPath;
