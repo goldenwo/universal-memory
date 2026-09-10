@@ -8,6 +8,10 @@
 # version did TRANSCRIPT=$(cat) and therefore never captured anything.)
 #
 # Behavior (all pinned by spec §5):
+#   - Two transcript dialects, ONE parser: Claude Code's transcript JSONL and
+#     Codex CLI's rollout JSONL (transcript_path is the rollout under Codex;
+#     its response_item/message records map to the same role/text tuple —
+#     2026-09-07, S29/S30). Everything after the parser is shared.
 #   - Delta cursor at ~/.um/state/stop-cursor-<session_id> (raw transcript
 #     line number already captured). session_id validated ^[A-Za-z0-9._-]+$
 #     before ANY path use. Cursor absent/unreadable ⇒ bounded trailing window
@@ -228,6 +232,44 @@ with fh:
         # (fixture line 11: model "<synthetic>", isApiErrorMessage) — not
         # conversation; skip. Spec §5 is silent, so conservative-skip.
         if e.get("isApiErrorMessage"):
+            continue
+        # Codex CLI rollout: under Codex, transcript_path is the session
+        # rollout JSONL (2026-09-07). A turn is a response_item whose payload
+        # is a `message` with input_text / output_text blocks. Hook context
+        # arrives in developer-role items (dropped by role); the first user
+        # turn also carries Codex-injected blocks (plugin advert, AGENTS.md
+        # instructions, environment) — dropped by prefix, the real prompt
+        # block of the same message survives. Every other record kind (session_meta,
+        # reasoning, function_call*, event_msg — whose agent_message
+        # duplicates the assistant item — turn_context, ...) is not
+        # conversation. Mapped to the same (lineno, role, text, timestamp)
+        # tuple as a Claude line so the cursor / cap / window logic below is
+        # one shared path (stop.test.sh S29/S30).
+        if e.get("type") == "response_item":
+            CODEX_INJECTED_PREFIXES = ("<system-reminder>", "<recommended_plugins>",
+                                       "<environment_context>", "<user_instructions>",
+                                       "# AGENTS.md instructions for ")
+            p = e.get("payload") or {}
+            role = p.get("role")
+            if p.get("type") != "message" or role not in ("user", "assistant"):
+                continue
+            parts = []
+            for b in p.get("content") or []:
+                if not (isinstance(b, dict) and b.get("type") in ("input_text", "output_text")
+                        and b.get("text")):
+                    continue
+                head = b["text"].strip()
+                # Injected, not typed: Claude-style reminders plus the blocks
+                # Codex prepends to the first user turn (plugin advert,
+                # AGENTS.md instructions — 18 KB on this box — and the
+                # environment block; <user_instructions> is the pre-0.150
+                # AGENTS.md wrapper). Measured on a real rollout 2026-09-10.
+                if head.startswith(CODEX_INJECTED_PREFIXES):
+                    continue
+                parts.append(b["text"])
+            text = chr(10).join(parts).strip()
+            if text:
+                msgs.append((lineno, role, text, e.get("timestamp")))
             continue
         t = e.get("type")
         if t not in ("user", "assistant"):
