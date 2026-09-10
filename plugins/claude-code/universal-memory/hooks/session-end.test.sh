@@ -283,6 +283,34 @@ else
 fi
 
 # ===========================================================================
+# E3b: 429 ⇒ error=http-429 (retried once by um-api.sh; never server-too-old)
+# ===========================================================================
+echo "=== E3b: 429 twice ⇒ error=http-429 ==="
+H=$(fresh_home e3b)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+reset_calls 429 429
+run_session_end "$H" "$STDIN"
+assert_eq "E3b: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-429"; then
+  pass "E3b: error=http-429 logged"
+else
+  fail "E3b: error=http-429 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_not_contains "E3b: NOT misfiled as server-too-old" "$(cat "$H/.um/hook.log" 2>/dev/null)" "server-too-old"
+
+echo "=== E3c: 429 then 200 ⇒ posted (the um-api retry) ==="
+H=$(fresh_home e3c)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+reset_calls 429 200
+run_session_end "$H" "$STDIN"
+assert_eq "E3c: parent exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "posted http=200"; then
+  pass "E3c: posted after one retry"
+else
+  fail "E3c: posted after one retry" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
 # E4: unreachable (000) ⇒ error=http-000 + G7 unreachable banner
 # ===========================================================================
 echo "=== E4: unreachable (transport failure) ==="
