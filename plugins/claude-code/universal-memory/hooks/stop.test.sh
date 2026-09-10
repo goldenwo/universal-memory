@@ -56,6 +56,12 @@
 #   S28. Hostile cwd basename ($, space, backtick) ⇒ well-formed signal body
 #        carrying the SANITIZED slug (the sanitize-at-assignment hoist).
 
+#   S29. Codex CLI rollout (2026-09-07): the SAME hook captures a Codex session
+#        — response_item/message user+assistant records ⇒ POSTs with the same
+#        bodies; developer-role hook context, Codex's <recommended_plugins>
+#        advert, reasoning / function_call items, event_msg duplicates and a
+#        <system-reminder> block are never POSTed; cursor lands on the last line.
+#   S30. Second fire on the unchanged rollout ⇒ zero new append-turn POSTs.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -240,6 +246,9 @@ run_stop() {
 body_field() {
   "$PYBIN" -c '
 import json, sys
+# C8: Windows python writes LF as CRLF on a pipe; emit the field byte-exact so a
+# multi-line content assert compares the body, not the platform newline.
+sys.stdout.reconfigure(newline=chr(10))
 with open(sys.argv[1], encoding="utf-8") as fh:
     b = json.load(fh)
 v = b.get(sys.argv[2])
@@ -1000,6 +1009,55 @@ case "$S28_PROJ" in
     fail "S28: unexpected project value: '$S28_PROJ'" ""
     ;;
 esac
+
+# ===========================================================================
+# S29: Codex CLI rollout — the same hook, the same wire contract
+# ===========================================================================
+# Codex passes its rollout JSONL as transcript_path. Turns are
+# response_item/message records with input_text / output_text blocks; hook
+# context rides in developer-role items; Codex's own plugin advert is a
+# user-role block starting with <recommended_plugins>; reasoning,
+# function_call(_output), event_msg (agent_message duplicates the assistant
+# item; task_complete carries last_agent_message) and turn_context lines are
+# not conversation. Before this scenario every Codex fire logged
+# skip=empty-delta-filtered (hook.log, 2026-09-07).
+echo "=== S29: Codex rollout capture ==="
+H=$(fresh_home s29)
+TP="$TMPDIR_ROOT/s29-rollout.jsonl"
+cp "$FIXTURES/rollout-sample.jsonl" "$TP"
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+
+assert_eq "S29: exit 0" "$RUN_EXIT" "0"
+assert_eq "S29: exactly 4 append-turn POSTs (fixture lines 4,7,10,12; line 3 = the three injected blocks, all skipped)" "$(append_post_count)" "4"
+assert_eq "S29: no anomaly self-report on a healthy rollout fire" "$(signal_post_count)" "0"
+assert_eq "S29: body1 role=user"       "$(body_field 1 role)" "user"
+assert_eq "S29: body1 project"         "$(body_field 1 project)" "example-project"
+assert_eq "S29: body1 content (input_text block)" "$(body_field 1 content)" "Please review the config loader and fix the failing test in server/test."
+assert_eq "S29: body1 timestamp (rollout line timestamp)" "$(body_field 1 timestamp)" "2026-09-08T01:25:10.000Z"
+assert_eq "S29: body2 role=assistant"  "$(body_field 2 role)" "assistant"
+assert_eq "S29: body2 content (output_text; reasoning + function_call items skipped)" "$(body_field 2 content)" "Let me read the config loader first."
+assert_eq "S29: body3 joins the two output_text blocks of one message" "$(body_field 3 content)" "The config loader does not handle a missing file.
+I added a guard and a regression test."
+assert_eq "S29: body4 keeps ONLY the real block of a reminder+text user message"   "$(body_field 4 content)" "Great, now also add a unit test for the missing-file guard."
+
+CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
+assert_file_exists "S29: cursor file created" "$CURSOR_FILE"
+assert_eq "S29: cursor at rollout end (14 lines)" "$(cat "$CURSOR_FILE" 2>/dev/null)" "14"
+assert_contains "S29: hook.log records posted" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=4"
+
+# ===========================================================================
+# S30: second fire on the unchanged rollout ⇒ zero new append-turn POSTs
+# ===========================================================================
+echo "=== S30: Codex rollout no-dup across fires ==="
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S30: exit 0" "$RUN_EXIT" "0"
+assert_eq "S30: zero append-turn POSTs on unchanged rollout" "$(append_post_count)" "0"
+assert_eq "S30: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "14"
 
 # ===========================================================================
 # Summary
