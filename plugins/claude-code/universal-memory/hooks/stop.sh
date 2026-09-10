@@ -235,7 +235,7 @@ with fh:
             continue
         # Codex CLI rollout: under Codex, transcript_path is the session
         # rollout JSONL (2026-09-07). A turn is a response_item whose payload
-        # is a `message` with input_text / output_text blocks. Hook context
+        # is a message item with input_text / output_text blocks. Hook context
         # arrives in developer-role items (dropped by role); the first user
         # turn also carries Codex-injected blocks (plugin advert, AGENTS.md
         # instructions, environment) — dropped by prefix, the real prompt
