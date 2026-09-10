@@ -805,9 +805,10 @@ assert_eq "T24: write slug and read slug are non-empty and identical" \
 # ---------------------------------------------------------------------------
 printf '\n---\n'
 # ---------------------------------------------------------------------------
-# Tests C1-C5: probe cache (2026-09-10). A full fire makes THREE wire calls —
-# GET /health, POST /api/append-turn (the probe), GET /api/state/<project>;
-# a cached fire skips the probe: two calls, no POST.
+# Tests C1-C5: probe cache (2026-09-10). Pinned by SHAPE, not by count: the
+# probe is the only POST a fire makes and the state fetch is the only
+# /api/state/ GET (an extra GET /health appears on Windows git-bash only, so
+# an absolute call count is platform-dependent — CI caught that).
 # ---------------------------------------------------------------------------
 printf '\nTest C1: healthy probe writes the cache\n'
 {
@@ -825,15 +826,15 @@ printf '\nTest C2: fresh cache => probe POST skipped, state still fetched\n'
   ac=$(extract_additional_context "$output")
   assert_contains "C2: state still injected" "$ac" "Current focus"
   assert_contains "C2: hook.log says cached" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe cached writes=enabled"
-  assert_eq "C2: two wire calls (health + state GET), the probe POST skipped" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "2"
-  if grep -q "POST" "$MOCK_BIN/curl_calls" 2>/dev/null; then fail "C2: no probe POST on a fresh cache" "$(cat "$MOCK_BIN/curl_calls")"; else pass "C2: no probe POST on a fresh cache"; fi
+  assert_eq "C2: the state GET still happens (exactly one)" "$(grep -c "/api/state/" "$MOCK_BIN/curl_calls")" "1"
+  assert_eq "C2: zero probe POSTs on a fresh cache" "$(grep -c "POST" "$MOCK_BIN/curl_calls")" "0"
 }
 printf '\nTest C3: stale cache => probe runs again\n'
 {
   if touch -d "20 minutes ago" "$FAKE_HOME/.um/state/probe-ok" 2>/dev/null; then
     rm -f "$MOCK_BIN/curl_calls" "$FAKE_HOME/.um/hook.log"
     output=$(run_hook)
-    assert_eq "C3: three wire calls again (probe re-ran)" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "3"
+    assert_eq "C3: the probe POST is back (stale cache re-probes)" "$(grep -c "POST" "$MOCK_BIN/curl_calls")" "1"
     assert_contains "C3: probe re-ran" "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null || true)" "probe http=400 writes=enabled"
   else
     echo "  SKIP: C3 (touch -d unsupported on this platform)"
@@ -844,7 +845,7 @@ printf '\nTest C4: UM_PROBE_CACHE_MIN=0 => cache ignored\n'
   : > "$FAKE_HOME/.um/state/probe-ok"
   rm -f "$MOCK_BIN/curl_calls" "$FAKE_HOME/.um/hook.log"
   output=$(run_hook UM_PROBE_CACHE_MIN=0)
-  assert_eq "C4: three wire calls with the cache disabled" "$(wc -l < "$MOCK_BIN/curl_calls" | tr -d ' ')" "3"
+  assert_eq "C4: the probe POST runs with the cache disabled" "$(grep -c "POST" "$MOCK_BIN/curl_calls")" "1"
 }
 printf '\nTest C5: unhealthy probe clears the cache\n'
 {
