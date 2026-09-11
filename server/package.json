@@ -34,7 +34,7 @@
   "license": "MIT",
   "devDependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",
-    "@apidevtools/swagger-parser": "^12.1.0",
+    "@apidevtools/swagger-parser": "^13.0.0",
     "patch-package": "^8.0.1",
     "tiktoken": "^1.0.0"
   }
