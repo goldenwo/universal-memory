@@ -16,13 +16,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /**
- * `cases` is the GROUP count in test/helpers/direction-policy-cases.mjs (K1, K2, D1-D10),
+ * `cases` is the GROUP count in test/helpers/direction-policy-cases.mjs (K1, K2, D1-D11),
  * `subcases` the total sub-case count across those groups — pinned separately because the
  * group count alone cannot see a dropped sub-case. `banner` is the literal prefix
  * run-direction.mjs prints its baseline lines under.
  */
 const PIN = {
-  controls: ['RCD1', 'RCD2'], cases: 12, subcases: 20, banner: 'direction baseline',
+  controls: ['RCD1', 'RCD2'], cases: 13, subcases: 22, banner: 'direction baseline',
 };
 
 function runControls() {

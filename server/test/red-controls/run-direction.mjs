@@ -53,8 +53,8 @@ const BANNER = 'direction baseline';
  *   RCD1 (arrival order reinstated: every call resolves incoming-newer, the #276 defect)
  *        flips every group that expects a stored-newer / stored-future / ambiguous somewhere:
  *        K1 (the live pair), D1 (earlier + equal sub-cases), D2, D3, D5 (stored-side
- *        sub-case), D6, D7, D8, D9, D10 (stored-newer sub-case). Survives: K2 and D4, whose
- *        only expectation is incoming-newer with the same re-serialised instants.
+ *        sub-case), D6, D7, D8, D9, D10 (stored-newer sub-case). Survives: K2, D4 and D11,
+ *        whose only expectation is incoming-newer with the same re-serialised instants.
  *   RCD2 (missing stored truth falls through to incoming-newer instead of abstaining)
  *        flips exactly the groups whose stored side has NO usable truth time and which reach
  *        that arm: D2, D3, D5. D6/D7 survive because the assertedAt / argument-shape arms
@@ -68,8 +68,8 @@ const CONTROLS = [
       "  if (!incoming || !stored) return result('ambiguous');",
       "  return result('incoming-newer');"),
     mustFlip: ['K1', 'D1', 'D2', 'D3', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10'],
-    mustPass: ['K2', 'D4'],
-    why: 'K2 and D4 expect incoming-newer with instants computed the same way, so "always newer" cannot be told apart from the rule there — every other group asserts an abstain or a stored-newer somewhere, and that is exactly what write order destroys',
+    mustPass: ['K2', 'D4', 'D11'],
+    why: 'K2, D4 and D11 expect incoming-newer with instants computed the same way, so "always newer" cannot be told apart from the rule there — every other group asserts an abstain or a stored-newer somewhere, and that is exactly what write order destroys',
   },
   {
     id: 'RCD2',
@@ -78,7 +78,7 @@ const CONTROLS = [
       "  if (storedMs === null) return result('ambiguous');",
       "  if (storedMs === null) return result('incoming-newer');"),
     mustFlip: ['D2', 'D3', 'D5'],
-    mustPass: ['K1', 'K2', 'D1', 'D4', 'D6', 'D7', 'D8', 'D9', 'D10'],
+    mustPass: ['K1', 'K2', 'D1', 'D4', 'D6', 'D7', 'D8', 'D9', 'D10', 'D11'],
     why: 'only a stored side with no usable truth time reaches this arm; the assertedAt and argument-shape arms precede it (D6, D7) and every other group carries a usable stored instant',
   },
 ];

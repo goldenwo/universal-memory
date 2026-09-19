@@ -233,7 +233,8 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * Direction (#276): after the band gate and BEFORE the judge, the recorded truth
  * time of both sides is resolved (`resolveSupersessionDirection`); only
  * 'incoming-newer' reaches the judge. Every other direction returns an abstain
- * carrying `direction`, so the judge fires for a SUBSET of the in-band slice —
+ * carrying `direction` plus the re-serialised `incomingAt`/`storedAt` (for the
+ * caller's abstain log line), so the judge fires for a SUBSET of the in-band slice —
  * the cost bound tightens, never loosens. Pre-existing short-circuits report
  * `direction: null` (direction was not evaluated).
  *
@@ -250,7 +251,7 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * @param {{valid_from?: string}} [p.olderTruth]  - Recorded truth time of the stored candidate (its payload `valid_from`).
  * @param {{valid_from?: string, assertedAt: string}} [p.newerTruth] - Incoming truth time (staged metadata `valid_from`) + the decision instant.
  * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning}. Already fail-safe.
- * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null}>}
+ * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null, incomingAt: string|null, storedAt: string|null}>}
  */
 export async function evaluateInBandSupersession({
   score,
@@ -266,7 +267,7 @@ export async function evaluateInBandSupersession({
   enabled = isAutoSupersedeEnabled(),
   _judge = judgeContradiction,
 } = {}) {
-  const NO = { supersede: false, judged: false, confidence: 0, reasoning: '', direction: null };
+  const NO = { supersede: false, judged: false, confidence: 0, reasoning: '', direction: null, incomingAt: null, storedAt: null };
 
   // Cheap short-circuits — the judge is reached ONLY when every gate passes.
   if (!enabled) return NO;                                          // flag off
@@ -279,8 +280,8 @@ export async function evaluateInBandSupersession({
   // Direction (#276): recorded truth time decides which side is newer. Anything
   // but 'incoming-newer' abstains BEFORE the judge is consulted — omitted truth
   // objects resolve 'ambiguous' (fail-safe), never arrival order.
-  const { direction } = resolveSupersessionDirection({ incoming: newerTruth, stored: olderTruth });
-  if (direction !== 'incoming-newer') return { ...NO, direction };
+  const { direction, incomingAt, storedAt } = resolveSupersessionDirection({ incoming: newerTruth, stored: olderTruth });
+  if (direction !== 'incoming-newer') return { ...NO, direction, incomingAt, storedAt };
 
   // Bounded inline judge. judgeContradiction is itself fail-safe: any provider
   // or parse error yields {contradicts:false, confidence:0} → degrades to
@@ -289,5 +290,5 @@ export async function evaluateInBandSupersession({
   // above has already established that the incoming side is the newer one.
   const v = await _judge(olderText, newerText);
   const supersede = v.contradicts === true && v.confidence >= judgeThreshold;
-  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction };
+  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction, incomingAt, storedAt };
 }

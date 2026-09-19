@@ -54,7 +54,10 @@ export const CASES = {
   ],
 
   K2: [
-    ["live pair, registration form (today's stored fields): the decision-date field is NOT read -> incoming-newer", (resolve) => {
+    // The registration instants are the issue's 2026-08-19 reading (ADR-0004 1.496 s later);
+    // the 2026-09-15 census found both points re-registered on 08-24 in the other order. The
+    // row pins the MECHANISM — the decision-date field is not read — not today's live values.
+    ['live pair, registration form (the 2026-08-19 reading): the decision-date field is NOT read -> incoming-newer', (resolve) => {
       expect(resolve, {
         stored: { valid_from: KUZU_STORED_REGISTERED, decided_at: KUZU_STORED_DECIDED },
         incoming: { valid_from: KUZU_INCOMING_REGISTERED, decided_at: KUZU_INCOMING_DECIDED, assertedAt: KUZU_INCOMING_REGISTERED },
@@ -164,6 +167,17 @@ export const CASES = {
       for (const v of ['', null, 'not a date', 12345]) {
         expect(resolve, { stored: { valid_from: iso(storedMs) }, incoming: { assertedAt: T0 }, now: v }, 'stored-future');
       }
+    }],
+    ['now EARLIER than assertedAt is honoured, not floored: a stored instant past now + tolerance is future', (resolve) => {
+      const storedMs = T0_MS - 24 * 60 * 60 * 1000; // a day before assertedAt, long after `now`
+      expect(resolve, { stored: { valid_from: iso(storedMs) }, incoming: { assertedAt: T0 }, now: PAST }, 'stored-future');
+    }],
+  ],
+
+  D11: [
+    ['a far-future INCOMING truth time still resolves incoming-newer — the rule bounds only the stored side (caller-settable valid_from is a recorded follow-up, not silently clamped here)', (resolve) => {
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: '2099-01-01T00:00:00.000Z', assertedAt: T0 }, now: T0 }, 'incoming-newer',
+        { incomingAt: '2099-01-01T00:00:00.000Z', storedAt: PAST });
     }],
   ],
 

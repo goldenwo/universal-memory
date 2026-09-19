@@ -21,10 +21,13 @@
  * capture costs a decline-row false-supersede, the design FAILS — and this harness
  * reports it rather than asserting independence.
  *
- * In-band is decided exactly as production does it: `evaluateInBandSupersession`
- * returns judged:true only when score ∈ [bandFloor, bandCeiling] AND the row is
- * partition-eligible (lane present). Rows below floor return judged:false and are
- * excluded from the gates (they never reach the judge in prod either).
+ * In-band is decided as production does it for the band + eligibility gates:
+ * `evaluateInBandSupersession` returns judged:true only when score ∈ [bandFloor,
+ * bandCeiling] AND the row is partition-eligible (lane present). Rows below floor
+ * return judged:false and are excluded from the gates (they never reach the judge in
+ * prod either). The #276 direction arm is deliberately NOT mirrored: every row is
+ * handed a synthetic incoming-newer truth pair, because this harness measures the
+ * JUDGE, and a production direction abstain never reaches it.
  *
  * Default ceiling = 1.0 (NO-SKIP / judge the whole band ≥0.84) per the corrected
  * path step 2: τ≈0.97-vs-0.95 is unresolvable without real write-path cost

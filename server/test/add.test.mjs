@@ -704,6 +704,47 @@ test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
   assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
 });
 
+// #276 seam proof — the direction wiring at the evaluateInBandSupersession call site. The pure
+// rule and the evaluator are pinned in supersession-direction.test.mjs; these two pin that umAdd
+// actually HANDS them the truth fields (a mutant that drops metadata.valid_from or invents a
+// stored instant left the whole suite green before these existed).
+function judgeSpy(verdict) {
+  const calls = [];
+  const fn = async (a, b) => { calls.push([a, b]); return verdict; };
+  fn.calls = calls;
+  return fn;
+}
+
+test('#276 seam: incoming metadata.valid_from EARLIER than the stored truth time → keep-older, judge never consulted', async () => {
+  const older = { id: 'older-truth-1', score: 0.85, payload: { valid_from: '2026-08-18T00:00:00.000Z', data: 'The Kuzu commitment is retired', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const judge = judgeSpy({ contradicts: true, confidence: 0.99, reasoning: 'would supersede' });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'Kuzu is used as the graph backend for relationship edges', userId: 'u1',
+    metadata: { lane: 'work', valid_from: '2026-04-16T00:00:00.000Z' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judge,
+  });
+  assert.equal(judge.calls.length, 0, 'stored-newer abstains BEFORE the judge');
+  assert.equal(q.upserts.length, 0, 'the older-truth arrival is not upserted as a new current point');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'the retired fact is NOT demoted');
+});
+
+test('#276 seam: stored hit with NO valid_from → ambiguous → keep-older, judge never consulted (never arrival order)', async () => {
+  const older = { id: 'older-undated-1', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const judge = judgeSpy({ contradicts: true, confidence: 0.99, reasoning: 'would supersede' });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'I live in Denver now', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judge,
+  });
+  assert.equal(judge.calls.length, 0, 'an undated stored point abstains — it is not treated as older by arrival');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion on ambiguous');
+});
+
 // Wiring proof: the in-band judge duration histogram is observed when the inline judge ran.
 // Uses the same judgeContradicts harness as the load-bearing invariant test above.
 test('Gap-5 P3: in-band judge duration histogram observed when judge ran (v1.5.0 p99 telemetry)', async () => {
