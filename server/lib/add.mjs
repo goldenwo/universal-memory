@@ -739,6 +739,10 @@ export async function umAdd({
                   lane: itemLane,
                   persona,
                   bandFloor: dedupThreshold,
+                  // #276: recorded truth time of both sides; assertedAt is the decision
+                  // instant (the same clock buildPayload stamps moments later).
+                  olderTruth: { valid_from: embeddingHit.payload?.valid_from },
+                  newerTruth: { valid_from: metadata?.valid_from, assertedAt: new Date().toISOString() },
                   enabled: autoSupersedeEnabled,
                   _judge: _judgeContradiction,
                 })

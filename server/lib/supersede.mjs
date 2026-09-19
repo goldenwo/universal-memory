@@ -29,6 +29,75 @@
  */
 
 import { judgeContradiction } from './contradiction-judge.mjs';
+import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
+
+/**
+ * resolveSupersessionDirection — the pure direction rule (#276, spec §4.1).
+ *
+ * Supersession used to realise "newer wins" by arrival order: the incoming write
+ * was always the newer side and the stored candidate always the older. Arrival
+ * order is the registration timestamp, not truth time — a re-registered older
+ * document arriving after its successor inverted the ordering and demoted the
+ * wrong side. Direction now keys on RECORDED TRUTH TIME, the `valid_from` field
+ * both sides may carry, and abstains whenever the store cannot say:
+ *
+ *   truthTime(stored)   := usable(stored.valid_from)   ? epoch(stored.valid_from)   : null
+ *   truthTime(incoming) := usable(incoming.valid_from) ? epoch(incoming.valid_from) : epoch(assertedAt)
+ *   now                 := caller-passed; defaults to assertedAt when omitted or unusable
+ *
+ *   assertedAt unusable                                        -> 'ambiguous'
+ *   truthTime(stored) === null                                 -> 'ambiguous'
+ *   truthTime(stored)  >  epoch(now) + CLOCK_SKEW_TOLERANCE_MS -> 'stored-future'
+ *   truthTime(incoming) > truthTime(stored)                    -> 'incoming-newer'
+ *   truthTime(incoming) < truthTime(stored)                    -> 'stored-newer'
+ *   equal                                                      -> 'ambiguous'
+ *
+ * Act (demote the stored point) iff direction === 'incoming-newer'. Every other
+ * value is an abstain — the subsystem's polarity is "err toward not superseding":
+ * a false supersession is silent recall loss. 'stored-future' is an abstain split
+ * out only so an operator can see it; it compares the stored instant against the
+ * wall clock at decision (`now`), never against the incoming truth time.
+ *
+ * The registration timestamp / arrival order is never consulted. The ADR
+ * decision-date field is never consulted either — `valid_from` is the one
+ * truth-time field the write side owns and the one ranking reads; the identity
+ * follow-up routes the decision date into it.
+ *
+ * Fail-safe: missing or non-object arguments, or a missing/unusable `assertedAt`,
+ * resolve 'ambiguous'. `usable` is isUsableDate — the writer's own contract — and
+ * it is applied to the field BEFORE the fallback, so 'not a date' falls through
+ * exactly like an absent value. Comparison is on epoch milliseconds and every
+ * instant reported is RE-SERIALISED (`toISOString()`), never the raw field: a
+ * usable string may carry arbitrary caller text in a parenthesised tail, and the
+ * raw field must not reach a log line. No clock read, no env, no I/O.
+ *
+ * @param {object} p
+ * @param {{valid_from?: string, assertedAt: string}} p.incoming
+ * @param {{valid_from?: string}}                     p.stored
+ * @param {string} [p.now]  Wall clock at decision; defaults to `assertedAt`.
+ * @returns {{direction: 'incoming-newer'|'stored-newer'|'stored-future'|'ambiguous', incomingAt: string|null, storedAt: string|null}}
+ */
+export function resolveSupersessionDirection(p) {
+  const epochOf = (v) => (isUsableDate(v) ? new Date(v).getTime() : null);
+  const isoOf = (ms) => (ms === null ? null : new Date(ms).toISOString());
+  const incoming = p && typeof p === 'object' && p.incoming && typeof p.incoming === 'object' ? p.incoming : null;
+  const stored = p && typeof p === 'object' && p.stored && typeof p.stored === 'object' ? p.stored : null;
+
+  const assertedMs = incoming ? epochOf(incoming.assertedAt) : null;
+  const storedMs = stored ? epochOf(stored.valid_from) : null;
+  const incomingMs = incoming ? (epochOf(incoming.valid_from) ?? assertedMs) : null;
+
+  const result = (direction) => ({ direction, incomingAt: isoOf(incomingMs), storedAt: isoOf(storedMs) });
+
+  if (!incoming || !stored) return result('ambiguous');
+  if (assertedMs === null) return result('ambiguous');
+  if (storedMs === null) return result('ambiguous');
+  const nowMs = (p.now === undefined ? null : epochOf(p.now)) ?? assertedMs;
+  if (storedMs > nowMs + CLOCK_SKEW_TOLERANCE_MS) return result('stored-future');
+  if (incomingMs > storedMs) return result('incoming-newer');
+  if (incomingMs < storedMs) return result('stored-newer');
+  return result('ambiguous');
+}
 
 /**
  * Mark a qdrant point as superseded.
@@ -161,6 +230,13 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * flag-off, unpartitioned, and out-of-band hits short-circuit before any judge
  * call, so the inline-judge hot-path cost is bounded to that narrow slice.
  *
+ * Direction (#276): after the band gate and BEFORE the judge, the recorded truth
+ * time of both sides is resolved (`resolveSupersessionDirection`); only
+ * 'incoming-newer' reaches the judge. Every other direction returns an abstain
+ * carrying `direction`, so the judge fires for a SUBSET of the in-band slice —
+ * the cost bound tightens, never loosens. Pre-existing short-circuits report
+ * `direction: null` (direction was not evaluated).
+ *
  * @param {object}   p
  * @param {number}   p.score            - Cosine of the dedup embedding hit.
  * @param {string}   p.olderText        - Existing (candidate-to-demote) point text.
@@ -171,8 +247,10 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * @param {number}   [p.bandCeiling]    - Upper band edge (default: contradictionBandCeiling()).
  * @param {number}   [p.judgeThreshold] - Min judge confidence (default: autoSupersedeJudgeThreshold()).
  * @param {boolean}  [p.enabled]        - Auto-supersession flag (default: isAutoSupersedeEnabled()).
+ * @param {{valid_from?: string}} [p.olderTruth]  - Recorded truth time of the stored candidate (its payload `valid_from`).
+ * @param {{valid_from?: string, assertedAt: string}} [p.newerTruth] - Incoming truth time (staged metadata `valid_from`) + the decision instant.
  * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning}. Already fail-safe.
- * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string}>}
+ * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null}>}
  */
 export async function evaluateInBandSupersession({
   score,
@@ -181,12 +259,14 @@ export async function evaluateInBandSupersession({
   lane,
   persona,
   bandFloor,
+  olderTruth,
+  newerTruth,
   bandCeiling = contradictionBandCeiling(),
   judgeThreshold = autoSupersedeJudgeThreshold(),
   enabled = isAutoSupersedeEnabled(),
   _judge = judgeContradiction,
 } = {}) {
-  const NO = { supersede: false, judged: false, confidence: 0, reasoning: '' };
+  const NO = { supersede: false, judged: false, confidence: 0, reasoning: '', direction: null };
 
   // Cheap short-circuits — the judge is reached ONLY when every gate passes.
   if (!enabled) return NO;                                          // flag off
@@ -196,11 +276,18 @@ export async function evaluateInBandSupersession({
   const inBand = typeof score === 'number' && score >= bandFloor && score <= bandCeiling;
   if (!inBand) return NO;                                           // out of band → keep-older
 
+  // Direction (#276): recorded truth time decides which side is newer. Anything
+  // but 'incoming-newer' abstains BEFORE the judge is consulted — omitted truth
+  // objects resolve 'ambiguous' (fail-safe), never arrival order.
+  const { direction } = resolveSupersessionDirection({ incoming: newerTruth, stored: olderTruth });
+  if (direction !== 'incoming-newer') return { ...NO, direction };
+
   // Bounded inline judge. judgeContradiction is itself fail-safe: any provider
   // or parse error yields {contradicts:false, confidence:0} → degrades to
-  // keep-older, never throws to the writer. Directionality mirrors the detector:
-  // older = existing candidate (TARGET), newer = incoming (REPLACEMENT).
+  // keep-older, never throws to the writer. Argument order: the stored candidate
+  // (TARGET) first, the incoming fact (REPLACEMENT) second — the direction check
+  // above has already established that the incoming side is the newer one.
   const v = await _judge(olderText, newerText);
   const supersede = v.contradicts === true && v.confidence >= judgeThreshold;
-  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '' };
+  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction };
 }
