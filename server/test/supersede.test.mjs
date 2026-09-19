@@ -70,7 +70,8 @@ test('autoSupersedeJudgeThreshold: default 0.80 (mirrors detector judgeThreshold
 
 // bandCeiling mirrors the production default (0.95 since the band-widening) so these
 // parameterized tests exercise the live band edge, not a stale one (R3 lens C).
-const ELIGIBLE = { lane: 'work', persona: undefined, bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80, enabled: true };
+const ELIGIBLE = { lane: 'work', persona: undefined, bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80, enabled: true,
+  olderTruth: { valid_from: '2026-01-01T00:00:00.000Z' }, newerTruth: { valid_from: '2026-06-01T00:00:00.000Z', assertedAt: '2026-06-01T00:00:00.000Z' } };
 
 test('evaluateInBandSupersession: flag off → no supersede, judge NOT consulted', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
@@ -171,6 +172,7 @@ test('evaluateInBandSupersession: DEFAULT ceiling — a 0.92 in-band hit routes 
   const judge = judgeStub({ contradicts: true, confidence: 0.91, reasoning: 'newer invalidates older' });
   const r = await evaluateInBandSupersession({
     lane: 'work', enabled: true, bandFloor: 0.84, judgeThreshold: 0.80, // NO bandCeiling → default 0.95
+    olderTruth: { valid_from: '2026-01-01T00:00:00.000Z' }, newerTruth: { valid_from: '2026-06-01T00:00:00.000Z', assertedAt: '2026-06-01T00:00:00.000Z' },
     score: 0.92, olderText: 'production db is postgres', newerText: 'production db is mysql now', _judge: judge,
   });
   assert.equal(r.judged, true, '0.92 ∈ [0.84, 0.95 default] → judged (dup-skipped at the old 0.87 ceiling = the s009 bug)');
@@ -202,6 +204,7 @@ test('evaluateInBandSupersession: persona-only partition is eligible', async () 
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({
     enabled: true, lane: undefined, persona: 'engineer', bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80,
+    olderTruth: { valid_from: '2026-01-01T00:00:00.000Z' }, newerTruth: { valid_from: '2026-06-01T00:00:00.000Z', assertedAt: '2026-06-01T00:00:00.000Z' },
     score: 0.85, olderText: 'a', newerText: 'b', _judge: judge,
   });
   assert.equal(r.judged, true, 'persona alone satisfies the partition-eligibility gate');
