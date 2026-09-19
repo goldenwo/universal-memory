@@ -569,7 +569,7 @@ const judgeDeclines = async () => ({ contradicts: false, confidence: 0.1, reason
 // point AND the older point is demoted. Skipping the merge alone is insufficient
 // (supersession only demotes the older; the newer must be upserted).
 test('Gap-5 P3: in-band eligible contradiction → newer persists status:current + older demoted', async () => {
-  const older = { id: 'older-pt-1', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-1', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I live in Boston', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const text = 'I live in Denver now';
   const result = await umAdd({
@@ -597,7 +597,7 @@ test('Gap-5 P3: in-band eligible contradiction → newer persists status:current
 // between leaves two current points (the accepted D1 trade-off), never the
 // "no current fact" recall-loss D3's precision-first design exists to prevent.
 test('Gap-5 P3: crash-safe order — newer upsert precedes older demotion', async () => {
-  const older = { id: 'older-pt-2', score: 0.85, payload: { data: 'old', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-2', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'old', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   await umAdd({
     memory: makeMockMemory(), text: 'new contradicting fact', userId: 'u1', metadata: { lane: 'work' }, infer: false,
@@ -613,7 +613,7 @@ test('Gap-5 P3: crash-safe order — newer upsert precedes older demotion', asyn
 // Fail-soft demotion: if the demote setPayload throws, the write STILL succeeds
 // (newer is current) and umAdd does not throw — no silent data-loss path.
 test('Gap-5 P3: demotion failure is fail-soft — newer stays current, write succeeds', async () => {
-  const older = { id: 'older-pt-3', score: 0.85, payload: { data: 'old', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-3', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'old', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older, setPayloadThrows: true });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'new contradicting fact', userId: 'u1', metadata: { lane: 'work' }, infer: false,
@@ -645,7 +645,7 @@ test('Gap-5 P3: out-of-band hit (pure duplicate) → keep-older merge, no supers
 // (b) flag off → unchanged keep-older; judge NOT consulted.
 test('Gap-5 P3: autosupersede flag off → keep-older merge, no judge', async () => {
   let judged = false;
-  const older = { id: 'older-pt-5', score: 0.85, payload: { data: 'x', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-5', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'x', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'y', userId: 'u1', metadata: { lane: 'work' }, infer: false,
@@ -661,7 +661,7 @@ test('Gap-5 P3: autosupersede flag off → keep-older merge, no judge', async ()
 // (b) unpartitioned (no lane/persona) → unchanged keep-older; judge NOT consulted (R1-B1).
 test('Gap-5 P3: unpartitioned hit → keep-older merge, no judge (R1-B1)', async () => {
   let judged = false;
-  const older = { id: 'older-pt-6', score: 0.85, payload: { data: 'x', status: 'current' } };
+  const older = { id: 'older-pt-6', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'x', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'y', userId: 'u1', metadata: {}, infer: false,
@@ -692,7 +692,7 @@ test('Gap-5 P3: exact hash hit → keep-older, judge never consulted (even if el
 
 // in-band eligible BUT judge declines → keep-older (newer NOT upserted, older NOT demoted).
 test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
-  const older = { id: 'older-pt-7', score: 0.85, payload: { data: 'related but not contradicting', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt-7', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'related but not contradicting', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'also about work', userId: 'u1', metadata: { lane: 'work' }, infer: false,
@@ -704,10 +704,51 @@ test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
   assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
 });
 
+// #276 seam proof — the direction wiring at the evaluateInBandSupersession call site. The pure
+// rule and the evaluator are pinned in supersession-direction.test.mjs; these two pin that umAdd
+// actually HANDS them the truth fields (a mutant that drops metadata.valid_from or invents a
+// stored instant left the whole suite green before these existed).
+function judgeSpy(verdict) {
+  const calls = [];
+  const fn = async (a, b) => { calls.push([a, b]); return verdict; };
+  fn.calls = calls;
+  return fn;
+}
+
+test('#276 seam: incoming metadata.valid_from EARLIER than the stored truth time → keep-older, judge never consulted', async () => {
+  const older = { id: 'older-truth-1', score: 0.85, payload: { valid_from: '2026-08-18T00:00:00.000Z', data: 'The Kuzu commitment is retired', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const judge = judgeSpy({ contradicts: true, confidence: 0.99, reasoning: 'would supersede' });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'Kuzu is used as the graph backend for relationship edges', userId: 'u1',
+    metadata: { lane: 'work', valid_from: '2026-04-16T00:00:00.000Z' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judge,
+  });
+  assert.equal(judge.calls.length, 0, 'stored-newer abstains BEFORE the judge');
+  assert.equal(q.upserts.length, 0, 'the older-truth arrival is not upserted as a new current point');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'the retired fact is NOT demoted');
+});
+
+test('#276 seam: stored hit with NO valid_from → ambiguous → keep-older, judge never consulted (never arrival order)', async () => {
+  const older = { id: 'older-undated-1', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const q = makeMockQdrantInband({ searchHit: older });
+  const judge = judgeSpy({ contradicts: true, confidence: 0.99, reasoning: 'would supersede' });
+  const result = await umAdd({
+    memory: makeMockMemory(), text: 'I live in Denver now', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+    _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+    _autoSupersedeEnabled: true, _judgeContradiction: judge,
+  });
+  assert.equal(judge.calls.length, 0, 'an undated stored point abstains — it is not treated as older by arrival');
+  assert.equal(result.results[0].event, 'DEDUP_MERGED');
+  assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion on ambiguous');
+});
+
 // Wiring proof: the in-band judge duration histogram is observed when the inline judge ran.
 // Uses the same judgeContradicts harness as the load-bearing invariant test above.
 test('Gap-5 P3: in-band judge duration histogram observed when judge ran (v1.5.0 p99 telemetry)', async () => {
-  const older = { id: 'older-duration-1', score: 0.85, payload: { data: 'I use vim', lane: 'work', status: 'current' } };
+  const older = { id: 'older-duration-1', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I use vim', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   // Snapshot the count before this test so we assert increment (registry is shared across the file).
   const textBefore = await registry.metrics();
@@ -727,7 +768,7 @@ test('Gap-5 P3: in-band judge duration histogram observed when judge ran (v1.5.0
 // supersede target must NOT leak into fact 2's iteration (a leak would demote
 // fact 1's older point twice / mislabel fact 2 as SUPERSEDED_INBAND).
 test('Gap-5 P3: infer:true — per-fact supersede target does not leak across items', async () => {
-  const olderF1 = { id: 'older-f1', score: 0.85, payload: { data: 'f1 older', lane: 'work', status: 'current' } };
+  const olderF1 = { id: 'older-f1', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'f1 older', lane: 'work', status: 'current' } };
   let searchCalls = 0;
   const upserts = [];
   const setPayloads = [];
@@ -757,7 +798,7 @@ test('Gap-5 P3: infer:true — per-fact supersede target does not leak across it
 
 // Coverage parity: a persona-only partition (no lane) triggers Option C identically.
 test('Gap-5 P3: in-band contradiction on a persona-only partition → newer current + older demoted', async () => {
-  const older = { id: 'older-persona-1', score: 0.85, payload: { data: 'I prefer tabs', persona: 'engineer', status: 'current' } };
+  const older = { id: 'older-persona-1', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I prefer tabs', persona: 'engineer', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const text = 'I prefer spaces now';
   const result = await umAdd({
@@ -840,7 +881,7 @@ test('umAdd #17: classifier fault → write lands unpartitioned (fail-safe degra
 // try/catch (§4.6 fail-soft) swallows it and falls through to a plain upsert.
 // Mirrors the in-band supersession harness above with a throwing judge.
 test('umAdd #17: judge fault → write lands, no supersession (fail-safe degradation)', async () => {
-  const older = { id: 'older-failsafe-judge', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const older = { id: 'older-failsafe-judge', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I live in Boston', lane: 'work', status: 'current' } };
   const q = makeMockQdrantInband({ searchHit: older });
   const result = await umAdd({
     memory: makeMockMemory(), text: 'I live in Denver now', userId: 'u1', metadata: { lane: 'work' }, infer: false,

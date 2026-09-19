@@ -739,6 +739,13 @@ export async function umAdd({
                   lane: itemLane,
                   persona,
                   bandFloor: dedupThreshold,
+                  // #276: recorded truth time of both sides. The incoming side reads the
+                  // STAGED metadata — the object buildPayload will persist — so the decision
+                  // mirrors the record. assertedAt is this decision's instant; buildPayload
+                  // takes its own clock read moments later, so the persisted stamp is a few
+                  // ms after it (harmless: only strict inequalities depend on it).
+                  olderTruth: { valid_from: embeddingHit.payload?.valid_from },
+                  newerTruth: { valid_from: stagedMetadata?.valid_from, assertedAt: new Date().toISOString() },
                   enabled: autoSupersedeEnabled,
                   _judge: _judgeContradiction,
                 })
@@ -769,6 +776,21 @@ export async function umAdd({
               if (decision.judged) {
                 // Judge was consulted (eligible+in-band) but declined → keep-older.
                 try { umInbandSupersedeTotal.inc({ outcome: 'declined' }); } catch { /* obs fail-safe */ }
+              } else if (decision.direction !== null && decision.direction !== undefined) {
+                // #276: in-band and eligible, but the direction check abstained BEFORE the
+                // judge (stored-newer / stored-future / ambiguous). The only signal of a
+                // denied supersession — carries everything a counter would have.
+                logger.info(
+                  {
+                    event: 'inband_supersede.direction_abstained',
+                    olderId: embeddingHit.id,
+                    score: embeddingHit.score,
+                    direction: decision.direction,
+                    incomingAt: decision.incomingAt,
+                    storedAt: decision.storedAt,
+                  },
+                  'in-band direction abstained; keep-older merge',
+                );
               }
               const merged = await mergeSurface({
                 client, collection, existingPoint: hit, newSurface: surface, newProject: itemProject,
