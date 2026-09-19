@@ -128,10 +128,13 @@ async function main() {
     for (let run = 0; run < RUNS; run++) {
       // evaluateInBandSupersession embeds nothing — it judges the two texts. We
       // hand it the precomputed cosine as the dedup-hit score it would have seen.
+      // #276: direction now resolves from recorded truth time BEFORE the judge; the rows are
+      // bare text pairs, so hand every row an incoming-newer pair or the judge is never reached.
       // eslint-disable-next-line no-await-in-loop
       const v = await evaluateInBandSupersession({
         score: r.cosine, olderText: r.older, newerText: r.newer,
         lane: r.lane, bandFloor: FLOOR, bandCeiling: CEILING, enabled: true,
+        olderTruth: { valid_from: '2026-01-01T00:00:00.000Z' }, newerTruth: { assertedAt: new Date().toISOString() },
       });
       r.runs.push({ supersede: v.supersede, judged: v.judged, confidence: v.confidence, reasoning: v.reasoning });
     }
