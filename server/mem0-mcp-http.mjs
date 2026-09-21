@@ -62,7 +62,7 @@ import { handleReactionRequest } from './lib/reaction-attach.mjs';
 import { handleCaptureAnomalyRequest } from './lib/anomaly-signal.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
 import { recordCaptureEvent, surfaceFromHeaders } from './lib/capture-events.mjs';
-import { CHECKPOINT_FAILURE_EVENT, classifyCheckpointSettlement } from './lib/checkpoint-signal.mjs';
+import { CHECKPOINT_FAILURE_ALERTING, CHECKPOINT_FAILURE_EVENT, classifyCheckpointSettlement } from './lib/checkpoint-signal.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
@@ -1752,7 +1752,16 @@ function recordAcceptedCheckpointOutcome({ project, surface, result, err, reject
 	// by-design chunk_cap / mid-run cost_cap stop).
 	if (outcome === null) return;
 	const errField = rejected ? err?.message : result?.error;
-	safeLog(() => getLogger()[outcome === 'contended' ? 'info' : 'error']({
+	// Log severity MIRRORS the alert's triggering set — it does not invent its
+	// own. Only `rejected` and `failed` are faults; `contended`, `zero_commit`,
+	// `provider_stalled` and `other` are recorded-not-triggering precisely
+	// because none of them has a measured benign base rate yet, so writing them
+	// at ERROR would make a transient provider ratelimit or an unrecognised stop
+	// reason read as a server fault in every log-based dashboard while the alert
+	// deliberately stays silent. Two severity models that disagree is how an
+	// operator learns to ignore one of them.
+	const level = CHECKPOINT_FAILURE_ALERTING.includes(outcome) ? 'error' : 'info';
+	safeLog(() => getLogger()[level]({
 		endpoint: '/api/checkpoint',
 		mode: 'accepted',
 		project,

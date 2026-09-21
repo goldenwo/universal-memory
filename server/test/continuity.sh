@@ -160,6 +160,24 @@ unset _UM_CONT_TOKEN
 # ---------------------------------------------------------------------------
 SESSION_ID="continuity-test-0001"
 PROJECT="continuity-test"
+
+# #309 live-mode preflight for the digestion barrier. state_snapshot /
+# wait_for_state_change read /api/state directly, which — unlike /health — is
+# bearer-gated off loopback (CI reaches the container over Docker's NAT
+# bridge). Probe it ONCE so a missing or wrong token fails immediately and says
+# why, instead of surfacing 120 s later as "accepted, but state never changed",
+# which reads as an accepted-mode bug and sent one review down exactly that
+# path. Only the AUTH class is fatal: a 404 for a project that has never been
+# checkpointed is the expected starting state.
+if [ "$LIVE" = "1" ]; then
+  _CONT_STATE_PROBE=$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' \
+    ${_UM_CONT_AUTH_CONFIG:+--config "$_UM_CONT_AUTH_CONFIG"} \
+    "$HOOK_ENDPOINT/api/state/$PROJECT" 2>/dev/null || echo 000)
+  case "$_CONT_STATE_PROBE" in
+    401|403)
+      fail "live mode: /api/state/$PROJECT returned $_CONT_STATE_PROBE — the digestion barrier cannot read state, so Step 2 would time out blaming accepted mode. Set UM_AUTH_TOKEN in server/.env (it is read into the curl --config), or run against a loopback server." ;;
+  esac
+fi
 # #186: the cwd must be a REAL directory carrying a project marker — the
 # hooks' non-project guard (project_guard.py) skips nonexistent/marker-less
 # paths by design, which is exactly what the old /fake/path value would hit.
@@ -384,7 +402,16 @@ wait_for_log() {  # <pattern> <min_count> <timeout_s> — rc 0 when reached
 # digestion.
 state_snapshot() {  # → prints the current served state body (empty if absent)
   [ "$LIVE" = "1" ] || return 0
-  curl -sf --max-time 10 "$HOOK_ENDPOINT/api/state/$PROJECT" 2>/dev/null || true
+  # AUTH IS REQUIRED HERE. /api/state is an /api/* route, and live mode reaches
+  # the container over Docker's NAT bridge — non-loopback — so a bare curl gets
+  # 401, `-f` turns that into a non-zero exit, and the `|| true` below would
+  # hand back an empty string on every call. wait_for_state_change would then
+  # never observe a change and would fail Step 2 with a message blaming
+  # accepted mode for a missing header. Same --config indirection the /api/search
+  # soft check uses, so the token never appears in argv.
+  local -a cfg=()
+  [ -n "$_UM_CONT_AUTH_CONFIG" ] && [ -f "$_UM_CONT_AUTH_CONFIG" ] && cfg=(--config "$_UM_CONT_AUTH_CONFIG")
+  curl -sf --max-time 10 "${cfg[@]}" "$HOOK_ENDPOINT/api/state/$PROJECT" 2>/dev/null || true
 }
 wait_for_state_change() {  # <snapshot> <timeout_s> — rc 0 when the doc differs
   [ "$LIVE" = "1" ] || return 0

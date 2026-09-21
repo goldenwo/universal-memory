@@ -37,6 +37,22 @@ import { handleCheckpointRequest, createRequestHandler } from '../mem0-mcp-http.
 import { classifyCheckpointSettlement } from '../lib/checkpoint-signal.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
+// COUNTERS ISOLATION — module scope, before a single test runs.
+//
+// The rejection tests below settle as `rejected`, which is a TRIGGERING outcome
+// for um-alert's CHECKPOINT-FAILURE arm, and settling emits a real counter row.
+// Without this, that row lands in countersDbPath()'s default location, and on a
+// machine whose server reads that path the unit suite makes the daily alert fire
+// for a fabricated project for SEVEN DAYS — the same hazard continuity.sh
+// carries a header warning about for the #267 family.
+//
+// It has to be module scope, not per-test setup: capture-events opens a LAZY
+// SINGLETON handle bound to whichever path is resolved on the first emit, so
+// per-test env juggling leaves the isolation dependent on declaration order and
+// it silently breaks under `--test-name-pattern`. Node runs this module body
+// before any test, and `node --test` gives each file its own process.
+process.env.UM_COUNTERS_DB_PATH = path.join(tempDir('um-309-counters-'), 'um-counters.db');
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -75,10 +91,11 @@ test('#309: accepted mode answers 202 with NO Content-Type and a zero-length bod
   const vaultDir = tempDir('um-309-wire-');
   const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
   const prevVault = process.env.UM_VAULT_DIR;
-  const prevCounters = process.env.UM_COUNTERS_DB_PATH;
   process.env.UM_MCP_WRITE_ENABLED = 'true';
   process.env.UM_VAULT_DIR = vaultDir;
-  process.env.UM_COUNTERS_DB_PATH = path.join(vaultDir, 'counters.db');
+  // UM_COUNTERS_DB_PATH is pinned at module scope — do NOT re-point it here:
+  // the lazy singleton binds to the first path resolved, so a second override
+  // would take effect only if this test happened to emit first.
 
   const srv = createServer(createRequestHandler({}));
   srv.listen(0, '127.0.0.1');
@@ -102,7 +119,6 @@ test('#309: accepted mode answers 202 with NO Content-Type and a zero-length bod
     await new Promise((r) => srv.close(r));
     process.env.UM_MCP_WRITE_ENABLED = prevWrite ?? '';
     if (prevVault === undefined) delete process.env.UM_VAULT_DIR; else process.env.UM_VAULT_DIR = prevVault;
-    if (prevCounters === undefined) delete process.env.UM_COUNTERS_DB_PATH; else process.env.UM_COUNTERS_DB_PATH = prevCounters;
     // Best-effort: the background job opens the counters DB through the
     // lazy-singleton handle, which stays open for the process lifetime, so on
     // Windows the WAL sidecars are still locked here (EBUSY on unlink). The
@@ -388,9 +404,20 @@ test('#309 classifier: provider stalls are recorded, and an unknown STOP is the 
   assert.equal(classifyCheckpointSettlement({
     result: { ok: true, stopped: { reason: 'a_reason_invented_later' }, chunks_done: 4 },
   }), 'other', 'a new stopped.reason must surface as `other` and nothing else may change silently');
-  // raw_lock WITH progress is not zero-commit — it is a recognised reason that
-  // this vocabulary does not have a term for, so it folds to the tripwire.
+});
+
+test('#309 classifier: raw_lock WITH committed chunks is a routine race, NOT recorded', () => {
+  // The third by-design early stop, and the one most easily mistaken for drift:
+  // the chunk builder hit a capture file whose lockdir an in-flight append-turn
+  // holds (checkpoint.mjs:454). That race happens on any active project. Folding
+  // it into `other` would make the drift tripwire non-zero in normal operation
+  // and send an operator hunting a contract defect that is not there.
   assert.equal(classifyCheckpointSettlement({
-    result: { ok: true, stopped: { reason: 'raw_lock' }, chunks_done: 2 },
-  }), 'other');
+    result: { ok: true, backlog_remaining: true, stopped: { reason: 'raw_lock' }, chunks_done: 2 },
+  }), null);
+  // Only the ZERO-commit case survives as a signal — that run accomplished
+  // nothing at all, which is what the term exists to catch.
+  assert.equal(classifyCheckpointSettlement({
+    result: { ok: true, backlog_remaining: true, stopped: { reason: 'raw_lock' }, chunks_done: 0 },
+  }), 'zero_commit');
 });

@@ -151,7 +151,19 @@ export function classifyCheckpointSettlement({ result, rejected = false } = {}) 
     // accumulator — reading that off the envelope yields `undefined === 0` and
     // the term ships DEAD. Assert this one off a real envelope, never a
     // hand-built object.
-    if (reason === 'raw_lock' && result.chunks_done === 0) return 'zero_commit';
+    if (reason === 'raw_lock') {
+      if (result.chunks_done === 0) return 'zero_commit';
+      // NOT RECORDED: a raw lock that stopped a drain which had ALREADY
+      // committed chunks (checkpoint.mjs:454). This is the third by-design
+      // early stop, and it is reachable in ordinary operation — the chunk
+      // builder hits a capture file whose lockdir an in-flight append-turn
+      // holds, which is a routine race on an active project, not drift. It
+      // belongs with chunk_cap and cost_cap rather than in `other`, or a benign
+      // race would read as "the vocabulary has drifted" and send an operator
+      // hunting a contract defect. Only the ZERO-commit case is a signal: that
+      // one means the run accomplished nothing at all.
+      return null;
+    }
 
     // A summarizer failure AFTER at least one chunk committed, so the run
     // reports success with a backlog it did not finish (checkpoint.mjs:729-735).

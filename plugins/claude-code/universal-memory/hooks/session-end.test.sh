@@ -11,6 +11,9 @@
 #       DEFAULT --max-time 10 (#309: synthesis moved server-side, so the old
 #       120s checkpoint override is gone); the hook exits 0 and logs
 #       `accepted project=<slug>` — a line that means ACCEPTED, NOT digested.
+#   E1b. Rollout skew — an OLDER server ignores the unknown `mode` key and
+#       answers 200 synchronously; the hook must then log `posted http=200`,
+#       never `accepted`, because that checkpoint really did complete.
 #   E2. 403 (writes disabled) ⇒ skip=writes-disabled + G7 banner text logged.
 #   E3. 5xx (500) ⇒ error=http-500 logged.
 #   E4. 000 (unreachable/transport failure) ⇒ error=http-000 + G7
@@ -126,7 +129,8 @@ if [ -n "$naptime" ]; then sleep "$naptime"; fi
 code=$(sed -n "${count}p" "$CAP_DIR/codes" 2>/dev/null)
 # #309: the default is 202 because that is what the server now answers for
 # mode:"accepted", which is what session-end.sh sends. A 200 is still
-# reachable — an older server ignoring the unknown key — and E1b pins it.
+# reachable — an older server ignoring the unknown key — and E1b pins that
+# path explicitly (it sets 200 and asserts `posted`, never `accepted`).
 [ -n "$code" ] || code=202
 if [ "$code" = "000" ]; then
   exit 7
@@ -269,6 +273,36 @@ assert_contains "E1: curl uses the default 10s budget (synthesis moved server-si
 assert_not_contains "E1: the 120s synthesis budget is GONE" "$E1_ARGS" "--max-time 120 "
 assert_contains "E1: log line attributed to session-end" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" " session-end "
+
+# ===========================================================================
+# E1b: an OLDER SERVER answers 200 ⇒ the hook still logs `posted http=200`
+#
+# This is the rollout-skew path and the reason the 200 branch still exists:
+# handleCheckpointRequest destructures known body keys and ignores the rest, so
+# a server deployed BEFORE #309 sees `mode:"accepted"`, ignores it, synthesises
+# synchronously and answers 200. The hook must then report a real digestion the
+# old way — NOT `accepted`, which would claim a job was merely taken when it
+# actually completed.
+#
+# It is pinned because flipping the mock default to 202 left this branch with no
+# coverage at all, and a comment in the mock claimed a test held it when none
+# did. Server-first is the documented deploy order, so this is the state the
+# plugin lands in whenever the two halves skew.
+# ===========================================================================
+echo "=== E1b: older server ignores mode and answers 200 ⇒ posted, not accepted ==="
+H=$(fresh_home e1b)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 200
+run_session_end "$H" "$STDIN"
+assert_eq "E1b: hook exits 0" "$RUN_EXIT" "0"
+E1B_LOG=$(cat "$H/.um/hook.log" 2>/dev/null)
+assert_contains "E1b: reports the synchronous digestion as posted" "$E1B_LOG" "posted http=200 project=example-project"
+assert_not_contains "E1b: must NOT log accepted for a completed checkpoint" "$E1B_LOG" "accepted project="
+# The flag still goes out — the hook does not sniff the server version, and an
+# unknown key is ignored by design rather than negotiated.
+assert_eq "E1b: the mode flag is sent regardless of server age" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # E2: 403 writes-disabled ⇒ skip=writes-disabled + G7 banner in hook.log
