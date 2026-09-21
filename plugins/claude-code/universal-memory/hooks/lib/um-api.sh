@@ -176,6 +176,11 @@ _um_api_request() {
 # definition; #294 D7 added the project field, always APPENDED LAST —
 # consumers grep these lines as substrings/prefixes, never end-anchored):
 #   `<ts> <hook> posted http=<code> [n=<count>] project=<slug>`
+#   `<ts> session-end accepted project=<slug>`  (#309 accepted mode: the server
+#     has TAKEN the job and answered 202 — this line means ACCEPTED, NOT
+#     DIGESTED. Synthesis happens afterwards and its outcome never reaches this
+#     log; a failure surfaces in um-alert.sh's CHECKPOINT-FAILURE arm instead.
+#     Do not treat this line as evidence that a session was digested.)
 #   `<ts> <hook> skip=<reason> [cwd=<path>]` / `<ts> <hook> error=<reason>`
 #   `<ts> session-start probe …` / `<ts> session-start state project=<slug>`
 #   `<ts> session-start state skip=<reason> cwd=<path>`

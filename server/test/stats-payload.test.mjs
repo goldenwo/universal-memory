@@ -439,8 +439,11 @@ test('signals: ALWAYS present; empty DB ⇒ { capture_anomaly: {} } (the ABSENT-
     assert.ok('signals' in body, 'key must exist from this version forward');
     // Null-prototype inner map (hostile-surface discipline); strict
     // deepEqual compares prototypes.
-    assert.deepEqual(body.signals, { capture_anomaly: { __proto__: null } },
-      'healthy-zero shape — distinguishes {} from null (degraded) and from ABSENT (old server)');
+    assert.deepEqual(body.signals, {
+      capture_anomaly: { __proto__: null },
+      // #309: sibling family, same healthy-zero contract.
+      checkpoint_failure: { __proto__: null },
+    }, 'healthy-zero shape — distinguishes {} from null (degraded) and from ABSENT (old server)');
   });
 });
 
@@ -454,7 +457,13 @@ test('signals: nests counters.anomalies under capture_anomaly', async () => {
     now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/test',
     listAll, readCounters: () => fakeCounters, checkpointConfig: {},
   });
-  assert.deepEqual(body.signals, { capture_anomaly: fakeCounters.anomalies });
+  // #309: the fake deliberately OMITS `checkpointFailure`, which is the
+  // undefined-vs-null seam-contract case — a DI fake missing the key must
+  // degrade to an honest `null`, never mint `{checkpoint_failure: undefined}`.
+  assert.deepEqual(body.signals, {
+    capture_anomaly: fakeCounters.anomalies,
+    checkpoint_failure: null,
+  });
 });
 
 test('signals: null when counters degraded (anomalies null)', async () => {

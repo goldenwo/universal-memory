@@ -783,16 +783,22 @@ print(json.dumps({"session_id": "s-294x", "transcript_path": "t.jsonl",
                   "cwd": sys.argv[1], "hook_event_name": "SessionEnd",
                   "reason": "other"}))' "$CROSS_SUB")
 write_mock_api 200 -
-# write side (detached child — wait for its log line before reading argv)
+# write side. #309: session-end.sh is INLINE now, so its log line is on disk
+# the moment the hook returns; the poll is kept as a cheap guard. It must match
+# `accepted` as well as `posted` — the hook logs `accepted project=<slug>` on
+# the 202, and polling for `posted http=` alone would spin the full timeout.
 rm -f "$FAKE_HOME/.um/hook.log"
 PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" UM_SERVER_URL="http://localhost:19999" \
   bash "$SESSION_END_HOOK" <<< "$STDIN_SE" >/dev/null 2>&1
 _i=0
 while [ "$_i" -lt 100 ]; do
-  grep -q "posted http=" "$FAKE_HOME/.um/hook.log" 2>/dev/null && break
+  grep -qE "posted http=|accepted project=" "$FAKE_HOME/.um/hook.log" 2>/dev/null && break
   sleep 0.1; _i=$((_i + 1))
 done
-WRITE_SLUG=$(grep -o '{"project":"[^"]*"}' "$MOCK_BIN/curl_calls" 2>/dev/null | head -1 | sed 's/.*:"\([^"]*\)".*/\1/')
+# #309: the body now carries a `mode` field, so this pattern must NOT anchor on
+# the closing brace — `{"project":"x"}` no longer matches `{"project":"x",...}`
+# and the extraction would come back empty.
+WRITE_SLUG=$(grep -o '{"project":"[^"]*"' "$MOCK_BIN/curl_calls" 2>/dev/null | head -1 | sed 's/.*:"\([^"]*\)".*/\1/')
 # read side (same cwd, stdin-absent → fallback)
 output=$(CLAUDE_CWD="$CROSS_SUB" PATH="$MOCK_BIN:$PATH" HOME="$FAKE_HOME" \
   UM_SERVER_URL="http://localhost:19999" bash "$SESSION_START" </dev/null 2>/dev/null)

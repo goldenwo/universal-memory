@@ -508,6 +508,15 @@ const SCHEMAS = {
         default: false,
         description: 'When true, produce a summary but skip the state.md merge step.',
       },
+      // #309. STRIPPED from the Custom GPT mirror in
+      // generateCustomGPTActionsSpec() — see the note there. Opt-in only:
+      // omitting `mode` keeps the synchronous 200 behaviour byte-for-byte, and
+      // any value other than "accepted" is a 400 rather than a silent fallback.
+      mode: {
+        type: 'string',
+        enum: ['accepted'],
+        description: 'Set to "accepted" to return 202 as soon as the request validates and run synthesis in the background. The response body is EMPTY — no summary_id, no job id, and no outcome. Intended for hooks whose host may reap them before synthesis finishes (#309). A failed background job is reported server-side via the signal.checkpoint_failure counter, never to this caller. Omit for the synchronous 200 behaviour. Any other value is rejected with 400.',
+      },
     },
   },
 
@@ -1121,6 +1130,14 @@ function pathCheckpoint() {
           description: 'Checkpoint completed successfully',
           content: { 'application/json': { schema: ref('CheckpointResponse') } },
         },
+        // #309 accepted mode. Declared with NO content at all, which is the
+        // contract, not an omission: the response is `writeHead(202); end()`
+        // with an empty body and NO Content-Type. An empty body under
+        // application/json is not a JSON document — that exact shape broke
+        // Codex CLI's rmcp client and is why POST /mcp grew its own 202 path.
+        202: {
+          description: 'Accepted (mode:"accepted" only): the request validated and synthesis was started in the background. EMPTY body, no Content-Type. Acceptance is NOT completion — the checkpoint may still fail afterwards, and this caller will never hear about it.',
+        },
         400: {
           ...ERROR_RESPONSE,
           description: 'Soft checkpoint failure (e.g. cost cap hit, invalid project, checkpoint in progress)',
@@ -1603,7 +1620,28 @@ export function generateCustomGPTActionsSpec() {
     }
   }
 
-  // Fix 2 (GPT-only): cap every description to ≤300 chars (ChatGPT hard limit).
+  // Fix 2 (GPT-only): strip #309 accepted mode from the mirror entirely.
+  //
+  // The spec's "only session-end.sh opts in" has to be ENFORCED here, not
+  // merely stated. A Custom GPT is an LLM choosing arguments at runtime: expose
+  // `mode` and it will eventually send `mode:"accepted"`, receive an empty 202,
+  // and narrate it to the user as a completed checkpoint — when nothing has been
+  // written and the real outcome arrives nowhere it can ever see. That is the
+  // misreported-success failure the spec's Risks single out, handed to the one
+  // caller least able to notice it.
+  //
+  // The 202 response goes with the flag. Declaring a response whose only
+  // trigger has been removed is incoherent, and it would invite exactly the
+  // narration above from a model reading the response list.
+  //
+  // MUST run BEFORE capDescriptions: `mode`'s description is over the 300-char
+  // GPT limit, so leaving it in would (correctly) throw there.
+  if (trimmed.components.schemas.CheckpointRequest) {
+    delete trimmed.components.schemas.CheckpointRequest.properties?.mode;
+  }
+  delete trimmedCheckpoint.post?.responses?.[202];
+
+  // Fix 3 (GPT-only): cap every description to ≤300 chars (ChatGPT hard limit).
   // Known offenders get curated rewrites via GPT_DESCRIPTION_OVERRIDES; any
   // other over-limit string THROWS (fail-loud — never silently truncated, so
   // the ≤300 walker test stays a real gate).

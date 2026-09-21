@@ -1255,6 +1255,136 @@ else
   fail "T62-help-content: $output"
 fi
 
+# ─── #309 CHECKPOINT-FAILURE arm ────────────────────────────────────────────
+# The rollback signal for accepted mode. LAYERS-STALE cannot serve here: it
+# measures a capture-vs-digest LAG, and that lag freezes when a project stops
+# capturing, so a project whose finite lag sits below the ceiling when it goes
+# quiet is invisible indefinitely with a green board.
+#
+# Only `rejected` and `failed` trigger. The other four are RECORDED and shown
+# in the breakdown but must leave the alert silent — each is transient or an
+# unrecognised success shape, and none has a measured benign base rate.
+CKPT_ZERO='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{}}}'
+CKPT_FAILED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":2,"outcomes_7d":{"rejected":0,"failed":2,"contended":0,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
+CKPT_REJECTED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":1,"outcomes_7d":{"rejected":1,"failed":0,"contended":0,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
+CKPT_CONTENDED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":9,"outcomes_7d":{"rejected":0,"failed":0,"contended":9,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
+CKPT_ZERO_COMMIT='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":4,"outcomes_7d":{"rejected":0,"failed":0,"contended":0,"zero_commit":4,"provider_stalled":0,"other":0}}}}}'
+CKPT_PROVIDER_STALLED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":6,"outcomes_7d":{"rejected":0,"failed":0,"contended":0,"zero_commit":0,"provider_stalled":6,"other":0}}}}}'
+CKPT_OTHER='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":3,"outcomes_7d":{"rejected":0,"failed":0,"contended":0,"zero_commit":0,"provider_stalled":0,"other":3}}}}}'
+CKPT_MIXED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":21,"outcomes_7d":{"rejected":0,"failed":1,"contended":20,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
+CKPT_ABSENT_KEY='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{}}}'
+CKPT_NULL='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":null}}'
+CKPT_MALFORMED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":"garbage"}}'
+
+# ─── T63: checkpoint_failure {} ⇒ exit 0, silent ────────────────────────────
+echo ""
+echo "=== T63: checkpoint_failure {} + fresh ⇒ exit 0, no CHECKPOINT-FAILURE line ==="
+mock="$TMPDIR_ROOT/t63"; _make_mock_curl "$mock" 200 "$CKPT_ZERO"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T63-exit-0"; else fail "T63-exit-0 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECKPOINT-FAILURE"; then
+  fail "T63-silent: healthy zero must not mention the arm: $output"
+else
+  pass "T63-silent"
+fi
+
+# ─── T64: a `failed` outcome FIRES ──────────────────────────────────────────
+echo ""
+echo "=== T64: checkpoint_failure failed=2 ⇒ exit 1 + CHECKPOINT-FAILURE line naming the project ==="
+mock="$TMPDIR_ROOT/t64"; _make_mock_curl "$mock" 200 "$CKPT_FAILED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T64-exit-1"; else fail "T64-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECKPOINT-FAILURE" && echo "$output" | grep -q "proj-a"; then
+  pass "T64-names-project"
+else
+  fail "T64-names-project: $output"
+fi
+
+# ─── T65: a `rejected` outcome FIRES ────────────────────────────────────────
+echo ""
+echo "=== T65: checkpoint_failure rejected=1 ⇒ exit 1 (highest-severity fault in the change) ==="
+mock="$TMPDIR_ROOT/t65"; _make_mock_curl "$mock" 200 "$CKPT_REJECTED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T65-exit-1"; else fail "T65-exit-1 (rc=$rc, out=$output)"; fi
+
+# ─── T66: the four NON-TRIGGERING outcomes each stay silent ─────────────────
+# These are the assertions that keep the alert actionable. A detector that
+# fires on routine traffic gets muted, and a muted detector is the silent
+# failure this whole change exists to remove — one level up.
+echo ""
+echo "=== T66: contended / zero_commit / provider_stalled / other ⇒ exit 0, silent ==="
+_t66() {
+  local name="$1" fixture="$2"
+  mock="$TMPDIR_ROOT/t66-$name"; _make_mock_curl "$mock" 200 "$fixture"
+  run_alert "$mock"
+  if [ "$rc" -eq 0 ] && ! echo "$output" | grep -q "CHECKPOINT-FAILURE"; then
+    pass "T66-$name-silent"
+  else
+    fail "T66-$name-silent (rc=$rc, out=$output)"
+  fi
+}
+_t66 "contended"         "$CKPT_CONTENDED"
+_t66 "zero-commit"       "$CKPT_ZERO_COMMIT"
+_t66 "provider-stalled"  "$CKPT_PROVIDER_STALLED"
+_t66 "other"             "$CKPT_OTHER"
+
+# ─── T67: a triggering outcome alongside heavy transients STILL fires ───────
+echo ""
+echo "=== T67: failed=1 among contended=20 ⇒ exit 1, breakdown shows BOTH ==="
+mock="$TMPDIR_ROOT/t67"; _make_mock_curl "$mock" 200 "$CKPT_MIXED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T67-exit-1"; else fail "T67-exit-1 (rc=$rc, out=$output)"; fi
+# The whole breakdown rides the line: a contended-heavy project alongside a
+# failure is a different diagnosis than a failure alone, and the non-triggering
+# counts ARE the base-rate measurement the promotion decision defers to.
+if echo "$output" | grep -q "contended x20" && echo "$output" | grep -q "failed x1"; then
+  pass "T67-full-breakdown"
+else
+  fail "T67-full-breakdown: $output"
+fi
+
+# ─── T68: checkpoint_failure key ABSENT ⇒ breadcrumb, exit 0, NOT exit 2 ────
+# THE DELIBERATE DIVERGENCE from the sibling capture_anomaly arm, which treats
+# a missing family key inside a present `signals` as a drift ERROR. The states
+# that produce this are a rollback to a pre-#309 server or an install-cli.sh
+# run that lands the new CLI before the server deploy — in both the CLI is
+# NEWER than the server it queries. The sibling posture would hard-fail the
+# daily alert in exactly the states where it is most needed.
+echo ""
+echo "=== T68: signals present, no checkpoint_failure key ⇒ ABSENT breadcrumb, exit 0 ==="
+mock="$TMPDIR_ROOT/t68"; _make_mock_curl "$mock" 200 "$CKPT_ABSENT_KEY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T68-exit-0-not-2"; else fail "T68-exit-0-not-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "no checkpoint_failure key"; then
+  pass "T68-breadcrumb"
+else
+  fail "T68-breadcrumb: $output"
+fi
+
+# ─── T69: checkpoint_failure null ⇒ DEGRADED, not a silent pass ─────────────
+echo ""
+echo "=== T69: checkpoint_failure:null while signals present ⇒ exit 2, the rollback signal is DARK ==="
+# Must be LOUD. A degraded counters DB nulls `signals` wholesale, so this state
+# can only mean the fail-isolated checkpoint-failure reader threw on its own —
+# the #309 rollback signal is dark while the rest of the board reads green.
+# That is the inert-detector failure mode this change exists to remove.
+mock="$TMPDIR_ROOT/t69"; _make_mock_curl "$mock" 200 "$CKPT_NULL"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T69-exit-2-loud"; else fail "T69-exit-2-loud (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED" && echo "$output" | grep -q "DARK"; then
+  pass "T69-names-the-dark-signal"
+else
+  fail "T69-names-the-dark-signal: $output"
+fi
+
+# ─── T70: malformed checkpoint_failure ⇒ CHECK FAILED exit 2 ───────────────
+echo ""
+echo "=== T70: checkpoint_failure:\"garbage\" ⇒ exit 2 CHECK FAILED ==="
+mock="$TMPDIR_ROOT/t70"; _make_mock_curl "$mock" 200 "$CKPT_MALFORMED"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T70-exit-2"; else fail "T70-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED"; then pass "T70-check-failed-text"; else fail "T70-check-failed-text: $output"; fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"
