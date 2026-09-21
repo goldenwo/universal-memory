@@ -490,7 +490,7 @@ fam = signals["checkpoint_failure"]
 if fam is None:
     # LOUD, not silent. This state can ONLY mean the fail-isolated reader in
     # stats.mjs threw while everything else stayed healthy: a degraded counters
-    # DB nulls `signals` wholesale, which the branch above already caught. So
+    # DB nulls "signals" wholesale, which the branch above already caught. So
     # the rollback signal for #309 is dark while the board looks green — the
     # inert-detector failure mode, which is the very class this change removes.
     emit("ERROR", "checkpoint_failure is null while signals is present — the checkpoint-failure reader degraded on its own; the #309 rollback signal is DARK")
