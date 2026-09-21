@@ -47,13 +47,15 @@ write nothing.
 | **SessionStart** (`session-start.sh`) | New session | Injects the project's server-side `state.md` + memory-routing rubric; shows a visible ⚠ banner when captures are OFF (server unreachable / writes disabled) |
 | **UserPromptSubmit** (`user-prompt-submit.sh`) | First prompt per session | Vector-search injection of top memory hits |
 | **Stop** (`stop.sh`) | After every turn | Parses the session transcript (delta cursor) and POSTs new messages to `/api/append-turn` — no LLM, fail-open |
-| **SessionEnd** (`session-end.sh`) | Clean exit | Detached POST `/api/checkpoint`; the server runs summary + `state.md` update with its own key |
+| **SessionEnd** (`session-end.sh`) | Clean exit | POST `/api/checkpoint` in **accepted mode** — the server answers 202 at once and runs summary + `state.md` update afterwards with its own key. The hook logs `accepted`, which means taken, **not** digested |
 | **`/um-checkpoint`** | On demand | Forces a checkpoint now |
 | **`/um-setup`** | First run | Setup flow above |
 
 Every fire logs to `~/.um/hook.log` (`posted http=<code> … project=<slug>` /
-`skip=<reason>` / `error=<reason>`) — capture problems are never silent, and
-since #294 the resolved project slug rides every success line.
+`accepted project=<slug>` / `skip=<reason>` / `error=<reason>`) — capture problems are never silent,
+and since #294 the resolved project slug rides every success line. `accepted` is `session-end`'s
+accepted-mode line: the server took the job, and whether synthesis then succeeded is reported by
+`bin/um-alert.sh`'s `CHECKPOINT-FAILURE` section rather than here.
 
 Checkpoint synthesis is chunked server-side (bounded input per call, regardless of backlog size), so
 a single `SessionEnd` fire (or `/um-checkpoint`) may leave `backlog_remaining: true` on a project

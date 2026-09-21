@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# session-end.sh v2 — detached checkpoint trigger to POST /api/checkpoint
-# (#159 T4, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5).
+# session-end.sh v3 — inline checkpoint trigger to POST /api/checkpoint
+# (#159 T4, spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5;
+#  #309 accepted mode, docs/plans/2026-09-17-309-checkpoint-accepted-mode-*).
 #
 # Claude Code passes SessionEnd hooks a small metadata JSON on stdin
 # ({session_id, transcript_path, cwd, reason, hook_event_name, ...}). This
@@ -8,34 +9,36 @@
 # client-side summarizer (the server's checkpoint pipeline owns synthesis;
 # the old summarize.sh/update-state.sh orchestration is retired).
 #
-# Behavior (all pinned by spec §5):
-#   - POST /api/checkpoint {project} — DETACHED (the v2 keeps the old
-#     UM_DETACH wisdom): the parent backgrounds a fully fd-detached child
-#     and returns immediately; server-side LLM synthesis routinely exceeds
-#     the shared 10s curl budget, so the child uses its own 120s max-time
-#     and Claude Code's hook timeout never sees the wait.
-#   - The CHILD logs the final result to ~/.um/hook.log. Reason taxonomy
-#     (same as stop.sh, spec §5 T3-review amendment): skip=writes-disabled
-#     (403, + G7 banner text), error=input-invalid (400), error=auth (401),
-#     skip=server-too-old (other non-403 4xx), error=http-<code> (5xx,
-#     000=unreachable + G7 banner text). Checkpoint-specific: a 502 means
-#     UPSTREAM_FAILURE, but its TWO possible meanings disambiguate on the
-#     response body's additive `error.stage` field (checkpoint chunked
-#     summarization spec §4.7): stage "reindex" (or ABSENT — a legacy
-#     pre-chunking server never sent stage at all, and for it every 502 WAS
-#     the reindex-exhausted case) means state.md WAS written and only the
-#     vector index is stale — the log carries note=state-written-index-stale.
-#     stage "summarize" means nothing was written at all (a 0-chunk
-#     summarizer failure) — logged plainly, no note. This requires the
-#     response BODY, not just $UM_API_HTTP_CODE — see the mktemp
-#     body-capture pattern below (um_api_post outside command substitution;
-#     UM_API_HTTP_CODE does not survive a subshell — bin/um-alert.sh:134-136).
+# Behavior:
+#   - POST /api/checkpoint {project, mode:"accepted"} — INLINE. v2 detached an
+#     fd-detached child with its own 120s max-time, because server-side LLM
+#     synthesis routinely exceeds the shared 10s curl budget. #309 proved that
+#     structure is what broke Codex capture: under `codex exec` the child was
+#     reaped before the POST completed (0/26 runs; 5/5 the moment anything kept
+#     the PARENT alive a few ms longer). The fix moves the wait to the server —
+#     accepted mode validates, answers an empty 202, and synthesises afterwards
+#     — so this hook has nothing left to outlive and runs inline on the default
+#     budget. The old `disown` comment claimed it protected against parent
+#     teardown; it did not, and that claim is what the issue disproved.
+#   - The hook logs the result to ~/.um/hook.log. On the 202 the line is
+#     `accepted project=<slug>`, which means ACCEPTED, NOT DIGESTED: synthesis
+#     has not started and its outcome never reaches this log. A failed
+#     synthesis surfaces server-side instead, via the #309
+#     signal.checkpoint_failure counter and um-alert.sh's CHECKPOINT-FAILURE
+#     arm. A plain `posted http=200` line is still reachable — that is an older
+#     server ignoring the unknown `mode` key and synthesising synchronously.
+#   - Reason taxonomy for non-2xx (same as stop.sh, spec §5 T3-review
+#     amendment): skip=writes-disabled (403, + G7 banner text),
+#     error=input-invalid (400), error=auth (401), skip=server-too-old (other
+#     non-403 4xx), error=http-<code> (5xx, 000=unreachable + G7 banner text).
+#     The 502 `error.stage` disambiguation v2 carried here is GONE along with
+#     its mktemp body-capture scaffolding: every synthesis outcome now happens
+#     after the 202, where this hook cannot observe it.
 #   - Project = the guard's ROOT-derived slug (#294 D1; naming rule:
 #     project_guard.py guard() — the canonical statement), sanitized to
 #     [A-Za-z0-9._-] client-side (mirrors the server's PROJECT_SLUG_RE;
 #     unsanitized slugs 400).
-#   - Fail-open: the parent always exits 0 — CC session integrity beats
-#     capture.
+#   - Fail-open: the hook always exits 0 — CC session integrity beats capture.
 
 set -uo pipefail
 
@@ -73,97 +76,106 @@ PROJECT="${PROJECT//[^A-Za-z0-9._-]/-}"
 
 # Safe to interpolate: the slug is reduced to [A-Za-z0-9._-] above, so no
 # JSON metacharacters can survive into the body.
-BODY="{\"project\":\"$PROJECT\"}"
+#
+# #309: `mode:"accepted"` opts this call into the server's accepted mode — the
+# server validates, answers an empty 202, and synthesises AFTER the response.
+# That is what lets this hook survive a host that reaps its process tree: there
+# is no longer any work for it to outlive. An older server ignores the unknown
+# key and runs synchronously (handleCheckpointRequest destructures known keys),
+# which is why T1 and T3 must land together — see the plan's Sequencing note.
+BODY="{\"project\":\"$PROJECT\",\"mode\":\"accepted\"}"
 
 # ---------------------------------------------------------------------------
-# Detached child. All three fds are detached so the parent's caller (and the
-# test harness's command substitution) never waits on the child; um_log is
-# the child's only output channel. `disown` drops it from job control so a
-# parent-shell teardown can't HUP it mid-checkpoint.
+# INLINE, not detached (#309). The detached child that used to live here is
+# gone, and with it the `disown` that carried a comment claiming it protected
+# against parent teardown. It did not: under `codex exec` the child was reaped
+# before the POST completed, 0/26 runs, which is the whole of issue #309. The
+# request is now sub-second (the server answers 202 after validation and
+# synthesises afterwards), so there is nothing left to outlive and no reason to
+# detach.
 #
-# STRUCTURAL change (checkpoint chunked summarization spec §4.7): the body is
-# now captured to a temp file (um_api_post OUTSIDE command substitution —
-# UM_API_HTTP_CODE does not survive a subshell, same mktemp pattern
-# bin/um-alert.sh uses) instead of discarded via >/dev/null, so the 502
-# branch can read `error.stage` and disambiguate its two meanings. Every
-# other reason-taxonomy branch, and the detached + fail-open structure, are
-# unchanged byte-for-byte.
+# The 120s budget went with it — synthesis no longer happens on this call, so
+# um_api_post's default (3s connect / 10s total) applies. Note the cost, which
+# is deliberate and accepted rather than overlooked: SessionEnd is now
+# SYNCHRONOUS on BOTH hosts, so an unreachable or slow server blocks Claude
+# Code's session teardown for up to that budget (~21s on the #307 429-retry
+# path: max-time + 1s sleep + max-time) where it used to return instantly.
+# That is still a 12x improvement on the old worst case, and a client-side
+# timeout cannot lose work — the server registers no disconnect cancellation,
+# so a hang-up does not stop a checkpoint it already accepted.
+#
+# The mktemp body-capture scaffolding and the 502 arm went too: both existed to
+# read `error.stage` off a synthesis failure, and under accepted mode every
+# synthesis outcome happens AFTER the 202, where this hook cannot see it. Those
+# failures are now detected server-side by the #309 signal.checkpoint_failure
+# counter and um-alert.sh's CHECKPOINT-FAILURE arm. Leaving unreachable branches
+# whose comments describe semantics that no longer apply would reproduce the
+# exact defect this change exists to correct.
+#
+# STDOUT MUST BE REDIRECTED. `_um_api_request` writes the response body to
+# stdout by contract; the old form kept it off the hook's stdout via the
+# `> "$CKPT_BODY_FILE"` redirect and the subshell's `>/dev/null`. Both are gone,
+# so the redirect is explicit here — otherwise every session end prints the
+# server's envelope on the SessionEnd hook's stdout, which the host reads.
 # ---------------------------------------------------------------------------
 ENDPOINT=$(um_api_endpoint 2>/dev/null)
-(
-  # Review round 1, MINOR 2: a bare `mktemp` failure (disk full, unwritable
-  # TMPDIR) would leave CKPT_BODY_FILE empty; `> "$CKPT_BODY_FILE"` then
-  # redirects to "" and fails BEFORE um_api_post ever runs, so
-  # UM_API_HTTP_CODE is never set — under this script's `set -u`, the `case`
-  # below would hit an unbound-variable error and the child would exit with
-  # NOTHING logged. Fall back to /dev/null: the POST still fires and
-  # UM_API_HTTP_CODE still gets set; only the 502 stage-parse degrades (to
-  # the same safe "note present" reading an absent/legacy stage already
-  # gets), never a silent, unlogged death.
-  CKPT_BODY_FILE=$(mktemp 2>/dev/null) || CKPT_BODY_FILE=/dev/null
-  if um_api_post '/api/checkpoint' "$BODY" 120 > "$CKPT_BODY_FILE" 2>/dev/null </dev/null; then
+if um_api_post '/api/checkpoint' "$BODY" >/dev/null 2>/dev/null </dev/null; then
+  # THIS CONDITIONAL MUST LIVE INSIDE THE SUCCESS ARM. um_api_post returns 0
+  # for ANY 2xx, so a 202 already lands here — the `case` block below is the
+  # ELSE arm, reached only on non-2xx. A `202)` case added down there would be
+  # dead code and the hook would ship `posted http=202`, which reads as "this
+  # session was digested" when nothing has been synthesised yet. That is
+  # precisely the misreported success the spec forbids.
+  if [ "$UM_API_HTTP_CODE" = "202" ]; then
+    # ACCEPTED, NOT DIGESTED. The server has taken the job and nothing has been
+    # written yet; success or failure is decided after this line is logged. A
+    # line reading as success when synthesis later failed would be worse than
+    # no line at all.
+    um_log "accepted project=$PROJECT"
+  else
     # #294 D7: the resolved slug rides the success line, APPENDED as the
     # LAST field (never inserted — continuity.sh's order-sensitive greps
     # match the existing prefix as a substring). $PROJECT is sanitized
-    # above before BODY is built.
+    # above before BODY is built. Reachable when an older server ignores the
+    # unknown `mode` key and answers 200 synchronously.
     um_log "posted http=$UM_API_HTTP_CODE project=$PROJECT"
-  else
-    case "$UM_API_HTTP_CODE" in
-      403)
-        um_log "skip=writes-disabled"
-        # SessionEnd has no visible channel (spec §5 G7) — the banner text
-        # goes to hook.log; session-start.sh owns the user-visible surface.
-        um_log "$(um_g7_message writes-disabled)"
-        ;;
-      000)
-        um_log "error=http-000"
-        um_log "$(um_g7_message unreachable "$ENDPOINT")"
-        ;;
-      # 400/401 carved out of server-too-old (spec §5 T3-review amendment).
-      400)
-        um_log "error=input-invalid"
-        ;;
-      401)
-        um_log "error=auth"
-        ;;
-      429)
-        # Remote rate-limiter — transient, already retried once by um-api.sh;
-        # never the server-too-old prescription (2026-09-10).
-        um_log "error=http-429"
-        ;;
-      4[0-9][0-9])
-        um_log "skip=server-too-old http=$UM_API_HTTP_CODE"
-        ;;
-      502)
-        # Two 502 meanings disambiguate on error.stage (spec §4.7):
-        #   "reindex" or ABSENT (legacy server, predates the field) ->
-        #     state.md WAS written; only the reindex/vector step failed ->
-        #     partial success, not a lost session -> the note.
-        #   "summarize" -> nothing was written at all (0-chunk summarizer
-        #     failure) -> logged plainly, no note.
-        CKPT_STAGE=$("$PY" -c '
-import json, sys
-try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
-    err = d.get("error") if isinstance(d.get("error"), dict) else {}
-    print(err.get("stage") or "")
-except Exception:
-    print("")
-' "$CKPT_BODY_FILE" 2>/dev/null)
-        if [ "$CKPT_STAGE" = "reindex" ] || [ -z "$CKPT_STAGE" ]; then
-          um_log "error=http-502 note=state-written-index-stale"
-        else
-          um_log "error=http-502 stage=$CKPT_STAGE"
-        fi
-        ;;
-      *)
-        um_log "error=http-$UM_API_HTTP_CODE"
-        ;;
-    esac
   fi
-  # Never rm the /dev/null fallback itself (the mktemp-failure leg above).
-  [ "$CKPT_BODY_FILE" = "/dev/null" ] || rm -f "$CKPT_BODY_FILE"
-) </dev/null >/dev/null 2>&1 &
-disown 2>/dev/null || true
+else
+  case "$UM_API_HTTP_CODE" in
+    403)
+      um_log "skip=writes-disabled"
+      # SessionEnd has no visible channel (spec §5 G7) — the banner text
+      # goes to hook.log; session-start.sh owns the user-visible surface.
+      um_log "$(um_g7_message writes-disabled)"
+      ;;
+    000)
+      um_log "error=http-000"
+      um_log "$(um_g7_message unreachable "$ENDPOINT")"
+      ;;
+    # 400/401 carved out of server-too-old (spec §5 T3-review amendment).
+    400)
+      um_log "error=input-invalid"
+      ;;
+    401)
+      um_log "error=auth"
+      ;;
+    429)
+      # Remote rate-limiter — transient, already retried once by um-api.sh;
+      # never the server-too-old prescription (2026-09-10).
+      um_log "error=http-429"
+      ;;
+    4[0-9][0-9])
+      um_log "skip=server-too-old http=$UM_API_HTTP_CODE"
+      ;;
+    *)
+      # KEEP THIS CATCH-ALL. It is the only branch that logs an unanticipated
+      # code, and 5xx BEFORE the 202 is still reachable — the route's outer
+      # handler maps escapes to 500/413. Deleting it would turn an unexpected
+      # response into a silent, unlogged hook exit: the same class of defect as
+      # the original "no log line" symptom this issue began with.
+      um_log "error=http-$UM_API_HTTP_CODE"
+      ;;
+  esac
+fi
 
 exit 0

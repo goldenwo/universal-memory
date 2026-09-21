@@ -26,7 +26,8 @@
 # parses the transcript JSONL at transcript_path, and POSTs one
 # /api/append-turn per new eligible message behind a delta cursor at
 # ~/.um/state/stop-cursor-<session_id>; session-end.sh POSTs /api/checkpoint
-# {project} from a detached child; session-start.sh GETs /api/state/<project>
+# {project} INLINE with mode:"accepted" (#309); session-start.sh GETs
+# /api/state/<project>
 # and injects it via the hookSpecificOutput.additionalContext envelope. NO
 # client-side vault writes exist anymore.
 #
@@ -35,8 +36,8 @@
 #       → exactly N append-turn POSTs on fire 1, ZERO on fires 2-5 (delta
 #         cursor idempotency), cursor file advanced to the transcript line count.
 #   session-end writes summary + state.md locally
-#       → session-end POSTs /api/checkpoint {project} (detached child observed
-#         via the mock capture / hook.log). Server-side synthesis (summary +
+#       → session-end POSTs /api/checkpoint {project} (observed via the mock
+#         capture / hook.log). Server-side synthesis (summary +
 #         state.md written FROM the appended turns, real LLM) is proven by
 #         smoke.sh S10 (UM_SMOKE_REMOTE_RT=1 leg in CI) — not re-proven here.
 #   orphan-catchup fork (Step 5 of the old test)
@@ -159,6 +160,24 @@ unset _UM_CONT_TOKEN
 # ---------------------------------------------------------------------------
 SESSION_ID="continuity-test-0001"
 PROJECT="continuity-test"
+
+# #309 live-mode preflight for the digestion barrier. state_snapshot /
+# wait_for_state_change read /api/state directly, which — unlike /health — is
+# bearer-gated off loopback (CI reaches the container over Docker's NAT
+# bridge). Probe it ONCE so a missing or wrong token fails immediately and says
+# why, instead of surfacing 120 s later as "accepted, but state never changed",
+# which reads as an accepted-mode bug and sent one review down exactly that
+# path. Only the AUTH class is fatal: a 404 for a project that has never been
+# checkpointed is the expected starting state.
+if [ "$LIVE" = "1" ]; then
+  _CONT_STATE_PROBE=$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' \
+    ${_UM_CONT_AUTH_CONFIG:+--config "$_UM_CONT_AUTH_CONFIG"} \
+    "$HOOK_ENDPOINT/api/state/$PROJECT" 2>/dev/null || echo 000)
+  case "$_CONT_STATE_PROBE" in
+    401|403)
+      fail "live mode: /api/state/$PROJECT returned $_CONT_STATE_PROBE — the digestion barrier cannot read state, so Step 2 would time out blaming accepted mode. Set UM_AUTH_TOKEN in server/.env (it is read into the curl --config), or run against a loopback server." ;;
+  esac
+fi
 # #186: the cwd must be a REAL directory carrying a project marker — the
 # hooks' non-project guard (project_guard.py) skips nonexistent/marker-less
 # paths by design, which is exactly what the old /fake/path value would hit.
@@ -367,6 +386,44 @@ wait_for_log() {  # <pattern> <min_count> <timeout_s> — rc 0 when reached
   return 1
 }
 
+# #309: THE LOG LINE IS NO LONGER A SYNTHESIS BARRIER.
+#
+# Under accepted mode the server answers 202 the moment the request validates
+# and synthesises afterwards, so `session-end accepted` lands sub-second while
+# state.md is still minutes from being written. CKPT_TIMEOUT rises to 120 in
+# live mode precisely to WAIT OUT real synthesis; without a real barrier the
+# run would sail into Step 5's state-body check before anything exists and fall
+# into its soft `warn` arm — green, while silently ceasing to prove the thing
+# this file exists to prove.
+#
+# So live mode waits on the ARTIFACT instead: poll GET /api/state/<project>
+# until the served document actually CHANGES from the snapshot taken before the
+# checkpoint. Same rule the spec applies to acceptance 1 — a log line is not
+# digestion.
+state_snapshot() {  # → prints the current served state body (empty if absent)
+  [ "$LIVE" = "1" ] || return 0
+  # AUTH IS REQUIRED HERE. /api/state is an /api/* route, and live mode reaches
+  # the container over Docker's NAT bridge — non-loopback — so a bare curl gets
+  # 401, `-f` turns that into a non-zero exit, and the `|| true` below would
+  # hand back an empty string on every call. wait_for_state_change would then
+  # never observe a change and would fail Step 2 with a message blaming
+  # accepted mode for a missing header. Same --config indirection the /api/search
+  # soft check uses, so the token never appears in argv.
+  local -a cfg=()
+  [ -n "$_UM_CONT_AUTH_CONFIG" ] && [ -f "$_UM_CONT_AUTH_CONFIG" ] && cfg=(--config "$_UM_CONT_AUTH_CONFIG")
+  curl -sf --max-time 10 "${cfg[@]}" "$HOOK_ENDPOINT/api/state/$PROJECT" 2>/dev/null || true
+}
+wait_for_state_change() {  # <snapshot> <timeout_s> — rc 0 when the doc differs
+  [ "$LIVE" = "1" ] || return 0
+  local before="$1" timeout="$2" i now
+  for i in $(seq 1 "$timeout"); do
+    now=$(state_snapshot)
+    if [ -n "$now" ] && [ "$now" != "$before" ]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 info "home:     $TEST_HOME"
 info "endpoint: $HOOK_ENDPOINT"
 info "mode:     $LIVE (0=mock curl, 1=live server)"
@@ -444,21 +501,31 @@ CURSOR_VAL=$(cat "$CURSOR_FILE")
 info "Step 1 passed: $EXPECT_MSGS_1 captures on fire 1, zero on fires 2-5, cursor=$CURSOR_VAL"
 
 # ===========================================================================
-# Step 2: session-end.sh — detached child POSTs /api/checkpoint {project}.
-# The parent returns immediately; poll for the child's result. In live mode
+# Step 2: session-end.sh — INLINE POST of /api/checkpoint {project} (#309).
+# The hook waits for its own 202 and logs `accepted`. In live mode
 # this triggers a REAL server-side checkpoint (LLM synthesis from the turns
 # appended in Step 1) — content correctness of that synthesis is S10's job
 # (smoke.sh remote round-trip); here we assert the hook's wire behavior.
 # ===========================================================================
 info "Step 2: session-end.sh (first session checkpoint)"
 
+STATE_BEFORE_1=$(state_snapshot)
 run_hook session-end.sh "$END_STDIN"
 [ "$RUN_EXIT" = 0 ] || fail "session-end.sh exited $RUN_EXIT (fail-open contract broken)"
 
 CKPT_TIMEOUT=30
-[ "$LIVE" = "1" ] && CKPT_TIMEOUT=120   # real LLM synthesis, child max-time 120s
-wait_for_log " session-end posted http=2[0-9][0-9]" 1 "$CKPT_TIMEOUT" \
-  || fail "Step 2: no 'session-end posted' hook.log line within ${CKPT_TIMEOUT}s (log tail: $(tail -3 "$HOOK_LOG" 2>/dev/null | tr '\n' '|'))"
+[ "$LIVE" = "1" ] && CKPT_TIMEOUT=120   # real LLM synthesis, server-side under accepted mode
+# #309: match `accepted` as well as `posted`. The hook logs `accepted
+# project=<slug>` on the 202; an older server ignoring `mode` still answers 200
+# and logs `posted http=200`, so both forms stay valid. NOT loosened to a bare
+# `session-end ` — the code class still has to be asserted.
+wait_for_log " session-end \(posted http=2[0-9][0-9]\|accepted project=\)" 1 "$CKPT_TIMEOUT" \
+  || fail "Step 2: no 'session-end posted/accepted' hook.log line within ${CKPT_TIMEOUT}s (log tail: $(tail -3 "$HOOK_LOG" 2>/dev/null | tr '\n' '|'))"
+# The line above proves the request was ACCEPTED, not that anything was
+# digested. In live mode wait for the real artifact before anything downstream
+# reads state.
+wait_for_state_change "$STATE_BEFORE_1" "$CKPT_TIMEOUT" \
+  || fail "Step 2: accepted, but /api/state/$PROJECT never changed within ${CKPT_TIMEOUT}s — the checkpoint was taken and then failed server-side (see um-alert's CHECKPOINT-FAILURE arm)"
 
 if [ "$LIVE" != "1" ]; then
   GOT=$(checkpoint_count)
@@ -572,10 +639,15 @@ CURSOR_VAL=$(cat "$CURSOR_FILE")
 [ "$CURSOR_VAL" = "$EXPECT_CURSOR_2" ] \
   || fail "Step 4: cursor=$CURSOR_VAL after second-session fire, want $EXPECT_CURSOR_2"
 
+STATE_BEFORE_2=$(state_snapshot)
 run_hook session-end.sh "$END_STDIN"
 [ "$RUN_EXIT" = 0 ] || fail "second session-end.sh exited $RUN_EXIT"
-wait_for_log " session-end posted http=2[0-9][0-9]" 2 "$CKPT_TIMEOUT" \
-  || fail "Step 4: second 'session-end posted' hook.log line not seen within ${CKPT_TIMEOUT}s"
+wait_for_log " session-end \(posted http=2[0-9][0-9]\|accepted project=\)" 2 "$CKPT_TIMEOUT" \
+  || fail "Step 4: second 'session-end posted/accepted' hook.log line not seen within ${CKPT_TIMEOUT}s"
+# Again: acceptance is not digestion. Step 5 reads state, so the artifact has
+# to exist before it runs or its state-body check degrades to a silent warn.
+wait_for_state_change "$STATE_BEFORE_2" "$CKPT_TIMEOUT" \
+  || fail "Step 4: second checkpoint accepted, but /api/state/$PROJECT never changed within ${CKPT_TIMEOUT}s"
 if [ "$LIVE" != "1" ]; then
   GOT=$(checkpoint_count)
   [ "$GOT" = 2 ] || fail "Step 4: expected 2 /api/checkpoint POSTs total, got $GOT"
@@ -666,6 +738,6 @@ fi
 info ""
 info "=== PASS: end-to-end continuity lifecycle verified (v2 API-always) ==="
 info "  stop.sh x5 → $EXPECT_MSGS_1 append-turn POSTs once, idempotent after (cursor=$EXPECT_CURSOR_1)"
-info "  session-end.sh → detached /api/checkpoint {project}"
+info "  session-end.sh → inline /api/checkpoint {project,mode:accepted}"
 info "  2nd session delta → $EXPECT_MSGS_2 new POSTs (cursor=$EXPECT_CURSOR_2) + 2nd checkpoint"
 info "  session-start.sh → hookSpecificOutput envelope w/ state + rubric"

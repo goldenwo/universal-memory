@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# hooks/session-end.test.sh — tests for session-end.sh v2 (#159 T4: detached
-# POST /api/checkpoint {project}; client summarizer retired).
+# hooks/session-end.test.sh — tests for session-end.sh v3 (#159 T4 POST
+# /api/checkpoint, client summarizer retired; #309 accepted mode, inline).
 #
 # Run: bash session-end.test.sh
 # All tests must pass (exit 0 = pass, non-zero = fail).
 #
 # Scenarios (spec docs/plans/2026-07-16-cc-plugin-remote-spec.md §5):
 #   E1. Happy path — fixture-shaped stdin ⇒ ONE POST to /api/checkpoint with
-#       body exactly {"project":"<cwd-basename>"} and --max-time 120 (the
-#       checkpoint override, not the shared 10s); parent exits 0; the
-#       DETACHED child logs `posted http=200` to hook.log.
+#       body exactly {"project":"<cwd-basename>","mode":"accepted"} and the
+#       DEFAULT --max-time 10 (#309: synthesis moved server-side, so the old
+#       120s checkpoint override is gone); the hook exits 0 and logs
+#       `accepted project=<slug>` — a line that means ACCEPTED, NOT digested.
+#   E1b. Rollout skew — an OLDER server ignores the unknown `mode` key and
+#       answers 200 synchronously; the hook must then log `posted http=200`,
+#       never `accepted`, because that checkpoint really did complete.
 #   E2. 403 (writes disabled) ⇒ skip=writes-disabled + G7 banner text logged.
 #   E3. 5xx (500) ⇒ error=http-500 logged.
 #   E4. 000 (unreachable/transport failure) ⇒ error=http-000 + G7
 #       "server unreachable at <endpoint>" logged.
-#   E5. Detach — mock curl sleeps 3s; the hook returns in <2s (does NOT wait
-#       for the child), and the child's log line lands afterwards.
+#   E5. INLINE (#309, was "Detach") — the hook waits for its own sub-second
+#       request and its log line is on disk at return; a 3s mock curl costs
+#       the hook 3s, proving nothing is backgrounded any more.
 #   E6. Project sanitization — cwd basename with invalid chars ⇒
 #       [^A-Za-z0-9._-] mapped to '-' (server hard-fails unsanitized slugs).
 #   E7. Empty stdin ⇒ skip=empty-stdin, zero POSTs.
-#   E8. 502 (checkpoint UPSTREAM_FAILURE: state.md WAS written, reindex
-#       failed) ⇒ error=http-502 with the partial-success note.
+#   E8-E11. The 502 stage-note arm is GONE (#309: synthesis outcomes now
+#       happen after the 202). 5xx falls to the generic catch-all, which must
+#       survive; and the hook must write nothing to stdout.
 
 set -uo pipefail
 
@@ -91,9 +97,10 @@ mkdir -p "$MOCK_BIN" "$CAP_DIR"
 
 # Mock curl: captures the URL, -d body, and FULL argv of every call to
 # $CAP_DIR/{url,body,args}_N, then answers with the HTTP code from line N of
-# $CAP_DIR/codes (default 200). Code 000 simulates a transport failure
-# (exit 7, no output). Optional $CAP_DIR/sleep makes each call sleep that
-# many seconds BEFORE responding (detach test). Counter at $CAP_DIR/count.
+# $CAP_DIR/codes (default 202 — see the #309 note below). Code 000 simulates a
+# transport failure (exit 7, no output). Optional $CAP_DIR/sleep makes each
+# call sleep that many seconds BEFORE responding (E5b uses it to prove the hook
+# now WAITS). Counter at $CAP_DIR/count.
 cat > "$MOCK_BIN/curl" <<MOCK_EOF
 #!/usr/bin/env bash
 CAP_DIR="$CAP_DIR"
@@ -120,7 +127,11 @@ naptime=$(cat "$CAP_DIR/sleep" 2>/dev/null)
 if [ -n "$naptime" ]; then sleep "$naptime"; fi
 
 code=$(sed -n "${count}p" "$CAP_DIR/codes" 2>/dev/null)
-[ -n "$code" ] || code=200
+# #309: the default is 202 because that is what the server now answers for
+# mode:"accepted", which is what session-end.sh sends. A 200 is still
+# reachable — an older server ignoring the unknown key — and E1b pins that
+# path explicitly (it sets 200 and asserts `posted`, never `accepted`).
+[ -n "$code" ] || code=202
 if [ "$code" = "000" ]; then
   exit 7
 fi
@@ -135,7 +146,7 @@ MOCK_EOF
 chmod +x "$MOCK_BIN/curl"
 
 # reset_calls [codes...] — clear captured calls and set the per-call HTTP
-# code sequence (one code per line; calls past the list get 200).
+# code sequence (one code per line; calls past the list get 202).
 reset_calls() {
   rm -f "$CAP_DIR"/url_* "$CAP_DIR"/body_* "$CAP_DIR"/args_* \
         "$CAP_DIR/count" "$CAP_DIR/codes" "$CAP_DIR/sleep" "$CAP_DIR/response_body"
@@ -175,8 +186,8 @@ print(json.dumps({
 
 # run_session_end <home> <stdin_json> — run the hook isolated; mock curl
 # first on PATH, deterministic endpoint, no token file. stdout+stderr →
-# $RUN_OUT, exit code → $RUN_EXIT. The DETACHED child keeps running after
-# this returns — use wait_for_log to observe its outcome.
+# $RUN_OUT, exit code → $RUN_EXIT. #309: the hook is INLINE, so its log line is
+# normally already on disk by the time this returns.
 run_session_end() {
   local home="$1" stdin_json="$2"
   RUN_EXIT=0
@@ -186,8 +197,24 @@ run_session_end() {
     bash "$SESSION_END" <<< "$stdin_json" 2>&1) || RUN_EXIT=$?
 }
 
-# wait_for_log <home> <needle> [timeout_s] — poll hook.log for the detached
-# child's line. Returns 0 when found, 1 on timeout.
+# Same, but capturing STDOUT ONLY (stderr discarded). #309: the SessionEnd
+# hook's stdout is read by the host, and _um_api_request writes the response
+# body there by contract — RUN_OUT merges 2>&1 and so cannot tell a genuine
+# stdout leak from ordinary stderr chatter.
+RUN_STDOUT=""
+run_session_end_stdout() {
+  local home="$1" stdin_json="$2"
+  RUN_EXIT=0
+  RUN_STDOUT=$(HOME="$home" PATH="$MOCK_BIN:$PATH" \
+    UM_SERVER_URL="http://mock.example:6335" \
+    UM_TOKEN_FILE="$home/.um/auth-token" \
+    bash "$SESSION_END" <<< "$stdin_json" 2>/dev/null) || RUN_EXIT=$?
+}
+
+# wait_for_log <home> <needle> [timeout_s] — poll hook.log for a line.
+# #309: the hook runs inline now, so the line is normally on disk the moment it
+# returns; the poll is kept because it costs nothing and still covers the codes
+# that log from a retry path. Returns 0 when found, 1 on timeout.
 wait_for_log() {
   local home="$1" needle="$2" timeout="${3:-10}" i=0
   while [ "$i" -lt $((timeout * 10)) ]; do
@@ -215,7 +242,7 @@ print(",".join(sorted(k for k in ("session_id", "cwd", "hook_event_name") if k i
 fi
 
 # ===========================================================================
-# E1: Happy path — one POST /api/checkpoint, exact body, max-time 120
+# E1: Happy path — one POST /api/checkpoint, exact body, default max-time
 # ===========================================================================
 echo "=== E1: happy path (detached checkpoint POST) ==="
 H=$(fresh_home e1)
@@ -226,21 +253,56 @@ run_session_end "$H" "$STDIN"
 assert_eq "E1: parent exits 0" "$RUN_EXIT" "0"
 assert_eq "E1: parent produces no output" "$RUN_OUT" ""
 
-if wait_for_log "$H" "posted http=200"; then
-  pass "E1: child logs posted http=200"
+if wait_for_log "$H" "accepted project="; then
+  pass "E1: hook logs accepted (NOT digested)"
 else
-  fail "E1: child logs posted http=200" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "E1: hook logs accepted (NOT digested)" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "E1: exactly one POST" "$(call_count)" "1"
 assert_eq "E1: POST targets /api/checkpoint" \
   "$(cat "$CAP_DIR/url_1" 2>/dev/null)" "http://mock.example:6335/api/checkpoint"
 assert_eq "E1: body is exactly {\"project\":...}" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 E1_ARGS=$(tr '\n' ' ' 2>/dev/null < "$CAP_DIR/args_1")
-assert_contains "E1: curl uses the 120s checkpoint timeout" "$E1_ARGS" "--max-time 120 "
-assert_not_contains "E1: NOT the shared 10s timeout" "$E1_ARGS" "--max-time 10 "
+# #309: the 120s budget existed because synthesis happened on this call.
+# It does not any more — the server answers 202 after validation — so the
+# request uses um_api_post's default budget. Asserted BOTH ways: the old
+# 120s must be gone, or the hook is still waiting out a synthesis that is
+# no longer happening on the wire.
+assert_contains "E1: curl uses the default 10s budget (synthesis moved server-side)" "$E1_ARGS" "--max-time 10 "
+assert_not_contains "E1: the 120s synthesis budget is GONE" "$E1_ARGS" "--max-time 120 "
 assert_contains "E1: log line attributed to session-end" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" " session-end "
+
+# ===========================================================================
+# E1b: an OLDER SERVER answers 200 ⇒ the hook still logs `posted http=200`
+#
+# This is the rollout-skew path and the reason the 200 branch still exists:
+# handleCheckpointRequest destructures known body keys and ignores the rest, so
+# a server deployed BEFORE #309 sees `mode:"accepted"`, ignores it, synthesises
+# synchronously and answers 200. The hook must then report a real digestion the
+# old way — NOT `accepted`, which would claim a job was merely taken when it
+# actually completed.
+#
+# It is pinned because flipping the mock default to 202 left this branch with no
+# coverage at all, and a comment in the mock claimed a test held it when none
+# did. Server-first is the documented deploy order, so this is the state the
+# plugin lands in whenever the two halves skew.
+# ===========================================================================
+echo "=== E1b: older server ignores mode and answers 200 ⇒ posted, not accepted ==="
+H=$(fresh_home e1b)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+
+reset_calls 200
+run_session_end "$H" "$STDIN"
+assert_eq "E1b: hook exits 0" "$RUN_EXIT" "0"
+E1B_LOG=$(cat "$H/.um/hook.log" 2>/dev/null)
+assert_contains "E1b: reports the synchronous digestion as posted" "$E1B_LOG" "posted http=200 project=example-project"
+assert_not_contains "E1b: must NOT log accepted for a completed checkpoint" "$E1B_LOG" "accepted project="
+# The flag still goes out — the hook does not sniff the server version, and an
+# unknown key is ignored by design rather than negotiated.
+assert_eq "E1b: the mode flag is sent regardless of server age" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # E2: 403 writes-disabled ⇒ skip=writes-disabled + G7 banner in hook.log
@@ -298,16 +360,16 @@ else
 fi
 assert_not_contains "E3b: NOT misfiled as server-too-old" "$(cat "$H/.um/hook.log" 2>/dev/null)" "server-too-old"
 
-echo "=== E3c: 429 then 200 ⇒ posted (the um-api retry) ==="
+echo "=== E3c: 429 then 202 ⇒ accepted (the um-api retry) ==="
 H=$(fresh_home e3c)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
-reset_calls 429 200
+reset_calls 429 202
 run_session_end "$H" "$STDIN"
 assert_eq "E3c: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "posted http=200"; then
-  pass "E3c: posted after one retry"
+if wait_for_log "$H" "accepted project="; then
+  pass "E3c: accepted after one retry"
 else
-  fail "E3c: posted after one retry" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "E3c: accepted after one retry" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 
 # ===========================================================================
@@ -333,32 +395,46 @@ else
 fi
 
 # ===========================================================================
-# E5: Detach — hook returns immediately while the child is still in-flight
+# E5: INLINE — the hook waits for its own request (#309)
+#
+# THE INVERSION. This case previously asserted the opposite: a 3s mock curl,
+# the parent returning in under 2s, and NO log line yet at exit. That pinned
+# the detached child, and the detached child is the whole of #309 — under
+# `codex exec` the host reaped it before the POST completed, 0/26 runs.
+#
+# It is repointed, never deleted: this is the only automated coverage of the
+# process-lifetime behaviour this entire issue turned on, and dropping it to
+# get green would be exactly the weakening the project forbids.
 # ===========================================================================
-echo "=== E5: detach (parent does not wait for the child) ==="
+echo "=== E5: inline (the hook waits for its own request; nothing is detached) ==="
 H=$(fresh_home e5)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
+# (a) The normal case: a sub-second 202, and the line is ALREADY on disk when
+#     the hook returns. Under the old structure it could not be — the child
+#     had not run yet.
 reset_calls
-echo 3 > "$CAP_DIR/sleep"   # curl takes 3s — parent must not wait for it
+run_session_end "$H" "$STDIN"
+assert_eq "E5a: hook exits 0" "$RUN_EXIT" "0"
+assert_contains "E5a: the log line is on disk AT RETURN (no child to outlive)" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "accepted project="
+
+# (b) A slow server proves the wait is real. 3s of curl must cost the hook 3s;
+#     if it returns early something is still being backgrounded.
+H=$(fresh_home e5b)
+reset_calls
+echo 3 > "$CAP_DIR/sleep"
 E5_START=$(date +%s)
 run_session_end "$H" "$STDIN"
 E5_ELAPSED=$(( $(date +%s) - E5_START ))
-assert_eq "E5: parent exits 0" "$RUN_EXIT" "0"
-if [ "$E5_ELAPSED" -lt 2 ]; then
-  pass "E5: parent returned in <2s while curl sleeps 3s (detached)"
+assert_eq "E5b: hook exits 0" "$RUN_EXIT" "0"
+if [ "$E5_ELAPSED" -ge 2 ]; then
+  pass "E5b: hook WAITED for the 3s request (the detach is gone)"
 else
-  fail "E5: parent returned in <2s while curl sleeps 3s (detached)" "took ${E5_ELAPSED}s"
+  fail "E5b: hook WAITED for the 3s request (the detach is gone)" "returned in ${E5_ELAPSED}s — something is still detached"
 fi
-E5_LOG_AT_EXIT=$(cat "$H/.um/hook.log" 2>/dev/null)
-assert_not_contains "E5: child had NOT logged yet at parent exit" \
-  "$E5_LOG_AT_EXIT" "posted http="
-if wait_for_log "$H" "posted http=200"; then
-  pass "E5: child completes and logs after the parent exited"
-else
-  fail "E5: child completes and logs after the parent exited" \
-    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
+assert_contains "E5b: and it still logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "accepted project="
 
 # ===========================================================================
 # E6: Project sanitization — invalid cwd-basename chars mapped to '-'
@@ -371,13 +447,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SPACE")")
 reset_calls
 run_session_end "$H" "$STDIN"
 assert_eq "E6: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "posted http=200"; then
-  pass "E6: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "E6: hook accepted"
 else
-  fail "E6: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "E6: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "E6: project slug sanitized ('my project' -> 'my-project')" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"my-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"my-project","mode":"accepted"}'
 
 # ===========================================================================
 # E7: Empty stdin ⇒ skip=empty-stdin, zero POSTs
@@ -396,90 +472,76 @@ assert_contains "E7: skip=empty-stdin logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-stdin"
 
 # ===========================================================================
-# E8: 502 UPSTREAM_FAILURE ⇒ error=http-502 + partial-success note
-# (state.md WAS written server-side; only the vector index is stale)
+# E8: the 502 arm is GONE — 5xx now falls to the generic catch-all
+#
+# Under accepted mode every synthesis outcome happens AFTER the 202, so the
+# hook can never observe a 502 from synthesis; the arm that read `error.stage`
+# off the response body, and the mktemp scaffolding built for it, were removed
+# rather than left unreachable with comments describing semantics that no
+# longer apply.
+#
+# What MUST survive is the generic `*)` catch-all: a 5xx BEFORE the 202 is
+# still reachable (the route's outer handler maps escapes to 500/413), and it
+# is the only branch that logs an unanticipated code. Deleting it would turn an
+# unexpected response into a silent, unlogged hook exit — the same class of
+# defect as the "no log line" symptom this issue began with.
 # ===========================================================================
-echo "=== E8: 502 checkpoint upstream failure (partial success) ==="
+echo "=== E8: 502 ⇒ generic error=http-502, and NO stage note (the arm is gone) ==="
 H=$(fresh_home e8)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
 reset_calls 502
 run_session_end "$H" "$STDIN"
-assert_eq "E8: parent exits 0" "$RUN_EXIT" "0"
+assert_eq "E8: hook exits 0" "$RUN_EXIT" "0"
 if wait_for_log "$H" "error=http-502"; then
-  pass "E8: error=http-502 logged"
+  pass "E8: the catch-all still logs an unanticipated code"
 else
-  fail "E8: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "E8: the catch-all still logs an unanticipated code" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
-if wait_for_log "$H" "state-written-index-stale"; then
-  pass "E8: partial-success note (state written, index stale)"
-else
-  fail "E8: partial-success note (state written, index stale)" \
-    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
+assert_not_contains "E8: no partial-success note — that reading no longer applies" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "state-written-index-stale"
 
-# ===========================================================================
-# E9/E10/E11 (Task 11, checkpoint chunked summarization spec §4.7): the 502
-# note is now keyed off the response body's additive error.stage field, not
-# blanket-printed on every 502. E8 above (default mock body {"ok":true}, no
-# error object at all) already covers the THIRD case — legacy server, no
-# stage field — and still gets the note; these three make the other two
-# explicit and prove stage="summarize" suppresses it.
-# ===========================================================================
-echo "=== E9: 502 error.stage=reindex ⇒ note PRESENT (state written, index stale) ==="
+echo "=== E9: a 502 carrying error.stage is NOT parsed any more ==="
 H=$(fresh_home e9)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
 reset_calls 502
 set_response_body '{"ok":false,"error":{"code":"UPSTREAM_FAILURE","stage":"reindex","message":"reindex retries exhausted"}}'
 run_session_end "$H" "$STDIN"
-assert_eq "E9: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "error=http-502"; then
-  pass "E9: error=http-502 logged"
-else
-  fail "E9: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
-if wait_for_log "$H" "state-written-index-stale"; then
-  pass "E9: note present for stage=reindex"
-else
-  fail "E9: note present for stage=reindex" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
+assert_eq "E9: hook exits 0" "$RUN_EXIT" "0"
+E9_LOG=$(cat "$H/.um/hook.log" 2>/dev/null)
+assert_contains "E9: plain generic line" "$E9_LOG" "error=http-502"
+assert_not_contains "E9: no stage disambiguation" "$E9_LOG" "state-written-index-stale"
+assert_not_contains "E9: no stage field" "$E9_LOG" "stage="
 
-echo "=== E10: 502 error.stage=summarize ⇒ note ABSENT (nothing was written) ==="
+echo "=== E10: an unexpected 500 is still logged (the catch-all earns its keep) ==="
 H=$(fresh_home e10)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
-reset_calls 502
-set_response_body '{"ok":false,"error":{"code":"UPSTREAM_FAILURE","stage":"summarize","provider_class":"ratelimit","message":"rate limited"}}'
+reset_calls 500
 run_session_end "$H" "$STDIN"
-assert_eq "E10: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "error=http-502"; then
-  pass "E10: error=http-502 logged"
+assert_eq "E10: hook exits 0" "$RUN_EXIT" "0"
+if wait_for_log "$H" "error=http-500"; then
+  pass "E10: pre-202 5xx reaches the log, never a silent exit"
 else
-  fail "E10: error=http-502 logged" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "E10: pre-202 5xx reaches the log, never a silent exit" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
-if wait_for_log "$H" "stage=summarize"; then
-  pass "E10: stage=summarize logged plainly"
-else
-  fail "E10: stage=summarize logged plainly" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
-assert_not_contains "E10: NOT the partial-success note (nothing was written)" \
-  "$(cat "$H/.um/hook.log" 2>/dev/null)" "state-written-index-stale"
 
-echo "=== E11: 502 with an unparseable body ⇒ still degrades to the note (fail toward the safe legacy reading) ==="
+echo "=== E11: the hook writes NOTHING to stdout (the host reads it) ==="
 H=$(fresh_home e11)
 STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
-reset_calls 502
-set_response_body 'not valid json {'
-run_session_end "$H" "$STDIN"
-assert_eq "E11: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "state-written-index-stale"; then
-  pass "E11: unparseable body degrades to the note (same as absent stage)"
-else
-  fail "E11: unparseable body degrades to the note (same as absent stage)" \
-    "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
-fi
+reset_calls
+set_response_body '{"ok":true,"leaked":"this must not reach stdout"}'
+run_session_end_stdout "$H" "$STDIN"
+assert_eq "E11: hook exits 0" "$RUN_EXIT" "0"
+# _um_api_request writes the response body to stdout BY CONTRACT. The old form
+# kept it off the hook's stdout via the body-file redirect and the subshell's
+# >/dev/null; both are gone, so session-end.sh redirects explicitly. Without
+# that, every session end prints the server envelope on the SessionEnd hook's
+# stdout.
+assert_not_contains "E11: server envelope does not leak to stdout" \
+  "$RUN_STDOUT" "leaked"
 
 # ===========================================================================
 # G1 (#186 follow-up): cwd == $HOME ⇒ routed to the catch-all 'desktop'
@@ -494,13 +556,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$H")")
 reset_calls
 run_session_end "$H" "$STDIN"
 assert_eq "G1: parent exits 0" "$RUN_EXIT" "0"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G1: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G1: hook accepted"
 else
-  fail "G1: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G1: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G1: slug is the desktop catch-all, not the home basename" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop","mode":"accepted"}'
 
 # G1b: UM_HOME_PROJECT= (explicit empty) reverts to skipping home sessions.
 H=$(fresh_home g1b)
@@ -524,13 +586,13 @@ RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
   UM_SERVER_URL="http://mock.example:6335" \
   UM_HOME_PROJECT="chats" \
   bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
-if wait_for_log "$H" "posted http=200"; then
-  pass "G1c: child posted under the override name"
+if wait_for_log "$H" "accepted project="; then
+  pass "G1c: hook accepted under the override name"
 else
-  fail "G1c: child posted under the override name" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G1c: hook accepted under the override name" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G1c: slug honors UM_HOME_PROJECT" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"chats"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"chats","mode":"accepted"}'
 
 # ===========================================================================
 # G2 (#186): marker-less cwd ⇒ skip=non-project-cwd, ZERO POSTs
@@ -561,13 +623,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_SUB")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G3: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G3: hook accepted"
 else
-  fail "G3: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G3: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G3: slug is the marker-root basename (not the subdir)" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # G4 (#186): MSYS-form home cwd (/c/Users/<u>) must normalize and route to
@@ -581,13 +643,13 @@ if command -v cygpath >/dev/null 2>&1; then
 
   reset_calls
   run_session_end "$H" "$STDIN"
-  if wait_for_log "$H" "posted http=200"; then
+  if wait_for_log "$H" "accepted project="; then
     pass "G4: MSYS-form home posted"
   else
     fail "G4: MSYS-form home posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
   fi
   assert_eq "G4: MSYS-form home routes to the desktop catch-all" \
-    "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop"}'
+    "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"desktop","mode":"accepted"}'
 else
   pass "G4: skipped (no cygpath — POSIX platform has no MSYS forms)"
 fi
@@ -609,7 +671,7 @@ RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
   UM_TOKEN_FILE="$H/.um/auth-token" \
   UM_PROJECT_MARKERS=".myproj" \
   bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
-if wait_for_log "$H" "posted http=200"; then
+if wait_for_log "$H" "accepted project="; then
   pass "G5: custom marker qualifies the dir"
 else
   fail "G5: custom marker qualifies the dir" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
@@ -658,13 +720,13 @@ RUN_EXIT=0
 RUN_OUT=$(cd "$CWD_N" && HOME="$H" PATH="$MOCK_BIN:$PATH" \
   UM_SERVER_URL="http://mock.example:6335" \
   bash "$SESSION_END" <<< "$STDIN_NOCWD" 2>&1) || RUN_EXIT=$?
-if wait_for_log "$H" "posted http=200"; then
+if wait_for_log "$H" "accepted project="; then
   pass "G6b: project pwd fallback still posts"
 else
   fail "G6b: project pwd fallback still posts" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G6b: slug from fallback pwd" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # G10 (#294 D1): interior non-git marker vs a .git root — .git dominates.
@@ -679,13 +741,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_INTERIOR")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G10: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G10: hook accepted"
 else
-  fail "G10: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G10: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G10: .git root's name wins over the interior marker" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # G11 (#294 D1 rule 2 + D4 delta 2): marker-only project (no .git anywhere
@@ -708,14 +770,14 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_MARKER_SUB")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G11: child posted (boundary exit returns the remembered marker)"
+if wait_for_log "$H" "accepted project="; then
+  pass "G11: hook accepted (boundary exit returns the remembered marker)"
 else
-  fail "G11: child posted (boundary exit returns the remembered marker)" \
+  fail "G11: hook accepted (boundary exit returns the remembered marker)" \
     "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G11: slug is the nearest marker dir, not SKIP and not the subdir" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"marker-proj"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"marker-proj","mode":"accepted"}'
 
 # ===========================================================================
 # G12 (#294 D1): nested repos — the NEAREST .git wins (git's own
@@ -728,13 +790,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_INNER/lib")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G12: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G12: hook accepted"
 else
-  fail "G12: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G12: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G12: nearest .git names the project" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner-repo"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner-repo","mode":"accepted"}'
 
 # ===========================================================================
 # G13 (#294 D5 no-op pin): cwd AT the repo root ⇒ slug unchanged from the
@@ -748,14 +810,14 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200 project=example-project"; then
+if wait_for_log "$H" "accepted project=example-project"; then
   pass "G13: success line carries the resolved slug appended last (D7)"
 else
   fail "G13: success line carries the resolved slug appended last (D7)" \
     "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G13: repo-root slug unchanged" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
 
 # ===========================================================================
 # G14 (#294 D1): .git as a FILE (worktree/submodule form) qualifies —
@@ -769,13 +831,13 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_WT/nested")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G14: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G14: hook accepted"
 else
-  fail "G14: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G14: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G14: .git-file dir names the project" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-checkout"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-checkout","mode":"accepted"}'
 
 # ===========================================================================
 # G15 (#294 D1 ruling + fixed-point exit): markers on SEPARATE levels so the
@@ -809,13 +871,13 @@ RUN_OUT=$(HOME="$H" PATH="$MOCK_BIN:$PATH" \
   UM_TOKEN_FILE="$H/.um/auth-token" \
   UM_PROJECT_MARKERS=".um-g15-marker" \
   bash "$SESSION_END" <<< "$STDIN" 2>&1) || RUN_EXIT=$?
-if wait_for_log "$H" "posted http=200"; then
-  pass "G15: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G15: hook accepted"
 else
-  fail "G15: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G15: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
 assert_eq "G15: nearest ACTIVE marker names it; excluded .git has no dominance" \
-  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner15"}'
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"inner15","mode":"accepted"}'
 
 # ===========================================================================
 # G16 (#294 review catch): slug case is PRESERVED. The first cut named from
@@ -831,12 +893,12 @@ STDIN=$(make_stdin "$SID" "$(native_path "$CWD_MC/sub")")
 
 reset_calls
 run_session_end "$H" "$STDIN"
-if wait_for_log "$H" "posted http=200"; then
-  pass "G16: child posted"
+if wait_for_log "$H" "accepted project="; then
+  pass "G16: hook accepted"
 else
-  fail "G16: child posted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+  fail "G16: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
 fi
-assert_eq "G16: slug preserves the on-disk case"   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"MixedCase-Proj"}'
+assert_eq "G16: slug preserves the on-disk case"   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"MixedCase-Proj","mode":"accepted"}'
 
 # ===========================================================================
 # Summary
