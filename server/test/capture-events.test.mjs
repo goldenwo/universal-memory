@@ -582,7 +582,7 @@ test('umAdd in-band supersession emits capture.extraction outcome=superseded', a
   const dbPath = await freshCountersDb();
   // Layer-2 embedding hit in the contradiction band + confirming judge ⇒
   // SUPERSEDED_INBAND (fixture mirrors add.test.mjs Gap-5 P3 tests).
-  const older = { id: 'older-pt', score: 0.85, payload: { data: 'I live in Boston', lane: 'work', status: 'current' } };
+  const older = { id: 'older-pt', score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I live in Boston', lane: 'work', status: 'current' } };
   const result = await umAdd({
     memory: mockMemory,
     text: 'I live in Denver now',

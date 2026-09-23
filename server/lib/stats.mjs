@@ -40,6 +40,11 @@ import { safeLog } from './obs-fallback.mjs';
 import { countersDbPath } from './capture-events.mjs';
 import { REACTION_OUTCOME_KEYS, SIGNAL_EVENTS } from './reaction-signal.mjs';
 import { ANOMALY_EVENT, ANOMALY_REASON_KEYS, ANOMALY_OTHER } from './anomaly-signal.mjs';
+import {
+  CHECKPOINT_FAILURE_EVENT,
+  CHECKPOINT_FAILURE_OUTCOMES,
+  CHECKPOINT_FAILURE_OTHER,
+} from './checkpoint-signal.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -61,7 +66,7 @@ const LANDING_EVENTS = Object.freeze(['capture.extraction', 'capture.checkpoint'
 
 /** Degraded shape (A5): counters unavailable ⇒ nulls, never a throw. */
 function nullShaped() {
-  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null };
+  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null };
 }
 
 function utcDayString(epochMs) {
@@ -397,7 +402,75 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       'log:stats:anomalies-unreadable');
     }
 
-    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies };
+    // #309 — signal.checkpoint_failure, keyed BY PROJECT (the sibling anomaly
+    // block above keys by surface). The failure this detector exists for is
+    // defined per project — a quiet project whose finite capture-vs-digest lag
+    // sits below the staleness ceiling — so an alert that cannot name the
+    // project cannot be acted on. `counters` already carries `project` in its
+    // primary key, so this needs no schema change; it needs its OWN query only
+    // because every existing reader aggregates the project away.
+    //
+    // Event EQUALITY (never LIKE), so the capture.% boundary stays untouched
+    // and growth_docs_7d cannot move because of this family.
+    //
+    // FAIL-ISOLATED in its own try, mirroring the anomaly block: a defect in
+    // this newest reader must never dark the capture-freshness sections it
+    // exists to protect. On error: checkpointFailure:null alone, which
+    // um-alert reports as a loud DEGRADED monitor fault.
+    let checkpointFailure = null;
+    try {
+      const cpKeys = Object.freeze([...CHECKPOINT_FAILURE_OUTCOMES]);
+      // One transaction for both reads — the writer shares this WAL DB, so two
+      // bare SELECTs could see a first-ever failing project appear between them.
+      const readCheckpointFailures = db.transaction(() => ({
+        lastSeen: db.prepare(`
+          SELECT project, MAX(day) AS last_day_seen
+          FROM counters
+          WHERE event = ?
+          GROUP BY project
+        `).all(CHECKPOINT_FAILURE_EVENT),
+        windowRows: db.prepare(`
+          SELECT project, outcome, SUM(count) AS n
+          FROM counters
+          WHERE event = ? AND day >= ? AND day <= ?
+          GROUP BY project, outcome
+        `).all(CHECKPOINT_FAILURE_EVENT, windowStart, today),
+      }));
+      const snap = readCheckpointFailures();
+
+      // Null-prototype maps throughout — project AND outcome are writer-
+      // controlled and this is served to external readers (the v1.8.1
+      // '__proto__' hazard).
+      const built = Object.create(null);
+      for (const { project, last_day_seen } of snap.lastSeen) {
+        built[project] = {
+          last_day_seen,
+          count_7d: 0,
+          outcomes_7d: Object.assign(Object.create(null), Object.fromEntries(cpKeys.map((k) => [k, 0]))),
+        };
+      }
+      for (const { project, outcome, n } of snap.windowRows) {
+        const c = built[project];
+        // Tripwire, unreachable under the transaction — see the anomaly block.
+        if (!c) continue;
+        c.count_7d += n;
+        // Fold, never skip: an out-of-vocabulary outcome (a NEWER server's row
+        // read by this one) counts under `other`. For an alarm feed a dropped
+        // row is a missed alarm.
+        const key = Object.hasOwn(c.outcomes_7d, outcome) ? outcome : CHECKPOINT_FAILURE_OTHER;
+        c.outcomes_7d[key] += n;
+      }
+      checkpointFailure = built;
+    } catch (err) {
+      safeLog(() => getLogger().warn({
+        component: 'stats',
+        err_class: err?.code ?? err?.name ?? 'Error',
+        err_message: err?.message ?? String(err),
+      }, 'checkpoint-failure section unreadable — serving checkpoint_failure:null (capture sections stay live)'),
+      'log:stats:checkpoint-failure-unreadable');
+    }
+
+    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies, checkpointFailure };
   } catch (err) {
     // Unreadable (corrupt/locked-exotic) db ⇒ same degraded shape as missing
     // (spec §3 errors clause: stats must not 500 over the counters file).

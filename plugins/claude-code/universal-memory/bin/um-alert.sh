@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/um-alert.sh — cron-able capture-pipeline health check (#171 Stage A +
 # #267 SIGNALS + #283 CRASH-DEAD + #297/#239 IMPUTATION-STUCK). GETs
-# /api/stats and evaluates SIX
+# #309 CHECKPOINT-FAILURE). GETs /api/stats and evaluates SEVEN
 # sections, each covering a failure class the others structurally cannot see:
 #
 #   FRESHNESS (counters-derived, #171): server-side / transport / total
@@ -36,13 +36,22 @@
 #     statistic: the refresh is lazy (a decay-path search or the boot kick
 #     triggers it), so an 8-12 h old value every morning is normal on a
 #     single-operator Pi. Quiet while decay is OFF (the block is inert).
+#   CHECKPOINT-FAILURE (#309): an accepted-mode checkpoint that FAILED
+#     server-side after the hook was already told 202. The hook is gone
+#     before the outcome exists, so nothing else reports it — and LAYERS
+#     cannot, because staleness is a capture-vs-digest LAG that FREEZES
+#     when a project stops capturing. Keyed BY PROJECT. Fires on
+#     rejected + failed only; contended / zero_commit / provider_stalled /
+#     other are shown in the breakdown but are transient or unrecognised
+#     and do not trigger. THIS IS THE ROLLBACK SIGNAL for accepted mode.
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
 #   1  ALARM — stale captures, a stale layer, ledger-error growth, a
-#      capture anomaly in the 7-day window, or an armed surface gone
-#      turn-dead while checkpoints stamp (crash-dead), or a stuck
-#      undated-imputation cache with decay on (imputation-stuck)
+#      capture anomaly in the 7-day window, an armed surface gone
+#      turn-dead while checkpoints stamp (crash-dead), a stuck
+#      undated-imputation cache with decay on (imputation-stuck), or an
+#      accepted-mode checkpoint that failed server-side (checkpoint-failure)
 #   2  the check itself couldn't run (unreachable / auth / bad response /
 #      degraded counters / malformed section) — a broken monitor is loud
 #
@@ -86,7 +95,7 @@ _usage() {
 Usage: um-alert.sh [options]
 
 Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
-on success, actionable line(s) + non-zero exit otherwise. Six sections:
+on success, actionable line(s) + non-zero exit otherwise. Seven sections:
 capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls),
 SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
 alarm for a stop.sh-only capture death), and CRASH-DEAD (#283 — an armed
@@ -98,9 +107,12 @@ stray header-less traffic), and IMPUTATION-STUCK (#297/#239 — the
 undated-decay cache behind /api/stats.undated_imputation stopped refreshing
 while decay is ON: the last refresh attempt failed, or the last attempt ran
 more than 2 × TTL after the last successful statistic — a stuck cache serves
-a stale factor to every undated score; quiet while decay is off). Every
-applicable escalation line is printed before the single exit (print-all,
-no masking).
+a stale factor to every undated score; quiet while decay is off), and
+CHECKPOINT-FAILURE (#309 — an accepted-mode checkpoint that failed
+server-side AFTER the hook was told 202 and went away; keyed by project,
+and the one signal that does not depend on the project continuing to
+capture). Every applicable escalation line is printed before the single
+exit (print-all, no masking).
 
 Options:
   --max-age-hours N   Freshness threshold in hours. Default: the server's
@@ -127,7 +139,10 @@ Exit codes:
                or stray header-less traffic, see #283), or a stuck
                undated-imputation cache while decay is on (IMPUTATION-STUCK:
                last refresh attempt failed, or last attempt > 2 × TTL after
-               the last success — see #239 / spec §4.5)
+               the last success — see #239 / spec §4.5), or an accepted-mode
+               checkpoint that failed server-side (CHECKPOINT-FAILURE:
+               rejected/failed in the 7-day window, named per project — the
+               session was captured but NOT digested, see #309)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -409,6 +424,123 @@ emit("OK", "no capture anomalies in the last 7 days")
 SIG_STATUS="${SIG_VERDICT%%|*}"
 SIG_MESSAGE="${SIG_VERDICT#*|}"
 
+# #309 CHECKPOINT-FAILURE section — accepted-mode checkpoints that failed
+# server-side (signal.checkpoint_failure rows, keyed BY PROJECT, exposed under
+# the top-level `signals` key alongside capture_anomaly).
+#
+# WHY THIS ARM EXISTS AT ALL: under accepted mode the hook is gone before the
+# outcome exists, so a failed digestion has no caller to report to. LAYERS-STALE
+# cannot cover it — staleness is a capture-vs-digest LAG, and that lag FREEZES
+# when a project stops capturing, so a project whose finite lag sits below the
+# ceiling when it goes quiet is invisible indefinitely with a green board.
+# THIS ARM IS THE ROLLBACK SIGNAL for #309, not LAYERS.
+#
+# Taxonomy — one deliberate divergence from the sibling arm above:
+#   ABSENT   — no `signals` key (pre-#267 server), OR `signals` present without
+#              the `checkpoint_failure` key. The SECOND case is the divergence:
+#              the sibling treats a missing family key inside a present
+#              `signals` as a drift ERROR (exit 2). Here it is INFORMATIONAL.
+#              The states that produce it are a rollback to a pre-#309 server or
+#              an install-cli.sh run that lands the new CLI before the server
+#              deploy — in both the CLI is NEWER than the server it queries.
+#              The sibling posture would hard-fail the daily alert in exactly
+#              the states where this alert is most needed.
+#   DEGRADED — the signals-null case (the whole counters DB degraded), where
+#              the capture verdict already carries the exit — no double report.
+#   ERROR    — malformed shape, OR checkpoint_failure:null while `signals` is
+#              present. The latter is LOUD on purpose: a degraded counters DB
+#              nulls `signals` wholesale, so that state can only mean THIS
+#              reader degraded on its own, leaving the #309 rollback signal dark
+#              behind a green board. ⇒ CHECK FAILED, exit 2.
+#   ALERT    — any project with rejected+failed > 0 in the window. The set, not
+#              the threshold, carries the burden here: unlike the sibling this
+#              family has NO measured benign base rate, so it cannot borrow the
+#              any-count-over-zero rule for a vocabulary containing transients.
+#              `rejected` and `failed` have a benign base rate of zero BY
+#              CONSTRUCTION. contended / zero_commit / provider_stalled / other
+#              are shown in the breakdown but never trigger.
+#   OK       — zero triggering outcomes in the window.
+CKPT_VERDICT=$("$PY" -c '
+import json, sys
+
+TRIGGERING = ("rejected", "failed")
+
+def emit(status, msg):
+    print(status + "|" + msg)
+    sys.exit(0)
+
+try:
+    stats = json.load(sys.stdin)
+    if not isinstance(stats, dict):
+        raise ValueError("not an object")
+except Exception:
+    emit("ERROR", "unparseable /api/stats response (not JSON)")
+
+if "signals" not in stats:
+    emit("ABSENT", "signals key absent — server predates #267/#309; accepted-mode checkpoint failures NOT checked")
+
+signals = stats.get("signals")
+if signals is None:
+    emit("DEGRADED", "counters degraded — checkpoint-failure signals cannot be assessed")
+if not isinstance(signals, dict):
+    emit("ERROR", "signals key present but malformed (expected an object)")
+if "checkpoint_failure" not in signals:
+    emit("ABSENT", "signals present but no checkpoint_failure key — server predates #309 (a rollback, or a CLI newer than the server); accepted-mode checkpoint failures NOT checked")
+fam = signals["checkpoint_failure"]
+if fam is None:
+    # LOUD, not silent. This state can ONLY mean the fail-isolated reader in
+    # stats.mjs threw while everything else stayed healthy: a degraded counters
+    # DB nulls "signals" wholesale, which the branch above already caught. So
+    # the rollback signal for #309 is dark while the board looks green — the
+    # inert-detector failure mode, which is the very class this change removes.
+    emit("ERROR", "checkpoint_failure is null while signals is present — the checkpoint-failure reader degraded on its own; the #309 rollback signal is DARK")
+if not isinstance(fam, dict):
+    emit("ERROR", "signals.checkpoint_failure malformed (expected an object)")
+
+alerts = []
+try:
+    # VALIDATE BEFORE SORTING, same discipline as the sibling: a sort key that
+    # reads a value runs BEFORE any isinstance guard in a comprehension, so a
+    # malformed entry would crash with a generic TypeError instead of reaching
+    # the purpose-written per-project error.
+    entries = []
+    for project, info in fam.items():
+        if not isinstance(info, dict):
+            raise ValueError("project %r malformed" % project)
+        outcomes = info.get("outcomes_7d")
+        if not isinstance(outcomes, dict):
+            raise ValueError("project %r has a bad outcomes_7d" % project)
+        n = 0
+        for k in TRIGGERING:
+            v = outcomes.get(k, 0)
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                raise ValueError("project %r has a bad %s count" % (project, k))
+            n += v
+        if n > 0:
+            entries.append((project, n, info, outcomes))
+    for project, n, info, outcomes in sorted(entries, key=lambda e: -e[1]):
+        # Show the WHOLE breakdown, triggering or not: a contended-heavy
+        # project alongside a failure is a different diagnosis than a failure
+        # alone, and the non-triggering counts are the base-rate measurement
+        # the promotion decision defers to.
+        parts = sorted(
+            ((k, v) for k, v in outcomes.items()
+             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
+            key=lambda kv: -kv[1])
+        breakdown = ", ".join("%s x%d" % kv for kv in parts) or "unlabeled"
+        alerts.append("%s: %d failed accepted checkpoint(s) in 7d (%s; last %s)" % (
+            project, n, breakdown, info.get("last_day_seen")))
+except Exception as e:
+    emit("ERROR", "checkpoint_failure payload malformed: %s" % e)
+
+if alerts:
+    emit("ALERT", "; ".join(alerts) + " — digestion failed server-side after the hook was told 202; these sessions are captured but NOT digested (#309)")
+emit("OK", "no failed accepted checkpoints in the last 7 days")
+' < "$BODY_FILE" 2>/dev/null) || CKPT_VERDICT=""
+
+CKPT_STATUS="${CKPT_VERDICT%%|*}"
+CKPT_MESSAGE="${CKPT_VERDICT#*|}"
+
 # #283 CRASH-DEAD section — the class SIGNALS structurally cannot see: the
 # capture hook never fires (deregistered/deleted/dies pre-report) while
 # session-end keeps stamping abstained checkpoints that hold freshness
@@ -643,6 +775,9 @@ print_escalations() {
   if [ "$SIG_STATUS" = "ALERT" ]; then
     echo "um-alert: SIGNALS — $SIG_MESSAGE" >&2
   fi
+  if [ "$CKPT_STATUS" = "ALERT" ]; then
+    echo "um-alert: CHECKPOINT-FAILURE — $CKPT_MESSAGE" >&2
+  fi
   if [ "$CD_STATUS" = "ALERT" ]; then
     echo "um-alert: CRASH-DEAD — $CD_MESSAGE" >&2
   fi
@@ -773,6 +908,20 @@ case "$SIG_STATUS" in
     echo "um-alert: CHECK FAILED — ${SIG_MESSAGE:-signals verdict parser produced no output}" >&2 ;;
 esac
 
+# #309 CHECKPOINT-FAILURE wiring — same breadcrumb / no-op / CHECK-FAILED
+# contract as SIGNALS above. Note ABSENT is reachable here for a reason the
+# sibling does not share (a CLI newer than its server); it stays a breadcrumb,
+# never a fault, so a rollback cannot hard-fail the alert it depends on.
+case "$CKPT_STATUS" in
+  ABSENT)
+    echo "um-alert: $CKPT_MESSAGE" >&2 ;;
+  OK|ALERT|DEGRADED)
+    : ;;
+  *)
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${CKPT_MESSAGE:-checkpoint-failure verdict parser produced no output}" >&2 ;;
+esac
+
 # #283 CRASH-DEAD wiring — same breadcrumb / no-op / CHECK-FAILED contract
 # as SIGNALS above; a garbage/empty status folds into the fault arm.
 case "$CD_STATUS" in
@@ -814,7 +963,7 @@ fi
 
 case "$STATUS" in
   FRESH)
-    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$IMP_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
+    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CKPT_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$IMP_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
       print_escalations
       # Context restored (review catch — the old suffix was deleted with
       # first-wins): the one mail a cron sends must say whether freshness

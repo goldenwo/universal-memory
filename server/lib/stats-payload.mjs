@@ -306,7 +306,18 @@ export async function buildStats({
     // omits `anomalies` must degrade to the honest null, not mint the
     // malformed `{capture_anomaly: undefined}` shape (the banked
     // undefined-vs-null seam-contract class).
-    signals: counters.anomalies == null ? null : { capture_anomaly: counters.anomalies },
+    // #309 adds `checkpoint_failure` as a sibling family, keyed by PROJECT
+    // (capture_anomaly is keyed by surface). Same LOOSE null-check and for the
+    // same reason: readCounters is a DI seam, and a fake that omits the key
+    // must degrade to an honest null rather than mint `{checkpoint_failure:
+    // undefined}` — the banked undefined-vs-null seam-contract class.
+    // um-alert reads an ABSENT `checkpoint_failure` inside a PRESENT `signals`
+    // as an informational breadcrumb (a CLI newer than the server it queries),
+    // NOT as the drift error its sibling arm raises.
+    signals: counters.anomalies == null ? null : {
+      capture_anomaly: counters.anomalies,
+      checkpoint_failure: counters.checkpointFailure == null ? null : counters.checkpointFailure,
+    },
     // #297: always present from this version forward (absent ⇔ a pre-#297 server); the
     // flip-owner's decision surface — see the block comment above for every key.
     undated_imputation: undatedImputationBlock,

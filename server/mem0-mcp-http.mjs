@@ -61,7 +61,8 @@ import { doAppendTurn } from './lib/append-turn.mjs';
 import { handleReactionRequest } from './lib/reaction-attach.mjs';
 import { handleCaptureAnomalyRequest } from './lib/anomaly-signal.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
-import { surfaceFromHeaders } from './lib/capture-events.mjs';
+import { recordCaptureEvent, surfaceFromHeaders } from './lib/capture-events.mjs';
+import { CHECKPOINT_FAILURE_ALERTING, CHECKPOINT_FAILURE_EVENT, classifyCheckpointSettlement } from './lib/checkpoint-signal.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
 import { ensurePayloadIndexes } from './lib/collection-init.mjs';
@@ -1732,6 +1733,100 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 }
 
 /**
+ * #309 T2: record how an accepted-mode checkpoint settled.
+ *
+ * Two halves, both required: a server-side log naming the project and the
+ * failure stage so a report can be traced to a cause rather than guessed at,
+ * and a counter row so the failure is detectable OUT OF BAND — LAYERS-STALE
+ * freezes on a quiet project and cannot serve here (see checkpoint-signal.mjs).
+ *
+ * `doCheckpoint` RESOLVES `{ok:false, error}` for nearly every post-202 failure,
+ * so both settlement paths route through here; a `.catch()` alone would see none
+ * of them.
+ *
+ * @param {{ project: string, surface?: string, result?: *, err?: *, rejected?: boolean }} a
+ */
+function recordAcceptedCheckpointOutcome({ project, surface, result, err, rejected = false }) {
+	const outcome = classifyCheckpointSettlement({ result, rejected });
+	// null ⇒ deliberately not recorded (a quiet success, an abstention, or a
+	// by-design chunk_cap / mid-run cost_cap stop).
+	if (outcome === null) return;
+	const errField = rejected ? err?.message : result?.error;
+	// Log severity MIRRORS the alert's triggering set — it does not invent its
+	// own. Only `rejected` and `failed` are faults; `contended`, `zero_commit`,
+	// `provider_stalled` and `other` are recorded-not-triggering precisely
+	// because none of them has a measured benign base rate yet, so writing them
+	// at ERROR would make a transient provider ratelimit or an unrecognised stop
+	// reason read as a server fault in every log-based dashboard while the alert
+	// deliberately stays silent. Two severity models that disagree is how an
+	// operator learns to ignore one of them.
+	const level = CHECKPOINT_FAILURE_ALERTING.includes(outcome) ? 'error' : 'info';
+	safeLog(() => getLogger()[level]({
+		endpoint: '/api/checkpoint',
+		mode: 'accepted',
+		project,
+		outcome,
+		// The stage disambiguates the two 502 meanings when present; the raw
+		// error is truncated because it is a union of shapes, one of which is
+		// free text.
+		...(result?.error?.stage ? { stage: result.error.stage } : {}),
+		...(result?.stopped?.reason ? { stopped_reason: result.stopped.reason } : {}),
+		err_message: typeof errField === 'string' ? errField.slice(0, 200) : errField?.message?.slice(0, 200),
+	}, `accepted checkpoint settled: ${outcome}`), 'log:checkpoint:accepted-outcome');
+	// NEVER capture.checkpoint outcome:'error' — that is doc growth (#185).
+	recordCaptureEvent({
+		surface: surface ?? 'unknown',
+		project,
+		event: CHECKPOINT_FAILURE_EVENT,
+		outcome,
+	});
+}
+
+/**
+ * #309 T1: run an accepted-mode checkpoint AFTER its 202 has been written.
+ *
+ * Returns nothing the route waits on — that is the entire point of the change.
+ *
+ * **The attached rejection handling is a hard requirement, not a nicety.**
+ * There is no `unhandledRejection` handler anywhere in `server/`, and
+ * `server/lib/lockdir.mjs:121` turns the resulting `uncaughtException` into
+ * `process.exit(1)`. `doCheckpoint` *does* throw on some paths (it re-throws
+ * non-ENOENT prompt-load errors), and every synchronous call is awaited inside
+ * `handleCheckpointRequest`'s try/catch today, so dropping that await moves
+ * rejections outside any catch. One unlucky accepted job would take the whole
+ * server down for every consumer. Hence the three-layer shape below: the
+ * settle handlers catch resolved-failure and rejection alike, and the trailing
+ * `.catch()` covers the recorder itself throwing.
+ *
+ * Note that `doCheckpoint` RESOLVES `{ok:false, error}` for nearly every
+ * failure in the post-202 column — a `.catch()` alone would see none of them.
+ *
+ * @param {{ checkpointFn: Function, args: object, ctx: object, project: string }} a
+ * @returns {void}
+ */
+function runAcceptedCheckpoint({ checkpointFn, args, ctx, project }) {
+	Promise.resolve()
+		.then(() => checkpointFn(args, {
+			vaultDir: ctx.vaultDir ?? process.env.UM_VAULT_DIR,
+			reindexFn: ctx._reindexFn ?? reindexDoc,
+			surface: ctx.surface,
+		}))
+		.then(
+			(result) => recordAcceptedCheckpointOutcome({ project, surface: ctx.surface, result }),
+			// `rejected` is passed explicitly rather than inferred from the
+			// error value: a promise rejected with `undefined` is pathological
+			// but real, and inferring would misfile it as a resolved settlement.
+			(err) => recordAcceptedCheckpointOutcome({ project, surface: ctx.surface, err, rejected: true }),
+		)
+		.catch((err) => safeLog(() => getLogger().error({
+			endpoint: '/api/checkpoint',
+			mode: 'accepted',
+			project,
+			err_message: err?.message,
+		}, 'accepted checkpoint outcome recorder failed'), 'log:checkpoint:accepted-recorder'));
+}
+
+/**
  * Exported handler for POST /api/checkpoint.
  * Accepts a pre-parsed body via req.body (unit-test friendly).
  * Supports DI of _doCheckpoint for testing without a real vault/LLM.
@@ -1744,8 +1839,13 @@ export async function handleAppendTurnRequest(req, res, ctx) {
  * maps to HTTP 503 for retryable-by-client semantics. SERVER_INTERNAL (cursor
  * write failure, spec §4.5 step 5 — Task 6) maps to HTTP 500.
  *
- * @param {{ body: { project?, since?, until?, skip_state_merge? } }} req
- * @param {{ status(code): this, json(obj): this }} res
+ * #309: `mode: "accepted"` opts into accepted mode — validate, answer 202 with
+ * an empty body, synthesise after the response. Opt-in only; an absent `mode`
+ * keeps today's synchronous behaviour byte-for-byte, and an unrecognised value
+ * is a 400 rather than a silent fallback.
+ *
+ * @param {{ body: { project?, since?, until?, skip_state_merge?, mode? } }} req
+ * @param {{ status(code): this, json(obj): this, sendBodiless(code): void }} res
  * @param {{ vaultDir?: string, writesEnabled: boolean, _doCheckpoint?: Function }} ctx
  */
 export async function handleCheckpointRequest(req, res, ctx) {
@@ -1759,8 +1859,49 @@ export async function handleCheckpointRequest(req, res, ctx) {
 		return;
 	}
 	try {
-		const { project, since, until, skip_state_merge } = req.body || {};
+		const { project, since, until, skip_state_merge, mode } = req.body || {};
 		const checkpointFn = ctx._doCheckpoint ?? doCheckpoint;
+		// #309 T1: an unrecognised `mode` is a hard 400, never a silent fallback
+		// to synchronous. A silent fallback would reproduce exactly the failure
+		// class this issue spent two days misdiagnosing — a caller believing it
+		// opted into a behaviour it did not get.
+		if (mode !== undefined && mode !== 'accepted') {
+			res.status(400).json(errorResponse(
+				'INPUT_INVALID',
+				`unknown mode: ${JSON.stringify(String(mode).slice(0, 32))}`,
+			));
+			return;
+		}
+		if (mode === 'accepted') {
+			// Slug resolution must precede the 202: an invalid project slug is
+			// one of the four errors that still reaches the caller (spec
+			// Contract). This is the SAME helper doCheckpoint calls at
+			// checkpoint.mjs:139, so an already-resolved slug passes through it
+			// a second time unchanged — no extraction, no new machinery.
+			const resolved = applyDefaultProject({
+				project,
+				tool: TOOL_IDS.MEMORY_CHECKPOINT,
+				logger: getLogger(),
+				requestId: currentRequestId(),
+			});
+			if (resolved === null) {
+				res.status(400).json(errorResponse(
+					'INPUT_INVALID',
+					`invalid project: ${JSON.stringify(String(project ?? '').slice(0, 64))}`,
+				));
+				return;
+			}
+			// Empty body, no Content-Type, no job identifier and no summary_id —
+			// nothing has been written yet and nothing consumes one.
+			res.sendBodiless(202);
+			runAcceptedCheckpoint({
+				checkpointFn,
+				args: { project: resolved, since, until, skip_state_merge },
+				ctx,
+				project: resolved,
+			});
+			return;
+		}
 		// T5 (#159 spec §6): ctx.surface threads into the lib's capture.checkpoint emit.
 		const result = await checkpointFn(
 			{ project, since, until, skip_state_merge },
@@ -3635,6 +3776,20 @@ export function createRequestHandler(ctx = {}) {
 				json(obj) {
 					res.writeHead(this.statusCode, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify(obj));
+				},
+				// #309 T1: bodiless response, for the accepted-mode 202 only.
+				// The Contract fixes that shape as `writeHead(202); end()` with
+				// NO Content-Type, and `json()` above cannot produce it — it
+				// sets application/json unconditionally, and an empty body under
+				// that header is not a JSON document. That exact shape broke
+				// Codex CLI's rmcp client, which is why POST /mcp grew its own
+				// 202 path (see the notification branch above). Without this
+				// method an implementer reaches for `json({})` and every stated
+				// acceptance still passes, because um_api_post returns 0 for any
+				// 2xx — so the decided contract would ship unenforced.
+				sendBodiless(code) {
+					res.writeHead(code);
+					res.end();
 				},
 			};
 			await handleCheckpointRequest(

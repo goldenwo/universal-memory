@@ -321,14 +321,14 @@ test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes 
 test('missing db file ⇒ null-shaped result, no throw', async () => {
   const dbPath = path.join(tempDir('um-stats-missing-'), 'nope.db');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null });
 });
 
 test('unreadable (corrupt) db ⇒ null-shaped result, no throw', async () => {
   const dbPath = await tempDbPath();
   await fs.writeFile(dbPath, 'not a sqlite database — garbage bytes');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null });
 });
 
 test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
@@ -695,4 +695,131 @@ test('#283 field presence: both fields on EVERY surface entry (uniform builder),
   assert.equal(stats.capture['a-turny'].last_turn_day, TODAY);
   assert.equal(stats.capture['b-quiet'].last_turn_day, null);
   assert.equal(stats.capture['b-quiet'].checkpoint_abstained_7d, 0);
+});
+
+// ---------------------------------------------------------------------------
+// #309: signal.checkpoint_failure — the accepted-mode failure detector.
+//
+// Keyed BY PROJECT (the sibling capture_anomaly family keys by surface),
+// because the failure this exists for is defined per project: a quiet project
+// whose finite capture-vs-digest lag sits below the staleness ceiling is
+// invisible to LAYERS-STALE indefinitely, with a green board.
+//
+// A present-but-always-empty field is the inert-detector failure mode — the
+// same class of bug as the one this whole change corrects, one level up — so
+// these assert a ROW for the failing project, never mere existence.
+// ---------------------------------------------------------------------------
+
+test('#309 checkpoint_failure: a failing project gets a ROW, not just a present-and-empty field', async () => {
+  const dbPath = await tempDbPath('um-stats-309-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', project: 'proj-a', event: 'signal.checkpoint_failure', outcome: 'failed', count: 2 },
+    { day: daysAgo(2), surface: 'claude-code-plugin', project: 'proj-a', event: 'signal.checkpoint_failure', outcome: 'contended', count: 5 },
+    { day: TODAY, surface: 'codex-cli', project: 'proj-b', event: 'signal.checkpoint_failure', outcome: 'rejected', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+
+  assert.ok(stats.checkpointFailure, 'the family must be present');
+  const a = stats.checkpointFailure['proj-a'];
+  assert.ok(a, 'proj-a must have a row — an existence-only assertion would pass on an inert detector');
+  assert.equal(a.last_day_seen, TODAY);
+  assert.equal(a.count_7d, 7, 'count_7d sums EVERY outcome, triggering or not');
+  assert.equal(a.outcomes_7d.failed, 2);
+  assert.equal(a.outcomes_7d.contended, 5);
+  assert.equal(a.outcomes_7d.rejected, 0);
+  assert.equal(stats.checkpointFailure['proj-b'].outcomes_7d.rejected, 1);
+});
+
+test('#309 checkpoint_failure: rows aggregate ACROSS surfaces within one project', async () => {
+  // The project is the key; surface is recorded but must not split the row,
+  // or a project checkpointed from two hosts would under-report.
+  const dbPath = await tempDbPath('um-stats-309-agg-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code-plugin', project: 'multi', event: 'signal.checkpoint_failure', outcome: 'failed', count: 1 },
+    { day: TODAY, surface: 'codex-cli', project: 'multi', event: 'signal.checkpoint_failure', outcome: 'failed', count: 3 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.checkpointFailure.multi.outcomes_7d.failed, 4);
+});
+
+test('#309 checkpoint_failure: an out-of-vocabulary outcome FOLDS to `other`, never dropped', async () => {
+  // For an alarm feed a dropped row is a missed alarm — a NEWER server writing
+  // a term this reader does not know must still be visible.
+  const dbPath = await tempDbPath('um-stats-309-fold-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 's', project: 'drift', event: 'signal.checkpoint_failure', outcome: 'a_term_from_the_future', count: 3 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.checkpointFailure.drift.outcomes_7d.other, 3);
+  assert.equal(stats.checkpointFailure.drift.count_7d, 3);
+});
+
+test('#309 checkpoint_failure: empty DB ⇒ {} (healthy zero), distinct from null (degraded)', async () => {
+  const dbPath = await tempDbPath('um-stats-309-zero-');
+  seedCountersDb(dbPath, []);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  // Null-prototype map (hostile-surface discipline — project and outcome are
+  // writer-controlled and this is served to external readers); strict deepEqual
+  // compares prototypes, so the expectation must carry it too.
+  assert.deepEqual(stats.checkpointFailure, { __proto__: null });
+});
+
+test('#309 checkpoint_failure: growth_docs_7d does NOT move for a nothing-written failure', async () => {
+  // THE most dangerous line in T2. stats.mjs counts capture.checkpoint rows with
+  // outcome IN ('stored','error') as DOC GROWTH, and that emit fires only AFTER
+  // the summary and state.md are durably on disk. A job that failed having
+  // written nothing is not that, and emitting 'error' for it would inflate the
+  // very metric #185 created to catch fabricated summaries.
+  //
+  // Baseline and treatment differ ONLY by the checkpoint-failure rows.
+  const baselineRows = [
+    { day: TODAY, surface: 's', project: 'g', event: 'capture.checkpoint', outcome: 'stored', count: 4 },
+  ];
+  const basePath = await tempDbPath('um-stats-309-gbase-');
+  seedCountersDb(basePath, baselineRows);
+  const baseline = readCounterStats({ now: NOW, dbPath: basePath });
+
+  const withFailures = await tempDbPath('um-stats-309-gfail-');
+  seedCountersDb(withFailures, [
+    ...baselineRows,
+    { day: TODAY, surface: 's', project: 'g', event: 'signal.checkpoint_failure', outcome: 'failed', count: 9 },
+    { day: TODAY, surface: 's', project: 'g', event: 'signal.checkpoint_failure', outcome: 'rejected', count: 9 },
+  ]);
+  const treatment = readCounterStats({ now: NOW, dbPath: withFailures });
+
+  assert.deepEqual(treatment.growth_docs_7d, baseline.growth_docs_7d,
+    'growth_docs_7d must be byte-identical — this family lives OUTSIDE capture.% by construction');
+  // And the failures did land somewhere, or the assertion above proves nothing.
+  assert.equal(treatment.checkpointFailure.g.count_7d, 18, 'positive control: the rows were actually written');
+});
+
+test('#309 checkpoint_failure: the capture.% boundary is untouched — errors_today does not move either', async () => {
+  const dbPath = await tempDbPath('um-stats-309-bound-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 's', project: 'g', event: 'capture.turn', outcome: 'stored', count: 1 },
+    { day: TODAY, surface: 's', project: 'g', event: 'signal.checkpoint_failure', outcome: 'failed', count: 7 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.equal(stats.capture.s.errors_today, 0,
+    'a signal.* row must never advance a capture aggregate — widening any capture query to match signal.% re-opens the #267 blindness');
+  assert.equal(stats.capture.s.outcomes_7d.failed, 0);
+});
+
+test('#309 checkpoint_failure: the real writer path is readable by this reader (writer-compat)', async () => {
+  // Round-trips through recordCaptureEvent rather than direct SQL, so a writer
+  // schema drift fails here instead of in production.
+  const dbPath = await tempDbPath('um-stats-309-writer-');
+  _resetCaptureEventsForTest();
+  const prev = process.env.UM_COUNTERS_DB_PATH;
+  process.env.UM_COUNTERS_DB_PATH = dbPath;
+  try {
+    recordCaptureEvent({
+      surface: 'codex-cli', project: 'wp', event: 'signal.checkpoint_failure', outcome: 'failed',
+    });
+    const stats = readCounterStats({ now: Date.now(), dbPath });
+    assert.equal(stats.checkpointFailure.wp.outcomes_7d.failed, 1);
+  } finally {
+    if (prev === undefined) delete process.env.UM_COUNTERS_DB_PATH; else process.env.UM_COUNTERS_DB_PATH = prev;
+    _resetCaptureEventsForTest();
+  }
 });
