@@ -79,15 +79,18 @@ rem that setup here and starts usr\bin\bash.exe directly, keeping the extra proc
 rem SessionEnd's one-second budget. Deliberately not replicated, inert for these hooks:
 rem PLINK_PROTOCOL, EXEPATH, the ~/bin PATH entry and git-bash.config MSYS= lines.
 rem The wrapper itself runs instead (as given) when the layout is not a Git for Windows
-rem install, or when PATH is longer than cmd can expand (8191 characters). The rewrite uses
-rem delayed expansion, which also keeps it clear of cmd's 8191-character line limit.
+rem install, or when PATH has a character at index 7000: cmd cannot expand a variable past
+rem 8191 characters, and a set whose value would pass that limit silently does nothing
+rem (measured), which would start bash without Git's tool directories.
 set "RH_SCRIPT=%RH_SCRIPT:\=/%"
 set "RH_GITROOT="
 for %%G in ("%RH_BASH%\..\..") do set "RH_GITROOT=%%~fG"
 if not exist "%RH_GITROOT%\usr\bin\bash.exe" goto run_as_given
 if not exist "%RH_GITROOT%\mingw64\bin\" goto run_as_given
 set "RH_P0=%PATH:~0,1%"
+set "RH_P7=%PATH:~7000,1%"
 if defined PATH if not defined RH_P0 goto run_as_given
+if defined RH_P7 goto run_as_given
 setlocal EnableDelayedExpansion
 set "PATH=!RH_GITROOT!\mingw64\bin;!RH_GITROOT!\usr\bin;!PATH!"
 set "MSYSTEM=MINGW64"

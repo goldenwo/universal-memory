@@ -29,6 +29,12 @@ $pwshExe = if ($pwshCmd) { $pwshCmd.Source } else { $null }
 $onCi = ($env:GITHUB_ACTIONS -eq 'true')
 $script:failures = 0
 
+# Run with Git's tool directories REMOVED from PATH (Git\cmd stays, so git.exe is found): the
+# environment of a Codex session launched from PowerShell. Then only the launcher's own PATH setup
+# can make cat, sed and cygpath resolvable. Launched from git-bash they are already on PATH, which
+# masked a PATH rewrite that silently did nothing (found by review round 4, 2026-09-23).
+$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -notmatch '\\Git\\(usr\\bin|mingw64\\bin|bin)$') }) -join ';'
+
 function Check([bool]$Condition, [string]$Name) {
     if ($Condition) { Write-Output "PASS: $Name" } else { Write-Output "FAIL: $Name"; $script:failures++ }
 }
