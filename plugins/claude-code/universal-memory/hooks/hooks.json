@@ -7,6 +7,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
+            "commandWindows": "cmd /d /c \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start.sh",
             "async": false
           }
         ]
@@ -19,6 +20,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh\"",
+            "commandWindows": "cmd /d /c \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" user-prompt-submit.sh",
             "async": false
           }
         ]
@@ -31,6 +33,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh\"",
+            "commandWindows": "cmd /d /c \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" stop.sh",
             "async": false,
             "timeout": 120
           }
@@ -44,6 +47,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh\"",
+            "commandWindows": "cmd /d /c \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-end.sh",
             "async": false
           }
         ]
