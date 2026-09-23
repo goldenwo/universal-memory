@@ -67,16 +67,22 @@ assert_eq "J1 events" "$(printf '%s\n' "$ROWS" | cut -d"$SEP" -f1 | tr '\n' ' ')
 assert_eq "J1 one group and one handler per event" "$(printf '%s\n' "$ROWS" | cut -d"$SEP" -f5,6 | sort -u)" "1${SEP}1"
 
 # J2 — pinned exactly as shipped through v1.23.0.
+# The expected handler strings are single-quoted on purpose: ${CLAUDE_PLUGIN_ROOT} is part
+# of the pinned literal, never expanded by this shell.
 assert_eq "J2 SessionStart matcher" "$(field SessionStart 2)" 'startup|clear|compact'
+# shellcheck disable=SC2016
 assert_eq "J2 SessionStart handler" "$(field SessionStart 3)" \
   '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"","async":false}'
 assert_eq "J2 UserPromptSubmit matcher" "$(field UserPromptSubmit 2)" ''
+# shellcheck disable=SC2016
 assert_eq "J2 UserPromptSubmit handler" "$(field UserPromptSubmit 3)" \
   '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh\"","async":false}'
 assert_eq "J2 Stop matcher" "$(field Stop 2)" ''
+# shellcheck disable=SC2016
 assert_eq "J2 Stop handler" "$(field Stop 3)" \
   '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh\"","async":false,"timeout":120}'
 assert_eq "J2 SessionEnd matcher" "$(field SessionEnd 2)" ''
+# shellcheck disable=SC2016
 assert_eq "J2 SessionEnd handler" "$(field SessionEnd 3)" \
   '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh\"","async":false}'
 

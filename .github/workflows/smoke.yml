@@ -644,10 +644,11 @@ jobs:
 
   # #313: on Windows, Codex runs every hook through hooks/run-hook.cmd (hooks.json
   # commandWindows). That launcher is Windows-only, so the ubuntu job above cannot
-  # exercise it; this job runs it in Codex's real spawn shape (%COMSPEC% /C "<command>")
-  # with the runner's Git for Windows, driven by a Windows PowerShell 5.1 test script.
-  # Runners have no Device Guard, so the walk-up precedence cases that SKIP on locked-down
-  # dev machines run here.
+  # exercise it; this job runs every commandWindows in all three Codex hook shapes —
+  # powershell -NoProfile -Command (measured default), pwsh -NoProfile -Command (chosen when
+  # installed; the runner has it) and cmd /C (no-shell fallback) — with the runner's Git for
+  # Windows, driven by a Windows PowerShell 5.1 test script. A SKIP fails the job here: the
+  # runner has pwsh and no Device Guard, so every case must actually run.
   hook-tests-windows:
     name: Plugin hook launcher (windows)
     runs-on: windows-latest

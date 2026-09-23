@@ -95,11 +95,11 @@ Server-side, captures require `UM_MCP_WRITE_ENABLED=true` +
 Codex runs these hooks through `hooks/run-hook.cmd` on Windows (`commandWindows` in
 `hooks/hooks.json`), which locates Git Bash itself: launched from PowerShell or cmd, the first
 `bash` on PATH is usually `C:\Windows\System32\bash.exe`, the WSL launcher, which cannot run these
-scripts. The launcher runs inside the `cmd.exe` Codex already starts, so it adds only a few
-milliseconds to Codex's one-second SessionEnd budget, and it passes the hook payload through
-untouched. If Git lives somewhere the launcher cannot find (a portable or scoop install), set
-`UM_GIT_BASH` to its `bin\bash.exe`; a launcher that finds no Git Bash logs `skip=no-git-bash` to
-`~/.um/hook.log` and lets the session continue.
+scripts. The launcher adds a few tens of milliseconds to Codex's one-second SessionEnd budget and
+passes the hook payload through untouched. If Git lives somewhere the launcher cannot find (a
+portable or scoop install), set `UM_GIT_BASH` to the absolute path of its `bin\bash.exe`; a launcher
+that finds no Git Bash logs `skip=no-git-bash` to `~/.um/hook.log` and lets the session continue.
+A Codex home whose path contains `&` or `^` is not supported (move it with `CODEX_HOME`).
 
 Codex runs only hooks you have approved, and asks again whenever a hook's command changes. The
 update that introduced this launcher changed the Windows command of all four hooks, so approve the

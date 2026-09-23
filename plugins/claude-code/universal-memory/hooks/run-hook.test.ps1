@@ -3,29 +3,38 @@
 #
 # Codex runs a Windows hook through the SESSION shell: codex 0.155.1 exec/TUI was measured
 # (2026-09-22, parent-process probe inside a real hook) running
-#     powershell.exe -NoProfile -Command "<command>"
+#     powershell.exe -NoProfile -Command "<command>"      (pwsh.exe when installed)
 # and Codex falls back to  %COMSPEC% /C "<command>"  when a session has no shell
-# (codex-rs/hooks/src/engine/command_runner.rs). Every hooks.json commandWindows is run in BOTH
-# shapes, with ${CLAUDE_PLUGIN_ROOT} replaced by a fixture root containing spaces and parentheses.
-# (A root containing '&' is a documented limitation of the cmd /d /c form - measured.) Stub hook
-# scripts record the stdin bytes they receive and print fixture stdout bytes, so byte transport,
-# exit codes and the fail-open paths are observed from outside, the way Codex sees them.
+# (codex-rs/hooks/src/engine/command_runner.rs). Every hooks.json commandWindows is run in all
+# three shapes, with ${CLAUDE_PLUGIN_ROOT} replaced by a fixture root containing spaces and
+# parentheses. (A root containing '&' or '^' is a documented limitation of the cmd /d /c form -
+# measured.) Stub hook scripts record the stdin bytes they receive, their $HOME, and whether a
+# PATH tail marker survived, and print fixture stdout bytes, so byte transport, exit codes, the
+# environment the script sees and the fail-open paths are observed from outside, as Codex sees them.
 #
 # Harness rules, both learned the hard way (2026-09-22):
 #  - Variables are set on THIS process and inherited. Rebuilding a child's environment through
 #    ProcessStartInfo.EnvironmentVariables made cmd and bash lookups fail intermittently.
 #  - Payloads reach stdin through an outer cmd's "<" redirection from a file. A .NET stdin pipe
 #    writer adds a UTF-8 BOM when the console runs code page 65001.
+# A SKIP is a failure on CI (GITHUB_ACTIONS=true): the runner must execute every case.
 # Non-ASCII test data is built from byte values: this file stays ASCII-only, because Windows
 # PowerShell 5.1 decodes a BOM-less script with the ANSI code page.
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$pwshCmd = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$pwshExe = if ($pwshCmd) { $pwshCmd.Source } else { $null }
+$onCi = ($env:GITHUB_ACTIONS -eq 'true')
 $script:failures = 0
 
 function Check([bool]$Condition, [string]$Name) {
     if ($Condition) { Write-Output "PASS: $Name" } else { Write-Output "FAIL: $Name"; $script:failures++ }
+}
+
+function Skip([string]$Name) {
+    if ($onCi) { Check $false "$Name (SKIP is a failure on CI)" } else { Write-Output "SKIP: $Name" }
 }
 
 function Same-Bytes([byte[]]$A, [byte[]]$B) {
@@ -43,13 +52,14 @@ function Join-Bytes([object[]]$Parts) {
     return , $ms.ToArray()
 }
 
-# Run <command> in a Codex hook shape ('PS' or 'CMD'), with the console at code page $Cp (or
-# untouched), stdin from a file, in $Cwd, with $Vars applied to this process for the call (null
-# removes a variable). Returns exit code + stdout bytes.
+# Run <command> in a Codex hook shape ('PS', 'PWSH' or 'CMD'), with the console at code page $Cp
+# (or untouched), stdin from a file, in $Cwd, with $Vars applied to this process for the call
+# (null removes a variable). Returns exit code + stdout bytes.
 function Invoke-Hook([string]$Shape, [string]$Command, [string]$StdinFile, [string]$Cwd, [hashtable]$Vars, [string]$Cp = '') {
-    if ($Shape -eq 'PS') {
+    if ($Shape -eq 'PS' -or $Shape -eq 'PWSH') {
+        $exe = if ($Shape -eq 'PS') { $psExe } else { $pwshExe }
         # Codex passes the command as ONE argument (Rust quoting: inner quotes become \").
-        $inner = $psExe + ' -NoProfile -Command "' + ($Command -replace '"', '\"') + '"'
+        $inner = '"' + $exe + '" -NoProfile -Command "' + ($Command -replace '"', '\"') + '"'
     } else {
         $inner = $env:ComSpec + ' /C "' + $Command + '"'
     }
@@ -71,7 +81,7 @@ function Invoke-Hook([string]$Shape, [string]$Command, [string]$StdinFile, [stri
         $out = New-Object System.IO.MemoryStream
         $outCopy = $p.StandardOutput.BaseStream.CopyToAsync($out)
         $err = $p.StandardError.ReadToEndAsync()
-        if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "timed out: $Command" }
+        if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "timed out: $Command" }
         $outCopy.Wait()
         return @{ Exit = $p.ExitCode; Out = $out.ToArray(); Err = $err.Result }
     } finally {
@@ -102,10 +112,16 @@ New-Item -ItemType Directory -Path $fixHooks, $fakeHome, $empty -Force | Out-Nul
 Copy-Item -LiteralPath (Join-Path $here 'run-hook.cmd') -Destination $fixHooks
 $stubDir = $tmp -replace '\\', '/'
 
-$stub = "#!/usr/bin/env bash`n" +
-        "cat > `"`$STUB_DIR/stdin-`$(basename `"`$0`").bin`"`n" +
-        "cat `"`$STUB_DIR/stdout.bin`"`n" +
-        "exit `"`${STUB_EXIT:-0}`"`n"
+$stub = @'
+#!/usr/bin/env bash
+cat > "$STUB_DIR/stdin-$(basename "$0").bin"
+cat "$STUB_DIR/stdout.bin"
+cygpath -w "$HOME" > "$STUB_DIR/home-$(basename "$0").txt" 2>/dev/null
+case ":$PATH:" in *um-path-tail*) printf ok > "$STUB_DIR/tail-$(basename "$0").txt" ;; esac
+exit "${STUB_EXIT:-0}"
+'@
+$stub = $stub -replace "`r`n", "`n"
+if (-not $stub.EndsWith("`n")) { $stub += "`n" }
 $scripts = @('session-start.sh', 'user-prompt-submit.sh', 'stop.sh', 'session-end.sh')
 foreach ($s in $scripts) { [System.IO.File]::WriteAllText((Join-Path $fixHooks $s), $stub, $utf8) }
 
@@ -124,41 +140,46 @@ $base = @{ CLAUDE_PLUGIN_ROOT = $tmp; STUB_DIR = $stubDir; HOME = $fakeHome; STU
            UM_GIT_BASH = $null; MARKER_FILE = $null; NoDefaultCurrentDirectoryInExePath = $null }
 function With([hashtable]$Extra) { $h = $base.Clone(); foreach ($k in $Extra.Keys) { $h[$k] = $Extra[$k] }; return $h }
 $launcher = '"' + (Join-Path $fixHooks 'run-hook.cmd') + '" '
-$received = { param($s) Join-Path $tmp "stdin-$s.bin" }
+function Received([string]$s) { Join-Path $tmp "stdin-$s.bin" }
+function Ran([string]$s) { $f = Received $s; (Test-Path -LiteralPath $f) -and (Same-Bytes ([System.IO.File]::ReadAllBytes($f)) $payload) }
+function Reset([string]$s) { foreach ($k in 'stdin', 'home', 'tail') { Remove-Item -LiteralPath (Join-Path $tmp "$k-$s.$(if ($k -eq 'stdin') { 'bin' } else { 'txt' })") -ErrorAction SilentlyContinue } }
 function CommandFor([string]$Event) {
     $h = $hooksJson.hooks.$Event[0].hooks[0]
     return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $tmp)
 }
+$shapes = @('PS', 'CMD')
+if ($pwshExe) { $shapes += 'PWSH' } else { Skip 'PWSH shape - pwsh is not installed here' }
 
 try {
-    # 1. Each hooks.json commandWindows in both Codex hook shapes and under both console code pages:
+    # 1. Each hooks.json commandWindows in every Codex hook shape and under both console code pages:
     #    stdin reaches the script byte-exact (no BOM), stdout comes back byte-exact, exit 0.
-    foreach ($shape in @('PS', 'CMD')) {
+    foreach ($shape in $shapes) {
         foreach ($cp in @('65001', '437')) {
             foreach ($event in $hooksJson.hooks.PSObject.Properties) {
                 $handler = $event.Value[0].hooks[0]
                 $s = ($scripts | Where-Object { $handler.command -like "*/hooks/$_*" } | Select-Object -First 1)
-                Remove-Item -LiteralPath (& $received $s) -ErrorAction SilentlyContinue
+                Reset $s
                 $r = Invoke-Hook $shape (CommandFor $event.Name) $payloadFile $tmp $base $cp
-                $got = if (Test-Path -LiteralPath (& $received $s)) { [System.IO.File]::ReadAllBytes((& $received $s)) } else { [byte[]]@() }
-                Check (($r.Exit -eq 0) -and (Same-Bytes $got $payload) -and (Same-Bytes $r.Out $stdoutFixture)) "$shape cp$cp $($event.Name): exit 0, stdin + stdout byte-exact"
+                Check (($r.Exit -eq 0) -and (Ran $s) -and (Same-Bytes $r.Out $stdoutFixture)) "$shape cp$cp $($event.Name): exit 0, stdin + stdout byte-exact"
             }
         }
     }
 
     # 2. A failing script is never reported as success. The CMD shape carries the exact code;
-    #    Windows PowerShell -Command reports any failing native command as exit 1 (measured: the
-    #    same for today's bare-bash command), so there the assertion is "1", not "3".
+    #    PowerShell -Command reports any failing native command as a generic failure (measured with
+    #    Windows PowerShell: exit 1, the same for today's bare-bash command).
     $r = Invoke-Hook 'CMD' (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3' })
     Check ($r.Exit -eq 3) 'CMD exit code propagates exactly (3)'
-    $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3' })
-    Check ($r.Exit -eq 1) 'PS failing script reported as failure (1)'
+    foreach ($shape in ($shapes | Where-Object { $_ -ne 'CMD' })) {
+        $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3' })
+        Check ($r.Exit -ne 0) "$shape failing script reported as failure (exit $($r.Exit))"
+    }
 
     # 3. Shape-check refusals (launcher invoked directly): exit 0, skip, nothing run, empty stdout.
     foreach ($bad in @('..\stop.sh', 'sub/stop.sh', 'x.txt', 'c:stop.sh')) {
-        Remove-Item -LiteralPath (& $received 'stop.sh') -ErrorAction SilentlyContinue
+        Reset 'stop.sh'
         $r = Invoke-Hook 'CMD' ($launcher + '"' + $bad + '"') $payloadFile $tmp $base
-        Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (& $received 'stop.sh'))) "refuse '$bad': exit 0, empty stdout, nothing run"
+        Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'stop.sh'))) "refuse '$bad': exit 0, empty stdout, nothing run"
     }
     Check ((Hook-LogText $fakeHome) -match 'run-hook skip=unknown-script') 'refusals: skip=unknown-script logged'
 
@@ -169,20 +190,25 @@ try {
     }
     Check ((Hook-LogText $fakeHome) -match 'absent skip=no-script') 'no script: skip=no-script logged'
 
-    # 5. UM_GIT_BASH is exclusive: a missing path fails open; a real path runs.
-    Remove-Item -LiteralPath (& $received 'session-end.sh') -ErrorAction SilentlyContinue
-    $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = (Join-Path $empty 'bash.exe') })
-    Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (& $received 'session-end.sh'))) 'UM_GIT_BASH missing: exit 0, empty stdout, nothing run'
-    Check ((Hook-LogText $fakeHome) -match 'session-end skip=no-git-bash') 'UM_GIT_BASH missing: skip=no-git-bash logged'
+    # 5. UM_GIT_BASH is exclusive and must be an absolute path to a file: a missing file, a
+    #    directory and a relative path all fail open with skip=no-git-bash; a real path runs.
     $realBash = Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'
+    $badValues = [ordered]@{ 'missing' = (Join-Path $empty 'bash.exe'); 'a directory' = (Split-Path -Parent (Split-Path -Parent $realBash)); 'relative' = 'Git\bin\bash.exe' }
+    foreach ($label in $badValues.Keys) {
+        Reset 'session-end.sh'
+        $before = (Hook-LogText $fakeHome).Length
+        $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $badValues[$label] })
+        $logged = (Hook-LogText $fakeHome).Substring($before) -match 'session-end skip=no-git-bash'
+        Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'session-end.sh')) -and $logged) "UM_GIT_BASH $label`: exit 0, empty stdout, nothing run, skip=no-git-bash"
+    }
+    Reset 'session-end.sh'
     $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $realBash })
-    Check ((Test-Path -LiteralPath (& $received 'session-end.sh')) -and ($r.Exit -eq 0)) 'UM_GIT_BASH real: runs'
+    Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) 'UM_GIT_BASH real: runs'
 
     # 6. Walk-up precedence: a fake Git layout whose bin\bash.exe is a marker program. The walk
     #    from git.exe must find it before the registry and ProgramFiles fallbacks, which would
     #    find the machine's real Git. A freshly compiled, unsigned executable cannot run where
-    #    Device Guard / Smart App Control enforces (measured on a dev machine 2026-09-22), so
-    #    the case is SKIPPED there - loudly, never counted as a pass. CI runners run it.
+    #    Device Guard / Smart App Control enforces (measured on a dev machine 2026-09-22).
     $fakeGit = Join-Path $tmp 'G'
     foreach ($d in @('cmd', 'bin', 'mingw64\bin')) { New-Item -ItemType Directory -Path (Join-Path $fakeGit $d) -Force | Out-Null }
     New-MarkerExe (Join-Path $fakeGit 'bin\bash.exe')
@@ -192,7 +218,7 @@ try {
     try { & (Join-Path $fakeGit 'bin\bash.exe') 'probe' 2>$null | Out-Null } catch { }
     Remove-Item Env:\MARKER_FILE
     if (-not (Test-Path -LiteralPath $probe)) {
-        Write-Output 'SKIP: walk-up precedence (x2) - this machine blocks compiled test executables (Device Guard / Smart App Control); CI runs these cases'
+        Skip 'walk-up precedence (x2) - this machine blocks compiled test executables (Device Guard / Smart App Control)'
     } else {
         foreach ($d in @('cmd', 'mingw64\bin')) {
             $marker = Join-Path $tmp "walk-$($d -replace '\\','-').txt"
@@ -202,32 +228,63 @@ try {
         }
     }
 
-    # 7. HOME unset: the skip line lands under HOMEDRIVE+HOMEPATH when that exists, like Git Bash.
+    # 7. HOME: unset HOME resolves the way Git's wrapper does (HOMEDRIVE+HOMEPATH when that
+    #    directory exists) - for the skip log AND for the script's own $HOME on the fast path.
     $altHome = Join-Path $tmp 'alt home'
     New-Item -ItemType Directory -Path $altHome -Force | Out-Null
-    $r = Invoke-Hook 'CMD' ($launcher + '"absent.sh"') $payloadFile $tmp (With @{ HOME = $null; HOMEDRIVE = $altHome.Substring(0, 2); HOMEPATH = $altHome.Substring(2) })
-    Check ((Hook-LogText $altHome) -match 'absent skip=no-script') 'HOME unset: log under HOMEDRIVE+HOMEPATH'
+    $homeVars = @{ HOME = $null; HOMEDRIVE = $altHome.Substring(0, 2); HOMEPATH = $altHome.Substring(2) }
+    $r = Invoke-Hook 'CMD' ($launcher + '"absent.sh"') $payloadFile $tmp (With $homeVars)
+    Check ((Hook-LogText $altHome) -match 'absent skip=no-script') 'HOME unset: skip log under HOMEDRIVE+HOMEPATH'
+    Reset 'stop.sh'
+    $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With $homeVars)
+    $seen = if (Test-Path -LiteralPath (Join-Path $tmp 'home-stop.sh.txt')) { [System.IO.File]::ReadAllText((Join-Path $tmp 'home-stop.sh.txt')).Trim() } else { '' }
+    Check (($r.Exit -eq 0) -and ($seen.TrimEnd('\') -ieq $altHome.TrimEnd('\'))) "HOME unset: the script's HOME is HOMEDRIVE+HOMEPATH (saw '$seen')"
 
-    # 8. cwd hijack: look-alikes planted in the session directory must never run. Batch files, not
-    #    executables: cmd tries every PATHEXT extension in the working directory before PATH, and
-    #    Device Guard does not block batch files - a planted .exe would be blocked on such a machine
-    #    and the check would pass without testing anything (caught by a mutation control).
-    #    Covers the launcher's bash run, registry fallback (PATH without git) and skip path, plus the
-    #    commandWindows 'cmd' token in the PowerShell shape (PowerShell never searches the cwd).
-    #    Not asserted: the CMD fallback shape resolves that 'cmd' token cwd-first (documented).
+    # 8. Long PATH: cmd cannot rewrite a PATH near or past its 8191-character limit, so the launcher
+    #    hands such PATHs to Git's own wrapper. The script must run with the full PATH (tail kept).
+    #    8170: cmd can still expand it and the rewritten PATH passes 8191 characters - which a
+    #    %-expanded rewrite would fail with "The input line is too long" and the delayed-expansion
+    #    rewrite handles. 9000: past what cmd can expand at all - the guard hands it to the wrapper.
+    $tail = 'C:\um-path-tail'
+    foreach ($target in @(8170, 9000)) {
+        $long = $env:PATH; $i = 0
+        while ($long.Length -lt $target - $tail.Length - 60) { $i++; $long += ';C:\um-filler-' + $i.ToString('0000') + '-abcdefghijklmnopqrstuvwxyz' }
+        $long += ';C:\um-pad-' + ('x' * ($target - $tail.Length - 1 - $long.Length - 11))
+        $long += ';' + $tail
+        Reset 'stop.sh'
+        $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With @{ PATH = $long })
+        Check (($r.Exit -eq 0) -and (Ran 'stop.sh') -and (Test-Path -LiteralPath (Join-Path $tmp 'tail-stop.sh.txt'))) "PATH of $($long.Length) chars: runs with the PATH tail intact"
+    }
+
+    # 9. A quoted PATH entry containing '&' must not split the launcher's PATH rewrite (which would
+    #    skip the hook and run a same-named file from the session directory).
+    $amp = Join-Path $tmp 'amp cwd'
+    New-Item -ItemType Directory -Path $amp -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $amp 'D.cmd'), "@echo hijack> `"%~dp0D.cmd.marker`"`r`n")
+    Reset 'stop.sh'
+    $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $amp (With @{ PATH = ('"C:\R&D Tools\bin";' + $env:PATH + ';' + $tail) })
+    Check (($r.Exit -eq 0) -and (Ran 'stop.sh') -and (Test-Path -LiteralPath (Join-Path $tmp 'tail-stop.sh.txt')) -and -not (Test-Path -LiteralPath (Join-Path $amp 'D.cmd.marker'))) 'quoted PATH entry with &: runs, PATH intact, nothing from the cwd'
+
+    # 10. cwd hijack: look-alikes planted in the session directory must never run. Batch files, not
+    #     executables: cmd tries every PATHEXT extension in the working directory before PATH, and
+    #     Device Guard does not block batch files - a planted .exe would be blocked on such a machine
+    #     and the check would pass without testing anything (caught by a mutation control).
+    #     Covers the launcher's bash run, registry fallback (PATH without git) and skip path, and the
+    #     commandWindows 'cmd' token in every shape.
     $evil = Join-Path $tmp 'evil repo'
     New-Item -ItemType Directory -Path $evil -Force | Out-Null
     foreach ($n in @('bash', 'git', 'reg', 'powershell', 'where', 'findstr', 'cmd')) {
         [System.IO.File]::WriteAllText((Join-Path $evil "$n.cmd"), "@echo hijack> `"%~dp0$n.cmd.marker`"`r`n")
     }
-    Remove-Item -LiteralPath (& $received 'stop.sh') -ErrorAction SilentlyContinue
-    $r1 = Invoke-Hook 'CMD' ($launcher + 'stop.sh') $payloadFile $evil $base
-    $r2 = Invoke-Hook 'CMD' ($launcher + 'stop.sh') $payloadFile $evil (With @{ PATH = ($env:SystemRoot + '\System32') })
-    $r3 = Invoke-Hook 'CMD' ($launcher + '"absent.sh"') $payloadFile $evil $base
-    $r4 = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $evil $base
+    Reset 'stop.sh'
+    $runs = @()
+    $runs += Invoke-Hook 'CMD' ($launcher + 'stop.sh') $payloadFile $evil $base
+    $runs += Invoke-Hook 'CMD' ($launcher + 'stop.sh') $payloadFile $evil (With @{ PATH = ($env:SystemRoot + '\System32') })
+    $runs += Invoke-Hook 'CMD' ($launcher + '"absent.sh"') $payloadFile $evil $base
+    foreach ($shape in $shapes) { $runs += Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $evil $base }
     $markers = @(Get-ChildItem -LiteralPath $evil -Filter '*.marker' -ErrorAction SilentlyContinue)
     Check ($markers.Count -eq 0) ('cwd hijack: no look-alike ran' + $(if ($markers.Count) { ' (' + (($markers | ForEach-Object { $_.Name }) -join ',') + ')' } else { '' }))
-    Check ((Test-Path -LiteralPath (& $received 'stop.sh')) -and $r1.Exit -eq 0 -and $r2.Exit -eq 0 -and $r3.Exit -eq 0 -and $r4.Exit -eq 0) 'cwd hijack: the real stub ran, all exit 0'
+    Check ((Ran 'stop.sh') -and -not ($runs | Where-Object { $_.Exit -ne 0 })) 'cwd hijack: the real stub ran, all exit 0'
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
