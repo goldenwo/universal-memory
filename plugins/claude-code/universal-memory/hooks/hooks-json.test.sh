@@ -98,7 +98,7 @@ while IFS="$SEP" read -r ev _matcher handler cmdwin _n _g; do
   script=$(printf '%s' "$handler" | sed -n 's|.*/hooks/\([a-z-]*\.sh\).*|\1|p')
   SCRIPTS+=("$script")
   assert_eq "J3 $ev commandWindows" "$cmdwin" \
-    "cmd /d /c \"\${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" $script"
+    "cmd /d /c call \"\${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd \" $script"
   if [ -f "$SCRIPT_DIR/$script" ]; then pass "J4 $script exists"; else fail "J4 $script exists" "missing"; fi
 done <<< "$ROWS"
 if [ -f "$LAUNCHER" ]; then pass "J4 run-hook.cmd exists"; else fail "J4 run-hook.cmd exists" "missing"; fi

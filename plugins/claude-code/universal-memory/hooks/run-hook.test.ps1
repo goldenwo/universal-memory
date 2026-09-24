@@ -7,8 +7,9 @@
 # and Codex falls back to  %COMSPEC% /C "<command>"  when a session has no shell
 # (codex-rs/hooks/src/engine/command_runner.rs). Every hooks.json commandWindows is run in all
 # three shapes, with ${CLAUDE_PLUGIN_ROOT} replaced by a fixture root containing spaces and
-# parentheses. (A root containing '&' or '^' is a documented limitation of the cmd /d /c form -
-# measured.) Stub hook scripts record the stdin bytes they receive, their $HOME, and whether a
+# parentheses. A root containing '&' is case 12, spawned directly as Codex spawns (the outer cmd
+# that feeds stdin everywhere else cannot carry an '&'); a root containing '^' fails closed
+# (measured, not tested here). Stub hook scripts record the stdin bytes they receive, their $HOME, and whether a
 # PATH tail marker survived, and print fixture stdout bytes, so byte transport, exit codes, the
 # environment the script sees and the fail-open paths are observed from outside, as Codex sees them.
 #
@@ -87,6 +88,42 @@ function Invoke-Hook([string]$Shape, [string]$Command, [string]$StdinFile, [stri
         $out = New-Object System.IO.MemoryStream
         $outCopy = $p.StandardOutput.BaseStream.CopyToAsync($out)
         $err = $p.StandardError.ReadToEndAsync()
+        if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "timed out: $Command" }
+        $outCopy.Wait()
+        return @{ Exit = $p.ExitCode; Out = $out.ToArray(); Err = $err.Result }
+    } finally {
+        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
+    }
+}
+
+# Spawn <command> exactly as Codex does (codex-rs command_runner.rs build_command): CreateProcess of
+# the shell with the command as ONE argument - PowerShell: -NoProfile -Command "<command>" with inner
+# quotes as \"; cmd: /C "<command>" raw - and no outer cmd, so a command containing '&' reaches the
+# shell intact. stdin gets the payload through the pipe, then closes.
+function Invoke-Direct([string]$Shape, [string]$Command, [string]$Cwd, [hashtable]$Vars) {
+    $saved = @{}
+    foreach ($k in $Vars.Keys) {
+        $saved[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+        [Environment]::SetEnvironmentVariable($k, $Vars[$k], 'Process')
+    }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        if ($Shape -eq 'CMD') { $psi.FileName = $env:ComSpec; $psi.Arguments = '/C "' + $Command + '"' }
+        else {
+            $psi.FileName = if ($Shape -eq 'PS') { $psExe } else { $pwshExe }
+            $psi.Arguments = '-NoProfile -Command "' + ($Command -replace '"', '\"') + '"'
+        }
+        $psi.UseShellExecute = $false
+        $psi.WorkingDirectory = $Cwd
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $out = New-Object System.IO.MemoryStream
+        $outCopy = $p.StandardOutput.BaseStream.CopyToAsync($out)
+        $err = $p.StandardError.ReadToEndAsync()
+        $p.StandardInput.BaseStream.Write($payload, 0, $payload.Length)
+        $p.StandardInput.Close()
         if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "timed out: $Command" }
         $outCopy.Wait()
         return @{ Exit = $p.ExitCode; Out = $out.ToArray(); Err = $err.Result }
@@ -176,6 +213,9 @@ try {
     #    Windows PowerShell: exit 1, the same for today's bare-bash command).
     $r = Invoke-Hook 'CMD' (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3' })
     Check ($r.Exit -eq 3) 'CMD exit code propagates exactly (3)'
+    # A user variable named ERRORLEVEL would shadow the dynamic value the launcher exits with.
+    $r = Invoke-Hook 'CMD' (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3'; ERRORLEVEL = '0' })
+    Check ($r.Exit -eq 3) 'CMD exit code propagates exactly (3) with a user variable ERRORLEVEL=0'
     foreach ($shape in ($shapes | Where-Object { $_ -ne 'CMD' })) {
         $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $tmp (With @{ STUB_EXIT = '3' })
         Check ($r.Exit -ne 0) "$shape failing script reported as failure (exit $($r.Exit))"
@@ -212,7 +252,7 @@ try {
         $logged = (Hook-LogText $fakeHome).Substring($before) -match 'session-end skip=no-git-bash'
         Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'session-end.sh')) -and $logged) "UM_GIT_BASH $label`: exit 0, empty stdout, nothing run, skip=no-git-bash"
     }
-    foreach ($value in @($realBash, ('"' + $realBash + '"'))) {
+    foreach ($value in @($realBash, ('"' + $realBash + '"'), ($realBash -replace '\\', '/'))) {
         Reset 'session-end.sh'
         $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $value })
         Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) "UM_GIT_BASH $value`: runs"
@@ -319,6 +359,48 @@ try {
             $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $sess (With @{ PATH = $entries[$label] })
             Check (($r.Exit -eq 0) -and (Ran 'stop.sh')) "PATH with $label entry ($shape): a git.exe in the session directory is not taken for Git"
         }
+    }
+    # A user variable named CD would shadow the working directory the launcher compares against.
+    foreach ($shape in $shapes) {
+        Reset 'stop.sh'
+        $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $sess (With @{ PATH = $entries['a leading ;']; CD = $tmp })
+        Check (($r.Exit -eq 0) -and (Ran 'stop.sh')) "PATH with a leading ; entry and a user variable CD ($shape): the session git.exe is still dropped"
+    }
+
+    # 12. A plugin root containing '&' - a Codex home under a profile like Tom&Jerry - spawned as
+    #     Codex spawns a hook (codex-rs command_runner.rs build_command: CreateProcess of the shell
+    #     with the command as one argument, no outer cmd). The old form cmd /d /c "<root>/..." split
+    #     at the '&' and ran <session>\Jerry\.codex\plugins\cache\um\um\1.0.0.cmd (cmd cuts the rest
+    #     at the first '/' and tries PATHEXT) in both shapes - measured. Decoys sit there; the real
+    #     stub must run instead. Two roots: a space-free one, like a real profile - PowerShell passes
+    #     a space-free path unquoted unless the command's own quotes hold a space - and one with
+    #     spaces around the '&'. stdin is not compared here: .NET may put a BOM on this pipe.
+    $ampBase = Join-Path ([System.IO.Path]::GetTempPath()) ('umamp-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $ampRoots = [ordered]@{}
+    $ampRoots['space-free'] = Join-Path $ampBase 'Users\Tom&Jerry\.codex\plugins\cache\um\um\1.0.0'
+    $ampRoots['spaced'] = Join-Path $tmp 'Users\Tom & Jerry\.codex\plugins\cache\um\um\1.0.0'
+    $ampSess = Join-Path $tmp 'amp session'
+    New-Item -ItemType Directory -Path (Join-Path $ampSess 'Jerry\.codex\plugins\cache\um\um') -Force | Out-Null
+    foreach ($ext in @('cmd', 'bat')) {
+        [System.IO.File]::WriteAllText((Join-Path $ampSess "Jerry\.codex\plugins\cache\um\um\1.0.0.$ext"), "@echo hijack> `"%~dp0decoy.marker`"`r`n")
+    }
+    try {
+        foreach ($label in $ampRoots.Keys) {
+            $ampRoot = $ampRoots[$label]
+            if ($label -eq 'space-free' -and $ampRoot.Contains(' ')) { Skip "root containing & ($label) - the temp path has a space: $ampBase"; continue }
+            New-Item -ItemType Directory -Path (Join-Path $ampRoot 'hooks') -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $fixHooks 'run-hook.cmd'), (Join-Path $fixHooks 'stop.sh') -Destination (Join-Path $ampRoot 'hooks')
+            $ampCommand = $hooksJson.hooks.Stop[0].hooks[0].commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $ampRoot)
+            foreach ($shape in $shapes) {
+                Reset 'stop.sh'
+                $r = Invoke-Direct $shape $ampCommand $ampSess $base
+                $decoys = @(Get-ChildItem -LiteralPath $ampSess -Recurse -Filter 'decoy.marker' -ErrorAction SilentlyContinue)
+                Check (($r.Exit -eq 0) -and (Test-Path -LiteralPath (Received 'stop.sh')) -and (Same-Bytes $r.Out $stdoutFixture) -and ($decoys.Count -eq 0)) "$label root containing & ($shape, spawned as Codex does): the real hook runs, no session-directory file"
+                $decoys | Remove-Item -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } finally {
+        Remove-Item -LiteralPath $ampBase -Recurse -Force -ErrorAction SilentlyContinue
     }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -6,8 +6,11 @@ rem 0.155.1: powershell.exe -NoProfile -Command, or pwsh when installed; cmd.exe
 rem when a session has no shell), resolving a bare bash from the PATH of whatever launched
 rem Codex. From PowerShell or cmd that is C:\Windows\System32\bash.exe, the WSL launcher,
 rem which exits 1 before any script runs when no WSL distro provides /bin/bash. hooks.json's
-rem commandWindows runs this file through cmd /d /c instead; it finds Git Bash itself and
-rem runs the script that the POSIX command runs.
+rem commandWindows runs this file instead, as cmd /d /c call "<root>/hooks/run-hook.cmd " x.sh:
+rem the word before the quote stops cmd stripping the quotes, and the space inside them makes
+rem PowerShell pass the path quoted, so a root containing & stays one path (measured: without
+rem both, cmd split the string at the & and ran a same-named file from the session directory).
+rem It finds Git Bash itself and runs the script that the POSIX command runs.
 rem
 rem Bytes: bash inherits Codex's stdin, stdout and stderr untouched, with no re-encoding and
 rem no byte-order mark, because nothing here redirects them.
@@ -25,6 +28,9 @@ rem internal names out of the plugin's UM_ configuration namespace. Fail open: e
 rem logs one line to ~/.um/hook.log, writes nothing to stdout (Codex hands SessionStart
 rem stdout to the model) and exits 0.
 setlocal EnableExtensions DisableDelayedExpansion
+rem A user variable named CD or ERRORLEVEL would stand in for cmd's dynamic values used below.
+set "CD="
+set "ERRORLEVEL="
 
 rem The home Git Bash would use, derived the way Git's own bin\bash.exe wrapper does: HOME,
 rem else HOMEDRIVE plus HOMEPATH when that directory exists, else USERPROFILE.
@@ -45,9 +51,9 @@ rem A wildcard name matches real files whose names differ from it, so it never p
 for %%F in ("%~dp0%RH_S%") do if exist "%%~fF" if /i "%%~nxF"=="%RH_S%" set "RH_SCRIPT=%%~fF"
 if not defined RH_SCRIPT goto skip_noscript
 
-rem --- 2. Find Git Bash. UM_GIT_BASH, when set, is the only candidate: an absolute path (X:\ or
-rem UNC; surrounding quotes are dropped) to an existing file; anything else fails open as
-rem skip=no-git-bash.
+rem --- 2. Find Git Bash. UM_GIT_BASH, when set, is the only candidate: an absolute path (X:\,
+rem X:/ or UNC; surrounding quotes are dropped) to an existing file; anything else fails open
+rem as skip=no-git-bash.
 set "RH_BASH="
 if not defined UM_GIT_BASH goto find_on_path
 set "RH_GB=%UM_GIT_BASH:"=%"
