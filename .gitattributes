@@ -44,4 +44,6 @@ server/patches/*.source.sha256 text eol=lf
 # same reason.
 
 # Batch files must be CRLF: cmd.exe mis-parses LF-only batch files (labels, long lines).
+# Keep this rule AFTER plugins/**/hooks/* above: both match hooks/run-hook.cmd and the later
+# rule wins (hooks-json.test.sh J5 checks the checkout).
 *.cmd text eol=crlf

@@ -28,7 +28,14 @@ $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.e
 $pwshCmd = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $pwshExe = if ($pwshCmd) { $pwshCmd.Source } else { $null }
 $onCi = ($env:GITHUB_ACTIONS -eq 'true')
+$taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
 $script:failures = 0
+$script:lastErr = ''
+
+# chcp (case 1) changes the console this harness shares with its children and the terminal it
+# runs in: note the code page now and restore it at the end.
+$cp0 = ''
+try { $cp0 = ((& $env:ComSpec /d /c chcp) -replace '[^0-9]', '') } catch { }
 
 # Run with Git's tool directories REMOVED from PATH (Git\cmd stays, so git.exe is found): the
 # environment of a Codex session launched from PowerShell. Then only the launcher's own PATH setup
@@ -36,8 +43,14 @@ $script:failures = 0
 # masked a PATH rewrite that silently did nothing (found by review round 4, 2026-09-23).
 $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -notmatch '\\Git\\(usr\\bin|mingw64\\bin|bin)$') }) -join ';'
 
+# A failing check also prints the stderr of the last hook run, so a red CI run explains itself.
 function Check([bool]$Condition, [string]$Name) {
-    if ($Condition) { Write-Output "PASS: $Name" } else { Write-Output "FAIL: $Name"; $script:failures++ }
+    if ($Condition) { Write-Output "PASS: $Name" } else {
+        Write-Output "FAIL: $Name"; $script:failures++
+        $e = ($script:lastErr -replace '\s+', ' ').Trim()
+        if ($e) { Write-Output ('  stderr of the last hook run: ' + $e.Substring(0, [Math]::Min(400, $e.Length))) }
+    }
+    $script:lastErr = ''
 }
 
 function Skip([string]$Name) {
@@ -88,8 +101,10 @@ function Invoke-Hook([string]$Shape, [string]$Command, [string]$StdinFile, [stri
         $out = New-Object System.IO.MemoryStream
         $outCopy = $p.StandardOutput.BaseStream.CopyToAsync($out)
         $err = $p.StandardError.ReadToEndAsync()
-        if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "timed out: $Command" }
+        # Kill the whole tree: Process.Kill ends only the outer process and leaves its children.
+        if (-not $p.WaitForExit(120000)) { try { & $taskkill /T /F /PID $p.Id *> $null } catch { }; throw "timed out: $Command" }
         $outCopy.Wait()
+        $script:lastErr = $err.Result
         return @{ Exit = $p.ExitCode; Out = $out.ToArray(); Err = $err.Result }
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
@@ -124,8 +139,10 @@ function Invoke-Direct([string]$Shape, [string]$Command, [string]$Cwd, [hashtabl
         $err = $p.StandardError.ReadToEndAsync()
         $p.StandardInput.BaseStream.Write($payload, 0, $payload.Length)
         $p.StandardInput.Close()
-        if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "timed out: $Command" }
+        # Kill the whole tree: Process.Kill ends only the outer process and leaves its children.
+        if (-not $p.WaitForExit(120000)) { try { & $taskkill /T /F /PID $p.Id *> $null } catch { }; throw "timed out: $Command" }
         $outCopy.Wait()
+        $script:lastErr = $err.Result
         return @{ Exit = $p.ExitCode; Out = $out.ToArray(); Err = $err.Result }
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
@@ -222,12 +239,16 @@ try {
     }
 
     # 3. Shape-check refusals (launcher invoked directly): exit 0, skip, nothing run, empty stdout.
+    #    Each must be refused by the shape check itself (skip=unknown-script), not only by the later
+    #    lookup that finds no such file (skip=no-script) - otherwise deleting a shape guard stays
+    #    green (review of 2026-09-24).
     foreach ($bad in @('..\stop.sh', 'sub/stop.sh', 'x.txt', 'c:stop.sh')) {
         Reset 'stop.sh'
+        $before = (Hook-LogText $fakeHome).Length
         $r = Invoke-Hook 'CMD' ($launcher + '"' + $bad + '"') $payloadFile $tmp $base
-        Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'stop.sh'))) "refuse '$bad': exit 0, empty stdout, nothing run"
+        $logged = (Hook-LogText $fakeHome).Substring($before) -match 'run-hook skip=unknown-script'
+        Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'stop.sh')) -and $logged) "refuse '$bad': exit 0, empty stdout, nothing run, skip=unknown-script"
     }
-    Check ((Hook-LogText $fakeHome) -match 'run-hook skip=unknown-script') 'refusals: skip=unknown-script logged'
 
     # 4. Well-formed names that match no single script: fail open with skip=no-script.
     foreach ($missing in @('absent.sh', '*.sh')) {
@@ -235,16 +256,32 @@ try {
         Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0)) "no script '$missing': exit 0, empty stdout"
     }
     Check ((Hook-LogText $fakeHome) -match 'absent skip=no-script') 'no script: skip=no-script logged'
-    # The skip line is lib/um-api.sh's um_log grammar: '<yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>'.
-    Check ((Hook-LogText $fakeHome) -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} absent skip=no-script$') 'skip line: <yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>'
+    # The skip line is lib/um-api.sh's um_log grammar, '<yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>':
+    # um_log itself writes a line under a scratch HOME, and both lines must match one pattern, so a
+    # change to either writer's format fails here.
+    $gitBash = Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'
+    $umHome = Join-Path $tmp 'um_log home'
+    New-Item -ItemType Directory -Path $umHome -Force | Out-Null
+    $umApi = (Join-Path $here 'lib\um-api.sh') -replace '\\', '/'
+    $savedHome = $env:HOME
+    try { $env:HOME = $umHome; & $gitBash -c "source '$umApi' && UM_HOOK_NAME=absent um_log skip=no-script" *> $null } catch { } finally { $env:HOME = $savedHome }
+    $umLog = Join-Path $umHome '.um\hook.log'
+    $umLine = if (Test-Path -LiteralPath $umLog) { [System.IO.File]::ReadAllText($umLog) } else { '' }
+    $grammar = '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} absent skip=no-script$'
+    Check (((Hook-LogText $fakeHome) -match $grammar) -and ($umLine -match $grammar)) "skip line: <yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>, the pattern um_log writes (um_log wrote '$($umLine.Trim())')"
 
     # 5. UM_GIT_BASH is exclusive and must be an absolute path to a file: a missing file, a
-    #    directory, a relative path and a drive-relative path (run from the directory it would
-    #    resolve against, so accepting it would run Git) all fail open with skip=no-git-bash; a
-    #    real path runs, with or without surrounding quotes.
+    #    directory, a relative path and a drive-relative path (each relative form run from the
+    #    directory it would resolve against, so accepting it would run Git), and WSL's launcher
+    #    System32\bash.exe (what `where bash` names from cmd; where WSL is absent the missing file is
+    #    refused instead) all fail open with skip=no-git-bash. A real path runs, with or without
+    #    surrounding quotes, with forward slashes, and as Git's inner usr\bin\bash.exe - which must
+    #    still get Git's tool directories (the stub needs cat), not run bare (review of 2026-09-24).
     $realBash = Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'
+    $innerBash = Join-Path (Split-Path -Parent (Split-Path -Parent $realBash)) 'usr\bin\bash.exe'
     $badValues = [ordered]@{ 'missing' = @((Join-Path $empty 'bash.exe'), $tmp); 'a directory' = @((Split-Path -Parent (Split-Path -Parent $realBash)), $tmp)
-                             'relative' = @('Git\bin\bash.exe', $tmp); 'drive-relative' = @(($realBash.Substring(0, 2) + 'Git\bin\bash.exe'), ${env:ProgramFiles}) }
+                             'relative' = @('Git\bin\bash.exe', ${env:ProgramFiles}); 'drive-relative' = @(($realBash.Substring(0, 2) + 'Git\bin\bash.exe'), ${env:ProgramFiles})
+                             'WSL launcher' = @((Join-Path $env:SystemRoot 'System32\bash.exe'), $tmp) }
     foreach ($label in $badValues.Keys) {
         Reset 'session-end.sh'
         $before = (Hook-LogText $fakeHome).Length
@@ -252,23 +289,28 @@ try {
         $logged = (Hook-LogText $fakeHome).Substring($before) -match 'session-end skip=no-git-bash'
         Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'session-end.sh')) -and $logged) "UM_GIT_BASH $label`: exit 0, empty stdout, nothing run, skip=no-git-bash"
     }
-    foreach ($value in @($realBash, ('"' + $realBash + '"'), ($realBash -replace '\\', '/'))) {
+    foreach ($value in @($realBash, ('"' + $realBash + '"'), ($realBash -replace '\\', '/'), $innerBash)) {
         Reset 'session-end.sh'
         $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $value })
         Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) "UM_GIT_BASH $value`: runs"
     }
 
-    # 6. Walk-up precedence: a fake Git layout whose bin\bash.exe is a marker program. The walk
-    #    from git.exe must find it before the registry and ProgramFiles fallbacks, which would
-    #    find the machine's real Git. A freshly compiled, unsigned executable cannot run where
-    #    Device Guard / Smart App Control enforces (measured on a dev machine 2026-09-22).
+    # 6. Walk-up precedence: a fake Git for Windows layout whose bin\bash.exe and usr\bin\bash.exe
+    #    are a marker program (the walk-up only accepts a layout with both). The walk from git.exe
+    #    must find it before the registry and ProgramFiles fallbacks, which would find the
+    #    machine's real Git. A freshly compiled, unsigned executable cannot run where Device Guard
+    #    / Smart App Control enforces (measured on a dev machine 2026-09-22), and that policy judges
+    #    each file on its own: the probe runs usr\bin\bash.exe, the copy the fast path starts, and a
+    #    run the policy blocks anyway is a SKIP here (on CI, where there is no such policy, a SKIP
+    #    fails the job).
     $fakeGit = Join-Path $tmp 'G'
-    foreach ($d in @('cmd', 'bin', 'mingw64\bin')) { New-Item -ItemType Directory -Path (Join-Path $fakeGit $d) -Force | Out-Null }
-    New-MarkerExe (Join-Path $fakeGit 'bin\bash.exe')
+    foreach ($d in @('cmd', 'bin', 'mingw64\bin', 'usr\bin')) { New-Item -ItemType Directory -Path (Join-Path $fakeGit $d) -Force | Out-Null }
+    New-MarkerExe (Join-Path $fakeGit 'usr\bin\bash.exe')
+    Copy-Item -LiteralPath (Join-Path $fakeGit 'usr\bin\bash.exe') -Destination (Join-Path $fakeGit 'bin\bash.exe')
     foreach ($d in @('cmd', 'mingw64\bin')) { [System.IO.File]::WriteAllBytes((Join-Path $fakeGit "$d\git.exe"), [byte[]]@()) }
     $probe = Join-Path $tmp 'marker-probe.txt'
     $env:MARKER_FILE = $probe
-    try { & (Join-Path $fakeGit 'bin\bash.exe') 'probe' 2>$null | Out-Null } catch { }
+    try { & (Join-Path $fakeGit 'usr\bin\bash.exe') 'probe' 2>$null | Out-Null } catch { }
     Remove-Item Env:\MARKER_FILE
     if (-not (Test-Path -LiteralPath $probe)) {
         Skip 'walk-up precedence (x2) - this machine blocks compiled test executables (Device Guard / Smart App Control)'
@@ -277,6 +319,7 @@ try {
             $marker = Join-Path $tmp "walk-$($d -replace '\\','-').txt"
             $path = (Join-Path $fakeGit $d) + ';' + $env:SystemRoot + '\System32;' + $env:SystemRoot + '\System32\WindowsPowerShell\v1.0'
             $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With @{ MARKER_FILE = $marker; PATH = $path })
+            if (-not (Test-Path -LiteralPath $marker) -and ($r.Err -match 'Device Guard')) { Skip "walk-up from Git\$d - the policy blocked the marker program this time"; $script:lastErr = ''; continue }
             Check ((Test-Path -LiteralPath $marker) -and ([System.IO.File]::ReadAllText($marker) -like '*/hooks/stop.sh')) "walk-up from Git\$d wins"
         }
     }
@@ -292,12 +335,29 @@ try {
     $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With $homeVars)
     $seen = if (Test-Path -LiteralPath (Join-Path $tmp 'home-stop.sh.txt')) { [System.IO.File]::ReadAllText((Join-Path $tmp 'home-stop.sh.txt')).Trim() } else { '' }
     Check (($r.Exit -eq 0) -and ($seen.TrimEnd('\') -ieq $altHome.TrimEnd('\'))) "HOME unset: the script's HOME is HOMEDRIVE+HOMEPATH (saw '$seen')"
+    # Git's wrapper ignores a HOMEDRIVE+HOMEPATH naming System32 (a SYSTEM or service context) and
+    # takes USERPROFILE, and needs no HOMEDRIVE (git-wrapper.c; review of 2026-09-24). USERPROFILE
+    # points at a scratch directory here, so nothing is written to the real profile.
+    $profileHome = Join-Path $tmp 'profile home'
+    New-Item -ItemType Directory -Path $profileHome -Force | Out-Null
+    $sys32 = [Environment]::SystemDirectory
+    $sysVars = @{ HOME = $null; HOMEDRIVE = $sys32.Substring(0, 2); HOMEPATH = $sys32.Substring(2); USERPROFILE = $profileHome }
+    $r = Invoke-Hook 'CMD' ($launcher + '"absent.sh"') $payloadFile $tmp (With $sysVars)
+    Check ((Hook-LogText $profileHome) -match 'absent skip=no-script') 'HOMEDRIVE+HOMEPATH = System32: skip log under USERPROFILE'
+    foreach ($case in @(@('HOMEDRIVE+HOMEPATH = System32', $sysVars, $profileHome), @('HOMEPATH without HOMEDRIVE', @{ HOME = $null; HOMEDRIVE = $null; HOMEPATH = $altHome }, $altHome))) {
+        Reset 'stop.sh'
+        $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With $case[1])
+        $seen = if (Test-Path -LiteralPath (Join-Path $tmp 'home-stop.sh.txt')) { [System.IO.File]::ReadAllText((Join-Path $tmp 'home-stop.sh.txt')).Trim() } else { '' }
+        Check (($r.Exit -eq 0) -and ($seen.TrimEnd('\') -ieq $case[2].TrimEnd('\'))) "$($case[0]): the script's HOME is $($case[2]) (saw '$seen')"
+    }
 
     # 8. Long PATH: cmd cannot rewrite a PATH near or past its 8191-character limit, so the launcher
     #    hands such PATHs to Git's own wrapper. The script must run with the full PATH (tail kept).
-    #    8170: cmd can still expand it and the rewritten PATH passes 8191 characters - which a
-    #    %-expanded rewrite would fail with "The input line is too long" and the delayed-expansion
-    #    rewrite handles. 9000: past what cmd can expand at all - the guard hands it to the wrapper.
+    #    8170: cmd can still expand it, but a rewrite would pass 8191 characters, where a
+    #    %-expanded set fails with "The input line is too long" and a delayed-expansion set silently
+    #    does nothing (measured) - the index-7000 guard (RH_P7) hands it to the wrapper, and that
+    #    guard is what this case pins. 9000: cmd expands the PATH to nothing (RH_P0 is empty), and
+    #    that guard hands it to the wrapper.
     $tail = 'C:\um-path-tail'
     foreach ($target in @(8170, 9000)) {
         $long = $env:PATH; $i = 0
@@ -341,13 +401,16 @@ try {
 
     # 11. An empty PATH entry (a leading ';' or ';;') or a '.' entry makes cmd's PATH lookup search
     #     the working directory too (measured). A git.exe planted in the session directory, with a
-    #     bin\bash.exe in its parent where the walk-up would look, must not be taken for Git. The
-    #     planted bash.exe is a DIRECTORY: the walk-up's existence check accepts it and running it
-    #     fails at once. (An empty file was held ~3 s by Smart App Control and once hung past the
-    #     harness timeout - measured - so a wrong pick must not depend on file contents.)
+    #     whole fake Git for Windows layout in its parent where the walk-up would look (bin\bash.exe
+    #     AND usr\bin\bash.exe, so the walk-up's layout check does not reject it on its own - a
+    #     partial decoy let the working-directory drop be deleted unnoticed, caught by a mutation
+    #     control on 2026-09-24), must not be taken for Git. The planted bash.exe files are
+    #     DIRECTORIES: existence checks accept them and running one fails at once. (An empty file was
+    #     held ~3 s by Smart App Control and once hung past the harness timeout - measured - so a
+    #     wrong pick must not depend on file contents.)
     $trap = Join-Path $tmp 'trap'
     $sess = Join-Path $trap 'session'
-    New-Item -ItemType Directory -Path $sess, (Join-Path $trap 'bin\bash.exe') -Force | Out-Null
+    New-Item -ItemType Directory -Path $sess, (Join-Path $trap 'bin\bash.exe'), (Join-Path $trap 'usr\bin\bash.exe') -Force | Out-Null
     [System.IO.File]::WriteAllBytes((Join-Path $sess 'git.exe'), [byte[]]@())
     $entries = [ordered]@{}
     $entries['a leading ;'] = ';' + $env:PATH
@@ -402,8 +465,22 @@ try {
     } finally {
         Remove-Item -LiteralPath $ampBase -Recurse -Force -ErrorAction SilentlyContinue
     }
+
+    # 13. A folder named bin that holds git.exe and bash.exe side by side (MSYS2's usr\bin, Cygwin's
+    #     bin) ahead of Git on PATH makes the walk-up resolve to that folder itself. It is not a Git
+    #     for Windows layout, so it must be passed over and the registry / fixed roots find the real
+    #     Git (review of 2026-09-24). The decoy bash.exe is a directory: taking it fails at once.
+    $msys = Join-Path $tmp 'msys64'
+    New-Item -ItemType Directory -Path (Join-Path $msys 'usr\bin\bash.exe') -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $msys 'usr\bin\git.exe'), [byte[]]@())
+    foreach ($shape in $shapes) {
+        Reset 'stop.sh'
+        $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $tmp (With @{ PATH = ((Join-Path $msys 'usr\bin') + ';' + $env:PATH) })
+        Check (($r.Exit -eq 0) -and (Ran 'stop.sh')) "git.exe and bash.exe side by side ahead on PATH ($shape): Git for Windows still runs the hook"
+    }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    if ($cp0) { try { & $env:ComSpec /d /c "chcp $cp0 >nul" } catch { } }
 }
 
 if ($script:failures -gt 0) { Write-Output "$($script:failures) FAILED"; exit 1 }

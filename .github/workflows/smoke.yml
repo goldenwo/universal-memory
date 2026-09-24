@@ -655,9 +655,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # shell: powershell is Windows PowerShell 5.1 already; the script runs in that process
+      # (its exit code becomes the step's), not in a second powershell.exe.
       - name: hooks/run-hook.test.ps1
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File plugins/claude-code/universal-memory/hooks/run-hook.test.ps1
+        run: ./plugins/claude-code/universal-memory/hooks/run-hook.test.ps1
 
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})

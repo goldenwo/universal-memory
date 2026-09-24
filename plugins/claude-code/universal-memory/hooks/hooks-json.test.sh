@@ -22,8 +22,10 @@
 #       LF and only the *.cmd rule in .gitattributes restores CRLF on checkout; cmd
 #       reading an LF copy can lose labels depending on byte offsets (an LF copy of
 #       an earlier revision: "cannot find the batch label specified", exit 1, no skip
-#       line - measured). Checked here, on the ubuntu job, because a Windows runner's
-#       core.autocrlf would restore CRLF even without the rule.
+#       line - measured). What keeps it CRLF is rule ORDER: .gitattributes' earlier
+#       plugins/**/hooks/* text eol=lf also matches this file, and the later *.cmd rule
+#       wins only because it comes after it (without it, a checkout is LF on every
+#       platform, core.autocrlf or not - measured).
 
 set -uo pipefail
 
@@ -94,10 +96,8 @@ assert_eq "J2 SessionEnd handler" "$(field SessionEnd 3)" \
   '{"type":"command","command":"bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh\"","async":false}'
 
 # J3 + J4
-SCRIPTS=()
 while IFS="$SEP" read -r ev _matcher handler cmdwin _n _g; do
   script=$(printf '%s' "$handler" | sed -n 's|.*/hooks/\([a-z-]*\.sh\).*|\1|p')
-  SCRIPTS+=("$script")
   assert_eq "J3 $ev commandWindows" "$cmdwin" \
     "cmd /d /c call \"\${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd \" $script"
   if [ -f "$SCRIPT_DIR/$script" ]; then pass "J4 $script exists"; else fail "J4 $script exists" "missing"; fi
