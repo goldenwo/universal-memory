@@ -17,6 +17,12 @@
 #   J3. commandWindows routes the SAME script through run-hook.cmd in the one
 #       pinned form (Windows trust — changing it re-prompts every Windows user).
 #   J4. Every script named exists, and so does run-hook.cmd.
+#   J5. run-hook.cmd is checked out with CRLF line endings, ASCII only. Git stores it
+#       LF and only the *.cmd rule in .gitattributes restores CRLF on checkout; cmd
+#       reading an LF copy can lose labels depending on byte offsets (an LF copy of
+#       an earlier revision: "cannot find the batch label specified", exit 1, no skip
+#       line - measured). Checked here, on the ubuntu job, because a Windows runner's
+#       core.autocrlf would restore CRLF even without the rule.
 
 set -uo pipefail
 
@@ -96,6 +102,14 @@ while IFS="$SEP" read -r ev _matcher handler cmdwin _n _g; do
   if [ -f "$SCRIPT_DIR/$script" ]; then pass "J4 $script exists"; else fail "J4 $script exists" "missing"; fi
 done <<< "$ROWS"
 if [ -f "$LAUNCHER" ]; then pass "J4 run-hook.cmd exists"; else fail "J4 run-hook.cmd exists" "missing"; fi
+
+# J5 - bytes counted with tr: Git for Windows' grep strips CRs before matching, so a
+# grep-based count passes on an LF copy there (measured).
+crs=$(( $(tr -cd '\r' < "$LAUNCHER" | wc -c) ))
+lfs=$(( $(tr -cd '\n' < "$LAUNCHER" | wc -c) ))
+if [ "$lfs" -gt 0 ] && [ "$crs" -eq "$lfs" ]; then pass "J5 run-hook.cmd is CRLF"
+else fail "J5 run-hook.cmd is CRLF" "$crs CR and $lfs LF bytes"; fi
+assert_eq "J5 run-hook.cmd is ASCII" "$(( $(LC_ALL=C tr -d '\000-\177' < "$LAUNCHER" | wc -c) ))" "0"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

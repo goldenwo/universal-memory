@@ -13,7 +13,9 @@ rem Bytes: bash inherits Codex's stdin, stdout and stderr untouched, with no re-
 rem no byte-order mark, because nothing here redirects them.
 rem
 rem TRUST: Codex hashes the commandWindows string for hook trust, not this file. Change this
-rem file freely; changing that string makes every Windows user re-approve the hooks.
+rem file freely; changing that string makes every Windows user re-approve the hooks. The
+rem string assumes a PowerShell or cmd session shell (measured): Git Bash as the session
+rem shell would rewrite its /d /c as paths, and cmd would then read the hook input as commands.
 rem
 rem Editing rules: keep every path expansion inside quotes (paths may contain ampersands and
 rem parentheses), never wrap path expansions in parenthesized blocks, call external programs
@@ -43,21 +45,25 @@ rem A wildcard name matches real files whose names differ from it, so it never p
 for %%F in ("%~dp0%RH_S%") do if exist "%%~fF" if /i "%%~nxF"=="%RH_S%" set "RH_SCRIPT=%%~fF"
 if not defined RH_SCRIPT goto skip_noscript
 
-rem --- 2. Find Git Bash. UM_GIT_BASH, when set, is the only candidate: an absolute path (drive
-rem or UNC) to an existing file; anything else fails open as skip=no-git-bash.
+rem --- 2. Find Git Bash. UM_GIT_BASH, when set, is the only candidate: an absolute path (X:\ or
+rem UNC; surrounding quotes are dropped) to an existing file; anything else fails open as
+rem skip=no-git-bash.
 set "RH_BASH="
 if not defined UM_GIT_BASH goto find_on_path
-set "RH_GB=%UM_GIT_BASH%"
-if not "%RH_GB:~1,1%"==":" if not "%RH_GB:~0,2%"=="\\" goto check_bash
+set "RH_GB=%UM_GIT_BASH:"=%"
+if not defined RH_GB goto check_bash
+if not "%RH_GB:~1,2%"==":\" if not "%RH_GB:~1,2%"==":/" if not "%RH_GB:~0,2%"=="\\" goto check_bash
 if exist "%RH_GB%\" goto check_bash
 if exist "%RH_GB%" set "RH_BASH=%RH_GB%"
 goto check_bash
 
 :find_on_path
-rem The PATH modifier searches PATH only, never the working directory. Two fixed ancestor
-rem checks from git.exe cover Git\cmd, Git\bin and Git\mingw64\bin.
+rem The PATH modifier also searches the working directory when PATH has an empty entry (a
+rem leading ";" or ";;") or a "." entry (measured), so a git.exe found there is dropped. Two
+rem fixed ancestor checks from git.exe cover Git\cmd, Git\bin and Git\mingw64\bin.
 set "RH_GITEXE="
 for %%I in (git.exe) do set "RH_GITEXE=%%~$PATH:I"
+if defined RH_GITEXE for %%F in ("%RH_GITEXE%\..") do if /i "%%~fF"=="%CD%" set "RH_GITEXE="
 if not defined RH_GITEXE goto find_in_registry
 for %%D in ("%RH_GITEXE%\..\..") do if exist "%%~fD\bin\bash.exe" set "RH_BASH=%%~fD\bin\bash.exe"
 if defined RH_BASH goto check_bash
@@ -113,6 +119,7 @@ goto log_skip
 set "RH_SKIP=no-git-bash"
 :log_skip
 rem Log under the home Git Bash would use (RH_HOME, above). PowerShell only starts on this
-rem path, where the capture is already lost, to get a locale-independent timestamp.
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$h = 'run-hook'; if ($env:RH_SKIP -ne 'unknown-script') { $h = [IO.Path]::GetFileNameWithoutExtension($env:RH_S) }; $d = Join-Path $env:RH_HOME '.um'; [void][IO.Directory]::CreateDirectory($d); [IO.File]::AppendAllText((Join-Path $d 'hook.log'), ((Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') + ' ' + $h + ' skip=' + $env:RH_SKIP + [char]10), (New-Object Text.UTF8Encoding($false)))" <nul >nul 2>nul
+rem path, where the capture is already lost. The timestamp uses the invariant culture: in a
+rem .NET format string ":" is the regional time separator ("." under fi-FI, measured).
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$h = 'run-hook'; if ($env:RH_SKIP -ne 'unknown-script') { $h = [IO.Path]::GetFileNameWithoutExtension($env:RH_S) }; $d = Join-Path $env:RH_HOME '.um'; [void][IO.Directory]::CreateDirectory($d); [IO.File]::AppendAllText((Join-Path $d 'hook.log'), ([DateTime]::Now.ToString('yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) + ' ' + $h + ' skip=' + $env:RH_SKIP + [char]10), (New-Object Text.UTF8Encoding($false)))" <nul >nul 2>nul
 exit /b 0

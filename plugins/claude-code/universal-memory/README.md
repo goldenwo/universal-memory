@@ -97,14 +97,17 @@ Codex runs these hooks through `hooks/run-hook.cmd` on Windows (`commandWindows`
 `bash` on PATH is usually `C:\Windows\System32\bash.exe`, the WSL launcher, which cannot run these
 scripts. The launcher adds a few tens of milliseconds to Codex's one-second SessionEnd budget and
 passes the hook payload through untouched. If Git lives somewhere the launcher cannot find (a
-portable or scoop install), set `UM_GIT_BASH` to the absolute path of its `bin\bash.exe`; a launcher
-that finds no Git Bash logs `skip=no-git-bash` to `~/.um/hook.log` and lets the session continue.
-A Codex home whose path contains `&` or `^` is not supported (move it with `CODEX_HOME`).
+portable or scoop install), set `UM_GIT_BASH` to the absolute path of its `bin\bash.exe`; when set,
+it is the only place the launcher looks. A launcher that finds no Git Bash logs `skip=no-git-bash`
+to `~/.um/hook.log` and lets the session continue. A Codex home whose path contains `&` or `^` is
+not supported (move it with `CODEX_HOME`).
 
 Codex runs only hooks you have approved, and asks again whenever a hook's command changes. The
 update that introduced this launcher changed the Windows command of all four hooks, so approve the
-universal-memory hooks once when Codex lists them at startup; until you do, Codex runs none of
-them. macOS and Linux are unaffected.
+universal-memory hooks once when interactive `codex` lists them at startup (if other hooks are
+waiting too, the review option approves them one at a time); until you do, Codex runs none of
+them. `codex exec` never asks, so if you only use `codex exec`, open `codex` once to approve.
+macOS and Linux are unaffected.
 
 ## The `um` CLI
 

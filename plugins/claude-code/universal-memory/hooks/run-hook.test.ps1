@@ -195,21 +195,28 @@ try {
         Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0)) "no script '$missing': exit 0, empty stdout"
     }
     Check ((Hook-LogText $fakeHome) -match 'absent skip=no-script') 'no script: skip=no-script logged'
+    # The skip line is lib/um-api.sh's um_log grammar: '<yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>'.
+    Check ((Hook-LogText $fakeHome) -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} absent skip=no-script$') 'skip line: <yyyy-MM-ddTHH:mm:ss> <hook> skip=<reason>'
 
     # 5. UM_GIT_BASH is exclusive and must be an absolute path to a file: a missing file, a
-    #    directory and a relative path all fail open with skip=no-git-bash; a real path runs.
+    #    directory, a relative path and a drive-relative path (run from the directory it would
+    #    resolve against, so accepting it would run Git) all fail open with skip=no-git-bash; a
+    #    real path runs, with or without surrounding quotes.
     $realBash = Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'
-    $badValues = [ordered]@{ 'missing' = (Join-Path $empty 'bash.exe'); 'a directory' = (Split-Path -Parent (Split-Path -Parent $realBash)); 'relative' = 'Git\bin\bash.exe' }
+    $badValues = [ordered]@{ 'missing' = @((Join-Path $empty 'bash.exe'), $tmp); 'a directory' = @((Split-Path -Parent (Split-Path -Parent $realBash)), $tmp)
+                             'relative' = @('Git\bin\bash.exe', $tmp); 'drive-relative' = @(($realBash.Substring(0, 2) + 'Git\bin\bash.exe'), ${env:ProgramFiles}) }
     foreach ($label in $badValues.Keys) {
         Reset 'session-end.sh'
         $before = (Hook-LogText $fakeHome).Length
-        $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $badValues[$label] })
+        $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $badValues[$label][1] (With @{ UM_GIT_BASH = $badValues[$label][0] })
         $logged = (Hook-LogText $fakeHome).Substring($before) -match 'session-end skip=no-git-bash'
         Check (($r.Exit -eq 0) -and ($r.Out.Length -eq 0) -and -not (Test-Path -LiteralPath (Received 'session-end.sh')) -and $logged) "UM_GIT_BASH $label`: exit 0, empty stdout, nothing run, skip=no-git-bash"
     }
-    Reset 'session-end.sh'
-    $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $realBash })
-    Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) 'UM_GIT_BASH real: runs'
+    foreach ($value in @($realBash, ('"' + $realBash + '"'))) {
+        Reset 'session-end.sh'
+        $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $value })
+        Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) "UM_GIT_BASH $value`: runs"
+    }
 
     # 6. Walk-up precedence: a fake Git layout whose bin\bash.exe is a marker program. The walk
     #    from git.exe must find it before the registry and ProgramFiles fallbacks, which would
@@ -291,6 +298,28 @@ try {
     $markers = @(Get-ChildItem -LiteralPath $evil -Filter '*.marker' -ErrorAction SilentlyContinue)
     Check ($markers.Count -eq 0) ('cwd hijack: no look-alike ran' + $(if ($markers.Count) { ' (' + (($markers | ForEach-Object { $_.Name }) -join ',') + ')' } else { '' }))
     Check ((Ran 'stop.sh') -and -not ($runs | Where-Object { $_.Exit -ne 0 })) 'cwd hijack: the real stub ran, all exit 0'
+
+    # 11. An empty PATH entry (a leading ';' or ';;') or a '.' entry makes cmd's PATH lookup search
+    #     the working directory too (measured). A git.exe planted in the session directory, with a
+    #     bin\bash.exe in its parent where the walk-up would look, must not be taken for Git. The
+    #     planted bash.exe is a DIRECTORY: the walk-up's existence check accepts it and running it
+    #     fails at once. (An empty file was held ~3 s by Smart App Control and once hung past the
+    #     harness timeout - measured - so a wrong pick must not depend on file contents.)
+    $trap = Join-Path $tmp 'trap'
+    $sess = Join-Path $trap 'session'
+    New-Item -ItemType Directory -Path $sess, (Join-Path $trap 'bin\bash.exe') -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $sess 'git.exe'), [byte[]]@())
+    $entries = [ordered]@{}
+    $entries['a leading ;'] = ';' + $env:PATH
+    $entries['an empty ;;'] = $env:SystemRoot + '\System32;;' + $env:PATH
+    $entries['a .'] = '.;' + $env:PATH
+    foreach ($label in $entries.Keys) {
+        foreach ($shape in $shapes) {
+            Reset 'stop.sh'
+            $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $sess (With @{ PATH = $entries[$label] })
+            Check (($r.Exit -eq 0) -and (Ran 'stop.sh')) "PATH with $label entry ($shape): a git.exe in the session directory is not taken for Git"
+        }
+    }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
