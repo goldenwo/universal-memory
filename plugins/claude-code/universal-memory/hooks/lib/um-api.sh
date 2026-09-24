@@ -186,6 +186,9 @@ _um_api_request() {
 #   `<ts> session-start state skip=<reason> cwd=<path>`
 # (Formerly cited "spec §5" — that doc is archived; this comment is the
 # living definition.)
+# Second writer, same grammar and timestamp format: hooks/run-hook.cmd (Codex on
+# Windows, #313) appends `<ts> <hook> skip=no-script|no-git-bash` and
+# `<ts> run-hook skip=unknown-script` when it cannot start a hook.
 # Hook name comes from $UM_HOOK_NAME (set it before sourcing/calling) else the
 # executing script's basename. Best-effort: never fails the caller.
 um_log() {

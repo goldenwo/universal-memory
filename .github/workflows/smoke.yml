@@ -642,6 +642,25 @@ jobs:
       - name: Reaction-producer pure-helper tests (#201 PR 2)
         run: node --test plugins/openclaw/reaction-producer/lib.test.mjs
 
+  # #313: on Windows, Codex runs every hook through hooks/run-hook.cmd (hooks.json
+  # commandWindows). That launcher is Windows-only, so the ubuntu job above cannot
+  # exercise it; this job runs every commandWindows in all three Codex hook shapes —
+  # powershell -NoProfile -Command (measured default), pwsh -NoProfile -Command (chosen when
+  # installed; the runner has it) and cmd /C (no-shell fallback) — with the runner's Git for
+  # Windows, driven by a Windows PowerShell 5.1 test script. A SKIP fails the job here: the
+  # runner has pwsh and no Device Guard, so every case must actually run.
+  hook-tests-windows:
+    name: Plugin hook launcher (windows)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # shell: powershell is Windows PowerShell 5.1 already; the script runs in that process
+      # (its exit code becomes the step's), not in a second powershell.exe.
+      - name: hooks/run-hook.test.ps1
+        shell: powershell
+        run: ./plugins/claude-code/universal-memory/hooks/run-hook.test.ps1
+
   installer-test:
     name: Installer cross-platform (${{ matrix.os }})
     needs: [guard, smoke]

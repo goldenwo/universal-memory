@@ -42,3 +42,8 @@ server/patches/*.source.sha256 text eol=lf
 # tree), not a rule dropped on top of a tree that does not already satisfy it.
 # cf. f2c178f, which reverted an out-of-scope line-ending normalization for the
 # same reason.
+
+# Batch files must be CRLF: cmd.exe mis-parses LF-only batch files (labels, long lines).
+# Keep this rule AFTER plugins/**/hooks/* above: both match hooks/run-hook.cmd and the later
+# rule wins (hooks-json.test.sh J5 checks the checkout).
+*.cmd text eol=crlf
