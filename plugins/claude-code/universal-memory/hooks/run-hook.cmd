@@ -10,7 +10,9 @@ rem commandWindows runs this file instead, as cmd /d /c call "<root>/hooks/run-h
 rem the word before the quote stops cmd stripping the quotes, and the space inside them makes
 rem PowerShell pass the path quoted, so a root containing & stays one path (measured: without
 rem both, cmd split the string at the & and ran a same-named file from the session directory).
-rem It finds Git Bash itself and runs the script that the POSIX command runs.
+rem /d skips any cmd AutoRun the user configured, which could otherwise print into
+rem SessionStart's stdout. This file finds Git Bash itself and runs the script that the
+rem POSIX command runs.
 rem
 rem Bytes: bash inherits Codex's stdin, stdout and stderr untouched, with no re-encoding and
 rem no byte-order mark, because nothing here redirects them.

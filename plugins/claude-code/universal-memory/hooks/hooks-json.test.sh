@@ -7,7 +7,8 @@
 # Why these pins exist: Codex only runs a hook the user has trusted, and the trust
 # hash covers the handler as Codex normalizes it — event, matcher, the SELECTED
 # command (command on macOS/Linux, commandWindows on Windows), async, timeout,
-# statusMessage (openai/codex codex-rs/hooks/src/engine/discovery.rs hook_hash).
+# statusMessage, additionalContextLimit (openai/codex codex-rs/hooks/src/engine/
+# discovery.rs, HookHandlerConfig at rust-v0.155.1).
 # Any edit to those fields silently un-trusts the hook for every Codex user on that
 # platform until they re-approve it, and until then Codex runs none of it. Change
 # the scripts or run-hook.cmd instead; neither is part of the hash.
