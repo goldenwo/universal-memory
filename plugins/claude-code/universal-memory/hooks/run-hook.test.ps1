@@ -206,9 +206,9 @@ $launcher = '"' + (Join-Path $fixHooks 'run-hook.cmd') + '" '
 function Received([string]$s) { Join-Path $tmp "stdin-$s.bin" }
 function Ran([string]$s) { $f = Received $s; (Test-Path -LiteralPath $f) -and (Same-Bytes ([System.IO.File]::ReadAllBytes($f)) $payload) }
 function Reset([string]$s) { foreach ($k in 'stdin', 'home', 'tail') { Remove-Item -LiteralPath (Join-Path $tmp "$k-$s.$(if ($k -eq 'stdin') { 'bin' } else { 'txt' })") -ErrorAction SilentlyContinue } }
-function CommandFor([string]$Event) {
+function CommandFor([string]$Event, [string]$Root = $tmp) {
     $h = $hooksJson.hooks.$Event[0].hooks[0]
-    return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $tmp)
+    return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $Root)
 }
 $shapes = @('PS', 'CMD')
 if ($pwshExe) { $shapes += 'PWSH' } else { Skip 'PWSH shape - pwsh is not installed here' }
@@ -579,7 +579,7 @@ server.serve_forever()
             # is the ANSI code page, and a Python whose default became UTF-8 mode would pass on its own.
             $enc = Invoke-Hook 'CMD' ('"' + $pyCmd + '" "' + $encProbe + '"') $payload329 $tmp $vars329
             Write-Output ('NOTE: with PYTHONUTF8 and PYTHONIOENCODING removed, ' + $pyCmd + ' reads a redirected stdin as ' + ([System.Text.Encoding]::ASCII.GetString($enc.Out).Trim()) + ' (the #329 case discriminates only while that is not utf-8)')
-            $r = Invoke-Hook 'PS' ($hooksJson.hooks.SessionStart[0].hooks[0].commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $pluginRoot)) $payload329 $proj $vars329
+            $r = Invoke-Hook 'PS' (CommandFor 'SessionStart' $pluginRoot) $payload329 $proj $vars329
             $served = if (Test-Path -LiteralPath $serverLog) { ([System.IO.File]::ReadAllText($serverLog) -replace '\s+', ' ').Trim() } else { '' }
             Check (($r.Exit -eq 0) -and ($served -match 'POST /api/append-turn') -and ($served -match 'GET /api/state/proj329')) "#329 the real session-start.sh through the launcher: exit 0, probe and state fetch reached the fixture server (served: $served)"
             $ctx = ''
@@ -591,8 +591,18 @@ server.serve_forever()
             $seen = if ($at -ge 0) { $ctx.Substring($at, [Math]::Min(26, $ctx.Length - $at)) } else { $ctx.Substring(0, [Math]::Min(26, $ctx.Length)) }
             $seenCps = ($seen.ToCharArray() | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ' '
             Check ($ctx.Contains($wantTitle) -and $ctx.Contains($wantLine)) "#329 PYTHONUTF8 and PYTHONIOENCODING removed: additionalContext carries the state's UTF-8 text unchanged (saw code points: $seenCps)"
+            # Independent of the Python version (the check above discriminates only while the runner's
+            # Python defaults to the ANSI code page): sourcing the lib with both variables removed must
+            # hand the interpreter um_find_python picks PYTHONUTF8=1, PYTHONIOENCODING=utf-8 and UTF-8 mode.
+            $modeSh = Join-Path $tmp 'utf8-mode.sh'
+            $modePy = Join-Path $tmp 'utf8-mode.py'
+            [System.IO.File]::WriteAllText($modePy, "import os, sys`nprint(os.environ.get('PYTHONUTF8', '-'), os.environ.get('PYTHONIOENCODING', '-'), sys.flags.utf8_mode)`n", [System.Text.Encoding]::ASCII)
+            [System.IO.File]::WriteAllText($modeSh, "source '$umApi' || exit 3`nPY=`$(um_find_python) || exit 4`n`"`$PY`" '$($modePy -replace '\\', '/')'`n", [System.Text.Encoding]::ASCII)
+            $mode = Invoke-Hook 'CMD' ('"' + $gitBash + '" "' + $modeSh + '"') $payload329 $tmp $vars329
+            $modeOut = [System.Text.Encoding]::ASCII.GetString($mode.Out).Trim()
+            Check ($modeOut -eq '1 utf-8 1') "#329 sourcing lib/um-api.sh with both variables removed gives the interpreter PYTHONUTF8=1, PYTHONIOENCODING=utf-8 and UTF-8 mode (saw '$modeOut', exit $($mode.Exit))"
         } finally {
-            try { $srv.Kill() } catch { }
+            try { $srv.Kill(); [void]$srv.WaitForExit(5000) } catch { }
         }
     }
 } finally {

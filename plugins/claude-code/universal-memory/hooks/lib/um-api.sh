@@ -41,8 +41,14 @@ source "$_UM_API_LIB_DIR/endpoint.sh"
 # it. Exported HERE, at sourced scope, not inside um_find_python: every caller
 # runs that probe as PY=$(um_find_python), a subshell whose exports never
 # reach the hook. PYTHONIOENCODING covers Pythons older than 3.7, which have
-# no UTF-8 mode. Script-only: hooks.json's hashed commandWindows strings are
-# unchanged, so no Windows Codex user re-approves the hooks.
+# no UTF-8 mode, AND on every version pins the stdio error handler to strict
+# (a value without an :errors part does; UTF-8 mode alone would use
+# surrogateescape). Strict is wanted: one invalid byte then raises into each
+# hook's existing {} fallback instead of reaching Codex as a lone-surrogate
+# escape, which its JSON parser rejects. Keep both lines. Script-only:
+# hooks.json's hashed commandWindows strings are unchanged, so no Windows
+# Codex user re-approves the hooks. The CLI side (lib/frontmatter.sh, which
+# every bin/um-* tool reaches through vault.sh) carries the same two lines.
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 

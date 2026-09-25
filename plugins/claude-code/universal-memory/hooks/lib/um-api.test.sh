@@ -392,7 +392,7 @@ echo "=== Y4 (#329): sourcing the lib exports UTF-8 mode for every \$PY child ==
 # would not reach the interpreter) and must win over the launching shell's
 # own values. run_api's env -i keeps this machine's shell out of the picture.
 H=$(fresh_home y4)
-GOT=$(run_api "$H" PYTHONUTF8=0 PYTHONIOENCODING=cp1252 -- 'env' | grep -c '^PYTHONUTF8=1$\|^PYTHONIOENCODING=utf-8$')
+GOT=$(run_api "$H" PYTHONUTF8=0 PYTHONIOENCODING=cp1252 -- 'env' | grep -cE '^(PYTHONUTF8=1|PYTHONIOENCODING=utf-8)$')
 assert_eq "Y4: PYTHONUTF8=1 and PYTHONIOENCODING=utf-8 are both exported after source" "$GOT" "2"
 
 # ===========================================================================
