@@ -48,16 +48,25 @@ import sys
 DEFAULT_MARKERS = ".git,.claude,package.json,pyproject.toml,go.mod,Cargo.toml,.hg,.svn"
 
 
-def _norm(p):
-    """Normalize a path for comparison: MSYS drive rewrite (Windows only,
-    BEFORE realpath), then realpath + normcase + normpath."""
-    if not p:
-        return ""
+def _msys_rewrite(p):
+    """Backslashes to slashes, then /e/... -> E:/... on Windows (the git-bash
+    form). The ONE rewrite, applied BEFORE realpath by every path that enters
+    a comparison or a walk: a native realpath('/c/Users/x') would yield
+    C:\\c\\Users\\x, a path that exists nowhere."""
     p = p.replace("\\", "/")
     if os.name == "nt":
         m = re.match(r"^/([A-Za-z])(/|$)", p)
         if m:
             p = m.group(1).upper() + ":" + (p[2:] or "/")
+    return p
+
+
+def _norm(p):
+    """Normalize a path for comparison: MSYS drive rewrite (Windows only,
+    BEFORE realpath), then realpath + normcase + normpath."""
+    if not p:
+        return ""
+    p = _msys_rewrite(p)
     try:
         p = os.path.realpath(p)
     except OSError:
@@ -76,11 +85,7 @@ def _walkpath(p):
     through normcase at the comparison site instead."""
     if not p:
         return ""
-    p = p.replace("\\", "/")
-    if os.name == "nt":
-        m = re.match(r"^/([A-Za-z])(/|$)", p)
-        if m:
-            p = m.group(1).upper() + ":" + (p[2:] or "/")
+    p = _msys_rewrite(p)
     try:
         p = os.path.realpath(p)
     except OSError:
@@ -110,6 +115,49 @@ def _root_name(marker_dir):
     return base if base else "SKIP:non-project-cwd"
 
 
+def _worktree_main(cur):
+    """#328: the root a worktree's session belongs to, or None.
+
+    A linked worktree's `.git` is a FILE holding `gitdir: <target>` (absolute
+    with forward slashes as git writes it, or relative to the worktree). A
+    worktree is the SAME repository checked out again, so its project is the
+    main checkout's — git's own line: rev-parse --git-common-dir. Recognised
+    targets, decided by the target's last two parents only (no existence
+    check: a worktree whose main moved still names the right project):
+      <main>/.git/worktrees/<name>      -> <main>
+      <repo>.git/worktrees/<name>       -> <parent>/<repo>   (bare main)
+    Anything else keeps today's naming from `cur`: a `.git` DIRECTORY, a
+    submodule's `<super>/.git/modules/<name>` (which IS another project), an
+    unreadable or malformed file. The caller still applies the home boundary
+    to the result."""
+    dotgit = os.path.join(cur, ".git")
+    if not os.path.isfile(dotgit):
+        return None
+    try:
+        with open(dotgit, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+    except OSError:
+        return None
+    if not first.startswith("gitdir:"):
+        return None
+    target = _msys_rewrite(first[len("gitdir:"):].strip())
+    if not target:
+        return None
+    if not os.path.isabs(target):
+        target = os.path.join(cur, target)
+    gitdir = _walkpath(target)
+    worktrees = os.path.dirname(gitdir)
+    if os.path.basename(worktrees) != "worktrees":
+        return None
+    common = os.path.dirname(worktrees)  # <main>/.git  or  <repo>.git
+    base = os.path.basename(common)
+    if base == ".git":
+        return os.path.dirname(common)
+    if base.endswith(".git") and len(base) > len(".git"):
+        return os.path.join(os.path.dirname(common), base[: -len(".git")])
+    return None
+
+
 def guard(cwd_raw, fallback_raw=""):
     # Candidate selection (#294 review catch — the old `cwd == "."` check
     # was dead: realpath absolutizes "." against the hook PROCESS's cwd, so
@@ -122,12 +170,7 @@ def guard(cwd_raw, fallback_raw=""):
     def usable(p):
         if not p:
             return ""
-        q = p.replace("\\", "/")
-        if os.name == "nt":
-            m = re.match(r"^/([A-Za-z])(/|$)", q)
-            if m:
-                q = m.group(1).upper() + ":" + (q[2:] or "/")
-        return _walkpath(p) if os.path.isabs(q) else ""
+        return _walkpath(p) if os.path.isabs(_msys_rewrite(p)) else ""
 
     cwd = usable(cwd_raw) or usable(fallback_raw)
     if not cwd:
@@ -157,8 +200,11 @@ def guard(cwd_raw, fallback_raw=""):
     #      is not a marker here; a marker too weak to qualify a project
     #      cannot name one — the G5b contract). Nearest-.git is git's own
     #      --show-toplevel semantics: nested checkouts resolve to the
-    #      inner repo, worktrees/submodules to their own root (`.git` may
-    #      be a FILE; exists() is the deliberate test — stat, never parse).
+    #      inner repo, submodules to their own root (`.git` may be a
+    #      FILE; exists() is the qualifying test). #328: a linked
+    #      WORKTREE's .git file (gitdir: <main>/.git/worktrees/<name>)
+    #      names the main checkout instead — the same repository checked
+    #      out again is the same project (_worktree_main, the one parse).
     #   2. No active `.git` below the boundary: the NEAREST ancestor
     #      carrying any other active marker names it. The walk REMEMBERS
     #      that dir and continues looking for a dominating .git, so both
@@ -183,6 +229,12 @@ def guard(cwd_raw, fallback_raw=""):
             # a marker dir remembered BELOW the boundary names the project.
             return _root_name(remembered)
         if git_active and os.path.exists(os.path.join(cur, ".git")):
+            # #328: a linked worktree names its MAIN checkout (never a home
+            # candidate — a repo AT $HOME keeps the worktree's own name, the
+            # #186 hazard); everything else names cur.
+            main = _worktree_main(cur)
+            if main is not None and os.path.normcase(main) not in homes:
+                return _root_name(main)
             return _root_name(cur)
         if remembered is None:
             for m in markers:
