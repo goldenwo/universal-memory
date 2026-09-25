@@ -855,7 +855,8 @@ echo "=== G14b (#328): worktree .git file names the MAIN checkout (absolute gitd
 H=$(fresh_home g14b)
 WT_MAIN="$TMPDIR_ROOT/wt-main"; mkdir -p "$WT_MAIN/.git/worktrees/wt-linked" "$WT_MAIN/.git/worktrees/wt-rel"
 WT_LINKED="$TMPDIR_ROOT/wt-linked"; mkdir -p "$WT_LINKED/nested"
-printf 'gitdir: %s\n' "$(native_path "$WT_MAIN/.git/worktrees/wt-linked" | tr '\\' '/')" > "$WT_LINKED/.git"
+WT_TARGET=$(native_path "$WT_MAIN/.git/worktrees/wt-linked")
+printf 'gitdir: %s\n' "${WT_TARGET//\\//}" > "$WT_LINKED/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$WT_LINKED/nested")")
 reset_calls
 run_session_end "$H" "$STDIN"
@@ -874,7 +875,11 @@ printf 'gitdir: ../wt-main/.git/worktrees/wt-rel\n' > "$WT_REL/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$WT_REL")")
 reset_calls
 run_session_end "$H" "$STDIN"
-wait_for_log "$H" "accepted project=" >/dev/null 2>&1 || true
+if wait_for_log "$H" "accepted project="; then
+  pass "G14c: hook accepted"
+else
+  fail "G14c: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
 assert_eq "G14c: relative worktree gitdir names the main checkout" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-main","mode":"accepted"}'
 
@@ -882,11 +887,16 @@ echo "=== G14d (#328): a bare main <repo>.git/worktrees/<name> names <repo> ==="
 H=$(fresh_home g14d)
 mkdir -p "$TMPDIR_ROOT/wt-bare-proj.git/worktrees/wt-b"
 WT_B="$TMPDIR_ROOT/wt-b"; mkdir -p "$WT_B"
-printf 'gitdir: %s\n' "$(native_path "$TMPDIR_ROOT/wt-bare-proj.git/worktrees/wt-b" | tr '\\' '/')" > "$WT_B/.git"
+WT_TARGET=$(native_path "$TMPDIR_ROOT/wt-bare-proj.git/worktrees/wt-b")
+printf 'gitdir: %s\n' "${WT_TARGET//\\//}" > "$WT_B/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$WT_B")")
 reset_calls
 run_session_end "$H" "$STDIN"
-wait_for_log "$H" "accepted project=" >/dev/null 2>&1 || true
+if wait_for_log "$H" "accepted project="; then
+  pass "G14d: hook accepted"
+else
+  fail "G14d: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
 assert_eq "G14d: bare-main worktree names the repository" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-bare-proj","mode":"accepted"}'
 
@@ -897,9 +907,33 @@ printf 'gitdir: ../.git/modules/libsub\n' > "$WT_SUPER/libsub/.git"
 STDIN=$(make_stdin "$SID" "$(native_path "$WT_SUPER/libsub/nested")")
 reset_calls
 run_session_end "$H" "$STDIN"
-wait_for_log "$H" "accepted project=" >/dev/null 2>&1 || true
+if wait_for_log "$H" "accepted project="; then
+  pass "G14e: hook accepted"
+else
+  fail "G14e: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
 assert_eq "G14e: submodule keeps its own project" \
   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"libsub","mode":"accepted"}'
+
+echo "=== G14f (#328): a worktree whose main is \$HOME keeps its own name (#186 boundary) ==="
+# The hook runs with HOME=$H. A repository AT $HOME (a dotfiles checkout)
+# with a linked worktree elsewhere must NOT mint the home basename — the
+# exact #186 bucket — so the worktree keeps naming itself.
+H=$(fresh_home g14f)
+mkdir -p "$H/.git/worktrees/wt-home"
+WT_HOME="$TMPDIR_ROOT/wt-home"; mkdir -p "$WT_HOME"
+WT_TARGET=$(native_path "$H/.git/worktrees/wt-home")
+printf 'gitdir: %s\n' "${WT_TARGET//\\//}" > "$WT_HOME/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$WT_HOME")")
+reset_calls
+run_session_end "$H" "$STDIN"
+if wait_for_log "$H" "accepted project="; then
+  pass "G14f: hook accepted"
+else
+  fail "G14f: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G14f: home-rooted main falls back to the worktree's own name" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"wt-home","mode":"accepted"}'
 
 # ===========================================================================
 # G15 (#294 D1 ruling + fixed-point exit): markers on SEPARATE levels so the

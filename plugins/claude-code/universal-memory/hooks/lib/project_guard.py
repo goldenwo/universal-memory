@@ -48,16 +48,25 @@ import sys
 DEFAULT_MARKERS = ".git,.claude,package.json,pyproject.toml,go.mod,Cargo.toml,.hg,.svn"
 
 
-def _norm(p):
-    """Normalize a path for comparison: MSYS drive rewrite (Windows only,
-    BEFORE realpath), then realpath + normcase + normpath."""
-    if not p:
-        return ""
+def _msys_rewrite(p):
+    """Backslashes to slashes, then /e/... -> E:/... on Windows (the git-bash
+    form). The ONE rewrite, applied BEFORE realpath by every path that enters
+    a comparison or a walk: a native realpath('/c/Users/x') would yield
+    C:\\c\\Users\\x, a path that exists nowhere."""
     p = p.replace("\\", "/")
     if os.name == "nt":
         m = re.match(r"^/([A-Za-z])(/|$)", p)
         if m:
             p = m.group(1).upper() + ":" + (p[2:] or "/")
+    return p
+
+
+def _norm(p):
+    """Normalize a path for comparison: MSYS drive rewrite (Windows only,
+    BEFORE realpath), then realpath + normcase + normpath."""
+    if not p:
+        return ""
+    p = _msys_rewrite(p)
     try:
         p = os.path.realpath(p)
     except OSError:
@@ -76,11 +85,7 @@ def _walkpath(p):
     through normcase at the comparison site instead."""
     if not p:
         return ""
-    p = p.replace("\\", "/")
-    if os.name == "nt":
-        m = re.match(r"^/([A-Za-z])(/|$)", p)
-        if m:
-            p = m.group(1).upper() + ":" + (p[2:] or "/")
+    p = _msys_rewrite(p)
     try:
         p = os.path.realpath(p)
     except OSError:
@@ -108,16 +113,6 @@ def _root_name(marker_dir):
         return "SKIP:non-project-cwd"
     base = os.path.basename(marker_dir.rstrip("/\\"))
     return base if base else "SKIP:non-project-cwd"
-
-
-def _msys_rewrite(p):
-    """/e/... -> E:/... on Windows (git-bash form); other strings unchanged."""
-    p = p.replace("\\", "/")
-    if os.name == "nt":
-        m = re.match(r"^/([A-Za-z])(/|$)", p)
-        if m:
-            p = m.group(1).upper() + ":" + (p[2:] or "/")
-    return p
 
 
 def _worktree_main(cur):
@@ -175,12 +170,7 @@ def guard(cwd_raw, fallback_raw=""):
     def usable(p):
         if not p:
             return ""
-        q = p.replace("\\", "/")
-        if os.name == "nt":
-            m = re.match(r"^/([A-Za-z])(/|$)", q)
-            if m:
-                q = m.group(1).upper() + ":" + (q[2:] or "/")
-        return _walkpath(p) if os.path.isabs(q) else ""
+        return _walkpath(p) if os.path.isabs(_msys_rewrite(p)) else ""
 
     cwd = usable(cwd_raw) or usable(fallback_raw)
     if not cwd:

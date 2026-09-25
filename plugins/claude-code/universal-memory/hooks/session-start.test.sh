@@ -744,7 +744,8 @@ echo "=== T21b (#328): worktree cwd fetches the main checkout's slug ==="
 _wt_native() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
 WT_MAIN="$TMPDIR_ROOT/wt-main"; mkdir -p "$WT_MAIN/.git/worktrees/wt-linked"
 WT_LINKED="$TMPDIR_ROOT/wt-linked"; mkdir -p "$WT_LINKED/nested"
-printf 'gitdir: %s\n' "$(_wt_native "$WT_MAIN/.git/worktrees/wt-linked" | tr '\\' '/')" > "$WT_LINKED/.git"
+WT_TARGET=$(_wt_native "$WT_MAIN/.git/worktrees/wt-linked")
+printf 'gitdir: %s\n' "${WT_TARGET//\\//}" > "$WT_LINKED/.git"
 STDIN_WT=$("$PY294" -c '
 import json, sys
 print(json.dumps({"session_id": "s-328", "transcript_path": "t.jsonl",
