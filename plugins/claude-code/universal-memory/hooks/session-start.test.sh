@@ -734,6 +734,30 @@ assert_not_contains "T21: CLAUDE_CWD (fallback) not consulted when stdin has cwd
   "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/testproject"
 
 # ---------------------------------------------------------------------------
+# T21b (#328): a worktree cwd fetches the MAIN checkout's slug — the read
+# side of the worktree rule (write side: session-end.test.sh G14b-e), so the
+# state written under the main project is what a worktree session receives.
+# The .git FILE's gitdir target is written as git writes it: absolute with
+# forward slashes, native form on Windows.
+# ---------------------------------------------------------------------------
+echo "=== T21b (#328): worktree cwd fetches the main checkout's slug ==="
+_wt_native() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+WT_MAIN="$TMPDIR_ROOT/wt-main"; mkdir -p "$WT_MAIN/.git/worktrees/wt-linked"
+WT_LINKED="$TMPDIR_ROOT/wt-linked"; mkdir -p "$WT_LINKED/nested"
+printf 'gitdir: %s\n' "$(_wt_native "$WT_MAIN/.git/worktrees/wt-linked" | tr '\\' '/')" > "$WT_LINKED/.git"
+STDIN_WT=$("$PY294" -c '
+import json, sys
+print(json.dumps({"session_id": "s-328", "transcript_path": "t.jsonl",
+                  "cwd": sys.argv[1], "hook_event_name": "SessionStart",
+                  "source": "startup"}))' "$(_wt_native "$WT_LINKED/nested")")
+write_mock_api 400 -
+output=$(run_hook_stdin "$STDIN_WT")
+assert_contains "T21b: fetch targets the main checkout's slug" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/wt-main"
+assert_not_contains "T21b: no worktree-named fetch" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/wt-linked"
+
+# ---------------------------------------------------------------------------
 # T22 (#294 D2): marker-less cwd → NO state fetch, skip logged with the D7
 # token shape, rubric still emitted (fail closed on the slug, never on the
 # non-project-scoped output).
