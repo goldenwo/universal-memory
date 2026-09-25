@@ -139,6 +139,16 @@ unset CLAUDE_CWD
 val=$(cd "$TMPDIR_ROOT" && project_name)
 assert_eq "T10: project_name falls back to pwd basename" "$val" "$(basename "$TMPDIR_ROOT")"
 
+# Test 11 (#329, CLI side): sourcing frontmatter.sh EXPORTS PYTHONUTF8=1 and
+# PYTHONIOENCODING=utf-8 over inherited values, so the python3 children of
+# every bin/um-* tool (which reach this file through vault.sh and never
+# source um-api.sh) read UTF-8 whatever the launching shell set. env lists
+# exported names only. The || true keeps set -e from aborting on a 0 count.
+val=$(env -i PATH="$PATH" HOME="$HOME" PYTHONUTF8=0 PYTHONIOENCODING=cp1252 \
+  bash -c "source '$SCRIPT_DIR/frontmatter.sh'; env" \
+  | grep -cE '^(PYTHONUTF8=1|PYTHONIOENCODING=utf-8)$' || true)
+assert_eq "T11: frontmatter.sh exports both UTF-8 variables over inherited values" "$val" "2"
+
 # ============================================================
 # Summary
 # ============================================================

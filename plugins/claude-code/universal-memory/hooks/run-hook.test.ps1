@@ -12,6 +12,9 @@
 # (measured, not tested here). Stub hook scripts record the stdin bytes they receive, their $HOME, and whether a
 # PATH tail marker survived, and print fixture stdout bytes, so byte transport, exit codes, the
 # environment the script sees and the fail-open paths are observed from outside, as Codex sees them.
+# Case 14 (#329) runs this checkout's REAL session-start.sh through the launcher against a local
+# HTTP server, with PYTHONUTF8 and PYTHONIOENCODING removed: the hooks' own Python must read its
+# UTF-8 input correctly whatever the launching shell set.
 #
 # Harness rules, both learned the hard way (2026-09-22):
 #  - Variables are set on THIS process and inherited. Rebuilding a child's environment through
@@ -203,9 +206,9 @@ $launcher = '"' + (Join-Path $fixHooks 'run-hook.cmd') + '" '
 function Received([string]$s) { Join-Path $tmp "stdin-$s.bin" }
 function Ran([string]$s) { $f = Received $s; (Test-Path -LiteralPath $f) -and (Same-Bytes ([System.IO.File]::ReadAllBytes($f)) $payload) }
 function Reset([string]$s) { foreach ($k in 'stdin', 'home', 'tail') { Remove-Item -LiteralPath (Join-Path $tmp "$k-$s.$(if ($k -eq 'stdin') { 'bin' } else { 'txt' })") -ErrorAction SilentlyContinue } }
-function CommandFor([string]$Event) {
+function CommandFor([string]$Event, [string]$Root = $tmp) {
     $h = $hooksJson.hooks.$Event[0].hooks[0]
-    return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $tmp)
+    return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $Root)
 }
 $shapes = @('PS', 'CMD')
 if ($pwshExe) { $shapes += 'PWSH' } else { Skip 'PWSH shape - pwsh is not installed here' }
@@ -477,6 +480,130 @@ try {
         Reset 'stop.sh'
         $r = Invoke-Hook $shape (CommandFor 'Stop') $payloadFile $tmp (With @{ PATH = ((Join-Path $msys 'usr\bin') + ';' + $env:PATH) })
         Check (($r.Exit -eq 0) -and (Ran 'stop.sh')) "git.exe and bash.exe side by side ahead on PATH ($shape): Git for Windows still runs the hook"
+    }
+
+    # 14. #329: the hooks' Python must read its stdin as UTF-8 whatever the launching environment
+    #     set. Outside UTF-8 mode, Python on Windows decodes a piped stdin with the ANSI code page,
+    #     so session-start's json.load(sys.stdin) turned the server's UTF-8 em dash into three
+    #     cp1252 characters in every session launched from a plain PowerShell (measured 2026-09-24
+    #     with Codex). This checkout's REAL session-start.sh runs through the launcher in the PS
+    #     shape with PYTHONUTF8 and PYTHONIOENCODING REMOVED, against a local HTTP server that
+    #     answers the probe and serves a state whose body holds an e-acute, an em dash, CJK and an
+    #     emoji; the emitted additionalContext must carry that text unchanged. The desktop app's
+    #     tool shells export both variables, which hid the bug through 40+ runs: never inherit them.
+    $pluginRoot = Split-Path -Parent $here
+    $proj = Join-Path $tmp 'proj329'
+    $home329 = Join-Path $tmp 'home329'
+    New-Item -ItemType Directory -Path (Join-Path $proj '.git'), $home329 -Force | Out-Null
+    $serverPy = Join-Path $tmp 'state-server.py'
+    $serverLog = Join-Path $tmp 'state-server.log'
+    $portFile = Join-Path $tmp 'state-server.port'
+    $serverSrc = @'
+import sys
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# The state body as UTF-8 bytes: "# State of play <em dash> proj329", a blank line, then
+# "caf<e-acute> <CJK sun> <slightly smiling face>". The newlines are JSON escapes.
+BODY = b"# State of play \xe2\x80\x94 proj329\\n\\ncaf\xc3\xa9 \xe6\x97\xa5 \xf0\x9f\x99\x82"
+LOG, PORT_FILE = sys.argv[1], sys.argv[2]
+
+
+def log(line):
+    with open(LOG, "a", encoding="ascii", errors="replace") as f:
+        f.write(line + "\n")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def reply(self, code, body):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        log("POST " + self.path)
+        self.reply(400, b'{"error":{"code":"INPUT_INVALID","message":"probe"}}')
+
+    def do_GET(self):
+        log("GET " + self.path)
+        if not self.path.startswith("/api/state/"):
+            self.reply(404, b'{"ok":false}')
+            return
+        valid_from = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ").encode("ascii")
+        self.reply(200, b'{"ok":true,"project":"proj329","state":{"body":"' + BODY
+                   + b'","frontmatter":{"valid_from":"' + valid_from + b'"}}}')
+
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+with open(PORT_FILE, "w") as f:
+    f.write(str(server.server_address[1]))
+server.serve_forever()
+'@
+    [System.IO.File]::WriteAllText($serverPy, ($serverSrc -replace "`r`n", "`n"), [System.Text.Encoding]::ASCII)
+    $encProbe = Join-Path $tmp 'stdin-encoding.py'
+    [System.IO.File]::WriteAllText($encProbe, "import sys`nprint(sys.stdin.encoding)`n", [System.Text.Encoding]::ASCII)
+    $payload329 = Join-Path $tmp 'payload329.bin'
+    [System.IO.File]::WriteAllBytes($payload329, [System.Text.Encoding]::ASCII.GetBytes('{"hook_event_name":"SessionStart","source":"startup","cwd":"' + ($proj -replace '\\', '\\') + '"}'))
+    # The same probe order as um_find_python (a Windows Store python3 stub is on PATH but does not run).
+    # -c pass, not -c '': Windows PowerShell 5.1 drops an empty-string argument to a native program.
+    $pyCmd = $null
+    foreach ($c in @('py', 'python3', 'python')) {
+        $found = Get-Command $c -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) { continue }
+        try { & $found.Source -c 'pass' *> $null; if ($LASTEXITCODE -eq 0) { $pyCmd = $found.Source; break } } catch { }
+    }
+    if (-not $pyCmd) { Skip '#329 UTF-8 stdin (x2) - no Python here to serve the fixture state' } else {
+        $srvPsi = New-Object System.Diagnostics.ProcessStartInfo
+        $srvPsi.FileName = $pyCmd
+        $srvPsi.Arguments = '"' + $serverPy + '" "' + $serverLog + '" "' + $portFile + '"'
+        $srvPsi.UseShellExecute = $false
+        $srvPsi.CreateNoWindow = $true
+        $srv = [System.Diagnostics.Process]::Start($srvPsi)
+        try {
+            $port = ''
+            for ($i = 0; $i -lt 100 -and -not $port; $i++) {
+                Start-Sleep -Milliseconds 100
+                if (Test-Path -LiteralPath $portFile) { $port = [System.IO.File]::ReadAllText($portFile).Trim() }
+            }
+            if (-not $port) { throw 'the fixture state server did not start' }
+            $vars329 = With @{ PYTHONUTF8 = $null; PYTHONIOENCODING = $null; HOME = $home329; UM_SERVER_URL = "http://127.0.0.1:$port"
+                               CLAUDE_PLUGIN_ROOT = $pluginRoot; UM_PROBE_CACHE_MIN = '0'; UM_TOKEN_FILE = $null }
+            # What this machine's Python does with a redirected stdin when both variables are absent.
+            # The case discriminates only while that is not utf-8: Python's default outside UTF-8 mode
+            # is the ANSI code page, and a Python whose default became UTF-8 mode would pass on its own.
+            $enc = Invoke-Hook 'CMD' ('"' + $pyCmd + '" "' + $encProbe + '"') $payload329 $tmp $vars329
+            Write-Output ('NOTE: with PYTHONUTF8 and PYTHONIOENCODING removed, ' + $pyCmd + ' reads a redirected stdin as ' + ([System.Text.Encoding]::ASCII.GetString($enc.Out).Trim()) + ' (the #329 case discriminates only while that is not utf-8)')
+            $r = Invoke-Hook 'PS' (CommandFor 'SessionStart' $pluginRoot) $payload329 $proj $vars329
+            $served = if (Test-Path -LiteralPath $serverLog) { ([System.IO.File]::ReadAllText($serverLog) -replace '\s+', ' ').Trim() } else { '' }
+            Check (($r.Exit -eq 0) -and ($served -match 'POST /api/append-turn') -and ($served -match 'GET /api/state/proj329')) "#329 the real session-start.sh through the launcher: exit 0, probe and state fetch reached the fixture server (served: $served)"
+            $ctx = ''
+            try { $ctx = ([System.Text.Encoding]::UTF8.GetString($r.Out) | ConvertFrom-Json).hookSpecificOutput.additionalContext } catch { $ctx = '' }
+            if ($null -eq $ctx) { $ctx = '' }
+            $wantTitle = $utf8.GetString((Join-Bytes @('State of play ', [byte[]](0xE2, 0x80, 0x94), ' proj329')))
+            $wantLine = $utf8.GetString((Join-Bytes @('caf', [byte[]](0xC3, 0xA9), ' ', [byte[]](0xE6, 0x97, 0xA5), ' ', [byte[]](0xF0, 0x9F, 0x99, 0x82))))
+            $at = $ctx.IndexOf('State of play')
+            $seen = if ($at -ge 0) { $ctx.Substring($at, [Math]::Min(26, $ctx.Length - $at)) } else { $ctx.Substring(0, [Math]::Min(26, $ctx.Length)) }
+            $seenCps = ($seen.ToCharArray() | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ' '
+            Check ($ctx.Contains($wantTitle) -and $ctx.Contains($wantLine)) "#329 PYTHONUTF8 and PYTHONIOENCODING removed: additionalContext carries the state's UTF-8 text unchanged (saw code points: $seenCps)"
+            # Independent of the Python version (the check above discriminates only while the runner's
+            # Python defaults to the ANSI code page): sourcing the lib with both variables removed must
+            # hand the interpreter um_find_python picks PYTHONUTF8=1, PYTHONIOENCODING=utf-8 and UTF-8 mode.
+            $modeSh = Join-Path $tmp 'utf8-mode.sh'
+            $modePy = Join-Path $tmp 'utf8-mode.py'
+            [System.IO.File]::WriteAllText($modePy, "import os, sys`nprint(os.environ.get('PYTHONUTF8', '-'), os.environ.get('PYTHONIOENCODING', '-'), sys.flags.utf8_mode)`n", [System.Text.Encoding]::ASCII)
+            [System.IO.File]::WriteAllText($modeSh, "source '$umApi' || exit 3`nPY=`$(um_find_python) || exit 4`n`"`$PY`" '$($modePy -replace '\\', '/')'`n", [System.Text.Encoding]::ASCII)
+            $mode = Invoke-Hook 'CMD' ('"' + $gitBash + '" "' + $modeSh + '"') $payload329 $tmp $vars329
+            $modeOut = [System.Text.Encoding]::ASCII.GetString($mode.Out).Trim()
+            Check ($modeOut -eq '1 utf-8 1') "#329 sourcing lib/um-api.sh with both variables removed gives the interpreter PYTHONUTF8=1, PYTHONIOENCODING=utf-8 and UTF-8 mode (saw '$modeOut', exit $($mode.Exit))"
+        } finally {
+            try { $srv.Kill(); [void]$srv.WaitForExit(5000) } catch { }
+        }
     }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

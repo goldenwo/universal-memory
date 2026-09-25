@@ -3,6 +3,14 @@
 # Source this file; do not execute directly.
 # Requires: python3 with pyyaml (graceful degradation if absent)
 
+# #329: the python3 children below read and write UTF-8 whatever the launching
+# environment set — outside UTF-8 mode, Python on Windows decodes a piped stdin
+# with the ANSI code page. The same two lines as lib/um-api.sh, where the full
+# rationale lives; this is the CLI side: every bin/um-* tool reaches python3
+# through vault.sh → this file and never sources um-api.sh.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 # Read a single frontmatter field as text.
 # Usage: value=$(fm_read FILE FIELD)
 # Returns: field value on stdout, or empty string if missing.
