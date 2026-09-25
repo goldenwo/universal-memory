@@ -32,6 +32,20 @@ _UM_API_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=endpoint.sh
 source "$_UM_API_LIB_DIR/endpoint.sh"
 
+# #329: every $PY child of every hook reads and writes UTF-8, whatever the
+# launching environment set. Outside UTF-8 mode, Python on Windows decodes a
+# piped stdin (and open() without encoding=) with the ANSI code page, so
+# session-start's json.load(sys.stdin) turned the server's "—" (E2 80 94)
+# into three cp1252 characters in every session launched from a plain
+# PowerShell; the desktop app's own shells export both variables, which hid
+# it. Exported HERE, at sourced scope, not inside um_find_python: every caller
+# runs that probe as PY=$(um_find_python), a subshell whose exports never
+# reach the hook. PYTHONIOENCODING covers Pythons older than 3.7, which have
+# no UTF-8 mode. Script-only: hooks.json's hashed commandWindows strings are
+# unchanged, so no Windows Codex user re-approves the hooks.
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
 # Docs link carried by the G7 banner. The plugin docs page ships later in this
 # arc (spec §7); keep this constant in sync when that page lands.
 UM_DOCS_LINK="${UM_DOCS_LINK:-https://github.com/goldenwo/universal-memory#readme}"
