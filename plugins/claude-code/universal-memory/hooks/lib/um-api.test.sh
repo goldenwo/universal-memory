@@ -23,6 +23,8 @@
 #   P6. um_api_post max-time override (3rd arg)
 #   Q1-Q5. um_api_get — GET (no -X POST/-d), headers/auth/code/sentinel contract
 #   Y1-Y3. um_find_python probe order (py → python3 → python; none ⇒ rc 1)
+#   Y4. #329 sourcing the lib EXPORTS PYTHONUTF8=1 + PYTHONIOENCODING=utf-8,
+#       over a launching shell's own values (every $PY child reads UTF-8)
 #   L1. um_log appends "<ts> <hook> <msg>" to ~/.um/hook.log (dir auto-created)
 #   G1. G7 message variants (unreachable / writes-disabled / auth)
 #   R1-R4. 429 retry: 429→200 succeeds on the 2nd call; 429→429 stops at 2
@@ -382,6 +384,16 @@ GOT=$(run_api "$H" -- "um_find_python") || RC=$?
 assert_eq "Y3: rc 1 when no interpreter works" "$RC" "1"
 assert_eq "Y3: empty output" "$GOT" ""
 clear_fake_interps
+
+echo "=== Y4 (#329): sourcing the lib exports UTF-8 mode for every \$PY child ==="
+# Outside UTF-8 mode, Python on Windows decodes a piped stdin with the ANSI
+# code page, and the hooks pipe UTF-8 JSON into every $PY call. The lib must
+# EXPORT both variables (env lists exported names only — a plain assignment
+# would not reach the interpreter) and must win over the launching shell's
+# own values. run_api's env -i keeps this machine's shell out of the picture.
+H=$(fresh_home y4)
+GOT=$(run_api "$H" PYTHONUTF8=0 PYTHONIOENCODING=cp1252 -- 'env' | grep -c '^PYTHONUTF8=1$\|^PYTHONIOENCODING=utf-8$')
+assert_eq "Y4: PYTHONUTF8=1 and PYTHONIOENCODING=utf-8 are both exported after source" "$GOT" "2"
 
 # ===========================================================================
 # um_log — line format + dir auto-creation
