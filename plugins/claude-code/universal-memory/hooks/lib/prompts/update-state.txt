@@ -5,31 +5,36 @@ every new date you write and never invent one.
 Rules:
 - Current focus: rewrite it from scratch every time — 1-3 sentences on what is being worked on
   NOW, at most 400 characters. Never append to the previous text.
-- In flight: unfinished work only. Remove every item the summary reports as done, merged,
-  closed, shipped, released, deployed or superseded. Each item is one bullet; its first line ends
-  with the date it was last confirmed, as [YYYY-MM-DD], and indented sub-lines under it carry no
-  date. Write the supplied date on items the summary mentions or adds, keep the existing date
-  unchanged on items it does not mention, and give the supplied date to an item that has no date
-  yet. Never replace an item's date with an earlier one: when the supplied date is earlier than
-  an item's existing date, keep the existing date even if the summary mentions the item. Add new
-  items at the end. Items not confirmed for 14 days are removed automatically, and the list is
-  capped at 8 by oldest date, so aim for 8 or fewer.
-- Recent decisions: append this session's decisions at the end, each as "- YYYY-MM-DD: …" with
-  the supplied date. Never change the text or date of an existing entry. Aim for 8 or fewer; the
-  oldest are removed automatically.
-- Next actions: add the summary's next steps at the end and remove finished ones. Aim for 6 or
-  fewer; the oldest are removed automatically.
-- Open questions: add new questions at the end and remove questions the session answered. Aim
-  for 5 or fewer; the oldest are removed automatically.
+- In flight: unfinished work only. Keep every unfinished item from the old document; remove an
+  item only when the summary reports it done, merged, closed, shipped, released, deployed or
+  superseded. Never drop an item to shorten the list — the server ages and bounds the list
+  itself. Each item is one bullet; its first line ENDS with the date it was last confirmed, in
+  square brackets, exactly like this: "- <item text> [2026-09-25]" (with the date from the
+  request). Write the request's date on items the summary mentions or adds, keep the existing
+  bracketed date unchanged on items it does not mention, and give the request's date to an item
+  that has no bracketed date yet. Never replace an item's date with an earlier one: when the
+  request's date is earlier than an item's existing date, keep the existing date even if the
+  summary mentions the item. Never put an In-flight date anywhere else (no parentheses, no dates
+  in the text). Indented sub-lines under an item carry no date. Add new items at the end. Items
+  not confirmed for 14 days are removed automatically, and the list is bounded to 8 by oldest
+  date automatically.
+- Recent decisions: append this session's decisions at the end, each STARTING with the date
+  from the request, exactly like this: "- 2026-09-25: <decision>". Never put a decision's date
+  at the end or in parentheses. Never change the text or date of an existing entry, whatever
+  form it has. The list is bounded to 8 automatically (oldest removed).
+- Next actions: add the summary's next steps at the end and remove finished ones. Keep every
+  unfinished step; the list is bounded to 6 automatically (oldest removed).
+- Open questions: add new questions at the end and remove questions the session answered. The
+  list is bounded to 5 automatically (oldest removed).
 - Environment: current branch, running processes, notable files — at most 3 lines, or "(none)".
 - Preserve sections the session did not affect, except that finished work is always removed.
 - Respect human hand-edits: prose the summary does not contradict stays — except Current focus,
   which is always rewritten.
 - All six sections are present, in the fixed order, even if empty (write "(none)").
-- The whole document must stay under 3000 characters. A longer document is trimmed
-  mechanically — Current focus down to 600 characters first, then Recent decisions, Environment,
-  Open questions, In flight, Next actions — so keep it short yourself by writing less, never by
-  rewording or shortening an existing list entry.
+- A document over 3000 characters is trimmed mechanically by the server — Current focus down to
+  600 characters first, then Recent decisions, Environment, Open questions, In flight, Next
+  actions. Write concisely, but never drop an unfinished item and never reword or shorten an
+  existing list entry to save space.
 - Preserve the YAML frontmatter; the server sets valid_from.
 
 Fixed structure (all six sections required, in this order):
@@ -50,16 +55,16 @@ project: <project>
 (1-3 sentences, at most 400 characters, rewritten every merge)
 
 ## In flight
-(unfinished work only, one bullet each, first line ending [YYYY-MM-DD] = last confirmed; 8 or fewer)
+(unfinished work only, one bullet each, every first line ending "[YYYY-MM-DD]" = last confirmed; e.g. "- Fix the parser [2026-09-25]")
 
 ## Recent decisions
-(each "- YYYY-MM-DD: …", oldest first; 8 or fewer)
+(each "- YYYY-MM-DD: …" with the date first, oldest first)
 
 ## Next actions
-(sequenced, specific, newest at the end; 6 or fewer)
+(sequenced, specific, newest at the end)
 
 ## Open questions
-(unresolved items, newest at the end; 5 or fewer, or "(none)")
+(unresolved items, newest at the end, or "(none)")
 
 ## Environment
 (branch, running processes, notable files — at most 3 lines, or "(none)")

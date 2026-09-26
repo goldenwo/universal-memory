@@ -392,9 +392,24 @@ if (IS_MAIN) {
     const oldRun = args.old ? await read(args.old) : null;
     const newRun = await read(args.new);
     const p2 = args.pass2Results ? await read(args.pass2Results) : null;
+    // The committed aggregate carries NUMBERS ONLY (spec 4.2.5): project names become doc-NN in the
+    // NEW arm's order (the mapping lives in the gitignored eval.md) and every key or unit text is
+    // reduced to a count. The per-project files with text stay under docs/plans/... (gitignored).
+    const ids = new Map(newRun.docs.map((d, i) => [d.project, `doc-${String(i + 1).padStart(2, '0')}`]));
+    const id = project => ids.get(project) ?? project;
     const agg = aggregate({ newArm: newRun.docs.map(d => ({ project: d.project, ...d.metrics })), oldArm: oldRun ? oldRun.docs.map(d => ({ project: d.project, ...d.metrics })) : null, pass2: p2 ? p2.docs.map(d => ({ project: d.project, ...d.conditions })) : null });
-    const numbersOnly = run => run && { arm: run.arm, model: run.model, temperature: run.temperature, ran_at: run.ran_at, docs: run.docs.map(d => ({ project: d.project, ...d.metrics, report: d.report ? { added: d.report.added, aged: d.report.aged, aged_future: d.report.aged_future, bounded: d.report.bounded, trims: d.report.trims } : null })) };
-    const out = { schema_version: 1, spec: 'docs/plans/2026-09-25-326-state-cap-section-aware-spec.md#4.2.5', control: agg.control, thresholds: agg.thresholds, all_ok: agg.all_ok, old_arm: numbersOnly(oldRun), new_arm: numbersOnly(newRun), pass2: p2 && { ran_at: p2.ran_at, docs: p2.docs.map(d => ({ project: d.project, ...d.conditions, selected: d.selected.map(s => ({ key: s.key, mentioned: s.mentioned, backdated: s.backdated, excluded: s.excluded ?? null })) })) } };
+    const scrubMetrics = m => ({
+      ...m,
+      headings_missing: m.headings_missing,
+      retention: { ok: m.retention.ok, has_live: m.retention.has_live, sections: Object.fromEntries(Object.entries(m.retention.sections).map(([k, v]) => [k, { ...v, dropped_mentioned: v.dropped_mentioned.length }])) },
+      stale_carry: { units: m.stale_carry.length, stamped_supplied: m.stale_carry.filter(s => s.stamp).length },
+      report: undefined,
+    });
+    const numbersOnly = run => run && { arm: run.arm, model: run.model, temperature: run.temperature, ran_at: run.ran_at, docs: run.docs.map(d => ({ doc: id(d.project), as_of_source: d.as_of_source, ...scrubMetrics(d.metrics), report: d.report ? { added: d.report.added.length, aged: d.report.aged, aged_future: d.report.aged_future, bounded: d.report.bounded, trims: d.report.trims } : null })) };
+    const scrubList = xs => xs.map(x => id(String(x).split(':')[0]) + (String(x).includes(':') ? ':' + String(x).split(':').slice(1).join(':') : ''));
+    const thresholds = Object.fromEntries(Object.entries(agg.thresholds).map(([k, v]) => [k, { ...v, failing: v.failing ? scrubList(v.failing) : undefined }]));
+    const control = { ...agg.control, missing: agg.control.missing.map(id) };
+    const out = { schema_version: 1, spec: 'docs/plans/2026-09-25-326-state-cap-section-aware-spec.md#4.2.5', control, thresholds, all_ok: agg.all_ok, old_arm: numbersOnly(oldRun), new_arm: numbersOnly(newRun), pass2: p2 && { ran_at: p2.ran_at, docs: p2.docs.map(d => ({ doc: id(d.project), n: d.conditions.n, cond1: { ok: d.conditions.cond1.ok, failures: d.conditions.cond1.failures.length }, cond2: { ok: d.conditions.cond2.ok, failures: d.conditions.cond2.failures.length, removed_by_bound: d.conditions.cond2.removed_by_bound.length }, cond3: { ...d.conditions.cond3, dropped_mentioned: d.conditions.cond3.dropped_mentioned.length }, backdated_dropped_by_model: d.conditions.backdated_dropped_by_model, selected: d.selected.length, backdated: d.selected.filter(s => s.backdated).length, excluded_not_found: d.selected.filter(s => /not found/.test(s.excluded ?? '')).length, excluded_unstamped: d.selected.filter(s => /unstamped/.test(s.excluded ?? '')).length })) } };
     await fs.writeFile(args.out, JSON.stringify(out, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] aggregate written to ${args.out}: all_ok=${agg.all_ok} control=${agg.control.ok} (${agg.control.old_arm_misses} misses)`);
     for (const [k, v] of Object.entries(agg.thresholds)) console.log(`  ${v.ok ? 'PASS' : 'FAIL'} ${k}: ${v.value} (need ${v.need})${v.failing?.length ? ' failing: ' + v.failing.join(', ') : ''}`);
