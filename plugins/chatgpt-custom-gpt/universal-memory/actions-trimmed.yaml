@@ -372,6 +372,8 @@ components:
             - type: string
               format: date-time
             - type: "null"
+          description: The state document's server-stamped merge instant (frontmatter
+            valid_from), null when no document exists. Not a supersession input.
     AddRequest:
       type: object
       required:
@@ -831,6 +833,11 @@ components:
         valid_from:
           type: string
           format: date-time
+          description: "Truth time: when the fact became true (UTC ISO-8601), not the
+            write instant. Server-stamped when absent; a usable caller value
+            wins; ADR writes route decided_at into it. Ranking reads only this
+            field. Supersession compares both sides; only incoming-newer acts;
+            missing or >5 min future abstain."
         invalidated_at:
           type:
             - string
