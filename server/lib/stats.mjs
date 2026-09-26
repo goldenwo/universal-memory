@@ -423,12 +423,22 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       // One transaction for both reads — the writer shares this WAL DB, so two
       // bare SELECTs could see a first-ever failing project appear between them.
       const readCheckpointFailures = db.transaction(() => ({
+        // #324: bounded to projects with a row INSIDE the window. Unwindowed,
+        // every project that had EVER failed kept a permanent zero row in the
+        // payload — project cardinality is unbounded, unlike the sibling
+        // block's handful of surfaces, so the payload grew by one dead row per
+        // historically-failing repository. last_day_seen stays the true
+        // MAX(day) for the projects served.
         lastSeen: db.prepare(`
           SELECT project, MAX(day) AS last_day_seen
           FROM counters
           WHERE event = ?
+            AND project IN (
+              SELECT DISTINCT project FROM counters
+              WHERE event = ? AND day >= ? AND day <= ?
+            )
           GROUP BY project
-        `).all(CHECKPOINT_FAILURE_EVENT),
+        `).all(CHECKPOINT_FAILURE_EVENT, CHECKPOINT_FAILURE_EVENT, windowStart, today),
         windowRows: db.prepare(`
           SELECT project, outcome, SUM(count) AS n
           FROM counters

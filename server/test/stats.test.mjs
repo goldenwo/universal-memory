@@ -730,6 +730,35 @@ test('#309 checkpoint_failure: a failing project gets a ROW, not just a present-
   assert.equal(stats.checkpointFailure['proj-b'].outcomes_7d.rejected, 1);
 });
 
+// #324: the lastSeen query was unwindowed, so every project that had EVER
+// recorded a checkpoint failure kept a permanent zero row in the payload
+// (count_7d: 0, all-zero outcomes_7d). Project cardinality is unbounded, so
+// the payload grew by one dead row per historically-failing repository, on
+// every /api/stats response and every um-alert fetch. A project appears only
+// while it has a row inside the window; last_day_seen stays the true MAX(day)
+// for those projects.
+test('#324 checkpoint_failure: a project whose last failure left the window has NO row', async () => {
+  const dbPath = await tempDbPath('um-stats-324-');
+  seedCountersDb(dbPath, [
+    { day: daysAgo(10), surface: 'claude-code-plugin', project: 'gone', event: 'signal.checkpoint_failure', outcome: 'failed', count: 3 },
+    { day: daysAgo(30), surface: 'codex-cli', project: 'gone', event: 'signal.checkpoint_failure', outcome: 'rejected', count: 1 },
+    { day: daysAgo(9), surface: 'claude-code-plugin', project: 'both', event: 'signal.checkpoint_failure', outcome: 'failed', count: 4 },
+    { day: daysAgo(1), surface: 'claude-code-plugin', project: 'both', event: 'signal.checkpoint_failure', outcome: 'contended', count: 2 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+
+  assert.ok(stats.checkpointFailure, 'the family must be present');
+  assert.equal(Object.hasOwn(stats.checkpointFailure, 'gone'), false,
+    'a project with no row in the 7-day window must not keep a permanent zero row');
+  const both = stats.checkpointFailure.both;
+  assert.ok(both, 'a project with an in-window row is served');
+  assert.equal(both.last_day_seen, daysAgo(1));
+  assert.equal(both.count_7d, 2, 'only the in-window rows are counted');
+  assert.equal(both.outcomes_7d.contended, 2);
+  assert.equal(both.outcomes_7d.failed, 0, 'the 9-day-old failure is outside the window');
+  assert.deepEqual(Object.keys(stats.checkpointFailure), ['both']);
+});
+
 test('#309 checkpoint_failure: rows aggregate ACROSS surfaces within one project', async () => {
   // The project is the key; surface is recorded but must not split the row,
   // or a project checkpointed from two hosts would under-report.
