@@ -18,6 +18,14 @@ services:
     #       without API keys) can reach qdrant from the runner
     # Production deployments override via UM_QDRANT_PORT (or omit by
     # docker-compose override if external exposure is undesired).
+    #
+    # #320: the override MUST keep a loopback host prefix (127.0.0.1:<port>,
+    # or [::1]:<port>). A bare port, or a 0.0.0.0 host, publishes qdrant on
+    # every interface — and qdrant runs here with NO API key of its own (it
+    # does not need one behind loopback), so that is an unauthenticated
+    # read+write path to the whole store from the LAN and any overlay network.
+    # The server's bearer auth on /api/* does not protect it. install.sh warns
+    # at install, --verify and --upgrade when the value has no loopback host.
     ports:
       - "${UM_QDRANT_PORT:-127.0.0.1:6333}:6333"
 
