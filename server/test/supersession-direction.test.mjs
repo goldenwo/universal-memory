@@ -61,6 +61,14 @@ test('E3: stored beyond now + skew -> abstain with direction stored-future, judg
   assert.equal(judge.calls.length, 0);
 });
 
+test('E3b: incoming beyond now + skew -> abstain with direction incoming-future, judge not consulted (#318)', async () => {
+  // A caller-posted far-future valid_from on the incoming side used to resolve incoming-newer
+  // and reach the judge; the write path passes no `now`, so the bound is assertedAt + skew.
+  const { r, judge } = await evaluate({ olderTruth: { valid_from: PAST }, newerTruth: { valid_from: FAR, assertedAt: T0 } });
+  assert.deepEqual(r, { ...ABSTAIN, direction: 'incoming-future', incomingAt: FAR, storedAt: PAST });
+  assert.equal(judge.calls.length, 0);
+});
+
 test('E4: equal instants -> ambiguous, judge not consulted', async () => {
   const { r, judge } = await evaluate({ olderTruth: { valid_from: T0 }, newerTruth: { valid_from: T0, assertedAt: T0 } });
   assert.deepEqual(r, { ...ABSTAIN, direction: 'ambiguous', incomingAt: T0, storedAt: T0 });

@@ -13,6 +13,7 @@
 //   assertedAt unusable                              -> 'ambiguous'
 //   truthTime(stored) === null                       -> 'ambiguous'
 //   truthTime(stored) > epoch(now) + CLOCK_SKEW_TOLERANCE_MS -> 'stored-future'
+//   truthTime(incoming) > epoch(now) + CLOCK_SKEW_TOLERANCE_MS -> 'incoming-future'   (#318)
 //   incoming > stored -> 'incoming-newer' ; incoming < stored -> 'stored-newer' ; equal -> 'ambiguous'
 // The registration timestamp is never consulted; the ADR decision-date field is never
 // consulted. A missing stored truth time ABSTAINS — it never falls through to arrival order.
@@ -175,9 +176,35 @@ export const CASES = {
   ],
 
   D11: [
-    ['a far-future INCOMING truth time still resolves incoming-newer — the rule bounds only the stored side (caller-settable valid_from is a recorded follow-up, not silently clamped here)', (resolve) => {
-      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: '2099-01-01T00:00:00.000Z', assertedAt: T0 }, now: T0 }, 'incoming-newer',
+    // #318: the stored side was bounded against the future from the start; the incoming side was
+    // not, so one caller-posted far-future valid_from resolved incoming-newer against every dated
+    // stored point. Same bound, same skew, same abstain polarity, a distinct label for the operator.
+    ['a far-future INCOMING truth time abstains as incoming-future — a caller-settable valid_from beyond now + skew cannot displace a dated stored point', (resolve) => {
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: '2099-01-01T00:00:00.000Z', assertedAt: T0 }, now: T0 }, 'incoming-future',
         { incomingAt: '2099-01-01T00:00:00.000Z', storedAt: PAST });
+    }],
+    ['incoming exactly now + tolerance -> incoming-newer (the boundary is inclusive, as for the stored side)', (resolve) => {
+      const incomingMs = T0_MS + CLOCK_SKEW_TOLERANCE_MS;
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: iso(incomingMs), assertedAt: T0 }, now: T0 }, 'incoming-newer',
+        { incomingAt: iso(incomingMs), storedAt: PAST });
+    }],
+    ['incoming one ms beyond now + tolerance -> incoming-future; measured against now, not assertedAt (a windowed backfill\'s past bound does not make an ordinary incoming instant future)', (resolve) => {
+      const incomingMs = T0_MS + CLOCK_SKEW_TOLERANCE_MS + 1;
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: iso(incomingMs), assertedAt: T0 }, now: T0 }, 'incoming-future',
+        { incomingAt: iso(incomingMs), storedAt: PAST });
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { valid_from: iso(incomingMs), assertedAt: PAST }, now: LATER }, 'incoming-newer',
+        { incomingAt: iso(incomingMs), storedAt: PAST });
+    }],
+    ['both sides future -> stored-future (evaluated first; two caller-chosen future instants are never compared)', (resolve) => {
+      expect(resolve, { stored: { valid_from: '2098-01-01T00:00:00.000Z' }, incoming: { valid_from: '2099-01-01T00:00:00.000Z', assertedAt: T0 }, now: T0 }, 'stored-future',
+        { incomingAt: '2099-01-01T00:00:00.000Z', storedAt: '2098-01-01T00:00:00.000Z' });
+    }],
+    ['no incoming valid_from and a now more than the skew EARLIER than assertedAt -> incoming-future (the assertedAt fallback is the incoming truth time; a client until-bound ahead of the wall clock abstains, deliberately)', (resolve) => {
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { assertedAt: T0 }, now: PAST }, 'incoming-future',
+        { incomingAt: T0, storedAt: PAST });
+      // Within the skew it is an ordinary incoming-newer.
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { assertedAt: T0 }, now: iso(T0_MS - CLOCK_SKEW_TOLERANCE_MS) }, 'incoming-newer',
+        { incomingAt: T0, storedAt: PAST });
     }],
   ],
 
