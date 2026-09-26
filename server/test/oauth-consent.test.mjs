@@ -227,6 +227,9 @@ test('#321 ttl: a positive number of hours is honoured, fractional included', ()
   assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '1' }), 3600_000);
   assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '0.25' }), 900_000);
   assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '336' }), 336 * 3600_000);
+  // whole seconds only: Max-Age is an integer per RFC 6265
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '0.0001' }) % 1000, 0);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '1.00001' }), 3600_000);
 });
 
 test('#321 ttl: capped at 30 days; garbage and non-positive fall back to the default', () => {

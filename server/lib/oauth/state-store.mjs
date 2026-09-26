@@ -49,7 +49,9 @@ export function resolveConsentCookieTtlMs(env = process.env) {
   if (raw === undefined || String(raw).trim() === '') return CONSENT_TTL_DEFAULT_HOURS * 3600_000;
   const hours = Number(raw);
   if (!Number.isFinite(hours) || hours <= 0) return CONSENT_TTL_DEFAULT_HOURS * 3600_000;
-  return Math.min(hours, CONSENT_TTL_MAX_HOURS) * 3600_000;
+  // Whole seconds: Set-Cookie Max-Age is an integer (RFC 6265), and a
+  // fractional hour like 0.25 must come out as 900, never 900.0004.
+  return Math.round(Math.min(hours, CONSENT_TTL_MAX_HOURS) * 3600) * 1000;
 }
 
 export const OAUTH_TTLS = Object.freeze({
