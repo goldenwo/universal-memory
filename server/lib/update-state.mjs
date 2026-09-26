@@ -75,7 +75,7 @@ const DEFAULT_PROMPT_PATH = path.resolve(LIB_DIR, '../config/prompts/update-stat
  * @param {Function} [ctx.now]          - Clock returning a Date (test DI; the txn passes its own)
  * @param {string}   [ctx.promptDir]    - Prompt directory override
  * @param {number}   [ctx.temperature]  - LLM temperature override
- * @returns {Promise<{mergedMd: string, costUsd: number, tokensIn: number, tokensOut: number, schema_version: 1, llmFailure: boolean}>}
+ * @returns {Promise<{mergedMd: string, costUsd: number, tokensIn: number, tokensOut: number, schema_version: 1, llmFailure: boolean, shaping: {added: string[], aged: number, aged_future: number, bounded: object[], trims: object[]}}>}
  */
 export async function updateState(args, ctx = {}) {
   const { oldStateMd = '', newSummary, projectId = '', asOf: asOfArg } = args;
@@ -173,7 +173,9 @@ export async function updateState(args, ctx = {}) {
   // `ok`, so a naive `if (!stateResult.ok)` check on the CALLER side
   // misfired on every successful merge. Additive — existing tests assert
   // fields individually and are unaffected.
-  return { schema_version: 1, ok: true, mergedMd, costUsd, tokensIn, tokensOut, llmFailure };
+  // #326: the shaping report rides along (additive) so a caller such as the keyed eval can
+  // record what the server did without scraping the log lines.
+  return { schema_version: 1, ok: true, mergedMd, costUsd, tokensIn, tokensOut, llmFailure, shaping: shaped.report };
 }
 
 /**

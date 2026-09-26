@@ -296,3 +296,10 @@ test('updateState #326: the llm-failure fallback inserts the unmerged heading an
   );
   assert.ok(empty.mergedMd.startsWith(SIX_NONE + '<!-- llm-merge-failed, appended raw -->\n\n## Unmerged session summary\n\nraw summary text'), empty.mergedMd.slice(0, 300));
 });
+
+test('updateState #326: the shaping report rides along on the result (additive field)', async () => {
+  const over = '---\ntype: state\nid: state-x\n---\n# t\n' + SIX({ 'Current focus': 'word '.repeat(700).trim() });
+  const r = await updateState({ oldStateMd: '', newSummary: 's', projectId: 'x' }, withClock(over));
+  assert.ok(r.shaping.trims.some(t => t.heading === 'Current focus' && t.chars_cut > 0));
+  assert.deepEqual(Object.keys(r.shaping).sort(), ['added', 'aged', 'aged_future', 'bounded', 'trims']);
+});
