@@ -30,11 +30,35 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// #321 — the consent cookie's lifetime. It exists so a returning operator
+// clicks Allow instead of pasting the operator token again; at the original
+// 15 minutes it never survived to the next authorization (days or weeks
+// apart), so the token was pasted on every one. Its security properties are
+// structural, not temporal (purpose-bound MAC, random nonce, timing-safe
+// compare): a longer life widens only the window in which someone with the
+// operator's own browser profile could authorize a new client without the
+// token. Default 7 days; UM_OAUTH_CONSENT_TTL_HOURS shortens or lengthens it,
+// capped at 30 days. An unparseable or non-positive value is refused at boot
+// by validateOAuthConfig when OAuth is on; this resolver falls back to the
+// default so an off-OAuth deployment never trips on an irrelevant variable.
+export const CONSENT_TTL_DEFAULT_HOURS = 7 * 24;
+export const CONSENT_TTL_MAX_HOURS = 30 * 24;
+
+export function resolveConsentCookieTtlMs(env = process.env) {
+  const raw = env.UM_OAUTH_CONSENT_TTL_HOURS;
+  if (raw === undefined || String(raw).trim() === '') return CONSENT_TTL_DEFAULT_HOURS * 3600_000;
+  const hours = Number(raw);
+  if (!Number.isFinite(hours) || hours <= 0) return CONSENT_TTL_DEFAULT_HOURS * 3600_000;
+  // Whole seconds: Set-Cookie Max-Age is an integer (RFC 6265), and a
+  // fractional hour like 0.25 must come out as 900, never 900.0004.
+  return Math.round(Math.min(hours, CONSENT_TTL_MAX_HOURS) * 3600) * 1000;
+}
+
 export const OAUTH_TTLS = Object.freeze({
   codeMs: 60_000,
   accessMs: 30 * 60_000,
   refreshIdleMs: 90 * 24 * 3600_000,
-  cookieMs: 15 * 60_000,
+  cookieMs: resolveConsentCookieTtlMs(),
   pendingAuthzMs: 10 * 60_000,
   idpStateMs: 10 * 60_000,
 });

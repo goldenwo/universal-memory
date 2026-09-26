@@ -9,7 +9,7 @@
 //     first segment is the literal `consent`; a value valid for any other
 //     purpose (even signed with the right hmacKey) is rejected. This stops a
 //     cookie minted elsewhere in the AS from standing in as proof of consent.
-//   * The cookie expires (15min, OAUTH_TTLS.cookieMs) and carries a random
+//   * The cookie expires (OAUTH_TTLS.cookieMs — 7 days by default, #321) and carries a random
 //     nonce so two consents are never byte-identical.
 //   * The CSRF token is bound to ONE pending authorization id. authzId pins
 //     client_id + redirect_uri + code_challenge in the pending record, so a
@@ -133,8 +133,12 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
   // When providers are available, the token field is wrapped in a <details> disclosure.
   let tokenField = '';
   if (needsToken) {
+    // #321 fix 2: say where the token lives. The installer writes it to
+    // ~/.um/auth-token (mode 600) on the server host; without this line a new
+    // self-hoster reaching the page has no path forward but the docs.
     const tokenInput = `<label>Operator token
         <input type="password" name="operator_token" autocomplete="current-password"${hasProviders ? '' : ' required'}>
+        <small class="hint">The bearer token this server was installed with. On the server host: <code>cat ~/.um/auth-token</code> (written by the installer, mode 600).</small>
       </label>`;
     tokenField = hasProviders
       ? `<details class="token-fallback"><summary>Use an operator token instead</summary>${tokenInput}</details>`
@@ -155,6 +159,8 @@ export function renderConsentPage({ clientName, redirectHost, authzId, csrf, nee
     .error { background: #fde8e8; color: #9b1c1c; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
     label { display: block; margin: 1rem 0; }
     input[type=password] { display: block; width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+    .hint { display: block; color: #555; font-size: 0.85rem; font-weight: normal; margin-top: 0.35rem; }
+    .hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
     button { padding: 0.6rem 1.2rem; border-radius: 6px; border: 1px solid #888; cursor: pointer; }
     button.allow { background: #1c64f2; color: #fff; border-color: #1c64f2; }
