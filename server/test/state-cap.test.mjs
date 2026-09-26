@@ -857,3 +857,19 @@ test('SC46 shapeState: the only ## In flight between two unmerged headings — s
   assert.equal(shapeState(r.md, CTX).md, r.md, 'idempotent');
   assert.ok(r.md.trimEnd().endsWith(MARKER_STATE_MERGE_UNAVAILABLE));
 });
+
+// Code-review finding (PR #340): the word-boundary search must not land inside the list marker.
+test('SC14b fit: a bulleted unit with no whitespace after the marker is hard-cut at the limit, never reduced to the bare marker', () => {
+  const md = build({ cf: [`- ${'x'.repeat(4000)}`] });
+  const r = fit(md);
+  const cf = unitTexts(r.md, 'Current focus')[0];
+  assert.ok(cf.startsWith('- xxxx') && cf.endsWith(ELL), cf.slice(0, 20));
+  const target = 4002 - (md.length - STATE_CAP_CHARS); // max(600, size - deficit)
+  assert.ok(cf.length > 100 && cf.length <= target && cf.length >= target - 10, `hard cut at the target ${target}, got ${cf.length}`);
+  const md2 = build({ cf: [text(300)], inflight: [`- ${'y'.repeat(1500)} [2026-09-20]`], decisions: [decision('2026-09-20', 190)], next: [text(190)], open: [text(190)], env: [text(190)] });
+  assert.ok(md2.length > STATE_CAP_CHARS);
+  const r2 = fit(md2);
+  const unit = unitTexts(r2.md, 'In flight')[0];
+  assert.ok(unit.startsWith('- yyyy') && unit.endsWith(`${ELL} [2026-09-20]`));
+  assert.ok(unit.length > 100, `not the bare marker: ${unit}`);
+});

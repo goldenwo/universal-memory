@@ -53,6 +53,7 @@ const PHASE3_ORDER = Object.freeze([
 const FM_KEY_RE = /^[A-Za-z_][\w-]*:/;
 const STAMP_RE = /^(.*?)( \[(\d{4})-(\d{2})-(\d{2})\]\s*)$/;
 const DECISION_DATE_RE = /^\s*[-*]\s+(\d{4})-(\d{2})-(\d{2})/;
+const LIST_MARKER_RE = /^\s*(?:[-*+]|\d+[.)])\s+/;
 
 // ---------------------------------------------------------------------------
 // Dates
@@ -497,8 +498,9 @@ export function fitStateToCap(md, opts = {}) {
   /**
    * Single-unit cut: (1) drop the continuation lines; (2) if the first line is still above
    * `target`, detach a trailing In-flight stamp, keep the text before the last whitespace at
-   * index ≤ target − 2 − stampSize (hard-cut when there is none), append ' …', re-attach the
-   * stamp. Applied only when it strictly reduces the unit's size; the unit is exhausted after it.
+   * index ≤ target − 2 − stampSize (whitespace inside a leading list marker such as `- ` or
+   * `1. ` does not count; hard-cut when there is none), append ' …', re-attach the stamp.
+   * Applied only when it strictly reduces the unit's size; the unit is exhausted after it.
    * chars_cut counts dropped continuation text in full plus the first-line characters cut (the
    * ellipsis and a re-attached stamp are not counted).
    */
@@ -508,17 +510,18 @@ export function fitStateToCap(md, opts = {}) {
     let chars = 0;
     let size = currentText(first).length;
     const contLines = unit.lines.slice(1);
-    if (size > target || contLines.length) {
-      for (const i of contLines) { chars += lines[i].text.length; }
-    }
+    for (const i of contLines) chars += lines[i].text.length;
     let newText = null;
     if (size > target) {
       const text = currentText(first);
       const stampStr = unit.stampStr;
       const body = text.slice(0, text.length - stampStr.length);
       const limit = target - ELLIPSIS.length - stampStr.length;
+      // A cut that lands on the whitespace of the list marker itself would leave `- …`; a
+      // long URL or path is a single token and must be hard-cut like any other.
+      const markerLen = LIST_MARKER_RE.exec(body)?.[0].length ?? 0;
       let at = -1;
-      for (let j = Math.min(limit, body.length - 1); j >= 0; j--) {
+      for (let j = Math.min(limit, body.length - 1); j >= markerLen; j--) {
         if (/\s/.test(body[j])) { at = j; break; }
       }
       if (at < 0) at = Math.max(0, limit);
