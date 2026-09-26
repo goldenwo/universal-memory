@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { v5 as uuidv5 } from 'uuid';
 import { umAdd, computeAdrIdentityId, computeFactId } from '../lib/add.mjs';
 import { isRecallable } from '../lib/recallable.mjs';
+import { resolveSupersessionDirection } from '../lib/supersede.mjs';
 import { NAMESPACE_UM, IDENTITY_CARRY_FORWARD_FIELDS, D3_SERVER_MANAGED_STATUS_FIELDS } from '../lib/dedup-constants.mjs';
 import { _resetCaptureEventsForTest } from '../lib/capture-events.mjs';
 import { toMem0AddResults } from '../lib/mem0-compat.mjs';
@@ -114,6 +115,10 @@ const ADR_META = Object.freeze({
 });
 
 const TITLE = 'Use Kuzu as the graph backend for relationship edges';
+
+// #317: ADR_META carries a usable decided_at, which now lands in valid_from. The
+// stamp / carry contracts (VF1, P8) are pinned on an ADR WITHOUT one.
+const { decided_at: _omitDecidedAt, ...META_NO_DECIDED } = ADR_META;
 
 async function identityAdd({ qdrant, metadata = ADR_META, text = TITLE, infer = true, extra = {} } = {}) {
   const factsCalls = [];
@@ -243,7 +248,7 @@ test('T2d: createdAt AND valid_from carried forward from the existing point (pos
     payload: { createdAt: '2026-01-01T00:00:00.000Z', valid_from: '2026-01-02T00:00:00.000Z' },
   };
   const qdrant = makeMockQdrant({ retrievePoints: [prior] });
-  await identityAdd({ qdrant });
+  await identityAdd({ qdrant, metadata: META_NO_DECIDED });
   const payload = qdrant.calls.upserts[0].body.points[0].payload;
   // P8: buildPayload unconditionally writes createdAt: nowIso — only a
   // post-call override can preserve this. A metadata-borne value would be lost.
@@ -252,8 +257,9 @@ test('T2d: createdAt AND valid_from carried forward from the existing point (pos
 });
 
 test('T2d: retrieve MISS → first-sync behavior (fresh createdAt + valid_from stamped)', async () => {
+  // Without a decided_at (#317 routes one into valid_from when present — T2n).
   const qdrant = makeMockQdrant({ retrievePoints: [] });
-  await identityAdd({ qdrant });
+  await identityAdd({ qdrant, metadata: META_NO_DECIDED });
   const payload = qdrant.calls.upserts[0].body.points[0].payload;
   assert.ok(typeof payload.createdAt === 'string' && payload.createdAt.length > 0);
   assert.equal(payload.valid_from, payload.createdAt, 'VF1: first write shares one nowIso');
@@ -312,6 +318,79 @@ test('T2d: a caller-supplied USABLE valid_from wins over the carry on re-sync (R
   const payload = qdrant.calls.upserts[0].body.points[0].payload;
   assert.equal(payload.valid_from, '2025-12-15T00:00:00.000Z', 'the correction lands');
   assert.equal(payload.createdAt, '2026-01-01T00:00:00.000Z', 'createdAt still carried (no caller path exists for it)');
+});
+
+// ---------------------------------------------------------------------------
+// T2n — #317: an ADR's truth time is its decision date (decided_at -> valid_from)
+// ---------------------------------------------------------------------------
+test('T2n: first sync routes a usable decided_at into valid_from, re-serialised; createdAt stays the registration instant', async () => {
+  const qdrant = makeMockQdrant({ retrievePoints: [] });
+  await identityAdd({ qdrant });   // ADR_META.decided_at = '2026-08-23'
+  const payload = qdrant.calls.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, '2026-08-23T00:00:00.000Z', 'the decision date, re-serialised to a UTC instant');
+  assert.ok(typeof payload.createdAt === 'string' && Date.parse(payload.createdAt) > Date.parse('2026-08-24'), 'createdAt is still the registration instant');
+  assert.notEqual(payload.valid_from, payload.createdAt);
+  assert.equal(payload.decided_at, '2026-08-23', 'decided_at itself still lands (metadata spread) — the direction rule never reads it');
+});
+
+test('T2n: re-sync — decided_at wins over the carried registration-instant valid_from (the #276 live-pair shape)', async () => {
+  const prior = { id: 'x', payload: { createdAt: '2026-08-18T02:09:47.029Z', valid_from: '2026-08-18T02:09:47.029Z' } };
+  const qdrant = makeMockQdrant({ retrievePoints: [prior] });
+  await identityAdd({ qdrant, metadata: { ...ADR_META, decided_at: '2026-04-16' } });
+  const payload = qdrant.calls.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, '2026-04-16T00:00:00.000Z', 'the decision date replaces the carried registration instant');
+  assert.equal(payload.createdAt, '2026-08-18T02:09:47.029Z', 'createdAt still carried');
+});
+
+test('T2n: a usable caller-supplied valid_from beats decided_at (RC2 precedence kept)', async () => {
+  const qdrant = makeMockQdrant({ retrievePoints: [] });
+  await identityAdd({ qdrant, metadata: { ...ADR_META, valid_from: '2025-12-15T00:00:00.000Z' } });
+  const payload = qdrant.calls.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, '2025-12-15T00:00:00.000Z');
+});
+
+test('T2n: an unusable decided_at changes nothing — first sync stamps, re-sync carries', async () => {
+  for (const bad of ['not a date', '', 42, null]) {
+    const miss = makeMockQdrant({ retrievePoints: [] });
+    await identityAdd({ qdrant: miss, metadata: { ...ADR_META, decided_at: bad } });
+    const fresh = miss.calls.upserts[0].body.points[0].payload;
+    assert.equal(fresh.valid_from, fresh.createdAt, `decided_at ${JSON.stringify(bad)}: VF1 stamp on a miss`);
+    const prior = { id: 'x', payload: { createdAt: '2026-01-01T00:00:00.000Z', valid_from: '2026-01-02T00:00:00.000Z' } };
+    const hit = makeMockQdrant({ retrievePoints: [prior] });
+    await identityAdd({ qdrant: hit, metadata: { ...ADR_META, decided_at: bad } });
+    assert.equal(hit.calls.upserts[0].body.points[0].payload.valid_from, '2026-01-02T00:00:00.000Z', `decided_at ${JSON.stringify(bad)}: carry on a re-sync`);
+  }
+});
+
+test('T2n: the live pair — registered in reverse order, the direction rule now reads the decision dates and keeps the retired fact', async () => {
+  const q8 = makeMockQdrant({ retrievePoints: [] });
+  await identityAdd({ qdrant: q8, text: 'The Kuzu commitment is retired', metadata: { ...ADR_META, adr_id: '0008', decided_at: '2026-08-18' } });
+  const q4 = makeMockQdrant({ retrievePoints: [] });
+  await identityAdd({ qdrant: q4, text: 'Kuzu is used as the graph backend for relationship edges', metadata: { ...ADR_META, adr_id: '0004', decided_at: '2026-04-16' } });
+  const p8 = q8.calls.upserts[0].body.points[0].payload;
+  const p4 = q4.calls.upserts[0].body.points[0].payload;
+  assert.ok(Date.parse(p4.createdAt) >= Date.parse(p8.createdAt), 'fixture: 0004 registered after 0008');
+  const r = resolveSupersessionDirection({ stored: { valid_from: p8.valid_from }, incoming: { valid_from: p4.valid_from, assertedAt: p4.createdAt } });
+  assert.equal(r.direction, 'stored-newer', 'the retired decision (stored) is newer by truth time; the arriving older ADR does not displace it');
+});
+
+test('T2n: the identity_write log line names where valid_from came from', async () => {
+  const infos = [];
+  const logger = { info: (obj) => infos.push(obj), warn: () => {}, error: () => {}, debug: () => {} };
+  const cases = [
+    [{ metadata: ADR_META }, [], 'decided_at'],
+    [{ metadata: { ...ADR_META, valid_from: '2025-12-15T00:00:00.000Z' } }, [], 'caller'],
+    [{ metadata: META_NO_DECIDED }, [{ id: 'x', payload: { createdAt: '2026-01-01T00:00:00.000Z', valid_from: '2026-01-02T00:00:00.000Z' } }], 'carry'],
+    [{ metadata: META_NO_DECIDED }, [], 'stamp'],
+  ];
+  for (const [args, retrievePoints, expected] of cases) {
+    infos.length = 0;
+    const qdrant = makeMockQdrant({ retrievePoints });
+    await identityAdd({ qdrant, ...args, extra: { _logger: logger } });
+    const line = infos.find((o) => o && o.event === 'adr.identity_write');
+    assert.ok(line, 'identity_write line emitted');
+    assert.equal(line.validFromSource, expected);
+  }
 });
 
 // ---------------------------------------------------------------------------
