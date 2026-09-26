@@ -171,7 +171,17 @@ const SCHEMAS = {
         description:
           'Document lifecycle state. Search excludes superseded/deprecated/rejected by default.',
       },
-      valid_from: { type: 'string', format: 'date-time' },
+      valid_from: {
+        type: 'string',
+        format: 'date-time',
+        description:
+          'Truth time: when the fact or document became true (UTC ISO-8601), distinct from when it was written. '
+          + 'The server stamps the write instant when the caller supplies no usable value; a usable caller value wins; '
+          + 'an identity ADR write (type adr with adr_id) routes decided_at into it. Temporal ranking reads this field and nothing else. '
+          + 'Supersession direction compares it on both sides: the side with the later valid_from is the newer one and only an incoming-newer '
+          + 'pair can supersede; a stored side without one abstains, and a value on either side more than 5 minutes past the server clock '
+          + 'abstains as future (stored-future / incoming-future). The write timestamp (createdAt) and decided_at are never consulted.',
+      },
       invalidated_at: {
         type: ['string', 'null'],
         format: 'date-time',
@@ -372,6 +382,8 @@ const SCHEMAS = {
           { type: 'string', format: 'date-time' },
           { type: 'null' },
         ],
+        description:
+          'The state document\'s server-stamped merge instant (frontmatter valid_from), null when no document exists. Not a supersession input.',
       },
     },
   },
@@ -1394,6 +1406,14 @@ function collectRefs(node, acc) {
 // so slash-containing segments are double-quoted bracket form and normal keys
 // are dot-separated.  The match in capDescriptions() is exact: childPath === 'gpt.' + e.at.
 const GPT_DESCRIPTION_OVERRIDES = [
+  {
+    // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
+    // #319: valid_from's meaning (truth time; the ranking date; the supersession-direction input).
+    at: 'components.schemas.MemoryMetadata.properties.valid_from.description',
+    expect:
+      'Truth time: when the fact or document became true (UTC ISO-8601), distinct from when it was written. The server stamps the write instant when the caller supplies no usable value; a usable caller value wins; an identity ADR write (type adr with adr_id) routes decided_at into it. Temporal ranking reads this field and nothing else. Supersession direction compares it on both sides: the side with the later valid_from is the newer one and only an incoming-newer pair can supersede; a stored side without one abstains, and a value on either side more than 5 minutes past the server clock abstains as future (stored-future / incoming-future). The write timestamp (createdAt) and decided_at are never consulted.',
+    text: 'Truth time: when the fact became true (UTC ISO-8601), not the write instant. Server-stamped when absent; a usable caller value wins; ADR writes route decided_at into it. Ranking reads only this field. Supersession compares both sides; only incoming-newer acts; missing or >5 min future abstain.',
+  },
   {
     // must equal the walker's breadcrumb minus the 'gpt.' prefix — the drift test pins this.
     at: 'paths["/api/search"].post.description',
