@@ -194,6 +194,45 @@ _resolved_host_port() {
 	[ -n "$_p" ] && printf '%s' "$_p" || _um_port
 }
 
+# #320 — a non-loopback Qdrant publish is an unauthenticated read AND write
+# path to the whole vector store, reachable from the LAN and from any overlay
+# network the host is on. Qdrant in this stack runs with no API key of its
+# own (it does not need one behind a loopback bind), and the server's bearer
+# auth on /api/* says nothing about the store underneath — GET /api/stats can
+# 401 while the store answers 200 to anyone who asks. docker-compose.yml's
+# default is loopback-only; the override is a bare host:port string with no
+# validation, and dropping the host prefix (UM_QDRANT_PORT=6336, or
+# 0.0.0.0:6336) is silent everywhere else. Prints the offending value when
+# the resolved UM_QDRANT_PORT carries no loopback host, nothing otherwise.
+# Resolution order mirrors compose: the environment, then server/.env. Every
+# caller WARNS and continues — an operator who publishes behind a firewall on
+# purpose still sees the line once, where the decision is made.
+_um_qdrant_nonloopback() {
+	local _v="${UM_QDRANT_PORT:-}"
+	if [ -z "$_v" ] && [ -f "$ENV_FILE" ]; then
+		_v=$(grep -E '^UM_QDRANT_PORT=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+		_v="${_v%$'\r'}"
+		case "$_v" in
+			'"'*'"')  _v="${_v#\"}"; _v="${_v%\"}" ;;
+			"'"*"'")  _v="${_v#\'}"; _v="${_v%\'}" ;;
+			*)        _v="${_v%%[[:space:]]#*}"; _v="${_v%"${_v##*[![:space:]]}"}" ;;
+		esac
+	fi
+	[ -n "$_v" ] || return 0
+	case "$_v" in
+		127.0.0.1:*|localhost:*|\[::1\]:*) return 0 ;;
+	esac
+	printf '%s' "$_v"
+}
+_um_qdrant_warning_lines() {
+	printf '%s\n' \
+		"UM_QDRANT_PORT=$1 publishes Qdrant on every interface (a bare port, or a 0.0.0.0 host)." \
+		"  Qdrant runs here with no authentication of its own; the server's bearer token does NOT" \
+		"  protect the store underneath, so this is an unauthenticated read+write path to every" \
+		"  memory from the LAN and any overlay network. Keep a loopback prefix, e.g." \
+		"  UM_QDRANT_PORT=127.0.0.1:${1##*:}, or drop the publish with a docker-compose.override.yml (#320)."
+}
+
 # ─── Version reporting across the three updatable surfaces ───────────────────
 # The server container, the `um` CLI, and the Claude Code plugin update through
 # three different mechanisms with no shared release trigger, so they drift
@@ -274,6 +313,12 @@ if [ "${1:-}" = "--verify" ]; then
 
   # Load .env so UM_VAULT_DIR etc. are available even if not already set in env.
   _um_load_env_file
+
+  # #320: advisory, never a failed check — see _um_qdrant_nonloopback.
+  _qbad="$(_um_qdrant_nonloopback)"
+  if [ -n "$_qbad" ]; then
+    _vwarn "qdrant-publish" "UM_QDRANT_PORT=$_qbad publishes Qdrant on every interface — unauthenticated store; keep a 127.0.0.1: prefix (#320)"
+  fi
 
   _PORT="$(_resolved_host_port)"
   _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
@@ -547,6 +592,11 @@ if [ "${1:-}" = "--upgrade" ]; then
 	fi
 
 	_um_load_env_file
+	# #320: the swap re-publishes whatever UM_QDRANT_PORT says; say it out loud.
+	_qbad="$(_um_qdrant_nonloopback)"
+	if [ -n "$_qbad" ]; then
+		while IFS= read -r _l; do _uwarn "$_l"; done < <(_um_qdrant_warning_lines "$_qbad")
+	fi
 	# Provisional; step 1 replaces it with what compose reports for the
 	# actually-running container (a host override can republish the port).
 	_UPG_HEALTH="http://localhost:$(_um_port)/health"
@@ -1559,6 +1609,15 @@ _append_to_profile() {
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
 _append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
+
+# ─── #320: non-loopback Qdrant publish warning ──────────────────────────────
+# Runs after .env is written so the check sees exactly what compose will read
+# (environment first, then the file), and before the stack starts so the
+# warning lands next to the decision it is about.
+_qbad="$(_um_qdrant_nonloopback)"
+if [ -n "$_qbad" ]; then
+	while IFS= read -r _l; do warn "$_l"; done < <(_um_qdrant_warning_lines "$_qbad")
+fi
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
 if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then

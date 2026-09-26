@@ -1810,6 +1810,109 @@ assert_exit_zero "T36: --verify still exits 0 on the default port" "$T36_EXIT"
 assert_contains "T36: server-health still probes the default port" "$T36_OUT" "http://localhost:6335/health"
 assert_contains "T36: all checks passed" "$T36_OUT" "All checks passed"
 
+
+# ─── TQ (#320): a non-loopback UM_QDRANT_PORT is warned about, never silent ───
+# Qdrant in this stack runs with no API key of its own; the server's bearer
+# auth does not protect the store underneath. The compose default is loopback-
+# only, but the override is a bare host:port string with no validation, and
+# dropping the host prefix (a bare port, or 0.0.0.0) publishes an
+# unauthenticated read+write path on every interface. The installer warns at
+# the moment the value is used (fresh install, --verify, --upgrade); it never
+# fails, because an operator may publish behind a firewall on purpose.
+echo ""
+echo "=== TQ1: fresh install with UM_QDRANT_PORT=0.0.0.0:6336 warns, exits 0 ==="
+TQ1="$TMPROOT/tq1"
+mkdir -p "$TQ1/vault" "$TQ1/plugins" "$TQ1/home"
+touch "$TQ1/home/.bashrc"
+make_fakebin "$TQ1/bin" 200
+TQ1_SH=$(make_isolated_server "$TQ1/server")
+TQ1_EXIT=0
+TQ1_OUT=$(run_install "$TQ1/bin" "$TQ1_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_QDRANT_PORT=0.0.0.0:6336 \
+  UM_VAULT_DIR="$TQ1/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$TQ1/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash \
+  HOME="$TQ1/home") || TQ1_EXIT=$?
+assert_exit_zero "TQ1: install still exits 0 (warn, never fail)" "$TQ1_EXIT"
+assert_contains "TQ1: names the value and the exposure" "$TQ1_OUT" "UM_QDRANT_PORT=0.0.0.0:6336 publishes Qdrant on every interface"
+assert_contains "TQ1: says the store has no auth of its own" "$TQ1_OUT" "no authentication of its own"
+assert_contains "TQ1: shows the loopback shape to use" "$TQ1_OUT" "127.0.0.1:"
+
+echo ""
+echo "=== TQ2: fresh install with a bare port UM_QDRANT_PORT=6336 warns too ==="
+TQ2="$TMPROOT/tq2"
+mkdir -p "$TQ2/vault" "$TQ2/plugins" "$TQ2/home"
+touch "$TQ2/home/.bashrc"
+make_fakebin "$TQ2/bin" 200
+TQ2_SH=$(make_isolated_server "$TQ2/server")
+TQ2_OUT=$(run_install "$TQ2/bin" "$TQ2_SH" \
+  UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_QDRANT_PORT=6336 UM_VAULT_DIR="$TQ2/vault" UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$TQ2/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$TQ2/home") || true
+assert_contains "TQ2: a bare port is every-interface in docker" "$TQ2_OUT" "UM_QDRANT_PORT=6336 publishes Qdrant on every interface"
+
+echo ""
+echo "=== TQ3: fresh install with UM_QDRANT_PORT=127.0.0.1:6336 is silent ==="
+TQ3="$TMPROOT/tq3"
+mkdir -p "$TQ3/vault" "$TQ3/plugins" "$TQ3/home"
+touch "$TQ3/home/.bashrc"
+make_fakebin "$TQ3/bin" 200
+TQ3_SH=$(make_isolated_server "$TQ3/server")
+TQ3_OUT=$(run_install "$TQ3/bin" "$TQ3_SH" \
+  UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_QDRANT_PORT=127.0.0.1:6336 UM_VAULT_DIR="$TQ3/vault" UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$TQ3/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$TQ3/home") || true
+if [[ "$TQ3_OUT" == *"publishes Qdrant"* ]]; then
+  fail_test "TQ3: loopback publish must not warn" "$TQ3_OUT"
+else
+  pass "TQ3: loopback publish is silent"
+fi
+
+echo ""
+echo "=== TQ4: --verify reads the value from server/.env (bare port) and warns ==="
+TQ4="$TMPROOT/tq4"
+mkdir -p "$TQ4/vault" "$TQ4/plugins" "$TQ4/home"
+touch "$TQ4/home/.bashrc"
+make_fakebin "$TQ4/bin" 200
+TQ4_SH=$(make_isolated_server "$TQ4/server")
+cp -r "$PLUGIN_SRC" "$TQ4/plugins/universal-memory"
+printf 'UM_QDRANT_PORT=6336\n' > "$TQ4/server/.env"
+TQ4_EXIT=0
+TQ4_OUT=$(env PATH="$TQ4/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$TQ4/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$TQ4/plugins" \
+  HOME="$TQ4/home" bash "$TQ4_SH" --verify 2>&1) || TQ4_EXIT=$?
+assert_exit_zero "TQ4: --verify still exits 0 (advisory)" "$TQ4_EXIT"
+assert_contains "TQ4: --verify carries a qdrant-publish advisory" "$TQ4_OUT" "qdrant-publish"
+assert_contains "TQ4: names the value" "$TQ4_OUT" "UM_QDRANT_PORT=6336 publishes Qdrant on every interface"
+
+echo ""
+echo "=== TQ5: --verify with a quoted IPv6 loopback in .env is silent ==="
+TQ5="$TMPROOT/tq5"
+mkdir -p "$TQ5/vault" "$TQ5/plugins" "$TQ5/home"
+touch "$TQ5/home/.bashrc"
+make_fakebin "$TQ5/bin" 200
+TQ5_SH=$(make_isolated_server "$TQ5/server")
+cp -r "$PLUGIN_SRC" "$TQ5/plugins/universal-memory"
+printf 'UM_QDRANT_PORT="[::1]:6333"\n' > "$TQ5/server/.env"
+TQ5_OUT=$(env PATH="$TQ5/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$TQ5/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$TQ5/plugins" \
+  HOME="$TQ5/home" bash "$TQ5_SH" --verify 2>&1) || true
+if [[ "$TQ5_OUT" == *"qdrant-publish"* ]]; then
+  fail_test "TQ5: IPv6 loopback must not warn" "$TQ5_OUT"
+else
+  pass "TQ5: IPv6 loopback is silent"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
