@@ -744,6 +744,10 @@ test('#324 checkpoint_failure: a project whose last failure left the window has 
     { day: daysAgo(30), surface: 'codex-cli', project: 'gone', event: 'signal.checkpoint_failure', outcome: 'rejected', count: 1 },
     { day: daysAgo(9), surface: 'claude-code-plugin', project: 'both', event: 'signal.checkpoint_failure', outcome: 'failed', count: 4 },
     { day: daysAgo(1), surface: 'claude-code-plugin', project: 'both', event: 'signal.checkpoint_failure', outcome: 'contended', count: 2 },
+    // Window boundary (WINDOW_DAYS = 7 ⇒ today + 6 prior days, inclusive):
+    // day −6 is the oldest day INSIDE, day −7 the newest day OUTSIDE.
+    { day: daysAgo(6), surface: 'codex-cli', project: 'edge-in', event: 'signal.checkpoint_failure', outcome: 'failed', count: 1 },
+    { day: daysAgo(7), surface: 'codex-cli', project: 'edge-out', event: 'signal.checkpoint_failure', outcome: 'failed', count: 1 },
   ]);
   const stats = readCounterStats({ now: NOW, dbPath });
 
@@ -756,7 +760,10 @@ test('#324 checkpoint_failure: a project whose last failure left the window has 
   assert.equal(both.count_7d, 2, 'only the in-window rows are counted');
   assert.equal(both.outcomes_7d.contended, 2);
   assert.equal(both.outcomes_7d.failed, 0, 'the 9-day-old failure is outside the window');
-  assert.deepEqual(Object.keys(stats.checkpointFailure), ['both']);
+  assert.ok(stats.checkpointFailure['edge-in'], 'day −6 is inside the inclusive window');
+  assert.equal(stats.checkpointFailure['edge-in'].last_day_seen, daysAgo(6));
+  assert.equal(Object.hasOwn(stats.checkpointFailure, 'edge-out'), false, 'day −7 is outside');
+  assert.deepEqual(Object.keys(stats.checkpointFailure).sort(), ['both', 'edge-in']);
 });
 
 test('#309 checkpoint_failure: rows aggregate ACROSS surfaces within one project', async () => {
