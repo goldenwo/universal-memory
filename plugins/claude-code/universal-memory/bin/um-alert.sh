@@ -353,12 +353,66 @@ fi
 #              ever were the 2026-07-16/17 deploy window) makes ANY windowed
 #              count real signal; the 7-day window is the dead-man margin.
 #   OK       — zero anomalies in the window.
-SIG_VERDICT=$("$PY" -c '
+# #325 — ONE verdict program for both signals arms. The two arms share the
+# JSON parse guard, the validate-before-sorting loop, the fold-to-breakdown
+# and the message shape; they differ in exactly two DELIBERATE places, which
+# are parameters in CFG below rather than a second copy of the block:
+#   1. ABSENT-key posture — a missing family key inside a present signals
+#      is a drift ERROR (exit 2) for capture_anomaly but an informational
+#      ABSENT breadcrumb (exit 0) for checkpoint_failure (T38 vs T68).
+#   2. Triggering set — capture_anomaly alerts on any count_7d > 0 (measured
+#      benign base rate of zero); checkpoint_failure alerts only on
+#      rejected + failed, the two outcomes with a zero base rate BY
+#      CONSTRUCTION, and shows the rest in the breakdown without triggering.
+# Every message is byte-identical to the two blocks this replaced, so the
+# um-alert.test.sh greps (T34-T38, T63-T70) pin the shared block.
+# Single-quoted on purpose (python source, no shell expansion; no backticks —
+# because shellcheck reads them as command substitution, SC2016, which failed
+# CI on #322). Family name arrives as argv[1]; the /api/stats body on stdin.
+_UM_SIGNAL_VERDICT_PY='
 import json, sys
+
+FAMILY = sys.argv[1]
+CFG = {
+    "capture_anomaly": {
+        "absent_signals": "signals key absent — server predates the #267 anomaly self-report; client-side capture anomalies NOT checked",
+        "degraded": "counters degraded — anomaly signals cannot be assessed",
+        "signals_null_with_capture": "signals is null while capture is present — malformed payload (both derive from the same counters DB)",
+        "absent_key": ("ERROR", "signals present but missing the capture_anomaly key — malformed payload"),
+        "fam_null": ("ERROR", "signals.capture_anomaly malformed (expected an object)"),
+        "malformed": "signals.capture_anomaly malformed (expected an object)",
+        "noun": "surface",
+        "trigger": "count_7d",
+        "breakdown_key": "reasons_7d",
+        "line": "%s: %d capture anomaly(ies) in 7d (%s; last %s)",
+        "tail": " — the capture client is firing but not capturing (the 2026-07-16 class, #267; see the reason breakdown)",
+        "ok": "no capture anomalies in the last 7 days",
+        "payload_err": "signals payload malformed: %s",
+    },
+    "checkpoint_failure": {
+        "absent_signals": "signals key absent — server predates #267/#309; accepted-mode checkpoint failures NOT checked",
+        "degraded": "counters degraded — checkpoint-failure signals cannot be assessed",
+        "signals_null_with_capture": None,
+        "absent_key": ("ABSENT", "signals present but no checkpoint_failure key — server predates #309 (a rollback, or a CLI newer than the server); accepted-mode checkpoint failures NOT checked"),
+        "fam_null": ("ERROR", "checkpoint_failure is null while signals is present — the checkpoint-failure reader degraded on its own; the #309 rollback signal is DARK"),
+        "malformed": "signals.checkpoint_failure malformed (expected an object)",
+        "noun": "project",
+        "trigger": ("rejected", "failed"),
+        "breakdown_key": "outcomes_7d",
+        "line": "%s: %d failed accepted checkpoint(s) in 7d (%s; last %s)",
+        "tail": " — digestion failed server-side after the hook was told 202; these sessions are captured but NOT digested (#309)",
+        "ok": "no failed accepted checkpoints in the last 7 days",
+        "payload_err": "checkpoint_failure payload malformed: %s",
+    },
+}
+C = CFG[FAMILY]
 
 def emit(status, msg):
     print(status + "|" + msg)
     sys.exit(0)
+
+def is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 try:
     stats = json.load(sys.stdin)
@@ -368,58 +422,79 @@ except Exception:
     emit("ERROR", "unparseable /api/stats response (not JSON)")
 
 if "signals" not in stats:
-    emit("ABSENT", "signals key absent — server predates the #267 anomaly self-report; client-side capture anomalies NOT checked")
+    emit("ABSENT", C["absent_signals"])
 
 signals = stats.get("signals")
 if signals is None:
-    if stats.get("capture") is None:
-        emit("DEGRADED", "counters degraded — anomaly signals cannot be assessed")
-    emit("ERROR", "signals is null while capture is present — malformed payload (both derive from the same counters DB)")
+    # Divergence 1a: the anomaly arm distinguishes a wholesale counters
+    # degrade (capture null too) from a malformed payload (capture present);
+    # the checkpoint arm reports DEGRADED either way — the capture verdict
+    # carries the exit, so it never double-reports.
+    if C["signals_null_with_capture"] is None or stats.get("capture") is None:
+        emit("DEGRADED", C["degraded"])
+    emit("ERROR", C["signals_null_with_capture"])
 if not isinstance(signals, dict):
     emit("ERROR", "signals key present but malformed (expected an object)")
-if "capture_anomaly" not in signals:
-    emit("ERROR", "signals present but missing the capture_anomaly key — malformed payload")
-fam = signals["capture_anomaly"]
+if FAMILY not in signals:
+    # Divergence 1: ERROR for capture_anomaly, ABSENT for checkpoint_failure.
+    emit(*C["absent_key"])
+fam = signals[FAMILY]
+if fam is None:
+    emit(*C["fam_null"])
 if not isinstance(fam, dict):
-    emit("ERROR", "signals.capture_anomaly malformed (expected an object)")
+    emit("ERROR", C["malformed"])
 
 alerts = []
 try:
     # VALIDATE BEFORE SORTING (review catch, twice over): a sort key that
-    # calls .get() or negates a value runs BEFORE any isinstance guard in a
-    # comprehension, so a malformed entry would crash with a generic
-    # TypeError/AttributeError instead of reaching the purpose-written
-    # per-surface error — or, for reason values, escalate a junk entry into
-    # a whole-section exit 2 where ignoring it keeps the ALERT actionable.
+    # reads a value runs BEFORE any isinstance guard in a comprehension, so a
+    # malformed entry would crash with a generic TypeError instead of
+    # reaching the purpose-written per-entry error.
     entries = []
-    for surface, info in fam.items():
+    for name, info in fam.items():
         if not isinstance(info, dict):
-            raise ValueError("surface %r malformed" % surface)
-        n = info.get("count_7d")
-        if not isinstance(n, (int, float)) or isinstance(n, bool):
-            raise ValueError("surface %r has a bad count_7d" % surface)
+            raise ValueError("%s %r malformed" % (C["noun"], name))
+        if C["trigger"] == "count_7d":
+            n = info.get("count_7d")
+            if not is_num(n):
+                raise ValueError("%s %r has a bad count_7d" % (C["noun"], name))
+        else:
+            # Divergence 2: sum the triggering outcomes only, each type-checked.
+            outcomes = info.get("outcomes_7d")
+            if not isinstance(outcomes, dict):
+                raise ValueError("%s %r has a bad outcomes_7d" % (C["noun"], name))
+            n = 0
+            for k in C["trigger"]:
+                v = outcomes.get(k, 0)
+                if not is_num(v):
+                    raise ValueError("%s %r has a bad %s count" % (C["noun"], name, k))
+                n += v
         if n > 0:
-            entries.append((surface, n, info))
-    for surface, n, info in sorted(entries, key=lambda e: -e[1]):
-        reasons = info.get("reasons_7d") or {}
+            entries.append((name, n, info))
+    for name, n, info in sorted(entries, key=lambda e: -e[1]):
+        # Show the WHOLE breakdown, triggering or not: the non-triggering
+        # counts are the base-rate measurement the promotion decision defers
+        # to (checkpoint arm), and the reason breakdown carries the diagnosis
+        # (anomaly arm — its neutral noun spans transcript reads AND
+        # hook-startup failures).
+        bd = info.get(C["breakdown_key"]) or {}
         parts = sorted(
-            ((k, v) for k, v in reasons.items()
-             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
+            ((k, v) for k, v in bd.items() if is_num(v) and v > 0),
             key=lambda kv: -kv[1])
         breakdown = ", ".join("%s x%d" % kv for kv in parts) or "unlabeled"
-        # Neutral noun (review catch): the vocabulary spans transcript reads
-        # AND hook-startup failures (no-python, bad-stdin) — "empty read"
-        # would misdirect the diagnosis; the reason breakdown carries the
-        # specifics.
-        alerts.append("%s: %d capture anomaly(ies) in 7d (%s; last %s)" % (
-            surface, n, breakdown, info.get("last_day_seen")))
+        alerts.append(C["line"] % (name, n, breakdown, info.get("last_day_seen")))
 except Exception as e:
-    emit("ERROR", "signals payload malformed: %s" % e)
+    emit("ERROR", C["payload_err"] % e)
 
 if alerts:
-    emit("ALERT", "; ".join(alerts) + " — the capture client is firing but not capturing (the 2026-07-16 class, #267; see the reason breakdown)")
-emit("OK", "no capture anomalies in the last 7 days")
-' < "$BODY_FILE" 2>/dev/null) || SIG_VERDICT=""
+    emit("ALERT", "; ".join(alerts) + C["tail"])
+emit("OK", C["ok"])
+'
+um_signal_verdict() {
+  "$PY" -c "$_UM_SIGNAL_VERDICT_PY" "$1" < "$BODY_FILE" 2>/dev/null
+}
+
+SIG_VERDICT=$(um_signal_verdict capture_anomaly) || SIG_VERDICT=""
 
 SIG_STATUS="${SIG_VERDICT%%|*}"
 SIG_MESSAGE="${SIG_VERDICT#*|}"
@@ -460,83 +535,7 @@ SIG_MESSAGE="${SIG_VERDICT#*|}"
 #              CONSTRUCTION. contended / zero_commit / provider_stalled / other
 #              are shown in the breakdown but never trigger.
 #   OK       — zero triggering outcomes in the window.
-CKPT_VERDICT=$("$PY" -c '
-import json, sys
-
-TRIGGERING = ("rejected", "failed")
-
-def emit(status, msg):
-    print(status + "|" + msg)
-    sys.exit(0)
-
-try:
-    stats = json.load(sys.stdin)
-    if not isinstance(stats, dict):
-        raise ValueError("not an object")
-except Exception:
-    emit("ERROR", "unparseable /api/stats response (not JSON)")
-
-if "signals" not in stats:
-    emit("ABSENT", "signals key absent — server predates #267/#309; accepted-mode checkpoint failures NOT checked")
-
-signals = stats.get("signals")
-if signals is None:
-    emit("DEGRADED", "counters degraded — checkpoint-failure signals cannot be assessed")
-if not isinstance(signals, dict):
-    emit("ERROR", "signals key present but malformed (expected an object)")
-if "checkpoint_failure" not in signals:
-    emit("ABSENT", "signals present but no checkpoint_failure key — server predates #309 (a rollback, or a CLI newer than the server); accepted-mode checkpoint failures NOT checked")
-fam = signals["checkpoint_failure"]
-if fam is None:
-    # LOUD, not silent. This state can ONLY mean the fail-isolated reader in
-    # stats.mjs threw while everything else stayed healthy: a degraded counters
-    # DB nulls "signals" wholesale, which the branch above already caught. So
-    # the rollback signal for #309 is dark while the board looks green — the
-    # inert-detector failure mode, which is the very class this change removes.
-    emit("ERROR", "checkpoint_failure is null while signals is present — the checkpoint-failure reader degraded on its own; the #309 rollback signal is DARK")
-if not isinstance(fam, dict):
-    emit("ERROR", "signals.checkpoint_failure malformed (expected an object)")
-
-alerts = []
-try:
-    # VALIDATE BEFORE SORTING, same discipline as the sibling: a sort key that
-    # reads a value runs BEFORE any isinstance guard in a comprehension, so a
-    # malformed entry would crash with a generic TypeError instead of reaching
-    # the purpose-written per-project error.
-    entries = []
-    for project, info in fam.items():
-        if not isinstance(info, dict):
-            raise ValueError("project %r malformed" % project)
-        outcomes = info.get("outcomes_7d")
-        if not isinstance(outcomes, dict):
-            raise ValueError("project %r has a bad outcomes_7d" % project)
-        n = 0
-        for k in TRIGGERING:
-            v = outcomes.get(k, 0)
-            if not isinstance(v, (int, float)) or isinstance(v, bool):
-                raise ValueError("project %r has a bad %s count" % (project, k))
-            n += v
-        if n > 0:
-            entries.append((project, n, info, outcomes))
-    for project, n, info, outcomes in sorted(entries, key=lambda e: -e[1]):
-        # Show the WHOLE breakdown, triggering or not: a contended-heavy
-        # project alongside a failure is a different diagnosis than a failure
-        # alone, and the non-triggering counts are the base-rate measurement
-        # the promotion decision defers to.
-        parts = sorted(
-            ((k, v) for k, v in outcomes.items()
-             if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0),
-            key=lambda kv: -kv[1])
-        breakdown = ", ".join("%s x%d" % kv for kv in parts) or "unlabeled"
-        alerts.append("%s: %d failed accepted checkpoint(s) in 7d (%s; last %s)" % (
-            project, n, breakdown, info.get("last_day_seen")))
-except Exception as e:
-    emit("ERROR", "checkpoint_failure payload malformed: %s" % e)
-
-if alerts:
-    emit("ALERT", "; ".join(alerts) + " — digestion failed server-side after the hook was told 202; these sessions are captured but NOT digested (#309)")
-emit("OK", "no failed accepted checkpoints in the last 7 days")
-' < "$BODY_FILE" 2>/dev/null) || CKPT_VERDICT=""
+CKPT_VERDICT=$(um_signal_verdict checkpoint_failure) || CKPT_VERDICT=""
 
 CKPT_STATUS="${CKPT_VERDICT%%|*}"
 CKPT_MESSAGE="${CKPT_VERDICT#*|}"
