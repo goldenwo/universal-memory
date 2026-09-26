@@ -272,10 +272,34 @@ async function performIdentityUpsert({
   }
   const prior = record?.payload ?? null;
 
+  // #317: an ADR's truth time is its DECISION date. `decided_at` is the ADR
+  // helper's field (create-adr.sh) and is deliberately never read by the
+  // supersession-direction rule (#316, spec §3.3 item 5: it is not reserved and
+  // lands on any write through the metadata spread), so the sanctioned path is
+  // to route it INTO `valid_from` here — the one write that knows the record
+  // is an ADR. Precedence: a usable caller-supplied valid_from still wins (RC2
+  // parity); then a usable decided_at; then the carry / stamp path below,
+  // exactly as before. Re-serialised (toISOString) so a date-only
+  // `2026-04-16` lands as the same UTC instant the direction rule computes
+  // from it. Ranking reads valid_from and nothing else (spec D-h), so an ADR
+  // now ranks and supersedes by when it was decided, not when it was synced —
+  // the #276 live pair (ADR-0008 retired 2026-08-18 vs ADR-0004 decided
+  // 2026-04-16, registered 1.5 s apart in the opposite order) resolves
+  // correctly from the write path alone. Zone caveat (the same one the #276
+  // spec accepts for valid_from): an ISO date-only or Z-suffixed decided_at is
+  // UTC; a non-ISO or zone-less date-time string parses in the process's local
+  // zone, so the routed instant would depend on the syncing host. The shipped
+  // helper (create-adr.sh) writes Z-suffixed ISO on create and copies the
+  // frontmatter value on sync.
+  const callerValidFrom = isUsableDate(stagedMetadata?.valid_from);
+  const decidedFrom = !callerValidFrom && isUsableDate(stagedMetadata?.decided_at)
+    ? new Date(stagedMetadata.decided_at).toISOString()
+    : null;
+  const truthMetadata = decidedFrom !== null ? { ...stagedMetadata, valid_from: decidedFrom } : stagedMetadata;
   const base = buildPayload({
     userId,
     text,
-    metadata: stagedMetadata,
+    metadata: truthMetadata,
     surface,
     lane: undefined,   // D4: unpartitioned by construction; caller lane/persona dropped
     persona: undefined,
@@ -294,7 +318,9 @@ async function performIdentityUpsert({
   const carry = {};
   if (prior) {
     for (const field of IDENTITY_CARRY_FORWARD_FIELDS) {
-      if (field === 'valid_from' && isUsableDate(metadata?.valid_from)) continue;
+      // #317: a routed decided_at is a caller-known truth time too — the carry
+      // must not put the prior's registration instant back over it.
+      if (field === 'valid_from' && (callerValidFrom || decidedFrom !== null)) continue;
       if (prior[field] != null) carry[field] = prior[field];
     }
   }
@@ -327,6 +353,10 @@ async function performIdentityUpsert({
     && payload.supersededAt == null
     && payload.invalidated_at == null;
   const clearBlocked = derived.intent === 'clear' && !provenanceClear;
+  // Where valid_from came from, for the log line (#317): identifiers only.
+  const validFromSource = callerValidFrom ? 'caller'
+    : decidedFrom !== null ? 'decided_at'
+      : prior?.valid_from != null ? 'carry' : 'stamp';
   if (derived.intent === 'suppress') {
     payload.status = derived.status;
   } else if (derived.intent === 'clear' && provenanceClear) {
@@ -347,6 +377,7 @@ async function performIdentityUpsert({
     {
       event: 'adr.identity_write', id, adr_id: metadata.adr_id, hadPrior: prior !== null,
       adrStatusIntent: derived.intent, clearBlocked, status: payload.status ?? null,
+      validFromSource,
     },
     'identity-addressed ADR write (verbatim, dedup-bypassed, full-replace upsert)',
   );
@@ -614,8 +645,8 @@ export async function umAdd({
     // exact #279 silent-divergence hazard. Leave a breadcrumb.
     if (_systemMigration !== true && metadata?.type === 'adr' && metadata?.adr_id != null) {
       logger.warn(
-        { event: 'adr.identity_skipped', adrIdType: typeof metadata.adr_id },
-        'type:adr write with a non-string or empty adr_id — falling through to the content-addressed pipeline',
+        { event: 'adr.identity_skipped', adrIdType: typeof metadata.adr_id, decidedAtRouted: false },
+        'type:adr write with a non-string or empty adr_id — falling through to the content-addressed pipeline (decided_at is not routed into valid_from there; #317)',
       );
     }
 
