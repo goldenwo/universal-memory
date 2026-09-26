@@ -778,7 +778,7 @@ export async function umAdd({
                 try { umInbandSupersedeTotal.inc({ outcome: 'declined' }); } catch { /* obs fail-safe */ }
               } else if (decision.direction !== null && decision.direction !== undefined) {
                 // #276: in-band and eligible, but the direction check abstained BEFORE the
-                // judge (stored-newer / stored-future / ambiguous). The only signal of a
+                // judge (stored-newer / stored-future / incoming-future / ambiguous). The only signal of a
                 // denied supersession — carries everything a counter would have.
                 logger.info(
                   {

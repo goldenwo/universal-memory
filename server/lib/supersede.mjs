@@ -48,6 +48,7 @@ import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
  *   assertedAt unusable                                        -> 'ambiguous'
  *   truthTime(stored) === null                                 -> 'ambiguous'
  *   truthTime(stored)  >  epoch(now) + CLOCK_SKEW_TOLERANCE_MS -> 'stored-future'
+ *   truthTime(incoming) > epoch(now) + CLOCK_SKEW_TOLERANCE_MS -> 'incoming-future'
  *   truthTime(incoming) > truthTime(stored)                    -> 'incoming-newer'
  *   truthTime(incoming) < truthTime(stored)                    -> 'stored-newer'
  *   equal                                                      -> 'ambiguous'
@@ -57,6 +58,13 @@ import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
  * a false supersession is silent recall loss. 'stored-future' is an abstain split
  * out only so an operator can see it; it compares the stored instant against the
  * wall clock at decision (`now`), never against the incoming truth time.
+ * 'incoming-future' (#318) is the same bound on the other side: `valid_from` is
+ * caller-settable on every public write, so without it one far-future value
+ * resolved 'incoming-newer' against every dated stored point and, on a confirmed
+ * contradiction, demoted it. The read side already treats a future `valid_from`
+ * as a hazard (#238's upper clamp); this is the write/direction-side analogue.
+ * Both future arms run before the newer/older comparison, stored side first, so
+ * two caller-chosen future instants are never compared against each other.
  *
  * The registration timestamp / arrival order is never consulted. The ADR
  * decision-date field is never consulted either — `valid_from` is the one
@@ -75,7 +83,7 @@ import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
  * @param {{valid_from?: string, assertedAt: string}} p.incoming
  * @param {{valid_from?: string}}                     p.stored
  * @param {string} [p.now]  Wall clock at decision; defaults to `assertedAt`.
- * @returns {{direction: 'incoming-newer'|'stored-newer'|'stored-future'|'ambiguous', incomingAt: string|null, storedAt: string|null}}
+ * @returns {{direction: 'incoming-newer'|'stored-newer'|'stored-future'|'incoming-future'|'ambiguous', incomingAt: string|null, storedAt: string|null}}
  */
 export function resolveSupersessionDirection(p) {
   const epochOf = (v) => (isUsableDate(v) ? new Date(v).getTime() : null);
@@ -94,6 +102,7 @@ export function resolveSupersessionDirection(p) {
   if (storedMs === null) return result('ambiguous');
   const nowMs = (p.now === undefined ? null : epochOf(p.now)) ?? assertedMs;
   if (storedMs > nowMs + CLOCK_SKEW_TOLERANCE_MS) return result('stored-future');
+  if (incomingMs > nowMs + CLOCK_SKEW_TOLERANCE_MS) return result('incoming-future');
   if (incomingMs > storedMs) return result('incoming-newer');
   if (incomingMs < storedMs) return result('stored-newer');
   return result('ambiguous');
