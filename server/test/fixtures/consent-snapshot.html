@@ -12,6 +12,8 @@
     .error { background: #fde8e8; color: #9b1c1c; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
     label { display: block; margin: 1rem 0; }
     input[type=password] { display: block; width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+    .hint { display: block; color: #555; font-size: 0.85rem; font-weight: normal; margin-top: 0.35rem; }
+    .hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
     button { padding: 0.6rem 1.2rem; border-radius: 6px; border: 1px solid #888; cursor: pointer; }
     button.allow { background: #1c64f2; color: #fff; border-color: #1c64f2; }
@@ -41,6 +43,7 @@
         <button class="provider" type="submit" formaction="/oauth/idp/plain/login">Continue with Plain Provider</button></div>
       <details class="token-fallback"><summary>Use an operator token instead</summary><label>Operator token
         <input type="password" name="operator_token" autocomplete="current-password">
+        <small class="hint">The bearer token this server was installed with. On the server host: <code>cat ~/.um/auth-token</code> (written by the installer, mode 600).</small>
       </label></details>
       <div class="actions">
         <button class="allow" type="submit" name="decision" value="allow">Allow</button>

@@ -128,6 +128,18 @@ export function validateOAuthConfig(env) {
       'UM_OAUTH_IDP_GITHUB_* requires all of CLIENT_ID, CLIENT_SECRET, and UM_OAUTH_OPERATOR_GITHUB (no half-enabled provider)',
     );
   }
+  // #321: the consent cookie lifetime, when set, must parse as a positive
+  // number of hours. A typo here would otherwise fall back to the default
+  // silently, and the operator would never learn their setting was ignored.
+  const ttlRaw = env.UM_OAUTH_CONSENT_TTL_HOURS;
+  if (ttlRaw !== undefined && String(ttlRaw).trim() !== '') {
+    const hours = Number(ttlRaw);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      throw new Error(
+        `UM_OAUTH_CONSENT_TTL_HOURS must be a positive number of hours, got "${ttlRaw}" (default 168 = 7 days, capped at 720 = 30 days)`,
+      );
+    }
+  }
 }
 
 /**

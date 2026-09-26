@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { OAUTH_TTLS } from '../lib/oauth/state-store.mjs';
+import { OAUTH_TTLS, resolveConsentCookieTtlMs, CONSENT_TTL_DEFAULT_HOURS, CONSENT_TTL_MAX_HOURS } from '../lib/oauth/state-store.mjs';
 import {
   signConsentCookie,
   verifyConsentCookie,
@@ -24,7 +24,7 @@ test('cookie: round-trip verifies true', () => {
   assert.equal(verifyConsentCookie(k, v), true);
 });
 
-test('cookie: expired (now advanced past 15min) rejected', () => {
+test('cookie: expired (now advanced past the TTL) rejected', () => {
   const k = key();
   const t0 = Date.now();
   const v = signConsentCookie(k, t0);
@@ -70,7 +70,7 @@ test('header: contains all required attributes with Max-Age derived from TTL', (
   const h = consentCookieHeader('VAL');
   assert.match(h, /um_consent=VAL/);
   assert.match(h, new RegExp(`Max-Age=${OAUTH_TTLS.cookieMs / 1000}`));
-  assert.match(h, /Max-Age=900/);
+  assert.match(h, /Max-Age=604800/); // 7 days by default (#321); was 900 (15 min)
   assert.match(h, /Path=\/oauth/);
   assert.match(h, /HttpOnly/);
   assert.match(h, /Secure/);
@@ -213,4 +213,41 @@ test('consent page lockup path geometry matches favicon.svg (shared brand consta
   assert.ok(lockupD, 'consent page lockup svg must contain a path d attribute');
   // Path data only — stroke-width intentionally differs (6 standard mark vs 9 favicon small-mark cut).
   assert.equal(lockupD, faviconD);
+});
+
+// ---- #321: consent cookie lifetime is configurable (default 7 d, max 30 d)
+test('#321 ttl: default is 7 days when UM_OAUTH_CONSENT_TTL_HOURS is unset or blank', () => {
+  assert.equal(CONSENT_TTL_DEFAULT_HOURS, 168);
+  assert.equal(resolveConsentCookieTtlMs({}), 168 * 3600_000);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '' }), 168 * 3600_000);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '   ' }), 168 * 3600_000);
+});
+
+test('#321 ttl: a positive number of hours is honoured, fractional included', () => {
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '1' }), 3600_000);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '0.25' }), 900_000);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '336' }), 336 * 3600_000);
+});
+
+test('#321 ttl: capped at 30 days; garbage and non-positive fall back to the default', () => {
+  assert.equal(CONSENT_TTL_MAX_HOURS, 720);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: '9999' }), 720 * 3600_000);
+  assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: 'Infinity' }), 168 * 3600_000);
+  for (const bad of ['0', '-5', 'a week', 'NaN']) {
+    assert.equal(resolveConsentCookieTtlMs({ UM_OAUTH_CONSENT_TTL_HOURS: bad }), 168 * 3600_000, bad);
+  }
+});
+
+test('#321 ttl: the module constant and the Set-Cookie Max-Age follow the resolver', () => {
+  assert.equal(OAUTH_TTLS.cookieMs, resolveConsentCookieTtlMs(process.env));
+  assert.match(consentCookieHeader('V'), new RegExp(`Max-Age=${OAUTH_TTLS.cookieMs / 1000}(;|$)`));
+});
+
+// ---- #321 fix 2: the page says where the operator token lives
+test('#321 hint: the token field names ~/.um/auth-token and the command to print it', () => {
+  const html = renderConsentPage({ clientName: 'c', redirectHost: 'h', authzId: 'a', csrf: 'x', needsToken: true, providers: [] });
+  assert.match(html, /cat ~\/\.um\/auth-token/);
+  assert.match(html, /class="hint"/);
+  const noToken = renderConsentPage({ clientName: 'c', redirectHost: 'h', authzId: 'a', csrf: 'x', needsToken: false, providers: [] });
+  assert.doesNotMatch(noToken, /auth-token/);
 });

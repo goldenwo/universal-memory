@@ -51,7 +51,7 @@ test('OAUTH_TTLS exposes the spec-canonical lifetimes and is frozen', () => {
   assert.equal(OAUTH_TTLS.codeMs, 60_000);
   assert.equal(OAUTH_TTLS.accessMs, 30 * 60_000);
   assert.equal(OAUTH_TTLS.refreshIdleMs, 90 * 24 * 3600_000);
-  assert.equal(OAUTH_TTLS.cookieMs, 15 * 60_000);
+  assert.equal(OAUTH_TTLS.cookieMs, 7 * 24 * 3600_000); // #321: 7 days by default (was 15 min), UM_OAUTH_CONSENT_TTL_HOURS-configurable
   assert.equal(OAUTH_TTLS.pendingAuthzMs, 10 * 60_000);
   assert.equal(OAUTH_TTLS.idpStateMs, 10 * 60_000);
   assert.ok(Object.isFrozen(OAUTH_TTLS));

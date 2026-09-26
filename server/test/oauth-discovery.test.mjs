@@ -368,3 +368,18 @@ test('validateOAuthConfig: whitespace-only IdP value treated as absent (partial 
     /all of|CLIENT_ID|half-enabled/i,
   );
 });
+
+// ---- #321: UM_OAUTH_CONSENT_TTL_HOURS is refused at boot when set and unusable
+test('#321 validateOAuthConfig: a non-numeric or non-positive consent TTL throws when OAuth is on', () => {
+  const base = { UM_OAUTH_ENABLED: 'true', UM_PUBLIC_BASE_URL: 'https://host.example' };
+  for (const bad of ['a week', '0', '-1', 'NaN']) {
+    assert.throws(() => validateOAuthConfig({ ...base, UM_OAUTH_CONSENT_TTL_HOURS: bad }), /UM_OAUTH_CONSENT_TTL_HOURS must be a positive number of hours/, bad);
+  }
+  assert.doesNotThrow(() => validateOAuthConfig({ ...base, UM_OAUTH_CONSENT_TTL_HOURS: '48' }));
+  assert.doesNotThrow(() => validateOAuthConfig({ ...base, UM_OAUTH_CONSENT_TTL_HOURS: '' }));
+  assert.doesNotThrow(() => validateOAuthConfig(base));
+});
+
+test('#321 validateOAuthConfig: the consent TTL is ignored while OAuth is off', () => {
+  assert.doesNotThrow(() => validateOAuthConfig({ UM_OAUTH_ENABLED: 'false', UM_OAUTH_CONSENT_TTL_HOURS: 'garbage' }));
+});
