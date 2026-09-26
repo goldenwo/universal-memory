@@ -64,7 +64,13 @@ import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
  * contradiction, demoted it. The read side already treats a future `valid_from`
  * as a hazard (#238's upper clamp); this is the write/direction-side analogue.
  * Both future arms run before the newer/older comparison, stored side first, so
- * two caller-chosen future instants are never compared against each other.
+ * two caller-chosen future instants are never compared against each other. The
+ * incoming arm reads truthTime(incoming), which falls back to `assertedAt` when
+ * the incoming side carries no usable valid_from — so a caller that passes a
+ * `now` more than the skew EARLIER than assertedAt (a windowed checkpoint whose
+ * client-supplied `until` bound is ahead of the wall clock) gets 'incoming-future'
+ * for every fact of that batch: the assertion itself is future relative to the
+ * trusted clock, and the fail-safe abstain is deliberate (D11).
  *
  * The registration timestamp / arrival order is never consulted. The ADR
  * decision-date field is never consulted either — `valid_from` is the one

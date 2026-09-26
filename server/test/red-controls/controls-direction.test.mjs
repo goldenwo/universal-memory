@@ -22,8 +22,8 @@ import { fileURLToPath } from 'node:url';
  * run-direction.mjs prints its baseline lines under.
  */
 const PIN = {
-  // #318: RCD3 added; D11 grew from 1 to 4 sub-cases (22 -> 25).
-  controls: ['RCD1', 'RCD2', 'RCD3'], cases: 13, subcases: 25, banner: 'direction baseline',
+  // #318: RCD3 added; D11 grew from 1 to 5 sub-cases (22 -> 26).
+  controls: ['RCD1', 'RCD2', 'RCD3'], cases: 13, subcases: 26, banner: 'direction baseline',
 };
 
 function runControls() {

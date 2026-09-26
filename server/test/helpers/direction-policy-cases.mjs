@@ -199,6 +199,13 @@ export const CASES = {
       expect(resolve, { stored: { valid_from: '2098-01-01T00:00:00.000Z' }, incoming: { valid_from: '2099-01-01T00:00:00.000Z', assertedAt: T0 }, now: T0 }, 'stored-future',
         { incomingAt: '2099-01-01T00:00:00.000Z', storedAt: '2098-01-01T00:00:00.000Z' });
     }],
+    ['no incoming valid_from and a now more than the skew EARLIER than assertedAt -> incoming-future (the assertedAt fallback is the incoming truth time; a client until-bound ahead of the wall clock abstains, deliberately)', (resolve) => {
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { assertedAt: T0 }, now: PAST }, 'incoming-future',
+        { incomingAt: T0, storedAt: PAST });
+      // Within the skew it is an ordinary incoming-newer.
+      expect(resolve, { stored: { valid_from: PAST }, incoming: { assertedAt: T0 }, now: iso(T0_MS - CLOCK_SKEW_TOLERANCE_MS) }, 'incoming-newer',
+        { incomingAt: T0, storedAt: PAST });
+    }],
   ],
 
   D10: [
