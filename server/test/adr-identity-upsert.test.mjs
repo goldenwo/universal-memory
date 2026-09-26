@@ -349,6 +349,16 @@ test('T2n: a usable caller-supplied valid_from beats decided_at (RC2 precedence 
   assert.equal(payload.valid_from, '2025-12-15T00:00:00.000Z');
 });
 
+test('T2n: an UNUSABLE caller valid_from does not block decided_at — usability, not presence, decides (code review on #338)', async () => {
+  const infos = [];
+  const logger = { info: (obj) => infos.push(obj), warn: () => {}, error: () => {}, debug: () => {} };
+  const qdrant = makeMockQdrant({ retrievePoints: [] });
+  await identityAdd({ qdrant, metadata: { ...ADR_META, valid_from: 'not a date' }, extra: { _logger: logger } });
+  const payload = qdrant.calls.upserts[0].body.points[0].payload;
+  assert.equal(payload.valid_from, '2026-08-23T00:00:00.000Z', 'the decision date lands, not a stamp and not the garbage string');
+  assert.equal(infos.find((o) => o && o.event === 'adr.identity_write').validFromSource, 'decided_at');
+});
+
 test('T2n: an unusable decided_at changes nothing — first sync stamps, re-sync carries', async () => {
   for (const bad of ['not a date', '', 42, null]) {
     const miss = makeMockQdrant({ retrievePoints: [] });

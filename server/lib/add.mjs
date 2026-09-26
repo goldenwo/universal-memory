@@ -285,7 +285,12 @@ async function performIdentityUpsert({
   // now ranks and supersedes by when it was decided, not when it was synced —
   // the #276 live pair (ADR-0008 retired 2026-08-18 vs ADR-0004 decided
   // 2026-04-16, registered 1.5 s apart in the opposite order) resolves
-  // correctly from the write path alone.
+  // correctly from the write path alone. Zone caveat (the same one the #276
+  // spec accepts for valid_from): an ISO date-only or Z-suffixed decided_at is
+  // UTC; a non-ISO or zone-less date-time string parses in the process's local
+  // zone, so the routed instant would depend on the syncing host. The shipped
+  // helper (create-adr.sh) writes Z-suffixed ISO on create and copies the
+  // frontmatter value on sync.
   const callerValidFrom = isUsableDate(stagedMetadata?.valid_from);
   const decidedFrom = !callerValidFrom && isUsableDate(stagedMetadata?.decided_at)
     ? new Date(stagedMetadata.decided_at).toISOString()
@@ -640,8 +645,8 @@ export async function umAdd({
     // exact #279 silent-divergence hazard. Leave a breadcrumb.
     if (_systemMigration !== true && metadata?.type === 'adr' && metadata?.adr_id != null) {
       logger.warn(
-        { event: 'adr.identity_skipped', adrIdType: typeof metadata.adr_id },
-        'type:adr write with a non-string or empty adr_id — falling through to the content-addressed pipeline',
+        { event: 'adr.identity_skipped', adrIdType: typeof metadata.adr_id, decidedAtRouted: false },
+        'type:adr write with a non-string or empty adr_id — falling through to the content-addressed pipeline (decided_at is not routed into valid_from there; #317)',
       );
     }
 
