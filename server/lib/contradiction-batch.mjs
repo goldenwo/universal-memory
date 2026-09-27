@@ -26,8 +26,10 @@
  *   TRUTH TIME, never by write order. Each candidate goes through the same pure
  *   rule the in-band write path uses (resolveSupersessionDirection, supersede.mjs):
  *     incoming = { assertedAt }  — the session's assertion instant: the caller's
- *                                  `assertedAt` option (a windowed checkpoint's
- *                                  `until` bound), else the detector's own now;
+ *                                  `assertedAt` option, else the detector's own now.
+ *                                  No production caller passes it yet: threading a
+ *                                  windowed checkpoint's `until` into it is deferred
+ *                                  until a checkpoint client declares lane/persona;
  *     stored   = { valid_from }  — the candidate's recorded truth time, nothing else;
  *     now      = the wall clock, read ONCE per call — the future bound is measured
  *                against it, never against a past `assertedAt`, so an ordinary point
@@ -67,8 +69,8 @@ import { isUsableDate } from './ranking.mjs';
  * @param {number}   [opts.retrievalThreshold=0.45] — Minimum embedding cosine for a candidate to be RETRIEVED (passed to _find as its score_threshold). Eval-derived; kept far below judgeThreshold because true contradictions are only moderately cosine-similar.
  * @param {string}   [opts.collection]    — Qdrant collection name.
  * @param {object}   [opts.client]        — Qdrant client (for real _find).
- * @param {string}   [opts.assertedAt]    — #276: ISO assertion instant of the session's facts (a windowed
- *                                          checkpoint's `until`). Absent or unusable → the detector's now,
+ * @param {string}   [opts.assertedAt]    — #276: ISO assertion instant of the session's facts (no production
+ *                                          caller passes it yet). Absent or unusable → the detector's now,
  *                                          so a malformed value fails live rather than skipping every candidate.
  * @param {Function} [opts._facts]        — DI: replaces facts() orchestrator (test seam).
  * @param {Function} [opts._embed]        — DI: replaces embed() orchestrator (test seam).
