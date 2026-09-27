@@ -18,6 +18,7 @@ import { runChunkTransaction } from '../lib/checkpoint-chunk-txn.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { ProviderError } from '../lib/provider/errors.mjs';
 import { CAPTURE_EVENTS } from '../lib/capture-events.mjs';
+import { parseState, REQUIRED_SECTIONS, UNMERGED_SUMMARY_HEADING, MARKER_STATE_MERGE_UNAVAILABLE } from '../lib/state-cap.mjs';
 
 const PROJECT = 'chunk-txn-test-proj';
 
@@ -571,7 +572,23 @@ test('state-merge degrade: updateStateFn hangs past stateMergeTimeoutMs -> degra
   await fs.rm(vault, { recursive: true, force: true });
 });
 
-test('state-merge degrade: degraded content over 3000 chars truncates like updateState\'s own cap', async () => {
+// #326: the degrade doc is shaped by state-cap.mjs (spec 4.2.3), never sliced.
+const FROZEN = new Date('2026-08-18T00:00:00.000Z');
+const STATE_FM = '---\nschema_version: 1\ntype: state\nid: state-x\nstatus: current\nvalid_from: 2026-08-01T00:00:00.000Z\nproject: x\n---\n';
+function sixSections(over = {}) {
+  const s = {
+    'Current focus': 'Focus.', 'In flight': '- item [2026-08-18]', 'Recent decisions': '- 2026-08-18: d',
+    'Next actions': '- n', 'Open questions': '(none)', 'Environment': '(none)', ...over,
+  };
+  return REQUIRED_SECTIONS.map(n => `## ${n}\n${s[n]}\n`).join('');
+}
+async function seedState(vault, md) {
+  await fs.mkdir(path.join(vault, 'state', PROJECT), { recursive: true });
+  await fs.writeFile(path.join(vault, 'state', PROJECT, 'state.md'), md, 'utf8');
+}
+const readState = vault => fs.readFile(path.join(vault, 'state', PROJECT, 'state.md'), 'utf8');
+
+test('state-merge degrade (1): a no-heading degrade doc over 3000 is shaped — <= 3000, six required sections ahead of the unmerged heading, marker last', async () => {
   const vault = makeVault();
   const hugeSummary = 'x'.repeat(4000);
   const result = await runChunkTransaction(
@@ -583,11 +600,100 @@ test('state-merge degrade: degraded content over 3000 chars truncates like updat
   );
   assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
 
-  const stateMd = await fs.readFile(path.join(vault, 'state', PROJECT, 'state.md'), 'utf8');
+  const stateMd = await readState(vault);
   assert.ok(stateMd.length <= 3000, `expected <= 3000 chars, got ${stateMd.length}`);
-  assert.ok(stateMd.endsWith('\n...'));
+  const p = parseState(stateMd);
+  assert.deepEqual(p.sections.filter(s => s.required).map(s => s.name).sort(), [...REQUIRED_SECTIONS].sort());
+  const unmergedIdx = p.sections.findIndex(s => s.unmerged);
+  assert.ok(unmergedIdx >= 0 && p.sections.slice(0, unmergedIdx).filter(s => s.required).length === 6, 'six required sections ahead of the unmerged heading');
+  assert.ok(stateMd.includes(`${UNMERGED_SUMMARY_HEADING}\n`));
+  assert.ok(stateMd.trimEnd().endsWith(MARKER_STATE_MERGE_UNAVAILABLE), 'marker last');
+  assert.ok(!stateMd.includes('\n...'), 'no blind slice');
 
   await fs.rm(vault, { recursive: true, force: true });
+});
+
+test('state-merge degrade (2): a six-section old state with a 1.4k Current focus plus a huge summary keeps the six required sections byte-identical when the summary alone fits', async () => {
+  const vault = makeVault();
+  const old = STATE_FM + '# State of play — x\n' + sixSections({ 'Current focus': 'focus word '.repeat(127).trim() });
+  assert.ok(old.length > 1500 && old.length < 3000);
+  await seedState(vault, old);
+  const result = await runChunkTransaction(
+    baseArgs(vault),
+    baseDeps({
+      clock: () => FROZEN, // the old state's stamp is the frozen date; the real clock would age it
+      summarizeFn: makeSummarizeFn({ summary: 'summary word '.repeat(300).trim() }),
+      updateStateFn: async () => ({ schema_version: 1, ok: false }),
+    }),
+  );
+  assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+  const stateMd = await readState(vault);
+  assert.ok(stateMd.startsWith(old), 'the six required sections are byte-identical');
+  assert.ok(stateMd.length <= 3000);
+  assert.ok(stateMd.trimEnd().endsWith(MARKER_STATE_MERGE_UNAVAILABLE));
+  assert.ok(stateMd.includes(`${UNMERGED_SUMMARY_HEADING}\n`), 'the unmerged heading stays (its section only lost the summary text)');
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
+test('state-merge clock seam (3): the same effectiveAsOf value, from coversUntil and deps.clock, reaches updateStateFn (with ctx.now) and the degrade branch', async () => {
+  const seen = {};
+  const vaultA = makeVault();
+  const resultA = await runChunkTransaction(
+    baseArgs(vaultA, { chunk: makeChunk({ coversUntil: '2027-08-18T00:00:00.000Z' }) }),
+    baseDeps({
+      clock: () => FROZEN,
+      updateStateFn: async (args, ctx) => {
+        seen.asOf = args.asOf;
+        seen.now = ctx.now?.();
+        return { schema_version: 1, ok: true, mergedMd: 'merged', costUsd: 0, tokensIn: 0, tokensOut: 0, llmFailure: false };
+      },
+    }),
+  );
+  assert.ok(resultA.committed);
+  assert.equal(seen.asOf, FROZEN.toISOString(), 'a year-ahead coversUntil reaches the merge as the frozen instant');
+  assert.equal(seen.now?.toISOString(), FROZEN.toISOString(), 'ctx.now returns the txn clock');
+  await fs.rm(vaultA, { recursive: true, force: true });
+
+  const vaultB = makeVault();
+  await seedState(vaultB, STATE_FM + '# t\n' + sixSections({ 'In flight': '- old one [2026-07-20]\n- fresh [2026-08-18]' }));
+  const resultB = await runChunkTransaction(
+    baseArgs(vaultB, { chunk: makeChunk({ coversUntil: '2027-08-18T00:00:00.000Z' }) }),
+    baseDeps({ clock: () => FROZEN, updateStateFn: async () => ({ schema_version: 1, ok: false }) }),
+  );
+  assert.ok(resultB.committed);
+  const stateB = await readState(vaultB);
+  assert.ok(stateB.includes('- fresh [2026-08-18]'), 'the degrade branch ages against the SAME clamped date: a frozen-date stamp survives');
+  assert.ok(!stateB.includes('- old one [2026-07-20]'), 'and a 29-day-old stamp is aged');
+  await fs.rm(vaultB, { recursive: true, force: true });
+});
+
+test('state-merge regressed chunk (4): In-flight units stamped with the frozen date survive a chunk whose coversUntil is 10 days earlier, on both branches', async () => {
+  const doc = STATE_FM + '# t\n' + sixSections({ 'In flight': '- a [2026-08-18]\n- b [2026-08-17]' });
+  const chunk = makeChunk({ coversUntil: '2026-08-08T00:00:00.000Z' });
+
+  const vaultA = makeVault();
+  await seedState(vaultA, doc);
+  const a = await runChunkTransaction(
+    baseArgs(vaultA, { chunk }),
+    baseDeps({ clock: () => FROZEN, updateStateFn: async () => ({ schema_version: 1, ok: false }) }),
+  );
+  assert.ok(a.committed);
+  const stateA = await readState(vaultA);
+  assert.ok(stateA.includes('- a [2026-08-18]') && stateA.includes('- b [2026-08-17]'), 'degrade branch: aged_future 0 under a regressed supplied date');
+  await fs.rm(vaultA, { recursive: true, force: true });
+
+  const vaultB = makeVault();
+  await seedState(vaultB, doc);
+  const b = await runChunkTransaction(
+    baseArgs(vaultB, { chunk }),
+    // the REAL updateState (deps.updateStateFn undefined → default) with a summarizeFn whose merge output keeps the stamps
+    baseDeps({ clock: () => FROZEN, updateStateFn: undefined, summarizeFn: makeSummarizeFn({ summary: doc }) }),
+  );
+  assert.ok(b.committed, `expected committed, got: ${JSON.stringify(b)}`);
+  const stateB = await readState(vaultB);
+  assert.ok(stateB.includes('- a [2026-08-18]') && stateB.includes('- b [2026-08-17]'), 'LLM branch: the shaping inside updateState keeps them too');
+  assert.match(stateB, /^valid_from: 2026-08-18T00:00:00\.000Z$/m, 'stamped by the txn clock through ctx.now');
+  await fs.rm(vaultB, { recursive: true, force: true });
 });
 
 // ===========================================================================

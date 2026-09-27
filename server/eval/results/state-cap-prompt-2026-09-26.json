@@ -1,0 +1,1963 @@
+{
+  "schema_version": 1,
+  "spec": "docs/plans/2026-09-25-326-state-cap-section-aware-spec.md#4.2.5",
+  "control": {
+    "rule": "control: the OLD arm misses 6/6 headings or raw <= 3000 on >= 7/13",
+    "old_arm_misses": 13,
+    "need": ">= 7/13",
+    "ok": true,
+    "missing": [
+      "doc-01",
+      "doc-02",
+      "doc-03",
+      "doc-04",
+      "doc-05",
+      "doc-06",
+      "doc-07",
+      "doc-08",
+      "doc-09",
+      "doc-10",
+      "doc-11",
+      "doc-12",
+      "doc-13"
+    ]
+  },
+  "thresholds": {
+    "headings_and_cap": {
+      "ok": false,
+      "value": 6,
+      "need": ">= 12/13",
+      "failing": [
+        "doc-01",
+        "doc-03",
+        "doc-08",
+        "doc-09",
+        "doc-10",
+        "doc-11",
+        "doc-12"
+      ]
+    },
+    "median_raw_length": {
+      "ok": false,
+      "value": 3288,
+      "need": "< 2500"
+    },
+    "invented_dates_zero": {
+      "ok": false,
+      "value": 12,
+      "need": "13/13",
+      "failing": [
+        "doc-12:4"
+      ]
+    },
+    "future_zero": {
+      "ok": true,
+      "value": 13,
+      "need": "13/13",
+      "failing": []
+    },
+    "all_stamped": {
+      "ok": false,
+      "value": 8,
+      "need": "13/13",
+      "failing": [
+        "doc-02",
+        "doc-04",
+        "doc-06",
+        "doc-10",
+        "doc-12"
+      ]
+    },
+    "order_clean": {
+      "ok": true,
+      "value": 13,
+      "need": "13/13",
+      "failing": []
+    },
+    "retention": {
+      "ok": false,
+      "value": 8,
+      "need": ">= 11/12",
+      "failing": [
+        "doc-01",
+        "doc-02",
+        "doc-09",
+        "doc-12"
+      ]
+    },
+    "current_focus": {
+      "ok": false,
+      "value": 7,
+      "need": ">= 11/13",
+      "failing": [
+        "doc-04:443",
+        "doc-05:456",
+        "doc-06:458",
+        "doc-07:435",
+        "doc-11:423",
+        "doc-13:433"
+      ]
+    },
+    "pass2": {
+      "ok": false,
+      "value": 8,
+      "need": ">= 11/12",
+      "failing": [
+        "doc-07",
+        "doc-09",
+        "doc-11",
+        "doc-13"
+      ]
+    }
+  },
+  "all_ok": false,
+  "old_arm": {
+    "arm": "old",
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "ran_at": "2026-09-26T23:00:04.257Z",
+    "docs": [
+      {
+        "doc": "doc-01",
+        "as_of_source": "covers_until",
+        "length": 3341,
+        "raw_le_cap": false,
+        "headings": 5,
+        "headings_missing": [
+          "Environment"
+        ],
+        "inflight_units": 7,
+        "all_stamped": false,
+        "unstamped": 7,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 185,
+        "dating": {
+          "new_entries": 0,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": false,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 5,
+              "dropped_live": 1,
+              "allowed": 0,
+              "dropped_mentioned": 1
+            },
+            "Next actions": {
+              "live": 3,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 1,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "Recent decisions",
+              "dropped": 3
+            },
+            {
+              "heading": "Next actions",
+              "dropped": 1
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 1,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-02",
+        "as_of_source": "covers_until",
+        "length": 3574,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 14,
+        "all_stamped": false,
+        "unstamped": 14,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 242,
+        "dating": {
+          "new_entries": 2,
+          "invented": 2,
+          "changed_existing": 0,
+          "extended": 1
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 11,
+              "dropped_live": 0,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 6
+            },
+            {
+              "heading": "Recent decisions",
+              "dropped": 3
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-03",
+        "as_of_source": "covers_until",
+        "length": 4271,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 23,
+        "all_stamped": false,
+        "unstamped": 23,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 686,
+        "dating": {
+          "new_entries": 8,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 20,
+              "dropped_live": 0,
+              "allowed": 12,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 15
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-04",
+        "as_of_source": "covers_until",
+        "length": 4348,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 5,
+        "all_stamped": false,
+        "unstamped": 5,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 2396,
+        "dating": {
+          "new_entries": 4,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 3,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Current focus",
+              "units_dropped": 0,
+              "chars_cut": 1351
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-05",
+        "as_of_source": "covers_until",
+        "length": 4171,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 2,
+        "all_stamped": false,
+        "unstamped": 2,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 2902,
+        "dating": {
+          "new_entries": 3,
+          "invented": 3,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": false,
+          "sections": {
+            "In flight": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Current focus",
+              "units_dropped": 1,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-06",
+        "as_of_source": "covers_until",
+        "length": 3650,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 10,
+        "all_stamped": false,
+        "unstamped": 10,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 1255,
+        "dating": {
+          "new_entries": 2,
+          "invented": 2,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 8,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 2
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Current focus",
+              "units_dropped": 0,
+              "chars_cut": 391
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-07",
+        "as_of_source": "covers_until",
+        "length": 4068,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 6,
+        "all_stamped": false,
+        "unstamped": 6,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 2234,
+        "dating": {
+          "new_entries": 3,
+          "invented": 3,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 4,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Current focus",
+              "units_dropped": 0,
+              "chars_cut": 1076
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-08",
+        "as_of_source": "covers_until",
+        "length": 3714,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 10,
+        "all_stamped": false,
+        "unstamped": 10,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 431,
+        "dating": {
+          "new_entries": 1,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 1
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 9,
+              "dropped_live": 0,
+              "allowed": 1,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 2
+            },
+            {
+              "heading": "Recent decisions",
+              "dropped": 3
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 2,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-09",
+        "as_of_source": "valid_from",
+        "length": 3389,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 7,
+        "all_stamped": false,
+        "unstamped": 7,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 68,
+        "dating": {
+          "new_entries": 3,
+          "invented": 3,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 7,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 9,
+              "dropped_live": 0,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "Recent decisions",
+              "dropped": 4
+            },
+            {
+              "heading": "Next actions",
+              "dropped": 4
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-10",
+        "as_of_source": "covers_until",
+        "length": 3644,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 22,
+        "all_stamped": false,
+        "unstamped": 22,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 604,
+        "dating": {
+          "new_entries": 2,
+          "invented": 2,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 19,
+              "dropped_live": 0,
+              "allowed": 11,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 14
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-11",
+        "as_of_source": "covers_until",
+        "length": 4190,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 21,
+        "all_stamped": false,
+        "unstamped": 21,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 538,
+        "dating": {
+          "new_entries": 4,
+          "invented": 4,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 20,
+              "dropped_live": 0,
+              "allowed": 12,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 13
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-12",
+        "as_of_source": "covers_until",
+        "length": 3910,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 5,
+        "all_stamped": false,
+        "unstamped": 5,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 171,
+        "dating": {
+          "new_entries": 3,
+          "invented": 3,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 5,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 5,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "Next actions",
+              "dropped": 2
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 6,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-13",
+        "as_of_source": "covers_until",
+        "length": 3651,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 12,
+        "all_stamped": false,
+        "unstamped": 12,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 1397,
+        "dating": {
+          "new_entries": 3,
+          "invented": 3,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 11,
+              "dropped_live": 0,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 4,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 4
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Current focus",
+              "units_dropped": 0,
+              "chars_cut": 133
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "new_arm": {
+    "arm": "new",
+    "model": "gpt-4o-mini",
+    "temperature": 0.2,
+    "ran_at": "2026-09-26T23:04:42.419Z",
+    "docs": [
+      {
+        "doc": "doc-01",
+        "as_of_source": "covers_until",
+        "length": 3572,
+        "raw_le_cap": false,
+        "headings": 5,
+        "headings_missing": [
+          "Environment"
+        ],
+        "inflight_units": 7,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 277,
+        "dating": {
+          "new_entries": 0,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": false,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 5,
+              "dropped_live": 1,
+              "allowed": 0,
+              "dropped_mentioned": 1
+            },
+            "Next actions": {
+              "live": 3,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 1,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "Recent decisions",
+              "dropped": 3
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 4,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-02",
+        "as_of_source": "covers_until",
+        "length": 1329,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 2,
+        "all_stamped": false,
+        "unstamped": 1,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 239,
+        "dating": {
+          "new_entries": 2,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": false,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 11,
+              "dropped_live": 9,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-03",
+        "as_of_source": "covers_until",
+        "length": 4170,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 22,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 389,
+        "dating": {
+          "new_entries": 8,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 20,
+              "dropped_live": 0,
+              "allowed": 12,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 14
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-04",
+        "as_of_source": "covers_until",
+        "length": 2354,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 5,
+        "all_stamped": false,
+        "unstamped": 3,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 443,
+        "dating": {
+          "new_entries": 4,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 3,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-05",
+        "as_of_source": "covers_until",
+        "length": 1679,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 2,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 456,
+        "dating": {
+          "new_entries": 3,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": false,
+          "sections": {
+            "In flight": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-06",
+        "as_of_source": "covers_until",
+        "length": 2936,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 10,
+        "all_stamped": false,
+        "unstamped": 10,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 458,
+        "dating": {
+          "new_entries": 2,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 8,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 2
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-07",
+        "as_of_source": "covers_until",
+        "length": 2274,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 6,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 435,
+        "dating": {
+          "new_entries": 3,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 4,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-08",
+        "as_of_source": "covers_until",
+        "length": 3314,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 9,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 379,
+        "dating": {
+          "new_entries": 0,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 1
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 9,
+              "dropped_live": 0,
+              "allowed": 1,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 1
+            },
+            {
+              "heading": "Recent decisions",
+              "dropped": 2
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-09",
+        "as_of_source": "valid_from",
+        "length": 3288,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 7,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 68,
+        "dating": {
+          "new_entries": 0,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": false,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 7,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 9,
+              "dropped_live": 4,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "Recent decisions",
+              "dropped": 2
+            }
+          ],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 1,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-10",
+        "as_of_source": "covers_until",
+        "length": 3515,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 21,
+        "all_stamped": false,
+        "unstamped": 21,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 383,
+        "dating": {
+          "new_entries": 2,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 19,
+              "dropped_live": 0,
+              "allowed": 11,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 13
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-11",
+        "as_of_source": "covers_until",
+        "length": 4281,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 21,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 423,
+        "dating": {
+          "new_entries": 4,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 20,
+              "dropped_live": 0,
+              "allowed": 12,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 13
+            }
+          ],
+          "trims": []
+        }
+      },
+      {
+        "doc": "doc-12",
+        "as_of_source": "covers_until",
+        "length": 3880,
+        "raw_le_cap": false,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 5,
+        "all_stamped": false,
+        "unstamped": 1,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 254,
+        "dating": {
+          "new_entries": 4,
+          "invented": 4,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": false,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 5,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 5,
+              "dropped_live": 2,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 0,
+          "stamped_supplied": 0
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [],
+          "trims": [
+            {
+              "heading": "(preamble)",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "In flight",
+              "units_dropped": 1,
+              "chars_cut": 0
+            },
+            {
+              "heading": "Recent decisions",
+              "units_dropped": 7,
+              "chars_cut": 0
+            }
+          ]
+        }
+      },
+      {
+        "doc": "doc-13",
+        "as_of_source": "covers_until",
+        "length": 2727,
+        "raw_le_cap": true,
+        "headings": 6,
+        "headings_missing": [],
+        "inflight_units": 11,
+        "all_stamped": true,
+        "unstamped": 0,
+        "future_stamps": 0,
+        "future_decision_dates": 0,
+        "current_focus_len": 433,
+        "dating": {
+          "new_entries": 3,
+          "invented": 0,
+          "changed_existing": 0,
+          "extended": 0
+        },
+        "order_clean": true,
+        "retention": {
+          "ok": true,
+          "has_live": true,
+          "sections": {
+            "In flight": {
+              "live": 11,
+              "dropped_live": 1,
+              "allowed": 3,
+              "dropped_mentioned": 0
+            },
+            "Next actions": {
+              "live": 0,
+              "dropped_live": 0,
+              "allowed": 0,
+              "dropped_mentioned": 0
+            }
+          }
+        },
+        "stale_carry": {
+          "units": 3,
+          "stamped_supplied": 3
+        },
+        "report": {
+          "added": 0,
+          "aged": 0,
+          "aged_future": 0,
+          "bounded": [
+            {
+              "heading": "In flight",
+              "dropped": 3
+            }
+          ],
+          "trims": []
+        }
+      }
+    ]
+  },
+  "pass2": {
+    "ran_at": "2026-09-26T23:07:02.802Z",
+    "docs": [
+      {
+        "doc": "doc-01",
+        "n": 7,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 3,
+        "backdated": 2,
+        "excluded_not_found": 1,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-02",
+        "n": 2,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 5,
+        "backdated": 0,
+        "excluded_not_found": 4,
+        "excluded_unstamped": 1
+      },
+      {
+        "doc": "doc-03",
+        "n": 22,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 14,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 10,
+        "backdated": 10,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-04",
+        "n": 5,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 2,
+        "backdated": 0,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 2
+      },
+      {
+        "doc": "doc-06",
+        "n": 10,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 2,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 3,
+        "backdated": 0,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 3
+      },
+      {
+        "doc": "doc-07",
+        "n": 6,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": false,
+          "dropped_supplied": 2,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 2,
+        "selected": 2,
+        "backdated": 2,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-08",
+        "n": 9,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 1,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 1,
+        "selected": 5,
+        "backdated": 5,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-09",
+        "n": 7,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": false,
+          "failures": 2,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 4,
+        "backdated": 4,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-10",
+        "n": 21,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 13,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 10,
+        "backdated": 0,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 10
+      },
+      {
+        "doc": "doc-11",
+        "n": 21,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": false,
+          "failures": 4,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 13,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 10,
+        "backdated": 10,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 0
+      },
+      {
+        "doc": "doc-12",
+        "n": 5,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": true,
+          "failures": 0,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 0,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 3,
+        "backdated": 2,
+        "excluded_not_found": 0,
+        "excluded_unstamped": 1
+      },
+      {
+        "doc": "doc-13",
+        "n": 11,
+        "cond1": {
+          "ok": true,
+          "failures": 0
+        },
+        "cond2": {
+          "ok": false,
+          "failures": 1,
+          "removed_by_bound": 0
+        },
+        "cond3": {
+          "ok": true,
+          "dropped_supplied": 0,
+          "allowed": 3,
+          "dropped_mentioned": 0
+        },
+        "backdated_dropped_by_model": 0,
+        "selected": 6,
+        "backdated": 5,
+        "excluded_not_found": 1,
+        "excluded_unstamped": 0
+      }
+    ]
+  }
+}

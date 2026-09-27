@@ -50,7 +50,8 @@ import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
 import { withRetry } from './retry.mjs';
 import { summarize as defaultSummarize } from './summarize.mjs';
-import { updateState as defaultUpdateState } from './update-state.mjs';
+import { updateState as defaultUpdateState, logShaping } from './update-state.mjs';
+import { effectiveAsOf, shapeState, UNMERGED_SUMMARY_HEADING, MARKER_STATE_MERGE_UNAVAILABLE } from './state-cap.mjs';
 import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
 import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled } from './supersede.mjs';
 import { recordCaptureEvent as defaultRecordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
@@ -71,24 +72,9 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const DEFAULT_RETRY_DELAYS_MS = [100, 200, 400];
 const DEFAULT_RETRY_JITTER_MAX_MS = 50;
 
-// §4.8: the same 3000-char cap update-state.mjs enforces on its own output.
-// update-state.mjs's STATE_CAP_CHARS/truncateToCap are module-private (task-5
-// brief constrains that file to ONLY the additive `ok: true` change), so the
-// cap + truncation algorithm are ported byte-for-byte here for the degrade
-// path below, which constructs mergedMd itself and therefore bypasses
-// update-state.mjs's own capping. Keep in sync manually if the cap or
-// algorithm there ever changes.
-const STATE_CAP_CHARS = 3000;
-function truncateStateToCap(md, cap) {
-  const fmMatch = md.match(/^(---\n[\s\S]*?\n---\n)/);
-  if (fmMatch) {
-    const fm = fmMatch[1];
-    const body = md.slice(fm.length);
-    const bodyCap = cap - fm.length - 5; // 5 = '\n...'.length + 1 for newline before it
-    return `${fm}${body.slice(0, bodyCap)}\n...`;
-  }
-  return `${md.slice(0, cap - 5)}\n...`;
-}
+// #326: the degrade path below constructs mergedMd itself and therefore bypasses
+// update-state.mjs's own shaping, so it runs the SAME shapeState from state-cap.mjs
+// (the byte-for-byte copy of the old cap that lived here is gone; one implementation).
 
 // §4.8 degrade marker — appended when the state-merge LLM call fails, returns
 // a malformed shape, or times out. Distinct from update-state.mjs's own
@@ -96,7 +82,7 @@ function truncateStateToCap(md, cap) {
 // when update-state.mjs's OWN prompt-missing/LLM-throw fallback runs; this
 // one fires when THIS module degrades around update-state.mjs entirely —
 // timeout, or a resolved-but-unusable result).
-const STATE_MERGE_UNAVAILABLE_MARKER = '<!-- state-merge-unavailable -->';
+const STATE_MERGE_UNAVAILABLE_MARKER = MARKER_STATE_MERGE_UNAVAILABLE;
 
 /**
  * Rewrite a .tmp summary file to set `status: orphan_summary` in its
@@ -321,6 +307,11 @@ export async function runChunkTransaction(args, deps = {}) {
   // the exact same instant.
   const now = clock();
   const today = now.toISOString().slice(0, 10);
+  // #326 D4: the session date for the state merge — the chunk's coversUntil (client-supplied
+  // turn timestamps, spec §3 constraint 9) clamped to [now - 14 d, now]; computed ONCE from this
+  // clock and passed to both the merge (with the same `now`, so its own clamp is the identity)
+  // and the degrade branch.
+  const stateAsOf = effectiveAsOf(chunk.coversUntil, now);
   const costPath = path.join(vaultDir, '.telemetry', `${today}-${project}.count`);
 
   // ----- Step 1: cost-cap pre-check (per chunk, not per run) -----
@@ -455,7 +446,7 @@ export async function runChunkTransaction(args, deps = {}) {
       let stateDegraded = false;
       try {
         stateResult = await raceTimeout(
-          updateStateFn({ oldStateMd, newSummary: summary, projectId: project }, { summarizeFn }),
+          updateStateFn({ oldStateMd, newSummary: summary, projectId: project, asOf: stateAsOf }, { summarizeFn, now: () => now }),
           chunkingCfg.stateMergeTimeoutMs,
           'state-merge',
         );
@@ -472,12 +463,17 @@ export async function runChunkTransaction(args, deps = {}) {
 
       let mergedMd;
       if (stateDegraded) {
+        // #326: the raw summary sits under `## Unmerged session summary` (everything after that
+        // heading is foreign to the trimmer and goes first — D9), the marker stays last, and the
+        // same shaping as the LLM path runs (scaffold, age, bound, fit). Whatever frontmatter
+        // the old doc carried is kept; nothing is stamped on this branch.
         mergedMd = oldStateMd
-          ? `${oldStateMd}\n\n${summary}\n\n${STATE_MERGE_UNAVAILABLE_MARKER}`
-          : `${summary}\n\n${STATE_MERGE_UNAVAILABLE_MARKER}`;
-        if (mergedMd.length > STATE_CAP_CHARS) {
-          mergedMd = truncateStateToCap(mergedMd, STATE_CAP_CHARS);
-        }
+          ? `${oldStateMd}\n\n${UNMERGED_SUMMARY_HEADING}\n\n${summary}\n\n${STATE_MERGE_UNAVAILABLE_MARKER}`
+          : `${UNMERGED_SUMMARY_HEADING}\n\n${summary}\n\n${STATE_MERGE_UNAVAILABLE_MARKER}`;
+        const charsBefore = mergedMd.length;
+        const shaped = shapeState(mergedMd, { asOf: stateAsOf, now });
+        mergedMd = shaped.md;
+        logShaping({ component: 'checkpoint-chunk-txn', project, charsBefore, charsAfter: mergedMd.length, report: shaped.report });
       } else {
         mergedMd = stateResult.mergedMd;
       }
