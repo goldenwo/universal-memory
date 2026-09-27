@@ -8,9 +8,10 @@
 // design. Name the fields descriptively ("the registration timestamp / arrival order", "the
 // ADR decision-date field") and never loosen this scan to admit a comment.
 //
-// The path array is pinned so a module move fails loudly. When the batch detector
-// (lib/contradiction-batch.mjs) gains the rule, add it here WITH a presence assertion that it
-// calls the resolver — that is the second half of the spec's I1, deferred with the batch path.
+// The path array is pinned so a module move fails loudly, and each entry asserts PRESENCE:
+// supersede.mjs defines the resolver, and the batch detector (lib/contradiction-batch.mjs)
+// imports it from there (its `_resolveDirection` seam defaults to that import) — so extracting
+// the rule to a third module fails this test until the path array is extended.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -18,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIRECTION_MODULES = [
   { path: '../lib/supersede.mjs', mustContain: 'export function resolveSupersessionDirection' },
+  { path: '../lib/contradiction-batch.mjs', mustContain: "import { resolveSupersessionDirection } from './supersede.mjs';" },
 ];
 
 const FORBIDDEN = [/\bcreatedAt\b/, /\bdecided_at\b/];

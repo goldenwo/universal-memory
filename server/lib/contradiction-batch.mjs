@@ -21,12 +21,30 @@
  *   calling _judge. The real _find already excludes them, but we skip
  *   defensively so a re-run never re-judges a resolved target.
  *
+ * Direction (#276, ADR-0009) — position: after the superseded-skip, before the judge:
+ *   "Newer wins" demotes the OLDER side, and older/newer is decided by RECORDED
+ *   TRUTH TIME, never by write order. Each candidate goes through the same pure
+ *   rule the in-band write path uses (resolveSupersessionDirection, supersede.mjs):
+ *     incoming = { assertedAt }  — the session's assertion instant: the caller's
+ *                                  `assertedAt` option (a windowed checkpoint's
+ *                                  `until` bound), else the detector's own now;
+ *     stored   = { valid_from }  — the candidate's recorded truth time, nothing else;
+ *     now      = the wall clock, read ONCE per call — the future bound is measured
+ *                against it, never against a past `assertedAt`, so an ordinary point
+ *                dated after a backfill's bound reads 'stored-newer', not poisoned.
+ *   The candidate reaches the judge ONLY when the rule resolves 'incoming-newer'.
+ *   Every other value — 'stored-newer', 'stored-future', 'incoming-future',
+ *   'ambiguous' (no usable stored truth time, or equal instants) — skips it and
+ *   the judge is never consulted. The registration timestamp / arrival order is
+ *   never read, and neither is the ADR decision-date field. The skip is silent
+ *   (no counter, no log line) by design in this arc.
+ *
  * supersededBy id:
  *   Uses computeFactId() from add.mjs — the canonical derivation shared with
  *   the write path — so audit/undo can rely on stable ids.
  *
  * Spec refs: D3.2 Task 2.3; R1-B1 (gate); R1-Lens-B-G2 (idempotency);
- *            R1-Lens-B-G5 (single max-confidence selection).
+ *            R1-Lens-B-G5 (single max-confidence selection); #276 (direction).
  */
 
 import { facts as realFacts } from './facts.mjs';
@@ -34,6 +52,8 @@ import { embed as realEmbed } from './embed.mjs';
 import { findEmbeddingSimilarCandidates } from './dedup.mjs';
 import { judgeContradiction } from './contradiction-judge.mjs';
 import { computeFactId } from './add.mjs';
+import { resolveSupersessionDirection } from './supersede.mjs';
+import { isUsableDate } from './ranking.mjs';
 
 /**
  * Detect contradictions in a batch (session-end) against stored facts.
@@ -47,10 +67,15 @@ import { computeFactId } from './add.mjs';
  * @param {number}   [opts.retrievalThreshold=0.45] — Minimum embedding cosine for a candidate to be RETRIEVED (passed to _find as its score_threshold). Eval-derived; kept far below judgeThreshold because true contradictions are only moderately cosine-similar.
  * @param {string}   [opts.collection]    — Qdrant collection name.
  * @param {object}   [opts.client]        — Qdrant client (for real _find).
+ * @param {string}   [opts.assertedAt]    — #276: ISO assertion instant of the session's facts (a windowed
+ *                                          checkpoint's `until`). Absent or unusable → the detector's now,
+ *                                          so a malformed value fails live rather than skipping every candidate.
  * @param {Function} [opts._facts]        — DI: replaces facts() orchestrator (test seam).
  * @param {Function} [opts._embed]        — DI: replaces embed() orchestrator (test seam).
  * @param {Function} [opts._find]         — DI: replaces findEmbeddingSimilarCandidates (test seam).
  * @param {Function} [opts._judge]        — DI: replaces judgeContradiction (test seam).
+ * @param {Function} [opts._now]          — DI: wall clock at decision, returns an ISO string (test seam).
+ * @param {Function} [opts._resolveDirection] — DI: replaces resolveSupersessionDirection (test seam).
  * @param {object}   [opts.metrics]       — DI: metrics sink (forwarded to _facts/_embed).
  *
  * @returns {Promise<Array<{targetId, supersededBy, confidence, reasoning}>>}
@@ -73,10 +98,13 @@ export async function detectContradictionsInBatch(transcript, {
   retrievalThreshold = 0.45, // candidate-retrieval cosine (passed to _find as score_threshold)
   collection,
   client,
+  assertedAt: assertedAtOption,
   _facts  = realFacts,
   _embed  = realEmbed,
   _find   = findEmbeddingSimilarCandidates,
   _judge  = judgeContradiction,
+  _now    = () => new Date().toISOString(),
+  _resolveDirection = resolveSupersessionDirection,
   metrics,
 } = {}) {
   // ── ELIGIBILITY GATE — MUST BE FIRST ────────────────────────────────────
@@ -91,6 +119,13 @@ export async function detectContradictionsInBatch(transcript, {
     : [];
 
   if (newFacts.length === 0) return [];
+
+  // ── Direction inputs (#276) — read the wall clock ONCE for the whole call ──
+  // `now` bounds the future arms; `assertedAt` is the session's assertion
+  // instant, normalised here (absent or unusable → now) so the rule's own
+  // missing-assertedAt abstain is never reached from a production caller.
+  const now = _now();
+  const assertedAt = isUsableDate(assertedAtOption) ? assertedAtOption : now;
 
   // ── Per-fact: embed → find candidates → judge pairs ─────────────────────
   // Accumulate ALL qualifying (contradicts===true && confidence>=judgeThreshold) pairs.
@@ -120,7 +155,19 @@ export async function detectContradictionsInBatch(transcript, {
       const olderFact = candidate.payload?.data;
       if (typeof olderFact !== 'string') continue;
 
-      // Directionality: older = candidate (TARGET), newer = newFact (REPLACEMENT).
+      // Direction (#276): the candidate is the demotion TARGET only if recorded
+      // truth time says the session's fact is newer. Anything but
+      // 'incoming-newer' skips it before the judge is consulted.
+      const { direction } = _resolveDirection({
+        incoming: { assertedAt },
+        stored: { valid_from: candidate.payload?.valid_from },
+        now,
+      });
+      if (direction !== 'incoming-newer') continue;
+
+      // Reached only on 'incoming-newer': the candidate is the older side
+      // (TARGET) and newFact the newer (REPLACEMENT) by truth time, so the
+      // judge's (older, newer) argument order is truth-correct here.
       const judgment = await _judge(olderFact, newFact);
 
       if (judgment.contradicts === true && judgment.confidence >= judgeThreshold) {
