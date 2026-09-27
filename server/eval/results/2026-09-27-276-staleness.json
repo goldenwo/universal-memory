@@ -1,0 +1,272 @@
+{
+  "timestamp": "2026-09-27T19:43:01.728Z",
+  "provider": "openai",
+  "model": "text-embedding-3-small (provider default)",
+  "fixtureRev": "9004fef519836a68e6480f7f7112e99a",
+  "evalUser": "um-mq-eval",
+  "flags": {
+    "UM_DEDUP_ENABLED": "true",
+    "UM_AUTOSUPERSEDE_ENABLED": "true",
+    "UM_LANE_CLASSIFIER_ENABLED": "true",
+    "UM_TEMPORAL_DECAY": "false"
+  },
+  "undatedImputation": null,
+  "env": {
+    "node": "v25.2.1",
+    "platform": "win32"
+  },
+  "fixtures": {
+    "recall": "(inline)",
+    "staleness": "eval/staleness-set.jsonl",
+    "noAnswer": "(none)"
+  },
+  "recall": null,
+  "staleness": {
+    "total": 18,
+    "fired": 18,
+    "fireRate": 1,
+    "staleReturnRate": 0,
+    "perRow": [
+      {
+        "id": "s001",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "339b819d-394e-5450-8df3-d44d096b3ba0",
+        "updatedId": "46878876-4bd1-52e3-8100-c596d9ff6e90",
+        "supersededTarget": "339b819d-394e-5450-8df3-d44d096b3ba0",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s002",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "e646b833-1791-5b90-a0e3-3210a55022e6",
+        "updatedId": "bce8658b-56f2-5d2d-bb7b-e2b8c4ef2a0d",
+        "supersededTarget": "e646b833-1791-5b90-a0e3-3210a55022e6",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s003",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "59f4c96a-8c36-5456-a050-b1df0f8bd8a3",
+        "updatedId": "cc51133f-3b0f-5c51-8ec5-b1f51ac92b48",
+        "supersededTarget": "59f4c96a-8c36-5456-a050-b1df0f8bd8a3",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s004",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "2a84bd9a-734a-53c0-a521-396918b183d1",
+        "updatedId": "8c253d60-2c8a-5276-9ec9-9f2758b7a55b",
+        "supersededTarget": "2a84bd9a-734a-53c0-a521-396918b183d1",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s005",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "4452c453-5ac4-5e81-83fc-5a20d3e8adae",
+        "updatedId": "04b7eeb2-eef8-5400-8843-96fc9fad454f",
+        "supersededTarget": "4452c453-5ac4-5e81-83fc-5a20d3e8adae",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s006",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "7a953d75-7d86-5e1d-9b09-f9ea98613011",
+        "updatedId": "6172acc8-3179-5f1a-a0f4-511aa26e9312",
+        "supersededTarget": "7a953d75-7d86-5e1d-9b09-f9ea98613011",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s007",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "782ce806-c6ee-5a92-8dad-fbb77cd4e7b1",
+        "updatedId": "5307b5ba-6fea-5a53-92e7-c836d35116e7",
+        "supersededTarget": "782ce806-c6ee-5a92-8dad-fbb77cd4e7b1",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s008",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "421c8e21-668c-50df-ab28-1fccdc427ce0",
+        "updatedId": "a342fa26-033a-59ac-87a6-5b2e757acc7a",
+        "supersededTarget": "421c8e21-668c-50df-ab28-1fccdc427ce0",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s009",
+        "lane": "dev",
+        "updatedEvent": "SUPERSEDED_INBAND",
+        "fired": true,
+        "firedPath": "inband",
+        "originalId": "1e629cf5-8d7d-5764-9149-11cca50cda1f",
+        "updatedId": "17326a44-bf47-5662-9eb1-006f0f313e54",
+        "supersededTarget": "1e629cf5-8d7d-5764-9149-11cca50cda1f",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s010",
+        "lane": "travel",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "4e33a97d-92dc-5b69-a631-f8ce0a038a3d",
+        "updatedId": "de717869-7eb9-57b8-98a6-cd3fdbb3a723",
+        "supersededTarget": "4e33a97d-92dc-5b69-a631-f8ce0a038a3d",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s011",
+        "lane": "home",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "a41ecd11-cb47-5929-8901-a492e01e0d61",
+        "updatedId": "e630b226-9593-56df-84d9-5c20a64103a9",
+        "supersededTarget": "a41ecd11-cb47-5929-8901-a492e01e0d61",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s012",
+        "lane": "work",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "cda93be9-2d19-5fea-a592-9ec428492f54",
+        "updatedId": "4a54d4eb-66ef-5149-87b3-cbf77c62f216",
+        "supersededTarget": "cda93be9-2d19-5fea-a592-9ec428492f54",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s013",
+        "lane": "pets",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "cce1880e-ee66-59a5-a8e8-6c5bfa1cd58e",
+        "updatedId": "66b78e76-9524-5c69-bbc3-fbebcda4d06b",
+        "supersededTarget": "cce1880e-ee66-59a5-a8e8-6c5bfa1cd58e",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s014",
+        "lane": "food",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "af927c72-c76a-5048-94cd-6fb29c24357a",
+        "updatedId": "bee3451f-9254-5c85-b276-491479c38aec",
+        "supersededTarget": "af927c72-c76a-5048-94cd-6fb29c24357a",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s015",
+        "lane": "health",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "964d8385-4b5e-5c92-874d-f6f2700da808",
+        "updatedId": "d61881bd-f5f3-5301-9e98-d9af93dfc2af",
+        "supersededTarget": "964d8385-4b5e-5c92-874d-f6f2700da808",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s016",
+        "lane": "finance",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "24e51916-c36f-5022-b831-50ebec80be3a",
+        "updatedId": "196cfc29-c3f9-58c5-935c-207cae9c2481",
+        "supersededTarget": "24e51916-c36f-5022-b831-50ebec80be3a",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s017",
+        "lane": "dev",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "53dc685e-1d82-5133-9cc4-fb0161490abf",
+        "updatedId": "4d96581f-288e-589c-9d65-9248aa69e36a",
+        "supersededTarget": "53dc685e-1d82-5133-9cc4-fb0161490abf",
+        "surfacedOriginal": false
+      },
+      {
+        "id": "s018",
+        "lane": "contact",
+        "updatedEvent": "ADD",
+        "fired": true,
+        "firedPath": "detector",
+        "originalId": "c3cc1014-92b2-559b-8032-fceed5fac37a",
+        "updatedId": "c58b51f7-9a47-581c-9f6b-6474f72ca364",
+        "supersededTarget": "c3cc1014-92b2-559b-8032-fceed5fac37a",
+        "surfacedOriginal": false
+      }
+    ]
+  },
+  "answerCorrectness": null,
+  "noAnswer": null,
+  "answerGrader": null,
+  "bouncerSweep": null,
+  "latency": {
+    "umAdd": {
+      "count": 36,
+      "p50": 219.0335999999952,
+      "p95": 1198.2006000000001,
+      "min": 144.51310000000376,
+      "max": 1424.7806999999998,
+      "mean": 290.78111388888885
+    },
+    "doSearch": {
+      "count": 18,
+      "p50": 204.82779999999912,
+      "p95": 402.8161999999975,
+      "min": 157.87769999999728,
+      "max": 402.8161999999975,
+      "mean": 218.46693333333218
+    }
+  },
+  "cost": {
+    "write": {
+      "tokensIn": 230,
+      "tokensOut": 0,
+      "costUsd": 0.000004600000000000001,
+      "bySurface": {
+        "embed": {
+          "tokensIn": 230,
+          "tokensOut": 0,
+          "costUsd": 0.000004600000000000001
+        }
+      }
+    },
+    "evalEmbed": {
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0
+    },
+    "note": "write = umAdd extract+embed (sink-captured; infer:false here → embed only). read query-embed is internal to mem0.search (not separately metered); judge/grader cost is available via return-usage in the opt-in answer pass — both out of this baseline cut."
+  }
+}
