@@ -58,6 +58,7 @@ import {
   resolveChunkingConfig, resolveFloor, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS,
   DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_MIN_TRANSCRIPT_TURNS,
 } from './checkpoint-config.mjs';
+import { isUsableDate } from './ranking.mjs';
 
 // R1 review A1, fix #1: lock-contention metric. Stable label only — never
 // raw lockdir paths (per-project expansion would explode cardinality).
@@ -583,6 +584,12 @@ async function runWindowedMode({
     {
       vaultDir, project, chunk, prevCursor: null, config, chunkingCfg,
       lane, persona, surface, skipStateMerge, skipCursorAdvance: true,
+      // #276 (spec §5.6, D11): a usable `until` is the assertion instant of the
+      // facts this window extracts, so the supersession direction rule compares
+      // stored truth times against the window's bound, not against now. A
+      // since-only window, or an `until` doCheckpoint accepts but no parser does,
+      // threads nothing and the detector's own now applies.
+      assertedAt: isUsableDate(until) ? until : undefined,
     },
     txnDeps,
   );

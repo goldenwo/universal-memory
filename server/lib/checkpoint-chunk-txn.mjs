@@ -240,6 +240,8 @@ function buildSupersedeDigest(detections, lane, persona) {
  *   - resolveChunkingConfig() output (checkpoint-config.mjs).
  * @param {string|undefined} [args.lane]
  * @param {string|undefined} [args.persona]
+ * @param {string|undefined} [args.assertedAt] - #276: assertion instant of this chunk's facts, forwarded
+ *   to the auto-supersede detector (windowed mode passes its usable `until`; absent → the detector's now).
  * @param {string} [args.surface]
  * @param {boolean} [args.skipStateMerge]
  * @param {boolean} [args.skipCursorAdvance] - Task 6 / spec §4.8's no-cursor sentinel for
@@ -275,6 +277,11 @@ export async function runChunkTransaction(args, deps = {}) {
     // auto-supersession regression. Let undefined pass through unmodified.
     lane,
     persona,
+    // #276: the session's assertion instant (a windowed checkpoint's usable
+    // `until`), forwarded to the detector. No `= null` default, for the same
+    // reason as lane/persona: absent must reach the detector as undefined so its
+    // own default (now) applies — a manufactured null is a different value.
+    assertedAt,
     surface,
     skipStateMerge = false,
     skipCursorAdvance = false,
@@ -585,6 +592,7 @@ export async function runChunkTransaction(args, deps = {}) {
           userId, lane, persona, collection, client: qdrantClient,
           judgeThreshold: autoJudgeThreshold,
           retrievalThreshold: autoRetrievalThreshold,
+          assertedAt,
         });
         if (detections.length > 0) {
           for (const d of detections) {

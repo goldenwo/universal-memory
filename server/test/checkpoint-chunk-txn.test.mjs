@@ -828,6 +828,54 @@ test('5b: DI seam contract — persona threads through as undefined (not null) w
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// #276 seam contract — the session's assertion instant. A windowed checkpoint
+// passes its `until` bound as `args.assertedAt`; runChunkTransaction must hand it
+// to the detector verbatim, and pass `undefined` (never a manufactured `null`)
+// when absent so the detector's own default (now) applies — the same
+// undefined-passes-through discipline as lane/persona above.
+test('5b: DI seam contract — assertedAt threads through verbatim into the detector options (#276)', async () => {
+  const vault = makeVault();
+  const ASSERTED = '2026-06-01T00:00:00.000Z';
+  let capturedOpts = null;
+
+  const result = await runChunkTransaction(
+    baseArgs(vault, { lane: 'work', assertedAt: ASSERTED }),
+    baseDeps({
+      isAutoSupersedeEnabled: () => true,
+      detectContradictions: async (text, opts) => { capturedOpts = opts; return []; },
+    }),
+  );
+
+  assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+  assert.ok(capturedOpts, 'detectContradictions spy must have been called');
+  assert.equal(capturedOpts.assertedAt, ASSERTED, 'args.assertedAt must reach the detector options verbatim');
+
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
+test('5b: DI seam contract — absent assertedAt threads through as undefined, not null (#276)', async () => {
+  const vault = makeVault();
+  let capturedOpts = null;
+
+  const args = baseArgs(vault, { lane: 'work' });
+  delete args.assertedAt; // a caller that omits the key (the cursor path)
+
+  const result = await runChunkTransaction(
+    args,
+    baseDeps({
+      isAutoSupersedeEnabled: () => true,
+      detectContradictions: async (text, opts) => { capturedOpts = opts; return []; },
+    }),
+  );
+
+  assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+  assert.ok(capturedOpts, 'detectContradictions spy must have been called');
+  assert.equal(capturedOpts.assertedAt, undefined,
+    'an absent assertedAt must reach the detector as undefined so its own default (now) applies — never a manufactured null');
+
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
 // ===========================================================================
 // Section F — per-chunk cost telemetry.
 // ===========================================================================

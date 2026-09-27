@@ -488,6 +488,65 @@ test('checkpoint: since:"" and until:"  " are treated as absent — default (cur
   await fs.rm(vaultDir, { recursive: true, force: true });
 });
 
+// #276 / spec §5.6: a windowed checkpoint's usable `until` bound is the
+// assertion instant of the facts it extracts, threaded end-to-end into the
+// batch detector's options. Driven through a REAL doCheckpoint with the
+// detector spied via ctx._detectContradictions — the only seam that sees the
+// detector's options (runChunkTransaction is a static import). The spy returns
+// [] so the auto-supersede step completes.
+async function runCheckpointCapturingDetectorOpts(args) {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, args.project, '2026-01-02.md', '# Session\n#276 assertion-instant probe.');
+
+  const savedFlag = process.env.UM_AUTOSUPERSEDE_ENABLED;
+  process.env.UM_AUTOSUPERSEDE_ENABLED = 'true';
+
+  const calls = [];
+  let result;
+  try {
+    result = await doCheckpoint(
+      { lane: 'work', ...args },
+      {
+        config: BASE_CONFIG,
+        vaultDir,
+        summarizeFn: makeSummarizeFn(),
+        updateStateFn: makeUpdateStateFn(),
+        reindexFn: async () => {},
+        _detectContradictions: async (transcript, opts) => { calls.push(opts); return []; },
+      },
+    );
+  } finally {
+    if (savedFlag === undefined) delete process.env.UM_AUTOSUPERSEDE_ENABLED;
+    else process.env.UM_AUTOSUPERSEDE_ENABLED = savedFlag;
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+
+  assert.equal(result.ok, true, `checkpoint must succeed, got: ${JSON.stringify(result)}`);
+  assert.equal(calls.length, 1, 'the detector must be reached exactly once');
+  return calls[0];
+}
+
+test('checkpoint #276: windowed since + usable until → the detector receives assertedAt === until', async () => {
+  const until = '2026-01-03T23:59:59Z';
+  const opts = await runCheckpointCapturingDetectorOpts({ project: 'assertwinproj', since: '2026-01-01T00:00:00Z', until });
+  assert.equal(opts.assertedAt, until, 'a usable until is the assertion instant of the window\'s facts');
+});
+
+test('checkpoint #276: windowed since-only → the detector receives assertedAt undefined (its own now applies)', async () => {
+  const opts = await runCheckpointCapturingDetectorOpts({ project: 'assertsinceproj', since: '2026-01-01T00:00:00Z' });
+  assert.equal(opts.assertedAt, undefined, 'no upper bound → nothing threaded, never a manufactured null');
+});
+
+test('checkpoint #276: windowed until:"not a date" → accepted by doCheckpoint, refused by the usability guard, assertedAt undefined', async () => {
+  const opts = await runCheckpointCapturingDetectorOpts({ project: 'assertbadproj', until: 'not a date' });
+  assert.equal(opts.assertedAt, undefined, 'an unusable until must not be threaded as the assertion instant');
+});
+
+test('checkpoint #276: cursor mode (no since/until) → the detector receives assertedAt undefined', async () => {
+  const opts = await runCheckpointCapturingDetectorOpts({ project: 'assertcursorproj' });
+  assert.equal(opts.assertedAt, undefined, 'the cursor path threads no assertion instant');
+});
+
 // C.8 (§4.2): typeof-string guard on caller-supplied since/until.
 // `since.slice(...)` and `until.slice(...)` only work on strings; a numeric
 // epoch like 1234567890 either throws TypeError (no .slice) or — in some
