@@ -18,8 +18,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const DIRECTION_MODULES = [
-  { path: '../lib/supersede.mjs', mustContain: 'export function resolveSupersessionDirection' },
-  { path: '../lib/contradiction-batch.mjs', mustContain: "import { resolveSupersessionDirection } from './supersede.mjs';" },
+  { path: '../lib/supersede.mjs', mustContain: /export function resolveSupersessionDirection\b/ },
+  // Any named-import form of the resolver from supersede.mjs counts (a second named import,
+  // either quote style, a line break) — the pin is the dependency, not the statement's text.
+  { path: '../lib/contradiction-batch.mjs', mustContain: /import\s*\{[^}]*\bresolveSupersessionDirection\b[^}]*\}\s*from\s*['"]\.\/supersede\.mjs['"]/ },
 ];
 
 const FORBIDDEN = [/\bcreatedAt\b/, /\bdecided_at\b/];
@@ -33,6 +35,6 @@ for (const { path, mustContain } of DIRECTION_MODULES) {
         `${path} contains the bare token ${re} — direction code and its comments name these fields `
         + 'descriptively; rewrite the line, do not loosen this scan to admit a comment');
     }
-    assert.ok(src.includes(mustContain), `${path} no longer contains "${mustContain}" — the rule moved; extend DIRECTION_MODULES`);
+    assert.match(src, mustContain, `${path} no longer matches ${mustContain} — the rule moved; extend DIRECTION_MODULES`);
   });
 }

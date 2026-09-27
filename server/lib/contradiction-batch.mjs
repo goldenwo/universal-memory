@@ -31,9 +31,9 @@
  *                                  windowed checkpoint's `until` into it is deferred
  *                                  until a checkpoint client declares lane/persona;
  *     stored   = { valid_from }  — the candidate's recorded truth time, nothing else;
- *     now      = the wall clock, read ONCE per call — the future bound is measured
- *                against it, never against a past `assertedAt`, so an ordinary point
- *                dated after a backfill's bound reads 'stored-newer', not poisoned.
+ *     now      = the wall clock, read ONCE per call — the future bounds are measured
+ *                against it, never against a caller's `assertedAt`, so a past
+ *                `assertedAt` never makes an ordinary stored instant read as future.
  *   The candidate reaches the judge ONLY when the rule resolves 'incoming-newer'.
  *   Every other value — 'stored-newer', 'stored-future', 'incoming-future',
  *   'ambiguous' (no usable stored truth time, or equal instants) — skips it and
