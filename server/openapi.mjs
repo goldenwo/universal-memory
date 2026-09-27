@@ -513,7 +513,7 @@ const SCHEMAS = {
       until: {
         type: 'string',
         format: 'date-time',
-        description: 'ISO 8601 end of capture window (inclusive). Defaults to now.',
+        description: 'ISO 8601 end of capture window (inclusive). Defaults to now. Also the assertion instant compared against stored valid_from by the supersession direction rule (#276); a windowed backfill that needs truth ordering must supply it.',
       },
       skip_state_merge: {
         type: 'boolean',

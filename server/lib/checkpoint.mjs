@@ -101,6 +101,9 @@ const RAW_LOCK_TIMEOUT_MS = 5_000;
  * @param {string} args.project          - Project slug (required)
  * @param {string} [args.since]          - Window start ISO string (windowed mode, §4.8)
  * @param {string} [args.until]          - Window end ISO string (windowed mode, §4.8)
+ *                                        Also the assertion instant compared against stored valid_from by the
+ *                                        supersession direction rule (#276); a windowed backfill that needs truth
+ *                                        ordering must supply it.
  * @param {boolean}[args.skip_state_merge] - If true, skip state.md merge
  * @param {string} [args.lane]           - D3.2 partition slug for the auto-supersede detector
  * @param {string} [args.persona]        - D3.2 partition slug for the auto-supersede detector
