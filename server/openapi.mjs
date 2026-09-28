@@ -21,6 +21,10 @@ import YAML from 'yaml';
 
 import { providers, supportingProviders } from './lib/provider/registry.mjs';
 import { SERVER_VERSION } from './lib/version.mjs';
+import { PROJECT_SLUG_RE } from './lib/default-project.mjs';
+
+// The published slug pattern IS the enforced one (lookahead-free, so any regex dialect).
+const SLUG = PROJECT_SLUG_RE.source;
 
 // ---------------------------------------------------------------------------
 // Provider enums — auto-derived from registry (spec §3.1 #5)
@@ -161,10 +165,10 @@ const SCHEMAS = {
       },
       id: {
         type: 'string',
-        description: 'Stable document id — filename stem without .md. Must match ^[a-zA-Z0-9._-]+$.',
+        description: `Stable document id — filename stem without .md. Must match ${SLUG}.`,
       },
       title: { type: 'string' },
-      project: { type: 'string', description: 'Owning project slug (matches ^[a-zA-Z0-9._-]+$)' },
+      project: { type: 'string', description: `Owning project slug (matches ${SLUG})` },
       status: {
         type: 'string',
         enum: ['current', 'superseded', 'deprecated', 'rejected'],
@@ -459,8 +463,8 @@ const SCHEMAS = {
     properties: {
       project: {
         type: 'string',
-        pattern: '^[a-zA-Z0-9._-]+$',
-        description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+        pattern: SLUG,
+        description: `Project slug. Must match ${SLUG}.`,
       },
       content: {
         type: 'string',
@@ -502,8 +506,8 @@ const SCHEMAS = {
     properties: {
       project: {
         type: 'string',
-        pattern: '^[a-zA-Z0-9._-]+$',
-        description: 'Project slug to checkpoint. Must match ^[a-zA-Z0-9._-]+$.',
+        pattern: SLUG,
+        description: `Project slug to checkpoint. Must match ${SLUG}.`,
       },
       since: {
         type: 'string',
@@ -983,8 +987,8 @@ function pathState() {
           name: 'project',
           in: 'path',
           required: true,
-          schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]+$' },
-          description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+          schema: { type: 'string', pattern: SLUG },
+          description: `Project slug. Must match ${SLUG}.`,
         },
       ],
       responses: {
@@ -1015,8 +1019,8 @@ function pathRecent() {
           name: 'project',
           in: 'path',
           required: true,
-          schema: { type: 'string', pattern: '^[a-zA-Z0-9._-]+$' },
-          description: 'Project slug. Must match ^[a-zA-Z0-9._-]+$.',
+          schema: { type: 'string', pattern: SLUG },
+          description: `Project slug. Must match ${SLUG}.`,
         },
         {
           name: 'limit',

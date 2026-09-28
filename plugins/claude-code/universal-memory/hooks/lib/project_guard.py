@@ -105,14 +105,23 @@ def _home_candidates():
     return {_norm(c) for c in raw if c}
 
 
+def _all_dots(name):
+    """The server's PROJECT_SLUG_RE refuses a name made only of dots (it would
+    name a parent directory in the vault), so the hooks must never send one:
+    the character sanitizer in each hook keeps dots, and the server would
+    answer 400 on every fire."""
+    return bool(name) and name.strip(".") == ""
+
+
 def _root_name(marker_dir):
     """The ONE naming site (#294 T1 step 2): every walk exit that names a
     project routes through here, so the empty-basename guard cannot be
-    half-applied. None -> no marker was seen -> SKIP."""
+    half-applied. None -> no marker was seen -> SKIP. An all-dot basename
+    (a directory literally named '...') is skipped like an empty one."""
     if marker_dir is None:
         return "SKIP:non-project-cwd"
     base = os.path.basename(marker_dir.rstrip("/\\"))
-    return base if base else "SKIP:non-project-cwd"
+    return base if base and not _all_dots(base) else "SKIP:non-project-cwd"
 
 
 def _worktree_main(cur):
@@ -186,7 +195,7 @@ def guard(cwd_raw, fallback_raw=""):
         # skipping home sessions entirely. Home SUBDIRS (~/Downloads etc.)
         # are not chats — they stay under the marker walk-up below.
         home_project = os.environ.get("UM_HOME_PROJECT", "desktop").strip()
-        return home_project if home_project else "SKIP:home-cwd"
+        return home_project if home_project and not _all_dots(home_project) else "SKIP:home-cwd"
 
     markers = [m.strip() for m in
                (os.environ.get("UM_PROJECT_MARKERS") or DEFAULT_MARKERS).split(",")

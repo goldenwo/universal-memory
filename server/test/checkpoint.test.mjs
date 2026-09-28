@@ -1488,6 +1488,31 @@ test('F1: checkpoint invalid slug still hard-fails after the F1 flip', async () 
   }
 });
 
+test('checkpoint: an all-dot project is refused before any lock or cursor is written', async () => {
+  // A bare '..' named state/../ — the vault root — for the lockdir and the cursor (see PROJECT_SLUG_RE).
+  for (const project of ['.', '..', '...']) {
+    const vaultDir = await makeVault();
+    try {
+      const before = (await fs.readdir(vaultDir)).sort();
+      const result = await doCheckpoint(
+        { project },
+        {
+          config: BASE_CONFIG,
+          vaultDir,
+          summarizeFn: makeSummarizeFn(),
+          updateStateFn: makeUpdateStateFn(),
+          reindexFn: async () => {},
+        },
+      );
+      assert.equal(result.ok, false, `project ${JSON.stringify(project)} refused`);
+      assert.equal(result.code, 'INPUT_INVALID');
+      assert.deepEqual((await fs.readdir(vaultDir)).sort(), before, `vault root untouched for ${JSON.stringify(project)}`);
+    } finally {
+      await fs.rm(vaultDir, { recursive: true, force: true });
+    }
+  }
+});
+
 // ---------- D3.2: UM_AUTOSUPERSEDE_ENABLED flag tests ----------
 
 // D3.3 v1.2 flip: UM_AUTOSUPERSEDE_ENABLED is now ON BY DEFAULT (opt-out) — only the

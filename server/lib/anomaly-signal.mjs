@@ -54,6 +54,7 @@
 
 import { recordCaptureEvent } from './capture-events.mjs';
 import { errorResponse } from './error-envelope.mjs';
+import { PROJECT_SLUG_RE } from './default-project.mjs';
 
 /** Pinned event name — one-way door (permanent rows keyed by event). */
 export const ANOMALY_EVENT = 'signal.capture_anomaly';
@@ -84,12 +85,11 @@ const ANOMALY_REASON_RE = /^[a-z0-9-]{1,64}$/;
 
 const REASON_SET = new Set(ANOMALY_REASON_KEYS);
 
-// Same charset the hooks sanitize to client-side (stop.sh); label-only here
-// — see header. Charset-only (no length anchor): over-long slugs are SLICED
-// to 64, never clamped to '' (review catch — stop.sh applies no length cap,
-// and dropping the label loses the row's only per-project attribution; same
-// posture as surfaceFromHeaders's slice).
-const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
+// The canonical slug rule (what the hooks can send: their sanitizer plus
+// project_guard's all-dot skip); label-only here — see header. No length
+// anchor: over-long slugs are SLICED to 64, never clamped to '' (review catch
+// — stop.sh applies no length cap, and dropping the label loses the row's only
+// per-project attribution; same posture as surfaceFromHeaders's slice).
 
 /**
  * POST /api/capture-anomaly — record one client-observed capture anomaly as
@@ -126,7 +126,7 @@ export async function handleCaptureAnomalyRequest(req, res, ctx) {
   }
   const outcome = REASON_SET.has(reason) ? reason : ANOMALY_OTHER;
 
-  const project = typeof b.project === 'string' && PROJECT_RE.test(b.project)
+  const project = typeof b.project === 'string' && PROJECT_SLUG_RE.test(b.project)
     ? b.project.slice(0, 64)
     : '';
 

@@ -13,14 +13,11 @@
 # Returns 0 if valid, 1 + stderr message if not.
 _um_validate_slug() {
   local value="$1"
-  if [[ ! "$value" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-    echo "um: invalid project slug: '$value' (must match ^[a-zA-Z0-9._-]+\$)" >&2
-    return 1
-  fi
-  # Mirrors the server's PROJECT_SLUG_RE: an all-dot name ('.', '..') would
-  # name a parent directory when the server joins it into a vault path.
-  if [[ "$value" =~ ^\.+$ ]]; then
-    echo "um: invalid project slug: '$value' (an all-dot name is not a project)" >&2
+  # The server's PROJECT_SLUG_RE, byte for byte: allowed characters, at least
+  # one of them not a dot ('.' and '..' would name a parent directory). No
+  # backslash in the pattern, so it holds under every bash compat level.
+  if [[ ! "$value" =~ ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$ ]]; then
+    echo "um: invalid project slug: '$value' (letters, digits, '.', '_', '-'; not all dots)" >&2
     return 1
   fi
   return 0

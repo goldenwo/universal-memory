@@ -880,3 +880,21 @@ test('F1: doAppendTurn invalid slug still hard-fails after the F1 flip', async (
   assert.match(result.error, /invalid project/i);
   await fs.rm(vault, { recursive: true, force: true });
 });
+
+test('doAppendTurn: an all-dot project is refused and nothing is written outside captures/<p>/', async () => {
+  // '../escape' above was always refused (the slash). A bare '..' was the real hole:
+  // captures/../raw/<date>.md is <vault>/raw/<date>.md (see PROJECT_SLUG_RE).
+  for (const project of ['.', '..', '...']) {
+    const vault = await makeTempVault();
+    try {
+      const before = (await fs.readdir(vault)).sort();
+      const result = await doAppendTurn({ project, content: 'should not write', role: 'user' }, { vaultDir: vault });
+      assert.equal(result.ok, false, `project ${JSON.stringify(project)} refused`);
+      assert.match(result.error, /invalid project/i);
+      assert.deepEqual((await fs.readdir(vault)).sort(), before, `vault root untouched for ${JSON.stringify(project)}`);
+      assert.deepEqual(await fs.readdir(path.join(vault, 'captures')), [], `captures/ untouched for ${JSON.stringify(project)}`);
+    } finally {
+      await fs.rm(vault, { recursive: true, force: true });
+    }
+  }
+});

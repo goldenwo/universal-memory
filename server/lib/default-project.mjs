@@ -37,8 +37,9 @@
  * pattern was inlined in six locations: `append-turn.mjs:PROJECT_SLUG_RE`,
  * `checkpoint.mjs:VALID_SLUG`, `mem0-mcp-http.mjs:SAFE_NAME_RE`, and three
  * inline regex literals in `doState` + `doRecent` + the REST
- * `/api/state/:project` handler. All six call sites now import this export;
- * no other definitions of the slug pattern remain in the codebase.
+ * `/api/state/:project` handler. All six call sites now import this export,
+ * as do openapi.mjs's published patterns and anomaly-signal.mjs; the plugin's
+ * resolve-project.sh carries the same string (bash has no import).
  *
  * Exported because both this module's policy helpers AND the caller-input
  * validation paths (`validateSafeName`, `doState`, `doRecent`, the REST
@@ -46,11 +47,17 @@
  * either call `.test(value)` directly OR (rare) read `.source` for error
  * messages.
  *
- * All-dot names ('.', '..', '...') are rejected: the slug is joined into vault
- * paths with path.join (checkpoint-cursor, chunk-builder, layers, checkpoint),
- * outside vault.mjs safePath, so '..' would resolve state/<p>/ to the vault root.
+ * The one rule this regex is the only guard for: a slug is ONE directory
+ * name, never '.' or '..'. The slug is joined into vault paths with
+ * path.join at the capture, cursor and checkpoint sites, and vault.mjs
+ * safePath only confines a path to the vault root (it accepts the root
+ * itself), so a '..' project resolved captures/<p>/, state/<p>/ and
+ * authored/<p>/ to the vault root. Hence: leading dots are allowed, but at
+ * least one character must be a non-dot. Written without lookahead or
+ * backslashes so the same string works as an OpenAPI pattern in any regex
+ * dialect and as a bash `=~` pattern in every compat mode.
  */
-export const PROJECT_SLUG_RE = /^(?!\.+$)[a-zA-Z0-9._-]+$/;
+export const PROJECT_SLUG_RE = /^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$/;
 
 /**
  * Canonical tool identifiers for the `tool` arg of `applyDefaultProject`.

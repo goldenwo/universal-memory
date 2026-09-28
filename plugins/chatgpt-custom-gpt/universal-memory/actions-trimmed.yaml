@@ -67,8 +67,8 @@ paths:
           required: true
           schema:
             type: string
-            pattern: ^[a-zA-Z0-9._-]+$
-          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+            pattern: ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$
+          description: Project slug. Must match ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$.
       responses:
         "200":
           description: "State file contents (or `state: null` when the file does not exist
@@ -143,8 +143,8 @@ paths:
           required: true
           schema:
             type: string
-            pattern: ^[a-zA-Z0-9._-]+$
-          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+            pattern: ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$
+          description: Project slug. Must match ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$.
         - name: limit
           in: query
           required: false
@@ -462,8 +462,8 @@ components:
       properties:
         project:
           type: string
-          pattern: ^[a-zA-Z0-9._-]+$
-          description: Project slug. Must match ^[a-zA-Z0-9._-]+$.
+          pattern: ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$
+          description: Project slug. Must match ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$.
         content:
           type: string
           maxLength: 8192
@@ -516,8 +516,9 @@ components:
       properties:
         project:
           type: string
-          pattern: ^[a-zA-Z0-9._-]+$
-          description: Project slug to checkpoint. Must match ^[a-zA-Z0-9._-]+$.
+          pattern: ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$
+          description: Project slug to checkpoint. Must match
+            ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$.
         since:
           type: string
           format: date-time
@@ -815,12 +816,12 @@ components:
         id:
           type: string
           description: Stable document id — filename stem without .md. Must match
-            ^[a-zA-Z0-9._-]+$.
+            ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$.
         title:
           type: string
         project:
           type: string
-          description: Owning project slug (matches ^[a-zA-Z0-9._-]+$)
+          description: Owning project slug (matches ^[.]*[a-zA-Z0-9_-][a-zA-Z0-9._-]*$)
         status:
           type: string
           enum:
