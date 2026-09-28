@@ -30,6 +30,7 @@ import { once } from 'node:events';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
+import { buildSpec } from '../openapi.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,14 @@ test('POST /api/search returns enveloped JSON over the wire', async () => {
     assert.equal(first.title, 'Search Doc One');
     assert.ok('score' in first);
     assert.ok(typeof first.snippet === 'string' && first.snippet.length > 0);
+    // #345: the item's keys are exactly what the published CompactMemoryResult allows.
+    // The plugin's first-prompt recall hook pins its fixture to that schema (via the
+    // checked-in actions spec), so handler = schema = client fixture is one chain.
+    const item = buildSpec().components.schemas.CompactMemoryResult;
+    const keys = new Set(Object.keys(first));
+    for (const k of item.required) assert.ok(keys.has(k), `compact item carries required ${k}`);
+    for (const k of keys) assert.ok(k in item.properties, `compact item key ${k} is in CompactMemoryResult`);
+    assert.ok(first.snippet.startsWith(`${first.title} — `), 'the snippet leads with the title (the hook labels lines by id)');
   } finally {
     await close();
   }
