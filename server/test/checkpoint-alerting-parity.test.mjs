@@ -18,7 +18,7 @@ const UM_ALERT = fileURLToPath(
   new URL('../../plugins/claude-code/universal-memory/bin/um-alert.sh', import.meta.url),
 );
 
-// The pre-registered #323 read (7-day window ending 2026-09-27): zero_commit and
+// The pre-registered #323 read (the 7-day window ending 2026-09-28): zero_commit and
 // provider_stalled were zero across 112 accepted checkpoints on the main client
 // host, so both were promoted. contended (lock contention, a retry succeeds) and
 // other (a vocabulary drift tripwire) stay recorded-not-triggering.

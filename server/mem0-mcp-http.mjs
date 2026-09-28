@@ -1753,10 +1753,11 @@ function recordAcceptedCheckpointOutcome({ project, surface, result, err, reject
 	if (outcome === null) return;
 	const errField = rejected ? err?.message : result?.error;
 	// Log severity MIRRORS the alert's triggering set — it does not invent its
-	// own. Only `rejected` and `failed` are faults; `contended`, `zero_commit`,
-	// `provider_stalled` and `other` are recorded-not-triggering precisely
-	// because none of them has a measured benign base rate yet, so writing them
-	// at ERROR would make a transient provider ratelimit or an unrecognised stop
+	// own. `rejected` and `failed` are faults by construction; `zero_commit` and
+	// `provider_stalled` joined them when the #323 read measured both at zero
+	// over a full week. `contended` (a retry clears it) and `other` (the
+	// vocabulary tripwire) stay recorded-not-triggering, so they log at INFO:
+	// writing them at ERROR would make lock contention or an unrecognised stop
 	// reason read as a server fault in every log-based dashboard while the alert
 	// deliberately stays silent. Two severity models that disagree is how an
 	// operator learns to ignore one of them.

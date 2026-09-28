@@ -143,7 +143,8 @@ Exit codes:
                the last success — see #239 / spec §4.5), or an accepted-mode
                checkpoint that failed server-side (CHECKPOINT-FAILURE:
                a triggering outcome in the 7-day window, named per project — the
-               session was captured but NOT digested, see #309)
+               session, or its unfinished part, was captured but NOT digested,
+               see #309 / #323)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -402,8 +403,8 @@ CFG = {
         "noun": "project",
         "trigger": ("rejected", "failed", "zero_commit", "provider_stalled"),
         "breakdown_key": "outcomes_7d",
-        "line": "%s: %d failed accepted checkpoint(s) in 7d (%s; last %s)",
-        "tail": " — digestion failed server-side after the hook was told 202; these sessions are captured but NOT digested (#309)",
+        "line": "%s: %d failed or stalled accepted checkpoint(s) in 7d (%s; last %s)",
+        "tail": " — digestion failed or stalled server-side after the hook was told 202; what did not commit is captured but NOT digested until the next checkpoint resumes it (#309, #323)",
         "ok": "no failed accepted checkpoints in the last 7 days",
         "payload_err": "checkpoint_failure payload malformed: %s",
     },
