@@ -73,13 +73,17 @@ export const CHECKPOINT_FAILURE_OTHER = 'other';
 /**
  * The pinned outcome vocabulary, in `/api/stats` key order.
  *
- * Only `rejected` and `failed` trigger the alert. Both have a benign base rate
- * of zero BY CONSTRUCTION — an unhandled rejection, a disk-full lock failure, a
- * missing prompt, an exhausted retry are never normal operation — which is the
- * same standard the sibling `capture_anomaly` arm earned by measurement.
- * `contended`, `zero_commit`, `provider_stalled` and `other` are recorded and
- * visible in `outcomes_7d`, but do NOT trigger: each is transient or is an
- * unrecognised success shape, so none can be known-non-benign today.
+ * Four outcomes trigger the alert. `rejected` and `failed` have a benign base
+ * rate of zero BY CONSTRUCTION — an unhandled rejection, a disk-full lock
+ * failure, a missing prompt, an exhausted retry are never normal operation.
+ * `zero_commit` and `provider_stalled` earned it BY MEASUREMENT, the standard
+ * the sibling `capture_anomaly` arm met: the #323 read found both at zero over
+ * a full 7-day window (112 accepted checkpoints on the main client host), so
+ * they were promoted. `contended` and `other` are recorded and visible in
+ * `outcomes_7d` but do NOT trigger: contention is transient (a retry clears
+ * it) and `other` is the vocabulary tripwire, read weekly rather than paged.
+ * um-alert.sh carries the same set; checkpoint-alerting-parity.test.mjs pins
+ * the two together.
  *
  * The narrowing is SAFE in the direction that matters: an unmatched FAILURE
  * lands in `failed` and alerts, so the non-triggering set can only ever contain
@@ -95,7 +99,7 @@ export const CHECKPOINT_FAILURE_OUTCOMES = Object.freeze([
 ]);
 
 /** The subset that fires the alert. See the vocabulary note above. */
-export const CHECKPOINT_FAILURE_ALERTING = Object.freeze(['rejected', 'failed']);
+export const CHECKPOINT_FAILURE_ALERTING = Object.freeze(['rejected', 'failed', 'zero_commit', 'provider_stalled']);
 
 /**
  * Classify one settlement of an accepted-mode `doCheckpoint` call.

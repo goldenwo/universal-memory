@@ -1261,9 +1261,11 @@ fi
 # capturing, so a project whose finite lag sits below the ceiling when it goes
 # quiet is invisible indefinitely with a green board.
 #
-# Only `rejected` and `failed` trigger. The other four are RECORDED and shown
-# in the breakdown but must leave the alert silent — each is transient or an
-# unrecognised success shape, and none has a measured benign base rate.
+# `rejected`, `failed`, `zero_commit` and `provider_stalled` trigger (the last
+# two promoted by the #323 base-rate read: zero across the 7-day window). The
+# other two are RECORDED and shown in the breakdown but must leave the alert
+# silent: `contended` is lock contention a retry clears, `other` a vocabulary
+# drift tripwire.
 CKPT_ZERO='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{}}}'
 CKPT_FAILED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":2,"outcomes_7d":{"rejected":0,"failed":2,"contended":0,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
 CKPT_REJECTED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{"proj-a":{"last_day_seen":"2026-07-17","count_7d":1,"outcomes_7d":{"rejected":1,"failed":0,"contended":0,"zero_commit":0,"provider_stalled":0,"other":0}}}}}'
@@ -1307,12 +1309,12 @@ mock="$TMPDIR_ROOT/t65"; _make_mock_curl "$mock" 200 "$CKPT_REJECTED"
 run_alert "$mock"
 if [ "$rc" -eq 1 ]; then pass "T65-exit-1"; else fail "T65-exit-1 (rc=$rc, out=$output)"; fi
 
-# ─── T66: the four NON-TRIGGERING outcomes each stay silent ─────────────────
+# ─── T66: the two NON-TRIGGERING outcomes each stay silent ──────────────────
 # These are the assertions that keep the alert actionable. A detector that
 # fires on routine traffic gets muted, and a muted detector is the silent
 # failure this whole change exists to remove — one level up.
 echo ""
-echo "=== T66: contended / zero_commit / provider_stalled / other ⇒ exit 0, silent ==="
+echo "=== T66: contended / other ⇒ exit 0, silent ==="
 _t66() {
   local name="$1" fixture="$2"
   mock="$TMPDIR_ROOT/t66-$name"; _make_mock_curl "$mock" 200 "$fixture"
@@ -1324,9 +1326,25 @@ _t66() {
   fi
 }
 _t66 "contended"         "$CKPT_CONTENDED"
-_t66 "zero-commit"       "$CKPT_ZERO_COMMIT"
-_t66 "provider-stalled"  "$CKPT_PROVIDER_STALLED"
 _t66 "other"             "$CKPT_OTHER"
+
+# ─── T66b: the two outcomes #323 PROMOTED each FIRE ─────────────────────────
+# zero_commit and provider_stalled had a measured benign base rate of zero over
+# the #323 window, so each now alerts on its own and names its project.
+echo ""
+echo "=== T66b: zero_commit / provider_stalled ⇒ exit 1 + CHECKPOINT-FAILURE line naming the project ==="
+_t66b() {
+  local name="$1" fixture="$2"
+  mock="$TMPDIR_ROOT/t66b-$name"; _make_mock_curl "$mock" 200 "$fixture"
+  run_alert "$mock"
+  if [ "$rc" -eq 1 ] && echo "$output" | grep -q "CHECKPOINT-FAILURE" && echo "$output" | grep -q "proj-a"; then
+    pass "T66b-$name-fires"
+  else
+    fail "T66b-$name-fires (rc=$rc, out=$output)"
+  fi
+}
+_t66b "zero-commit"       "$CKPT_ZERO_COMMIT"
+_t66b "provider-stalled"  "$CKPT_PROVIDER_STALLED"
 
 # ─── T67: a triggering outcome alongside heavy transients STILL fires ───────
 echo ""

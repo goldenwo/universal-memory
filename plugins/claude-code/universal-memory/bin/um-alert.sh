@@ -41,9 +41,10 @@
 #     before the outcome exists, so nothing else reports it — and LAYERS
 #     cannot, because staleness is a capture-vs-digest LAG that FREEZES
 #     when a project stops capturing. Keyed BY PROJECT. Fires on
-#     rejected + failed only; contended / zero_commit / provider_stalled /
-#     other are shown in the breakdown but are transient or unrecognised
-#     and do not trigger. THIS IS THE ROLLBACK SIGNAL for accepted mode.
+#     rejected / failed / zero_commit / provider_stalled (the last two
+#     promoted by the #323 base-rate read); contended and other are shown in
+#     the breakdown but are transient or unrecognised and do not trigger.
+#     THIS IS THE ROLLBACK SIGNAL for accepted mode.
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
@@ -141,8 +142,9 @@ Exit codes:
                last refresh attempt failed, or last attempt > 2 × TTL after
                the last success — see #239 / spec §4.5), or an accepted-mode
                checkpoint that failed server-side (CHECKPOINT-FAILURE:
-               rejected/failed in the 7-day window, named per project — the
-               session was captured but NOT digested, see #309)
+               a triggering outcome in the 7-day window, named per project — the
+               session, or its unfinished part, was captured but NOT digested,
+               see #309 / #323)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -361,9 +363,11 @@ fi
 #      is a drift ERROR (exit 2) for capture_anomaly but an informational
 #      ABSENT breadcrumb (exit 0) for checkpoint_failure (T38 vs T68).
 #   2. Triggering set — capture_anomaly alerts on any count_7d > 0 (measured
-#      benign base rate of zero); checkpoint_failure alerts only on
-#      rejected + failed, the two outcomes with a zero base rate BY
-#      CONSTRUCTION, and shows the rest in the breakdown without triggering.
+#      benign base rate of zero); checkpoint_failure alerts on rejected +
+#      failed (a zero base rate BY CONSTRUCTION) + zero_commit +
+#      provider_stalled (zero BY MEASUREMENT, #323), and shows contended and
+#      other in the breakdown without triggering. The server's
+#      CHECKPOINT_FAILURE_ALERTING is the same set (a parity test pins it).
 # Every message is byte-identical to the two blocks this replaced, so the
 # um-alert.test.sh greps (T34-T38, T63-T70) pin the shared block.
 # Single-quoted on purpose (python source, no shell expansion; no backticks —
@@ -397,10 +401,10 @@ CFG = {
         "fam_null": ("ERROR", "checkpoint_failure is null while signals is present — the checkpoint-failure reader degraded on its own; the #309 rollback signal is DARK"),
         "malformed": "signals.checkpoint_failure malformed (expected an object)",
         "noun": "project",
-        "trigger": ("rejected", "failed"),
+        "trigger": ("rejected", "failed", "zero_commit", "provider_stalled"),
         "breakdown_key": "outcomes_7d",
-        "line": "%s: %d failed accepted checkpoint(s) in 7d (%s; last %s)",
-        "tail": " — digestion failed server-side after the hook was told 202; these sessions are captured but NOT digested (#309)",
+        "line": "%s: %d failed or stalled accepted checkpoint(s) in 7d (%s; last %s)",
+        "tail": " — digestion failed or stalled server-side after the hook was told 202; what did not commit is captured but NOT digested until the next checkpoint resumes it (#309, #323)",
         "ok": "no failed accepted checkpoints in the last 7 days",
         "payload_err": "checkpoint_failure payload malformed: %s",
     },
@@ -527,13 +531,13 @@ SIG_MESSAGE="${SIG_VERDICT#*|}"
 #              nulls `signals` wholesale, so that state can only mean THIS
 #              reader degraded on its own, leaving the #309 rollback signal dark
 #              behind a green board. ⇒ CHECK FAILED, exit 2.
-#   ALERT    — any project with rejected+failed > 0 in the window. The set, not
-#              the threshold, carries the burden here: unlike the sibling this
-#              family has NO measured benign base rate, so it cannot borrow the
-#              any-count-over-zero rule for a vocabulary containing transients.
-#              `rejected` and `failed` have a benign base rate of zero BY
-#              CONSTRUCTION. contended / zero_commit / provider_stalled / other
-#              are shown in the breakdown but never trigger.
+#   ALERT    — any project with a triggering outcome > 0 in the window. The
+#              set, not the threshold, carries the burden here: the family's
+#              vocabulary contains a transient, so it cannot borrow the
+#              any-count-over-zero rule wholesale. `rejected` and `failed` have
+#              a benign base rate of zero BY CONSTRUCTION; `zero_commit` and
+#              `provider_stalled` were measured at zero over the #323 window.
+#              contended / other are shown in the breakdown but never trigger.
 #   OK       — zero triggering outcomes in the window.
 CKPT_VERDICT=$(um_signal_verdict checkpoint_failure) || CKPT_VERDICT=""
 
