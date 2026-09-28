@@ -228,22 +228,24 @@ test('applyDefaultProject: invalid value does NOT emit a soft-default warn', () 
 test('PROJECT_SLUG_RE: canonical pattern matches valid slugs', () => {
   // Sanity-anchor on the exact pattern. If anyone retunes the regex they
   // also have to retune this test, which catches accidental drift.
-  assert.equal(PROJECT_SLUG_RE.source, '^[a-zA-Z0-9._-]+$');
-  for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d', '.hidden']) {
+  assert.equal(PROJECT_SLUG_RE.source, '^(?!\\.+$)[a-zA-Z0-9._-]+$');
+  for (const ok of ['default', 'my-project', 'proj.v1_2', 'a1', 'A.b-C_d', '.hidden', 'a..b', '..hidden']) {
     assert.ok(PROJECT_SLUG_RE.test(ok), `expected match: ${ok}`);
   }
-  // Defense-in-depth lockdown: these inputs currently MATCH the regex
-  // (the char class permits `.` `-` `_` in any position). Path traversal
-  // (`..`) is matched here but rejected at the filesystem layer by
-  // `vault.mjs:safePath()` — that's the existing security model.
-  // Asserting the current behavior so a future regex tightening (e.g.
-  // adding an anti-traversal lookahead) becomes a tracked decision rather
-  // than silently shifting the matched set.
-  for (const lockedMatch of ['.', '..', '...', '-', '_', '-leading-dash', '_lead_under']) {
+  // Lockdown: these still MATCH (the char class permits `.` `-` `_` in any
+  // position, and none of them names a parent directory). Asserted so a
+  // further tightening is a tracked decision rather than a silent shift.
+  for (const lockedMatch of ['-', '_', '-leading-dash', '_lead_under']) {
     assert.ok(PROJECT_SLUG_RE.test(lockedMatch),
-      `defense-in-depth lockdown: ${JSON.stringify(lockedMatch)} currently matches ` +
-      `(vault safePath is the backstop). If you intentionally tightened the regex, ` +
-      `update this assertion AND verify the FS-layer guard still covers traversal.`);
+      `lockdown: ${JSON.stringify(lockedMatch)} currently matches. If you intentionally ` +
+      `tightened the regex, update this assertion.`);
+  }
+  // All-dot names are rejected. The slug is joined into vault paths with
+  // path.join in checkpoint-cursor.mjs, chunk-builder.mjs, layers.mjs and
+  // checkpoint.mjs, outside vault.mjs:safePath(), so project '..' resolved
+  // state/<p>/ and sessions/<p>/ to the vault root.
+  for (const dots of ['.', '..', '...']) {
+    assert.ok(!PROJECT_SLUG_RE.test(dots), `expected no match: ${JSON.stringify(dots)}`);
   }
   // Hostile-input coverage. The regex's `^...$` anchors prevent multi-line
   // bypass (a string like "good\nbad" won't match because the newline isn't

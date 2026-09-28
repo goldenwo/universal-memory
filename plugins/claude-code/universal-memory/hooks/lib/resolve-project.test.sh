@@ -69,6 +69,15 @@ R7_OUT=$(resolve_in "$TMPDIR_ROOT/plain"); R7_RC=$?
 assert_eq "R7: rc 2" "$R7_RC" "2"
 assert_eq "R7: empty stdout" "$R7_OUT" ""
 
+echo "=== R8: all-dot slugs are rejected, dotted names are not ==="
+for dots in . .. ...; do
+  R8_OUT=$(resolve_in "$TMPDIR_ROOT/main" "$dots"); R8_RC=$?
+  assert_eq "R8: '$dots' rc 2" "$R8_RC" "2"
+  assert_eq "R8: '$dots' empty stdout" "$R8_OUT" ""
+done
+assert_eq "R8: a..b accepted" "$(resolve_in "$TMPDIR_ROOT/main" a..b)" "a..b"
+assert_eq "R8: .hidden accepted" "$(resolve_in "$TMPDIR_ROOT/main" .hidden)" ".hidden"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

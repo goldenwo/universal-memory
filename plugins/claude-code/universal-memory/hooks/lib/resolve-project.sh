@@ -17,6 +17,12 @@ _um_validate_slug() {
     echo "um: invalid project slug: '$value' (must match ^[a-zA-Z0-9._-]+\$)" >&2
     return 1
   fi
+  # Mirrors the server's PROJECT_SLUG_RE: an all-dot name ('.', '..') would
+  # name a parent directory when the server joins it into a vault path.
+  if [[ "$value" =~ ^\.+$ ]]; then
+    echo "um: invalid project slug: '$value' (an all-dot name is not a project)" >&2
+    return 1
+  fi
   return 0
 }
 

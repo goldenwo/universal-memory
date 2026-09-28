@@ -45,8 +45,12 @@
  * pre-validator) need the same shape. Consumers needing a predicate can
  * either call `.test(value)` directly OR (rare) read `.source` for error
  * messages.
+ *
+ * All-dot names ('.', '..', '...') are rejected: the slug is joined into vault
+ * paths with path.join (checkpoint-cursor, chunk-builder, layers, checkpoint),
+ * outside vault.mjs safePath, so '..' would resolve state/<p>/ to the vault root.
  */
-export const PROJECT_SLUG_RE = /^[a-zA-Z0-9._-]+$/;
+export const PROJECT_SLUG_RE = /^(?!\.+$)[a-zA-Z0-9._-]+$/;
 
 /**
  * Canonical tool identifiers for the `tool` arg of `applyDefaultProject`.
@@ -114,7 +118,7 @@ export function umDefaultProject({ logger } = {}) {
     logger.warn(
       { um_default_project_env: raw },
       'UM_DEFAULT_PROJECT is set but does not match the project slug pattern ' +
-      '/^[a-zA-Z0-9._-]+$/; falling back to literal "default" for this and ' +
+      `/${PROJECT_SLUG_RE.source}/; falling back to literal "default" for this and ` +
       'subsequent writes until the env is fixed.',
     );
   }
