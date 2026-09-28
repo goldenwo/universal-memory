@@ -100,14 +100,18 @@ except Exception:
 ' 2>/dev/null || echo ""
 }
 
-# Helper: build a 3-hit search response
+# Helper: build a 3-hit search response in the server's real shape.
+# POST /api/search returns CompactMemoryResult items {id, title, snippet,
+# score}, snippet = "<title> — <body excerpt>" (#345: the old fixture used
+# {memory, metadata}, a shape the server never sends, and hid a hook that
+# injected bare ids). The contract test below pins these keys to the schema.
 make_search_response_3hits() {
   python3 -c '
 import json
 results = [
-    {"id": "mem-1", "memory": "Task A is in progress and needs attention soon.", "metadata": {"title": "Task A"}},
-    {"id": "mem-2", "memory": "The architecture uses event-driven design patterns.", "metadata": {"title": "Arch note"}},
-    {"id": "mem-3", "memory": "Deploy to staging before production always.", "metadata": {"title": "Deploy rule"}},
+    {"id": "mem-1", "score": 0.91, "title": "Task A", "snippet": "Task A — Task A is in progress and needs attention soon."},
+    {"id": "mem-2", "score": 0.84, "title": "Arch note", "snippet": "Arch note — The architecture uses event-driven design patterns."},
+    {"id": "mem-3", "score": 0.77, "title": "Deploy rule", "snippet": "Deploy rule — Deploy to staging before production always."},
 ]
 print(json.dumps({"results": results}))
 '
@@ -254,7 +258,61 @@ printf '\nTest 4: First prompt, 3 search hits\n'
   assert_contains "output has section header" "$ac" "## Relevant from your memory"
   assert_contains "output includes first hit title" "$ac" "Task A"
   assert_contains "output includes second hit" "$ac" "Arch note"
+  # #345: the injected line must carry the hit's text, not just its id.
+  assert_contains "output includes first hit's snippet text" "$ac" "needs attention soon"
+  assert_contains "output includes third hit's snippet text" "$ac" "staging before production"
+  assert_contains "output names the hit id for follow-up" "$ac" "**mem-1**"
   assert_file_count "counter = 1 after first prompt with hits" "$COUNTER_FILE" "1"
+}
+
+# ---------------------------------------------------------------------------
+# Contract (#345): the search fixture matches the server's CompactMemoryResult.
+# Read from the checked-in custom-GPT actions spec, which custom-gpt-actions
+# .test.mjs keeps identical to server/openapi.mjs; api-list-wire-shape
+# .test.mjs pins the handler's output to that compact shape. A server shape
+# change therefore fails here instead of silently emptying the injection.
+# ---------------------------------------------------------------------------
+printf '\nContract: search fixture keys match CompactMemoryResult\n'
+{
+  ACTIONS_SPEC="$SCRIPT_DIR/../../../chatgpt-custom-gpt/universal-memory/actions-trimmed.yaml"
+  contract=$(make_search_response_3hits | python3 -c '
+import json, sys, yaml
+with open(sys.argv[1], encoding="utf-8") as fh:
+    schema = yaml.safe_load(fh)["components"]["schemas"]["CompactMemoryResult"]
+required, allowed = set(schema["required"]), set(schema["properties"])
+for hit in json.load(sys.stdin)["results"]:
+    keys = set(hit)
+    if not (required <= keys <= allowed):
+        print("mismatch: fixture %s, required %s, allowed %s" % (sorted(keys), sorted(required), sorted(allowed)))
+        sys.exit(0)
+print("ok")
+' "$ACTIONS_SPEC" 2>&1)
+  assert_eq "fixture keys within CompactMemoryResult (required <= keys <= properties)" "$contract" "ok"
+}
+
+# ---------------------------------------------------------------------------
+# Test 4b (#345): the full shape ({memory, metadata}, ?full=1) still injects text
+# Test 4c (#345): hits that carry no text inject nothing, not bare labels
+# ---------------------------------------------------------------------------
+printf '\nTest 4b: full-shape hits still inject their text\n'
+{
+  reset_counter
+  write_mock_curl '{"results":[{"id":"mem-9","memory":"The release train leaves on Thursdays.","metadata":{"title":"Release cadence"}}]}'
+  output=$(run_hook "When do releases go out?")
+  ac=$(extract_ac "$output")
+  assert_contains "full shape: title labels the line" "$ac" "**Release cadence**"
+  assert_contains "full shape: memory text injected" "$ac" "leaves on Thursdays"
+}
+
+printf '\nTest 4c: textless hits inject nothing\n'
+{
+  reset_counter
+  write_mock_curl '{"results":[{"id":"mem-7","title":"Empty","snippet":""},{"id":"mem-8","memory":"","metadata":{"title":"Also empty"}}]}'
+  output=$(run_hook "Anything about empty hits?")
+  exit_code=$?
+  assert_eq "textless hits: exit 0" "$exit_code" "0"
+  ac=$(extract_ac "$output")
+  assert_empty "textless hits: no additionalContext" "$ac"
 }
 
 # ---------------------------------------------------------------------------

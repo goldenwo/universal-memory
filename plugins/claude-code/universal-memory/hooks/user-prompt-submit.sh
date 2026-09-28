@@ -213,14 +213,22 @@ lines = ["## Relevant from your memory", ""]
 total_chars = sum(len(l) + 1 for l in lines)
 
 for r in hits:
-    memory = r.get("memory", "") or ""
-    metadata = r.get("metadata", {}) or {}
-    title = (metadata.get("title") or
-             metadata.get("id") or
-             r.get("id") or
-             "memory")
-    snippet = memory[:500]  # 500 chars per hit
-    entry = f"- **{title}**: {snippet}"
+    # POST /api/search returns CompactMemoryResult items {id, title, snippet,
+    # score}; the snippet already leads with the title ("<title> — <excerpt>"),
+    # so the id labels the line. {memory, metadata} is the full shape
+    # (?full=1, pre-v0.4.0 servers). Reading only the full shape injected
+    # bare ids for five months (#345).
+    metadata = r.get("metadata") or {}
+    if r.get("snippet"):
+        label = r.get("id") or metadata.get("id") or "memory"
+        text = r["snippet"]
+    else:
+        label = (r.get("title") or metadata.get("title") or
+                 metadata.get("id") or r.get("id") or "memory")
+        text = r.get("memory") or ""
+    if not text:
+        continue  # a label with no text is noise, not recall
+    entry = f"- **{label}**: {text[:500]}"  # 500 chars per hit
     if total_chars + len(entry) + 1 > TOKEN_BUDGET:
         break
     lines.append(entry)
