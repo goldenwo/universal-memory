@@ -690,8 +690,35 @@ ${pipelineRows(capture)}
 // ---------------------------------------------------------------------------
 
 /**
- * One small tile, per spec §6: stale projects red with their lag + pending
- * bytes — nothing else (no per-field breakdown of every fresh project; the
+ * #314 D12: why a stale layer is stale, in the words um-alert.sh's LAYERS-STALE
+ * line uses — how long its oldest undigested content has waited (or "never
+ * digested"), and/or a summary still awaiting its reindex. A layer without
+ * `age_hours` comes from a server older than the age rule: it keeps the lag
+ * text that server's `stale` was computed from. Plain text; the caller escapes.
+ */
+function layerStaleReason(info) {
+  if (!Object.hasOwn(info, 'age_hours')) {
+    const lag = info.lag_hours === 'Infinity' ? '∞' : (typeof info.lag_hours === 'number' ? `${info.lag_hours}h` : String(info.lag_hours));
+    return `lag ${lag}`;
+  }
+  const reasons = [];
+  if (info.undigested === true) {
+    if (info.last_summary_at === null || info.last_summary_at === undefined) reasons.push('never digested');
+    else if (typeof info.age_hours === 'number') reasons.push(`undigested for ${info.age_hours}h`);
+    else reasons.push('undigested, age unknown');
+  }
+  if (info.repair_since) {
+    const when = info.repair_since === 'unknown' ? 'at an unknown time' : info.repair_since;
+    reasons.push(`summary written ${when} is not indexed`);
+  }
+  return reasons.join('; ');
+}
+
+/**
+ * One small tile, per spec §6: stale projects red with why they are stale
+ * (#314 D12: the wait of their oldest undigested content, or an unindexed
+ * summary), their pending bytes and the idle sweep's latest outcome —
+ * nothing else (no per-field breakdown of every fresh project; the
  * freshness/pipeline tiles above already cover per-surface detail from the
  * counters db, and this tile exists specifically to show what THAT data
  * source cannot see).
@@ -699,7 +726,8 @@ ${pipelineRows(capture)}
  * `stats.layers` is malformed/absent ⇒ "cannot assess" (mirrors every other
  * tile's shape-guard posture); `{}` (no projects have any captures yet) and
  * "present, zero stale" are both healthy empty states, rendered distinctly
- * from "cannot assess" per this module's C4 empty-state contract.
+ * from "cannot assess" per this module's C4 empty-state contract. A missing
+ * or malformed `sweep` block only empties the sweep column.
  */
 function layersTile(stats) {
   const layers = asPlainObject(stats.layers);
@@ -730,28 +758,31 @@ function layersTile(stats) {
     </section>`;
   }
 
-  // `lag_hours` serializes the ∞ case as the STRING "Infinity" (JSON has no
-  // Infinity literal) — rendered as the ∞ glyph rather than the literal
-  // word, everything else passes through cell()/t() like any other payload
-  // value (a hostile project name is a map KEY here, same posture as every
-  // other tile's Object.keys() iteration).
+  // Hours fields serialize the ∞ case as the STRING "Infinity" (JSON has no
+  // Infinity literal) — layerStaleReason renders it as the ∞ glyph or in
+  // words, never the raw sentinel; everything passes through cell()/t() like
+  // any other payload value (a hostile project name is a map KEY here, same
+  // posture as every other tile's Object.keys() iteration).
+  const sweepLayers = asPlainObject(asPlainObject(stats.sweep)?.layers) ?? {};
   const rows = staleNames.map((name) => {
     const info = asPlainObject(layers[name]) ?? {};
-    const lagIsInfinite = info.lag_hours === 'Infinity';
-    const lagCell = lagIsInfinite ? '∞' : (typeof info.lag_hours === 'number' ? `${t(info.lag_hours)}h` : cell(info.lag_hours));
+    const attempt = Object.hasOwn(sweepLayers, name) ? asPlainObject(sweepLayers[name]) : null;
+    const sweepCell = attempt === null ? EMPTY : `${cell(attempt.outcome)} ${cell(attempt.last_attempt_at)}`;
+    const reason = layerStaleReason(info);
     return `        <tr>
           <th scope="row">${t(name)}</th>
-          <td>${lagCell}</td>
+          <td>${reason ? t(reason) : EMPTY}</td>
           <td>${cell(info.pending_bytes)}</td>
+          <td>${sweepCell}</td>
         </tr>`;
   }).join('\n');
 
   return `    <section class="tile">
       <h2>Per-layer freshness</h2>
-      <p class="banner s-red">${staleNames.length} stale project(s) — pending content is not reaching summaries.</p>
+      <p class="banner s-red">${staleNames.length} stale project(s) — content is waiting to be digested, or a summary to be indexed.</p>
       <table>
         <thead>
-          <tr><th scope="col">Project</th><th scope="col">Lag</th><th scope="col">Pending bytes</th></tr>
+          <tr><th scope="col">Project</th><th scope="col">Why stale</th><th scope="col">Pending bytes</th><th scope="col">Latest sweep</th></tr>
         </thead>
         <tbody>
 ${rows}

@@ -353,8 +353,12 @@ function sendRedirect(res, location, setCookie = null) {
  * `oauthAdmit`/`admit` limiters in the entrypoint) and is GLOBAL by design, not
  * per-IP: there is exactly one credential to guess, and per-IP is meaningless
  * behind a proxy's single egress IP (spec §3 step 6 / R1 S-B2b).
+ *
+ * `getSweepState` (#314 D12) returns the running idle sweep's state, or null —
+ * the same handle /api/stats reads, so the page's layers tile can show each
+ * stale layer's latest sweep outcome.
  */
-export function createControlHandlers({ throttle = createConsentThrottle(), now = Date.now } = {}) {
+export function createControlHandlers({ throttle = createConsentThrottle(), now = Date.now, getSweepState = () => null } = {}) {
   // One "block generation" per armed block window: bumped on every fail(), and
   // NOT bumped by blocked attempts (a blocked attempt never calls fail()). The
   // throttled warn line fires at most once per generation, so a sustained
@@ -432,7 +436,7 @@ export function createControlHandlers({ throttle = createConsentThrottle(), now 
       const nonce = newNonce();
       const token = ensureCsrf(req, res);
       const stats = await buildStats({
-        now: now(), memory, userId, endpoint, readCounters, listAll,
+        now: now(), memory, userId, endpoint, readCounters, listAll, sweepState: getSweepState(),
       });
       return sendControlHtml(res, 200, renderControlPage({ stats, nonce, csrf: token }), nonce);
     }

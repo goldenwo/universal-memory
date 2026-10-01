@@ -15,8 +15,13 @@
 #     default (um-server) is a name the shipped compose never mints
 #     (universal-memory-memory-server-1), so on a stock deployment this
 #     section is inert until the env var is set.
-#   LAYERS (v1.16): downstream digestion stalls WITH pending bytes (the
-#     2026-08-04 class) — blind to upstream death, which produces none.
+#   LAYERS (v1.16; age-based since #314): a layer whose oldest undigested
+#     content has waited past the server's UM_SUMMARY_LAG_MAX_HOURS (30 h), or
+#     whose summary has stayed unindexed that long — what the server's idle
+#     sweep could not clear, each line naming the sweep's latest outcome for
+#     the layer (the 2026-08-04 class, and the quiet layers whose old lag rule
+#     froze under the threshold) — blind to upstream death, which leaves
+#     nothing pending.
 #   SIGNALS (#267): client-side anomalous empty transcript reads,
 #     self-reported by stop.sh as signal.capture_anomaly counter rows —
 #     THE direct alarm for the 2026-07-16 silent-capture-death class
@@ -106,7 +111,9 @@ Usage: um-alert.sh [options]
 
 Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
 on success, actionable line(s) + non-zero exit otherwise. Eight sections:
-capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls),
+capture freshness, LEDGER (reaction errors), LAYERS (content left undigested,
+or a summary left unindexed, past the age threshold — what the server's idle
+sweep could not clear; each line names the sweep's latest outcome),
 SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
 alarm for a stop.sh-only capture death), and CRASH-DEAD (#283 — an armed
 surface whose turns stopped while session-end keeps stamping abstained
@@ -867,7 +874,11 @@ print_escalations() {
 #     monitoring payload is itself a loud CHECK-FAILED (exit 2), unconditionally
 #     — this arc's own root failure mode was a silently-dropped broken monitor.
 #   STALE/OK — `layers` present and well-shaped; STALE names every project
-#     whose own `stale` flag is true.
+#     whose own `stale` flag is true, with why (#314 D12: how long its oldest
+#     undigested content has waited, "never digested", or a summary not yet
+#     indexed; the lag on a server without `age_hours`) and the idle sweep's
+#     latest outcome when `sweep.layers` has one. `sweep` is display context:
+#     absent, null or malformed, it never changes the verdict.
 LAYERS_VERDICT=$("$PY" -c '
 import json, sys
 
@@ -889,21 +900,51 @@ layers = stats.get("layers")
 if not isinstance(layers, dict):
     emit("ERROR", "layers key present but malformed (expected an object)")
 
+# #314 D12: the idle sweep latest attempt per layer, display context only —
+# absent (an older server), null (the sweep is off) or malformed, a line just
+# carries no sweep part; it never changes the verdict.
+sweep = stats.get("sweep")
+sweep_layers = sweep.get("layers") if isinstance(sweep, dict) else None
+if not isinstance(sweep_layers, dict):
+    sweep_layers = {}
+
+def why_stale(info):
+    # Hours fields serialize infinity as the STRING "Infinity" (see
+    # layers.mjs): printed verbatim it reads as the nonsensical "Infinityh",
+    # so it becomes words (MINOR 7, review round 1).
+    if "age_hours" not in info:
+        # A server older than #314 computed stale from the lag: say that.
+        lag = info.get("lag_hours")
+        lag_str = "never" if lag == "Infinity" else "%sh" % lag
+        return ["lag %s, pending %s bytes" % (lag_str, info.get("pending_bytes"))]
+    reasons = []
+    if info.get("undigested") is True:
+        age = info.get("age_hours")
+        if info.get("last_summary_at") is None:
+            waited = "never digested"
+        elif isinstance(age, (int, float)) and not isinstance(age, bool):
+            waited = "undigested for %sh" % age
+        else:
+            waited = "undigested, age unknown"
+        reasons.append("%s, pending %s bytes" % (waited, info.get("pending_bytes")))
+    since = info.get("repair_since")
+    if since:
+        when = "at an unknown time" if since == "unknown" else since
+        # \x27: an apostrophe, which this single-quoted program cannot hold literally.
+        reasons.append("summary written %s is not indexed; repaired at the layer\x27s next checkpoint" % when)
+    return reasons or ["pending %s bytes" % info.get("pending_bytes")]
+
 stale = []
 try:
     for name, info in layers.items():
         if not isinstance(info, dict) or not isinstance(info.get("stale"), bool):
             raise ValueError("project %r has a malformed or missing stale field" % name)
         if info["stale"]:
-            # MINOR 7 (review round 1): the JSON sentinel for an infinite lag
-            # is the STRING "Infinity" (see layers.mjs) — printed verbatim it
-            # reads as the nonsensical "Infinityh"; render it as "never"
-            # instead, same idea as um-alert.sh already applying its own
-            # float()-coercion discipline to threshold/freshness values
-            # elsewhere in this file.
-            lag = info.get("lag_hours")
-            lag_str = "never" if lag == "Infinity" else "%sh" % lag
-            stale.append("%s (lag %s, pending %s bytes)" % (name, lag_str, info.get("pending_bytes")))
+            parts = why_stale(info)
+            attempt = sweep_layers.get(name)
+            if isinstance(attempt, dict) and attempt.get("outcome"):
+                parts.append("sweep: %s %s" % (attempt.get("outcome"), attempt.get("last_attempt_at")))
+            stale.append("%s (%s)" % (name, "; ".join(parts)))
 except Exception as e:
     emit("ERROR", "layers payload malformed: %s" % e)
 

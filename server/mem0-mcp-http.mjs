@@ -2557,8 +2557,9 @@ export function createRequestHandler(ctx = {}) {
 	// shared per-IP limiter, spec §3 step 6) is shared across every request this
 	// server serves. Constructed unconditionally and cheap: the kill switch is
 	// read per request (endpoint-class row + a re-check inside), so no flag
-	// state is frozen at construction time.
-	const control = createControlHandlers();
+	// state is frozen at construction time. #314 D12: the page reads the same
+	// idle-sweep handle as /api/stats (ctx._getSweepState is the test seam).
+	const control = createControlHandlers({ getSweepState: ctx?._getSweepState ?? idleSweepState });
 	// OAuth on/off is a construction-time decision; env validated at boot.
 	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
 	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
