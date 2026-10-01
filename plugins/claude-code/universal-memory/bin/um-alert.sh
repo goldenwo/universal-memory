@@ -943,7 +943,15 @@ try:
             parts = why_stale(info)
             attempt = sweep_layers.get(name)
             if isinstance(attempt, dict) and attempt.get("outcome"):
-                parts.append("sweep: %s %s" % (attempt.get("outcome"), attempt.get("last_attempt_at")))
+                sweep_part = "sweep: %s %s" % (attempt.get("outcome"), attempt.get("last_attempt_at"))
+                # The outcome describes the digest; a repair that failed in the
+                # same attempt would hide behind it (an "abstained" layer whose
+                # summary is still not indexed).
+                repair = attempt.get("repair")
+                failed = repair.get("failed") if isinstance(repair, dict) else None
+                if isinstance(failed, int) and not isinstance(failed, bool) and failed > 0:
+                    sweep_part += ", repair failed"
+                parts.append(sweep_part)
             stale.append("%s (%s)" % (name, "; ".join(parts)))
 except Exception as e:
     emit("ERROR", "layers payload malformed: %s" % e)

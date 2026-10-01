@@ -1494,7 +1494,7 @@ else
   fail "T76-age-with-sweep-outcome: $output"
 fi
 if echo "$output" | grep -qF "newborn (never digested, pending 700 bytes)"; then pass "T77-never-digested"; else fail "T77-never-digested: $output"; fi
-if echo "$output" | grep -qF "unindexed (summary written 2026-09-29T12:00:00.000Z is not indexed; repaired at the layer's next checkpoint; sweep: failed 2026-10-01T10:00:09.000Z)"; then
+if echo "$output" | grep -qF "unindexed (summary written 2026-09-29T12:00:00.000Z is not indexed; repaired at the layer's next checkpoint; sweep: failed 2026-10-01T10:00:09.000Z, repair failed)"; then
   pass "T78-repair-arm"
 else
   fail "T78-repair-arm: $output"

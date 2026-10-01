@@ -881,8 +881,11 @@ test('layers tile (#314 D12): never digested, the repair arm, an unknown age, an
       'unindexed': { ...AGED, undigested: false, pending_bytes: 0, waiting_since: null, age_hours: null, repair_since: '2026-09-29T12:00:00.000Z', repair_hours: 46 },
       'grown-below': { ...AGED, waiting_since: null, age_hours: 'Infinity' },
     },
-    sweep: sweepWith({}),
+    sweep: sweepWith({
+      unindexed: { last_attempt_at: '2026-10-01T10:00:09.000Z', outcome: 'abstained', stopped_reason: null, next_eligible_at: null, cursor_after: null, repair: { done: 0, failed: 1, dropped: 0 } },
+    }),
   })));
+  assert.match(tile, /abstained 2026-10-01T10:00:09\.000Z, repair failed/, 'a failed repair is named, not hidden behind the outcome');
   assert.match(tile, /3 stale project/);
   assert.match(tile, /never digested/);
   assert.match(tile, /summary written 2026-09-29T12:00:00\.000Z is not indexed/);

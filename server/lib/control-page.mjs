@@ -767,7 +767,11 @@ function layersTile(stats) {
   const rows = staleNames.map((name) => {
     const info = asPlainObject(layers[name]) ?? {};
     const attempt = Object.hasOwn(sweepLayers, name) ? asPlainObject(sweepLayers[name]) : null;
-    const sweepCell = attempt === null ? EMPTY : `${cell(attempt.outcome)} ${cell(attempt.last_attempt_at)}`;
+    // The outcome describes the digest; a repair that failed in the same attempt is named too, or
+    // it would hide behind an "abstained" or "digested" outcome (the um-alert.sh line does the same).
+    const repairFailed = Number.isInteger(asPlainObject(attempt?.repair)?.failed) && attempt.repair.failed > 0;
+    const sweepCell = attempt === null ? EMPTY
+      : `${cell(attempt.outcome)} ${cell(attempt.last_attempt_at)}${repairFailed ? ', repair failed' : ''}`;
     const reason = layerStaleReason(info);
     return `        <tr>
           <th scope="row">${t(name)}</th>
