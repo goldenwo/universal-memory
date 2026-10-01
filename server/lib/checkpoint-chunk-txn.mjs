@@ -56,6 +56,7 @@ import { detectContradictionsInBatch as defaultDetectContradictions } from './co
 import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled } from './supersede.mjs';
 import { recordCaptureEvent as defaultRecordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { advanceCursor } from './checkpoint-cursor.mjs';
+import { writePendingReindex, deletePendingReindex } from './pending-reindex.mjs';
 import { resolveFloor, DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_MIN_TRANSCRIPT_TURNS } from './checkpoint-config.mjs';
 import { ProviderError } from './provider/errors.mjs';
 
@@ -224,6 +225,7 @@ function buildSupersedeDigest(detections, lane, persona) {
  *       itself is a planted symlink, in which case marking is skipped — see the catch below), cursor untouched.
  *       `code` is the raw error code (e.g. EBUSY/STATE_LOCK_CONTENTION/SYMLINK_REFUSED/ENOSPC), additive so a
  *       caller can restore checkpoint.mjs's STATE_LOCK_CONTENTION → 503-retryable branch without re-deriving it.
+ *   `{ failed: { stage: 'pending_write', message } }`               — step 4b (#314 D7), doc durable, cursor lags
  *   `{ failed: { stage: 'cursor_write', message } }`                — step 5, doc durable, cursor lags
  *   `{ failed: { stage: 'reindex', message, summaryId, summaryPath } }` — step 7, doc durable, CURSOR ADVANCED,
  *       telemetry/counters still recorded (spec §4.5.6) even though this call reports failure
@@ -546,6 +548,22 @@ export async function runChunkTransaction(args, deps = {}) {
     return { failed: { stage: 'phase2', code: phase2Err?.code, message: phase2Err?.message ?? String(phase2Err) } };
   }
 
+  // ----- Step 4b (#314 D7): the write-ahead reindex repair record -----
+  // After the summary's durable rename and before the cursor moves past it, so a summary the
+  // cursor has passed always has an entry until its reindex is confirmed (by step 7 below, or by
+  // a later checkpoint's repair step, both under the run lock). A failed write leaves the cursor
+  // where it was, like cursor_write: the chunk is re-digested next run, nothing is lost.
+  try {
+    await writePendingReindex({ vaultDir, project, summaryId, summaryPath: summaryRelPath, since: now.toISOString() });
+  } catch (entryErr) {
+    return {
+      failed: {
+        stage: 'pending_write',
+        message: `checkpoint reindex-repair record write failed (${entryErr?.code ?? 'ERR'}) — check free space on the vault volume`,
+      },
+    };
+  }
+
   // ----- Step 5: cursor advance — strictly after the durable rename, strictly before reindex (I5) -----
   // §4.8 no-cursor sentinel (windowed mode, Task 6): skipCursorAdvance makes
   // this step a no-op that returns the INPUT cursor (prevCursor) unchanged —
@@ -658,6 +676,20 @@ export async function runChunkTransaction(args, deps = {}) {
         summaryPath: summaryRelPath,
       },
     };
+  }
+
+  // #314 D7: the summary is indexed, so its repair record goes. A failed delete is logged and left
+  // for the layer's next repair, which re-runs the idempotent reindex and removes it.
+  try {
+    await deletePendingReindex({ vaultDir, project, id: summaryId });
+  } catch (err) {
+    safeLog(() => getLogger().warn({
+      request_id: currentRequestId(),
+      component: 'checkpoint-chunk-txn',
+      project,
+      summary_id: summaryId,
+      err_message: err?.message ?? String(err),
+    }, 'pending-reindex entry delete failed; the next repair removes it'), 'log:checkpoint-chunk-txn:pending-delete-failed');
   }
 
   // ----- Step 8: per-chunk telemetry + stored counter -----

@@ -9,16 +9,54 @@
 // deletes an entry.
 
 import fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
 export const PENDING_REINDEX_DIRNAME = 'pending-reindex';
 
-// `<summaryId>.json` only — a tmp file mid-rename never matches.
+// `<summaryId>.json` only — a tmp file mid-rename (`<summaryId>.json.tmp`) never matches.
 const ENTRY_FILE_RE = /^(.+)\.json$/;
+
+// Refuse to follow a symlink at the open() syscall (a no-op on Windows; the lstat guards
+// below still apply there) — the same guard advanceCursor's inline write uses.
+const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 
 /** The layer's entry directory. */
 export function pendingReindexDir(vaultDir, project) {
   return path.join(vaultDir, 'state', project, PENDING_REINDEX_DIRNAME);
+}
+
+function entryPath(vaultDir, project, summaryId) {
+  return path.join(pendingReindexDir(vaultDir, project), `${summaryId}.json`);
+}
+
+/**
+ * Write (or overwrite: a retried chunk reuses its summary id) the entry for one summary —
+ * `.tmp` write + atomic rename, mirroring advanceCursor, refusing a planted symlink at either
+ * path. Throws on any failure; the chunk transaction maps that to `pending_write`.
+ */
+export async function writePendingReindex({ vaultDir, project, summaryId, summaryPath, since }) {
+  const finalPath = entryPath(vaultDir, project, summaryId);
+  const tmpPath = `${finalPath}.tmp`;
+  await fs.mkdir(path.dirname(finalPath), { recursive: true });
+  for (const p of [tmpPath, finalPath]) {
+    const st = await fs.lstat(p).catch(() => null);
+    if (st && st.isSymbolicLink()) {
+      throw Object.assign(new Error('pending-reindex: target is a symlink; refusing to write'), { code: 'SYMLINK_REFUSED' });
+    }
+  }
+  const fh = await fs.open(tmpPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | NOFOLLOW, 0o644);
+  try {
+    await fh.writeFile(JSON.stringify({ summary_path: summaryPath, since }), 'utf8');
+  } finally {
+    await fh.close();
+  }
+  await fs.rename(tmpPath, finalPath);
+}
+
+/** Delete one entry by id; an entry already gone is fine. Throws on any other error. */
+export async function deletePendingReindex({ vaultDir, project, id }) {
+  await fs.rm(entryPath(vaultDir, project, id), { force: true });
 }
 
 /**

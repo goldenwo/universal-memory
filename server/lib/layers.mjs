@@ -140,9 +140,11 @@ function round1(n) {
  * precedent): a set-but-blank env var must read as UNSET (never as
  * `Number('') === 0`, which would silently make every project permanently
  * eligible for staleness on the lag arm), while a deliberate '0' survives.
+ * Exported (#314 D4) so the idle sweep derives MAX_AGE from this resolver
+ * instead of parsing the setting a second way.
  */
-function summaryLagMaxHours() {
-  const raw = process.env.UM_SUMMARY_LAG_MAX_HOURS;
+export function summaryLagMaxHours(env = process.env) {
+  const raw = env.UM_SUMMARY_LAG_MAX_HOURS;
   const n = (raw == null || raw.trim() === '') ? NaN : Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SUMMARY_LAG_MAX_HOURS;
 }
@@ -191,7 +193,7 @@ async function readdirSafe(dir) {
  * (trading a false-positive alert for that outcome, never a false-negative
  * one).
  */
-async function readCursorLight(cursorPath) {
+export async function readCursorLight(cursorPath) {
   let raw;
   try {
     raw = await fs.readFile(cursorPath, 'utf8');

@@ -54,6 +54,7 @@ import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { loadCursor } from './checkpoint-cursor.mjs';
 import { buildNextChunk, computeSplitPoint } from './chunk-builder.mjs';
 import { runChunkTransaction } from './checkpoint-chunk-txn.mjs';
+import { listPendingReindex, deletePendingReindex } from './pending-reindex.mjs';
 import {
   resolveChunkingConfig, resolveFloor, makeTurnHeaderRe, HEARTBEAT_INTERVAL_MS,
   DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_MIN_TRANSCRIPT_TURNS,
@@ -295,6 +296,12 @@ export async function doCheckpoint(args, ctx = {}) {
   heartbeatTimer.unref();
 
   try {
+    // #314 D7: repair this layer's older pending-reindex entries first — under the lock and its
+    // heartbeat, before the run-start cost check (a repair makes no summarize call, so a
+    // cost-capped run still repairs) and before any chunk. Best effort: it never changes the
+    // envelope's ok/error, and reports `repairs` only when it touched an entry.
+    const repairs = await repairPendingReindex({ vaultDir, project, reindexFn: ctx.reindexFn });
+
     // Run-start cost-cap check — the legacy exact 'cost cap hit' string
     // envelope (pinned, §8). Distinct from the txn's own per-chunk mid-run
     // cap check (stopped:{reason:'cost_cap'}, always a SUCCESS envelope —
@@ -304,7 +311,7 @@ export async function doCheckpoint(args, ctx = {}) {
     let daySpent = 0;
     try { daySpent = parseFloat(await fs.readFile(costPath, 'utf8')) || 0; } catch {}
     if (daySpent >= config.cost_cap_usd_per_day_per_project) {
-      return { schema_version: 1, ok: false, error: 'cost cap hit' };
+      return withRepairs({ schema_version: 1, ok: false, error: 'cost cap hit' }, repairs);
     }
 
     // DI deps shared by every runChunkTransaction call this run (default
@@ -332,21 +339,90 @@ export async function doCheckpoint(args, ctx = {}) {
     // above) → the default, cursor-driven path.
     const isWindowed = normalizedSince !== null || normalizedUntil !== null;
     if (isWindowed) {
-      return await runWindowedMode({
+      return withRepairs(await runWindowedMode({
         vaultDir, project, since: normalizedSince, until: normalizedUntil, config, chunkingCfg, lane, persona,
         skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
         minTranscriptBytes, minTranscriptTurns,
-      });
+      }), repairs);
     }
-    return await runDefaultMode({
+    return withRepairs(await runDefaultMode({
       vaultDir, project, config, chunkingCfg, lane, persona,
       skipStateMerge: skip_state_merge, surface: ctx.surface, txnDeps, t0,
       minTranscriptBytes, minTranscriptTurns,
-    });
+    }), repairs);
   } finally {
     clearInterval(heartbeatTimer);
     await releaseLockdir(lockdir);
   }
+}
+
+// ---------------------------------------------------------------------------
+// #314 D7 — the pending-reindex repair step
+// ---------------------------------------------------------------------------
+
+// A repair only ever reindexes this layer's own session summaries.
+const SUMMARY_FILE_RE = /^session-[A-Za-z0-9._-]+\.md$/;
+
+/**
+ * Repair the layer's pending-reindex entries, oldest first. Runs only inside doCheckpoint's
+ * lock, so it never interleaves with a chunk's own entry write, step 7 or another repair.
+ * Per entry: a summary that no longer exists drops the entry (its layer was retired); a
+ * successful `reindexFn` deletes it; any other outcome keeps it for the next checkpoint.
+ * Never throws. Without a real `reindexFn` it does nothing — the transaction's own fallback
+ * is a no-op, and a no-op "success" would delete an entry with nothing indexed.
+ *
+ * @returns {Promise<{done:number, failed:number, dropped:number}>}
+ */
+async function repairPendingReindex({ vaultDir, project, reindexFn }) {
+  const repairs = { done: 0, failed: 0, dropped: 0 };
+  if (typeof reindexFn !== 'function') return repairs;
+  const warn = (fields, msg) => safeLog(() => getLogger().warn({
+    request_id: currentRequestId(), component: 'checkpoint', project, ...fields,
+  }, msg), 'log:checkpoint:repair');
+  let entries;
+  try {
+    entries = await listPendingReindex({ vaultDir, project });
+  } catch (err) {
+    warn({ err_message: err?.message ?? String(err) }, 'pending-reindex: entries unreadable; repair skipped this run');
+    return repairs;
+  }
+  const prefix = `sessions/${project}/`;
+  for (const entry of entries) {
+    const rel = entry.summary_path;
+    if (typeof rel !== 'string' || !rel.startsWith(prefix) || !SUMMARY_FILE_RE.test(rel.slice(prefix.length))) {
+      repairs.failed += 1;
+      warn({ entry: entry.id }, 'pending-reindex: entry names no summary of this layer; kept for the operator');
+      continue;
+    }
+    const present = await fs.stat(path.join(vaultDir, rel)).then(() => true, (err) => err?.code !== 'ENOENT');
+    if (!present) {
+      repairs.dropped += 1;
+      await deletePendingReindex({ vaultDir, project, id: entry.id })
+        .catch((err) => warn({ entry: entry.id, err_message: err?.message }, 'pending-reindex: entry delete failed'));
+      continue;
+    }
+    try {
+      await reindexFn(rel);
+    } catch (err) {
+      repairs.failed += 1;
+      warn({ entry: entry.id, err_message: err?.message ?? String(err) }, 'pending-reindex: repair reindex failed; kept for the next checkpoint');
+      continue;
+    }
+    repairs.done += 1;
+    await deletePendingReindex({ vaultDir, project, id: entry.id })
+      .catch((err) => warn({ entry: entry.id, err_message: err?.message }, 'pending-reindex: entry delete failed'));
+  }
+  if (repairs.done + repairs.failed + repairs.dropped > 0) {
+    safeLog(() => getLogger().info({
+      request_id: currentRequestId(), component: 'checkpoint', project, ...repairs,
+    }, 'pending-reindex: repaired'), 'log:checkpoint:repaired');
+  }
+  return repairs;
+}
+
+/** Additive: an envelope carries `repairs` only when the repair step touched an entry. */
+function withRepairs(envelope, repairs) {
+  return repairs.done + repairs.failed + repairs.dropped > 0 ? { ...envelope, repairs } : envelope;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,13 +827,15 @@ function classifyAndApply(txnResult, acc, envCtx) {
       },
     };
   }
-  if (f?.stage === 'cursor_write') {
+  if (f?.stage === 'cursor_write' || f?.stage === 'pending_write') {
+    // #314 D7: a failed repair-record write fails the chunk exactly like a failed cursor write —
+    // the summary is on disk, the cursor has not moved, and the next run re-digests the chunk.
     return {
       done: true,
       envelope: {
         schema_version: 1,
         ok: false,
-        error: { code: 'SERVER_INTERNAL', stage: 'cursor_write', message: f.message },
+        error: { code: 'SERVER_INTERNAL', stage: f.stage, message: f.message },
       },
     };
   }
