@@ -69,6 +69,30 @@ R7_OUT=$(resolve_in "$TMPDIR_ROOT/plain"); R7_RC=$?
 assert_eq "R7: rc 2" "$R7_RC" "2"
 assert_eq "R7: empty stdout" "$R7_OUT" ""
 
+echo "=== R8: all-dot slugs are rejected, dotted names are not ==="
+for dots in . .. ...; do
+  R8_OUT=$(resolve_in "$TMPDIR_ROOT/main" "$dots"); R8_RC=$?
+  assert_eq "R8: '$dots' rc 2" "$R8_RC" "2"
+  assert_eq "R8: '$dots' empty stdout" "$R8_OUT" ""
+done
+assert_eq "R8: a..b accepted" "$(resolve_in "$TMPDIR_ROOT/main" a..b)" "a..b"
+assert_eq "R8: .hidden accepted" "$(resolve_in "$TMPDIR_ROOT/main" .hidden)" ".hidden"
+
+echo "=== R9: the hooks' naming site skips an all-dot root name (project_guard.py) ==="
+PYBIN=""
+for _c in py python3 python; do
+  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c '' >/dev/null 2>&1; then PYBIN="$_c"; break; fi
+done
+if [ -z "$PYBIN" ]; then
+  fail "R9: no working python interpreter (py, python3, python)"
+else
+  # Run from the lib dir so the import needs no path argument (a git-bash path
+  # handed to a native Windows python is unreadable).
+  R9_OUT=$(cd "$SCRIPT_DIR" && "$PYBIN" -c 'import project_guard as g
+print(g._root_name("/srv/repos/..."), g._root_name("/srv/repos/..hidden"), g._root_name("/srv/repos/a..b"))')
+  assert_eq "R9: '...' skipped, '..hidden' and 'a..b' named" "$R9_OUT" "SKIP:non-project-cwd ..hidden a..b"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then
