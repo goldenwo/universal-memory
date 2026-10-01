@@ -20,6 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { endpointClassRoute } from '../lib/endpoint-class.mjs';
@@ -92,7 +93,7 @@ function makeExplodingMemory() {
 // sentinel still fires the instant a pre-auth path touches the corpus.
 const umGetAllBridge = async (memory, args) => memory.getAll(args);
 
-async function startControl({ env = {}, memory = makeExplodingMemory(), readCounters } = {}) {
+async function startControl({ env = {}, memory = makeExplodingMemory(), readCounters, ctx = {} } = {}) {
   const overrides = {
     UM_AUTH_TOKEN: TOKEN,
     UM_CONTROL_ENABLED: 'true',
@@ -113,7 +114,7 @@ async function startControl({ env = {}, memory = makeExplodingMemory(), readCoun
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
-  const srv = createServer(createRequestHandler({ memory, readCounters, _umGetAll: umGetAllBridge }));
+  const srv = createServer(createRequestHandler({ memory, readCounters, _umGetAll: umGetAllBridge, ...ctx }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -343,6 +344,35 @@ test('A4b: a live session cookie renders the real control page (not the form)', 
     assert.doesNotMatch(html, /name="operator_token"/, 'the real page is not the unlock form');
     assert.match(html, /action="\/control\/logout"/, 'the page carries its own logout form');
     assert.ok(csrfFieldOf(html), 'the logout form carries its own CSRF pair');
+    expire(id);
+  } finally { await ctx.close(); }
+});
+
+// #314 T06 (spec D12): /control builds its page through the same buildStats as /api/stats, so it
+// must be handed the same sweep handle — the layers tile names each stale layer's latest sweep outcome.
+test('#314 T06: /control receives the sweep state through getSweepState — a stale layer shows its latest sweep outcome', async () => {
+  const vault = tempDir('um-control-routes-314-');
+  const rawDir = path.join(vault, 'captures', 'quiet-layer', 'raw');
+  await fs.mkdir(rawDir, { recursive: true });
+  await fs.writeFile(path.join(rawDir, '2026-01-01.md'), `## 2026-01-01T06:00:00.000Z user\n${'x'.repeat(600)}\n\n`, 'utf8');
+  const sweepState = {
+    enabled: true,
+    last_run_at: '2026-10-01T10:00:00.000Z',
+    last_run: { eligible: 1, attempted: 1 },
+    layers: {
+      'quiet-layer': {
+        last_attempt_at: '2026-10-01T10:00:04.000Z', outcome: 'failed', stopped_reason: null,
+        next_eligible_at: '2026-10-01T16:00:04.000Z', cursor_after: null, repair: null,
+      },
+    },
+  };
+  const ctx = await startControl({ env: { UM_VAULT_DIR: vault }, ctx: { _getSweepState: () => sweepState } });
+  try {
+    const { id } = createSession(Date.now());
+    const html = await (await fetch(ctx.url('/control'), { headers: { Cookie: `um_control=${id}` } })).text();
+    const tile = html.split('Per-layer freshness')[1].split('</section>')[0];
+    assert.match(tile, /quiet-layer/, 'the layer is stale: 600 pending bytes waiting since January');
+    assert.match(tile, /failed 2026-10-01T10:00:04\.000Z/);
     expire(id);
   } finally { await ctx.close(); }
 });

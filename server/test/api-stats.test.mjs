@@ -80,7 +80,7 @@ function makeFakeMemory(pointCount, { getAllThrows = false } = {}) {
 
 // House ephemeral-port pattern (mem0-compat-routes.test.mjs): pin env,
 // start createRequestHandler on loopback, restore ALL touched env on close.
-async function startServer({ memory, env = {} }) {
+async function startServer({ memory, env = {}, ctx = {} }) {
   const overrides = { UM_AUTH_TOKEN: TOKEN, ...env };
   const prev = {};
   for (const [k, v] of Object.entries(overrides)) {
@@ -93,7 +93,7 @@ async function startServer({ memory, env = {} }) {
   // instead of memory.getAll. Bridging the seam back onto the injected stub
   // reuses makeFakeMemory's limit=100 mimic and its getAllThrows behavior
   // verbatim, so the limit-fix and degraded-mode pins below stay live.
-  const srv = createServer(createRequestHandler({ memory, _umGetAll: (m, a) => m.getAll(a) }));
+  const srv = createServer(createRequestHandler({ memory, _umGetAll: (m, a) => m.getAll(a), ...ctx }));
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   const { port } = srv.address();
@@ -610,6 +610,31 @@ test('POST /api/capture-anomaly: end-to-end — 200, row lands, /api/stats signa
     // and the row NEVER touches capture freshness (namespace boundary)
     assert.ok(!(body.capture && body.capture['claude-code-plugin']), 'no capture entry minted by an anomaly');
   } finally { await close(); _resetCaptureEventsForTest(); delete process.env.UM_COUNTERS_DB_PATH; }
+});
+
+// #314 D9: the route hands buildStats the running sweep's state. Without a sweep handle (the sweep
+// is off, or this process is not the server's main module) the block is null.
+test('#314: GET /api/stats serves the sweep handle\'s state as body.sweep, and null without a handle', async () => {
+  const state = {
+    enabled: true,
+    last_run_at: '2026-10-01T10:00:00.000Z',
+    last_run: { eligible: 1, attempted: 1 },
+    layers: { demo: { last_attempt_at: '2026-10-01T10:00:02.000Z', outcome: 'partial', stopped_reason: 'chunk_cap', next_eligible_at: null, cursor_after: null, repair: null } },
+  };
+  const withSweep = await startServer({ memory: makeFakeMemory(1), ctx: { _getSweepState: () => state } });
+  try {
+    const body = await (await fetch(withSweep.url('/api/stats'), authed)).json();
+    assert.equal(body.sweep.enabled, true);
+    assert.deepEqual(body.sweep.last_run, { eligible: 1, attempted: 1 });
+    assert.deepEqual(body.sweep.layers, state.layers);
+  } finally { await withSweep.close(); }
+
+  const withoutSweep = await startServer({ memory: makeFakeMemory(1) });
+  try {
+    const body = await (await fetch(withoutSweep.url('/api/stats'), authed)).json();
+    assert.ok('sweep' in body);
+    assert.equal(body.sweep, null);
+  } finally { await withoutSweep.close(); }
 });
 
 test('endpoint-class: /api/capture-anomaly rides the /api/* catch-all (auth + rate-limit on, loopback bypass allowed — the standard posture, NOT /api/stats\'s noLoopbackBypass)', () => {

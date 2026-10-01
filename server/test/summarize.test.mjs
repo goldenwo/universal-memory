@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
-import { summarize, BACKENDS } from '../lib/summarize.mjs';
+import { summarize, summarizerTarget, BACKENDS } from '../lib/summarize.mjs';
+import { PROVIDER_METRICS } from '../lib/metrics.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 
 // ---------- openai backend ----------
@@ -122,6 +123,53 @@ test('summarize: unknown backend falls back to UM_SUMMARIZER_FALLBACK', async ()
   assert.ok(fallbackCalled);
   assert.equal(result.summary, 'fb');
   delete process.env.UM_SUMMARIZER_FALLBACK;
+});
+
+// ---------- #314: summarizerTarget names the (provider, model) summarize() bills ----------
+//
+// The idle sweep warns at boot when a checkpoint's summarizer model has no price entry (the
+// per-project cost cap cannot bind then). summarizerTarget restates summarize()'s resolution
+// without calling a provider; this pins the two together over the precedence and fallback cases,
+// reading what summarize() really used off its cost-metric labels.
+
+test('#314 summarizerTarget: the same provider and model summarize() resolves and bills, case by case', async () => {
+  const cases = [
+    { env: {}, ctx: {}, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: {}, ctx: { model: 'gpt-4.1-nano-2025-04-14' }, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
+    { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: {}, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
+    { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: { model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: { backend: 'openai', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: { UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'ollama', model: 'llama3' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: {}, ctx: { backend: 'claude-agent-sdk', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: { UM_SUMMARIZER_FALLBACK: 'anthropic' }, ctx: { backend: 'nonexistent-backend' }, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+  ];
+  const VARS = ['UM_SUMMARIZER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_MODEL', 'UM_SUMMARIZER_FALLBACK'];
+  const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
+  try {
+    for (const { env, ctx, want } of cases) {
+      for (const k of VARS) delete process.env[k];
+      Object.assign(process.env, env);
+      let billed = null;
+      const metrics = {
+        counter: (name, labels) => { if (name === PROVIDER_METRICS.COST_USD_TOTAL) billed = { provider: labels.provider, model: labels.model }; },
+        histogram: () => {},
+      };
+      await summarize('t', {
+        ...ctx,
+        metrics,
+        _providerOverride: { summarizerInvoke: async () => ({ content: 's', usage: { tokensIn: 1, tokensOut: 1 } }) },
+      });
+      const label = JSON.stringify({ env, ctx });
+      assert.deepEqual(billed, want, `summarize() billed ${label}`);
+      assert.deepEqual(summarizerTarget(ctx, env), want, `summarizerTarget ${label}`);
+    }
+  } finally {
+    for (const k of VARS) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  }
 });
 
 // ---------- cost calculation ----------

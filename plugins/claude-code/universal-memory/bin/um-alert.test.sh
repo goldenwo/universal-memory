@@ -1403,6 +1403,135 @@ run_alert "$mock"
 if [ "$rc" -eq 2 ]; then pass "T70-exit-2"; else fail "T70-exit-2 (rc=$rc, out=$output)"; fi
 if echo "$output" | grep -q "CHECK FAILED"; then pass "T70-check-failed-text"; else fail "T70-check-failed-text: $output"; fi
 
+# ─── #314 T07: SWEEP-FAILURE (signals.sweep_failure, keyed by project) ──────
+# The idle sweep's two outcomes LAYERS-STALE cannot see: a reindex-stage failure
+# (the cursor already moved past a summary that is on disk but not searchable) and
+# a rejected call. Both have a benign base rate of zero by construction, so any
+# windowed count fires. The sweep never writes the accepted-mode family above, and
+# an absent key is informational (a CLI newer than its server), as for #309.
+SWEEP_ZERO='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{}}}'
+SWEEP_REINDEX='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{"proj-s":{"last_day_seen":"2026-07-17","count_7d":1,"outcomes_7d":{"reindex_failed":1,"rejected":0,"other":0}}}}}'
+SWEEP_REJECTED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{"proj-s":{"last_day_seen":"2026-07-16","count_7d":2,"outcomes_7d":{"reindex_failed":0,"rejected":2,"other":0}}}}}'
+SWEEP_ABSENT_KEY='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{}}}'
+SWEEP_NULL='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":null}}'
+
+echo ""
+echo "=== T71: sweep_failure reindex_failed=1 + fresh capture ⇒ exit 1 + SWEEP-FAILURE line naming the project ==="
+mock="$TMPDIR_ROOT/t71"; _make_mock_curl "$mock" 200 "$SWEEP_REINDEX"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T71-exit-1"; else fail "T71-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "SWEEP-FAILURE — proj-s: 1 sweep checkpoint(s) in 7d (reindex_failed x1; last 2026-07-17)"; then
+  pass "T71-names-project-and-outcome"
+else
+  fail "T71-names-project-and-outcome: $output"
+fi
+if echo "$output" | grep -q "CHECKPOINT-FAILURE"; then
+  fail "T71-not-the-accepted-mode-arm: $output"
+else
+  pass "T71-not-the-accepted-mode-arm"
+fi
+
+echo ""
+echo "=== T72: sweep_failure rejected=2 ⇒ exit 1 + SWEEP-FAILURE ==="
+mock="$TMPDIR_ROOT/t72"; _make_mock_curl "$mock" 200 "$SWEEP_REJECTED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ] && echo "$output" | grep -q "SWEEP-FAILURE — proj-s: 2 sweep checkpoint(s) in 7d (rejected x2"; then
+  pass "T72-fires"
+else
+  fail "T72-fires (rc=$rc, out=$output)"
+fi
+
+echo ""
+echo "=== T73: sweep_failure {} ⇒ exit 0, silent ==="
+mock="$TMPDIR_ROOT/t73"; _make_mock_curl "$mock" 200 "$SWEEP_ZERO"
+run_alert "$mock"
+if [ "$rc" -eq 0 ] && ! echo "$output" | grep -qi "sweep"; then
+  pass "T73-silent"
+else
+  fail "T73-silent (rc=$rc, out=$output)"
+fi
+
+echo ""
+echo "=== T74: signals present, no sweep_failure key ⇒ ABSENT breadcrumb, exit 0 ==="
+mock="$TMPDIR_ROOT/t74"; _make_mock_curl "$mock" 200 "$SWEEP_ABSENT_KEY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T74-exit-0-not-2"; else fail "T74-exit-0-not-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "no sweep_failure key"; then pass "T74-breadcrumb"; else fail "T74-breadcrumb: $output"; fi
+
+echo ""
+echo "=== T75: sweep_failure:null while signals present ⇒ exit 2, the sweep's own reader degraded ==="
+mock="$TMPDIR_ROOT/t75"; _make_mock_curl "$mock" 200 "$SWEEP_NULL"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T75-exit-2"; else fail "T75-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED — sweep_failure is null"; then pass "T75-names-the-family"; else fail "T75-names-the-family: $output"; fi
+
+# ─── #314 T4 (spec D12): the LAYERS-STALE text on an age-measuring server ───
+# A layer is stale when its oldest undigested content has waited past the
+# server's threshold, or a summary has stayed unindexed that long. Each line
+# says which, and the idle sweep's latest outcome for the layer when it has one.
+# Without age_hours (an older server) the line keeps the lag text (T21, T32, T79).
+AGE_FRESH_CAPTURE='"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}}'
+AGE_LAYER='"last_capture_at":"2026-09-30T20:00:00.000Z","last_state_at":null,"lag_hours":5,"waiting_since":"2026-09-30T05:00:00.000Z"'
+AGE_LAYERS="{\"schema_version\":1,$AGE_FRESH_CAPTURE,\"layers\":{\
+\"aged\":{$AGE_LAYER,\"last_summary_at\":\"2026-09-28T00:00:00.000Z\",\"pending_bytes\":2000,\"stale\":true,\"undigested\":true,\"age_hours\":31.2,\"repair_since\":null,\"repair_hours\":null},\
+\"newborn\":{$AGE_LAYER,\"last_summary_at\":null,\"pending_bytes\":700,\"stale\":true,\"undigested\":true,\"age_hours\":80,\"repair_since\":null,\"repair_hours\":null},\
+\"unindexed\":{$AGE_LAYER,\"last_summary_at\":\"2026-09-28T00:00:00.000Z\",\"pending_bytes\":0,\"stale\":true,\"undigested\":false,\"age_hours\":null,\"repair_since\":\"2026-09-29T12:00:00.000Z\",\"repair_hours\":46},\
+\"grown\":{$AGE_LAYER,\"last_summary_at\":\"2026-09-28T00:00:00.000Z\",\"pending_bytes\":900,\"stale\":true,\"undigested\":true,\"age_hours\":\"Infinity\",\"repair_since\":null,\"repair_hours\":null},\
+\"calm\":{$AGE_LAYER,\"last_summary_at\":\"2026-09-28T00:00:00.000Z\",\"pending_bytes\":0,\"stale\":false,\"undigested\":false,\"age_hours\":null,\"repair_since\":null,\"repair_hours\":null}},\
+\"sweep\":{\"enabled\":true,\"last_run_at\":\"2026-10-01T10:00:00.000Z\",\"last_run\":{\"eligible\":2,\"attempted\":2},\"layers\":{\
+\"aged\":{\"last_attempt_at\":\"2026-10-01T10:00:04.000Z\",\"outcome\":\"failed\",\"stopped_reason\":null,\"next_eligible_at\":\"2026-10-01T16:00:04.000Z\",\"cursor_after\":null,\"repair\":null},\
+\"unindexed\":{\"last_attempt_at\":\"2026-10-01T10:00:09.000Z\",\"outcome\":\"failed\",\"stopped_reason\":null,\"next_eligible_at\":\"2026-10-01T16:00:09.000Z\",\"cursor_after\":null,\"repair\":{\"done\":0,\"failed\":1,\"dropped\":0}}},\
+\"outcomes_7d\":null}}"
+
+echo ""
+echo "=== T76-T78: age, never-digested, repair-arm and unknown-age text, each with the sweep's latest outcome when it has one ==="
+mock="$TMPDIR_ROOT/t76"; _make_mock_curl "$mock" 200 "$AGE_LAYERS"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T76-exit-1"; else fail "T76-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -qF "aged (undigested for 31.2h, pending 2000 bytes; sweep: failed 2026-10-01T10:00:04.000Z)"; then
+  pass "T76-age-with-sweep-outcome"
+else
+  fail "T76-age-with-sweep-outcome: $output"
+fi
+if echo "$output" | grep -qF "newborn (never digested, pending 700 bytes)"; then pass "T77-never-digested"; else fail "T77-never-digested: $output"; fi
+if echo "$output" | grep -qF "unindexed (summary written 2026-09-29T12:00:00.000Z is not indexed; repaired at the layer's next checkpoint; sweep: failed 2026-10-01T10:00:09.000Z, repair failed)"; then
+  pass "T78-repair-arm"
+else
+  fail "T78-repair-arm: $output"
+fi
+if echo "$output" | grep -qF "grown (undigested, age unknown, pending 900 bytes)"; then pass "T78b-age-unknown"; else fail "T78b-age-unknown: $output"; fi
+if echo "$output" | grep -q "calm\|Infinity\|lag "; then
+  fail "T76-only-stale-layers-and-no-lag-text: $output"
+else
+  pass "T76-only-stale-layers-and-no-lag-text"
+fi
+
+# T79: a server without age_hours keeps the lag text, even beside a sweep block
+# that names the layer — the age wording needs the age field it describes.
+LAG_ONLY_WITH_SWEEP="{\"schema_version\":1,$AGE_FRESH_CAPTURE,\"layers\":{\"old\":{\"stale\":true,\"lag_hours\":40.2,\"pending_bytes\":9000}},\"sweep\":{\"enabled\":true,\"last_run_at\":null,\"last_run\":null,\"layers\":{},\"outcomes_7d\":null}}"
+echo ""
+echo "=== T79: no age_hours ⇒ the lag fallback text ==="
+mock="$TMPDIR_ROOT/t79"; _make_mock_curl "$mock" 200 "$LAG_ONLY_WITH_SWEEP"
+run_alert "$mock"
+if [ "$rc" -eq 1 ] && echo "$output" | grep -qF "old (lag 40.2h, pending 9000 bytes)"; then
+  pass "T79-lag-fallback"
+else
+  fail "T79-lag-fallback (rc=$rc, out=$output)"
+fi
+
+# T80: the sweep block is display context — a malformed one never fails the
+# LAYERS verdict or hides a stale layer; the line just carries no sweep part.
+MALFORMED_SWEEP="{\"schema_version\":1,$AGE_FRESH_CAPTURE,\"layers\":{\"aged\":{$AGE_LAYER,\"last_summary_at\":\"2026-09-28T00:00:00.000Z\",\"pending_bytes\":2000,\"stale\":true,\"undigested\":true,\"age_hours\":31.2,\"repair_since\":null,\"repair_hours\":null}},\"sweep\":\"garbage\"}"
+echo ""
+echo "=== T80: a malformed sweep block ⇒ the stale line still prints, without a sweep part ==="
+mock="$TMPDIR_ROOT/t80"; _make_mock_curl "$mock" 200 "$MALFORMED_SWEEP"
+run_alert "$mock"
+if [ "$rc" -eq 1 ] && echo "$output" | grep -qF "aged (undigested for 31.2h, pending 2000 bytes)"; then
+  pass "T80-malformed-sweep-ignored"
+else
+  fail "T80-malformed-sweep-ignored (rc=$rc, out=$output)"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

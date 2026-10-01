@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bin/um-alert.sh — cron-able capture-pipeline health check (#171 Stage A +
-# #267 SIGNALS + #283 CRASH-DEAD + #297/#239 IMPUTATION-STUCK). GETs
-# #309 CHECKPOINT-FAILURE). GETs /api/stats and evaluates SEVEN
-# sections, each covering a failure class the others structurally cannot see:
+# #267 SIGNALS + #283 CRASH-DEAD + #297/#239 IMPUTATION-STUCK +
+# #309 CHECKPOINT-FAILURE + #314 SWEEP-FAILURE). GETs /api/stats and evaluates
+# EIGHT sections, each covering a failure class the others structurally cannot see:
 #
 #   FRESHNESS (counters-derived, #171): server-side / transport / total
 #     capture death — day-granular rows stop landing and the surface ages
@@ -15,8 +15,13 @@
 #     default (um-server) is a name the shipped compose never mints
 #     (universal-memory-memory-server-1), so on a stock deployment this
 #     section is inert until the env var is set.
-#   LAYERS (v1.16): downstream digestion stalls WITH pending bytes (the
-#     2026-08-04 class) — blind to upstream death, which produces none.
+#   LAYERS (v1.16; age-based since #314): a layer whose oldest undigested
+#     content has waited past the server's UM_SUMMARY_LAG_MAX_HOURS (30 h), or
+#     whose summary has stayed unindexed that long — what the server's idle
+#     sweep could not clear, each line naming the sweep's latest outcome for
+#     the layer (the 2026-08-04 class, and the quiet layers whose old lag rule
+#     froze under the threshold) — blind to upstream death, which leaves
+#     nothing pending.
 #   SIGNALS (#267): client-side anomalous empty transcript reads,
 #     self-reported by stop.sh as signal.capture_anomaly counter rows —
 #     THE direct alarm for the 2026-07-16 silent-capture-death class
@@ -45,14 +50,25 @@
 #     promoted by the #323 base-rate read); contended and other are shown in
 #     the breakdown but are transient or unrecognised and do not trigger.
 #     THIS IS THE ROLLBACK SIGNAL for accepted mode.
+#   SWEEP-FAILURE (#314): the server's idle sweep (which digests the layers no
+#     session end reaches) hit one of the two outcomes LAYERS does not report
+#     at once — a reindex-stage failure (the cursor already moved past a
+#     summary that is on disk but not searchable; LAYERS shows it only once
+#     its repair record has waited past the threshold) or a call that threw
+#     (no outcome at all). Keyed BY PROJECT; any count in the 7-day window
+#     fires (both have a zero benign base rate by construction). Every other
+#     sweep failure leaves the content aging, so LAYERS reports it. The sweep
+#     never writes CHECKPOINT-FAILURE.
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
 #   1  ALARM — stale captures, a stale layer, ledger-error growth, a
 #      capture anomaly in the 7-day window, an armed surface gone
 #      turn-dead while checkpoints stamp (crash-dead), a stuck
-#      undated-imputation cache with decay on (imputation-stuck), or an
-#      accepted-mode checkpoint that failed server-side (checkpoint-failure)
+#      undated-imputation cache with decay on (imputation-stuck), an
+#      accepted-mode checkpoint that failed server-side (checkpoint-failure),
+#      or a sweep checkpoint whose summary is not indexed or that threw
+#      (sweep-failure)
 #   2  the check itself couldn't run (unreachable / auth / bad response /
 #      degraded counters / malformed section) — a broken monitor is loud
 #
@@ -96,8 +112,10 @@ _usage() {
 Usage: um-alert.sh [options]
 
 Capture-pipeline health check against GET /api/stats. Cron-able: silent-ish
-on success, actionable line(s) + non-zero exit otherwise. Seven sections:
-capture freshness, LEDGER (reaction errors), LAYERS (digestion stalls),
+on success, actionable line(s) + non-zero exit otherwise. Eight sections:
+capture freshness, LEDGER (reaction errors), LAYERS (content left undigested,
+or a summary left unindexed, past the age threshold — what the server's idle
+sweep could not clear; each line names the sweep's latest outcome),
 SIGNALS (#267 — client-reported anomalous empty transcript reads, the direct
 alarm for a stop.sh-only capture death), and CRASH-DEAD (#283 — an armed
 surface whose turns stopped while session-end keeps stamping abstained
@@ -112,8 +130,10 @@ a stale factor to every undated score; quiet while decay is off), and
 CHECKPOINT-FAILURE (#309 — an accepted-mode checkpoint that failed
 server-side AFTER the hook was told 202 and went away; keyed by project,
 and the one signal that does not depend on the project continuing to
-capture). Every applicable escalation line is printed before the single
-exit (print-all, no masking).
+capture), and SWEEP-FAILURE (#314 — the server's idle sweep wrote a summary
+it could not index, or its checkpoint call threw; keyed by project — see
+/api/stats sweep.layers). Every applicable escalation line is printed
+before the single exit (print-all, no masking).
 
 Options:
   --max-age-hours N   Freshness threshold in hours. Default: the server's
@@ -144,7 +164,9 @@ Exit codes:
                checkpoint that failed server-side (CHECKPOINT-FAILURE:
                a triggering outcome in the 7-day window, named per project — the
                session, or its unfinished part, was captured but NOT digested,
-               see #309 / #323)
+               see #309 / #323), or an idle-sweep checkpoint whose summary is
+               not indexed or whose call threw (SWEEP-FAILURE, named per
+               project, see #314)
   2  check couldn't run — server unreachable, auth rejected, non-200,
                unparseable response, degraded counters, or a malformed
                monitoring section
@@ -355,16 +377,18 @@ fi
 #              ever were the 2026-07-16/17 deploy window) makes ANY windowed
 #              count real signal; the 7-day window is the dead-man margin.
 #   OK       — zero anomalies in the window.
-# #325 — ONE verdict program for both signals arms. The two arms share the
+# #325 — ONE verdict program for every signals arm. The arms share the
 # JSON parse guard, the validate-before-sorting loop, the fold-to-breakdown
 # and the message shape; they differ in exactly two DELIBERATE places, which
-# are parameters in CFG below rather than a second copy of the block:
+# are parameters in CFG below rather than another copy of the block:
 #   1. ABSENT-key posture — a missing family key inside a present signals
 #      is a drift ERROR (exit 2) for capture_anomaly but an informational
-#      ABSENT breadcrumb (exit 0) for checkpoint_failure (T38 vs T68).
-#   2. Triggering set — capture_anomaly alerts on any count_7d > 0 (measured
-#      benign base rate of zero); checkpoint_failure alerts on rejected +
-#      failed (a zero base rate BY CONSTRUCTION) + zero_commit +
+#      ABSENT breadcrumb (exit 0) for checkpoint_failure and sweep_failure
+#      (T38 vs T68, T74): both families are newer than signals itself.
+#   2. Triggering set — capture_anomaly and sweep_failure alert on any
+#      count_7d > 0 (a benign base rate of zero, measured for the first, by
+#      construction for the second, #314 D7); checkpoint_failure alerts on
+#      rejected + failed (a zero base rate BY CONSTRUCTION) + zero_commit +
 #      provider_stalled (zero BY MEASUREMENT, #323), and shows contended and
 #      other in the breakdown without triggering. The server's
 #      CHECKPOINT_FAILURE_ALERTING is the same set (a parity test pins it).
@@ -408,6 +432,21 @@ CFG = {
         "ok": "no failed accepted checkpoints in the last 7 days",
         "payload_err": "checkpoint_failure payload malformed: %s",
     },
+    "sweep_failure": {
+        "absent_signals": "signals key absent — server predates #267/#314; idle-sweep failures NOT checked",
+        "degraded": "counters degraded — sweep-failure signals cannot be assessed",
+        "signals_null_with_capture": None,
+        "absent_key": ("ABSENT", "signals present but no sweep_failure key — server predates #314 (a rollback, or a CLI newer than the server); idle-sweep failures NOT checked"),
+        "fam_null": ("ERROR", "sweep_failure is null while signals is present — the sweep-failure reader degraded on its own; unindexed sweep summaries are DARK"),
+        "malformed": "signals.sweep_failure malformed (expected an object)",
+        "noun": "project",
+        "trigger": "count_7d",
+        "breakdown_key": "outcomes_7d",
+        "line": "%s: %d sweep checkpoint(s) in 7d (%s; last %s)",
+        "tail": " — a summary was written but is not indexed, or the sweep threw; see /api/stats sweep.layers (#314)",
+        "ok": "no idle-sweep failures in the last 7 days",
+        "payload_err": "sweep_failure payload malformed: %s",
+    },
 }
 C = CFG[FAMILY]
 
@@ -440,7 +479,7 @@ if signals is None:
 if not isinstance(signals, dict):
     emit("ERROR", "signals key present but malformed (expected an object)")
 if FAMILY not in signals:
-    # Divergence 1: ERROR for capture_anomaly, ABSENT for checkpoint_failure.
+    # Divergence 1: ERROR for capture_anomaly, ABSENT for the newer families.
     emit(*C["absent_key"])
 fam = signals[FAMILY]
 if fam is None:
@@ -543,6 +582,29 @@ CKPT_VERDICT=$(um_signal_verdict checkpoint_failure) || CKPT_VERDICT=""
 
 CKPT_STATUS="${CKPT_VERDICT%%|*}"
 CKPT_MESSAGE="${CKPT_VERDICT#*|}"
+
+# #314 SWEEP-FAILURE section — the idle sweep's own family (signal.sweep_failure,
+# keyed BY PROJECT): a reindex-stage failure, where the cursor already moved past a
+# summary that is on disk but not searchable, or a checkpoint call that threw.
+# LAYERS does not report either at once: the first leaves no content aging (its
+# repair record reaches LAYERS-STALE only after the threshold — this arm fires the
+# same day), the second has no outcome at all. The sweep never writes
+# signal.checkpoint_failure (that family is the #309 rollback signal, calibrated on
+# accepted-mode runs only).
+# Taxonomy — the CHECKPOINT-FAILURE arm's, with one difference:
+#   ABSENT   — no `signals` key, or `signals` without `sweep_failure`: a server
+#              older than the CLI (a rollback, or install-cli.sh before the
+#              deploy). Breadcrumb, exit untouched.
+#   DEGRADED — signals null (the counters DB degraded wholesale).
+#   ERROR    — malformed, or sweep_failure:null while `signals` is present (this
+#              reader degraded on its own) ⇒ CHECK FAILED, exit 2.
+#   ALERT    — any project with count_7d > 0 (the difference: both outcomes have
+#              a zero benign base rate by construction, so every count triggers).
+#   OK       — nothing in the window.
+SWEEP_VERDICT=$(um_signal_verdict sweep_failure) || SWEEP_VERDICT=""
+
+SWEEP_STATUS="${SWEEP_VERDICT%%|*}"
+SWEEP_MESSAGE="${SWEEP_VERDICT#*|}"
 
 # #283 CRASH-DEAD section — the class SIGNALS structurally cannot see: the
 # capture hook never fires (deregistered/deleted/dies pre-report) while
@@ -781,6 +843,9 @@ print_escalations() {
   if [ "$CKPT_STATUS" = "ALERT" ]; then
     echo "um-alert: CHECKPOINT-FAILURE — $CKPT_MESSAGE" >&2
   fi
+  if [ "$SWEEP_STATUS" = "ALERT" ]; then
+    echo "um-alert: SWEEP-FAILURE — $SWEEP_MESSAGE" >&2
+  fi
   if [ "$CD_STATUS" = "ALERT" ]; then
     echo "um-alert: CRASH-DEAD — $CD_MESSAGE" >&2
   fi
@@ -813,7 +878,11 @@ print_escalations() {
 #     monitoring payload is itself a loud CHECK-FAILED (exit 2), unconditionally
 #     — this arc's own root failure mode was a silently-dropped broken monitor.
 #   STALE/OK — `layers` present and well-shaped; STALE names every project
-#     whose own `stale` flag is true.
+#     whose own `stale` flag is true, with why (#314 D12: how long its oldest
+#     undigested content has waited, "never digested", or a summary not yet
+#     indexed; the lag on a server without `age_hours`) and the idle sweep's
+#     latest outcome when `sweep.layers` has one. `sweep` is display context:
+#     absent, null or malformed, it never changes the verdict.
 LAYERS_VERDICT=$("$PY" -c '
 import json, sys
 
@@ -835,21 +904,59 @@ layers = stats.get("layers")
 if not isinstance(layers, dict):
     emit("ERROR", "layers key present but malformed (expected an object)")
 
+# #314 D12: the idle sweep latest attempt per layer, display context only —
+# absent (an older server), null (the sweep is off) or malformed, a line just
+# carries no sweep part; it never changes the verdict.
+sweep = stats.get("sweep")
+sweep_layers = sweep.get("layers") if isinstance(sweep, dict) else None
+if not isinstance(sweep_layers, dict):
+    sweep_layers = {}
+
+def why_stale(info):
+    # Hours fields serialize infinity as the STRING "Infinity" (see
+    # layers.mjs): printed verbatim it reads as the nonsensical "Infinityh",
+    # so it becomes words (MINOR 7, review round 1).
+    if "age_hours" not in info:
+        # A server older than #314 computed stale from the lag: say that.
+        lag = info.get("lag_hours")
+        lag_str = "never" if lag == "Infinity" else "%sh" % lag
+        return ["lag %s, pending %s bytes" % (lag_str, info.get("pending_bytes"))]
+    reasons = []
+    if info.get("undigested") is True:
+        age = info.get("age_hours")
+        if info.get("last_summary_at") is None:
+            waited = "never digested"
+        elif isinstance(age, (int, float)) and not isinstance(age, bool):
+            waited = "undigested for %sh" % age
+        else:
+            waited = "undigested, age unknown"
+        reasons.append("%s, pending %s bytes" % (waited, info.get("pending_bytes")))
+    since = info.get("repair_since")
+    if since:
+        when = "at an unknown time" if since == "unknown" else since
+        # \x27: an apostrophe, which this single-quoted program cannot hold literally.
+        reasons.append("summary written %s is not indexed; repaired at the layer\x27s next checkpoint" % when)
+    return reasons or ["pending %s bytes" % info.get("pending_bytes")]
+
 stale = []
 try:
     for name, info in layers.items():
         if not isinstance(info, dict) or not isinstance(info.get("stale"), bool):
             raise ValueError("project %r has a malformed or missing stale field" % name)
         if info["stale"]:
-            # MINOR 7 (review round 1): the JSON sentinel for an infinite lag
-            # is the STRING "Infinity" (see layers.mjs) — printed verbatim it
-            # reads as the nonsensical "Infinityh"; render it as "never"
-            # instead, same idea as um-alert.sh already applying its own
-            # float()-coercion discipline to threshold/freshness values
-            # elsewhere in this file.
-            lag = info.get("lag_hours")
-            lag_str = "never" if lag == "Infinity" else "%sh" % lag
-            stale.append("%s (lag %s, pending %s bytes)" % (name, lag_str, info.get("pending_bytes")))
+            parts = why_stale(info)
+            attempt = sweep_layers.get(name)
+            if isinstance(attempt, dict) and attempt.get("outcome"):
+                sweep_part = "sweep: %s %s" % (attempt.get("outcome"), attempt.get("last_attempt_at"))
+                # The outcome describes the digest; a repair that failed in the
+                # same attempt would hide behind it (an "abstained" layer whose
+                # summary is still not indexed).
+                repair = attempt.get("repair")
+                failed = repair.get("failed") if isinstance(repair, dict) else None
+                if isinstance(failed, int) and not isinstance(failed, bool) and failed > 0:
+                    sweep_part += ", repair failed"
+                parts.append(sweep_part)
+            stale.append("%s (%s)" % (name, "; ".join(parts)))
 except Exception as e:
     emit("ERROR", "layers payload malformed: %s" % e)
 
@@ -925,6 +1032,18 @@ case "$CKPT_STATUS" in
     echo "um-alert: CHECK FAILED — ${CKPT_MESSAGE:-checkpoint-failure verdict parser produced no output}" >&2 ;;
 esac
 
+# #314 SWEEP-FAILURE wiring — the CHECKPOINT-FAILURE contract: ABSENT (a server
+# older than this CLI) is a breadcrumb, never a fault.
+case "$SWEEP_STATUS" in
+  ABSENT)
+    echo "um-alert: $SWEEP_MESSAGE" >&2 ;;
+  OK|ALERT|DEGRADED)
+    : ;;
+  *)
+    MONITOR_FAULT=1
+    echo "um-alert: CHECK FAILED — ${SWEEP_MESSAGE:-sweep-failure verdict parser produced no output}" >&2 ;;
+esac
+
 # #283 CRASH-DEAD wiring — same breadcrumb / no-op / CHECK-FAILED contract
 # as SIGNALS above; a garbage/empty status folds into the fault arm.
 case "$CD_STATUS" in
@@ -966,7 +1085,7 @@ fi
 
 case "$STATUS" in
   FRESH)
-    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CKPT_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$IMP_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
+    if [ "$SIG_STATUS" = "ALERT" ] || [ "$CKPT_STATUS" = "ALERT" ] || [ "$SWEEP_STATUS" = "ALERT" ] || [ "$CD_STATUS" = "ALERT" ] || [ "$IMP_STATUS" = "ALERT" ] || [ "$LAYERS_STATUS" = "STALE" ] || [ -n "$LEDGER_ALERT" ]; then
       print_escalations
       # Context restored (review catch — the old suffix was deleted with
       # first-wins): the one mail a cron sends must say whether freshness

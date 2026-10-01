@@ -97,6 +97,10 @@ function captureFreshnessThresholdHours() {
  *   checkpoint.json layers.mjs needs for the #185 min_transcript_bytes
  *   floor. Production omits it; layers.mjs reads config/checkpoint.json
  *   itself once per call.
+ * @param {object|null} [opts.sweepState] - #314 D9: the running idle sweep's
+ *   `state()` (lib/idle-sweep.mjs), or null when no sweep runs in this
+ *   process (UM_SWEEP_ENABLED=false, or a caller that has none) — then the
+ *   `sweep` block is null.
  * @returns {Promise<object>} the full stats body, including `degraded` when
  *   one or more sources are unavailable.
  */
@@ -108,6 +112,7 @@ export async function buildStats({
   // way readCounters already works.
   listAll = umGetAll,
   imputation = undatedImputation,
+  sweepState = null,
 }) {
   const degraded = [];
 
@@ -166,8 +171,9 @@ export async function buildStats({
   // derived `capture` section could not see). buildLayers() never throws —
   // its own degraded markers ('layers-unavailable' / 'layers-partial' /
   // 'layers_saturated') fold into this payload's degraded[] exactly like
-  // corpus/counters do.
-  const layersResult = await buildLayers({ vaultDir, config: checkpointConfig });
+  // corpus/counters do. #314: `now` is this payload's clock — a layer's age
+  // (waiting_since → age_hours → stale) is measured against it.
+  const layersResult = await buildLayers({ vaultDir, config: checkpointConfig, now });
   if (layersResult.degraded.length > 0) degraded.push(...layersResult.degraded);
 
   // #297: the relative undated-imputation block (spec §4.2 step 5). The cache's INTERNAL
@@ -314,9 +320,24 @@ export async function buildStats({
     // um-alert reads an ABSENT `checkpoint_failure` inside a PRESENT `signals`
     // as an informational breadcrumb (a CLI newer than the server it queries),
     // NOT as the drift error its sibling arm raises.
+    // #314 D7 adds `sweep_failure` (the idle sweep's reindex-stage failures and
+    // rejected calls, keyed by project) under the same rules.
     signals: counters.anomalies == null ? null : {
       capture_anomaly: counters.anomalies,
       checkpoint_failure: counters.checkpointFailure == null ? null : counters.checkpointFailure,
+      sweep_failure: counters.sweepFailure == null ? null : counters.sweepFailure,
+    },
+    // #314 D9: the idle sweep. null when no sweep runs in this process; else
+    // its in-process state (last run, and per layer the latest attempt —
+    // reset on restart) plus outcomes_7d, its own capture.checkpoint rows from
+    // the counters db (which survive a restart; null when counters are
+    // degraded). `capture` never holds the sweep's surface (D8).
+    sweep: sweepState == null ? null : {
+      enabled: sweepState.enabled,
+      last_run_at: sweepState.last_run_at,
+      last_run: sweepState.last_run,
+      layers: sweepState.layers,
+      outcomes_7d: counters.sweepOutcomes ?? null,
     },
     // #297: always present from this version forward (absent ⇔ a pre-#297 server); the
     // flip-owner's decision surface — see the block comment above for every key.

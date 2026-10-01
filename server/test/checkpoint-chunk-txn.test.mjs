@@ -19,6 +19,8 @@ import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { ProviderError } from '../lib/provider/errors.mjs';
 import { CAPTURE_EVENTS } from '../lib/capture-events.mjs';
 import { parseState, REQUIRED_SECTIONS, UNMERGED_SUMMARY_HEADING, MARKER_STATE_MERGE_UNAVAILABLE } from '../lib/state-cap.mjs';
+import { listPendingReindex } from '../lib/pending-reindex.mjs';
+import { buildLayers } from '../lib/layers.mjs';
 
 const PROJECT = 'chunk-txn-test-proj';
 
@@ -925,4 +927,89 @@ test('last_turn_iso max-persist: null/absent prevCursor falls back to chunk.cove
   assert.ok(result.committed);
   assert.equal(result.committed.nextCursor.last_turn_iso, '2026-08-11T00:00:00.000Z');
   await fs.rm(vault, { recursive: true, force: true });
+});
+
+// ===========================================================================
+// #314 S28 — the write-ahead reindex repair record (spec D7, §4.2.1a): one
+// state/<p>/pending-reindex/<summaryId>.json per summary whose reindex is not
+// yet confirmed, written after the summary's durable rename and before the
+// cursor advances, removed only by the transaction's own successful step 7.
+// ===========================================================================
+
+const entryDirFor = (vault, project = PROJECT) => path.join(vault, 'state', project, 'pending-reindex');
+const entryFileFor = (vault, id, project = PROJECT) => path.join(entryDirFor(vault, project), `${id}.json`);
+const exists = (p) => fs.stat(p).then(() => true, () => false);
+
+test('S28 #314 (order): the entry is on disk before the cursor advances, survives a crash before the reindex, and goes once the transaction’s own reindex succeeds', async () => {
+  const vault = makeVault();
+  const chunk = makeChunk();
+  const id = computeId(PROJECT, chunk);
+  // A cursor_write failure happens after the entry was written: the entry is already there.
+  await fs.mkdir(cursorPath(vault) + '.tmp', { recursive: true });
+  const failed = await runChunkTransaction(baseArgs(vault, { chunk, skipStateMerge: true }), baseDeps());
+  assert.equal(failed.failed?.stage, 'cursor_write');
+  const entry = JSON.parse(await fs.readFile(entryFileFor(vault, id), 'utf8'));
+  assert.equal(entry.summary_path, `sessions/${PROJECT}/${id}.md`);
+  assert.ok(!Number.isNaN(Date.parse(entry.since)), 'since is a parseable time');
+  // A crash between the cursor advance and the reindex: at reindex time the entry and the advanced cursor are both on disk.
+  await fs.rm(cursorPath(vault) + '.tmp', { recursive: true, force: true });
+  let atReindex = null;
+  const committed = await runChunkTransaction(baseArgs(vault, { chunk, skipStateMerge: true }), baseDeps({
+    reindexFn: async () => { atReindex = { entry: await exists(entryFileFor(vault, id)), cursor: await exists(cursorPath(vault)) }; },
+  }));
+  assert.ok(committed.committed, JSON.stringify(committed));
+  assert.deepEqual(atReindex, { entry: true, cursor: true });
+  assert.equal(await exists(entryFileFor(vault, id)), false, 'the successful step 7 removed it');
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
+test('S28 #314 (pending_write): a failed entry write returns pending_write with the cursor unmoved; a failed reindex keeps the entry, which buildLayers reads as repair_since', async () => {
+  const vault = makeVault();
+  const chunk = makeChunk();
+  const id = computeId(PROJECT, chunk);
+  // A FILE where the entry directory belongs: the entry write fails.
+  await fs.mkdir(path.join(vault, 'state', PROJECT), { recursive: true });
+  await fs.writeFile(entryDirFor(vault), 'not a directory');
+  const blocked = await runChunkTransaction(baseArgs(vault, { chunk, skipStateMerge: true }), baseDeps());
+  assert.equal(blocked.failed?.stage, 'pending_write', JSON.stringify(blocked));
+  assert.equal(await exists(cursorPath(vault)), false, 'the cursor did not move');
+
+  await fs.rm(entryDirFor(vault), { force: true });
+  const unindexed = await runChunkTransaction(baseArgs(vault, { chunk, skipStateMerge: true }), baseDeps({
+    reindexFn: async () => { throw new Error('mem0 unavailable'); },
+    retryDelaysMs: [0, 0, 0],
+    retryJitterMaxMs: 0,
+  }));
+  assert.equal(unindexed.failed?.stage, 'reindex');
+  const listed = await listPendingReindex({ vaultDir: vault, project: PROJECT });
+  assert.deepEqual(listed.map((e) => [e.id, e.summary_path]), [[id, `sessions/${PROJECT}/${id}.md`]], 'a failed reindex keeps the entry');
+
+  // Round trip into buildLayers (a raw file makes the project a layer).
+  const rawDir = path.join(vault, 'captures', PROJECT, 'raw');
+  await fs.mkdir(rawDir, { recursive: true });
+  await fs.writeFile(path.join(rawDir, '2026-08-10.md'), 'x');
+  const { layers } = await buildLayers({ vaultDir: vault, config: { min_transcript_bytes: 500 } });
+  assert.equal(layers[PROJECT].repair_since, new Date(listed[0].sinceMs).toISOString());
+  // An unparseable since resolves in the alerting direction.
+  await fs.writeFile(entryFileFor(vault, id), JSON.stringify({ summary_path: listed[0].summary_path, since: 'garbage' }));
+  const again = await buildLayers({ vaultDir: vault, config: { min_transcript_bytes: 500 } });
+  assert.equal(again.layers[PROJECT].repair_hours, 'Infinity');
+  await fs.rm(vault, { recursive: true, force: true });
+});
+
+test('S28 #314 (handler): a manual reindex outside a checkpoint leaves entries alone — POST /api/reindex, reindexDoc and cli/reindex.mjs never touch them', async () => {
+  // POST /api/reindex is inlined and calls the module-level memory, so it cannot run end to end
+  // here (r1-review-fixes.test.mjs pins its retry wrap the same way); the property is that no
+  // path outside a checkpoint's lock references the entry module at all.
+  const src = await fs.readFile(new URL('../mem0-mcp-http.mjs', import.meta.url), 'utf8');
+  const routeStart = src.indexOf("url.pathname === '/api/reindex' && req.method === 'POST'");
+  const route = src.slice(routeStart, src.indexOf("url.pathname === '/api/append-turn'", routeStart));
+  assert.ok(routeStart >= 0 && route.length > 500, 'found the inline /api/reindex route');
+  const fnStart = src.indexOf('async function reindexDoc(');
+  assert.ok(fnStart >= 0, 'found reindexDoc');
+  const reindexDocSrc = src.slice(fnStart, src.indexOf('\n}\n', fnStart));
+  const cli = await fs.readFile(new URL('../../cli/reindex.mjs', import.meta.url), 'utf8');
+  for (const [label, text] of [['POST /api/reindex', route], ['reindexDoc', reindexDocSrc], ['cli/reindex.mjs', cli]]) {
+    assert.doesNotMatch(text, /pending-reindex|PendingReindex/, `${label} must not touch repair entries — only a checkpoint, under its lock, does`);
+  }
 });

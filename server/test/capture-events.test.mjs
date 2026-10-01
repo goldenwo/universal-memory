@@ -306,6 +306,19 @@ test('surfaceFromHeaders caps the derived value at 64 chars (NIT-5: bounded PK c
   assert.equal(derived, 'x'.repeat(64));
 });
 
+// #314 D8 (T05): `sweep` is the idle sweep's own surface, written only by the server and excluded
+// from the `capture` freshness section. A client claiming it would either hide its own captures
+// from freshness or pass its traffic off as the sweep's, so every client entry point refuses it.
+test('surfaceFromHeaders: a header that normalizes to the reserved "sweep" records under unknown (#314 D8)', () => {
+  assert.equal(surfaceFromHeaders({ 'x-um-source': 'sweep' }), 'unknown');
+  assert.equal(surfaceFromHeaders({ 'x-um-source': 'SWEEP' }), 'unknown');
+  assert.equal(surfaceFromHeaders({ 'x-um-source': ' sweep ' }), 'unknown');
+  assert.equal(surfaceFromHeaders({ 'x-mem0-source': 'Sweep' }), 'unknown', 'the alias header is a client entry point too');
+  assert.equal(surfaceFromHeaders({ 'x-um-source': 'sweep' }, 'mem0-compat'), 'unknown',
+    'a reserved name is not an absent header: it never takes the compat fallback');
+  assert.equal(surfaceFromHeaders({ 'x-um-source': 'Sweeper' }), 'sweeper', 'only the exact reserved name is refused');
+});
+
 // ---------- integration: doAppendTurn (capture.turn) ----------
 
 test('doAppendTurn success emits capture.turn outcome=stored with threaded surface + project', async () => {
@@ -672,6 +685,78 @@ test('REST /api/add with X-UM-Source and no body surface uses the header for cou
     assert.equal(rows.length, 1);
     assert.equal(rows[0].event, 'capture.extraction');
     assert.equal(rows[0].surface, 'claude-code', 'counter surface from X-UM-Source, not unknown');
+  } finally {
+    srv.close();
+    await once(srv, 'close');
+    if (prevWrite !== undefined) process.env.UM_MCP_WRITE_ENABLED = prevWrite; else delete process.env.UM_MCP_WRITE_ENABLED;
+    if (prevToken !== undefined) process.env.UM_AUTH_TOKEN = prevToken; else delete process.env.UM_AUTH_TOKEN;
+  }
+});
+
+// #314 D8 (T05), the two body paths: the #159 rule stores a caller's surface as given, so the
+// reservation there is an exact comparison — "sweep" becomes unknown, while "SWEEP" is a surface of
+// its own that the exclusion (also exact) leaves visible in `capture`.
+test('MCP memory_add: an args.surface of exactly "sweep" records under unknown; "SWEEP" is stored as given (#314 D8)', async () => {
+  const dbPath = await freshCountersDb();
+  const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  const upserts = [];
+  const ctx = {
+    memory: mockMemory,
+    surface: 'header-surface',
+    _factsProviderOverride: factsPassthrough(['a fact from a caller claiming the sweep surface']),
+    _embedProviderOverride: embedOverride,
+    _qdrantClient: { upsert: async (c, body) => { upserts.push(body); return {}; } },
+  };
+  try {
+    await handleToolCall('memory_add', { text: 'one', surface: 'sweep', metadata: { project: 'um-proj' } }, ctx);
+    await handleToolCall('memory_add', { text: 'two', surface: 'SWEEP', metadata: { project: 'um-proj' } }, ctx);
+    assert.equal(upserts.length, 2);
+    assert.deepEqual(upserts[0].points[0].payload.surfaces, ['unknown'], 'the reserved name is not stored as attribution');
+    assert.deepEqual(upserts[1].points[0].payload.surfaces, ['SWEEP'], 'a case variant is stored as given (#159)');
+    assert.deepEqual(readRows(dbPath).map((r) => [r.event, r.surface, r.count]), [
+      ['capture.extraction', 'SWEEP', 1],
+      ['capture.extraction', 'unknown', 1],
+    ]);
+  } finally {
+    if (prevWrite !== undefined) process.env.UM_MCP_WRITE_ENABLED = prevWrite; else delete process.env.UM_MCP_WRITE_ENABLED;
+  }
+});
+
+test('REST /api/add: a body surface of exactly "sweep" and an X-UM-Source "Sweep" both record under unknown; a body "SWEEP" is stored as given (#314 D8)', async () => {
+  const dbPath = await freshCountersDb();
+  const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
+  const prevToken = process.env.UM_AUTH_TOKEN;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  process.env.UM_AUTH_TOKEN = 'test-token';
+  const upserts = [];
+  const srv = createServer(createRequestHandler({
+    memory: mockMemory,
+    _qdrantClient: { upsert: async (c, body) => { upserts.push(body); return {}; } },
+    _factsProviderOverride: factsPassthrough(['a fact from a caller claiming the sweep surface']),
+    _embedProviderOverride: embedOverride,
+  }));
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  const { port } = srv.address();
+  const add = async (body, extraHeaders = {}) => {
+    const r = await fetch(`http://127.0.0.1:${port}/api/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token', ...extraHeaders },
+      body: JSON.stringify({ metadata: { project: 'um-proj' }, ...body }),
+    });
+    assert.equal(r.status, 200, await r.text().catch(() => ''));
+  };
+  try {
+    await add({ text: 'body claims it', surface: 'sweep' });
+    await add({ text: 'header claims it' }, { 'X-UM-Source': 'Sweep' });
+    await add({ text: 'a case variant', surface: 'SWEEP' });
+    assert.equal(upserts.length, 3);
+    assert.deepEqual(upserts.map((u) => u.points[0].payload.surfaces), [['unknown'], ['unknown'], ['SWEEP']]);
+    assert.deepEqual(readRows(dbPath).map((r) => [r.event, r.surface, r.count]), [
+      ['capture.extraction', 'SWEEP', 1],
+      ['capture.extraction', 'unknown', 2],
+    ]);
   } finally {
     srv.close();
     await once(srv, 'close');

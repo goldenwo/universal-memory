@@ -851,6 +851,49 @@ test('layers tile: an infinite lag (never-checkpointed project) renders the ∞ 
   assert.doesNotMatch(html, /Infinityh/);
 });
 
+// #314 D12: a server that measures age (layers carry age_hours) gets the age text, never-digested
+// and repair-arm wording, and each stale layer's latest sweep outcome — the same text um-alert.sh
+// prints. The lag cases above are the old-server fallback.
+const AGED = Object.freeze({
+  last_capture_at: '2026-09-30T20:00:00.000Z', last_summary_at: '2026-09-28T00:00:00.000Z', last_state_at: null,
+  pending_bytes: 2000, stale: true, lag_hours: 5, undigested: true,
+  waiting_since: '2026-09-30T05:00:00.000Z', age_hours: 31.2, repair_since: null, repair_hours: null,
+});
+const sweepWith = (layers) => ({ enabled: true, last_run_at: '2026-10-01T10:00:00.000Z', last_run: { eligible: 1, attempted: 1 }, layers, outcomes_7d: null });
+const layersTileOf = (html) => html.split('Per-layer freshness')[1].split('</section>')[0];
+
+test('layers tile (#314 D12): a stale layer shows how long its content has waited and the sweep\'s latest outcome', () => {
+  const tile = layersTileOf(render(makeStats({
+    layers: { demo: AGED },
+    sweep: sweepWith({ demo: { last_attempt_at: '2026-10-01T10:00:04.000Z', outcome: 'failed', stopped_reason: null, next_eligible_at: null, cursor_after: null, repair: null } }),
+  })));
+  assert.match(tile, /undigested for 31\.2h/);
+  assert.match(tile, /2000/);
+  assert.match(tile, /failed 2026-10-01T10:00:04\.000Z/);
+  assert.doesNotMatch(tile, /lag/i, 'the lag is display history; the age is what made the layer stale');
+});
+
+test('layers tile (#314 D12): never digested, the repair arm, an unknown age, and a layer the sweep has not attempted', () => {
+  const tile = layersTileOf(render(makeStats({
+    layers: {
+      fresh: { ...AGED, stale: false },
+      'never-digested': { ...AGED, last_summary_at: null, lag_hours: 'Infinity', pending_bytes: 700 },
+      'unindexed': { ...AGED, undigested: false, pending_bytes: 0, waiting_since: null, age_hours: null, repair_since: '2026-09-29T12:00:00.000Z', repair_hours: 46 },
+      'grown-below': { ...AGED, waiting_since: null, age_hours: 'Infinity' },
+    },
+    sweep: sweepWith({
+      unindexed: { last_attempt_at: '2026-10-01T10:00:09.000Z', outcome: 'abstained', stopped_reason: null, next_eligible_at: null, cursor_after: null, repair: { done: 0, failed: 1, dropped: 0 } },
+    }),
+  })));
+  assert.match(tile, /abstained 2026-10-01T10:00:09\.000Z, repair failed/, 'a failed repair is named, not hidden behind the outcome');
+  assert.match(tile, /3 stale project/);
+  assert.match(tile, /never digested/);
+  assert.match(tile, /summary written 2026-09-29T12:00:00\.000Z is not indexed/);
+  assert.match(tile, /undigested, age unknown/);
+  assert.doesNotMatch(tile, /Infinity/, 'an infinite wait never prints as the raw sentinel');
+  assert.doesNotMatch(tile, /<th scope="row">fresh<\/th>/);
+});
+
 test('layers tile: a malformed layers section (not an object) is "cannot assess", never crashes or fabricates a project list', () => {
   const html = render(makeStats({ layers: [] }));
   assert.match(html, /Per-layer freshness/);

@@ -1971,3 +1971,125 @@ test('#185: REST /api/checkpoint returns 200 with skipped envelope on abstention
   }
 });
 
+// ===========================================================================
+// #314 S29 — the repair step (spec D7, §4.2.1a): under the checkpoint lock,
+// right after the heartbeat starts and before the run-start cost check, each
+// pending-reindex entry of the layer is repaired, oldest first, best effort.
+// ===========================================================================
+
+const RP = 'repairproj';
+
+async function seedSummary(vaultDir, project, id) {
+  const rel = `sessions/${project}/${id}.md`;
+  await fs.mkdir(path.join(vaultDir, 'sessions', project), { recursive: true });
+  await fs.writeFile(path.join(vaultDir, rel), `---\ntype: session_summary\nid: ${id}\ntitle: t\nproject: ${project}\ncovers_until: 2025-12-30T10:00:00.000Z\n---\nolder summary\n`);
+  return rel;
+}
+
+async function seedEntry(vaultDir, project, id, summaryPath, since = new Date().toISOString()) {
+  const dir = path.join(vaultDir, 'state', project, 'pending-reindex');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify({ summary_path: summaryPath, since }));
+}
+
+const entryNames = (vaultDir, project = RP) =>
+  fs.readdir(path.join(vaultDir, 'state', project, 'pending-reindex')).catch(() => []);
+
+function repairCtx(vaultDir, reindexFn, extra = {}) {
+  return {
+    config: BASE_CONFIG, vaultDir, summarizeFn: makeSummarizeFn(), updateStateFn: makeUpdateStateFn(),
+    reindexFn, retryDelaysMs: [0, 0, 0], retryJitterMaxMs: 0, ...extra,
+  };
+}
+
+test('S29 #314 (lock held): a checkpoint that meets a held lock repairs nothing', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, RP, '2026-01-01.md', '# s\nwork');
+  const id = 'session-2025-12-31-aaaa0001';
+  await seedEntry(vaultDir, RP, id, await seedSummary(vaultDir, RP, id));
+  await fs.mkdir(path.join(vaultDir, 'state', RP, 'state.md.lockdir'), { recursive: true });
+  const reindexed = [];
+  const result = await doCheckpoint({ project: RP }, repairCtx(vaultDir, async (p) => { reindexed.push(p); }));
+  assert.equal(result.error, 'checkpoint_in_progress');
+  assert.deepEqual(reindexed, []);
+  assert.deepEqual(await entryNames(vaultDir), [`${id}.json`]);
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('S29 #314 (repair before the chunk): every entry is repaired and removed, oldest first, before the first chunk; a missing summary drops its entry', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, RP, '2026-01-01.md', '# s\nwork');
+  const relA = await seedSummary(vaultDir, RP, 'session-2025-12-30-aaaa0001');
+  const relB = await seedSummary(vaultDir, RP, 'session-2025-12-31-aaaa0002');
+  await seedEntry(vaultDir, RP, 'session-2025-12-31-aaaa0002', relB, '2026-01-01T01:00:00.000Z');
+  await seedEntry(vaultDir, RP, 'session-2025-12-30-aaaa0001', relA, '2026-01-01T00:00:00.000Z');
+  await seedEntry(vaultDir, RP, 'session-2025-12-29-gone0003', `sessions/${RP}/session-2025-12-29-gone0003.md`, '2026-01-01T02:00:00.000Z');
+  const reindexed = [];
+  const result = await doCheckpoint({ project: RP }, repairCtx(vaultDir, async (p) => { reindexed.push(p); }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.chunks_done, 1);
+  assert.deepEqual(reindexed.slice(0, 2), [relA, relB], 'both repaired, oldest first');
+  assert.equal(reindexed.length, 3, 'then the chunk’s own reindex');
+  assert.deepEqual(result.repairs, { done: 2, failed: 0, dropped: 1 });
+  assert.deepEqual(await entryNames(vaultDir), [], 'repaired and dropped entries are gone, and the new chunk’s own entry went with its step 7');
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('S29 #314 (failed repair): a throwing reindexFn keeps the entry and counts it failed; the run still digests and returns ok:true', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, RP, '2026-01-01.md', '# s\nwork');
+  const id = 'session-2025-12-31-aaaa0001';
+  const rel = await seedSummary(vaultDir, RP, id);
+  await seedEntry(vaultDir, RP, id, rel);
+  const result = await doCheckpoint({ project: RP }, repairCtx(vaultDir, async (p) => { if (p === rel) throw new Error('qdrant down'); }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.chunks_done, 1);
+  assert.deepEqual(result.repairs, { done: 0, failed: 1, dropped: 0 });
+  assert.deepEqual(await entryNames(vaultDir), [`${id}.json`]);
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('S29 #314 (cost cap): a run stopped by the run-start cost cap still repairs', async () => {
+  const vaultDir = await makeVault();
+  await seedCapture(vaultDir, RP, '2026-01-01.md', '# s\nwork');
+  const id = 'session-2025-12-31-aaaa0001';
+  const rel = await seedSummary(vaultDir, RP, id);
+  await seedEntry(vaultDir, RP, id, rel);
+  const today = new Date().toISOString().slice(0, 10);
+  await fs.mkdir(path.join(vaultDir, '.telemetry'), { recursive: true });
+  await fs.writeFile(path.join(vaultDir, '.telemetry', `${today}-${RP}.count`), '0.50');
+  const reindexed = [];
+  const result = await doCheckpoint({ project: RP }, repairCtx(vaultDir, async (p) => { reindexed.push(p); }));
+  assert.equal(result.error, 'cost cap hit');
+  assert.deepEqual(reindexed, [rel]);
+  assert.deepEqual(result.repairs, { done: 1, failed: 0, dropped: 0 });
+  assert.deepEqual(await entryNames(vaultDir), []);
+  await fs.rm(vaultDir, { recursive: true, force: true });
+});
+
+test('S29 #314 (same-chunk retry): after a cursor_write failure, the retry (repair, then the chunk again) ends with no entry when its step 7 succeeds and exactly one when it fails', async () => {
+  for (const reindexOk of [true, false]) {
+    const vaultDir = await makeVault();
+    await seedCapture(vaultDir, RP, '2026-01-01.md', '# s\nwork');
+    const cursorTmp = path.join(vaultDir, 'state', RP, 'checkpoint-cursor.json.tmp');
+    await fs.mkdir(cursorTmp, { recursive: true });
+    const first = await doCheckpoint({ project: RP }, repairCtx(vaultDir, async () => {}));
+    assert.equal(first.error?.stage, 'cursor_write', JSON.stringify(first));
+    assert.equal((await entryNames(vaultDir)).length, 1, 'the cursor_write failure left the entry');
+    await fs.rm(cursorTmp, { recursive: true, force: true });
+    const second = await doCheckpoint(
+      { project: RP },
+      repairCtx(vaultDir, reindexOk ? async () => {} : async () => { throw new Error('qdrant down'); }),
+    );
+    if (reindexOk) {
+      assert.equal(second.ok, true, JSON.stringify(second));
+      assert.deepEqual(second.repairs, { done: 1, failed: 0, dropped: 0 });
+      assert.deepEqual(await entryNames(vaultDir), [], 'no entry once the retry’s step 7 succeeds');
+    } else {
+      assert.equal(second.error?.stage, 'reindex', JSON.stringify(second));
+      assert.equal((await entryNames(vaultDir)).length, 1, 'exactly one entry when it fails (same summary id)');
+    }
+    await fs.rm(vaultDir, { recursive: true, force: true });
+  }
+});
+

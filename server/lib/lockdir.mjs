@@ -20,7 +20,8 @@ import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { rmdirSync, statSync, statfsSync } from 'node:fs';
 
 const HELD = new Set();
-const DEFAULT_STALE_MS = 10 * 60_000;
+// Exported (#314 D1): the idle sweep's first run waits this plus one heartbeat, by import.
+export const DEFAULT_STALE_MS = 10 * 60_000;
 // Exported (additive, Task 8 / spec §9 I6(a)): the checkpoint chunking arc's
 // whole-run lock heartbeat (checkpoint-config.mjs's HEARTBEAT_INTERVAL_MS)
 // must stay strictly below this value by import, so a future default bump on

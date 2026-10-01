@@ -376,7 +376,7 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
 
 test('layers: always present, even as {} — vaultDir omitted (the common test/dev shape)', async () => {
   const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
-  assert.deepEqual(body.layers, {});
+  assert.deepEqual(body.layers, { __proto__: null });
   assert.equal(body.degraded, undefined, 'an absent vaultDir must not degrade every pre-existing caller — see lib/layers.mjs');
 });
 
@@ -405,7 +405,7 @@ test('layers: a per-project I/O error degrades the payload (layers-partial) with
     now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', vaultDir: vault, listAll,
   });
   assert.ok(body.degraded.includes('layers-partial'));
-  assert.deepEqual(body.layers, {}, 'the broken project is omitted, not guessed at');
+  assert.deepEqual(body.layers, { __proto__: null }, 'the broken project is omitted, not guessed at');
   assert.equal(body.corpus.points, 3, 'other sections stay live — one bad layers project must not sink the payload');
 });
 
@@ -443,6 +443,8 @@ test('signals: ALWAYS present; empty DB ⇒ { capture_anomaly: {} } (the ABSENT-
       capture_anomaly: { __proto__: null },
       // #309: sibling family, same healthy-zero contract.
       checkpoint_failure: { __proto__: null },
+      // #314 D7: the sweep's own family, same contract.
+      sweep_failure: { __proto__: null },
     }, 'healthy-zero shape — distinguishes {} from null (degraded) and from ABSENT (old server)');
   });
 });
@@ -463,7 +465,103 @@ test('signals: nests counters.anomalies under capture_anomaly', async () => {
   assert.deepEqual(body.signals, {
     capture_anomaly: fakeCounters.anomalies,
     checkpoint_failure: null,
+    // #314: the same seam rule for the sweep's family.
+    sweep_failure: null,
   });
+});
+
+test('signals.sweep_failure (#314 D7): nests counters.sweepFailure beside the accepted-mode family', async () => {
+  const sweepFailure = { 'proj-r': { last_day_seen: TODAY, count_7d: 1, outcomes_7d: { reindex_failed: 1, rejected: 0, other: 0 } } };
+  const body = await buildStats({
+    now: NOW, memory: makeFakeMemory(1), userId: 'op', endpoint: '/test',
+    listAll, checkpointConfig: {},
+    readCounters: () => ({
+      available: true, capture: {}, growth_7d: {}, growth_docs_7d: {}, recall: { searches_today: 0, searches_7d: 0 },
+      anomalies: {}, checkpointFailure: {}, sweepFailure,
+    }),
+  });
+  assert.deepEqual(body.signals, { capture_anomaly: {}, checkpoint_failure: {}, sweep_failure: sweepFailure });
+});
+
+// ---------------------------------------------------------------------------
+// #314: the `sweep` block (D9) and the payload clock reaching `layers` (T04)
+// ---------------------------------------------------------------------------
+
+const SWEEP_STATE = Object.freeze({
+  enabled: true,
+  last_run_at: '2026-10-01T10:00:00.000Z',
+  last_run: { eligible: 3, attempted: 2 },
+  layers: {
+    demo: {
+      last_attempt_at: '2026-10-01T10:00:04.000Z',
+      outcome: 'digested',
+      stopped_reason: null,
+      next_eligible_at: '2026-10-01T16:00:04.000Z',
+      cursor_after: { file: '2026-10-01.md', offset: 120 },
+      repair: null,
+    },
+  },
+});
+
+test('sweep (#314 T03): the key is present and null when no sweep state is supplied — the sweep is off, or the caller has none', async () => {
+  const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
+  assert.ok('sweep' in body);
+  assert.equal(body.sweep, null);
+});
+
+test('sweep (#314 T01/D9): the in-process state plus outcomes_7d counted from the sweep\'s own rows, which capture omits', async () => {
+  const dbPath = await tempDbPath();
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code', event: 'capture.turn', outcome: 'stored', count: 1 },
+    { day: TODAY, surface: 'sweep', project: 'demo', event: 'capture.checkpoint', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'sweep', project: 'other', event: 'capture.checkpoint', outcome: 'abstained', count: 1 },
+  ]);
+  await withEnv({ UM_COUNTERS_DB_PATH: dbPath }, async () => {
+    const body = await buildStats({
+      now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll, sweepState: SWEEP_STATE,
+    });
+    assert.deepEqual(body.sweep, {
+      enabled: true,
+      last_run_at: '2026-10-01T10:00:00.000Z',
+      last_run: { eligible: 3, attempted: 2 },
+      layers: SWEEP_STATE.layers,
+      outcomes_7d: { stored: 2, abstained: 1, deduped: 0, superseded: 0, error: 0, failed: 0 },
+    });
+    assert.deepEqual(Object.keys(body.capture), ['claude-code']);
+  });
+});
+
+test('sweep (#314 D9): outcomes_7d is null when the counters are degraded or a fake omits them; the in-process half still serves', async () => {
+  const degraded = await buildStats({
+    now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll, sweepState: SWEEP_STATE,
+    readCounters: () => ({ available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null, sweepFailure: null, sweepOutcomes: null }),
+  });
+  assert.equal(degraded.sweep.outcomes_7d, null);
+  assert.deepEqual(degraded.sweep.last_run, { eligible: 3, attempted: 2 });
+
+  const omitted = await buildStats({
+    now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll, sweepState: SWEEP_STATE,
+    readCounters: () => ({ available: true, capture: {}, growth_7d: {}, growth_docs_7d: {}, recall: { searches_today: 0, searches_7d: 0 } }),
+  });
+  assert.equal(omitted.sweep.outcomes_7d, null, 'undefined from a DI fake serves as null, never as a missing key');
+  assert.ok('outcomes_7d' in omitted.sweep);
+});
+
+test('layers (#314 T04): buildStats passes its own now to buildLayers, so a layer\'s age is measured on the payload clock', async () => {
+  const vault = tempDir('um-stats-payload-314-t04-');
+  const rawDir = path.join(vault, 'captures', 'demo', 'raw');
+  await fs.mkdir(rawDir, { recursive: true });
+  await fs.writeFile(path.join(rawDir, '2026-01-01.md'), `## 2026-01-01T06:00:00.000Z user\n${'x'.repeat(600)}\n\n`, 'utf8');
+
+  const body = await buildStats({
+    now: Date.parse('2026-01-02T06:00:00.000Z'), memory: makeFakeMemory(0), userId: 'op', endpoint: '/x',
+    vaultDir: vault, checkpointConfig: { min_transcript_bytes: 500 }, listAll,
+  });
+  const demo = body.layers.demo;
+  assert.equal(demo.undigested, true);
+  assert.equal(demo.waiting_since, '2026-01-01T06:00:00.000Z');
+  assert.equal(demo.age_hours, 24, 'measured from the payload clock, not the wall clock (which reads thousands of hours)');
+  assert.equal(demo.stale, false);
 });
 
 test('signals: null when counters degraded (anomalies null)', async () => {

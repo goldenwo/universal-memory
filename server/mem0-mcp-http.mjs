@@ -61,7 +61,7 @@ import { doAppendTurn } from './lib/append-turn.mjs';
 import { handleReactionRequest } from './lib/reaction-attach.mjs';
 import { handleCaptureAnomalyRequest } from './lib/anomaly-signal.mjs';
 import { doCheckpoint } from './lib/checkpoint.mjs';
-import { recordCaptureEvent, surfaceFromHeaders } from './lib/capture-events.mjs';
+import { recordCaptureEvent, surfaceFromHeaders, clientSurface } from './lib/capture-events.mjs';
 import { CHECKPOINT_FAILURE_ALERTING, CHECKPOINT_FAILURE_EVENT, classifyCheckpointSettlement } from './lib/checkpoint-signal.mjs';
 import { unsupersedePoint, isAutoSupersedeEnabled } from './lib/supersede.mjs';
 import { applyDefaultProject, PROJECT_SLUG_RE, TOOL_IDS, validateLanePersonaSlug } from './lib/default-project.mjs';
@@ -106,6 +106,13 @@ import { isWriteEnabled } from './lib/write-enabled.mjs';
 // FULL_SCAN_LIMIT: owned by lib/mem0-read.mjs since #231 round-2 (re-exported
 // by stats-payload for its consumers); imported here for /health + delete-scan.
 import { buildStats, FULL_SCAN_LIMIT } from './lib/stats-payload.mjs';
+import { startIdleSweep } from './lib/idle-sweep.mjs';
+
+// #314 (spec §4.2.3): the running idle sweep, started in the IS_MAIN listen callback below —
+// null in a process that is not the server's main module, or with UM_SWEEP_ENABLED=false.
+// /api/stats reads its state per request.
+let idleSweep = null;
+const idleSweepState = () => idleSweep?.state() ?? null;
 
 // ---------------------------------------------------------------------------
 // Route-template resolver (C.3 / spec §5.3 + future C.4 metrics).
@@ -1123,8 +1130,10 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 				// contract); otherwise fall back to the header-derived ctx.surface
 				// so capture.extraction counters carry real attribution. Provider /
 				// qdrant seams threaded from ctx for parity with REST /api/add
-				// (same DI shape createRequestHandler forwards to /mcp).
-				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: args?.surface ?? ctx?.surface, _qdrantClient: ctx?._qdrantClient, _factsProviderOverride: ctx?._factsProviderOverride, _embedProviderOverride: ctx?._embedProviderOverride })
+				// (same DI shape createRequestHandler forwards to /mcp). #314 D8:
+				// a caller's surface exactly equal to an internal one ('sweep') is
+				// recorded as 'unknown' (clientSurface).
+				umAdd({ memory: memoryClient, text: args.text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: clientSurface(args?.surface ?? ctx?.surface), _qdrantClient: ctx?._qdrantClient, _factsProviderOverride: ctx?._factsProviderOverride, _embedProviderOverride: ctx?._embedProviderOverride })
 					.catch((e) => { throw tagRetryable(e); })
 			, { op: 'add' });
 			const events = result?.results?.map((r) => `[${r.event || r.metadata?.event}] ${r.memory}`).join('; ') || 'Stored.';
@@ -2548,8 +2557,9 @@ export function createRequestHandler(ctx = {}) {
 	// shared per-IP limiter, spec §3 step 6) is shared across every request this
 	// server serves. Constructed unconditionally and cheap: the kill switch is
 	// read per request (endpoint-class row + a re-check inside), so no flag
-	// state is frozen at construction time.
-	const control = createControlHandlers();
+	// state is frozen at construction time. #314 D12: the page reads the same
+	// idle-sweep handle as /api/stats (ctx._getSweepState is the test seam).
+	const control = createControlHandlers({ getSweepState: ctx?._getSweepState ?? idleSweepState });
 	// OAuth on/off is a construction-time decision; env validated at boot.
 	const oauthEnabled = (process.env.UM_OAUTH_ENABLED ?? 'false') === 'true';
 	const oauthBase = (process.env.UM_PUBLIC_BASE_URL ?? '').replace(/\/+$/, '');
@@ -3238,7 +3248,8 @@ export function createRequestHandler(ctx = {}) {
 			// ctx?._umGetAll is the test seam (same convention as ctx.memory).
 			// #297: `imputation` is the same test seam shape (buildStats defaults it to the module
 			// singleton, exactly as listAll defaults to umGetAll — spec D16).
-			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats', listAll: ctx?._umGetAll, imputation: ctx?._undatedImputation });
+			// #314 D9: the idle sweep's state (null when none runs); ctx?._getSweepState is the test seam.
+			const body = await buildStats({ now: Date.now(), memory: resolvedMemory(), userId: USER_ID, endpoint: '/api/stats', listAll: ctx?._umGetAll, imputation: ctx?._undatedImputation, sweepState: (ctx?._getSweepState ?? idleSweepState)() });
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(JSON.stringify(body));
 			return;
@@ -3474,7 +3485,9 @@ export function createRequestHandler(ctx = {}) {
 					// T5 review IMPORTANT-2: body `surface` still wins (D1 F.1), but a
 					// client sending only X-UM-Source / X-Mem0-Source no longer lands
 					// as surface='unknown' — uniform with the MCP + compat paths.
-					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: surface ?? surfaceFromHeaders(req.headers), _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
+					// #314 D8: a body surface exactly equal to an internal one
+					// ('sweep') is recorded as 'unknown' (clientSurface).
+					umAdd({ memory: resolvedMemory(), text, userId: USER_ID, metadata: metadataWithDefault, infer: true, surface: clientSurface(surface ?? surfaceFromHeaders(req.headers)), _qdrantClient: ctx._qdrantClient, _factsProviderOverride: ctx._factsProviderOverride, _embedProviderOverride: ctx._embedProviderOverride })
 						.catch((e) => { throw tagRetryable(e); })
 				, { op: 'add' });
 			} catch (err) {
@@ -3966,5 +3979,12 @@ if (IS_MAIN) {
 		// scan thunk. Gated on the flag — with decay off nothing runs and no log line appears
 		// (the CI smoke gate greps for exactly that, spec §6.6). Fire-and-forget; never rejects.
 		if (isDecayEnabled()) undatedImputation.refreshIfDue()?.catch?.(() => {});
+		// #314 (spec §4.2.3): the idle sweep digests the layers no session end reaches — hourly,
+		// first run 10.5 min after listen, writes-guarded per run, under its own surface 'sweep'.
+		// Default on; UM_SWEEP_ENABLED=false starts nothing. Never rejects (lib/idle-sweep.mjs).
+		idleSweep = startIdleSweep({
+			checkpointFn: doCheckpoint,
+			ctx: { vaultDir: process.env.UM_VAULT_DIR, reindexFn: reindexDoc },
+		});
 	});
 }
