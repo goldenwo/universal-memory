@@ -376,7 +376,7 @@ test('readCounters: an injected reader supersedes readCounterStats — the seam 
 
 test('layers: always present, even as {} — vaultDir omitted (the common test/dev shape)', async () => {
   const body = await buildStats({ now: NOW, memory: makeFakeMemory(0), userId: 'op', endpoint: '/x', listAll });
-  assert.deepEqual(body.layers, {});
+  assert.deepEqual(body.layers, { __proto__: null });
   assert.equal(body.degraded, undefined, 'an absent vaultDir must not degrade every pre-existing caller — see lib/layers.mjs');
 });
 
@@ -405,7 +405,7 @@ test('layers: a per-project I/O error degrades the payload (layers-partial) with
     now: NOW, memory: makeFakeMemory(3), userId: 'op', endpoint: '/x', vaultDir: vault, listAll,
   });
   assert.ok(body.degraded.includes('layers-partial'));
-  assert.deepEqual(body.layers, {}, 'the broken project is omitted, not guessed at');
+  assert.deepEqual(body.layers, { __proto__: null }, 'the broken project is omitted, not guessed at');
   assert.equal(body.corpus.points, 3, 'other sections stay live — one bad layers project must not sink the payload');
 });
 

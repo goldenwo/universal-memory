@@ -363,20 +363,33 @@ test('fail-soft: the payload never throws even when the whole captures/ dir is u
   // ENOTDIR (not ENOENT), the real-failure branch.
   await fs.writeFile(path.join(vault, 'captures'), 'not a directory', 'utf8');
   const result = await buildLayers({ vaultDir: vault, config: CONFIG });
-  assert.deepEqual(result.layers, {});
+  assert.deepEqual(result.layers, { __proto__: null });
   assert.deepEqual(result.degraded, ['layers-unavailable']);
 });
 
 test('vaultDir absent (undefined) ⇒ empty layers, NOT degraded — unreachable-in-production shape', async () => {
   const result = await buildLayers({ vaultDir: undefined, config: CONFIG });
-  assert.deepEqual(result.layers, {});
+  assert.deepEqual(result.layers, { __proto__: null });
   assert.deepEqual(result.degraded, []);
 });
 
 test('captures/ directory genuinely never created (ENOENT) ⇒ empty layers, NOT degraded — "0 projects" is a real, successfully-determined truth', async () => {
   const vault = tempDir('um-layers-'); // exists, but no captures/ subdir ever created
   const result = await buildLayers({ vaultDir: vault, config: CONFIG });
-  assert.deepEqual(result.layers, {});
+  assert.deepEqual(result.layers, { __proto__: null });
+  assert.deepEqual(result.degraded, []);
+});
+
+// Review fix (#314): PROJECT_SLUG_RE admits `__proto__`. On a plain-object map that key hits the
+// prototype setter, so the layer vanished from the payload — never shown, never swept, never
+// stale (the v1.8.1 hostile-key class stats.mjs already guards with null-prototype maps).
+test('a project named __proto__ is served as data, not swallowed by the prototype setter', async () => {
+  const vault = tempDir('um-layers-');
+  await writeRawFile(vault, '__proto__', '2026-09-27.md', `## 2026-09-27T01:00:00.000Z user\n${'x'.repeat(600)}\n\n`, iso('2026-09-27T01:00:00Z'));
+  const result = await buildLayers({ vaultDir: vault, config: CONFIG, now: Date.parse('2026-09-28T12:00:00.000Z') });
+  assert.ok(Object.hasOwn(result.layers, '__proto__'), 'an own key, not the map\'s prototype');
+  assert.equal(result.layers.__proto__.undigested, true);
+  assert.equal(result.layers.__proto__.stale, true);
   assert.deepEqual(result.degraded, []);
 });
 
@@ -384,7 +397,7 @@ test('a project directory with no raw/ captures at all is simply absent from the
   const vault = tempDir('um-layers-');
   await fs.mkdir(path.join(vault, 'captures', 'empty-project'), { recursive: true }); // exists, no raw/ subdir
   const result = await buildLayers({ vaultDir: vault, config: CONFIG });
-  assert.deepEqual(result.layers, {});
+  assert.deepEqual(result.layers, { __proto__: null });
   assert.deepEqual(result.degraded, []);
 });
 

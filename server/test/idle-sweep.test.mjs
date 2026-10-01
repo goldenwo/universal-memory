@@ -294,6 +294,19 @@ test('S16 #314: state() — nulls before the first run, then last_run and one en
   });
 });
 
+// Review fix: PROJECT_SLUG_RE admits `__proto__`; a plain-object state map would turn the layer's
+// entry into the map's prototype, dropping it from state().
+test('S16b #314: a layer named __proto__ is attempted and kept in state() as data', async () => {
+  // Computed keys make own `__proto__` properties (a literal `__proto__:` would set the prototype),
+  // and the harness looks results up by project, so this one needs its own entry too.
+  const h = harness({ layers: (t) => ({ ['__proto__']: layer(t) }), results: { ['__proto__']: DIGESTED } });
+  await h.sweep.runOnce();
+  assert.deepEqual(h.attempted(), ['__proto__']);
+  const { layers } = h.sweep.state();
+  assert.ok(Object.hasOwn(layers, '__proto__'), 'an own key in state().layers');
+  assert.equal(layers.__proto__.outcome, 'digested');
+});
+
 test('S17 #314: the checkpoint gets { project } only and the sweep ctx — surface "sweep", the reindexFn, no lane or persona', async () => {
   const h = harness({ layers: (t) => ({ a: layer(t) }) });
   await h.sweep.runOnce();

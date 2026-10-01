@@ -128,7 +128,7 @@ export function createIdleSweep({
   let intervalTimer = null;
   let lastRunAt = null;
   let lastRun = null;
-  const layersState = {};
+  const layersState = Object.create(null); // keyed by project slug, which may be `__proto__`
   // D6, in memory: a restart resets both (at worst one extra attempt per layer).
   const nextEligible = new Map();
   const rateLimitStreak = new Map();

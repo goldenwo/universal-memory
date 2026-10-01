@@ -548,7 +548,11 @@ export async function buildLayers({ vaultDir, config, scanLimit = LAYERS_SCAN_LI
   );
   const lagMaxHours = summaryLagMaxHours();
 
-  const layers = {};
+  // Null-prototype map: project slugs come from the vault's directory names, and
+  // PROJECT_SLUG_RE admits `__proto__` — on a plain literal that key hits the
+  // prototype setter and the layer silently vanishes (the v1.8.1 class stats.mjs
+  // guards the same way).
+  const layers = Object.create(null);
   const degraded = [];
 
   if (typeof vaultDir !== 'string' || vaultDir === '') {
