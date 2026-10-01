@@ -47,6 +47,24 @@ export const CAPTURE_EVENTS = Object.freeze({
   EXTRACTION: 'capture.extraction',
 });
 
+/** #314 D8: the idle sweep's surface. Only the server writes it (doCheckpoint's ctx.surface). */
+export const SWEEP_SURFACE = 'sweep';
+
+/**
+ * #314 D8: surfaces only the server writes. stats.mjs keeps them out of the `capture` freshness
+ * section (which means "a client captured"), and every client entry point refuses them.
+ */
+export const INTERNAL_SURFACES = Object.freeze([SWEEP_SURFACE]);
+
+/**
+ * #314 D8: a client-supplied surface as it is recorded. A value exactly equal to an internal
+ * surface becomes 'unknown'; anything else passes as given (#159: the /api/add body and MCP
+ * memory_add store a caller's surface with no trim or case change), non-strings included.
+ */
+export function clientSurface(surface) {
+  return INTERNAL_SURFACES.includes(surface) ? 'unknown' : surface;
+}
+
 const COUNTERS_USER_VERSION = 1;
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -178,13 +196,16 @@ function warnOnce(err) {
  *
  * Node's http layer lowercases incoming header names — callers pass
  * req.headers as-is.
+ *
+ * #314 D8: a header that normalizes to an internal surface ('sweep') becomes
+ * 'unknown' — never the fallback, since the header was not absent.
  */
 export function surfaceFromHeaders(headers, fallback = 'unknown') {
   const raw = headers?.['x-um-source'] ?? headers?.['x-mem0-source'];
   // 64-char cap (review NIT-5): surface is a primary-key column — a garbage /
   // duplicate-joined header must not mint unbounded distinct counter rows.
   return typeof raw === 'string' && raw.trim().length > 0
-    ? raw.trim().toLowerCase().slice(0, 64)
+    ? clientSurface(raw.trim().toLowerCase().slice(0, 64))
     : fallback;
 }
 

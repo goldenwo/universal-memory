@@ -48,6 +48,22 @@ export const BACKENDS = {
 };
 
 /**
+ * #314: the (provider, model) a summarize() call with this ctx resolves to and bills — the same
+ * precedence and the same fallback hop for a backend that cannot run here — without calling a
+ * provider. The idle sweep's boot warning reads it (an unpriced model leaves the per-project cost
+ * cap unable to bind). summarize.test.mjs pins it to summarize() case by case: change both together.
+ */
+export function summarizerTarget(ctx = {}, env = process.env) {
+  let provider = ctx.provider ?? ctx.backend ?? env.UM_SUMMARIZER_PROVIDER ?? env.UM_SUMMARIZER ?? 'openai';
+  let backend = BACKENDS[provider];
+  if (!backend?.invoke) {
+    provider = backend?.fallback ?? env.UM_SUMMARIZER_FALLBACK ?? 'openai';
+    backend = BACKENDS[provider];
+  }
+  return { provider, model: ctx.model ?? env.UM_SUMMARIZER_MODEL ?? backend?.defaults?.summarizerModel };
+}
+
+/**
  * Summarize a transcript using the configured backend.
  *
  * @param {string} transcript - Text to summarize
@@ -76,6 +92,7 @@ export async function summarize(transcript, ctx = {}) {
 
   // ctx.provider is the v0.7 name; ctx.backend is the v0.6 compat alias;
   // UM_SUMMARIZER_PROVIDER and UM_SUMMARIZER are both checked for backward compat.
+  // summarizerTarget() above restates this resolution and the model's (#314).
   const providerName = ctx.provider ?? ctx.backend ?? process.env.UM_SUMMARIZER_PROVIDER ?? process.env.UM_SUMMARIZER ?? 'openai';
   const b = BACKENDS[providerName];
 

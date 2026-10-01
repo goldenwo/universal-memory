@@ -37,13 +37,16 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
-import { countersDbPath } from './capture-events.mjs';
+import { countersDbPath, INTERNAL_SURFACES, SWEEP_SURFACE } from './capture-events.mjs';
 import { REACTION_OUTCOME_KEYS, SIGNAL_EVENTS } from './reaction-signal.mjs';
 import { ANOMALY_EVENT, ANOMALY_REASON_KEYS, ANOMALY_OTHER } from './anomaly-signal.mjs';
 import {
   CHECKPOINT_FAILURE_EVENT,
   CHECKPOINT_FAILURE_OUTCOMES,
   CHECKPOINT_FAILURE_OTHER,
+  SWEEP_FAILURE_EVENT,
+  SWEEP_FAILURE_OUTCOMES,
+  SWEEP_FAILURE_OTHER,
 } from './checkpoint-signal.mjs';
 
 const require = createRequire(import.meta.url);
@@ -64,9 +67,17 @@ const OUTCOME_KEYS = Object.freeze(['stored', 'abstained', 'deduped', 'supersede
  */
 const LANDING_EVENTS = Object.freeze(['capture.extraction', 'capture.checkpoint']);
 
+/**
+ * #314 D8: the clause every query feeding the `capture` map carries — surfaces only the server
+ * writes (the idle sweep) never count as "a client captured". All five must carry it: the loops
+ * that fill the map dereference capture[surface] unguarded, so one row past the last-seen query
+ * would throw and degrade the whole counters section.
+ */
+const CLIENT_SURFACES_ONLY = `surface NOT IN (${INTERNAL_SURFACES.map(() => '?').join(', ')})`;
+
 /** Degraded shape (A5): counters unavailable ⇒ nulls, never a throw. */
 function nullShaped() {
-  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null };
+  return { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null, sweepFailure: null, sweepOutcomes: null };
 }
 
 function utcDayString(epochMs) {
@@ -99,6 +110,82 @@ export function freshnessHours(lastDaySeen, nowMs) {
 }
 
 /**
+ * A signal.* failure family keyed BY PROJECT (#309 signal.checkpoint_failure, #314
+ * signal.sweep_failure). The failures these exist for are defined per project, so an alert that
+ * cannot name the project cannot be acted on; `counters` already carries `project` in its primary
+ * key, so this needs no schema change, only its own query (every capture reader aggregates the
+ * project away).
+ *
+ * Event EQUALITY (never LIKE), so the capture.% boundary stays untouched and growth_docs_7d cannot
+ * move because of a failure family.
+ *
+ * #324: bounded to projects with a row INSIDE the window. Unwindowed, every project that had EVER
+ * failed kept a permanent zero row in the payload — project cardinality is unbounded, unlike the
+ * handful of surfaces the anomaly section keys by. last_day_seen stays the true MAX(day) for the
+ * projects served.
+ *
+ * Fail-isolated: a throw here serves this family as null alone (um-alert reports that as a loud
+ * monitor fault), never darkening the capture-freshness sections the family exists to back up.
+ *
+ * @returns {null | Record<string, { last_day_seen: string, count_7d: number,
+ *   outcomes_7d: Record<string, number> }>} null-prototype maps throughout — project AND outcome
+ *   are writer-controlled and served to external readers (the v1.8.1 '__proto__' hazard).
+ */
+function readProjectFailures(db, { event, outcomes, other, windowStart, today, section, wireKey }) {
+  try {
+    // One transaction for both reads — the writer shares this WAL DB, so two bare SELECTs could
+    // see a first-ever failing project appear between them.
+    const snap = db.transaction(() => ({
+      lastSeen: db.prepare(`
+        SELECT project, MAX(day) AS last_day_seen
+        FROM counters
+        WHERE event = ?
+          AND project IN (
+            SELECT DISTINCT project FROM counters
+            WHERE event = ? AND day >= ? AND day <= ?
+          )
+        GROUP BY project
+      `).all(event, event, windowStart, today),
+      windowRows: db.prepare(`
+        SELECT project, outcome, SUM(count) AS n
+        FROM counters
+        WHERE event = ? AND day >= ? AND day <= ?
+        GROUP BY project, outcome
+      `).all(event, windowStart, today),
+    }))();
+
+    const built = Object.create(null);
+    for (const { project, last_day_seen } of snap.lastSeen) {
+      built[project] = {
+        last_day_seen,
+        count_7d: 0,
+        outcomes_7d: Object.assign(Object.create(null), Object.fromEntries(outcomes.map((k) => [k, 0]))),
+      };
+    }
+    for (const { project, outcome, n } of snap.windowRows) {
+      const c = built[project];
+      // Tripwire, unreachable under the transaction (window rows ⊆ last-seen within one snapshot):
+      // skipping defers the row to the next read — rows are durable — rather than throwing.
+      if (!c) continue;
+      c.count_7d += n;
+      // Fold, never skip: an out-of-vocabulary outcome (a NEWER server's row read by this one)
+      // counts under the family's `other`. For an alarm feed a dropped row is a missed alarm.
+      const key = Object.hasOwn(c.outcomes_7d, outcome) ? outcome : other;
+      c.outcomes_7d[key] += n;
+    }
+    return built;
+  } catch (err) {
+    safeLog(() => getLogger().warn({
+      component: 'stats',
+      err_class: err?.code ?? err?.name ?? 'Error',
+      err_message: err?.message ?? String(err),
+    }, `${section} section unreadable — serving ${wireKey}:null (capture sections stay live)`),
+    `log:stats:${section}-unreadable`);
+    return null;
+  }
+}
+
+/**
  * Read + aggregate um-counters.db for the spec-§3 counters-derived sections.
  *
  * @param {object} opts
@@ -117,8 +204,15 @@ export function freshnessHours(lastDaySeen, nowMs) {
  *   recall: null | { searches_today: number, searches_7d: number },
  *   anomalies: null | Record<string, { last_day_seen: string, count_7d: number,
  *     reasons_7d: Record<string, number> }>,
+ *   checkpointFailure: null | Record<string, { last_day_seen: string, count_7d: number,
+ *     outcomes_7d: Record<string, number> }>,
+ *   sweepFailure: null | Record<string, { last_day_seen: string, count_7d: number,
+ *     outcomes_7d: Record<'reindex_failed'|'rejected'|'other', number> }>,
+ *   sweepOutcomes: null | Record<'stored'|'abstained'|'deduped'|'superseded'|'error'|'failed', number>,
  * }} Null-shaped ({available:false}, all sections null) when the counters db
- *    is missing or unreadable — never throws for db-state reasons.
+ *    is missing or unreadable — never throws for db-state reasons. `capture`
+ *    never holds an internal surface (#314 D8); the idle sweep's own
+ *    capture.checkpoint outcomes are `sweepOutcomes` instead (D9).
  */
 export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
   if (!Number.isFinite(now)) {
@@ -143,16 +237,16 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     const lastSeenRows = db.prepare(`
       SELECT surface, MAX(day) AS last_day_seen
       FROM counters
-      WHERE event LIKE 'capture.%'
+      WHERE event LIKE 'capture.%' AND ${CLIENT_SURFACES_ONLY}
       GROUP BY surface
-    `).all();
+    `).all(...INTERNAL_SURFACES);
 
     const windowRows = db.prepare(`
       SELECT surface, day, outcome, SUM(count) AS n
       FROM counters
-      WHERE event LIKE 'capture.%' AND day >= ? AND day <= ?
+      WHERE event LIKE 'capture.%' AND ${CLIENT_SURFACES_ONLY} AND day >= ? AND day <= ?
       GROUP BY surface, day, outcome
-    `).all(windowStart, today);
+    `).all(...INTERNAL_SURFACES, windowStart, today);
 
     // Spec §7 — outcomes_7d is LANDING-ONLY: capture.extraction + capture.
     // checkpoint, never capture.turn (a turn-append also emits outcome
@@ -163,9 +257,9 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     const landingRows = db.prepare(`
       SELECT surface, outcome, SUM(count) AS n
       FROM counters
-      WHERE event IN (${landingPlaceholders}) AND day >= ? AND day <= ?
+      WHERE event IN (${landingPlaceholders}) AND ${CLIENT_SURFACES_ONLY} AND day >= ? AND day <= ?
       GROUP BY surface, outcome
-    `).all(...LANDING_EVENTS, windowStart, today);
+    `).all(...LANDING_EVENTS, ...INTERNAL_SURFACES, windowStart, today);
 
     // #283 crash-dead fields (spec D1/D3/D4) + turns_7d (spec §7), ONE
     // atomic statement over the capture.turn rows. DELIBERATELY inside the
@@ -188,9 +282,9 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
              MAX(day) AS last_turn_day,
              SUM(CASE WHEN day >= ? AND day <= ? THEN count ELSE 0 END) AS n
       FROM counters
-      WHERE event = 'capture.turn'
+      WHERE event = 'capture.turn' AND ${CLIENT_SURFACES_ONLY}
       GROUP BY surface
-    `).all(windowStart, today);
+    `).all(windowStart, today, ...INTERNAL_SURFACES);
 
     // #283: windowed checkpoint-scoped abstain count — event EQUALITY, never
     // outcome-only (spec D4: extraction abstains on the same surface must not
@@ -199,9 +293,19 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       SELECT surface, SUM(count) AS n
       FROM counters
       WHERE event = 'capture.checkpoint' AND outcome = 'abstained'
-        AND day >= ? AND day <= ?
+        AND ${CLIENT_SURFACES_ONLY} AND day >= ? AND day <= ?
       GROUP BY surface
-    `).all(windowStart, today);
+    `).all(...INTERNAL_SURFACES, windowStart, today);
+
+    // #314 D9: the idle sweep's own landings, which `capture` excludes — the same windowed
+    // capture.checkpoint outcomes a client surface's outcomes_7d carries, served as
+    // sweep.outcomes_7d. These rows survive a restart; the sweep's in-process state does not.
+    const sweepRows = db.prepare(`
+      SELECT outcome, SUM(count) AS n
+      FROM counters
+      WHERE surface = ? AND event = 'capture.checkpoint' AND day >= ? AND day <= ?
+      GROUP BY outcome
+    `).all(SWEEP_SURFACE, windowStart, today);
 
     const growthRows = db.prepare(`
       SELECT day, SUM(count) AS n
@@ -281,6 +385,10 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
     for (const { surface, n } of checkpointAbstainedRows) {
       const s = capture[surface]; // always present: checkpoint rows are capture.% ⊆ last-seen surfaces
       s.checkpoint_abstained_7d = n;
+    }
+    const sweepOutcomes = emptyOutcomes();
+    for (const { outcome, n } of sweepRows) {
+      if (Object.hasOwn(sweepOutcomes, outcome)) sweepOutcomes[outcome] += n;
     }
 
     // #187 reactions_7d: signal.reaction lives OUTSIDE the capture.* namespace
@@ -402,85 +510,20 @@ export function readCounterStats({ now, dbPath = countersDbPath() } = {}) {
       'log:stats:anomalies-unreadable');
     }
 
-    // #309 — signal.checkpoint_failure, keyed BY PROJECT (the sibling anomaly
-    // block above keys by surface). The failure this detector exists for is
-    // defined per project — a quiet project whose finite capture-vs-digest lag
-    // sits below the staleness ceiling — so an alert that cannot name the
-    // project cannot be acted on. `counters` already carries `project` in its
-    // primary key, so this needs no schema change; it needs its OWN query only
-    // because every existing reader aggregates the project away.
-    //
-    // Event EQUALITY (never LIKE), so the capture.% boundary stays untouched
-    // and growth_docs_7d cannot move because of this family.
-    //
-    // FAIL-ISOLATED in its own try, mirroring the anomaly block: a defect in
-    // this newest reader must never dark the capture-freshness sections it
-    // exists to protect. On error: checkpointFailure:null alone, which
-    // um-alert reports as a loud DEGRADED monitor fault.
-    let checkpointFailure = null;
-    try {
-      const cpKeys = Object.freeze([...CHECKPOINT_FAILURE_OUTCOMES]);
-      // One transaction for both reads — the writer shares this WAL DB, so two
-      // bare SELECTs could see a first-ever failing project appear between them.
-      const readCheckpointFailures = db.transaction(() => ({
-        // #324: bounded to projects with a row INSIDE the window. Unwindowed,
-        // every project that had EVER failed kept a permanent zero row in the
-        // payload — project cardinality is unbounded, unlike the sibling
-        // block's handful of surfaces, so the payload grew by one dead row per
-        // historically-failing repository. last_day_seen stays the true
-        // MAX(day) for the projects served.
-        lastSeen: db.prepare(`
-          SELECT project, MAX(day) AS last_day_seen
-          FROM counters
-          WHERE event = ?
-            AND project IN (
-              SELECT DISTINCT project FROM counters
-              WHERE event = ? AND day >= ? AND day <= ?
-            )
-          GROUP BY project
-        `).all(CHECKPOINT_FAILURE_EVENT, CHECKPOINT_FAILURE_EVENT, windowStart, today),
-        windowRows: db.prepare(`
-          SELECT project, outcome, SUM(count) AS n
-          FROM counters
-          WHERE event = ? AND day >= ? AND day <= ?
-          GROUP BY project, outcome
-        `).all(CHECKPOINT_FAILURE_EVENT, windowStart, today),
-      }));
-      const snap = readCheckpointFailures();
+    // #309 signal.checkpoint_failure (accepted-mode checkpoints, the #309 rollback signal) and
+    // #314 signal.sweep_failure (the idle sweep's own family, D7), each keyed BY PROJECT (the
+    // anomaly block above keys by surface) and each fail-isolated on its own: see
+    // readProjectFailures. The two never mix — the sweep writes only its own event.
+    const checkpointFailure = readProjectFailures(db, {
+      event: CHECKPOINT_FAILURE_EVENT, outcomes: CHECKPOINT_FAILURE_OUTCOMES, other: CHECKPOINT_FAILURE_OTHER,
+      windowStart, today, section: 'checkpoint-failure', wireKey: 'checkpoint_failure',
+    });
+    const sweepFailure = readProjectFailures(db, {
+      event: SWEEP_FAILURE_EVENT, outcomes: SWEEP_FAILURE_OUTCOMES, other: SWEEP_FAILURE_OTHER,
+      windowStart, today, section: 'sweep-failure', wireKey: 'sweep_failure',
+    });
 
-      // Null-prototype maps throughout — project AND outcome are writer-
-      // controlled and this is served to external readers (the v1.8.1
-      // '__proto__' hazard).
-      const built = Object.create(null);
-      for (const { project, last_day_seen } of snap.lastSeen) {
-        built[project] = {
-          last_day_seen,
-          count_7d: 0,
-          outcomes_7d: Object.assign(Object.create(null), Object.fromEntries(cpKeys.map((k) => [k, 0]))),
-        };
-      }
-      for (const { project, outcome, n } of snap.windowRows) {
-        const c = built[project];
-        // Tripwire, unreachable under the transaction — see the anomaly block.
-        if (!c) continue;
-        c.count_7d += n;
-        // Fold, never skip: an out-of-vocabulary outcome (a NEWER server's row
-        // read by this one) counts under `other`. For an alarm feed a dropped
-        // row is a missed alarm.
-        const key = Object.hasOwn(c.outcomes_7d, outcome) ? outcome : CHECKPOINT_FAILURE_OTHER;
-        c.outcomes_7d[key] += n;
-      }
-      checkpointFailure = built;
-    } catch (err) {
-      safeLog(() => getLogger().warn({
-        component: 'stats',
-        err_class: err?.code ?? err?.name ?? 'Error',
-        err_message: err?.message ?? String(err),
-      }, 'checkpoint-failure section unreadable — serving checkpoint_failure:null (capture sections stay live)'),
-      'log:stats:checkpoint-failure-unreadable');
-    }
-
-    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies, checkpointFailure };
+    return { available: true, capture, growth_7d, growth_docs_7d, recall: { searches_today, searches_7d }, anomalies, checkpointFailure, sweepFailure, sweepOutcomes };
   } catch (err) {
     // Unreadable (corrupt/locked-exotic) db ⇒ same degraded shape as missing
     // (spec §3 errors clause: stats must not 500 over the counters file).

@@ -12,18 +12,18 @@
 // its own lock. runOnce never rejects, logging can never break a run, and both timers are
 // unref'd.
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { buildLayers as defaultBuildLayers, summaryLagMaxHours, readCursorLight } from './layers.mjs';
 import { classifyCheckpointSettlement, SWEEP_FAILURE_EVENT } from './checkpoint-signal.mjs';
-import { recordCaptureEvent } from './capture-events.mjs';
+import { recordCaptureEvent, SWEEP_SURFACE } from './capture-events.mjs';
 import { isWriteEnabled as defaultIsWriteEnabled } from './write-enabled.mjs';
 import { priceFor } from './pricing.mjs';
+import { summarizerTarget } from './summarize.mjs';
 import { DEFAULT_STALE_MS } from './lockdir.mjs';
-import { HEARTBEAT_INTERVAL_MS } from './checkpoint-config.mjs';
+import { HEARTBEAT_INTERVAL_MS, DEFAULT_CONFIG_PATH } from './checkpoint-config.mjs';
 import { getLogger } from './logger.mjs';
 
-/** D8: the sweep's capture surface — reserved, and excluded from the `capture` freshness section. */
-export const SWEEP_SURFACE = 'sweep';
 export const SWEEP_INTERVAL_MS = 60 * 60_000;
 // D1: a lockdir orphaned by a crash mid-attempt is recoverable before the first run meets it.
 export const SWEEP_FIRST_RUN_DELAY_MS = DEFAULT_STALE_MS + HEARTBEAT_INTERVAL_MS;
@@ -308,4 +308,36 @@ export function createIdleSweep({
     },
   };
   return api;
+}
+
+/** D10: opt-out — anything but a trimmed 'false' means on (the isAutoSupersedeEnabled convention). */
+export function isSweepEnabled(env = process.env) {
+  return env.UM_SWEEP_ENABLED?.trim() !== 'false';
+}
+
+function readShippedCheckpointConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8'));
+  } catch {
+    return null; // the checkpoint itself reports an unreadable config; the warning is best effort
+  }
+}
+
+/**
+ * Spec §4.2.3: the server's boot hook, called in the IS_MAIN listen callback. Returns null when
+ * the sweep is off (D10), else a started sweep (its first run comes SWEEP_FIRST_RUN_DELAY_MS later).
+ *
+ * The unpriced-model warning (§4.3.5) names the model a sweep checkpoint pays for: the chunk
+ * transaction calls summarize() with `{ backend: UM_SUMMARIZER, model: checkpoint.json's
+ * summary_model }` (checkpoint-chunk-txn.mjs, step 3; the sweep passes no model override), which
+ * summarizerTarget resolves exactly as summarize() does.
+ *
+ * @param {object} deps - createIdleSweep's deps, plus:
+ * @param {object|null} [deps.config] - parsed checkpoint.json; read from disk when omitted.
+ * @returns {ReturnType<typeof createIdleSweep>|null}
+ */
+export function startIdleSweep({ config = readShippedCheckpointConfig(), env = process.env, ...deps } = {}) {
+  if (!isSweepEnabled(env)) return null;
+  const summarizer = summarizerTarget({ backend: env.UM_SUMMARIZER, model: config?.summary_model }, env);
+  return createIdleSweep({ ...deps, env, summarizer }).start();
 }

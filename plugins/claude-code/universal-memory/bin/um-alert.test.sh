@@ -1403,6 +1403,68 @@ run_alert "$mock"
 if [ "$rc" -eq 2 ]; then pass "T70-exit-2"; else fail "T70-exit-2 (rc=$rc, out=$output)"; fi
 if echo "$output" | grep -q "CHECK FAILED"; then pass "T70-check-failed-text"; else fail "T70-check-failed-text: $output"; fi
 
+# ─── #314 T07: SWEEP-FAILURE (signals.sweep_failure, keyed by project) ──────
+# The idle sweep's two outcomes LAYERS-STALE cannot see: a reindex-stage failure
+# (the cursor already moved past a summary that is on disk but not searchable) and
+# a rejected call. Both have a benign base rate of zero by construction, so any
+# windowed count fires. The sweep never writes the accepted-mode family above, and
+# an absent key is informational (a CLI newer than its server), as for #309.
+SWEEP_ZERO='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{}}}'
+SWEEP_REINDEX='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{"proj-s":{"last_day_seen":"2026-07-17","count_7d":1,"outcomes_7d":{"reindex_failed":1,"rejected":0,"other":0}}}}}'
+SWEEP_REJECTED='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":{"proj-s":{"last_day_seen":"2026-07-16","count_7d":2,"outcomes_7d":{"reindex_failed":0,"rejected":2,"other":0}}}}}'
+SWEEP_ABSENT_KEY='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{}}}'
+SWEEP_NULL='{"schema_version":1,"capture":{"claude-code-plugin":{"last_day_seen":"2026-07-17","freshness_hours":0,"events_today":4,"errors_today":0,"outcomes_7d":{"stored":3,"abstained":0,"deduped":0,"superseded":0,"error":0}}},"signals":{"capture_anomaly":{},"checkpoint_failure":{},"sweep_failure":null}}'
+
+echo ""
+echo "=== T71: sweep_failure reindex_failed=1 + fresh capture ⇒ exit 1 + SWEEP-FAILURE line naming the project ==="
+mock="$TMPDIR_ROOT/t71"; _make_mock_curl "$mock" 200 "$SWEEP_REINDEX"
+run_alert "$mock"
+if [ "$rc" -eq 1 ]; then pass "T71-exit-1"; else fail "T71-exit-1 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "SWEEP-FAILURE — proj-s: 1 sweep checkpoint(s) in 7d (reindex_failed x1; last 2026-07-17)"; then
+  pass "T71-names-project-and-outcome"
+else
+  fail "T71-names-project-and-outcome: $output"
+fi
+if echo "$output" | grep -q "CHECKPOINT-FAILURE"; then
+  fail "T71-not-the-accepted-mode-arm: $output"
+else
+  pass "T71-not-the-accepted-mode-arm"
+fi
+
+echo ""
+echo "=== T72: sweep_failure rejected=2 ⇒ exit 1 + SWEEP-FAILURE ==="
+mock="$TMPDIR_ROOT/t72"; _make_mock_curl "$mock" 200 "$SWEEP_REJECTED"
+run_alert "$mock"
+if [ "$rc" -eq 1 ] && echo "$output" | grep -q "SWEEP-FAILURE — proj-s: 2 sweep checkpoint(s) in 7d (rejected x2"; then
+  pass "T72-fires"
+else
+  fail "T72-fires (rc=$rc, out=$output)"
+fi
+
+echo ""
+echo "=== T73: sweep_failure {} ⇒ exit 0, silent ==="
+mock="$TMPDIR_ROOT/t73"; _make_mock_curl "$mock" 200 "$SWEEP_ZERO"
+run_alert "$mock"
+if [ "$rc" -eq 0 ] && ! echo "$output" | grep -qi "sweep"; then
+  pass "T73-silent"
+else
+  fail "T73-silent (rc=$rc, out=$output)"
+fi
+
+echo ""
+echo "=== T74: signals present, no sweep_failure key ⇒ ABSENT breadcrumb, exit 0 ==="
+mock="$TMPDIR_ROOT/t74"; _make_mock_curl "$mock" 200 "$SWEEP_ABSENT_KEY"
+run_alert "$mock"
+if [ "$rc" -eq 0 ]; then pass "T74-exit-0-not-2"; else fail "T74-exit-0-not-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "no sweep_failure key"; then pass "T74-breadcrumb"; else fail "T74-breadcrumb: $output"; fi
+
+echo ""
+echo "=== T75: sweep_failure:null while signals present ⇒ exit 2, the sweep's own reader degraded ==="
+mock="$TMPDIR_ROOT/t75"; _make_mock_curl "$mock" 200 "$SWEEP_NULL"
+run_alert "$mock"
+if [ "$rc" -eq 2 ]; then pass "T75-exit-2"; else fail "T75-exit-2 (rc=$rc, out=$output)"; fi
+if echo "$output" | grep -q "CHECK FAILED — sweep_failure is null"; then pass "T75-names-the-family"; else fail "T75-names-the-family: $output"; fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "um-alert.sh: $PASS passed, $FAIL failed"

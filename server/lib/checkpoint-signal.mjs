@@ -108,7 +108,8 @@ export const CHECKPOINT_FAILURE_ALERTING = Object.freeze(['rejected', 'failed', 
  * failure and a rejected call. Unknown outcomes fold into this family's own `other`.
  */
 export const SWEEP_FAILURE_EVENT = 'signal.sweep_failure';
-export const SWEEP_FAILURE_OUTCOMES = Object.freeze(['reindex_failed', 'rejected', 'other']);
+export const SWEEP_FAILURE_OTHER = 'other';
+export const SWEEP_FAILURE_OUTCOMES = Object.freeze(['reindex_failed', 'rejected', SWEEP_FAILURE_OTHER]);
 
 /**
  * Classify one settlement of an accepted-mode `doCheckpoint` call.

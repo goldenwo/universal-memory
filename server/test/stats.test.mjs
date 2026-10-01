@@ -29,6 +29,7 @@ import {
   CAPTURE_EVENTS,
   _resetCaptureEventsForTest,
 } from '../lib/capture-events.mjs';
+import { captureVerdict } from '../lib/control-page.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
@@ -321,14 +322,14 @@ test('growth_docs_7d counts capture.checkpoint stored + error per day; excludes 
 test('missing db file ⇒ null-shaped result, no throw', async () => {
   const dbPath = path.join(tempDir('um-stats-missing-'), 'nope.db');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null, sweepFailure: null, sweepOutcomes: null });
 });
 
 test('unreadable (corrupt) db ⇒ null-shaped result, no throw', async () => {
   const dbPath = await tempDbPath();
   await fs.writeFile(dbPath, 'not a sqlite database — garbage bytes');
   const stats = readCounterStats({ now: NOW, dbPath });
-  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null });
+  assert.deepEqual(stats, { available: false, capture: null, growth_7d: null, growth_docs_7d: null, recall: null, anomalies: null, checkpointFailure: null, sweepFailure: null, sweepOutcomes: null });
 });
 
 test('empty db (schema, zero rows) ⇒ empty-but-not-null shapes', async () => {
@@ -858,4 +859,109 @@ test('#309 checkpoint_failure: the real writer path is readable by this reader (
     if (prev === undefined) delete process.env.UM_COUNTERS_DB_PATH; else process.env.UM_COUNTERS_DB_PATH = prev;
     _resetCaptureEventsForTest();
   }
+});
+
+// ---------------------------------------------------------------------------
+// #314 D8/D9: the idle sweep checkpoints under its own surface, `sweep`. `capture` means "a client
+// captured", so the sweep's rows must reach none of its five feeding queries — and because the
+// loops that fill `capture` dereference capture[surface] unguarded, one leaked row would not merely
+// add a key, it would throw and degrade the whole counters section. The sweep's own landings are
+// served separately as sweepOutcomes (D9's sweep.outcomes_7d).
+// ---------------------------------------------------------------------------
+
+test('#314 T01: capture omits the sweep surface from every field while sweepOutcomes counts its capture.checkpoint rows', async () => {
+  const dbPath = await tempDbPath('um-stats-314-t01-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'claude-code', project: 'p', event: 'capture.turn', outcome: 'stored', count: 3 },
+    { day: daysAgo(1), surface: 'claude-code', project: 'p', event: 'capture.checkpoint', outcome: 'stored', count: 1 },
+    // One row per capture-feeding query: last-seen and the day window (any capture.%), the landing
+    // outcomes (capture.checkpoint stored/error/failed), the turn aggregate (a capture.turn row the
+    // sweep never writes today, but the exclusion is by surface, not by event) and the checkpoint
+    // abstain count.
+    { day: TODAY, surface: 'sweep', project: 'q', event: 'capture.checkpoint', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'sweep', project: 'q', event: 'capture.checkpoint', outcome: 'error', count: 1 },
+    { day: daysAgo(1), surface: 'sweep', project: 'r', event: 'capture.checkpoint', outcome: 'failed', count: 1 },
+    { day: daysAgo(2), surface: 'sweep', project: 'r', event: 'capture.checkpoint', outcome: 'abstained', count: 4 },
+    { day: daysAgo(3), surface: 'sweep', project: 'r', event: 'capture.turn', outcome: 'stored', count: 5 },
+    // Outside the 7-day window: not an outcome of this week.
+    { day: daysAgo(8), surface: 'sweep', project: 'r', event: 'capture.checkpoint', outcome: 'stored', count: 9 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+
+  assert.equal(stats.available, true, 'a sweep row must not degrade the counters section');
+  assert.deepEqual(Object.keys(stats.capture), ['claude-code']);
+  assert.deepEqual(stats.capture['claude-code'], {
+    last_day_seen: TODAY,
+    freshness_hours: 0,
+    events_today: 3,
+    errors_today: 0,
+    outcomes_7d: { ...EMPTY_OUTCOMES, stored: 1 },
+    turns_7d: 3,
+    checkpoint_abstained_7d: 0,
+    last_turn_day: TODAY,
+  });
+  assert.deepEqual(stats.sweepOutcomes, { ...EMPTY_OUTCOMES, stored: 2, error: 1, failed: 1, abstained: 4 });
+});
+
+test('#314 T02: a stale client stays stale while the sweep writes fresh rows', async () => {
+  const dbPath = await tempDbPath('um-stats-314-t02-');
+  seedCountersDb(dbPath, [
+    { day: daysAgo(3), surface: 'claude-code', project: 'p', event: 'capture.turn', outcome: 'stored', count: 2 },
+    { day: TODAY, surface: 'sweep', project: 'p', event: 'capture.checkpoint', outcome: 'stored', count: 4 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+
+  assert.deepEqual(Object.keys(stats.capture), ['claude-code']);
+  assert.equal(stats.capture['claude-code'].freshness_hours, 57.5);
+  // The any-surface freshness rule (um-alert.sh's FRESH arm; captureVerdict is /control's mirror of
+  // it): with the sweep's row in `capture` it would read FRESH on the sweep's activity alone.
+  assert.equal(captureVerdict(stats.capture, 26).verdict, 'STALE');
+});
+
+test('#314 T05: a client surface spelled SWEEP is not internal — the exclusion is an exact match, so it stays in capture', async () => {
+  const dbPath = await tempDbPath('um-stats-314-t05-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'SWEEP', project: 'p', event: 'capture.extraction', outcome: 'stored', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+  assert.deepEqual(Object.keys(stats.capture), ['SWEEP']);
+  assert.equal(stats.capture.SWEEP.outcomes_7d.stored, 1);
+  assert.deepEqual(stats.sweepOutcomes, EMPTY_OUTCOMES, 'a client row is never counted as the sweep\'s');
+});
+
+// #314 D7 (T07): signal.sweep_failure — the sweep's reindex-stage failures and rejected calls, read
+// by project with the #324 window bound, in the family's own vocabulary, and never mixed into the
+// accepted-mode #309 family (the rollback signal).
+test('#314 T07: sweepFailure is keyed by project inside the window, keeps reindex_failed and rejected as their own keys, and leaves checkpointFailure untouched', async () => {
+  const dbPath = await tempDbPath('um-stats-314-t07-');
+  seedCountersDb(dbPath, [
+    { day: TODAY, surface: 'sweep', project: 'proj-r', event: 'signal.sweep_failure', outcome: 'reindex_failed', count: 1 },
+    { day: daysAgo(2), surface: 'sweep', project: 'proj-r', event: 'signal.sweep_failure', outcome: 'rejected', count: 2 },
+    { day: daysAgo(10), surface: 'sweep', project: 'proj-old', event: 'signal.sweep_failure', outcome: 'reindex_failed', count: 1 },
+    { day: daysAgo(1), surface: 'sweep', project: 'proj-x', event: 'signal.sweep_failure', outcome: 'a_term_from_the_future', count: 3 },
+    { day: TODAY, surface: 'claude-code', project: 'proj-c', event: 'signal.checkpoint_failure', outcome: 'failed', count: 1 },
+  ]);
+  const stats = readCounterStats({ now: NOW, dbPath });
+
+  assert.deepEqual(stats.sweepFailure, {
+    __proto__: null,
+    'proj-r': { last_day_seen: TODAY, count_7d: 3, outcomes_7d: { __proto__: null, reindex_failed: 1, rejected: 2, other: 0 } },
+    'proj-x': { last_day_seen: daysAgo(1), count_7d: 3, outcomes_7d: { __proto__: null, reindex_failed: 0, rejected: 0, other: 3 } },
+  }, 'proj-old has no row: its only failure is 10 days old (#324)');
+  assert.deepEqual(stats.checkpointFailure, {
+    __proto__: null,
+    'proj-c': {
+      last_day_seen: TODAY,
+      count_7d: 1,
+      outcomes_7d: { __proto__: null, rejected: 0, failed: 1, contended: 0, zero_commit: 0, provider_stalled: 0, other: 0 },
+    },
+  }, 'sweep rows never reach the accepted-mode family');
+});
+
+test('#314: empty db ⇒ sweepFailure {} (healthy zero, distinct from the degraded null) and all-zero sweepOutcomes', async () => {
+  const dbPath = await tempDbPath('um-stats-314-empty-');
+  seedCountersDb(dbPath, []);
+  const empty = readCounterStats({ now: NOW, dbPath });
+  assert.deepEqual(empty.sweepFailure, { __proto__: null });
+  assert.deepEqual(empty.sweepOutcomes, EMPTY_OUTCOMES);
 });

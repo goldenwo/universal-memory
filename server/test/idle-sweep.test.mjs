@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { tempDir } from './helpers/tmpdir.mjs';
-import { createIdleSweep } from '../lib/idle-sweep.mjs';
+import { createIdleSweep, isSweepEnabled, startIdleSweep } from '../lib/idle-sweep.mjs';
 import { HEARTBEAT_INTERVAL_MS } from '../lib/checkpoint-config.mjs';
 import { buildLayers } from '../lib/layers.mjs';
 import { doCheckpoint } from '../lib/checkpoint.mjs';
@@ -522,4 +522,63 @@ test('S27 #314: a non-rate-limit provider failure ends the run and waits 6 h; ov
   h.advance(H);
   await h.sweep.runOnce();
   assert.deepEqual(h.attempted(), ['a', 'b', 'c']);
+});
+
+// ---------------------------------------------------------------------------
+// T3 (spec §4.2.3, D10): the server's boot hook. UM_SWEEP_ENABLED is opt-out — anything but a
+// trimmed 'false' means on, the isAutoSupersedeEnabled convention.
+// ---------------------------------------------------------------------------
+
+test('T3 #314: isSweepEnabled — only a trimmed "false" turns the sweep off', () => {
+  for (const off of ['false', ' false ', 'false\n']) assert.equal(isSweepEnabled({ UM_SWEEP_ENABLED: off }), false, JSON.stringify(off));
+  for (const on of [undefined, '', 'true', '0', 'no', 'FALSE']) assert.equal(isSweepEnabled({ UM_SWEEP_ENABLED: on }), true, JSON.stringify(on));
+  assert.equal(isSweepEnabled({}), true, 'unset means on (D13: default on)');
+});
+
+function bootDeps(over = {}) {
+  const logs = [];
+  const log = {
+    info: (obj, msg) => { logs.push({ level: 'info', obj, msg }); },
+    warn: (obj, msg) => { logs.push({ level: 'warn', obj, msg }); },
+    error: (obj, msg) => { logs.push({ level: 'error', obj, msg }); },
+  };
+  const timers = fakeTimers();
+  return {
+    logs,
+    timers,
+    deps: {
+      checkpointFn: async () => DIGESTED,
+      ctx: { vaultDir: '/vault', reindexFn: REINDEX },
+      config: { summary_model: 'gpt-4o-mini' },
+      env: {},
+      log,
+      timers,
+      ...over,
+    },
+  };
+}
+
+test('T3 #314: startIdleSweep — off starts nothing; on returns a started sweep with both timers scheduled', () => {
+  const off = bootDeps({ env: { UM_SWEEP_ENABLED: 'false' } });
+  assert.equal(startIdleSweep(off.deps), null);
+  assert.equal(off.timers.timeouts.length + off.timers.intervals.length, 0, 'a disabled sweep schedules nothing');
+
+  const on = bootDeps();
+  const sweep = startIdleSweep(on.deps);
+  assert.equal(on.timers.timeouts.length, 1);
+  assert.equal(on.timers.intervals.length, 1);
+  assert.deepEqual(sweep.state(), { enabled: true, last_run_at: null, last_run: null, layers: {} });
+});
+
+test('T3 #314: startIdleSweep warns about an unpriced model by the one a sweep checkpoint pays for — checkpoint.json\'s summary_model under the configured provider', () => {
+  const priceWarnings = (over) => {
+    const b = bootDeps(over);
+    startIdleSweep(b.deps);
+    return b.logs.filter((l) => l.level === 'warn' && /price/.test(l.msg)).map((l) => l.obj);
+  };
+  assert.deepEqual(priceWarnings({}), [], 'openai / gpt-4o-mini is priced');
+  assert.deepEqual(priceWarnings({ config: { summary_model: 'mystery-model' } }), [{ provider: 'openai', model: 'mystery-model' }]);
+  assert.deepEqual(priceWarnings({ env: { UM_SUMMARIZER_PROVIDER: 'anthropic' } }), [{ provider: 'anthropic', model: 'gpt-4o-mini' }],
+    'the chunk transaction passes summary_model as the model, whatever the provider');
+  assert.deepEqual(priceWarnings({ env: { UM_SUMMARIZER: 'claude-agent-sdk' } }), [], 'the agent-sdk backend falls back to openai server-side');
 });
