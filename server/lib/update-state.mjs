@@ -184,6 +184,9 @@ export async function updateState(args, ctx = {}) {
  * names, `(preamble)`, one aggregated `(foreign)` — no session text), and `state.shaped`
  * (info) with what scaffolding, ageing and bounding did. Shared with checkpoint-chunk-txn.mjs,
  * which passes its own `component`.
+ * The two drop counts use different bases (#342): `bounded[].dropped` counts items only (a
+ * blank or `(none)` unit the bound removes is not counted), while `state.cap_trimmed`'s
+ * `units_dropped` counts every unit the trimmer removes, blank and placeholder units included.
  */
 export function logShaping({ component, project, charsBefore, charsAfter, report }) {
   const base = { request_id: currentRequestId(), component, project };

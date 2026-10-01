@@ -593,14 +593,32 @@ const readState = vault => fs.readFile(path.join(vault, 'state', PROJECT, 'state
 test('state-merge degrade (1): a no-heading degrade doc over 3000 is shaped — <= 3000, six required sections ahead of the unmerged heading, marker last', async () => {
   const vault = makeVault();
   const hugeSummary = 'x'.repeat(4000);
-  const result = await runChunkTransaction(
-    baseArgs(vault),
-    baseDeps({
-      summarizeFn: makeSummarizeFn({ summary: hugeSummary }),
-      updateStateFn: async () => ({ schema_version: 1, ok: false }),
-    }),
-  );
+  const captured = _attachLogCapture();
+  let result;
+  try {
+    result = await runChunkTransaction(
+      baseArgs(vault),
+      baseDeps({
+        summarizeFn: makeSummarizeFn({ summary: hugeSummary }),
+        updateStateFn: async () => ({ schema_version: 1, ok: false }),
+      }),
+    );
+  } finally {
+    _detachLogCapture();
+  }
   assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+
+  // #342: the degrade branch's own shaping log lines (the #326 A6 read counts degraded merges
+  // from them; updateStateFn failed, so update-state.mjs logged nothing here).
+  const mine = msg => captured.filter(l => l.msg === msg && l.component === 'checkpoint-chunk-txn');
+  const shaped = mine('state.shaped');
+  assert.equal(shaped.length, 1, 'one state.shaped line from the txn');
+  assert.equal(shaped[0].project, PROJECT);
+  assert.ok(shaped[0].added.length > 0, 'the no-heading doc gained its required sections');
+  const trimmed = mine('state.cap_trimmed');
+  assert.equal(trimmed.length, 1, 'one state.cap_trimmed line from the txn');
+  assert.equal(trimmed[0].project, PROJECT);
+  assert.ok(trimmed[0].chars_before > 3000 && trimmed[0].chars_after <= 3000);
 
   const stateMd = await readState(vault);
   assert.ok(stateMd.length <= 3000, `expected <= 3000 chars, got ${stateMd.length}`);
