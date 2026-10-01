@@ -563,9 +563,18 @@ test('SC28 limits: Next actions and Open questions from the top, Environment fro
   assert.deepEqual(unitTexts(r.md, 'Open questions'), ['- q3', '- q4', '- q5', '- q6', '- q7']);
   assert.deepEqual(unitTexts(r.md, 'Environment'), ['- e1', '- e2', '- e3']);
   assert.deepEqual(r.bounded.map(b => b.heading), ['Next actions', 'Open questions', 'Environment']);
-  assert.equal(r.bounded[0].dropped, 3);
+  // #342: the blank and the placeholder are removed but are not items, so dropped counts n1 only.
+  assert.equal(r.bounded[0].dropped, 1);
   const within = build({ next: ['(none)', '- n1', '- n2', '- n3', '- n4', '- n5', '- n6'] });
   assert.equal(applySectionLimits(within, CTX).md, within, 'a placeholder does not count toward the limit');
+});
+
+test('SC28b #342: bounded counts items only — a leading blank and a placeholder go first uncounted', () => {
+  // The two non-item unit shapes the parser makes: a section's leading blank run, and a (none) line.
+  const lead = build({ next: ['', '(none)', ...Array.from({ length: 8 }, (_, i) => `- n${i + 1}`)] });
+  const a = applySectionLimits(lead, CTX);
+  assert.deepEqual(a.bounded, [{ heading: 'Next actions', dropped: 2 }], 'limit + 2 reports exactly 2');
+  assert.deepEqual(unitTexts(a.md, 'Next actions'), ['- n3', '- n4', '- n5', '- n6', '- n7', '- n8']);
 });
 
 test('SC29 limits: within limits → identity, bounded: []', () => {

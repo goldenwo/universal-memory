@@ -453,7 +453,8 @@ export function applySectionLimits(md, opts = {}) {
       const victim = pickUnit(section, live, clock);
       victim.removed = true;
       for (const i of victim.lines) removed.add(i);
-      dropped++;
+      // A blank or placeholder goes first but is not an item: `bounded` reports items (#342).
+      if (counts(victim)) dropped++;
     }
     if (dropped > 0) bounded.push({ heading: name, dropped });
   }
