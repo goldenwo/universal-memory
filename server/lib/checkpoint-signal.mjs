@@ -104,8 +104,9 @@ export const CHECKPOINT_FAILURE_ALERTING = Object.freeze(['rejected', 'failed', 
 /**
  * #314 D7: the idle sweep's own failure family, kept apart from the accepted-mode family above
  * (that one is the #309 rollback signal, calibrated on accepted runs only; the sweep never
- * writes it). Only the two outcomes LAYERS-STALE cannot see are recorded: a reindex-stage
- * failure and a rejected call. Unknown outcomes fold into this family's own `other`.
+ * writes it). Only the two outcomes LAYERS-STALE does not report at once are recorded: a
+ * reindex-stage failure (LAYERS-STALE shows its summary only after the repair record has waited
+ * past the threshold) and a rejected call. Unknown outcomes fold into this family's own `other`.
  */
 export const SWEEP_FAILURE_EVENT = 'signal.sweep_failure';
 export const SWEEP_FAILURE_OTHER = 'other';

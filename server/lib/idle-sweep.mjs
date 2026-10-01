@@ -6,8 +6,9 @@
 // entry (D4) — drop those inside their retry window (D6), and attempt the oldest eight (D5),
 // one at a time, each through doCheckpoint under the sweep's own surface (D8, D11). A provider
 // failure ends the run (D6). Each attempt logs one `sweep.attempt` line; the two outcomes
-// LAYERS-STALE cannot see — a reindex-stage failure (the cursor already passed a summary that
-// is not searchable) and a rejected call — are recorded as signal.sweep_failure (D7). The
+// LAYERS-STALE does not report at once — a reindex-stage failure (the cursor already passed a
+// summary that is not searchable; its repair record turns the layer stale only after the
+// threshold) and a rejected call — are recorded as signal.sweep_failure (D7). The
 // sweep never touches pending-reindex entries itself: a layer's checkpoint repairs them under
 // its own lock. runOnce never rejects, logging can never break a run, and both timers are
 // unref'd.

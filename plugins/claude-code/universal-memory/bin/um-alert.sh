@@ -51,12 +51,14 @@
 #     the breakdown but are transient or unrecognised and do not trigger.
 #     THIS IS THE ROLLBACK SIGNAL for accepted mode.
 #   SWEEP-FAILURE (#314): the server's idle sweep (which digests the layers no
-#     session end reaches) hit one of the two outcomes LAYERS cannot see — a
-#     reindex-stage failure (the cursor already moved past a summary that is
-#     on disk but not searchable) or a call that threw. Keyed BY PROJECT; any
-#     count in the 7-day window fires (both have a zero benign base rate by
-#     construction). Every other sweep failure leaves the content aging, so
-#     LAYERS reports it. The sweep never writes CHECKPOINT-FAILURE.
+#     session end reaches) hit one of the two outcomes LAYERS does not report
+#     at once — a reindex-stage failure (the cursor already moved past a
+#     summary that is on disk but not searchable; LAYERS shows it only once
+#     its repair record has waited past the threshold) or a call that threw
+#     (no outcome at all). Keyed BY PROJECT; any count in the 7-day window
+#     fires (both have a zero benign base rate by construction). Every other
+#     sweep failure leaves the content aging, so LAYERS reports it. The sweep
+#     never writes CHECKPOINT-FAILURE.
 #
 # Exit taxonomy (A3, unchanged):
 #   0  healthy — freshness within threshold AND no section escalates
@@ -584,9 +586,11 @@ CKPT_MESSAGE="${CKPT_VERDICT#*|}"
 # #314 SWEEP-FAILURE section — the idle sweep's own family (signal.sweep_failure,
 # keyed BY PROJECT): a reindex-stage failure, where the cursor already moved past a
 # summary that is on disk but not searchable, or a checkpoint call that threw.
-# LAYERS cannot see either: the first leaves no content aging, the second has no
-# outcome at all. The sweep never writes signal.checkpoint_failure (that family is
-# the #309 rollback signal, calibrated on accepted-mode runs only).
+# LAYERS does not report either at once: the first leaves no content aging (its
+# repair record reaches LAYERS-STALE only after the threshold — this arm fires the
+# same day), the second has no outcome at all. The sweep never writes
+# signal.checkpoint_failure (that family is the #309 rollback signal, calibrated on
+# accepted-mode runs only).
 # Taxonomy — the CHECKPOINT-FAILURE arm's, with one difference:
 #   ABSENT   — no `signals` key, or `signals` without `sweep_failure`: a server
 #              older than the CLI (a rollback, or install-cli.sh before the
