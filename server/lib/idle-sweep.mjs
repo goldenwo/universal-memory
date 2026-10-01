@@ -333,12 +333,26 @@ function readShippedCheckpointConfig() {
  * summary_model }` (checkpoint-chunk-txn.mjs, step 3; the sweep passes no model override), which
  * summarizerTarget resolves exactly as summarize() does.
  *
+ * Never throws: the caller is the listen callback, where a throw is an uncaughtException and
+ * lockdir.mjs exits the process on one. A sweep that cannot start logs once, clears any timer it
+ * had already set, and returns null — the server runs on without it.
+ *
  * @param {object} deps - createIdleSweep's deps, plus:
  * @param {object|null} [deps.config] - parsed checkpoint.json; read from disk when omitted.
  * @returns {ReturnType<typeof createIdleSweep>|null}
  */
 export function startIdleSweep({ config = readShippedCheckpointConfig(), env = process.env, ...deps } = {}) {
   if (!isSweepEnabled(env)) return null;
-  const summarizer = summarizerTarget({ backend: env.UM_SUMMARIZER, model: config?.summary_model }, env);
-  return createIdleSweep({ ...deps, env, summarizer }).start();
+  let sweep = null;
+  try {
+    const summarizer = summarizerTarget({ backend: env.UM_SUMMARIZER, model: config?.summary_model }, env);
+    sweep = createIdleSweep({ ...deps, env, summarizer });
+    return sweep.start();
+  } catch (err) {
+    try { sweep?.stop(); } catch { /* best effort */ }
+    try {
+      (deps.log ?? defaultLog).error({ err_message: errMessage(err) }, 'sweep: could not start; the server runs without it');
+    } catch { /* a logger failure never escapes */ }
+    return null;
+  }
 }

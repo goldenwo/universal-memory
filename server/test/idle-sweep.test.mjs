@@ -570,6 +570,22 @@ test('T3 #314: startIdleSweep — off starts nothing; on returns a started sweep
   assert.deepEqual(sweep.state(), { enabled: true, last_run_at: null, last_run: null, layers: {} });
 });
 
+// Review fix: startIdleSweep runs in the server's listen callback, where a synchronous throw is an
+// uncaughtException that lockdir.mjs turns into process.exit(1). A sweep that cannot start must
+// leave the server running without it — and leave no half-started timer behind.
+test('T3 #314: startIdleSweep never throws — a sweep that cannot start logs once, returns null and leaves no timer', () => {
+  const noTimeout = bootDeps({ timers: { ...fakeTimers(), setTimeout: () => { throw new Error('timer table full'); } } });
+  let sweep;
+  assert.doesNotThrow(() => { sweep = startIdleSweep(noTimeout.deps); });
+  assert.equal(sweep, null);
+  assert.equal(noTimeout.logs.filter((l) => l.level === 'error').length, 1);
+
+  const timers = fakeTimers();
+  const noInterval = bootDeps({ timers: { ...timers, setInterval: () => { throw new Error('timer table full'); } } });
+  assert.equal(startIdleSweep(noInterval.deps), null);
+  assert.deepEqual(timers.cleared, [['timeout', timers.timeouts[0].handle]], 'the first-run timer already set is cleared');
+});
+
 test('T3 #314: startIdleSweep warns about an unpriced model by the one a sweep checkpoint pays for — checkpoint.json\'s summary_model under the configured provider', () => {
   const priceWarnings = (over) => {
     const b = bootDeps(over);
