@@ -21,21 +21,38 @@
 // "newest summary date" reading and bootstrapInit's own reading from ever
 // silently drifting apart.
 //
-// STALE RULE (spec §6, verbatim — the ∞ sign has a review history of
-// landing inverted; get the direction right and pin both):
-//   stale := pending_bytes >= min_transcript_bytes AND lag > UM_SUMMARY_LAG_MAX_HOURS
+// STALE RULE (#314 spec D2/D3 — staleness is how long the oldest undigested
+// content has waited, on the server's clock):
+//   undigested := with a cursor: pending_bytes >= min_transcript_bytes, or
+//     below-cursor growth (an older raw file modified at/after
+//     cursor.updated_at — loadCursor's check 4, mirrored); cursorless:
+//     pending_bytes >= min_transcript_bytes AND (no summary yet OR
+//     last_capture_at > last_summary_at), which drops the phantom rows a
+//     legacy layer summarized after its last capture used to show.
+//   waiting_since := the first pending turn's header ISO, clamped to the
+//     raw file's own server day [dayStart(F), min(dayEnd(F), now)] so no
+//     client clock skew can hide content or age it past its day; a split
+//     cursor reads the header of the turn it sits inside (16 KiB back); a
+//     missing or unparseable header reads dayStart(F) (the alerting side);
+//     a cursorless layer with a summary waits since last_summary_at.
+//   age_hours := (now - waiting_since) / 1 h, compared UNROUNDED; it is
+//     +Infinity (serialized "Infinity") for below-cursor growth, a raw file
+//     dated after now, or nothing readable.
+//   repair_since := the oldest pending-reindex entry's `since` (#314 D7): a
+//     summary on disk whose reindex is unconfirmed.
+//   stale := (undigested AND age_hours > UM_SUMMARY_LAG_MAX_HOURS)
+//            OR (repair_since AND repair_hours > UM_SUMMARY_LAG_MAX_HOURS)
+//
+// LAG (display only since #314 — kept verbatim from spec §6; the ∞ sign has a
+// review history of landing inverted):
 //   lag := last_capture_at - digested_through
 //   digested_through := cursor.last_turn_iso when a cursor exists, else last_summary_at
 //   lag := +Infinity whenever digested_through resolves to null (no cursor
 //     AND no summary ever, OR a cursor whose own last_turn_iso is
-//     unusable) — a never-checkpointed project with real pending content
-//     must read as MAXIMALLY stale. The infinity sits on the LAG, never on
-//     digested_through: seeding digested_through itself with +Infinity
-//     would make the subtraction `last_capture_at - Infinity` = -Infinity,
-//     which is LESS than any finite threshold — the comparison inverts and
-//     such a project would NEVER alert. That is exactly the silent-monitor
-//     failure mode this arc exists to close, so the sentinel is pinned on
-//     the side of the formula that keeps the direction safe.
+//     unusable). The infinity sits on the LAG, never on digested_through:
+//     seeding digested_through itself with +Infinity would make the
+//     subtraction `last_capture_at - Infinity` = -Infinity — the inverted
+//     direction.
 //
 // FAIL-SOFT (spec §6):
 //   - A genuine per-project I/O error (EACCES, a corrupt/unreadable
@@ -74,9 +91,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
-  resolveFloor, DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_CONFIG_PATH,
+  resolveFloor, DEFAULT_MIN_TRANSCRIPT_BYTES, DEFAULT_CONFIG_PATH, makeTurnHeaderRe,
 } from './checkpoint-config.mjs';
 import { SESSION_DATE_RE } from './checkpoint-cursor.mjs';
+import { listPendingReindex } from './pending-reindex.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { currentRequestId } from './request-context.mjs';
@@ -102,6 +120,14 @@ const RAW_FILE_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const SESSION_FILE_RE = SESSION_DATE_RE;
 const CURSOR_FILE_NAME_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 const MS_PER_HOUR = 3_600_000;
+const MS_PER_DAY = 86_400_000;
+// The forward read at a turn-boundary position — checkpoint-cursor.mjs's
+// isTurnHeaderAt window, long enough for `## ` + an ISO + ` ` + a role.
+const HEADER_WINDOW_BYTES = 128;
+// The backward read for a split cursor: a turn is at most 8192 content bytes
+// (append-turn.mjs MAX_CONTENT_BYTES) plus its header, so 16 KiB always
+// holds the header of the turn the offset sits inside.
+const SPLIT_LOOKBACK_BYTES = 16 * 1024;
 
 function round1(n) {
   return Math.round(n * 10) / 10;
@@ -178,7 +204,12 @@ async function readCursorLight(cursorPath) {
     if (typeof parsed.file !== 'string' || !CURSOR_FILE_NAME_RE.test(parsed.file)) return null;
     if (!Number.isSafeInteger(parsed.offset) || parsed.offset < 0) return null;
     const lastTurnIso = typeof parsed.last_turn_iso === 'string' ? parsed.last_turn_iso : null;
-    return { file: parsed.file, offset: parsed.offset, lastTurnIso };
+    // #314: `boundary` picks the age read (a split cursor sits mid-turn); `updatedAt` feeds the
+    // below-cursor growth check. Neither is shape-guarded here: anything but 'split' reads as a
+    // turn boundary, and a missing updated_at reads as "every older file is newer" (check 4's rule).
+    const boundary = parsed.boundary === 'split' ? 'split' : 'turn';
+    const updatedAt = typeof parsed.updated_at === 'string' ? parsed.updated_at : null;
+    return { file: parsed.file, offset: parsed.offset, lastTurnIso, boundary, updatedAt };
   } catch {
     return null;
   }
@@ -203,7 +234,7 @@ async function readCursorLight(cursorPath) {
  *   try/catch is what turns that into 'layers-partial' + omission.
  */
 async function computeProjectLayer({
-  vaultDir, project, minTranscriptBytes, lagMaxHours, budget,
+  vaultDir, project, minTranscriptBytes, lagMaxHours, budget, now,
 }) {
   const rawDir = path.join(vaultDir, 'captures', project, 'raw');
   const sessionsDir = path.join(vaultDir, 'sessions', project);
@@ -333,7 +364,32 @@ async function computeProjectLayer({
     ? Infinity
     : (lastCaptureMs - digestedThroughMs) / MS_PER_HOUR;
 
-  const stale = pendingBytes >= minTranscriptBytes && rawLagHours > lagMaxHours;
+  // #314 D2/D3 — see the module header. Below-cursor growth reuses the raw
+  // stats taken above; the age read is at most one 128-byte forward read or
+  // one backward read of up to 16 KiB.
+  const growth = cursor !== null && belowCursorGrowth(rawEntries, rawStats, cursor);
+  const undigested = cursor !== null
+    ? pendingBytes >= minTranscriptBytes || growth
+    : pendingBytes >= minTranscriptBytes
+      && (lastSummaryAt === null || lastCaptureMs > Date.parse(lastSummaryAt));
+  let waitingSinceMs = null; // stays null for the ∞ cases
+  if (undigested && !growth) {
+    waitingSinceMs = cursor === null && lastSummaryAt !== null
+      ? Date.parse(lastSummaryAt) // a legacy layer reopened after its last summary: conservative
+      : await firstPendingSince({ rawDir, rawEntries, rawStats, cursor, now });
+    if (Number.isNaN(waitingSinceMs)) waitingSinceMs = null;
+  }
+  // Compared UNROUNDED (the lag rule's MINOR 2 lesson); round1 is display only.
+  const rawAgeHours = !undigested ? null
+    : waitingSinceMs === null ? Infinity : (now - waitingSinceMs) / MS_PER_HOUR;
+
+  const repairs = await listPendingReindex({ vaultDir, project });
+  const oldestRepair = repairs.length > 0 ? repairs[0] : null; // oldest first, unparseable first
+  const rawRepairHours = oldestRepair === null ? null
+    : Number.isNaN(oldestRepair.sinceMs) ? Infinity : (now - oldestRepair.sinceMs) / MS_PER_HOUR;
+
+  const stale = (undigested && rawAgeHours > lagMaxHours)
+    || (oldestRepair !== null && rawRepairHours > lagMaxHours);
 
   return {
     last_capture_at: lastCaptureAt,
@@ -347,9 +403,118 @@ async function computeProjectLayer({
     // exact float-coercion contract control-page.mjs's pyFloat() and
     // um-alert.sh's python block already speak for threshold/freshness
     // values (both parse "Infinity"/"inf" natively) — one convention, not a
-    // second one invented for this field.
+    // second one invented for this field. Display only since #314.
     lag_hours: Number.isFinite(rawLagHours) ? round1(rawLagHours) : 'Infinity',
+    undigested,
+    waiting_since: waitingSinceMs === null ? null : new Date(waitingSinceMs).toISOString(),
+    age_hours: hoursField(rawAgeHours),
+    // An entry whose `since` cannot be read still marks the layer as carrying a repair.
+    repair_since: oldestRepair === null ? null
+      : Number.isNaN(oldestRepair.sinceMs) ? 'unknown' : new Date(oldestRepair.sinceMs).toISOString(),
+    repair_hours: hoursField(rawRepairHours),
   };
+}
+
+/** null stays null, ∞ serializes as the string "Infinity" (see lag_hours), a number rounds to 0.1. */
+function hoursField(raw) {
+  if (raw === null) return null;
+  return Number.isFinite(raw) ? round1(raw) : 'Infinity';
+}
+
+/**
+ * loadCursor's check 4, mirrored on the stats already taken: a raw file lexically
+ * before `cursor.file` whose mtime is at or after `cursor.updated_at` (an unusable
+ * updated_at reads as "every older file is newer", the duplication-safe side).
+ */
+function belowCursorGrowth(rawEntries, rawStats, cursor) {
+  const updatedAtMs = cursor.updatedAt === null ? NaN : Date.parse(cursor.updatedAt);
+  const threshold = Number.isNaN(updatedAtMs) ? -Infinity : updatedAtMs;
+  return rawEntries.some((name) => name < cursor.file && rawStats.get(name).mtimeMs >= threshold);
+}
+
+/**
+ * When the oldest pending content arrived, in ms, clamped to its raw file's server
+ * day: the first pending turn's header ISO h, as min(max(h, dayStart(F)),
+ * min(dayEnd(F), now)). A missing or unparseable header, or a failed read, gives
+ * dayStart(F). Returns null (∞) when the file is dated after now or no pending
+ * position exists. The first pending position is the cursor's own (file, offset)
+ * while offset < size, else offset 0 of the next raw file after cursor.file (an
+ * offset at end of file, or a deleted cursor.file); cursorless, offset 0 of the
+ * oldest raw file.
+ */
+async function firstPendingSince({ rawDir, rawEntries, rawStats, cursor, now }) {
+  let file;
+  let offset = 0;
+  let split = false;
+  if (cursor === null) {
+    file = rawEntries[0];
+  } else {
+    const st = rawStats.get(cursor.file);
+    if (st !== undefined && cursor.offset < st.size) {
+      file = cursor.file;
+      offset = cursor.offset;
+      split = cursor.boundary === 'split';
+    } else {
+      file = rawEntries.find((name) => name > cursor.file);
+    }
+  }
+  if (file === undefined) return null;
+  const lo = Date.parse(`${file.slice(0, 10)}T00:00:00.000Z`);
+  if (lo > now) return null; // a raw file dated after the server's today (e.g. a reboot before time sync)
+  const hi = Math.min(lo + MS_PER_DAY, now);
+  let h = NaN;
+  try {
+    const filePath = path.join(rawDir, file);
+    h = split ? await lastHeaderMsBefore(filePath, offset) : await headerMsAt(filePath, offset);
+  } catch {
+    // a failed read degrades to dayStart(F), never to an exception
+  }
+  if (Number.isNaN(h)) return lo;
+  return Math.min(Math.max(h, lo), hi);
+}
+
+/** The ISO of a turn header line, as ms (NaN when unparseable). `line` starts with `## `. */
+function headerLineMs(line) {
+  const end = line.indexOf(' ', 3);
+  return Date.parse(line.slice(3, end === -1 ? undefined : end));
+}
+
+/** The header at `offset`, if one starts there (the 128-byte window), as ms; else NaN. */
+async function headerMsAt(filePath, offset) {
+  const window = await readWindow(filePath, offset, HEADER_WINDOW_BYTES);
+  return makeTurnHeaderRe().test(window) ? headerLineMs(window) : NaN;
+}
+
+/**
+ * The last turn header that starts within the 16 KiB before `offset` (a split
+ * cursor's containing turn), as ms; NaN when the window holds none. The window
+ * is clamped to the start of the file; when it starts mid-file, the partial
+ * first line is dropped so only a true line start can match.
+ */
+async function lastHeaderMsBefore(filePath, offset) {
+  const start = Math.max(0, offset - SPLIT_LOOKBACK_BYTES);
+  let text = await readWindow(filePath, Math.max(0, start - 1), offset - Math.max(0, start - 1));
+  if (start > 0) {
+    const nl = text.indexOf('\n');
+    text = nl === -1 ? '' : text.slice(nl + 1);
+  }
+  let last = null;
+  for (const m of text.matchAll(makeTurnHeaderRe('gm'))) last = m.index;
+  if (last === null) return NaN;
+  const lineEnd = text.indexOf('\n', last);
+  return headerLineMs(text.slice(last, lineEnd === -1 ? undefined : lineEnd));
+}
+
+/** Read up to `length` bytes at `position`. Never reads the whole file. */
+async function readWindow(filePath, position, length) {
+  const fh = await fs.open(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, position);
+    return buf.toString('utf8', 0, bytesRead);
+  } finally {
+    await fh.close();
+  }
 }
 
 /**
@@ -369,9 +534,12 @@ async function computeProjectLayer({
  *   fixture that actually creates 10000 files to exercise saturation would
  *   be prohibitively slow — unlike stats-payload's FULL_SCAN_LIMIT boundary
  *   test, which only generates cheap in-memory objects). Production omits it.
+ * @param {number} [opts.now] - the server clock in ms (#314: ages are measured
+ *   against it). buildStats passes its own; the module never reads the clock
+ *   when a caller supplies one.
  * @returns {Promise<{layers: object, degraded: string[]}>}
  */
-export async function buildLayers({ vaultDir, config, scanLimit = LAYERS_SCAN_LIMIT } = {}) {
+export async function buildLayers({ vaultDir, config, scanLimit = LAYERS_SCAN_LIMIT, now = Date.now() } = {}) {
   const cfg = config ?? await readCheckpointConfig();
   const minTranscriptBytes = resolveFloor(
     'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', cfg.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES,
@@ -414,7 +582,7 @@ export async function buildLayers({ vaultDir, config, scanLimit = LAYERS_SCAN_LI
       // whole vault deterministically rather than racing many projects'
       // readdirs against it concurrently.
       const entry = await computeProjectLayer({
-        vaultDir, project, minTranscriptBytes, lagMaxHours, budget,
+        vaultDir, project, minTranscriptBytes, lagMaxHours, budget, now,
       });
       if (entry !== null) layers[project] = entry;
     } catch (err) {
