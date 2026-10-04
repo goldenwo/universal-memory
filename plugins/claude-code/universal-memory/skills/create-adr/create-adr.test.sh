@@ -223,6 +223,26 @@ got=$(HOME="$TOKFILE_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token
 assert_eq "_resolve_auth_token config wins over file" "from-config" "$got"
 rm -rf "$TOKFILE_HOME"
 
+# ─── Unit tests: skill.md helper path ──────────────────────────────────────
+# REGRESSION: skill.md invoked the helper at ~/.claude/skills/create-adr/, a path
+# nothing creates — the helper ships beside skill.md inside the plugin. Every
+# `bash <path>/create-adr.sh` line must resolve to the file next to skill.md once
+# Claude Code substitutes ${CLAUDE_SKILL_DIR} (the skill's own directory).
+echo ""
+echo "=== unit: skill.md helper path ==="
+skill_md="$SCRIPT_DIR/skill.md"
+helper_paths=$(grep -oE 'bash "?[^ `"]*create-adr.sh' "$skill_md" | sed -E 's/^bash "?//')
+n_paths=$(printf '%s
+' "$helper_paths" | grep -c .)
+[ "$n_paths" -ge 3 ] && pass "skill.md names the helper in 3+ commands ($n_paths)"   || fail "skill.md names the helper in 3+ commands" "found $n_paths"
+while IFS= read -r hp; do
+  [ -n "$hp" ] || continue
+  # The literal ${CLAUDE_SKILL_DIR} token, replaced by this test's own dir.
+  skill_dir_token="\${CLAUDE_SKILL_DIR}"
+  resolved=${hp//"$skill_dir_token"/$SCRIPT_DIR}
+  [ -f "$resolved" ] && pass "skill.md helper path resolves: $hp"     || fail "skill.md helper path resolves" "$hp -> $resolved (no such file)"
+done <<< "$helper_paths"
+
 # ─── Unit tests: _detect_self_application ───────────────────────────────────
 echo ""
 echo "=== unit: _detect_self_application ==="
