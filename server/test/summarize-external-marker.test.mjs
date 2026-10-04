@@ -74,6 +74,49 @@ test('summarize: meta-instruction prepended BEFORE caller systemPrompt', async (
   assert.ok(metaIdx < callerIdx, 'meta-instruction must come before caller systemPrompt');
 });
 
+// #353: the fallback branch recursed with `systemPrompt: undefined` after ctx had
+// already been rewritten, so a fallen-back call reached the provider with the
+// meta-instruction alone — a checkpoint's whole summarize.txt prompt was dropped.
+// Exact equality pins both halves: the caller's prompt arrives, and the
+// meta-instruction is prepended once, not once per hop.
+for (const [route, backend] of [
+  ['registry fallback (claude-agent-sdk -> openai)', 'claude-agent-sdk'],
+  ['unknown backend (UM_SUMMARIZER_FALLBACK unset -> openai)', 'no-such-backend'],
+]) {
+  for (const callerPrompt of ['You are a concise summarizer.', undefined]) {
+    test(`summarize: ${route} delivers ${callerPrompt ? 'the caller prompt after one meta-instruction' : 'the meta-instruction once'} (#353)`, async () => {
+      const savedFallback = process.env.UM_SUMMARIZER_FALLBACK;
+      delete process.env.UM_SUMMARIZER_FALLBACK;
+      let capturedMessages = null;
+      const openaiClient = {
+        chat: {
+          completions: {
+            create: async ({ messages }) => {
+              capturedMessages = messages;
+              return {
+                choices: [{ message: { content: 'ok' } }],
+                usage: { prompt_tokens: 10, completion_tokens: 5 },
+              };
+            },
+          },
+        },
+      };
+      try {
+        await summarize('transcript', { backend, openaiClient, systemPrompt: callerPrompt });
+      } finally {
+        if (savedFallback === undefined) delete process.env.UM_SUMMARIZER_FALLBACK;
+        else process.env.UM_SUMMARIZER_FALLBACK = savedFallback;
+      }
+      assert.ok(capturedMessages, 'the fallback provider must have been called');
+      assert.equal(capturedMessages[0].role, 'system');
+      assert.equal(
+        capturedMessages[0].content,
+        callerPrompt ? `${EXTERNAL_SUMMARY_META_INSTRUCTION}\n\n${callerPrompt}` : EXTERNAL_SUMMARY_META_INSTRUCTION,
+      );
+    });
+  }
+}
+
 // ---------- 2. Live adversarial test (skip without API key) ----------
 
 const hasKey = !!(process.env.OPENAI_API_KEY || process.env.UM_OPENAI_API_KEY);

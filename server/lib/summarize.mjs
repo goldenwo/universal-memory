@@ -106,7 +106,9 @@ export async function summarize(transcript, ctx = {}) {
       fallback,
       reason: b?.reason ?? 'unknown/unavailable',
     }, 'summarize backend unavailable; falling back'), 'log:summarize:backend-fallback');
-    return summarize(transcript, { ...ctx, provider: fallback, backend: fallback, systemPrompt: undefined });
+    // Recurse with the caller's own prompt (#353): ctx.systemPrompt already carries the
+    // meta-instruction, which the recursive call prepends again.
+    return summarize(transcript, { ...ctx, provider: fallback, backend: fallback, systemPrompt: callerPrompt });
   }
 
   const model = ctx.model ?? process.env.UM_SUMMARIZER_MODEL ?? b.defaults?.summarizerModel;
