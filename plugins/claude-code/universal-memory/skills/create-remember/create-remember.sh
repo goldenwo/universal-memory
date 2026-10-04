@@ -162,7 +162,7 @@ _codepoint_truncate() {
 # ─── env / config helpers ───────────────────────────────────────────────
 
 _resolve_auth_token() {
-  # Mirrors create-adr.sh:206-225, with config path scoped to /remember
+  # Mirrors create-adr.sh's _resolve_auth_token, with config path scoped to /remember
   # (per-skill token scoping per B2 spec §"create-remember.sh function shape").
   if [ -n "${UM_AUTH_TOKEN:-}" ]; then
     printf '%s' "$UM_AUTH_TOKEN"
@@ -178,6 +178,15 @@ _resolve_auth_token() {
       printf '%s' "$tok"
       return 0
     fi
+  fi
+  # Final fallback (#285, mirrored from create-adr.sh): the hooks' canonical
+  # token file, same semantics as um-api.sh's um_api_token
+  # (${UM_TOKEN_FILE:-~/.um/auth-token}, all whitespace stripped). Without it
+  # a bare /remember posted unauthenticated on a machine where the hooks auth.
+  local token_file="${UM_TOKEN_FILE:-$HOME/.um/auth-token}"
+  if [ -r "$token_file" ]; then
+    tr -d '[:space:]' < "$token_file" 2>/dev/null || true
+    return 0
   fi
   printf ''
 }
@@ -311,7 +320,8 @@ Output (warn-only, 1 line):
   WARNING: not saved (HTTP <code>; <reason>). Re-run /remember "<preview>".
 
 Auth: env UM_AUTH_TOKEN > ~/.claude/skills/create-remember/config.json
-      ("auth_token" key) > anonymous (loopback-only acceptable).
+      ("auth_token" key) > ${UM_TOKEN_FILE:-~/.um/auth-token}
+      > anonymous (loopback-only acceptable).
 
 See https://github.com/goldenwo/universal-memory for the server.
 EOF
@@ -407,7 +417,7 @@ cmd_remember() {
       return 0
       ;;
     401|403)
-      printf 'WARNING: not saved (HTTP %s; auth failed). Set UM_AUTH_TOKEN (see <repo>/server/.env) and re-run /remember "%s".\n' \
+      printf 'WARNING: not saved (HTTP %s; auth failed). Set UM_AUTH_TOKEN or put the token in ~/.um/auth-token (see <repo>/server/.env) and re-run /remember "%s".\n' \
         "$http_code" "$preview"
       return 0
       ;;

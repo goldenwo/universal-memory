@@ -32,11 +32,11 @@ Apply these rules **in this exact order**:
 
 ## Step 2 — invoke the helper via Bash tool
 
-The helper lives at `~/.claude/skills/create-adr/create-adr.sh`. Use the Bash tool with the structured CLI form:
+The helper ships beside this file: `create-adr.sh` in this skill's directory, which Claude Code substitutes for `${CLAUDE_SKILL_DIR}` below (if the variable reaches you unsubstituted, use that directory's path). Use the Bash tool with the structured CLI form:
 
-- **Help:** `bash ~/.claude/skills/create-adr/create-adr.sh help`
-- **Create:** `bash ~/.claude/skills/create-adr/create-adr.sh create --title "<title>" [--commit] [--no-path]`
-- **Sync:** `bash ~/.claude/skills/create-adr/create-adr.sh sync <NNNN>`
+- **Help:** `bash "${CLAUDE_SKILL_DIR}/create-adr.sh" help`
+- **Create:** `bash "${CLAUDE_SKILL_DIR}/create-adr.sh" create --title "<title>" [--commit] [--no-path]`
+- **Sync:** `bash "${CLAUDE_SKILL_DIR}/create-adr.sh" sync <NNNN>`
 
 Pass the title as a single quoted argument. Pass `--commit` and `--no-path` only if the user supplied them. Use the user's current working directory as cwd — the helper resolves the git toplevel itself.
 

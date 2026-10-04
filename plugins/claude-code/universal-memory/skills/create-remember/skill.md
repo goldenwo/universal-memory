@@ -41,11 +41,13 @@ Apply these rules **in this exact order**:
 
 ## Step 2 — invoke the helper via Bash tool
 
-The helper lives at `~/.claude/skills/create-remember/create-remember.sh`.
+The helper ships beside this file: `create-remember.sh` in this skill's
+directory, which Claude Code substitutes for `${CLAUDE_SKILL_DIR}` below
+(if the variable reaches you unsubstituted, use that directory's path).
 Use the Bash tool with the structured CLI form:
 
-- **Help:** `bash ~/.claude/skills/create-remember/create-remember.sh help`
-- **Remember:** `bash ~/.claude/skills/create-remember/create-remember.sh remember --text "<text>"`
+- **Help:** `bash "${CLAUDE_SKILL_DIR}/create-remember.sh" help`
+- **Remember:** `bash "${CLAUDE_SKILL_DIR}/create-remember.sh" remember --text "<text>"`
 
 Pass the joined text as a single quoted argument to `--text`. Never
 forward a bare `--` separator to the helper; the LLM is the

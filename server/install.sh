@@ -1694,7 +1694,7 @@ if [ "${UM_WAS_EXISTING_INSTALL:-0}" = "0" ] && [ -z "${UM_QUIET:-}" ]; then
                                           with the universal-memory server.
   • /adr sync NNNN   → re-register an existing ADR (recovery for net failures)
   • /adr --help      → flags + usage
-  • Install path: ~/.claude/skills/create-adr/ (manual copy from the plugin)
+  • Ships with the Claude Code plugin (skills/create-adr/); nothing to copy
 EOM
 fi
 

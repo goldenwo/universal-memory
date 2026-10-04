@@ -13,6 +13,11 @@
 
 set -uo pipefail
 
+# The token-file tier reads ${UM_TOKEN_FILE:-$HOME/.um/auth-token}. HOME is
+# isolated per-test, but an operator-exported UM_TOKEN_FILE would leak
+# through every helper run — pin it off for the whole file (as create-adr's).
+export UM_TOKEN_FILE=""
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/create-remember.sh"
 
@@ -165,6 +170,51 @@ EMPTY_HOME=$(mktemp -d)
 got=$(HOME="$EMPTY_HOME" UM_AUTH_TOKEN="" _resolve_auth_token)
 assert_eq "_resolve_auth_token empty default" "" "$got"
 rm -rf "$EMPTY_HOME"
+
+# Token-file tier (the #285 fix, mirrored from create-adr.sh):
+# ${UM_TOKEN_FILE:-$HOME/.um/auth-token}, trimmed, same semantics as
+# um-api.sh's um_api_token. FINAL fallback: env and config.json both win.
+TOKFILE_HOME=$(mktemp -d)
+mkdir -p "$TOKFILE_HOME/.um"
+printf '  from-file
+' > "$TOKFILE_HOME/.um/auth-token"
+
+got=$(HOME="$TOKFILE_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
+assert_eq "_resolve_auth_token file tier (default path, trimmed)" "from-file" "$got"
+
+ALT_TOKFILE=$(mktemp)
+printf 'from-alt-file
+' > "$ALT_TOKFILE"
+got=$(HOME="$TOKFILE_HOME-x" UM_AUTH_TOKEN="" UM_TOKEN_FILE="$ALT_TOKFILE" _resolve_auth_token)
+assert_eq "_resolve_auth_token file tier (UM_TOKEN_FILE override)" "from-alt-file" "$got"
+rm -f "$ALT_TOKFILE"
+
+mkdir -p "$TOKFILE_HOME/.claude/skills/create-remember"
+printf '{"auth_token":"from-config"}
+' > "$TOKFILE_HOME/.claude/skills/create-remember/config.json"
+got=$(HOME="$TOKFILE_HOME" UM_AUTH_TOKEN="" UM_TOKEN_FILE="" _resolve_auth_token)
+assert_eq "_resolve_auth_token config wins over file" "from-config" "$got"
+rm -rf "$TOKFILE_HOME"
+
+# ─── Unit tests: skill.md helper path ──────────────────────────────────────
+# REGRESSION: skill.md invoked the helper at ~/.claude/skills/create-remember/, a path
+# nothing creates — the helper ships beside skill.md inside the plugin. Every
+# `bash <path>/create-remember.sh` line must resolve to the file next to skill.md once
+# Claude Code substitutes ${CLAUDE_SKILL_DIR} (the skill's own directory).
+echo ""
+echo "=== unit: skill.md helper path ==="
+skill_md="$SCRIPT_DIR/skill.md"
+helper_paths=$(grep -oE 'bash "?[^ `"]*create-remember.sh' "$skill_md" | sed -E 's/^bash "?//')
+n_paths=$(printf '%s
+' "$helper_paths" | grep -c .)
+[ "$n_paths" -ge 2 ] && pass "skill.md names the helper in 2+ commands ($n_paths)"   || fail "skill.md names the helper in 2+ commands" "found $n_paths"
+while IFS= read -r hp; do
+  [ -n "$hp" ] || continue
+  # The literal ${CLAUDE_SKILL_DIR} token, replaced by this test's own dir.
+  skill_dir_token="\${CLAUDE_SKILL_DIR}"
+  resolved=${hp//"$skill_dir_token"/$SCRIPT_DIR}
+  [ -f "$resolved" ] && pass "skill.md helper path resolves: $hp"     || fail "skill.md helper path resolves" "$hp -> $resolved (no such file)"
+done <<< "$helper_paths"
 
 # ─── Unit tests: _resolve_default_project_for_display ────────────────────
 echo ""

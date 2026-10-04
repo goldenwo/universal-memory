@@ -19,8 +19,11 @@
 #   - does NOT acquire a lockdir
 #   - does NOT reindex
 #
-# If you like the preview and want to commit it, run `/um-checkpoint` (which
-# invokes session-end.sh, the canonical write path).
+# This is a LOCAL draft from the client-side summarize.sh + update-state.sh
+# pair. Checkpoints no longer use it: /um-checkpoint and SessionEnd POST to
+# the server (session-end.sh), whose checkpoint synthesis writes the real
+# state.md, so the two can differ. With a remote server and no local vault
+# there are no captures here to read.
 
 set -uo pipefail
 
@@ -48,9 +51,11 @@ while [ $# -gt 0 ]; do
       cat <<EOF
 Usage: um-preview [--project <name>]
 
-Reads today's raw captures, summarizes them, and outputs a draft state.md
-to stdout. Does NOT modify any files in the vault. Use /um-checkpoint if
-you want to actually write the state.
+Reads today's raw captures from the local vault, summarizes them, and
+outputs a draft state.md to stdout. Does NOT modify any files in the vault.
+This is a local client-side draft: /um-checkpoint asks the server to
+checkpoint, and the server's synthesis writes the real state.md, which can
+differ from this draft.
 
 Env vars:
   UM_VAULT_DIR        - vault root (default: \$HOME/.um/vault)
