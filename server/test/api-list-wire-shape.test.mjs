@@ -434,3 +434,75 @@ test('GET /api/search?type=… typeFilter preserves siblings through the route r
     await close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// #349: a compact snippet leads with the doc's OWN title, once. Vault docs are
+// indexed as "<title>\n\n<body>" (reindexDoc), so their memory text already
+// opens with the title line — the snippet used to repeat it. A doc with no
+// title of its own got a display fallback ('(untitled)', an id, a file stem)
+// spent at the front of the window. The item's `title` field keeps its
+// fallback (clients label by it); only the snippet text changes.
+// ---------------------------------------------------------------------------
+
+const SNIPPET_TITLED = {
+  id: 'mem0-uuid-t',
+  memory: 'Summary 2026-09-28\n\n## What happened\nthe sweep ran',
+  metadata: { id: 'session-2026-09-28-x', title: 'Summary 2026-09-28' },
+  score: 0.9,
+};
+const SNIPPET_UNTITLED = { id: 'mem0-uuid-u', memory: 'the user prefers tea', metadata: {}, score: 0.8 };
+const SNIPPET_MEMORY = {
+  getAll: async () => ({ results: [SNIPPET_TITLED, SNIPPET_UNTITLED] }),
+  search: async () => ({ results: [SNIPPET_TITLED, SNIPPET_UNTITLED] }),
+};
+
+function assertSnippets349(results, untitledTitle) {
+  const titled = results.find((r) => r.id === 'session-2026-09-28-x');
+  const untitled = results.find((r) => r.id === 'mem0-uuid-u');
+  assert.ok(titled && untitled, 'both stub records are present');
+  assert.equal(titled.title, 'Summary 2026-09-28');
+  assert.equal(titled.snippet, 'Summary 2026-09-28 — ## What happened\nthe sweep ran', 'the title appears once');
+  assert.equal(untitled.title, untitledTitle, 'the item keeps its display title');
+  assert.equal(untitled.snippet, 'the user prefers tea', 'no placeholder prefix');
+}
+
+for (const [route, request, untitledTitle] of [
+  ['GET /api/list', (o) => fetch(`${o}/api/list`), 'mem0-uuid-u'],
+  ['POST /api/search', (o) => fetch(`${o}/api/search`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'q', limit: 5 }),
+  }), '(untitled)'],
+  ['GET /api/search', (o) => fetch(`${o}/api/search?q=q`), '(untitled)'],
+]) {
+  test(`#349 ${route}: the snippet leads with the doc's own title once, and an untitled record's snippet is its text`, async () => {
+    const { origin, close } = await startServer({ memory: SNIPPET_MEMORY, _umGetAll: getAllBridge });
+    try {
+      const res = await request(origin);
+      assert.equal(res.status, 200);
+      assertSnippets349(JSON.parse(await res.text()).results, untitledTitle);
+    } finally {
+      await close();
+    }
+  });
+}
+
+test('#349 GET /api/recent: a doc without a frontmatter title gets an excerpt-only snippet; its item title stays the file stem', async () => {
+  const tmpVault = tempDir('um-wire-recent-349-');
+  const authored = path.join(tmpVault, 'authored', 'wire-349');
+  await mkdir(authored, { recursive: true });
+  await writeFile(path.join(authored, 'no-title-doc.md'), '---\ntype: note\nid: no-title-doc\n---\n\nplain body text', 'utf8');
+  const prevVault = process.env.UM_VAULT_DIR;
+  process.env.UM_VAULT_DIR = tmpVault;
+  const { origin, close } = await startServer({});
+  try {
+    const res = await fetch(`${origin}/api/recent/wire-349?limit=5`);
+    assert.equal(res.status, 200);
+    const [item] = JSON.parse(await res.text()).results;
+    assert.equal(item.title, 'no-title-doc');
+    assert.equal(item.snippet, 'plain body text');
+  } finally {
+    await close();
+    if (prevVault === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = prevVault;
+    await rm(tmpVault, { recursive: true, force: true });
+  }
+});

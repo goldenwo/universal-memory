@@ -204,21 +204,32 @@ const _FAVICON_ICO = readFileSync(path.resolve(__dirname, 'assets/brand/favicon.
  * Build a compact snippet: title + " — " + first SNIPPET_N code points of body (+ ellipsis).
  * Uses [...str] (code-point-aware iteration) rather than slice(0, N) which operates on
  * UTF-16 code units and can split a surrogate pair at the boundary.
- * Shared by doRecent and doSearch so snippet format is guaranteed identical.
+ * Shared by every compact projection (search, list, recent) so the format is identical.
  *
- * Title fallback convention (matches doRecent): if title is empty/null, returns only the excerpt.
+ * `title` is the doc's OWN title (metadata.title / frontmatter title), never a display
+ * fallback: an id, a file stem or '(untitled)' is a label the item's `title` field already
+ * carries, and spent at the front of the window it pushes content out (#349). With no own
+ * title the snippet is the excerpt alone. Vault docs are indexed as "<title>\n\n<body>"
+ * (reindexDoc), so a body whose first line is the title drops that line before excerpting.
  *
- * @param {string} title
+ * @param {string|undefined} title
  * @param {string} body
  * @returns {string}
  */
 function buildSnippet(title, body) {
-  const trimmedBody = (body || '').trim();
-  const codePoints = [...trimmedBody];
+  const ownTitle = typeof title === 'string' ? title.trim() : '';
+  let text = (body || '').trim();
+  if (ownTitle) {
+    const nl = text.indexOf('\n');
+    if ((nl === -1 ? text : text.slice(0, nl)).trim() === ownTitle) {
+      text = nl === -1 ? '' : text.slice(nl + 1).trim();
+    }
+  }
+  const codePoints = [...text];
   const bodyExcerpt = codePoints.length > SNIPPET_N
     ? codePoints.slice(0, SNIPPET_N).join('') + SNIPPET_ELLIPSIS
-    : trimmedBody;
-  return title ? `${title} — ${bodyExcerpt}` : bodyExcerpt;
+    : text;
+  return ownTitle ? `${title} — ${bodyExcerpt}` : bodyExcerpt;
 }
 
 // True when this module is the entry point (invoked via `node mem0-mcp-http.mjs`
@@ -970,7 +981,7 @@ function applyOnlySupersededListing(items, { lane, persona, limit, offset, clien
 				id: r.id,
 				title: r.title,
 				score: r.score,
-				snippet: buildSnippetFn(r.title, r.body),
+				snippet: buildSnippetFn(md.title, r.body),
 				supersededAt: md.supersededAt,
 				supersededBy: md.supersededBy,
 			};
@@ -1076,7 +1087,7 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					id: r.id,
 					title: r.title,
 					score: r.score,
-					snippet: buildSnippet(r.title, r.body),
+					snippet: buildSnippet(r.metadata?.title, r.body),
 				}));
 			}
 
@@ -1987,7 +1998,7 @@ export async function handleCheckpointRequest(req, res, ctx) {
  * Compact shape (full=false, default): { id, title, score, snippet }
  *   - id   = metadata.id (filename stem, NOT mem0 UUID — spec §5.2.1)
  *   - title fallback: metadata.id if title absent (matches doRecent convention)
- *   - snippet = buildSnippet(title, memory body)
+ *   - snippet = buildSnippet(metadata.title, memory body) — the doc's own title only (#349)
  * Full shape (full=true): compact shape + { body } (raw memory text)
  *
  * @param {string} query
@@ -2158,7 +2169,7 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 			base.body = r.memory;
 			base.metadata = r.metadata; // preserve for internal MCP callers that filter on metadata
 		} else {
-			base.snippet = buildSnippet(title, r.memory);
+			base.snippet = buildSnippet(r.metadata?.title, r.memory);
 		}
 		return base;
 	});
@@ -2356,7 +2367,7 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
         const title = fm.title || stem;
 
         // Compact snippet — delegate to shared buildSnippet() for consistent format.
-        const snippet = buildSnippet(title, body);
+        const snippet = buildSnippet(fm.title, body);
 
         const record = { id, title, snippet };
         if (full) {
@@ -2403,7 +2414,7 @@ export async function doRecent(project, limit = 10, full = false, ctx = {}) {
  * Compact shape (full=false, default): { id, title, snippet }
  *   - id    = metadata.id (filename stem) if present, else mem0 UUID
  *   - title = metadata.title if present; falls back to metadata.id, then mem0 UUID
- *   - snippet = buildSnippet(title, memory body)
+ *   - snippet = buildSnippet(metadata.title, memory body) — the doc's own title only (#349)
  * Full shape (full=true): raw mem0 result objects inside the results array
  *   (preserves per-item raw mem0 fields for callers that request full).
  *
@@ -2463,7 +2474,7 @@ export async function doList(full = false, limit = null, ctx = {}) {
   const results = sliced.map((r) => {
     const id = r.metadata?.id ?? r.id;
     const title = r.metadata?.title ?? r.metadata?.id ?? r.id ?? '(untitled)';
-    const snippet = buildSnippet(title, r.memory);
+    const snippet = buildSnippet(r.metadata?.title, r.memory);
     return { id, title, snippet };
   });
   return listEnvelope(results, extras);
@@ -3354,7 +3365,7 @@ export function createRequestHandler(ctx = {}) {
 					id: r.id,
 					title: r.title,
 					score: r.score,
-					snippet: buildSnippet(r.title, r.body),
+					snippet: buildSnippet(r.metadata?.title, r.body),
 				}));
 				// Preserve §4.1 siblings through the compact projection — same
 				// extensibility contract as the filter branch above.
@@ -3432,7 +3443,7 @@ export function createRequestHandler(ctx = {}) {
 					id: r.id,
 					title: r.title,
 					score: r.score,
-					snippet: buildSnippet(r.title, r.body),
+					snippet: buildSnippet(r.metadata?.title, r.body),
 				}));
 				// Preserve §4.1 siblings through the compact projection — same
 				// extensibility contract as the typeFilter branch above.
