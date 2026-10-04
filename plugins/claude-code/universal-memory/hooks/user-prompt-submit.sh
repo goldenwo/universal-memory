@@ -224,8 +224,9 @@ total_chars = sum(len(l) + 1 for l in lines)
 for r in hits:
     # POST /api/search answers CompactMemoryResult items {id, title, snippet,
     # score}; this hook never asks for the full shape. The snippet leads with
-    # the title ("<title> -- <excerpt>", the excerpt capped server-side at
-    # about 240 code points) and may span lines, so it is collapsed to one
+    # the record title when it has one ("<title> -- <excerpt>", the excerpt
+    # capped server-side at about 240 code points; an untitled fact is the
+    # excerpt alone, #349) and may span lines, so it is collapsed to one
     # bullet and the id labels it. Reading {memory, metadata}, a shape the
     # server stopped sending in v0.4.0, injected bare ids for five months (#345).
     if not isinstance(r, dict) or not isinstance(r.get("snippet"), str):

@@ -168,3 +168,63 @@ test('MCP tools/call memory_search with full=true preserves siblings through the
     await close();
   }
 });
+
+// #349: MCP memory_search re-projects doSearch's full items to compact; the
+// snippet leads with the doc's own title once, and an untitled record's
+// snippet is its text alone (the item keeps title '(untitled)').
+test('#349 MCP memory_search: the snippet leads with the doc\'s own title once; an untitled record gets no prefix', async () => {
+  const fakeMemory = {
+    search: async () => ({
+      results: [
+        { id: 'mem0-uuid-t', memory: 'Summary 2026-09-28\n\n## What happened\nthe sweep ran', metadata: { id: 'session-x', title: 'Summary 2026-09-28' }, score: 0.9 },
+        { id: 'mem0-uuid-u', memory: 'the user prefers tea', metadata: {}, score: 0.8 },
+      ],
+    }),
+  };
+  const { origin, close } = await startServer({ memory: fakeMemory });
+  try {
+    const res = await fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'memory_search', arguments: { query: 'q', limit: 5 } } }),
+    });
+    assert.equal(res.status, 200);
+    const { results } = JSON.parse(JSON.parse(await res.text()).result.content[0].text);
+    const titled = results.find((r) => r.id === 'session-x');
+    const untitled = results.find((r) => r.id === 'mem0-uuid-u');
+    assert.equal(titled.snippet, 'Summary 2026-09-28 — ## What happened\nthe sweep ran');
+    assert.equal(untitled.title, '(untitled)');
+    assert.equal(untitled.snippet, 'the user prefers tea');
+  } finally {
+    await close();
+  }
+});
+
+test('#349 MCP memory_search only_superseded: the compact listing builds snippets the same way', async () => {
+  const superseded = { status: 'superseded', supersededBy: 'cur-uuid', supersededAt: '2026-05-16T10:00:00Z' };
+  const fakeMemory = {
+    search: async () => ({
+      results: [
+        { id: 'mem0-uuid-t', memory: 'Old decision\n\nwe used tabs', metadata: { id: 'sup-titled', title: 'Old decision', ...superseded }, score: 0.9 },
+        { id: 'mem0-uuid-u', memory: 'the user preferred coffee', metadata: { ...superseded }, score: 0.8 },
+      ],
+    }),
+  };
+  const { origin, close } = await startServer({ memory: fakeMemory });
+  try {
+    const res = await fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'memory_search', arguments: { query: 'q', only_superseded: true } } }),
+    });
+    assert.equal(res.status, 200);
+    const { results } = JSON.parse(JSON.parse(await res.text()).result.content[0].text);
+    const titled = results.find((r) => r.id === 'sup-titled');
+    const untitled = results.find((r) => r.id === 'mem0-uuid-u');
+    assert.ok(titled && untitled, `both superseded records listed; got ${JSON.stringify(results)}`);
+    assert.equal(titled.snippet, 'Old decision — we used tabs');
+    assert.equal(untitled.snippet, 'the user preferred coffee');
+  } finally {
+    await close();
+  }
+});
