@@ -53,6 +53,8 @@ const PHASE3_ORDER = Object.freeze([
 const FM_KEY_RE = /^[A-Za-z_][\w-]*:/;
 const STAMP_RE = /^(.*?)( \[(\d{4})-(\d{2})-(\d{2})\]\s*)$/;
 const DECISION_DATE_RE = /^\s*[-*]\s+(\d{4})-(\d{2})-(\d{2})/;
+// #358: models copy the doc's convention, and many docs date a decision at its end instead.
+const DECISION_TRAILING_DATE_RE = /[[(](\d{4})-(\d{2})-(\d{2})[\])]\.?\s*$/;
 const LIST_MARKER_RE = /^\s*(?:[-*+]|\d+[.)])\s+/;
 
 // ---------------------------------------------------------------------------
@@ -155,8 +157,12 @@ function readStamp(text) {
   if (!isRealDay(y, mo, d)) return null;
   return { day: `${m[3]}-${m[4]}-${m[5]}`, str: m[2] };
 }
-function readDecisionDate(text) {
-  const m = DECISION_DATE_RE.exec(text);
+/**
+ * A decision's date: a leading `- YYYY-MM-DD` on its first line, else a trailing `[YYYY-MM-DD]` or
+ * `(YYYY-MM-DD)` on its last non-blank line (#358). Read only; the text is never rewritten.
+ */
+function readDecisionDate(firstLine, lastLine) {
+  const m = DECISION_DATE_RE.exec(firstLine) ?? DECISION_TRAILING_DATE_RE.exec(lastLine);
   if (!m) return null;
   const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3]);
   return isRealDay(y, mo, d) ? `${m[1]}-${m[2]}-${m[3]}` : null;
@@ -244,7 +250,7 @@ function parse(md) {
         const s = readStamp(first);
         if (s) { stamp = s.day; stampStr = s.str; }
       } else if (section && section.name === 'Recent decisions') {
-        date = readDecisionDate(first);
+        date = readDecisionDate(first, nonBlank.length ? lines[nonBlank[nonBlank.length - 1]].text : first);
       }
       return { lines: idxs, size: idxs.reduce((acc, i) => acc + lines[i].text.length, 0), blank, placeholder, stamp, stampStr, date, isHeading: false, removed: false, cut: false };
     };
