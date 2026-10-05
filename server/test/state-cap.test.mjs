@@ -884,3 +884,58 @@ test('SC14b fit: a bulleted unit with no whitespace after the marker is hard-cut
   assert.ok(unit.startsWith('- yyyy') && unit.endsWith(`${ELL} [2026-09-20]`));
   assert.ok(unit.length > 100, `not the bare marker: ${unit}`);
 });
+
+// ---------------------------------------------------------------------------
+// #358: a decision's date may trail the entry. Models copy the doc's convention, and 6 of 15
+// production docs write `[YYYY-MM-DD]` / `(YYYY-MM-DD)` at the end; reading only a leading date
+// made every such entry undated, so the bound and the trimmer dropped the TOPMOST entry
+// (project-raccoon lost its 6 newest decisions and kept two 2023 ones). The text is never moved.
+// ---------------------------------------------------------------------------
+/** A trailing-dated decision of exactly `size` chars: `- <filler>. [date]` or `(date)`. */
+function trailingDecision(date, size, open = '[', close = ']') {
+  const tail = ` ${open}${date}${close}`;
+  return '- ' + text(size - 2 - tail.length) + tail;
+}
+
+test('SC58 parse: a trailing [date] or (date) is the decision date; a leading date wins; a mid-line date is not read (#358)', () => {
+  const md = build({ decisions: [
+    trailingDecision('2026-09-26', 60),
+    trailingDecision('2023-10-06', 60, '(', ')'),
+    '- closed the loop. [2026-09-27].',
+    '- 2026-09-20: leading wins over [2026-09-28]',
+    '- moved the [2026-09-21] item to done',
+    '- spans two lines\n  and ends dated [2026-09-22]',
+  ] });
+  const units = section(md, 'Recent decisions').units.filter(u => !u.blank && !u.placeholder);
+  assert.deepEqual(units.map(u => u.date), ['2026-09-26', '2023-10-06', '2026-09-27', '2026-09-20', null, '2026-09-22']);
+});
+
+test('SC59 limits: trailing-dated decisions, newest on top, 10 → 8 keep the 8 largest dates, not the bottom 8 (#358)', () => {
+  const dates = ['2026-09-30', '2026-09-29', '2026-09-28', '2026-09-27', '2026-09-26', '2026-09-25', '2026-09-24', '2026-09-23', '2023-10-06', '2023-10-05'];
+  const md = build({ decisions: dates.map((d, i) => trailingDecision(d, 60, i % 2 ? '(' : '[', i % 2 ? ')' : ']')) });
+  const r = applySectionLimits(md, { asOf: '2026-09-30T10:00:00Z', now: new Date('2026-09-30T12:00:00Z') });
+  const kept = unitTexts(r.md, 'Recent decisions').map(u => u.slice(-11, -1));
+  assert.deepEqual(kept, dates.slice(0, 8), 'the two 2023 entries go, the newest stay');
+  assert.deepEqual(r.bounded, [{ heading: 'Recent decisions', dropped: 2 }]);
+});
+
+test('SC60 limits: a trailing date later than now + 1 counts as undated and goes first (#358)', () => {
+  const dates = ['2026-09-17', '2026-09-18', '2026-09-19', '2026-09-20', '2026-10-30', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'];
+  const md = build({ decisions: dates.map(d => trailingDecision(d, 60)) });
+  const r = applySectionLimits(md, CTX);
+  const kept = unitTexts(r.md, 'Recent decisions').map(u => u.slice(-11, -1));
+  assert.equal(kept.length, 8);
+  assert.ok(!kept.includes('2026-10-30'), 'the future-dated entry went first');
+  assert.ok(kept.includes('2026-09-17'), 'every real date stayed');
+});
+
+test('SC61 fit: the trimmer takes a trailing-dated section oldest first, not topmost (#358)', () => {
+  const dates = ['2026-09-24', '2026-09-23', '2026-09-22', '2026-09-21', '2026-09-20', '2026-09-19', '2026-09-18', '2026-09-17'];
+  const md = build({ cf: [text(600)], inflight: [bullet('a', 190, '2026-09-20')], decisions: dates.map(d => trailingDecision(d, 260)), next: [text(190)], open: [text(190)], env: [text(190)] });
+  assert.ok(md.length > STATE_CAP_CHARS);
+  const r = fit(md);
+  const kept = unitTexts(r.md, 'Recent decisions').map(u => u.slice(-11, -1));
+  assert.ok(kept.length >= 1 && kept.length < dates.length, `the trimmer cut some decisions: kept ${kept.length}`);
+  assert.deepEqual(kept, dates.slice(0, kept.length), 'the newest (top) survive; the oldest (bottom) went');
+  assert.ok(r.md.length <= STATE_CAP_CHARS);
+});
