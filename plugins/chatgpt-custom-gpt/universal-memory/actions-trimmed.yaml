@@ -28,7 +28,7 @@ paths:
           schema:
             type: boolean
             default: false
-          description: "When true, return the full MemoryResult shape in each result
+          description: "When true, return the full FullSearchResult shape in each result
             instead of the compact CompactMemoryResult shape. The outer envelope
             (`{results: [...]}`) is the same either way."
       requestBody:
@@ -40,7 +40,7 @@ paths:
       responses:
         "200":
           description: "Search succeeded. Response is `{results: [...]}`; items are
-            compact (CompactMemoryResult) by default, or full (MemoryResult)
+            compact (CompactMemoryResult) by default, or full (FullSearchResult)
             when ?full=1."
           content:
             application/json:
@@ -135,7 +135,7 @@ paths:
       summary: Most-recent memories for a project
       description: "Returns the N most-recently indexed memories for the given project
         slug. Response is `{results: [...]}` with compact items by default; add
-        `?full=1` to get the full MemoryResult shape in each result instead.
+        `?full=1` to get the full RecentFullResult shape in each result instead.
         Results are sorted newest-first by updated_at."
       parameters:
         - name: project
@@ -160,20 +160,20 @@ paths:
           schema:
             type: boolean
             default: false
-          description: "When true, return the full MemoryResult shape in each result
+          description: "When true, return the full RecentFullResult shape in each result
             instead of the compact CompactMemoryResult shape. The outer envelope
             (`{results: [...]}`) is the same either way."
       responses:
         "200":
           description: "Recent memories. Response is `{results: [...]}`; items are compact
-            (CompactMemoryResult) by default, or full (MemoryResult) when
+            (CompactMemoryResult) by default, or full (RecentFullResult) when
             ?full=1."
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/CompactSearchResponse"
-                  - $ref: "#/components/schemas/SearchResponseFull"
+                  - $ref: "#/components/schemas/RecentResponseFull"
         "400":
           description: Invalid project name
           content:
@@ -288,8 +288,8 @@ components:
     SearchResponse:
       type: object
       description: "Default response shape for /api/search: `{results:
-        [CompactMemoryResult]}`. Add ?full=1 to get the full MemoryResult shape
-        in each result instead."
+        [CompactMemoryResult]}`. Add ?full=1 to get the full FullSearchResult
+        shape in each result instead."
       required:
         - results
       properties:
@@ -306,7 +306,7 @@ components:
         results:
           type: array
           items:
-            $ref: "#/components/schemas/MemoryResult"
+            $ref: "#/components/schemas/FullSearchResult"
     ErrorResponse:
       type: object
       description: v0.6 unified error envelope (spec §5.1). Returned on every 4xx/5xx
@@ -444,7 +444,7 @@ components:
     CompactSearchResponse:
       type: object
       description: Default search/list/recent response envelope with compact items.
-        Use ?full=1 to get the full MemoryResult shape in each result instead.
+        Use ?full=1 for the full shape of each route instead.
       required:
         - results
       properties:
@@ -452,6 +452,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CompactMemoryResult"
+    RecentResponseFull:
+      type: object
+      description: Full response shape for /api/recent/{project} when ?full=1 is provided.
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecentFullResult"
     AppendTurnRequest:
       type: object
       required:
@@ -740,7 +750,9 @@ components:
       type: object
       description: Compact memory record returned by default (without ?full=1) from
         search, list, and recent endpoints. Contains only the most commonly
-        needed fields. Use ?full=1 to get the full MemoryResult shape.
+        needed fields. Use ?full=1 for the full shape of each route
+        (FullSearchResult for search, MemoryResult for list, RecentFullResult
+        for recent).
       required:
         - id
         - title
@@ -763,43 +775,32 @@ components:
             corpus-relative when available, else exp(-0.25). With
             UM_TEMPORAL_QUERY=true a resolved date window re-ranks instead; both
             on, undated take the same factor.
-    MemoryResult:
+    FullSearchResult:
       type: object
-      description: A single memory record returned by search/list endpoints (full
-        shape, ?full=1).
+      description: "A search result in the full shape (?full=1, or full: true in the
+        body): the compact fields with the stored text as `body` instead of a
+        snippet, plus the point metadata."
+      required:
+        - id
+        - title
+        - body
       properties:
         id:
           type: string
           description: Filename stem from metadata.id when present; falls back to mem0
             UUID only when metadata.id is absent
-        memory:
+        title:
           type: string
-          description: The stored text
+          description: metadata.title; falls back to metadata.id, then "(untitled)"
         score:
           type: number
-          description: "Relevance score. With UM_TEMPORAL_DECAY=true this is the decayed
-            score: dated results scale by exp(-age/halfLife), undated ones by an
-            imputed factor (corpus-relative, else exp(-0.25)). With
-            UM_TEMPORAL_QUERY=true a resolved date window re-ranks instead; both
-            on, undated take the same factor."
+          description: Relevance score, with the same temporal semantics as
+            CompactMemoryResult.score.
+        body:
+          type: string
+          description: The stored text
         metadata:
           $ref: "#/components/schemas/MemoryMetadata"
-        hash:
-          type: string
-        created_at:
-          type:
-            - string
-            - "null"
-        updated_at:
-          type:
-            - string
-            - "null"
-        user_id:
-          type: string
-          description: "Snake-case field name as returned by the mem0 library API
-            (application layer). Note: the underlying Qdrant payload stores this
-            as camelCase `userId` per spec §4.3 — mem0 normalises it back to
-            snake_case in getAll()/search() results."
     MemoryMetadata:
       type: object
       description: Arbitrary metadata attached to a mem0 document. Fields follow UM
@@ -851,3 +852,25 @@ components:
           type: array
           items:
             type: string
+    RecentFullResult:
+      type: object
+      description: "A recent authored document in the full shape (?full=1): the
+        compact fields plus the document body."
+      required:
+        - id
+        - title
+        - snippet
+        - body
+      properties:
+        id:
+          type: string
+          description: Frontmatter id; falls back to the file stem
+        title:
+          type: string
+          description: Frontmatter title; falls back to the file stem
+        snippet:
+          type: string
+          description: Short text excerpt from the document body
+        body:
+          type: string
+          description: The document body (after its frontmatter)

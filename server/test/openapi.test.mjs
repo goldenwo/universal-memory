@@ -166,6 +166,9 @@ test('custom GPT actions spec includes only the 7 trimmed routes with operationI
     'HealthResponse',
     'DeleteByUuidResponse',
     'McpWriteGatedResponse',
+    // #350: only /api/list?full=1 sends a raw MemoryResult, and list is not a GPT route.
+    'MemoryResult',
+    'ListResponseFull',
   ]) {
     assert.ok(
       !schemaNames.includes(forbidden),
@@ -179,7 +182,11 @@ test('custom GPT actions spec includes only the 7 trimmed routes with operationI
     'SearchRequest',
     'SearchResponse',
     'SearchFilters',
-    'MemoryResult',
+    // #350: the full search and recent items have their own schemas.
+    'SearchResponseFull',
+    'FullSearchResult',
+    'RecentResponseFull',
+    'RecentFullResult',
     'MemoryMetadata',
     'CompactMemoryResult',
     'AddRequest',
