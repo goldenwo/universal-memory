@@ -506,3 +506,96 @@ test('#349 GET /api/recent: a doc without a frontmatter title gets an excerpt-on
     await rm(tmpVault, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// #350: every ?full=1 item matches the schema its route publishes. The full
+// /api/search item was documented as MemoryResult{memory}, while the handler
+// sends {id, title, score, body, metadata}; a client written from the schema
+// reads `memory`, gets nothing, and fails silently (the #345 class). /api/recent
+// had the same mismatch. The check resolves each route's documented full item
+// from the spec, so the handler and the schema are one chain.
+// ---------------------------------------------------------------------------
+
+function documentedFullItem(spec, route, method) {
+  const resolve = (s) => (s && s.$ref ? spec.components.schemas[s.$ref.split('/').pop()] : s);
+  const schema = spec.paths[route][method].responses['200'].content['application/json'].schema;
+  const variants = (schema.oneOf ?? [schema]).map(resolve);
+  const full = variants.find((v) => resolve(v.properties.results.items) !== spec.components.schemas.CompactMemoryResult);
+  assert.ok(full, `${method.toUpperCase()} ${route} documents a full response variant`);
+  return resolve(full.properties.results.items);
+}
+
+function assertItemMatches(item, schema, label) {
+  for (const k of schema.required ?? []) assert.ok(k in item, `${label}: required ${k} is sent`);
+  for (const k of Object.keys(item)) assert.ok(k in schema.properties, `${label}: sent key ${k} is documented`);
+}
+
+const FULL_SEARCH_MEMORY = {
+  search: async () => ({
+    results: [{ id: 'mem0-uuid-f', memory: 'the stored text', metadata: { id: 'full-doc', title: 'Full Doc', type: 'note' }, score: 0.8 }],
+  }),
+};
+
+test('#350 POST /api/search?full=1: the item matches the documented full search item', async () => {
+  const { origin, close } = await startServer({ memory: FULL_SEARCH_MEMORY });
+  try {
+    const res = await fetch(`${origin}/api/search?full=1`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'q', limit: 5 }),
+    });
+    assert.equal(res.status, 200);
+    const [item] = JSON.parse(await res.text()).results;
+    assert.equal(item.body, 'the stored text');
+    assert.ok(!('memory' in item), 'the full search item carries body, not memory');
+    assertItemMatches(item, documentedFullItem(buildSpec(), '/api/search', 'post'), 'POST /api/search?full=1');
+  } finally {
+    await close();
+  }
+});
+
+test('#350 GET /api/search?full=1: the item matches the documented full search item', async () => {
+  const { origin, close } = await startServer({ memory: FULL_SEARCH_MEMORY });
+  try {
+    const res = await fetch(`${origin}/api/search?q=q&full=1`);
+    assert.equal(res.status, 200);
+    const [item] = JSON.parse(await res.text()).results;
+    assertItemMatches(item, documentedFullItem(buildSpec(), '/api/search', 'get'), 'GET /api/search?full=1');
+  } finally {
+    await close();
+  }
+});
+
+test('#350 GET /api/list?full=1: the raw mem0 item matches the documented MemoryResult', async () => {
+  const fakeMemory = { getAll: async () => ({ results: [{ id: 'mem0-uuid-1', memory: 'hello world', metadata: { id: 'doc-1', title: 'Doc One' } }] }) };
+  const { origin, close } = await startServer({ memory: fakeMemory, _umGetAll: getAllBridge });
+  try {
+    const res = await fetch(`${origin}/api/list?full=1`);
+    const [item] = JSON.parse(await res.text()).results;
+    assert.equal(item.memory, 'hello world');
+    assertItemMatches(item, documentedFullItem(buildSpec(), '/api/list', 'get'), 'GET /api/list?full=1');
+  } finally {
+    await close();
+  }
+});
+
+test('#350 GET /api/recent/:project?full=1: the item matches the documented full recent item', async () => {
+  const tmpVault = tempDir('um-wire-recent-350-');
+  const authored = path.join(tmpVault, 'authored', 'wire-350');
+  await mkdir(authored, { recursive: true });
+  await writeFile(path.join(authored, 'doc.md'), '---\ntype: note\nid: doc-350\ntitle: Doc 350\n---\n\nbody text', 'utf8');
+  const prevVault = process.env.UM_VAULT_DIR;
+  process.env.UM_VAULT_DIR = tmpVault;
+  const { origin, close } = await startServer({});
+  try {
+    const res = await fetch(`${origin}/api/recent/wire-350?full=1`);
+    assert.equal(res.status, 200);
+    const [item] = JSON.parse(await res.text()).results;
+    assert.equal(item.body.trim(), 'body text');
+    const route = Object.keys(buildSpec().paths).find((p) => p.startsWith('/api/recent/'));
+    assertItemMatches(item, documentedFullItem(buildSpec(), route, 'get'), 'GET /api/recent?full=1');
+  } finally {
+    await close();
+    if (prevVault === undefined) delete process.env.UM_VAULT_DIR;
+    else process.env.UM_VAULT_DIR = prevVault;
+    await rm(tmpVault, { recursive: true, force: true });
+  }
+});
