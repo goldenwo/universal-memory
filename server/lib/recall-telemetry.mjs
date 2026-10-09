@@ -1,13 +1,19 @@
 // server/lib/recall-telemetry.mjs — U2 (#171 Stage A, spec §2 source 3):
 // in-process recall telemetry for GET /api/stats.
 //
-// Two coupled emissions per PRODUCTION search (spec §2/§3):
+// Per PRODUCTION recall (spec §2/§3), noteRecallSearch makes two coupled
+// emissions:
 //   • a `recall.search` counters row through the SAME recordCaptureEvent seam
 //     the capture.* events use (additive row, outcome '', no migration) —
-//     feeds searches_today / searches_7d;
+//     feeds searches_today / searches_7d. Emitted for doSearch and for BOTH
+//     compat reads (search and the query-less list);
 //   • the serving duration into a memory-only ring buffer (last
 //     RING_CAPACITY durations, process-lifetime, reset on restart) — feeds
 //     latency_since_boot percentiles, computed at READ time.
+// Each production SEARCH (doSearch, compat search; never the compat list read)
+// also writes two prevalence rows, read by SQL and not served in /api/stats:
+//   • `recall.temporal_query` (noteTemporalQuery) — the temporal-parse kind;
+//   • `recall.query_shape` (noteQueryShape, #203) — none/embedded/dominant.
 //
 // GATE (plan U2 R4-b, load-bearing): emission happens ONLY when a surface is
 // present. doSearch has ~25 test/eval callers that never thread ctx.surface —
@@ -20,6 +26,7 @@
 
 import { recordCaptureEvent } from './capture-events.mjs';
 import { isTemporalKind } from './temporal-query.mjs';
+import { QUERY_SHAPES, isQueryShape } from './query-shape.mjs';
 
 /** Spec §2 pinned recall event names (ride the capture-counters schema). */
 export const RECALL_EVENTS = Object.freeze({
@@ -27,7 +34,17 @@ export const RECALL_EVENTS = Object.freeze({
   /** Temporal v1 spec D-f. Outside capture.% — an older server stays
    *  downgrade-inert against it, same as recall.search. */
   TEMPORAL_QUERY: 'recall.temporal_query',
+  /** #203 D9: how identifier-led each production query is. Outside capture.%,
+   *  not in /api/stats — read by SQL, like recall.temporal_query. */
+  QUERY_SHAPE: 'recall.query_shape',
 });
+
+/**
+ * The recall.query_shape outcome vocabulary: none | embedded | dominant. The
+ * classifier owns it (lib/query-shape.mjs) and this is the same frozen array,
+ * so the gate below can never disagree with what the classifier returns.
+ */
+export { QUERY_SHAPES };
 
 /** Outcome written when a query carries no parseable temporal phrase. */
 export const TEMPORAL_OUTCOME_NONE = 'none';
@@ -105,6 +122,49 @@ export function noteTemporalQuery(evt, deps) {
     const outcome = kind == null ? TEMPORAL_OUTCOME_NONE : kind;
     if (outcome !== TEMPORAL_OUTCOME_NONE && !isTemporalKind(outcome)) return;
     record({ surface, project: '', event: RECALL_EVENTS.TEMPORAL_QUERY, outcome });
+  } catch {
+    // Fire-and-forget: telemetry must never fail a search.
+  }
+}
+
+/**
+ * Record one production recall's query shape (#203 spec D9): whether the query
+ * is identifier-dominant, carries an identifier inside other words, or none.
+ *
+ * The forward prevalence counter for short identifier-led queries — the only
+ * instrument that sees connector and phone traffic, and the trigger for #203's
+ * parked remedy branch. Same footprint as recall.temporal_query: the caller
+ * classifies the query in memory (classifyQueryShape) and only the label is
+ * written; no query text is logged, stored or returned.
+ *
+ * Prevalence is computed WITHIN this event family:
+ *   dominant / (none + embedded + dominant)
+ * never over recall.search — the compat facade emits recall.search from its
+ * query-less list read too, which has no query and so no shape row; dividing
+ * by it would understate the share on any surface that lists.
+ *
+ * Mirrors noteTemporalQuery: two gates, both no-ops rather than errors —
+ *   • surface absent  ⇒ no emission (the ~25 eval/test doSearch callers)
+ *   • shape not in the frozen QUERY_SHAPES vocabulary ⇒ no emission. `outcome`
+ *     is part of the counters PRIMARY KEY with no length cap; anything else
+ *     (including a null from a failed classification) must never reach it.
+ * Unlike a temporal kind, a shape has no "absent ⇒ none" mapping: `none` is a
+ * label the classifier returns, so null/undefined means "not classified".
+ *
+ * @param {object} evt
+ * @param {string} [evt.surface] - Production surface; absent ⇒ no emission.
+ * @param {string} [evt.shape]   - A QUERY_SHAPES member; anything else ⇒ no emission.
+ * @param {object} [deps] - Test seam; defaults to the real counters writer.
+ */
+export function noteQueryShape(evt, deps) {
+  try {
+    // Destructured inside the try, as in noteTemporalQuery: a default
+    // parameter would let `noteQueryShape(null)` throw before any guard ran.
+    const { surface, shape } = evt ?? {};
+    const record = deps?.record ?? recordCaptureEvent;
+    if (typeof surface !== 'string' || surface.length === 0) return;
+    if (!isQueryShape(shape)) return;
+    record({ surface, project: '', event: RECALL_EVENTS.QUERY_SHAPE, outcome: shape });
   } catch {
     // Fire-and-forget: telemetry must never fail a search.
   }

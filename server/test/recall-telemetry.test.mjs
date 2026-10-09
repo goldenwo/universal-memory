@@ -16,7 +16,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteTemporalQuery, RECALL_EVENTS } from '../lib/recall-telemetry.mjs';
+import { noteTemporalQuery, noteQueryShape, RECALL_EVENTS, QUERY_SHAPES } from '../lib/recall-telemetry.mjs';
+import { classifyQueryShape, QUERY_SHAPES as CLASSIFIER_SHAPES } from '../lib/query-shape.mjs';
 
 /** Capture what reaches the recordCaptureEvent seam without touching sqlite. */
 function collector() {
@@ -90,4 +91,58 @@ test('never throws on a malformed argument object', () => {
 	assert.doesNotThrow(() => noteTemporalQuery());
 	assert.doesNotThrow(() => noteTemporalQuery(null));
 	assert.doesNotThrow(() => noteTemporalQuery({}));
+});
+
+// ── #203 D9: recall.query_shape — the same contract as noteTemporalQuery ──────
+// R1–R3 here (unit, through the record seam); R1's production-path half, R2's
+// real-writer half, R4 (compat list read) and R5 (whole-output namespace
+// isolation) live in api-stats.test.mjs beside the recall.search pins.
+
+test('R1: emits a recall.query_shape row carrying the shape, for every shape, on a production surface', () => {
+	const c = collector();
+	for (const shape of ['none', 'embedded', 'dominant']) {
+		noteQueryShape({ surface: 'claude-code-plugin', shape }, { record: c.record });
+	}
+	assert.deepEqual(c.rows, ['none', 'embedded', 'dominant'].map((outcome) => ({
+		surface: 'claude-code-plugin',
+		project: '',
+		event: RECALL_EVENTS.QUERY_SHAPE,
+		outcome,
+	})));
+	// The classified outcome, end to end through the classifier.
+	const d = collector();
+	noteQueryShape({ surface: 'unknown', shape: classifyQueryShape('UM_TEMPORAL_DECAY') }, { record: d.record });
+	assert.equal(d.rows[0].outcome, 'dominant');
+});
+
+test("R1: pinned event name is 'recall.query_shape' — outside the capture.% namespace; one frozen vocabulary", () => {
+	assert.equal(RECALL_EVENTS.QUERY_SHAPE, 'recall.query_shape');
+	assert.ok(!RECALL_EVENTS.QUERY_SHAPE.startsWith('capture.'));
+	assert.deepEqual([...QUERY_SHAPES], ['none', 'embedded', 'dominant']);
+	assert.ok(Object.isFrozen(QUERY_SHAPES));
+	assert.equal(QUERY_SHAPES, CLASSIFIER_SHAPES, 'the counter gates on the classifier\'s own vocabulary, not a copy');
+});
+
+test('R2: no surface ⇒ no emission (the ~25 eval/test doSearch callers)', () => {
+	const c = collector();
+	for (const surface of [undefined, null, '', 42, {}]) {
+		noteQueryShape({ surface, shape: 'dominant' }, { record: c.record });
+	}
+	assert.equal(c.rows.length, 0, 'eval/test callers must not pollute the prevalence counter');
+});
+
+test('R3: an out-of-vocabulary shape emits nothing (outcome is part of the PRIMARY KEY)', () => {
+	const c = collector();
+	for (const shape of ['DOMINANT', 'made_up', 'none ', '', 'capture.turn', 'UM_TEMPORAL_DECAY', null, undefined, 42, {}, ['none']]) {
+		noteQueryShape({ surface: 'claude-code', shape }, { record: c.record });
+	}
+	assert.equal(c.rows.length, 0, 'only the three frozen labels may reach the PRIMARY KEY — never query text');
+});
+
+test('noteQueryShape is fire-and-forget: never throws when the seam throws, or on a malformed argument', () => {
+	const throwing = () => { throw new Error('sqlite is unhappy'); };
+	assert.doesNotThrow(() => noteQueryShape({ surface: 'claude-code', shape: 'none' }, { record: throwing }));
+	assert.doesNotThrow(() => noteQueryShape());
+	assert.doesNotThrow(() => noteQueryShape(null));
+	assert.doesNotThrow(() => noteQueryShape({}));
 });

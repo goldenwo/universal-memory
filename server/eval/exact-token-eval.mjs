@@ -32,6 +32,7 @@ import {
 } from './lib/bm25.mjs';
 import { fuse } from './lib/rrf.mjs';
 import { percentile } from './lib/stats.mjs';
+import { IDENTIFIER_RX, MIN_IDENT_LEN } from '../lib/query-shape.mjs';
 
 // ─── FROZEN ACCEPT RULE (spec §5.3) — do not edit after a number is observed ───
 const GATES = {
@@ -59,18 +60,9 @@ const VERBATIM_RANK1_FLOOR = 0.90;
 const STRATUM_SEMANTIC_FLOOR = { fact: 0.50, doc: null }; // null = reported, no floor asserted
 const K_PRIMARY = 5;
 const FETCH_DEPTH = 50;
-const EXT = 'mjs|js|json|sh|ya?ml|md|ts|py|db|sql|toml|ini|env|lock';
-const IDENTIFIER_RX = new RegExp([
-  String.raw`[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}`,
-  String.raw`v?\d+\.\d+\.\d+`,
-  String.raw`#\d{1,4}`,
-  String.raw`[\w-]+(?:[./][\w-]+)*\.(?:${EXT})\b`,
-  String.raw`--[a-z][a-z0-9-]{2,}`,
-  String.raw`[a-z_][a-z0-9_]*\(\)`,
-  String.raw`(?<![\w-])~?/[\w.-]+(?:/[\w.-]+)+`,
-  String.raw`[a-z][\w-]*:\d{2,5}`,
-].join('|'), 'g');
-const MIN_IDENT_LEN = 4;
+// IDENTIFIER_RX (with EXT) and MIN_IDENT_LEN moved to lib/query-shape.mjs (#203),
+// source byte-identical, so the production counter, the census and this
+// population share one definition; imported above.
 // PROTOCOL DEVIATION D1 (recorded, spec §11) — the exact-token arm is the IDENTIFIER-CENTRIC
 // query, not `semantic + identifier`.
 //
