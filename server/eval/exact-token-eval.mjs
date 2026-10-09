@@ -98,7 +98,9 @@ function rareTokens(index, query) {
 
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > -1 ? process.argv[i + 1] : dflt; };
-const isDoc = (t) => t.length > 400 || /^Session summary|^<summary>/.test(t);
+// Exported for #203 (server/eval/exact-token-203.mjs): its seed-doc choice and C3
+// eligibility use the same doc rule the population's strata use (spec D4).
+export const isDoc = (t) => t.length > 400 || /^Session summary|^<summary>/.test(t);
 
 // ─── CORRECTION 2026-07-29: id-space alignment (see .claude/reviews/2026-07-28-long-document-dilution) ───
 // The original harness built relevant sets and BM25 indexes from the qdrant POINT id while doSearch
@@ -114,7 +116,12 @@ const isDoc = (t) => t.length > 400 || /^Session summary|^<summary>/.test(t);
 export const projectedId = (p) => String(p.payload?.id ?? p.id);
 
 // ─── population (spec §6.2) ───────────────────────────────────────────────────
-export function buildPopulation(points) {
+// `{ groups: true }` (#203 spec D4) returns the collapse GROUPS — every identifier
+// sharing a relevant set, sorted, with that set, df and stratum — instead of
+// choosing July's keep-longest representative, so the #203 harness can pick its
+// own (substring-then-salted-hash). The default call is unchanged, byte for byte
+// (test/query-shape.test.mjs pins its output hash).
+export function buildPopulation(points, { groups = false } = {}) {
   const docs = points.map((p) => ({ id: projectedId(p), text: p.payload?.data ?? '', payload: p.payload ?? {} }));
   // Serving-haystack parity: doSearch can never return these, so they cannot be TARGETS.
   // They stay in the haystack and in BM25 df/avgdl (prod-faithful).
@@ -132,6 +139,25 @@ export function buildPopulation(points) {
       if (m.length < MIN_IDENT_LEN || rel.has(m)) continue;
       rel.set(m, new Set(docs.filter((x) => targetableIds.has(x.id) && x.text.includes(m)).map((x) => x.id)));
     }
+  }
+  if (groups) {
+    const members = new Map(); // relevant-set key -> identifiers
+    for (const [ident, set] of rel) {
+      const key = [...set].sort().join('|');
+      if (!members.has(key)) members.set(key, []);
+      members.get(key).push(ident);
+    }
+    return [...members.entries()].map(([key, identifiers]) => {
+      const relevant = key.split('|');
+      const docTexts = relevant.map((id) => docs.find((d) => d.id === id)?.text ?? '');
+      const docCount = docTexts.filter(isDoc).length;
+      return {
+        identifiers: identifiers.sort(),
+        relevant,
+        df: relevant.length,
+        stratum: docCount * 2 >= relevant.length ? 'doc' : 'fact',
+      };
+    }).sort((a, b) => (a.relevant.join('|') < b.relevant.join('|') ? -1 : 1));
   }
   // Collapse identifiers with identical relevant sets, keeping the longest
   // (`v0.3.8` and `0.3.8` are the same query in substance).
@@ -209,7 +235,10 @@ const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 // single document, which is exactly where the claimed problem was. A probe that samples one stratum
 // certifies nothing about another. Now STRATIFIED, with sample composition asserted and reported so a
 // silently-empty half is visible rather than averaged away.
-async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N) {
+//
+// Exported for #203, whose harness passes `n` and `floor` from its accept rule (spec D5); the
+// defaults keep this file's own call unchanged.
+export async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N, floor = VERBATIM_RANK1_FLOOR) {
   const eligible = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length > 0);
   const strata = {
     fact: eligible.filter((p) => !isDoc(p.payload.data)).slice(0, n),
@@ -224,17 +253,19 @@ async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N) {
     }
     const rate = sample.length ? rank1 / sample.length : 0;
     // An EMPTY stratum is a fault, not a pass — that is how the original probe hid the doc stratum.
-    per[stratum] = { n: sample.length, rank1, rate, ok: sample.length > 0 && rate >= VERBATIM_RANK1_FLOOR };
+    per[stratum] = { n: sample.length, rank1, rate, ok: sample.length > 0 && rate >= floor };
   }
-  return { per, floor: VERBATIM_RANK1_FLOOR, ok: Object.values(per).every((x) => x.ok) };
+  return { per, floor, ok: Object.values(per).every((x) => x.ok) };
 }
 
 /**
  * The guard that would have caught the #188 defect on run 1. Every id an arm ranks MUST be a
  * projected corpus id — i.e. drawn from the same space the relevant sets are built in. A mismatch
  * silently scores 0 for a whole stratum and reads as a retrieval finding; here it throws.
+ * Exported for #203, whose harness maps the throw to a fixed VOID code (its message quotes an
+ * identifier and an id, so it is never printed there).
  */
-function assertIdSpace(rankedIds, universe, label, identifier) {
+export function assertIdSpace(rankedIds, universe, label, identifier) {
   for (const id of rankedIds) {
     if (!universe.has(id)) {
       throw new Error(
