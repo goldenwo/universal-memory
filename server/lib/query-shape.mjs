@@ -37,10 +37,23 @@
 //   at 200 000) and MCP memory_search has no length cap, so only the first
 //   QUERY_SHAPE_MAX_CHARS characters are read (the UserPromptSubmit hook's own
 //   cap). `dominant` needs ≤ 8 content tokens, so text past the cap can only
-//   move `embedded` vs `none`. Matching runs `matchAll` on a fresh RegExp per
-//   call: IDENTIFIER_RX is a shared `g` regex and String.prototype.matchAll
-//   starts from the regex's lastIndex, so matching on the shared object would
-//   let one caller's leftover state change another request's answer.
+//   move `embedded` vs `none`. The cap counts UTF-16 code units (String#slice),
+//   while the hook's Python cap counts code points; the two differ only on
+//   astral characters and only past the cap, which is harmless for the reason
+//   just given. Matching runs `matchAll` on a fresh RegExp per call:
+//   IDENTIFIER_RX is a shared `g` regex and String.prototype.matchAll starts
+//   from the regex's lastIndex, so matching on the shared object would let one
+//   caller's leftover state change another request's answer. Every consumer
+//   must use only `.match` (which resets lastIndex) or `matchAll` on a fresh
+//   copy — never `.test` / `.exec` on the shared object.
+//
+// • SHORT MATCHES CONSUME TEXT (kept on purpose): the regex is matched as one
+//   alternation, left to right, and a match under MIN_IDENT_LEN still consumes
+//   the characters it covers before being discarded. So `#12.3.4` is `none`
+//   (`#12` is taken, the rest no longer forms a version) while `12.3.4` is
+//   `dominant`. This is exactly what the July eval's `.match` did; it is kept
+//   for comparability with #188 and the census. Do not "fix" it here — a
+//   different matcher is a different instrument.
 
 /** File extensions the file-name alternative recognises (frozen 2026-07-28). */
 export const EXT = 'mjs|js|json|sh|ya?ml|md|ts|py|db|sql|toml|ini|env|lock';
@@ -67,11 +80,12 @@ export const QUERY_SHAPE_MAX_CHARS = 5000;
 /** `dominant` needs at most this many content tokens. */
 const DOMINANT_MAX_CONTENT_TOKENS = 8;
 
-/** Spec D9's stopword list, verbatim. */
-const STOPWORDS = new Set((
+/** Spec D9's stopword list, verbatim and in the spec's order (pinned by a test). */
+export const STOPWORDS = Object.freeze((
   'a an the of in on at to for with by from about into over under between through during '
   + 'after before via and or what how why where when which who is are was were does do did can should'
 ).split(' '));
+const STOPWORD_SET = new Set(STOPWORDS);
 
 // "Punctuation" for the stopword comparison: any character that is neither a
 // letter nor a number, so `what?`, `(the` and `is,` compare as stopwords and a
@@ -127,7 +141,7 @@ export function classifyQueryShape(text) {
       continue;
     }
     const word = t[0].toLowerCase().replace(EDGE_PUNCT_RX, '');
-    if (word.length === 0 || STOPWORDS.has(word)) continue;
+    if (word.length === 0 || STOPWORD_SET.has(word)) continue;
     content++;
   }
 

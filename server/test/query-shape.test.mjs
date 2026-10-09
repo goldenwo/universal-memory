@@ -30,6 +30,7 @@ import {
   MIN_IDENT_LEN,
   QUERY_SHAPES,
   QUERY_SHAPE_MAX_CHARS,
+  STOPWORDS,
 } from '../lib/query-shape.mjs';
 import { buildPopulation } from '../eval/exact-token-eval.mjs';
 import { POPULATION_FIXTURE_POINTS } from './fixtures/exact-token-population.fixture.mjs';
@@ -74,6 +75,50 @@ test('Q4 stopword-only text → none (and empty / punctuation-only text too)', (
 	for (const q of ['what is the', 'What IS the?', 'how, why, when?', '', '   ', '?? -- !!', '\n\t']) {
 		assert.equal(classifyQueryShape(q), 'none', JSON.stringify(q));
 	}
+});
+
+// ── Q4 (continued): the tokenizer and stopword rules, each pinned ────────────
+// Q4's inputs carry no identifier, so they classify `none` whatever the
+// stopword handling does. These cases put one identifier beside one content
+// word, so a single extra content token flips `dominant` (1 of 2) to
+// `embedded` (1 of 3): every rule below changes an answer if it regresses.
+
+// Spec D9's list, written out here in the spec's order.
+const SPEC_D9_STOPWORDS = [
+	'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from', 'about', 'into',
+	'over', 'under', 'between', 'through', 'during', 'after', 'before', 'via', 'and', 'or', 'what',
+	'how', 'why', 'where', 'when', 'which', 'who', 'is', 'are', 'was', 'were', 'does', 'do', 'did',
+	'can', 'should',
+];
+
+test('Q4 stopwords: the exported list is spec D9\'s, in order, and frozen', () => {
+	assert.deepEqual([...STOPWORDS], SPEC_D9_STOPWORDS);
+	assert.ok(Object.isFrozen(STOPWORDS));
+});
+
+test('Q4 stopwords: every stopword, in any case and with edge punctuation, is not a content token', () => {
+	// Iterates the spec's list, not the export, so a word dropped from the
+	// module fails here on behaviour as well as in the list pin above.
+	for (const w of SPEC_D9_STOPWORDS) {
+		for (const form of [w, w.toUpperCase(), `${w}?`, `(${w},`]) {
+			assert.equal(classifyQueryShape(`alpha UM_FLAG_X ${form}`), 'dominant', `"${form}" must not count as content`);
+		}
+	}
+	// Control: a non-stopword in the same slot is content, so the frame discriminates.
+	assert.equal(classifyQueryShape('alpha UM_FLAG_X it'), 'embedded');
+});
+
+test('Q4 tokenizer: punctuation-only tokens are dropped; any whitespace separates tokens', () => {
+	assert.equal(classifyQueryShape('alpha UM_FLAG_X -- ->'), 'dominant', 'tokens that strip to empty are not content');
+	assert.equal(classifyQueryShape('UM_FLAG_X\nalpha'), 'dominant');
+	// A newline or tab between two words makes two content tokens (1 of 3).
+	assert.equal(classifyQueryShape('UM_FLAG_X alpha\nbeta'), 'embedded');
+	assert.equal(classifyQueryShape('UM_FLAG_X\talpha\tbeta'), 'embedded');
+});
+
+test('short matches consume the text they cover, exactly as the July eval\'s .match did (kept on purpose)', () => {
+	assert.equal(classifyQueryShape('#12.3.4'), 'none', '`#12` (3 chars) is taken first, so no version is left');
+	assert.equal(classifyQueryShape('12.3.4'), 'dominant');
 });
 
 // ── Q5: identifier + ≥ 4 other content words ─────────────────────────────────
