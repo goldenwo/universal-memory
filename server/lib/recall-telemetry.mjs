@@ -1,13 +1,19 @@
 // server/lib/recall-telemetry.mjs — U2 (#171 Stage A, spec §2 source 3):
 // in-process recall telemetry for GET /api/stats.
 //
-// Two coupled emissions per PRODUCTION search (spec §2/§3):
+// Per PRODUCTION recall (spec §2/§3), noteRecallSearch makes two coupled
+// emissions:
 //   • a `recall.search` counters row through the SAME recordCaptureEvent seam
 //     the capture.* events use (additive row, outcome '', no migration) —
-//     feeds searches_today / searches_7d;
+//     feeds searches_today / searches_7d. Emitted for doSearch and for BOTH
+//     compat reads (search and the query-less list);
 //   • the serving duration into a memory-only ring buffer (last
 //     RING_CAPACITY durations, process-lifetime, reset on restart) — feeds
 //     latency_since_boot percentiles, computed at READ time.
+// Each production SEARCH (doSearch, compat search; never the compat list read)
+// also writes two prevalence rows, read by SQL and not served in /api/stats:
+//   • `recall.temporal_query` (noteTemporalQuery) — the temporal-parse kind;
+//   • `recall.query_shape` (noteQueryShape, #203) — none/embedded/dominant.
 //
 // GATE (plan U2 R4-b, load-bearing): emission happens ONLY when a surface is
 // present. doSearch has ~25 test/eval callers that never thread ctx.surface —
@@ -130,6 +136,12 @@ export function noteTemporalQuery(evt, deps) {
  * parked remedy branch. Same footprint as recall.temporal_query: the caller
  * classifies the query in memory (classifyQueryShape) and only the label is
  * written; no query text is logged, stored or returned.
+ *
+ * Prevalence is computed WITHIN this event family:
+ *   dominant / (none + embedded + dominant)
+ * never over recall.search — the compat facade emits recall.search from its
+ * query-less list read too, which has no query and so no shape row; dividing
+ * by it would understate the share on any surface that lists.
  *
  * Mirrors noteTemporalQuery: two gates, both no-ops rather than errors —
  *   • surface absent  ⇒ no emission (the ~25 eval/test doSearch callers)

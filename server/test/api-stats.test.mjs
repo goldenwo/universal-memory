@@ -458,6 +458,13 @@ test('R1 doSearch: the ctx._noteQueryShape seam receives {surface, shape} on suc
       memory: { search: async () => ({ results: [bad] }) }, surface: 'unknown', _noteQueryShape: (e) => failed.push(e),
     }));
     assert.equal(failed.length, 0, 'a failed search must not emit a query-shape row');
+
+    // No surface ⇒ no classification work at all: the seam is never reached.
+    const unsurfaced = [];
+    await doSearch(SHAPED_QUERIES.dominant, 5, false, false, {
+      memory: makeFakeMemory(5), _noteQueryShape: (e) => unsurfaced.push(e),
+    });
+    assert.equal(unsurfaced.length, 0, 'a surface-less caller must skip the classify-and-note block');
   });
 });
 
