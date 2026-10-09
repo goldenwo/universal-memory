@@ -18,6 +18,7 @@ import {
   aggregate,
   THRESHOLDS,
 } from '../eval/state-cap-eval.mjs';
+import { SECTION_LIMITS } from '../lib/state-cap.mjs';
 
 const FM = '---\nschema_version: 1\ntype: state\nid: state-x\nvalid_from: 2026-09-20T00:00:00.000Z\nproject: x\n---\n\n# State of play — x\n';
 const SUPPLIED = '2026-09-25';
@@ -160,9 +161,11 @@ test('pass1Metrics: the failure shapes — missing heading, unstamped, future st
 test('pass1Metrics: retention allows the model to anticipate the server bound (dropped_live <= live - limit)', () => {
   const many = FM + '## In flight\n' + Array.from({ length: 10 }, (_, i) => `- Live item ${i} details`).join('\n') + '\n## Recent decisions\n## Next actions\n';
   const labels = { ...LABELS, cutoff_decision_line: null, stale_issue_refs: {}, pass2: [], units: Array.from({ length: 10 }, (_, i) => ({ section: 'In flight', i: i + 1, label: 'live', key: `live item ${i} details`, text: '' })) };
-  const raw = FM + '## Current focus\nf\n## In flight\n' + Array.from({ length: 8 }, (_, i) => `- Live item ${i + 2} details [2026-09-25]`).join('\n') + '\n## Recent decisions\n(none)\n## Next actions\n(none)\n## Open questions\n(none)\n## Environment\n(none)\n';
+  // The model keeps exactly the bound's worth (the boundary: dropped_live == allowed).
+  const limit = SECTION_LIMITS['In flight'];
+  const raw = FM + '## Current focus\nf\n## In flight\n' + Array.from({ length: limit }, (_, i) => `- Live item ${i + 10 - limit} details [2026-09-25]`).join('\n') + '\n## Recent decisions\n(none)\n## Next actions\n(none)\n## Open questions\n(none)\n## Environment\n(none)\n';
   const m = pass1Metrics({ raw, input: many, labels, suppliedDate: SUPPLIED, report: { added: [], aged: 0, aged_future: 0, bounded: [], trims: [] } });
-  assert.deepEqual(m.retention.sections['In flight'], { live: 10, dropped_live: 2, allowed: 2, dropped_mentioned: [] });
+  assert.deepEqual(m.retention.sections['In flight'], { live: 10, dropped_live: 10 - limit, allowed: 10 - limit, dropped_mentioned: [] });
   assert.equal(m.retention.ok, true);
 });
 

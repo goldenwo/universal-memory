@@ -17,10 +17,12 @@ export const STATE_CAP_CHARS = 3000;
 export const CURRENT_FOCUS_CEIL_CHARS = 600;
 export const UNIT_FLOOR_CHARS = 200;
 export const INFLIGHT_MAX_AGE_DAYS = 14;
+// #359: In flight 8 → 6 and Next actions 6 → 4 — at 8 and 6 those two filled the cap before
+// Recent decisions got a turn, so the trimmer cut decisions on 27% of merges.
 export const SECTION_LIMITS = Object.freeze({
-  'In flight': 8,
+  'In flight': 6,
   'Recent decisions': 8,
-  'Next actions': 6,
+  'Next actions': 4,
   'Open questions': 5,
   'Environment': 3,
 });
