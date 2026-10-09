@@ -196,10 +196,14 @@ export async function runCensus({ transcriptsDir, countersPath, rule }) {
         }
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
         const ms = Date.parse(obj.timestamp);
-        for (const tu of toolUses(obj)) {
-          if (!tu.name.endsWith(census.tool_name_suffix)) continue;
-          const prev = calls.get(tu.id);
-          if (!prev || (Number.isNaN(prev.ms) && !Number.isNaN(ms))) calls.set(tu.id, { ms, query: tu.input?.query });
+        // A tool name ending in the suffix appears verbatim in the raw line
+        // (JSON never escapes ASCII letters or `_`), so other lines skip the walk.
+        if (line.includes(census.tool_name_suffix)) {
+          for (const tu of toolUses(obj)) {
+            if (!tu.name.endsWith(census.tool_name_suffix)) continue;
+            const prev = calls.get(tu.id);
+            if (!prev || (Number.isNaN(prev.ms) && !Number.isNaN(ms))) calls.set(tu.id, { ms, query: tu.input?.query });
+          }
         }
         if (subagentFile || obj.isSidechain === true) continue;
         const text = promptText(obj, census);
