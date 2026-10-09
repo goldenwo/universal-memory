@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { doAppendTurn } from '../lib/append-turn.mjs';
-import { handleAppendTurnRequest } from '../mem0-mcp-http.mjs';
+import { handleAppendTurnRequest, handleToolCall } from '../mem0-mcp-http.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
 
@@ -327,14 +327,7 @@ test('POST /api/append-turn writes a turn and returns compact shape', async () =
   const vault = await makeTempVault();
   const req = { body: { project: 'rest-test', content: 'via REST', role: 'user' } };
   const res = mockRes();
-  // No-op reindexFn so the fire-and-forget reindex doesn't try to hit an
-  // uninitialized mem0 binding. This test covers the 200-response shape;
-  // best-effort reindex semantics are covered by a dedicated test below.
-  await handleAppendTurnRequest(req, res, {
-    vaultDir: vault,
-    writesEnabled: true,
-    reindexFn: async () => {},
-  });
+  await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
   assert.equal(res.statusCode, 200);
   const body = res.jsonBody;
   assert.equal(body.ok, true);
@@ -545,11 +538,7 @@ test('POST /api/append-turn with numeric timestamp returns 400 INPUT_INVALID (§
     },
   };
   const res = mockRes();
-  await handleAppendTurnRequest(req, res, {
-    vaultDir: vault,
-    writesEnabled: true,
-    reindexFn: async () => {},
-  });
+  await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
   assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}`);
   assert.equal(res.jsonBody.ok, false);
   assert.equal(res.jsonBody.error.code, 'INPUT_INVALID');
@@ -661,22 +650,17 @@ test('concurrent writes to same date file serialize via lockdir — no torn writ
   assert.equal(lockdirStat, null, 'lockdir should be released after both writes');
 });
 
-// ---------- B.9: best-effort reindex per spec §5.4 ----------
-// memory_append_turn is semantically non-blocking: the turn is captured to disk
-// unconditionally, and any reindex is fire-and-forget with logged errors. The
-// HTTP 200 response does NOT depend on reindex outcome.
-test('/api/append-turn reindex is best-effort — succeeds with 200 even when reindex throws', async () => {
-  const vault = await makeTempVault();
-  let reindexCallCount = 0;
-  let reindexRelPath = null;
-  const reindexFn = async (relPath) => {
-    reindexCallCount += 1;
-    reindexRelPath = relPath;
-    throw new Error('simulated reindex failure (vector store down)');
-  };
+// ---------- #351: raw turns are never indexed ----------
+// Raw captures are consumed by the session-end summary, which is the indexed
+// record (docs/plans/2026-04-17-close-continuity-gap.md: "Not indexed"). They
+// carry no frontmatter, so the old best-effort reindex threw on every append
+// and logged a warn — 84% of the live server's warn lines. Both entry points
+// are called exactly as production calls them (no reindex seam): before the
+// fix the default reindex ran and warned; an index attempt in this env can
+// only fail (no mem0 binding), so "no warn line" also means "no attempt".
 
-  // C.3: capture pino-emitted warn lines via the logger test sink — the
-  // structured logger replaced console.warn for handler-path messages.
+/** Run `fn` with pino lines captured; resolve to the warn-or-worse lines. */
+async function warnLinesDuring(fn) {
   const captured = [];
   _setLogStreamForTest(new Writable({
     write(chunk, enc, cb) {
@@ -687,42 +671,57 @@ test('/api/append-turn reindex is best-effort — succeeds with 200 even when re
       cb();
     },
   }));
-
   try {
-    const req = { body: { project: 'besteffort', content: 'stays on disk', role: 'user' } };
-    const res = mockRes();
-    await handleAppendTurnRequest(req, res, {
-      vaultDir: vault,
-      writesEnabled: true,
-      reindexFn,
-    });
-
-    // 200 even though reindex threw — turn is on disk, vector index catches up later.
-    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
-    assert.equal(res.jsonBody.ok, true);
-    assert.match(res.jsonBody.path, /captures\/besteffort\/raw/);
-
-    // Turn is durably on disk.
-    const diskContent = await fs.readFile(path.join(vault, res.jsonBody.path), 'utf8');
-    assert.match(diskContent, /stays on disk/);
-
-    // Give the fire-and-forget promise a tick to resolve/reject and hit the .catch handler.
-    await new Promise((r) => setImmediate(r));
-
-    // Reindex was invoked exactly once, on the just-written path.
-    assert.equal(reindexCallCount, 1, 'reindex should be called exactly once');
-    assert.equal(reindexRelPath, res.jsonBody.path, 'reindex called with the capture path');
-
-    // Phase C: structured logger emits a warn line with msg='append-turn reindex failed (best-effort)'.
-    const reindexWarnings = captured.filter(
-      (l) => l.level === 'warn' && /reindex.*(failed|best-effort)/i.test(l.msg ?? ''),
-    );
-    assert.ok(
-      reindexWarnings.length >= 1,
-      `expected a reindex-failure warn log line, got: ${JSON.stringify(captured)}`,
-    );
+    await fn();
+    // Long enough for a fire-and-forget reindex (a file read, then a reject)
+    // to reach its .catch and log: the window the old code warned in.
+    await new Promise((r) => setTimeout(r, 100));
   } finally {
     _setLogStreamForTest(null);
+  }
+  return captured.filter((l) => l.level === 'warn' || l.level === 'error');
+}
+
+test('/api/append-turn writes the raw turn and indexes nothing — no reindex, no warn (#351)', async () => {
+  const vault = await makeTempVault();
+  let res;
+  const warns = await warnLinesDuring(async () => {
+    res = mockRes();
+    const req = { body: { project: 'rawonly', content: 'stays on disk', role: 'user' } };
+    await handleAppendTurnRequest(req, res, { vaultDir: vault, writesEnabled: true });
+  });
+
+  assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${JSON.stringify(res.jsonBody)}`);
+  assert.equal(res.jsonBody.ok, true);
+  assert.match(res.jsonBody.path, /captures\/rawonly\/raw/);
+  const diskContent = await fs.readFile(path.join(vault, res.jsonBody.path), 'utf8');
+  assert.match(diskContent, /stays on disk/);
+  assert.deepEqual(warns, [], `expected no warn/error lines, got: ${JSON.stringify(warns)}`);
+});
+
+test('memory_append_turn (MCP tool) writes the raw turn and indexes nothing — no reindex, no warn (#351)', async () => {
+  const vault = await makeTempVault();
+  const prevWrite = process.env.UM_MCP_WRITE_ENABLED;
+  const prevVault = process.env.UM_VAULT_DIR;
+  process.env.UM_MCP_WRITE_ENABLED = 'true';
+  process.env.UM_VAULT_DIR = vault;
+  try {
+    let result;
+    const warns = await warnLinesDuring(async () => {
+      result = JSON.parse(await handleToolCall(
+        'memory_append_turn',
+        { project: 'rawonly-mcp', content: 'stays on disk too', role: 'assistant' },
+      ));
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.match(result.path, /captures\/rawonly-mcp\/raw/);
+    const diskContent = await fs.readFile(path.join(vault, result.path), 'utf8');
+    assert.match(diskContent, /stays on disk too/);
+    assert.deepEqual(warns, [], `expected no warn/error lines, got: ${JSON.stringify(warns)}`);
+  } finally {
+    if (prevWrite !== undefined) process.env.UM_MCP_WRITE_ENABLED = prevWrite; else delete process.env.UM_MCP_WRITE_ENABLED;
+    if (prevVault !== undefined) process.env.UM_VAULT_DIR = prevVault; else delete process.env.UM_VAULT_DIR;
   }
 });
 

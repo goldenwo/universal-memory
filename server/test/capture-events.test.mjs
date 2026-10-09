@@ -375,7 +375,7 @@ test('handleAppendTurnRequest threads ctx.surface into the capture.turn counter'
   await handleAppendTurnRequest(
     { body: { project: 'http-proj', content: 'via http', role: 'user' } },
     res,
-    { vaultDir: vault, writesEnabled: true, reindexFn: async () => {}, surface: surfaceFromHeaders({ 'x-um-source': 'openclaw' }) },
+    { vaultDir: vault, writesEnabled: true, surface: surfaceFromHeaders({ 'x-um-source': 'openclaw' }) },
   );
   assert.equal(res.statusCode, 200);
   const rows = readRows(dbPath);
@@ -401,8 +401,6 @@ test('MCP tool path (handleToolCall memory_append_turn) emits capture.turn with 
     );
     const result = JSON.parse(raw);
     assert.equal(result.ok, true);
-    // Give the fire-and-forget reindex promise a tick so its .catch settles.
-    await new Promise((r) => setImmediate(r));
     const rows = readRows(dbPath);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].surface, 'mcp-client');

@@ -1481,22 +1481,11 @@ async function _handleToolCallInner(name, args, ctx = {}) {
 					'MCP writes disabled; set UM_MCP_WRITE_ENABLED=true and UM_MOUNT_MODE=rw in your .env',
 				));
 			}
+			// #351: the raw turn is never indexed — the session-end summary that
+			// consumes it is the indexed record.
 			// T5 (#159 spec §6): ctx.surface (derived from X-UM-Source at the /mcp
 			// route) rides into the lib's capture.turn counter emit.
 			const result = await doAppendTurn(args, { vaultDir: process.env.UM_VAULT_DIR, surface: ctx?.surface });
-			// B.9 (spec §5.4): fire-and-forget reindex for MCP parity with the
-			// REST endpoint. Errors logged, never propagated — the turn is
-			// already on disk and will reindex on the next successful pass.
-			if (result.ok && result.path) {
-				reindexDoc(result.path).catch((err) => {
-					safeLog(() => getLogger().warn({
-						request_id: currentRequestId(),
-						tool: 'memory_append_turn',
-						path: result.path,
-						err_message: err?.message ?? String(err),
-					}, 'memory_append_turn reindex failed (best-effort)'), 'log:memory_append_turn:reindex-failed');
-				});
-			}
 			return JSON.stringify(result);
 		}
 
@@ -1661,19 +1650,13 @@ function readBody(req, maxBytes = _currentMaxBodyBytes()) {
  * Exported handler for POST /api/append-turn.
  * Accepts a pre-parsed body via req.body (unit-test friendly).
  *
- * Reindex semantics (spec §5.4): memory_append_turn is best-effort — the turn
- * is captured to disk unconditionally, and any reindex to the vector store is
- * fire-and-forget with logged errors. HTTP 200 is returned as soon as the disk
- * write succeeds; the vector index can be stale until the next successful
- * reindex (e.g., from a subsequent checkpoint). Contrast with memory_checkpoint,
- * where reindex is blocking because the checkpoint is a consistency point.
+ * The turn lands in `captures/<project>/raw/` and is never indexed (#351): raw
+ * captures are consumed by the session-end summary, and that summary is the
+ * indexed record. Same as the memory_append_turn MCP tool.
  *
  * @param {{ body: { project, content, role, timestamp?, conversation_id? } }} req
  * @param {{ status(code): this, json(obj): this }} res
- * @param {{ vaultDir?: string, writesEnabled: boolean, reindexFn?: Function }} ctx
- *   `reindexFn`: optional async fn(relPath) → indexed; called fire-and-forget
- *   after a successful disk write. Defaults to the module-level `reindexDoc`.
- *   Tests inject a stub (throwing or success) to assert best-effort semantics.
+ * @param {{ vaultDir?: string, writesEnabled: boolean, surface?: string }} ctx
  */
 export async function handleAppendTurnRequest(req, res, ctx) {
 	if (!ctx.writesEnabled) {
@@ -1717,20 +1700,6 @@ export async function handleAppendTurnRequest(req, res, ctx) {
 			));
 			return;
 		}
-		// B.9 (spec §5.4): fire-and-forget reindex. The user keeps typing; the
-		// turn is on disk; the vector index catches up on the next successful
-		// reindex. Errors are logged but do NOT affect the 200 response or the
-		// durability of the captured turn.
-		// Phase C: structured logger replaces the legacy console.warn.
-		const reindexFn = ctx.reindexFn ?? reindexDoc;
-		reindexFn(result.path).catch((err) => {
-			safeLog(() => getLogger().warn({
-				request_id: currentRequestId(),
-				endpoint: '/api/append-turn',
-				path: result.path,
-				err_message: err?.message ?? String(err),
-			}, 'append-turn reindex failed (best-effort)'), 'log:append-turn:reindex-failed');
-		});
 		res.status(200).json(result);
 	} catch (err) {
 		safeLog(() => getLogger().error({
