@@ -42,7 +42,8 @@ import { getRealClient } from './qdrant-client-resolver.mjs';
 import { searchConfig, umGetAll } from './mem0-read.mjs';
 import { normalizeReactionMetadata } from './reaction-signal.mjs';
 import { isRecallable } from './recallable.mjs';
-import { noteRecallSearch, noteTemporalQuery } from './recall-telemetry.mjs';
+import { noteRecallSearch, noteTemporalQuery, noteQueryShape } from './recall-telemetry.mjs';
+import { classifyQueryShape } from './query-shape.mjs';
 import { parseTemporalWindow } from './temporal-query.mjs';
 import { withRetry } from './retry.mjs';
 import { filterSystemDocs } from './system-docs.mjs';
@@ -668,6 +669,18 @@ async function handleSearch({ req, body, ctx }) {
     compatParseOk = false;
   }
   if (compatParseOk) noteTemporalQuery({ surface: compatSurface, kind: compatWindow?.kind ?? null });
+  // #203 D9: the query-shape counter, for the same reason as the temporal one
+  // above — this facade bypasses doSearch, so without it the counter would see
+  // a strict subset of production search. Search only: handleList below is a
+  // query-less read and emits nothing. Only the label is written, never the
+  // query; a classification that throws emits nothing and fails nothing.
+  let compatShape = null;
+  try {
+    compatShape = classifyQueryShape(b.query);
+  } catch {
+    // fail-open: telemetry must never fail a search
+  }
+  noteQueryShape({ surface: compatSurface, shape: compatShape });
   return { status: 200, body: { results: records.slice(0, topK) } };
 }
 

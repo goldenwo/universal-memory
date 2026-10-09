@@ -100,7 +100,8 @@ import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-doc
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
 import { umAdd } from './lib/add.mjs';
-import { noteTemporalQuery, noteRecallSearch } from './lib/recall-telemetry.mjs';
+import { noteTemporalQuery, noteRecallSearch, noteQueryShape } from './lib/recall-telemetry.mjs';
+import { classifyQueryShape } from './lib/query-shape.mjs';
 import { getRealClient } from './lib/qdrant-client-resolver.mjs';
 import { bounceTopHit } from './lib/bouncer.mjs';
 import { isWriteEnabled } from './lib/write-enabled.mjs';
@@ -2152,6 +2153,20 @@ export async function doSearch(query, limit, includeSuperseded, full = false, ct
 	// to a denominator that does not move. Emission is surface-gated inside
 	// noteTemporalQuery; a failed parse emits nothing.
 	if (!parseFailed) noteFn({ surface: ctx?.surface, kind: temporalWindow?.kind ?? null });
+	// #203 D9: the query-shape counter, same placement and same reasons (success
+	// path only, surface-gated inside noteQueryShape). The query is classified
+	// in memory and only the label is written — no query text is stored. A
+	// classification that throws emits nothing (null is outside the vocabulary)
+	// and never fails the search. ctx._noteQueryShape is the test seam, as
+	// ctx._noteTemporalQuery is above.
+	const noteShapeFn = ctx?._noteQueryShape ?? noteQueryShape;
+	let queryShape = null;
+	try {
+		queryShape = classifyQueryShape(query);
+	} catch {
+		// fail-open: telemetry must never fail a search
+	}
+	noteShapeFn({ surface: ctx?.surface, shape: queryShape });
 	const envelope = listEnvelope(mapped, extras);
 	// D-a2: when the fetch was widened, doSearch returns MORE than the caller's
 	// limit and each handler slices as its final step, AFTER its metadata

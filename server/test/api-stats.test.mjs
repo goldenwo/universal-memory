@@ -35,11 +35,15 @@ import { readCounterStats } from '../lib/stats.mjs';
 import { _resetCaptureEventsForTest } from '../lib/capture-events.mjs';
 import {
   noteRecallSearch,
+  noteQueryShape,
   latencySinceBoot,
   recallDurations,
   RING_CAPACITY,
+  QUERY_SHAPES,
+  RECALL_EVENTS,
   _resetRecallTelemetryForTest,
 } from '../lib/recall-telemetry.mjs';
+import { classifyQueryShape } from '../lib/query-shape.mjs';
 import { registry } from '../lib/metrics.mjs';
 import { SERVER_VERSION } from '../lib/version.mjs';
 import { seedCountersDb } from './helpers/counters-db.mjs';
@@ -397,6 +401,156 @@ test('A4 compat: /v2/memories/ (list read) also counts as a recall', async () =>
     assert.equal(stats.recall.searches_today, 1);
     assert.equal(latencySinceBoot().n, 1);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #203 D9 — recall.query_shape on both production read paths (R1, R2, R4, R5;
+// the unit halves of R1–R3 are in recall-telemetry.test.mjs). Every query here
+// is synthetic.
+// ---------------------------------------------------------------------------
+
+/** recall.query_shape rows in a counters db, as plain {surface, outcome, n}. */
+function queryShapeRows(dbPath) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return db.prepare(
+      'SELECT surface, outcome, SUM(count) AS n FROM counters WHERE event = ? GROUP BY surface, outcome ORDER BY surface, outcome',
+    ).all(RECALL_EVENTS.QUERY_SHAPE).map((r) => ({ ...r }));
+  } finally { db.close(); }
+}
+
+const SHAPED_QUERIES = Object.freeze({
+  dominant: 'UM_TEMPORAL_DECAY',
+  embedded: 'why does the reindex fail after UM_TEMPORAL_DECAY flips on in production',
+  none: 'how did we fix the reindex warnings',
+});
+
+test('R1 doSearch: each production search writes one recall.query_shape row with its classified shape', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    const memory = makeFakeMemory(5);
+    for (const q of Object.values(SHAPED_QUERIES)) {
+      await doSearch(q, 5, false, false, { memory, surface: 'claude-code-plugin' });
+    }
+    assert.deepEqual(queryShapeRows(dbPath), [
+      { surface: 'claude-code-plugin', outcome: 'dominant', n: 1 },
+      { surface: 'claude-code-plugin', outcome: 'embedded', n: 1 },
+      { surface: 'claude-code-plugin', outcome: 'none', n: 1 },
+    ]);
+    for (const [shape, q] of Object.entries(SHAPED_QUERIES)) assert.equal(classifyQueryShape(q), shape);
+  });
+});
+
+test('R1 doSearch: the ctx._noteQueryShape seam receives {surface, shape} on success, and nothing when the search fails', async () => {
+  // withTelemetryDb: recall.search still writes through the real writer here.
+  await withTelemetryDb(async () => {
+    const emitted = [];
+    await doSearch(SHAPED_QUERIES.dominant, 5, false, false, {
+      memory: makeFakeMemory(5), surface: 'unknown', _noteQueryShape: (e) => emitted.push(e),
+    });
+    assert.deepEqual(emitted, [{ surface: 'unknown', shape: 'dominant' }]);
+
+    // A search that fails after the engine call (a result whose metadata getter
+    // throws) is not recall volume: no shape row, matching recall.search.
+    const bad = { id: 'x', memory: 'm', score: 0.9 };
+    Object.defineProperty(bad, 'metadata', { get() { throw new Error('post-processing boom'); }, enumerable: true });
+    const failed = [];
+    await assert.rejects(doSearch(SHAPED_QUERIES.dominant, 5, false, false, {
+      memory: { search: async () => ({ results: [bad] }) }, surface: 'unknown', _noteQueryShape: (e) => failed.push(e),
+    }));
+    assert.equal(failed.length, 0, 'a failed search must not emit a query-shape row');
+  });
+});
+
+test('R2 doSearch: a surface-less search (eval/test caller shape) writes no query-shape row', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    await doSearch(SHAPED_QUERIES.dominant, 5, false, false, { memory: makeFakeMemory(5) });
+    const stats = readCounterStats({ now: Date.now(), dbPath });
+    assert.equal(stats.available, false, 'no emission ⇒ the counters db was never even created');
+  });
+});
+
+test('R1 compat: /v2/memories/search/ writes one recall.query_shape row with the classified shape', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    const ctx = { memory: makeFakeMemory(5), userId: 'op' };
+    for (const q of Object.values(SHAPED_QUERIES)) {
+      const out = await handleMem0Compat({ method: 'POST', headers: {} }, new URL('/v2/memories/search/', 'http://x'), { query: q }, ctx);
+      assert.equal(out.status, 200);
+    }
+    assert.deepEqual(queryShapeRows(dbPath), [
+      { surface: 'mem0-compat', outcome: 'dominant', n: 1 },
+      { surface: 'mem0-compat', outcome: 'embedded', n: 1 },
+      { surface: 'mem0-compat', outcome: 'none', n: 1 },
+    ]);
+  });
+});
+
+test('R4 compat: the query-less list read (/v2/memories/) writes no query-shape row', async () => {
+  await withTelemetryDb(async (dbPath) => {
+    const ctx = { memory: makeFakeMemory(5), userId: 'op', _umGetAll: (m, a) => m.getAll(a) };
+    // Even a stray `query` key in the body must not turn a list into a search.
+    const out = await handleMem0Compat({ method: 'POST', headers: {} }, new URL('/v2/memories/', 'http://x'), { query: SHAPED_QUERIES.dominant }, ctx);
+    assert.equal(out.status, 200);
+    // Positive control: the list read DID emit telemetry (recall.search), so
+    // the db exists and an absent shape row is a real absence.
+    assert.equal(readCounterStats({ now: Date.now(), dbPath }).recall.searches_today, 1);
+    assert.deepEqual(queryShapeRows(dbPath), []);
+  });
+});
+
+test('R5 NAMESPACE ISOLATION: recall.query_shape rows leave the WHOLE readCounterStats output and the served /api/stats body byte-identical', async () => {
+  // The stats.test.mjs template: capture rows OFF today, so TODAY shape rows
+  // would visibly move freshness and events_today if any capture query ever
+  // matched them, and recall.search rows on another day, so a widened recall
+  // query (event LIKE 'recall.%') would move searches_today/searches_7d.
+  const now = Date.now();
+  const day = (n) => new Date(now - n * 86_400_000).toISOString().slice(0, 10);
+  const baseRows = [
+    { day: day(2), surface: 'claude-code-plugin', event: 'capture.turn', outcome: 'stored', count: 5 },
+    { day: day(2), surface: 'claude-code-plugin', event: 'capture.extraction', outcome: 'stored', count: 2 },
+    { day: day(1), surface: 'claude-code-plugin', event: 'recall.search', outcome: '', count: 4 },
+  ];
+  const cleanPath = await tempDbPath('um-shape-clean-');
+  seedCountersDb(cleanPath, baseRows);
+  const shapedPath = await tempDbPath('um-shape-dirty-');
+  seedCountersDb(shapedPath, baseRows);
+
+  // Shape rows through the REAL writer, exactly as production writes them:
+  // every label on the captured surface, plus a surface with nothing else.
+  const prev = process.env.UM_COUNTERS_DB_PATH;
+  process.env.UM_COUNTERS_DB_PATH = shapedPath;
+  _resetCaptureEventsForTest();
+  try {
+    for (const shape of QUERY_SHAPES) noteQueryShape({ surface: 'claude-code-plugin', shape });
+    noteQueryShape({ surface: 'shape-only-surface', shape: 'dominant' });
+  } finally {
+    _resetCaptureEventsForTest();
+    if (prev !== undefined) process.env.UM_COUNTERS_DB_PATH = prev;
+    else delete process.env.UM_COUNTERS_DB_PATH;
+  }
+  // Positive control: the rows landed, so equality below is not vacuous.
+  assert.equal(queryShapeRows(shapedPath).length, 4);
+
+  const clean = readCounterStats({ now, dbPath: cleanPath });
+  const shaped = readCounterStats({ now, dbPath: shapedPath });
+  assert.equal(JSON.stringify(shaped), JSON.stringify(clean), 'nothing stripped: no stats field may see the rows');
+  assert.deepEqual(shaped, clean);
+
+  // As served. Only the two per-request fields differ between the two calls.
+  const served = async (dbPath) => {
+    const { close, url } = await startServer({ memory: makeFakeMemory(3), env: { UM_COUNTERS_DB_PATH: dbPath } });
+    try {
+      const r = await fetch(url('/api/stats'), authed);
+      assert.equal(r.status, 200);
+      const body = await r.json();
+      delete body.generated_at;
+      delete body.server.uptime_s;
+      return body;
+    } finally { await close(); }
+  };
+  const cleanBody = await served(cleanPath);
+  const shapedBody = await served(shapedPath);
+  assert.equal(JSON.stringify(shapedBody), JSON.stringify(cleanBody));
+  assert.ok(!JSON.stringify(shapedBody).includes('shape-only-surface'), 'a shape-only surface mints no entry anywhere');
 });
 
 // ---------------------------------------------------------------------------
