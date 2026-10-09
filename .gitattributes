@@ -28,6 +28,13 @@ server/test/fixtures/*.db binary
 server/patches/*.patch text eol=lf
 server/patches/*.source.sha256 text eol=lf
 
+# #203 pre-registration: the accept rule's working-tree BYTES are hashed into
+# the anchor (`rule` line) and into the frozen query set, so every checkout must
+# hold the blob's LF bytes whatever core.autocrlf says. The anchor itself is
+# read from HEAD's blob; pinned for the same reason. New files, so no-op pins.
+server/eval/exact-token-203-accept-rule.json text eol=lf
+server/eval/accept-rule-203.sha256 text eol=lf
+
 # NOT pinned: `*.mjs text eol=lf`. It was added in #218 on the claim that every
 # .mjs was already LF so the rule was a no-op. That claim was wrong — FOUR files
 # are committed with CRLF bytes (server/lib/ranking.mjs, server/openapi.mjs,
