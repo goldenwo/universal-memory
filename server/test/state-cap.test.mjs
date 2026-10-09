@@ -5,6 +5,7 @@
 // predicted FAIL / PASS sets refer to these numbers, so keep the numbering stable.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   STATE_CAP_CHARS,
   CURRENT_FOCUS_CEIL_CHARS,
@@ -116,7 +117,9 @@ test('constants match the spec', () => {
   assert.equal(CURRENT_FOCUS_CEIL_CHARS, 600);
   assert.equal(UNIT_FLOOR_CHARS, 200);
   assert.equal(INFLIGHT_MAX_AGE_DAYS, 14);
-  assert.deepEqual(SECTION_LIMITS, { 'In flight': 8, 'Recent decisions': 8, 'Next actions': 6, 'Open questions': 5, 'Environment': 3 });
+  // #359 (operator, 2026-10-09): In flight 8 → 6 and Next actions 6 → 4, so the bound rather
+  // than the trimmer does the cutting and Recent decisions keep room.
+  assert.deepEqual(SECTION_LIMITS, { 'In flight': 6, 'Recent decisions': 8, 'Next actions': 4, 'Open questions': 5, 'Environment': 3 });
   assert.deepEqual(REQUIRED_SECTIONS, ['Current focus', 'In flight', 'Recent decisions', 'Next actions', 'Open questions', 'Environment']);
   assert.equal(MARKER_STATE_MERGE_UNAVAILABLE, '<!-- state-merge-unavailable -->');
   assert.equal(MARKER_LLM_MERGE_FAILED, '<!-- llm-merge-failed, appended raw -->');
@@ -515,21 +518,22 @@ test('SC25 age: no asOf → identity', () => {
 // ---------------------------------------------------------------------------
 // SC26–SC29: applySectionLimits
 // ---------------------------------------------------------------------------
-test('SC26 limits: In flight 12 → 8 keeping the 8 newest stamps, unstamped first; a delayed chunk never evicts a later stamp', () => {
+test('SC26 limits: In flight 12 → the limit keeping the newest stamps, unstamped first; a delayed chunk never evicts a later stamp', () => {
+  const limit = SECTION_LIMITS['In flight']; // 6 since #359; the case holds for any limit 2..8
   const stamps = ['2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18', '2026-09-19', '2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23'];
   const units = [bullet('u1', 60), ...stamps.slice(0, 5).map((s, i) => bullet(`s${i}`, 60, s)), bullet('u2', 60), ...stamps.slice(5).map((s, i) => bullet(`t${i}`, 60, s))];
   const md = build({ inflight: units });
   const r = applySectionLimits(md, CTX);
   const kept = unitTexts(r.md, 'In flight');
-  assert.equal(kept.length, 8);
+  assert.equal(kept.length, limit);
   assert.ok(kept.every(u => /\]$/.test(u)), 'unstamped went first');
-  assert.deepEqual(kept.map(u => u.slice(-11, -1)), stamps.slice(2), 'the 8 newest stamps, in original order');
-  assert.deepEqual(r.bounded, [{ heading: 'In flight', dropped: 4 }]);
+  assert.deepEqual(kept.map(u => u.slice(-11, -1)), stamps.slice(stamps.length - limit), 'the newest stamps, in original order');
+  assert.deepEqual(r.bounded, [{ heading: 'In flight', dropped: units.length - limit }]);
   const nine = build({ inflight: ['2026-09-16', '2026-09-17', '2026-09-18', '2026-09-24', '2026-09-19', '2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23'].map((s, i) => bullet(`n${i}`, 60, s)) });
   const d = applySectionLimits(nine, { asOf: '2026-09-15T00:00:00Z', now: new Date('2026-09-25T00:00:00Z') });
   const keptNine = unitTexts(d.md, 'In flight').map(u => u.slice(-11, -1));
-  assert.equal(keptNine.length, 8);
-  assert.ok(keptNine.includes('2026-09-24'));
+  assert.equal(keptNine.length, limit);
+  assert.ok(keptNine.includes('2026-09-24'), 'the out-of-order newest stamp stays');
   assert.ok(!keptNine.includes('2026-09-16'));
 });
 
@@ -553,35 +557,40 @@ test('SC27 limits: Recent decisions 10 → 8 keeping the 8 largest dates; a date
 });
 
 test('SC28 limits: Next actions and Open questions from the top, Environment from the tail; blank units and (none) go first and do not count', () => {
+  const nextLimit = SECTION_LIMITS['Next actions']; // 4 since #359
+  const nexts = Array.from({ length: 7 }, (_, i) => `- n${i + 1}`);
   const md = build({
-    next: ['', '(none)', ...Array.from({ length: 7 }, (_, i) => `- n${i + 1}`)],
+    next: ['', '(none)', ...nexts],
     open: Array.from({ length: 7 }, (_, i) => `- q${i + 1}`),
     env: Array.from({ length: 5 }, (_, i) => `- e${i + 1}`),
   });
   const r = applySectionLimits(md, CTX);
-  assert.deepEqual(unitTexts(r.md, 'Next actions'), ['- n2', '- n3', '- n4', '- n5', '- n6', '- n7']);
+  assert.deepEqual(unitTexts(r.md, 'Next actions'), nexts.slice(nexts.length - nextLimit));
   assert.deepEqual(unitTexts(r.md, 'Open questions'), ['- q3', '- q4', '- q5', '- q6', '- q7']);
   assert.deepEqual(unitTexts(r.md, 'Environment'), ['- e1', '- e2', '- e3']);
   assert.deepEqual(r.bounded.map(b => b.heading), ['Next actions', 'Open questions', 'Environment']);
-  // #342: the blank and the placeholder are removed but are not items, so dropped counts n1 only.
-  assert.equal(r.bounded[0].dropped, 1);
-  const within = build({ next: ['(none)', '- n1', '- n2', '- n3', '- n4', '- n5', '- n6'] });
+  // #342: the blank and the placeholder are removed but are not items, so dropped counts items only.
+  assert.equal(r.bounded[0].dropped, nexts.length - nextLimit);
+  const within = build({ next: ['(none)', ...nexts.slice(0, nextLimit)] });
   assert.equal(applySectionLimits(within, CTX).md, within, 'a placeholder does not count toward the limit');
 });
 
 test('SC28b #342: bounded counts items only — a leading blank and a placeholder go first uncounted', () => {
   // The two non-item unit shapes the parser makes: a section's leading blank run, and a (none) line.
-  const lead = build({ next: ['', '(none)', ...Array.from({ length: 8 }, (_, i) => `- n${i + 1}`)] });
+  const nexts = Array.from({ length: SECTION_LIMITS['Next actions'] + 2 }, (_, i) => `- n${i + 1}`);
+  const lead = build({ next: ['', '(none)', ...nexts] });
   const a = applySectionLimits(lead, CTX);
   assert.deepEqual(a.bounded, [{ heading: 'Next actions', dropped: 2 }], 'limit + 2 reports exactly 2');
-  assert.deepEqual(unitTexts(a.md, 'Next actions'), ['- n3', '- n4', '- n5', '- n6', '- n7', '- n8']);
+  assert.deepEqual(unitTexts(a.md, 'Next actions'), nexts.slice(2));
 });
 
 test('SC29 limits: within limits → identity, bounded: []', () => {
   const md = build({
-    inflight: Array.from({ length: 8 }, (_, i) => bullet(String(i), 60, `2026-09-${String(14 + i).padStart(2, '0')}`)),
-    decisions: Array.from({ length: 8 }, (_, i) => decision(`2026-09-${String(24 - i).padStart(2, '0')}`, 60)),
-    next: Array.from({ length: 6 }, (_, i) => `- n${i}`), open: Array.from({ length: 5 }, (_, i) => `- q${i}`), env: ['- e1', '- e2', '- e3'],
+    inflight: Array.from({ length: SECTION_LIMITS['In flight'] }, (_, i) => bullet(String(i), 60, `2026-09-${String(14 + i).padStart(2, '0')}`)),
+    decisions: Array.from({ length: SECTION_LIMITS['Recent decisions'] }, (_, i) => decision(`2026-09-${String(24 - i).padStart(2, '0')}`, 60)),
+    next: Array.from({ length: SECTION_LIMITS['Next actions'] }, (_, i) => `- n${i}`),
+    open: Array.from({ length: SECTION_LIMITS['Open questions'] }, (_, i) => `- q${i}`),
+    env: Array.from({ length: SECTION_LIMITS['Environment'] }, (_, i) => `- e${i + 1}`),
   });
   const r = applySectionLimits(md, CTX);
   assert.equal(r.md, md);
@@ -600,7 +609,8 @@ test('SC30 shapeState: order ensure → age → limits → fit, and the report s
   assert.deepEqual(r.report.added, ['Environment']);
   assert.equal(r.report.aged, 1);
   assert.equal(r.report.aged_future, 0);
-  assert.deepEqual(r.report.bounded, [{ heading: 'In flight', dropped: 2 }]);
+  // 10 stamped items survive ageing; the bound takes them down to the limit.
+  assert.deepEqual(r.report.bounded, [{ heading: 'In flight', dropped: 10 - SECTION_LIMITS['In flight'] }]);
   assert.ok(r.report.trims.length > 0);
   const manual = fitStateToCap(applySectionLimits(ageInFlight(ensureRequiredSections(md).md, CTX).md, CTX).md, { cap: STATE_CAP_CHARS, ...CTX });
   assert.equal(r.md, manual.md, 'shapeState equals the four steps in sequence');
@@ -938,4 +948,17 @@ test('SC61 fit: the trimmer takes a trailing-dated section oldest first, not top
   assert.ok(kept.length >= 1 && kept.length < dates.length, `the trimmer cut some decisions: kept ${kept.length}`);
   assert.deepEqual(kept, dates.slice(0, kept.length), 'the newest (top) survive; the oldest (bottom) went');
   assert.ok(r.md.length <= STATE_CAP_CHARS);
+});
+
+test('SC62 the merge prompt states each section bound as SECTION_LIMITS has it (#359)', () => {
+  // The model is told the bounds; a prompt that says 8 while the server cuts at 6 invites the
+  // model to keep items the server then drops. prompt-copies-identical pins the plugin copy.
+  const prompt = readFileSync(new URL('../config/prompts/update-state.txt', import.meta.url), 'utf8');
+  for (const [name, limit] of Object.entries(SECTION_LIMITS)) {
+    const rule = prompt.match(new RegExp(`^- ${name}:[\\s\\S]*?(?=^- |^\\n)`, 'm'));
+    assert.ok(rule, `the prompt has a rule for ${name}`);
+    const stated = rule[0].match(/bounded to (\d+)|at most (\d+) lines/);
+    assert.ok(stated, `the ${name} rule states its bound`);
+    assert.equal(Number(stated[1] ?? stated[2]), limit, `${name}: the prompt says ${stated[0]}, SECTION_LIMITS says ${limit}`);
+  }
 });

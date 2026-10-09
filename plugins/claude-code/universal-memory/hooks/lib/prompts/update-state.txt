@@ -16,14 +16,14 @@ Rules:
   request's date is earlier than an item's existing date, keep the existing date even if the
   summary mentions the item. Never put an In-flight date anywhere else (no parentheses, no dates
   in the text). Indented sub-lines under an item carry no date. Add new items at the end. Items
-  not confirmed for 14 days are removed automatically, and the list is bounded to 8 by oldest
+  not confirmed for 14 days are removed automatically, and the list is bounded to 6 by oldest
   date automatically.
 - Recent decisions: append this session's decisions at the end, each STARTING with the date
   from the request, exactly like this: "- 2026-09-25: <decision>". Never put a decision's date
   at the end or in parentheses. Never change the text or date of an existing entry, whatever
   form it has. The list is bounded to 8 automatically (oldest removed).
 - Next actions: add the summary's next steps at the end and remove finished ones. Keep every
-  unfinished step; the list is bounded to 6 automatically (oldest removed).
+  unfinished step; the list is bounded to 4 automatically (oldest removed).
 - Open questions: add new questions at the end and remove questions the session answered. The
   list is bounded to 5 automatically (oldest removed).
 - Environment: current branch, running processes, notable files — at most 3 lines, or "(none)".

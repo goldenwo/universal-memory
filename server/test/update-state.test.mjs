@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateState } from '../lib/update-state.mjs';
-import { REQUIRED_SECTIONS } from '../lib/state-cap.mjs';
+import { REQUIRED_SECTIONS, SECTION_LIMITS } from '../lib/state-cap.mjs';
 import { _setLogStreamForTest } from '../lib/logger.mjs';
 import { Writable } from 'node:stream';
 
@@ -279,7 +279,7 @@ test('updateState #326: state.shaped is emitted with added when the model omits 
   }
 });
 
-test('updateState #342: a bound-only merge emits state.shaped with bounded — 12 fresh In-flight items log [{In flight, 4}]', async () => {
+test('updateState #342: a bound-only merge emits state.shaped with bounded — 12 fresh In-flight items log [{In flight, 12 - limit}]', async () => {
   const captured = captureLogs();
   try {
     // Stamped with the clock's date: nothing to add, age or trim, so `bounded` alone opens the gate.
@@ -288,7 +288,7 @@ test('updateState #342: a bound-only merge emits state.shaped with bounded — 1
     const line = captured.find(l => l.msg === 'state.shaped');
     assert.ok(line, 'state.shaped emitted for a bound-only merge');
     assert.equal(line.project, 'proj-bounded');
-    assert.deepEqual(line.bounded, [{ heading: 'In flight', dropped: 4 }]);
+    assert.deepEqual(line.bounded, [{ heading: 'In flight', dropped: 12 - SECTION_LIMITS['In flight'] }]);
     assert.deepEqual(line.added, []);
     assert.equal(line.aged, 0);
     assert.equal(line.aged_future, 0);
