@@ -16,7 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createVaultAdapter, wrapOldMemoryForReindex } from '../reindex.mjs';
-import { FULL_SCAN_LIMIT } from '../../server/lib/mem0-read.mjs';
+import { FULL_SCAN_LIMIT, umGetAll } from '../../server/lib/mem0-read.mjs';
 
 function enumeratorOf(items) {
   const calls = [];
@@ -55,21 +55,36 @@ test('createVaultAdapter: a saturated enumeration throws — never a silently tr
 
 test('wrapOldMemoryForReindex.listFactIds: same enumeration contract; vault-backed entries excluded; other methods delegate', async () => {
   const target = { other: () => 'delegated' };
+  // #362: metadata.id is what reindexDoc writes — the doc's frontmatter id (its filename stem),
+  // never a vault path. The old fixture used path ids, a shape no writer produces, so every
+  // real vault-backed point passed as a fact and a migration would have written each doc twice.
   const { calls, listAll } = enumeratorOf([
-    { id: 'u1', metadata: { id: 'notes/a.md' } },  // vault-backed → excluded
-    { id: 'u2', metadata: { id: 'gone/b.md' } },   // .md but NOT in vaultPaths → kept
-    { id: 'u3', metadata: {} },                    // fact-only → kept
-    { metadata: {} },                              // id-less → skipped
+    { id: 'u1', metadata: { id: 's1', type: 'session_summary' } },  // vault-backed → excluded
+    { id: 'u2', metadata: { id: 'gone-doc', type: 'note' } },       // its vault file is gone → kept
+    { id: 'u3', metadata: {} },                                     // fact-only → kept
+    { metadata: {} },                                               // id-less → skipped
   ]);
-  const wrapped = wrapOldMemoryForReindex(target, {
-    userId: 'op',
-    vaultPaths: ['notes\\a.md'],  // backslash form — the wrapper normalizes
-    _listAll: listAll,
-  });
-  assert.deepEqual(await wrapped.listFactIds(), ['u2', 'u3']);
+  const wrapped = wrapOldMemoryForReindex(target, { userId: 'op', _listAll: listAll });
+  assert.deepEqual(await wrapped.listFactIds({ vaultIds: ['s1'] }), ['u2', 'u3']);
   assert.deepEqual(calls[0].args, { userId: 'op', limit: FULL_SCAN_LIMIT });
   assert.equal(calls[0].mem, target);
   assert.equal(wrapped.other(), 'delegated');
+});
+
+test('wrapOldMemoryForReindex #362: a stored point, through umGetAll\'s real projection, is recognised as vault-backed by its payload id', async () => {
+  // Payloads as they sit in the live collection: a vault doc reindexDoc wrote (payload.id = the
+  // frontmatter id) and a memory_add fact (no id). Only the Qdrant client is faked.
+  const points = [
+    { id: 'p-doc', payload: { id: 's1', type: 'session_summary', title: 'Session one', schema_version: 1, data: 'Session one\n\nWhat happened.', userId: 'op' } },
+    { id: 'p-fact', payload: { data: 'a fact', userId: 'op' } },
+  ];
+  const client = { scroll: async () => ({ points }) };
+  const memory = { config: { vectorStore: { config: { collectionName: 'memories' } } } };
+  const wrapped = wrapOldMemoryForReindex(memory, {
+    userId: 'op',
+    _listAll: (mem, args) => umGetAll(mem, args, { getClient: async () => client }),
+  });
+  assert.deepEqual(await wrapped.listFactIds({ vaultIds: ['s1'] }), ['p-fact']);
 });
 
 test('wrapOldMemoryForReindex: a saturated enumeration throws', async () => {

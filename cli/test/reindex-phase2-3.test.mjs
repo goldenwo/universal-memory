@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { runPhase2Snapshot, runPhase3Rebuild, installSigintHandler } from '../reindex.mjs';
+import { parseFrontmatter } from '../../server/lib/frontmatter.mjs';
+import { indexRecord } from '../../server/lib/index-record.mjs';
 import { ProviderError } from '../../server/lib/provider/errors.mjs';
 import { tempDir } from '../../server/test/helpers/tmpdir.mjs';
 
@@ -13,6 +16,13 @@ function makeMemory() {
     config: { vectorStore: { config: { collectionName: 'test', host: 'localhost', port: 6333 } } },
   };
 }
+
+// A vault doc as parseFrontmatter returns it, with the type/id/title every indexed doc carries
+// (#362: phase 3 refuses anything else, as reindexDoc does). id = the filename stem.
+const vaultDoc = (relPath, extra = {}) => ({
+  frontmatter: { type: 'note', id: path.posix.basename(relPath, '.md'), title: `Doc ${relPath}`, ...extra },
+  body: 't',
+});
 
 // Default no-op embed seam (infer:false paths only need embed, not facts).
 function makeEmbed() {
@@ -31,11 +41,11 @@ test('Phase 3 rebuilds entries; writes checkpoint after each', async () => {
   const checkpoint = { write: async () => {} };
   await runPhase3Rebuild({
     newMemory, state, checkpoint,
-    vault: { read: async (p) => ({ frontmatter: { id: p }, body: 'text' }) },
+    vault: { read: async (p) => (p.endsWith('.md') ? vaultDoc(p) : { frontmatter: { id: p }, body: 'text' }) },
     _qdrantClient,
     _embedProviderOverride: makeEmbed(),
   });
-  assert.deepEqual(writes.sort(), ['a.md', 'b.md', 'f1']);
+  assert.deepEqual(writes.sort(), ['a', 'b', 'f1'], 'a vault doc is stored under its frontmatter id');
   assert.equal(state.phase_completed, 3);
 });
 
@@ -53,7 +63,7 @@ test('Phase 3: explicit frontmatter.userId overrides RESOLVED_USER_ID fallback',
   const checkpoint = { write: async () => {} };
   await runPhase3Rebuild({
     newMemory, state, checkpoint,
-    vault: { read: async () => ({ frontmatter: { id: 'a.md', userId: 'fm-explicit-user' }, body: 't' }) },
+    vault: { read: async (p) => vaultDoc(p, { userId: 'fm-explicit-user' }) },
     _qdrantClient,
     _embedProviderOverride: makeEmbed(),
   });
@@ -78,7 +88,7 @@ test('Phase 3 retries on PROVIDER_RATELIMIT (429-then-success)', async () => {
   const checkpoint = { write: async () => {} };
   await runPhase3Rebuild({
     newMemory, state, checkpoint,
-    vault: { read: async () => ({ frontmatter: { id: 'a.md' }, body: 't' }) },
+    vault: { read: async (p) => vaultDoc(p) },
     maxRetries: 3,
     _qdrantClient,
     _embedProviderOverride,
@@ -99,7 +109,7 @@ test('Phase 3 surfaces RATELIMIT after exhausting retries with resume hint', asy
   await assert.rejects(
     () => runPhase3Rebuild({
       newMemory, state, checkpoint,
-      vault: { read: async () => ({ frontmatter: { id: 'a.md' }, body: 't' }) },
+      vault: { read: async (p) => vaultDoc(p) },
       maxRetries: 2,
       _qdrantClient,
       _embedProviderOverride,
@@ -116,7 +126,7 @@ test('Phase 3 final-entry recordPhase + processed_id batched in one writeCheckpo
   const checkpoint = { write: async (s) => writeCalls.push({ phase: s.phase_completed, processed: [...s.processed_ids] }) };
   await runPhase3Rebuild({
     newMemory, state, checkpoint,
-    vault: { read: async () => ({ frontmatter: { id: 'a.md' }, body: 't' }) },
+    vault: { read: async (p) => vaultDoc(p) },
     _qdrantClient,
     _embedProviderOverride: makeEmbed(),
   });
@@ -149,7 +159,7 @@ test('Phase 3 persists progress before propagating non-RATELIMIT errors', async 
   await assert.rejects(
     () => runPhase3Rebuild({
       newMemory, state, checkpoint,
-      vault: { read: async (p) => ({ frontmatter: { id: p }, body: 't' }) },
+      vault: { read: async (p) => vaultDoc(p) },
       _qdrantClient,
       _embedProviderOverride,
     }),
@@ -217,7 +227,7 @@ test('Phase 3 honours abortSignal between entries: persists progress, returns ca
     newMemory,
     state,
     checkpoint,
-    vault: { read: async (p) => ({ frontmatter: { id: p }, body: 't' }) },
+    vault: { read: async (p) => vaultDoc(p) },
     abortSignal: controller.signal,
     _qdrantClient,
     _embedProviderOverride,
@@ -260,7 +270,7 @@ test('Phase 3 honours pre-aborted signal: zero entries processed, cancelled=true
     newMemory,
     state,
     checkpoint,
-    vault: { read: async (p) => ({ frontmatter: { id: p }, body: 't' }) },
+    vault: { read: async (p) => vaultDoc(p) },
     abortSignal: controller.signal,
     _qdrantClient,
     _embedProviderOverride,
@@ -301,4 +311,85 @@ test('installSigintHandler: first SIGINT aborts controller, logs message, dispos
   } finally {
     process.off('SIGINT', swallow);
   }
+});
+
+// ---------- #362: the CLI admits and rebuilds vault docs by the server's own rule ----------
+
+// The issue's probe: a raw capture (no frontmatter), state.md, an untitled note and one real doc.
+const PROBE = {
+  'captures/p/raw/2026-10-09.md': '## 2026-10-09T00:00:00.000Z user\n\nhello\n\n',
+  'state/p/state.md': '---\ntype: state\nid: state-p\ntitle: State of play\n---\n\n# State\n',
+  'notes/untitled.md': '---\ntype: note\nid: untitled\n---\n\nno title\n',
+  'sessions/p/s1.md': '---\ntype: session_summary\nid: s1\ntitle: Session one\n---\n\nWhat happened.\n',
+};
+
+async function writeProbeVault() {
+  const dir = tempDir('reindex-362-');
+  for (const [rel, text] of Object.entries(PROBE)) {
+    await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await writeFile(path.join(dir, rel), text);
+  }
+  return dir;
+}
+
+test('#362 Phase 2 snapshots only what reindexDoc would index; a raw capture, state.md and an untitled note are skipped and counted', async () => {
+  const dir = await writeProbeVault();
+  const lines = [];
+  const factArgs = [];
+  const state = { schema_version: 1, processed_ids: [] };
+  try {
+    const r = await runPhase2Snapshot({
+      vault: { dir },
+      oldMemory: { listFactIds: async (arg) => { factArgs.push(arg); return []; } },
+      state,
+      checkpoint: { write: async () => {} },
+      out: { write: (s) => lines.push(s) },
+    });
+    assert.deepEqual(state.snapshot, { vault_paths: ['sessions/p/s1.md'], fact_ids: [] });
+    assert.deepEqual(factArgs, [{ vaultIds: ['s1'] }], 'the admitted docs\' frontmatter ids decide which points are vault-backed');
+    assert.deepEqual(r.skipped, { missing_fields: 2, state: 1 });
+    assert.match(lines.join(''), /phase 2: 1 vault doc\(s\) to rebuild; skipped 3 not indexed by the server \(missing_fields 2, state 1\)/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('#362 Phase 3 rebuilds a vault doc exactly as reindexDoc writes it: the shared record\'s text and metadata', async () => {
+  const payloads = [];
+  const _qdrantClient = { upsert: async (_col, { points }) => { payloads.push(points[0].payload); } };
+  const parsed = parseFrontmatter(PROBE['sessions/p/s1.md']);
+  const state = { schema_version: 1, snapshot: { vault_paths: ['sessions/p/s1.md'], fact_ids: [] }, processed_ids: [] };
+  await runPhase3Rebuild({
+    newMemory: makeMemory(), state, checkpoint: { write: async () => {} },
+    vault: { read: async () => parsed },
+    _qdrantClient,
+    _embedProviderOverride: makeEmbed(),
+  });
+  const rec = indexRecord(parsed);
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].data, rec.text, 'title + body, not the bare body');
+  for (const [k, v] of Object.entries(rec.metadata)) assert.equal(payloads[0][k], v, `metadata.${k}`);
+});
+
+test('#362 Phase 3 skips a snapshot path the rule refuses (a pre-#362 checkpoint resumed), counts it and completes', async () => {
+  const payloads = [];
+  const lines = [];
+  const _qdrantClient = { upsert: async (_col, { points }) => { payloads.push(points[0].payload.id); } };
+  const state = {
+    schema_version: 1,
+    snapshot: { vault_paths: ['captures/p/raw/2026-10-09.md', 'sessions/p/s1.md'], fact_ids: [] },
+    processed_ids: [],
+  };
+  const r = await runPhase3Rebuild({
+    newMemory: makeMemory(), state, checkpoint: { write: async () => {} },
+    vault: { read: async (p) => parseFrontmatter(PROBE[p]) },
+    _qdrantClient,
+    _embedProviderOverride: makeEmbed(),
+    out: { write: (s) => lines.push(s) },
+  });
+  assert.deepEqual(payloads, ['s1'], 'only the real doc is written');
+  assert.equal(r.skipped, 1);
+  assert.deepEqual(state.processed_ids, ['captures/p/raw/2026-10-09.md', 'sessions/p/s1.md'], 'the skipped path is not retried on resume');
+  assert.equal(state.phase_completed, 3);
+  assert.match(lines.join(''), /skipped captures\/p\/raw\/2026-10-09\.md: missing_fields/);
 });

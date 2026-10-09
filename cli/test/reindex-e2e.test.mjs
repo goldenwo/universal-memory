@@ -65,21 +65,19 @@ status: current
  */
 async function preIndex({ vaultDir, env, ids }) {
   const { umAdd } = await import('../../server/lib/add.mjs');
+  const { parseFrontmatter } = await import('../../server/lib/frontmatter.mjs');
+  const { indexRecord } = await import('../../server/lib/index-record.mjs');
   const { createMemoryInstance } = await import('../reindex.mjs');
   const userId = env.MEM0_USER_ID || 'reindex-e2e';
   const collection = env.QDRANT_COLLECTION || 'memories';
   const memory = await createMemoryInstance({ env, collection });
   for (const id of ids) {
     const relPath = `authored/reindex-e2e/${id}.md`;
-    const text = await readFile(path.join(vaultDir, relPath), 'utf8');
-    const body = text.split('---').slice(2).join('---').trim();
-    await umAdd({
-      memory,
-      text: body,
-      userId,
-      metadata: { id: relPath, schema_version: 1, type: 'note' },
-      infer: false,
-    });
+    // #362: the record reindexDoc writes (metadata.id = the frontmatter id, title + body
+    // text). This seed used to store path ids, a shape no writer produces, which hid that
+    // the migration rebuilt every vault doc twice.
+    const rec = indexRecord(parseFrontmatter(await readFile(path.join(vaultDir, relPath), 'utf8')));
+    await umAdd({ memory, text: rec.text, userId, metadata: rec.metadata, infer: false });
   }
   return collection;
 }
@@ -124,6 +122,18 @@ async function fetchCollections() {
   if (!res.ok) throw new Error(`qdrant /collections HTTP ${res.status}`);
   const json = await res.json();
   return json.result?.collections?.map((c) => c.name) || [];
+}
+
+async function fetchPointCount(collection) {
+  const host = process.env.QDRANT_HOST || 'localhost';
+  const port = process.env.QDRANT_PORT || '6333';
+  const res = await fetch(`http://${host}:${port}/collections/${collection}/points/count`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ exact: true }),
+  });
+  if (!res.ok) throw new Error(`qdrant points/count HTTP ${res.status}`);
+  return (await res.json()).result.count;
 }
 
 async function fetchAliasTarget(alias) {
@@ -179,6 +189,10 @@ test('reindex e2e: openai → google flips embedding provider end-to-end', { ski
     const collections = await fetchCollections();
     assert.ok(collections.includes(collection), 'old collection should still exist');
     assert.ok(collections.includes(aliasTarget), 'new collection should exist');
+
+    // #362: one point per vault doc. Each doc's old point is vault-backed, so it is rebuilt
+    // from the file and never carried over as a fact too.
+    assert.equal(await fetchPointCount(aliasTarget), ids.length, 'every seeded doc exactly once');
   } finally {
     await rm(vaultDir, { recursive: true, force: true });
     // Operator runs `docker compose down -v` between scenarios to drop
