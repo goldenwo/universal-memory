@@ -42,6 +42,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Memory } from 'mem0ai/oss';
 import { parseFrontmatter, serializeFrontmatter } from './lib/frontmatter.mjs';
+import { indexRecord } from './lib/index-record.mjs';
 import { assertScanNotSaturated, searchConfig, umGetAll, wrapMem0Read } from './lib/mem0-read.mjs';
 import { readVaultFile, vaultPath, listVaultFiles, statVaultFile } from './lib/vault.mjs';
 import { applyTemporalDecay, applyTemporalWindow, countInWindow, isUsableDate, undatedFactorFor } from './lib/ranking.mjs';
@@ -839,20 +840,17 @@ async function deleteByMetadataId(targetId) {
 
 async function reindexDoc(relPath) {
 	const fileText = await readVaultFile(relPath);
-	const { frontmatter: fm, body } = parseFrontmatter(fileText);
-	if (!fm.type || !fm.id || !fm.title) {
-		const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
-		throw new Error(`Missing required frontmatter fields: ${missing.join(', ')}`);
+	// #362: admission, text and metadata are shared with POST /api/reindex and
+	// cli/reindex.mjs. C2: state.md is served via /api/state and the
+	// memory_state MCP tool, never indexed into mem0.
+	const rec = indexRecord(parseFrontmatter(fileText));
+	if (!rec.ok) {
+		throw new Error(rec.reason === 'state'
+			? 'state.md documents must not be indexed into mem0'
+			: `Missing required frontmatter fields: ${rec.missing.join(', ')}`);
 	}
-	// C2: state.md documents must never be indexed into mem0 (they are served
-	// directly via /api/state and the memory_state MCP tool).
-	if (fm.type === 'state') {
-		throw new Error('state.md documents must not be indexed into mem0');
-	}
-	const targetId = fm.id;
+	const { id: targetId, metadata, text: docText } = rec;
 	await deleteByMetadataId(targetId);
-	const metadata = { schema_version: 1, ...fm };
-	const docText = `${fm.title}\n\n${body.trim()}`;
 	// v0.8 G2: umAdd routes through orchestrators for metric emission.
 	// D1 (R14 symmetric): vault reindex deletes-then-rewrites; without
 	// _systemMigration:true, dedup could inadvertently merge the rebuilt doc
@@ -3593,54 +3591,38 @@ export function createRequestHandler(ctx = {}) {
 				throw err;
 			}
 
-			// 3. parse once, destructure both frontmatter and body
-			const { frontmatter: fm, body } = parseFrontmatter(fileText);
-
-			// 4. required fields
-			if (!fm.type || !fm.id || !fm.title) {
-				const missing = ['type', 'id', 'title'].filter((k) => !fm[k]);
+			// 3-5. the shared index record (#362; reindexDoc and cli/reindex.mjs use
+			// the same one): required fields, then state rejected, then the text and
+			// metadata (schema_version defaults to 1 if absent).
+			const rec = indexRecord(parseFrontmatter(fileText));
+			if (!rec.ok) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse(
 					'INPUT_INVALID',
-					`Missing required frontmatter fields: ${missing.join(', ')}`,
+					rec.reason === 'state'
+						? 'state.md is never reindexed — use /api/state (Task 10)'
+						: `Missing required frontmatter fields: ${rec.missing.join(', ')}`,
 				)));
 				return;
 			}
+			const { id: targetId, metadata, text: docText } = rec;
 
-			// 5. state type rejected
-			if (fm.type === 'state') {
-				res.writeHead(400, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify(errorResponse(
-					'INPUT_INVALID',
-					'state.md is never reindexed — use /api/state (Task 10)',
-				)));
-				return;
-			}
-
-			// 6. filename stem must match metadata.id
+			// 6. filename stem must match metadata.id (this route only: the caller
+			// names the path)
 			const stem = path.basename(relPath, '.md');
-			if (stem !== fm.id) {
+			if (stem !== targetId) {
 				res.writeHead(400, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(errorResponse(
 					'INPUT_INVALID',
-					`id mismatch: frontmatter id "${fm.id}" does not match filename stem "${stem}"`,
+					`id mismatch: frontmatter id "${targetId}" does not match filename stem "${stem}"`,
 				)));
 				return;
 			}
 
 			// 7. upsert: delete all existing entries with this metadata.id, then add
-			const targetId = fm.id;
 			// TODO(v0.6): no mutex on delete+add — concurrent reindex for same id may produce duplicates. Acceptable at current single-user CLI-driven scale.
 			await deleteByMetadataId(targetId);
 
-			// 8. build metadata from frontmatter (schema_version defaults to 1 if absent)
-			const metadata = {
-				schema_version: 1,
-				...fm,
-			};
-
-			// Compose a meaningful text to add to mem0 (title + body excerpt)
-			const docText = `${fm.title}\n\n${body.trim()}`;
 			// v0.8 G2: see /api/add migration.
 			// D1 (R14 symmetric): /api/reindex deletes-then-rewrites a vault doc;
 			// _systemMigration:true bypasses dedup so the rebuild can't merge into

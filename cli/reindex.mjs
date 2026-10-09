@@ -121,6 +121,8 @@ import { pathToFileURL } from 'node:url';
 import { ProviderError } from '../server/lib/provider/errors.mjs';
 import { umAdd } from '../server/lib/add.mjs';
 import { umGetAll, FULL_SCAN_LIMIT } from '../server/lib/mem0-read.mjs';
+import { parseFrontmatter } from '../server/lib/frontmatter.mjs';
+import { indexRecord } from '../server/lib/index-record.mjs';
 import { runPhase4Stamp, runPhase5Swap, runPhase6Verify } from './lib/swap.mjs';
 import { runPhase7Report } from './lib/archive.mjs';
 
@@ -468,8 +470,10 @@ async function listVaultMarkdownPaths(vaultDir) {
  * Phase 2 (snapshot) — enumerate everything that needs to be rebuilt.
  *
  * Two sources contribute to the snapshot:
- *   1. The vault directory — every `.md` file is a vault-backed entry whose
- *      body+frontmatter will be re-embedded under the new model in phase 3.
+ *   1. The vault directory — every `.md` file the server would index (the
+ *      shared `indexRecord` rule, #362) is a vault-backed entry whose record
+ *      will be re-embedded under the new model in phase 3. The rest (raw
+ *      captures, state.md, untitled notes) are counted and printed, not rebuilt.
  *   2. The OLD Qdrant collection — fact-only payloads (entries that have NO
  *      vault file because they were stored as facts via `infer:true`). The
  *      `oldMemory` client is expected to expose a `listFactIds()` method that
@@ -490,22 +494,61 @@ async function listVaultMarkdownPaths(vaultDir) {
  * @param {object} params.state - Mutable checkpoint state. Phase 2 mutates
  *   `state.snapshot` and `state.phase_completed`.
  * @param {{ write: (s: object) => Promise<void> }} params.checkpoint
- * @returns {Promise<{ vault_paths: string[], fact_ids: string[] }>}
+ * @param {{ write: (s: string) => void }} [params.out] - where the skip summary goes
+ * @returns {Promise<{ vault_paths: string[], fact_ids: string[], skipped: Record<string, number> }>}
  */
-export async function runPhase2Snapshot({ vault, oldMemory, state, checkpoint }) {
-  const vault_paths = await listVaultMarkdownPaths(vault?.dir);
+export async function runPhase2Snapshot({ vault, oldMemory, state, checkpoint, out = process.stderr }) {
+  // #362: only what the server itself indexes (indexRecord, shared with reindexDoc) — not raw
+  // captures, state.md or any other frontmatter-less .md.
+  const docs = await listIndexableVaultDocs(vault?.dir);
+  const vault_paths = docs.paths;
   // Fact-only IDs: prefer an explicit listFactIds() method on the old memory
   // client. Returning [] when the client isn't available keeps the e2e test
   // (DE12) the source of truth for the live-Qdrant path while letting unit
-  // tests stub the snapshot directly without a Qdrant.
+  // tests stub the snapshot directly without a Qdrant. The admitted docs' ids
+  // tell it which points are vault-backed (rebuilt from the file instead).
   let fact_ids = [];
   if (oldMemory && typeof oldMemory.listFactIds === 'function') {
-    fact_ids = await oldMemory.listFactIds();
+    fact_ids = await oldMemory.listFactIds({ vaultIds: docs.ids });
   }
   state.snapshot = { vault_paths, fact_ids };
   state.phase_completed = 2;
   await checkpoint.write(state);
-  return { vault_paths, fact_ids };
+  const reasons = Object.entries(docs.skipped).sort(([a], [b]) => a.localeCompare(b));
+  const skippedTotal = reasons.reduce((n, [, c]) => n + c, 0);
+  const detail = skippedTotal > 0 ? ` (${reasons.map(([r, c]) => `${r} ${c}`).join(', ')})` : '';
+  out.write(`[reindex] phase 2: ${vault_paths.length} vault doc(s) to rebuild; skipped ${skippedTotal} not indexed by the server${detail}\n`);
+  return { vault_paths, fact_ids, skipped: docs.skipped };
+}
+
+/**
+ * The vault docs the server would index (#362): every `.md` whose parsed text passes
+ * `indexRecord`, the rule reindexDoc and POST /api/reindex use. Raw captures (no
+ * frontmatter), state.md and untitled notes are counted by reason, never rebuilt.
+ *
+ * @param {string|undefined} vaultDir
+ * @returns {Promise<{ paths: string[], ids: string[], skipped: Record<string, number> }>}
+ *   `ids`: the admitted docs' frontmatter ids — the metadata.id their points carry.
+ */
+async function listIndexableVaultDocs(vaultDir) {
+  const paths = [];
+  const ids = [];
+  const skipped = {};
+  for (const rel of await listVaultMarkdownPaths(vaultDir)) {
+    let rec;
+    try {
+      rec = indexRecord(parseFrontmatter(await fs.readFile(path.join(vaultDir, rel), 'utf8')));
+    } catch {
+      rec = { ok: false, reason: 'unreadable' }; // vanished or unreadable mid-walk
+    }
+    if (rec.ok) {
+      paths.push(rel);
+      ids.push(rec.id);
+    } else {
+      skipped[rec.reason] = (skipped[rec.reason] ?? 0) + 1;
+    }
+  }
+  return { paths, ids, skipped };
 }
 
 /**
@@ -528,15 +571,29 @@ function sleep(ms) {
  * tests stub it directly.
  */
 async function rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderOverride } = {}) {
-  const { frontmatter, body } = await vault.read(id);
+  const parsed = await vault.read(id);
+  const { frontmatter } = parsed;
+  let text;
+  let metadata;
+  if (id.endsWith('.md')) {
+    // #362: a vault doc is rebuilt as reindexDoc writes it (title + body, schema_version
+    // metadata). A path the rule refuses — only possible when resuming a snapshot taken
+    // before #362 — is reported to the caller and never written.
+    const rec = indexRecord(parsed);
+    if (!rec.ok) return rec;
+    ({ text, metadata } = rec);
+  } else {
+    text = parsed.body;
+    metadata = { id: frontmatter.id, ...frontmatter };
+  }
   await umAdd({
     memory: newMemory,
-    text: body,
+    text,
     // forward-compat: no current writer emits userId in vault frontmatter
     // (canonical schema in docs/frontmatter-schema.md does not define it),
     // so RESOLVED_USER_ID is the always-fires path in production.
     userId: frontmatter.userId ?? RESOLVED_USER_ID,
-    metadata: { id: frontmatter.id, ...frontmatter },
+    metadata,
     infer: false,
     // D1 R14: reindex Phase 3 must bypass dedup. Without _systemMigration:true,
     // a rebuild would inadvertently merge the rebuilt doc into a different
@@ -601,10 +658,12 @@ export async function runPhase3Rebuild({
   progressEvery = DEFAULT_PROGRESS_EVERY,
   retryBaseMs = DEFAULT_RETRY_BASE_MS,
   abortSignal,
+  out = process.stderr,
   _qdrantClient,
   _embedProviderOverride,
 }) {
   const snapshot = state.snapshot || { vault_paths: [], fact_ids: [] };
+  let skipped = 0;
   // Iterate vault entries first, then fact-only IDs. Order is incidental for
   // correctness (each add is independent), but stable for log readability.
   const allIds = [...(snapshot.vault_paths || []), ...(snapshot.fact_ids || [])];
@@ -641,7 +700,12 @@ export async function runPhase3Rebuild({
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        await rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderOverride });
+        const refused = await rebuildOne(newMemory, vault, id, { _qdrantClient, _embedProviderOverride });
+        if (refused?.ok === false) {
+          // Marked processed below, so a resume does not retry it.
+          skipped += 1;
+          out.write(`[reindex] phase 3: skipped ${id}: ${refused.reason} (not indexed by the server)\n`);
+        }
         break;
       } catch (err) {
         const isRateLimit = err instanceof ProviderError && err.class === 'PROVIDER_RATELIMIT';
@@ -695,7 +759,7 @@ export async function runPhase3Rebuild({
     await checkpoint.write(state);
   }
 
-  return { processed: processedThisRun };
+  return { processed: processedThisRun, skipped };
 }
 
 // Phases 4-7 — extracted into cli/lib/swap.mjs (phases 4, 5, 6) and
@@ -715,9 +779,9 @@ export { runPhase4Stamp, runPhase5Swap, runPhase6Verify, runPhase7Report };
 //     adapter consumed by phase 2/3. Reads .md from disk for vault-backed
 //     entries; synthesizes fact-only payloads via the native umGetAll
 //     enumeration (#231 — mem0 3.x getAll cannot scope UM's payloads).
-//   - wrapOldMemoryForReindex(memory, {userId, vaultPaths}) — adds a
-//     listFactIds() method to a Memory instance (the snapshot-time set
-//     diff against vault paths). Phase 2's contract.
+//   - wrapOldMemoryForReindex(memory, {userId}) — adds a
+//     listFactIds({vaultIds}) method to a Memory instance (the snapshot-time
+//     set diff against the admitted vault docs' ids). Phase 2's contract.
 //   - createQdrantClient({env}) — exposes updateAlias() for phase 5.
 //   - runReindex(opts) — sequences phases 1→7, handles --resume + SIGINT.
 //   - main(argv) — argv parsing + adapter construction + exit-code mapping.
@@ -769,7 +833,6 @@ export async function createMemoryInstance({ env, collection }) {
  * therefore untestable without a live qdrant).
  */
 export async function createVaultAdapter({ vaultDir, oldMemory, userId, _listAll = umGetAll }) {
-  const { parseFrontmatter } = await import('../server/lib/frontmatter.mjs');
   let factCache = null;
   async function loadFactCache() {
     if (factCache != null) return factCache;
@@ -813,18 +876,21 @@ export async function createVaultAdapter({ vaultDir, oldMemory, userId, _listAll
 }
 
 /**
- * Wrap a Memory instance with `listFactIds()`. Returns the IDs in the
- * old collection that do NOT correspond to a vault-backed `.md` entry —
- * those are the fact-only entries that phase 2 must add to the snapshot.
+ * Wrap a Memory instance with `listFactIds({ vaultIds })`. Returns the IDs in
+ * the old collection that do NOT correspond to a vault doc phase 2 rebuilds
+ * from its file — those are the fact-only entries that phase 2 must add to the
+ * snapshot. A point is vault-backed when its metadata.id is one of `vaultIds`:
+ * the admitted docs' frontmatter ids, which is what reindexDoc stores (#362 —
+ * matching on vault paths never hit a real point, so every doc was rebuilt twice).
  *
  * Implemented as a Proxy so all other Memory methods pass through unchanged.
  */
-export function wrapOldMemoryForReindex(memory, { userId, vaultPaths, _listAll = umGetAll }) {
-  const vaultPathSet = new Set((vaultPaths || []).map((p) => p.replace(/\\/g, '/')));
+export function wrapOldMemoryForReindex(memory, { userId, _listAll = umGetAll }) {
   return new Proxy(memory, {
     get(target, prop, receiver) {
       if (prop === 'listFactIds') {
-        return async () => {
+        return async ({ vaultIds = [] } = {}) => {
+          const vaultIdSet = new Set(vaultIds);
           // #231: same native enumeration + full-scan limit + loud
           // saturation as loadFactCache above (the two must see the SAME
           // point set).
@@ -837,8 +903,7 @@ export function wrapOldMemoryForReindex(memory, { userId, vaultPaths, _listAll =
           for (const item of rows) {
             const id = item?.id;
             if (!id) continue;
-            const metaId = item?.metadata?.id;
-            if (typeof metaId === 'string' && metaId.endsWith('.md') && vaultPathSet.has(metaId)) continue;
+            if (vaultIdSet.has(item?.metadata?.id)) continue;
             out.push(id);
           }
           return out;
@@ -974,11 +1039,11 @@ export async function runReindex(opts) {
 
   // Phase 2 — snapshot. Walks vault + lists fact-only IDs from oldMemory.
   if (state.phase_completed < 2) {
-    const vaultPaths = await listVaultMarkdownPaths(vaultDir);
-    const oldMemoryWrapped = wrapOldMemoryForReindex(oldMemory, { userId, vaultPaths });
+    const oldMemoryWrapped = wrapOldMemoryForReindex(oldMemory, { userId });
     await runPhase2Snapshot({
       vault: { dir: vaultDir },
       oldMemory: oldMemoryWrapped,
+      out: io.stderr,
       state,
       checkpoint,
     });
@@ -995,6 +1060,7 @@ export async function runReindex(opts) {
         checkpoint,
         vault,
         abortSignal: controller.signal,
+        out: io.stderr,
       });
       if (result?.cancelled) {
         const processed = state.processed_ids?.length ?? 0;
