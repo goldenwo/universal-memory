@@ -20,10 +20,16 @@
 //       Sidechain/subagent lines never fire the hook: a line with
 //       isSidechain: true, or any line in a `subagents/` or `agent-*.jsonl`
 //       file, gives no first prompt. Meta, compact-summary and tool-result
-//       lines, and lines that open with one of `non_prompt_prefixes` (slash
-//       and local-command markup), are not prompts. A prompt line copied into
-//       a resumed session's file is the same prompt: lines are deduplicated by
-//       uuid (the copy in the file named after its own sessionId wins).
+//       lines, and lines that open with one of `skipped_prefixes`, are not
+//       submitted lines and are skipped. A session whose first submitted line
+//       (after any skipped sub-`min_prompt_chars` prompt) opens with one of
+//       `command_prefixes` — a slash or local command — is EXCLUDED from
+//       s_first and counted (`sessions_command_first`): whether the hook fires
+//       on a command, and with what text, is unverified, so neither the
+//       command nor a later prompt can be attributed to it (spec D9 ruling,
+//       PR 2 review). A line copied into a resumed session's file is the same
+//       line: lines are deduplicated by uuid (the copy in the file named after
+//       its own sessionId wins).
 //   (b) agent calls — every tool_use whose name ends in `tool_name_suffix`
 //       (its `query` argument), subagent transcripts included, counted ONCE by
 //       tool-use id wherever it appears, when dated inside the window.
@@ -87,8 +93,11 @@ function hookQuery(text, census) {
   return cut.trim();
 }
 
-/** The prompt text of a typed user line, or null when the line is not a prompt. */
-function promptText(obj, census) {
+/**
+ * A user-submitted main-session line: `{ kind: 'prompt', text }`, `{ kind: 'command' }`
+ * (slash or local command markup), or null when the line is not a submission.
+ */
+function submittedLine(obj, census) {
   if (obj.type !== 'user') return null;
   const m = obj.message;
   if (!m || typeof m !== 'object' || m.role !== 'user') return null;
@@ -104,8 +113,9 @@ function promptText(obj, census) {
     return null;
   }
   const lead = text.trimStart();
-  if (census.non_prompt_prefixes.some((p) => lead.startsWith(p))) return null;
-  return text;
+  if (census.skipped_prefixes.some((p) => lead.startsWith(p))) return null;
+  if (census.command_prefixes.some((p) => lead.startsWith(p))) return { kind: 'command' };
+  return { kind: 'prompt', text };
 }
 
 /** Every tool_use block anywhere in a parsed line (progress lines nest them). */
@@ -206,10 +216,10 @@ export async function runCensus({ transcriptsDir, countersPath, rule }) {
           }
         }
         if (subagentFile || obj.isSidechain === true) continue;
-        const text = promptText(obj, census);
-        if (text === null) continue;
+        const sub = submittedLine(obj, census);
+        if (sub === null) continue;
         const sessionId = typeof obj.sessionId === 'string' && obj.sessionId ? obj.sessionId : `file:${rel}`;
-        const cand = { sessionId, ms, text, rel, lineNo, own: sessionId === ownSession };
+        const cand = { sessionId, ms, kind: sub.kind, text: sub.text, rel, lineNo, own: sessionId === ownSession };
         const key = typeof obj.uuid === 'string' && obj.uuid ? `uuid:${obj.uuid}` : `anon:${anonymous++}`;
         const prev = prompts.get(key);
         if (!prev || (!prev.own && cand.own)) prompts.set(key, cand);
@@ -226,6 +236,7 @@ export async function runCensus({ transcriptsDir, countersPath, rule }) {
     bySession.get(c.sessionId).push(c);
   }
   const firstPrompts = emptyShapes();
+  let commandFirst = 0;
   let undated = 0;
   for (const cands of bySession.values()) {
     cands.sort((a, b) => {
@@ -235,15 +246,19 @@ export async function runCensus({ transcriptsDir, countersPath, rule }) {
       if (a.rel !== b.rel) return a.rel < b.rel ? -1 : 1;
       return a.lineNo - b.lineNo;
     });
+    // The first submission the hook would act on: a short prompt is skipped
+    // (the hook ignores it and waits for the next); a command ends the search.
     let first = null;
     let query = null;
     for (const c of cands) {
+      if (c.kind === 'command') { first = c; break; }
       query = hookQuery(c.text, census);
       if (query !== null) { first = c; break; }
     }
     if (!first) continue;
     if (Number.isNaN(first.ms)) { undated++; continue; }
     if (!inWindow(first.ms)) continue;
+    if (first.kind === 'command') { commandFirst++; continue; }
     const shape = classifyQueryShape(query);
     firstPrompts.total++;
     firstPrompts[shape]++;
@@ -273,6 +288,7 @@ export async function runCensus({ transcriptsDir, countersPath, rule }) {
       lines_read: linesRead,
       malformed_lines: malformed,
       undated_items: undated,
+      sessions_command_first: commandFirst,
       first_prompts: firstPrompts,
       agent_calls: agentCalls,
       volume,

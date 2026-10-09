@@ -19,10 +19,17 @@
 //   stratum, df ≤ max_df, single-project; `fact-control` = the fact stratum
 //   under the same filter; everything else `nonprimary` (calibration only).
 //
+// • DUPLICATE DOCUMENT IDS (ruling, PR 2 review): several points can share one
+//   payload.id. Every text is kept (point-id order); a row reads, per doc, the
+//   first text that contains its identifier (docText), and the cross-document
+//   exclusion checks every text of every relevant doc.
+//
 // • WINDOWS (G-src): the paragraph (blank-line separated) holding the
 //   identifier's first occurrence in the seed doc, capped at window_chars
-//   centred on it; a seed no longer than the cap is its own window. The
-//   generator and every judge see windows, never a whole document.
+//   centred on it. A doc-stratum row ALWAYS gets the paragraph, however short
+//   the seed; only a fact-stratum seed no longer than the cap is its own whole
+//   window (ruling, PR 2 review). The generator and every judge see windows,
+//   never a whole document.
 //
 // • J2 CANDIDATES: every IDENTIFIER_RX match (≥ MIN_IDENT_LEN) in the row's
 //   window except matches nested with the target (one contains the other) —
@@ -124,23 +131,44 @@ export function chooseRepresentative(members, salt) {
 const projectOf = (payload, rule) => (typeof payload?.project === 'string' && payload.project !== ''
   ? payload.project : rule.population.missing_project_value);
 
-/** Projected id → { text, isDoc, projects } (text: the first point carrying the id, as buildPopulation reads it). */
+/**
+ * Projected id → { texts, projects }. Several corpus points can share one
+ * document id (payload.id); EVERY text is kept, ordered by point id so the
+ * order does not depend on the dump's (ruling, PR 2 review).
+ */
 export function indexCorpus(points, rule) {
   const byId = new Map();
   for (const p of points) {
     const id = projectedId(p);
-    if (!byId.has(id)) {
-      const text = p.payload?.data ?? '';
-      byId.set(id, { text, isDoc: isDoc(text), projects: new Set() });
-    }
-    byId.get(id).projects.add(projectOf(p.payload, rule));
+    if (!byId.has(id)) byId.set(id, { entries: [], projects: new Set() });
+    const e = byId.get(id);
+    e.entries.push({ pointId: String(p.id), text: p.payload?.data ?? '' });
+    e.projects.add(projectOf(p.payload, rule));
+  }
+  for (const e of byId.values()) {
+    e.entries.sort((a, b) => cmp(a.pointId, b.pointId));
+    e.texts = e.entries.map((x) => x.text);
   }
   return { byId, universe: new Set(byId.keys()) };
 }
 
-/** The seed doc: the isDoc relevant doc with the smallest salted hash; else the smallest-hash relevant doc. */
-export function chooseSeedDoc(relevant, index, salt) {
-  const docs = relevant.filter((id) => index.byId.get(id)?.isDoc);
+/**
+ * The text of document `id` a row reads: the first of its texts (point-id
+ * order) that contains the identifier — the one relevance matched — else its
+ * first text (no identifier given, or none contains it).
+ */
+export function docText(index, id, identifier) {
+  const e = index.byId.get(id);
+  if (!e) return '';
+  return (identifier !== undefined && e.texts.find((t) => t.includes(identifier))) || e.texts[0];
+}
+
+/**
+ * The seed doc: the relevant doc whose text (docText) is isDoc, with the
+ * smallest salted hash; with none, the smallest-hash relevant doc.
+ */
+export function chooseSeedDoc(relevant, index, salt, identifier) {
+  const docs = relevant.filter((id) => isDoc(docText(index, id, identifier)));
   return (docs.length ? docs : relevant).slice().sort(byHash(salt))[0];
 }
 
@@ -156,9 +184,15 @@ function paragraphBounds(text, pos) {
   return [start, end];
 }
 
-/** The window around an occurrence at `pos` (length `len`) in `text`. */
-export function windowAt(text, pos, len, cap) {
-  if (text.length <= cap) return { text, start: 0, pos };
+/**
+ * The window around an occurrence at `pos` (length `len`) in `text`: its
+ * paragraph, capped at `cap` chars centred on the occurrence. With
+ * `wholeIfShort` (fact-stratum rows only) a text no longer than the cap is
+ * its own window; a doc-stratum row always gets the paragraph (ruling, PR 2
+ * review).
+ */
+export function windowAt(text, pos, len, cap, { wholeIfShort = false } = {}) {
+  if (wholeIfShort && text.length <= cap) return { text, start: 0, pos };
   const [ps, pe] = paragraphBounds(text, pos);
   let start = ps;
   let end = pe;
@@ -169,10 +203,14 @@ export function windowAt(text, pos, len, cap) {
   return { text: text.slice(start, end), start, pos: pos - start };
 }
 
-/** The window around an identifier's first occurrence, or null when it does not occur. */
-export function firstWindow(text, identifier, cap) {
+/**
+ * The window around an identifier's first occurrence. Relevance guarantees an
+ * occurrence in the text docText() picks; were there none, the window opens
+ * at the text's start rather than throwing.
+ */
+export function firstWindow(text, identifier, cap, opts) {
   const pos = text.indexOf(identifier);
-  return pos < 0 ? null : windowAt(text, pos, identifier.length, cap);
+  return pos < 0 ? windowAt(text, 0, 0, cap, opts) : windowAt(text, pos, identifier.length, cap, opts);
 }
 
 /**
@@ -230,11 +268,18 @@ function inWindowCandidates(row, seedText, rule) {
   return [...nearest.values()]
     .sort((a, b) => a.dist - b.dist || cmp(a.identifier, b.identifier))
     .slice(0, rule.gloss.max_in_window_candidates - 1)
-    .map((c) => ({ identifier: c.identifier, pos: c.pos, window: windowAt(seedText, w.start + c.pos, c.identifier.length, rule.gloss.window_chars) }));
+    .map((c) => ({
+      identifier: c.identifier, pos: c.pos,
+      window: windowAt(seedText, w.start + c.pos, c.identifier.length, rule.gloss.window_chars, windowOpts(row)),
+    }));
 }
 
+/** Whole-text windows for short seeds are a fact-stratum rule only (D4 ruling). */
+const windowOpts = (row) => ({ wholeIfShort: row.stratum === 'fact' });
+
 function crossDocNeighbours(row, rows, index, rule) {
-  const relTexts = row.relevant.map((id) => index.byId.get(id)?.text ?? '');
+  // "Occurs in one of this row's relevant docs" checks EVERY text of each doc.
+  const relTexts = row.relevant.flatMap((id) => index.byId.get(id)?.texts ?? []);
   const salt = rule.salts.neighbour_tiebreak;
   return rows
     .filter((o) => o !== row && o.class === row.class && !relTexts.some((t) => t.includes(o.identifier)))
@@ -255,20 +300,20 @@ export function buildPopulationRows(points, rule) {
     const projects = new Set();
     for (const id of g.relevant) for (const p of index.byId.get(id)?.projects ?? []) projects.add(p);
     const single = projects.size === 1;
-    const seed = chooseSeedDoc(g.relevant, index, rule.salts.seed_doc);
-    const window = firstWindow(index.byId.get(seed).text, identifier, cap);
+    const seed = chooseSeedDoc(g.relevant, index, rule.salts.seed_doc, identifier);
+    const window = firstWindow(docText(index, seed, identifier), identifier, cap, windowOpts(g));
     const eligibleDf = g.df <= rule.population.max_df;
     const role = eligibleDf && single ? (g.stratum === 'doc' ? 'primary' : 'fact-control') : 'nonprimary';
     return {
       identifier, class: classOf(identifier), relevant: g.relevant, df: g.df, stratum: g.stratum,
       single_project: single, role, seed_id: seed, window,
-      c3_eligible: g.relevant.some((id) => id !== seed && index.byId.get(id)?.isDoc),
+      c3_eligible: g.relevant.some((id) => id !== seed && isDoc(docText(index, id, identifier))),
       tokens: contentTokens(window.text),
     };
   });
   for (const row of rows) {
     if (row.role === 'nonprimary') { row.in_window = []; row.cross = []; row.options = [row.identifier]; continue; }
-    row.in_window = inWindowCandidates(row, index.byId.get(row.seed_id).text, rule);
+    row.in_window = inWindowCandidates(row, docText(index, row.seed_id, row.identifier), rule);
     row.cross = crossDocNeighbours(row, rows, index, rule);
     row.options = seededShuffle([row.identifier, ...row.in_window.map((c) => c.identifier), ...row.cross.map((c) => c.identifier)],
       rule.salts.candidate_order, row.identifier);
@@ -402,7 +447,9 @@ async function judgeJ2(row, phrase, plant, { llm, rule }) {
 /** J3's windows: seed doc first, then the other relevant docs by salted hash. */
 function j3Windows(row, index, rule) {
   const others = row.relevant.filter((id) => id !== row.seed_id).sort(byHash(rule.salts.seed_doc));
-  return [row.seed_id, ...others].map((id) => ({ id, text: firstWindow(index.byId.get(id).text, row.identifier, rule.gloss.window_chars).text }));
+  return [row.seed_id, ...others].map((id) => ({
+    id, text: firstWindow(docText(index, id, row.identifier), row.identifier, rule.gloss.window_chars, windowOpts(row)).text,
+  }));
 }
 
 async function judgeJ3(row, windows, plant, { llm, rule }) {

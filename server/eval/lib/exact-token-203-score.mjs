@@ -308,7 +308,7 @@ export function resultSchema(rule) {
   const { channels, shapes, byClass, plants } = sharedSchemas(rule);
   const census = S.obj({
     window: S.obj({ from: S.date, until: S.date }), files_read: S.int, lines_read: S.int, malformed_lines: S.int,
-    undated_items: S.int, first_prompts: shapes, agent_calls: shapes,
+    undated_items: S.int, sessions_command_first: S.int, first_prompts: shapes, agent_calls: shapes,
     volume: S.obj({ plugin: S.int, unknown: S.int, excluded: S.int, other: S.int }),
     s_first: S.num, s_agent: S.num, p_dom: S.num, threshold: S.num, prevalence: S.enum(PREVALENCE_SIDES),
   });

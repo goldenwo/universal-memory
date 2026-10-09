@@ -33,6 +33,8 @@ import {
 import { fuse } from './lib/rrf.mjs';
 import { percentile } from './lib/stats.mjs';
 import { IDENTIFIER_RX, MIN_IDENT_LEN } from '../lib/query-shape.mjs';
+import { isRecallable } from '../lib/recallable.mjs';
+import { isSystemDoc } from '../lib/system-docs.mjs';
 
 // ─── FROZEN ACCEPT RULE (spec §5.3) — do not edit after a number is observed ───
 const GATES = {
@@ -236,10 +238,13 @@ const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 // certifies nothing about another. Now STRATIFIED, with sample composition asserted and reported so a
 // silently-empty half is visible rather than averaged away.
 //
-// Exported for #203, whose harness passes `n` and `floor` from its accept rule (spec D5); the
-// defaults keep this file's own call unchanged.
-export async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N, floor = VERBATIM_RANK1_FLOOR) {
-  const eligible = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length > 0);
+// Exported for #203, whose harness passes `n` and `floor` from its accept rule (spec D5) and
+// `recallableOnly`: sample only points doSearch can return (lib/recallable.mjs's status and
+// invalidation predicate, and no system doc), so a superseded point cannot fail the probe by
+// construction. The defaults keep this file's own call unchanged.
+export async function verbatimProbe(doSearch, memory, points, n = VERBATIM_PROBE_N, floor = VERBATIM_RANK1_FLOOR, { recallableOnly = false } = {}) {
+  const eligible = points.filter((p) => p.payload?.userId !== '_um_system' && (p.payload?.data || '').length > 0
+    && (!recallableOnly || (isRecallable({ metadata: p.payload }) && !isSystemDoc({ metadata: p.payload }))));
   const strata = {
     fact: eligible.filter((p) => !isDoc(p.payload.data)).slice(0, n),
     doc: eligible.filter((p) => isDoc(p.payload.data)).slice(0, n),

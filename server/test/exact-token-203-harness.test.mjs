@@ -137,17 +137,17 @@ async function e2e({ ruleMut, llm, points = CORPUS_POINTS, anchor = true } = {})
   return { sb, env, arc, llm: stub, buildOut };
 }
 
-async function score(ctx, { index, faults, env } = {}) {
+async function score(ctx, { index, faults, env, resultsDir } = {}) {
   const outLines = [];
   const idx = index ?? makeStubIndex(CORPUS_POINTS);
   let opened = 0;
   const code = await run(['score', '--arc-dir', ctx.arc], {
-    repoDir: ctx.sb.repo, env: env ?? ctx.env, now: NOW, faults,
+    repoDir: ctx.sb.repo, env: env ?? ctx.env, now: NOW, faults, ...(resultsDir ? { resultsDir } : {}),
     out: (l) => outLines.push(String(l)),
     openIndex: async () => { opened++; return idx; },
   });
-  const resultsDir = join(ctx.sb.repo, 'server', 'eval', 'results');
-  return { code, outLines, idx, opened, resultsDir, files: listAll(resultsDir) };
+  const dir = resultsDir ?? join(ctx.sb.repo, 'server', 'eval', 'results');
+  return { code, outLines, idx, opened, resultsDir: dir, files: listAll(dir) };
 }
 
 function readQuerySet(arc) {
@@ -222,6 +222,10 @@ test('G3 a gloss carrying another identifier is rejected', () => {
 test('G4 "the issue" rejected (no descriptive word); word limits enforced', () => {
   assert.deepEqual(gShape('the issue', '#351', RULE), { ok: false, reason: 'descriptive-words' });
   assert.deepEqual(gShape('the config file setting', 'FAKE_FLAG', RULE), { ok: false, reason: 'descriptive-words' });
+  // Plurals of the generic words are generic too (ruling, PR 2 review): an explicit list, no stemming.
+  assert.deepEqual(gShape('the flags', '#351', RULE), { ok: false, reason: 'descriptive-words' });
+  assert.deepEqual(gShape('config files and settings', 'FAKE_FLAG', RULE), { ok: false, reason: 'descriptive-words' });
+  assert.deepEqual(gShape('the reindex flags', '#351', RULE), { ok: false, reason: 'descriptive-words' }, 'one descriptive word is not enough');
   assert.deepEqual(gShape('reindex', '#351', RULE), { ok: false, reason: 'word-count' });
   assert.deepEqual(gShape('one two three four five six seven', '#351', RULE), { ok: false, reason: 'word-count' });
 });
@@ -269,6 +273,10 @@ test('K1 the tracked rule carries the spec\'s pre-registered values', () => {
   assert.equal(RULE.gloss.window_chars, 600);
   assert.equal(RULE.gloss.min_words, 2);
   assert.equal(RULE.gloss.max_words, 6);
+  const SPEC_GENERIC = ['issue', 'pr', 'file', 'flag', 'version', 'release', 'path', 'setting', 'variable', 'function', 'command',
+    'port', 'option', 'script', 'config', 'fix', 'update', 'change', 'server', 'module', 'system', 'tool', 'feature', 'code', 'bug', 'thing'];
+  const plural = (w) => (/(x|s|sh|ch)$/.test(w) ? `${w}es` : `${w}s`);
+  assert.deepEqual([...RULE.gloss.generic_words].sort(), [...SPEC_GENERIC, ...SPEC_GENERIC.map(plural)].sort(), 'spec D2\'s words and their plurals, nothing else');
   assert.equal(RULE.corpus.pinned_user_id, 'golden');
   assert.deepEqual({ ...RULE.corpus.embedder }, { provider: 'openai', model: 'text-embedding-3-small', dims: 1536 });
   assert.equal(RULE.census.prevalence_threshold, 0.05);
@@ -556,6 +564,75 @@ test('H9 a throw after the verdict function → VOID post-verdict-error', async 
   assert.ok(!existsSync(join(ctx.arc, 'score-rows.jsonl')));
 });
 
+test('H9 (review I-1) a throw from INSIDE the verdict call is VOID post-verdict-error, never a refusal', async () => {
+  const ctx = await e2e();
+  let called = 0;
+  const s = await score(ctx, { faults: { decideVerdict: () => { called++; throw new Error('verdict blew up FAKE_ALPHA_FLAG'); } } });
+  assert.equal(called, 1, 'the injected verdict function was called (else the case is vacuous)');
+  assert.equal(s.code, 0, s.outLines.join('\n'));
+  const result = JSON.parse(readFileSync(join(s.resultsDir, s.files[0]), 'utf8'));
+  assert.equal(result.verdict, 'VOID');
+  assert.deepEqual(result.void_reasons, ['post-verdict-error']);
+  assert.equal(result.census.first_prompts.total, 6, 'the record still carries the census');
+  const out = s.outLines.join('\n');
+  assert.doesNotMatch(out, /"status":"refused"|internal-error|blew up/);
+  assert.ok(!existsSync(join(ctx.arc, 'score-rows.jsonl')));
+});
+
+test('H9 (review I-1) when even the VOID record cannot be written: the distinct code post-verdict-write-failed', async () => {
+  const ctx = await e2e();
+  // A results "directory" under a regular file: every write there fails.
+  const blocker = join(ctx.sb.root, 'not-a-dir');
+  writeFileSync(blocker, 'x');
+  const s = await score(ctx, { resultsDir: join(blocker, 'results') });
+  assert.equal(s.code, 3);
+  const out = s.outLines.join('\n');
+  assert.match(out, /"code":"post-verdict-write-failed"/);
+  assert.doesNotMatch(out, /"status":"refused"/, 'never mistakable for a pre-verdict refusal');
+  assert.ok(!existsSync(join(ctx.arc, 'score-rows.jsonl')));
+  assert.ok(RULE.codes.void_reasons.includes('post-verdict-write-failed'));
+});
+
+test('review item 6: score refuses while ANY earlier result (any date) or row file exists', async () => {
+  const ctx = await e2e();
+  const results = join(ctx.sb.repo, 'server', 'eval', 'results');
+  mkdirSync(results, { recursive: true });
+  writeFileSync(join(results, '2026-10-01-exact-token-203.json'), '{}\n');
+  const s = await score(ctx);
+  assert.notEqual(s.code, 0);
+  assert.match(s.outLines.join('\n'), /result-exists/);
+  assert.equal(s.opened, 0);
+  // Other result files do not block it.
+  const ctx2 = await e2e();
+  const r2 = join(ctx2.sb.repo, 'server', 'eval', 'results');
+  mkdirSync(r2, { recursive: true });
+  writeFileSync(join(r2, '2026-07-28-exact-token-gap.json'), '{}\n');
+  assert.equal((await score(ctx2)).code, 0);
+  // A row file left in the arc dir blocks it too.
+  const ctx3 = await e2e();
+  writeFileSync(join(ctx3.arc, 'score-rows.jsonl'), '\n');
+  const s3 = await score(ctx3);
+  assert.notEqual(s3.code, 0);
+  assert.match(s3.outLines.join('\n'), /result-exists/);
+});
+
+test('review item 7: the probe samples only what doSearch can return (recallableOnly); the July default is unchanged', async () => {
+  const pts = [
+    { id: 'q1', payload: { id: 'sup', data: 'Session summary: a superseded note.', status: 'superseded', userId: 'golden' } },
+    { id: 'q2', payload: { id: 'inv', data: 'Session summary: an invalidated note.', invalidated_at: '2026-01-01T00:00:00Z', userId: 'golden' } },
+    { id: 'q3', payload: { id: '_um_embedding_stamp', data: 'stamp text under the pinned user', userId: 'golden' } },
+    { id: 'q4', payload: { id: 'live', data: 'Session summary: a live note.', userId: 'golden' } },
+    { id: 'q5', payload: { data: 'a live fact', userId: 'golden' } },
+  ];
+  const idx = makeStubIndex(pts);
+  const july = await verbatimProbe(idx.doSearch, idx.memory, pts, 20, 0.9);
+  assert.equal(july.per.doc.n, 3, 'the July default still samples superseded and invalidated docs');
+  assert.equal(july.per.fact.n, 2);
+  const live = await verbatimProbe(idx.doSearch, idx.memory, pts, 20, 0.9, { recallableOnly: true });
+  assert.equal(live.per.doc.n, 1);
+  assert.equal(live.per.fact.n, 1, 'the system doc is not sampled');
+});
+
 test('H10a score refuses before any clone when a read-path flag is on or the embedder differs', async () => {
   const ctx = await e2e();
   for (const [env, code] of [
@@ -701,6 +778,46 @@ test('H13 nested candidates excluded; nearest non-nested in-window donor; multi-
     assert.equal(x.donor.assigned, assigned, x.identifier);
     if (assigned === 'cross' && x.cross.length) assert.equal(x.donor.type, 'cross');
     if (assigned === 'in-window' && x.in_window.length) assert.equal(x.donor.type, 'in-window');
+  }
+});
+
+test('D4 ruling (PR 2 review): a doc-stratum row always gets the paragraph window; a short fact seed is its own window', () => {
+  const r = loaded(fixtureRule());
+  const pts = [
+    { id: 'pt-p1', vector: [0], payload: { id: 'para-doc', userId: 'golden', project: 'proj-a',
+      data: 'Session summary: topicnu.\n\nFAKE_PARA_FLAG drives the loom shuttle.\n\nAn unrelated closing paragraph about the orchard.' } },
+    { id: 'pt-p2', vector: [0], payload: { userId: 'golden', project: 'proj-a', data: 'kiln notes\n\nFAKE_FACT_PARA toggles the kiln.' } },
+  ];
+  const { rows } = buildPopulationRows(pts, r);
+  const doc = rows.find((x) => x.identifier === 'FAKE_PARA_FLAG');
+  assert.equal(doc.stratum, 'doc');
+  assert.ok(pts[0].payload.data.length <= r.gloss.window_chars, 'the seed is under the cap (else the case is vacuous)');
+  assert.equal(doc.window.text, 'FAKE_PARA_FLAG drives the loom shuttle.');
+  const fact = rows.find((x) => x.identifier === 'FAKE_FACT_PARA');
+  assert.equal(fact.stratum, 'fact');
+  assert.equal(fact.window.text, pts[1].payload.data);
+});
+
+test('D4 ruling (PR 2 review): points sharing a document id — every text kept; the window comes from the text holding the identifier', () => {
+  const r = loaded(fixtureRule());
+  const summary = (s) => `Session summary: ${s}`;
+  const pts = [
+    // Same payload.id; by point id, the first text lacks the row's identifier but names another.
+    { id: 'pt-dup-a', vector: [0], payload: { id: 'dup-1', userId: 'golden', project: 'proj-a', data: summary('topicxi. FAKE_OTHER_FLAG guards the dye vat.') } },
+    { id: 'pt-dup-b', vector: [0], payload: { id: 'dup-1', userId: 'golden', project: 'proj-a', data: summary('topicxi. FAKE_DUP_FLAG gates the spool winder.') } },
+    { id: 'pt-x', vector: [0], payload: { id: 'doc-x', userId: 'golden', project: 'proj-a', data: summary('topicomicron. FAKE_OTHER_FLAG also guards the rinse tank.') } },
+    { id: 'pt-y', vector: [0], payload: { id: 'doc-y', userId: 'golden', project: 'proj-a', data: summary('topicpi. FAKE_THIRD_FLAG gates the spool winder too.') } },
+  ];
+  for (const order of [pts, [...pts].reverse()]) {
+    const { rows, index } = buildPopulationRows(order, r);
+    assert.deepEqual(index.byId.get('dup-1').texts, [pts[0].payload.data, pts[1].payload.data], 'every text, in point-id order');
+    const dup = rows.find((x) => x.identifier === 'FAKE_DUP_FLAG');
+    assert.ok(dup, 'the row exists (the old index kept one text per id and threw here)');
+    assert.deepEqual(dup.relevant, ['dup-1']);
+    assert.match(dup.window.text, /FAKE_DUP_FLAG gates the spool winder/, 'window from the second text');
+    // FAKE_OTHER_FLAG occurs only in dup-1's OTHER text: still excluded as a neighbour.
+    assert.ok(!dup.cross.some((c) => c.identifier === 'FAKE_OTHER_FLAG'), 'the exclusion reads every text of the relevant doc');
+    assert.ok(dup.cross.some((c) => c.identifier === 'FAKE_THIRD_FLAG'), 'a genuine other-document neighbour stays');
   }
 });
 

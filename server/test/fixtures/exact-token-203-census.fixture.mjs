@@ -17,10 +17,14 @@
 //
 // Expected census over the tracked rule's window (2026-09-10 .. 2026-10-08):
 //   first prompts (one per MAIN session, first prompt of >= 5 chars, dated in
-//   the window): a1 dominant, a2 none (its first prompt is under 5 chars, the
-//   next counts), a5 embedded, a6 none, b1 dominant, c1 dominant (a resumed
-//   copy of a1's first prompt is deduplicated by uuid)  -> 6: 3 / 1 / 2.
-//   Dropped: a3 (first prompt before the window), a4 (after it), a7 (undated).
+//   the window): a1 dominant, a5 embedded, a6 none, a8 none (its first prompt
+//   is under 5 chars, the next counts; a later command changes nothing),
+//   b1 dominant, c1 dominant (a resumed copy of a1's first prompt is
+//   deduplicated by uuid)  -> 6: 3 / 1 / 2.
+//   Excluded and counted (sessions_command_first = 2): a2 (its first
+//   submitted line is a slash command), a9 (a skipped short prompt, then a
+//   command). Dropped: a3 (first prompt before the window), a4 (after it),
+//   a7 (undated).
 //   agent memory_search calls (each tool-use id once, subagents included):
 //   A1 dominant, S1 dominant, D1 dominant (present in two files), N1 none,
 //   E1 embedded -> 5: 3 / 1 / 1; OUT (before the window) and a non-memory
@@ -60,10 +64,22 @@ export const CENSUS_FILES = Object.freeze({
     assistantToolUse('sess-a1', 'x1-a1', '2026-09-20T10:00:03.000Z', 'toolu_S1', 'mcp__plugin_um__memory_search', { query: 'v9.8.7 widget' }, { isSidechain: true, agentId: 'x1' }),
   ],
   'C--proj-alpha/sess-a2.jsonl': [
+    // First submitted line is a slash command: the whole session is excluded.
     user('sess-a2', 'a2-u0', '2026-09-15T09:00:00.000Z', '<command-name>/clear</command-name>\n<command-message>clear</command-message>'),
     user('sess-a2', 'a2-u1', '2026-09-15T09:00:01.000Z', 'Caveat: generated while running local commands', { isMeta: true }),
-    user('sess-a2', 'a2-u2', '2026-09-15T09:01:00.000Z', 'hi'),
-    user('sess-a2', 'a2-u3', '2026-09-15T09:02:00.000Z', [{ type: 'text', text: `how did we fix the reindex warnings ${MARK.toLowerCase()}` }]),
+    user('sess-a2', 'a2-u3', '2026-09-15T09:02:00.000Z', 'UM_AFTER_COMMAND_FLAG'),
+  ],
+  'C--proj-alpha/sess-a8.jsonl': [
+    user('sess-a8', 'a8-u1', '2026-09-16T09:00:01.000Z', 'Caveat: generated while running local commands', { isMeta: true }),
+    user('sess-a8', 'a8-u2', '2026-09-16T09:01:00.000Z', 'hi'),
+    user('sess-a8', 'a8-u3', '2026-09-16T09:02:00.000Z', [{ type: 'text', text: `how did we fix the reindex warnings ${MARK.toLowerCase()}` }]),
+    user('sess-a8', 'a8-u4', '2026-09-16T09:03:00.000Z', '<command-name>/compact</command-name>'),
+  ],
+  'C--proj-alpha/sess-a9.jsonl': [
+    // A skipped short prompt, then a local command: excluded like a2.
+    user('sess-a9', 'a9-u1', '2026-09-17T09:01:00.000Z', 'ok'),
+    user('sess-a9', 'a9-u2', '2026-09-17T09:02:00.000Z', '<bash-input>ls</bash-input>'),
+    user('sess-a9', 'a9-u3', '2026-09-17T09:03:00.000Z', '#4242'),
   ],
   'C--proj-alpha/sess-a3.jsonl': [
     user('sess-a3', 'a3-u1', '2026-09-05T09:00:00.000Z', 'lib/widget.mjs'),
@@ -124,6 +140,7 @@ export const CENSUS_EXPECTED = Object.freeze({
   s_agent: 0.6,
   p_dom: 0.525,
   malformed_lines: 1,
+  sessions_command_first: 2,
 });
 
 /**

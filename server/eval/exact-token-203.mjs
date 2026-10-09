@@ -36,9 +36,13 @@
  *   closed when UM_TEMPORAL_QUERY or UM_TEMPORAL_DECAY is 'true'.
  *
  * • OUTCOME-BLIND UNTIL THE END: everything the verdict reads — Δ, its CI, C1,
- *   C2, C3, thinning, the floor, the guards — is computed before the verdict
- *   function runs. A throw before it is a refusal that writes nothing (fixable
- *   under a tree-only re-freeze); a throw after it is VOID `post-verdict-error`.
+ *   C2, C3, thinning, the floor, the guards — and everything a VOID record
+ *   holds is computed before the verdict function is called. A throw before
+ *   the call is a refusal that writes nothing (fixable under a tree-only
+ *   re-freeze); a throw from the call on (inside it, or in either writer) is
+ *   final: VOID `post-verdict-error`, or `post-verdict-write-failed` (exit 3)
+ *   when even that record cannot be written. A second scored run is refused
+ *   while any earlier result or row file exists.
  *
  * • CODES ONLY: every refusal and VOID is a code from the rule's vocabulary,
  *   never exception text (an id-space message quotes an identifier; a parse
@@ -368,7 +372,7 @@ async function cmdCalibrate(args, d) {
     checks['qdrant-version'] = idx.qdrantVersion === rule.read_path.qdrant_version;
     let probe;
     try {
-      probe = await verbatimProbe(idx.doSearch, idx.memory, points, rule.probe.per_stratum_n, rule.probe.rank1_floor);
+      probe = await verbatimProbe(idx.doSearch, idx.memory, points, rule.probe.per_stratum_n, rule.probe.rank1_floor, { recallableOnly: true });
     } catch {
       throw codeErr('search-failed');
     }
@@ -412,6 +416,7 @@ async function cmdCalibrate(args, d) {
 // ── score ────────────────────────────────────────────────────────────────────
 
 const ID_SPACE = Symbol('id-space');
+const RESULT_FILE_RX = /-exact-token-203\.json$/;
 
 function armStats(outcomes, rule, label) {
   const n = outcomes.length;
@@ -455,7 +460,14 @@ async function cmdScore(args, d) {
   await checkReadPathEnv(rule, d);
   const startedAt = d.now();
   const resultPath = join(d.resultsDir, `${startedAt.toISOString().slice(0, 10)}-exact-token-203.json`);
-  if (existsSync(resultPath) || existsSync(rowsPath)) throw codeErr('result-exists');
+  // Exactly one scored invocation: any earlier result (any date) or row file refuses.
+  let priorResult = false;
+  try {
+    priorResult = readdirSync(d.resultsDir).some((f) => RESULT_FILE_RX.test(f));
+  } catch {
+    priorResult = false; // no results dir yet
+  }
+  if (priorResult || existsSync(rowsPath)) throw codeErr('result-exists');
 
   const cen = await runCensus({ transcriptsDir: entries.transcripts, countersPath: entries.counters, rule });
   if (!cen.ok) throw codeErr(cen.code);
@@ -490,7 +502,7 @@ async function cmdScore(args, d) {
     // ── pre-verdict: everything the verdict reads ──
     let probe;
     try {
-      probe = await verbatimProbe(idx.doSearch, idx.memory, points, rule.probe.per_stratum_n, rule.probe.rank1_floor);
+      probe = await verbatimProbe(idx.doSearch, idx.memory, points, rule.probe.per_stratum_n, rule.probe.rank1_floor, { recallableOnly: true });
     } catch {
       throw codeErr('search-failed');
     }
@@ -563,10 +575,8 @@ async function cmdScore(args, d) {
     }
     if (scored.length === 0) verdictInput.guards.exclusionFraction = 1;
 
-    // ── the verdict function ──
-    const decided = decideVerdict(verdictInput, rule);
-
-    // ── post-verdict: a throw from here on is VOID post-verdict-error ──
+    // Everything the VOID path needs is assembled BEFORE the verdict function is
+    // called, so the only code past that call is the verdict and the writers.
     const common = {
       schema: RESULT_SCHEMA_ID,
       freeze: { head_commit: va.headCommit, anchor_blob: va.anchorBlob },
@@ -590,7 +600,12 @@ async function cmdScore(args, d) {
       timestamps: { started_at: startedAt.toISOString(), finished_at: d.now().toISOString() },
     });
     const schema = resultSchema(rule);
+    const decide = d.faults.decideVerdict ?? decideVerdict; // test seam only; the CLI passes no deps
+
+    // ── from the moment the verdict function is CALLED, any throw (inside it,
+    // or in either writer) is final: VOID post-verdict-error (spec D7) ──
     try {
+      const decided = decide(verdictInput, rule);
       d.faults.afterVerdict?.();
       let result;
       let rowsText = null;
@@ -629,11 +644,18 @@ async function cmdScore(args, d) {
       return 0;
     } catch {
       // Final for this arc (spec D7): the throw site could reveal the label.
-      rmSync(rowsPath, { force: true });
-      const rec = voidRecord(['post-verdict-error']);
-      writeAllowlisted(resultPath, rec, schema, { overwrite: true });
-      d.out(JSON.stringify(rec));
-      return 0;
+      try {
+        rmSync(rowsPath, { force: true });
+        const rec = voidRecord(['post-verdict-error']);
+        writeAllowlisted(resultPath, rec, schema, { overwrite: true });
+        d.out(JSON.stringify(rec));
+        return 0;
+      } catch {
+        // The VOID record itself could not be written. A distinct code, so this
+        // can never read as a pre-verdict refusal (which a re-freeze may fix).
+        d.out(JSON.stringify({ subcommand: 'score', status: 'void-unwritten', code: 'post-verdict-write-failed' }));
+        return 3;
+      }
     }
   } finally {
     await idx.close?.();

@@ -21,7 +21,7 @@ export const EMITTED_VOID_CODES = Object.freeze([
   'plant-j1-accuracy', 'plant-j1-too-few', 'plant-j2-accuracy', 'plant-j2-too-few',
   'plant-j2-donor-type-accuracy', 'plant-j2-donor-type-too-few', 'plant-j3-accuracy', 'plant-j3-too-few',
   'exclusions-over-cap', 'control-c1-failed', 'control-c2-failed', 'pass-disagreement',
-  'format-failures-over-cap', 'post-verdict-error',
+  'format-failures-over-cap', 'post-verdict-error', 'post-verdict-write-failed',
 ]);
 export const EMITTED_REFUSAL_CODES = Object.freeze([
   'usage', 'rule-invalid', 'input-missing', 'anchor-missing', 'anchor-malformed', 'rule-mismatch',
@@ -99,7 +99,8 @@ const SCHEMA = {
   census: {
     census_from: T.date, census_until: T.date, counters_export_sql: T.str, prevalence_threshold: T.prob,
     source_mapping: { first_prompt: T.str, agent_memory_search: T.str, excluded: T.strs },
-    min_prompt_chars: T.posInt, prompt_max_chars: T.posInt, tool_name_suffix: T.str, non_prompt_prefixes: T.strs,
+    min_prompt_chars: T.posInt, prompt_max_chars: T.posInt, tool_name_suffix: T.str,
+    command_prefixes: T.strs, skipped_prefixes: T.strs,
   },
   codes: {
     void_reasons: superset(EMITTED_VOID_CODES),

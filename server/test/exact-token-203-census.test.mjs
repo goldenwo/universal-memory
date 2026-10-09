@@ -115,6 +115,30 @@ test('S4 a first prompt under 5 chars is skipped; the next prompt is classified'
   assert.deepEqual(res.census.first_prompts, { total: 1, none: 0, embedded: 0, dominant: 1 });
 });
 
+test('S4 (ruling, PR 2 review) a session whose first submitted line is a slash or local command gives no first prompt and is counted', async () => {
+  const { res } = await censusOn();
+  assert.equal(res.census.sessions_command_first, CENSUS_EXPECTED.sessions_command_first, 'sess-a2 (slash command first) and sess-a9 (short prompt, then a command)');
+  // Neither the command nor a later prompt of that session is classified.
+  const line = (sid, uuid, ts, content) => ({ type: 'user', sessionId: sid, uuid, timestamp: ts, isSidechain: false, message: { role: 'user', content } });
+  const later = line('sess-k', 'k2', '2026-09-20T00:01:00.000Z', 'UM_LATER_FLAG');
+  const control = line('sess-m', 'm1', '2026-09-20T00:00:00.000Z', 'plain words only here');
+  const counters = [{ day: '2026-09-20', surface: 'claude-code-plugin', n: 1 }];
+  for (const cmd of ['<command-name>/model</command-name>', '<local-command-stdout>ok</local-command-stdout>', '  <bash-input>ls</bash-input>']) {
+    const { res: r } = await censusOn({ 'p/sess-k.jsonl': [line('sess-k', 'k1', '2026-09-20T00:00:00.000Z', cmd), later], 'p/sess-m.jsonl': [control] }, counters);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.census.first_prompts, { total: 1, none: 1, embedded: 0, dominant: 0 }, cmd);
+    assert.equal(r.census.sessions_command_first, 1, cmd);
+  }
+  // Control: the same session without the command contributes its prompt.
+  const { res: c } = await censusOn({ 'p/sess-k.jsonl': [later], 'p/sess-m.jsonl': [control] }, counters);
+  assert.deepEqual(c.census.first_prompts, { total: 2, none: 1, embedded: 0, dominant: 1 });
+  assert.equal(c.census.sessions_command_first, 0);
+  // A command dated outside the window is not counted.
+  const { res: o } = await censusOn({ 'p/sess-k.jsonl': [line('sess-k', 'k1', '2026-09-01T00:00:00.000Z', '<command-name>/clear</command-name>'), later], 'p/sess-m.jsonl': [control] }, counters);
+  assert.equal(o.census.sessions_command_first, 0);
+  assert.equal(o.census.first_prompts.total, 1);
+});
+
 test('S4 P_dom and the D10 branch match a hand computation', async () => {
   const { res } = await censusOn();
   const c = res.census;
