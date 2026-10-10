@@ -47,6 +47,25 @@
 //
 // • CHANNELS: generator-error (format), unglossable (UNKNOWN), g-shape (after
 //   `retries` retries), j1, j2, j3 — each an exclusion, the first that fires.
+//
+// • PLANT VALIDATION (revision 1, spec §8.2 R1–R3): every plant attempt with a
+//   phrase is checked by a validator from another model family (V1 leaky: only
+//   YES confirms; V2 near-miss: only donor-only confirms, its A/B side set by
+//   validatorOrder; V3 split: only NO confirms) AND judged; a reply outside the
+//   validator's vocabulary confirms nothing and is recorded as OOV. Plants carry
+//   their `attempts` (rank from 1; an UNKNOWN / format / G-shape-failed donor
+//   gloss uses up an attempt with no phrase and is neither validated nor judged).
+//   Near-miss tries up to plants.near_miss_donor_attempts donors of the row's
+//   type in that type's order (in-window by distance, cross by Jaccard), each
+//   with no nested twin; split tries up to plants.split_donor_attempts
+//   same-class donors whose relevant docs all carry the row's project and whose
+//   identifier occurs (substring, every text) in none of the row's docs, by
+//   Jaccard; both stop at the first confirmed attempt. A row in a catch-all
+//   project (plants.split_project_excluded) gets no split plant. Accuracy and
+//   row floors count CONFIRMED attempts only; the near-miss structural rule and
+//   split.structural are decided on availability before any LLM call.
+//   plant-j3-too-few is never a rebuild trigger (split plants involve no
+//   generation, so a rebuild reproduces it).
 
 import { createHash, randomBytes } from 'node:crypto';
 import { IDENTIFIER_RX, MIN_IDENT_LEN, STOPWORDS, classifyQueryShape } from '../../lib/query-shape.mjs';
@@ -58,7 +77,17 @@ export const IDENTIFIER_CLASSES = Object.freeze([
   'screaming-snake', 'semver', 'issue-ref', 'file', 'long-flag', 'fn-call', 'path', 'host-port',
 ]);
 export const ROLES = Object.freeze(['primary', 'fact-control', 'nonprimary']);
-export const QUERY_SET_SCHEMA = 'exact-token-203-query-set/1';
+export const QUERY_SET_SCHEMA = 'exact-token-203-query-set/2';
+/** Codes no rebuild can move (spec §8.2 R3). */
+export const NON_REBUILDABLE_CODES = Object.freeze(['plant-j3-too-few']);
+/** Split-plant accuracy strata: the row's own real J3 answer was SAME, something else, or J3 never ran. */
+export const J3_STRATA = Object.freeze(['same', 'not_same', 'not_judged']);
+
+/** Attempts per plant kind: a leaky plant gets none extra (spec §8.2 R2); the others from the rule. */
+export const attemptCaps = (rule) => ({
+  leaky: 1, near_miss: rule.plants.near_miss_donor_attempts, split: rule.plants.split_donor_attempts,
+});
+export const rankKey = (rank) => `rank_${rank}`;
 
 /** Split a regex source at its top-level `|` (outside groups and classes). */
 export function topLevelAlternatives(source) {
@@ -121,6 +150,18 @@ const byHash = (salt) => (a, b) => {
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 export const isNested = (a, b) => a !== b && (a.includes(b) || b.includes(a));
+
+/**
+ * V2's A/B order (spec §8.2 R1): the donor is shown as A iff the first 32 bits of
+ * sha256(validator_order + "\0" + row + "\0" + donor + "\0" + rank) are even
+ * (rank from 1). A salt of its own, so the position is independent of the
+ * donor-type parity that salts.donor_type sets.
+ * @returns {'donor-a'|'donor-b'}
+ */
+export function validatorOrder(rule, rowIdentifier, donorIdentifier, rank) {
+  const h = saltedHash(rule.salts.validator_order, `\0${rowIdentifier}\0${donorIdentifier}\0${rank}`);
+  return parseInt(h.slice(0, 8), 16) % 2 === 0 ? 'donor-a' : 'donor-b';
+}
 
 /** Substring-then-hash representative of a collapse group (D4). */
 export function chooseRepresentative(members, salt) {
@@ -277,16 +318,32 @@ function inWindowCandidates(row, seedText, rule) {
 /** Whole-text windows for short seeds are a fact-stratum rule only (D4 ruling). */
 const windowOpts = (row) => ({ wholeIfShort: row.stratum === 'fact' });
 
-function crossDocNeighbours(row, rows, index, rule) {
-  // "Occurs in one of this row's relevant docs" checks EVERY text of each doc.
+/**
+ * Same-class population rows from other documents, by descending window
+ * Jaccard (ties by salted hash), excluding any identifier that occurs in one
+ * of this row's relevant docs — EVERY text of each doc, by substring, so a
+ * nested twin (X ⊂ Y occurs in Y's docs; X ⊃ Y puts X's docs among Y's) never
+ * qualifies. `accept` narrows the pool further.
+ */
+function rankedOthers(row, rows, index, rule, accept = () => true) {
   const relTexts = row.relevant.flatMap((id) => index.byId.get(id)?.texts ?? []);
   const salt = rule.salts.neighbour_tiebreak;
   return rows
-    .filter((o) => o !== row && o.class === row.class && !relTexts.some((t) => t.includes(o.identifier)))
+    .filter((o) => o !== row && o.class === row.class && accept(o) && !relTexts.some((t) => t.includes(o.identifier)))
     .map((o) => ({ identifier: o.identifier, window: o.window, jaccard: jaccard(row.tokens, o.tokens) }))
-    .sort((a, b) => b.jaccard - a.jaccard || byHash(salt)(a.identifier, b.identifier))
-    .slice(0, rule.gloss.cross_doc_neighbours);
+    .sort((a, b) => b.jaccard - a.jaccard || byHash(salt)(a.identifier, b.identifier));
 }
+
+/** J2's cross-document neighbours: the top cross_doc_neighbours, any project. */
+const crossDocNeighbours = (row, rows, index, rule) => rankedOthers(row, rows, index, rule).slice(0, rule.gloss.cross_doc_neighbours);
+
+/**
+ * Split-plant donors (spec §8.2 R1), every eligible one in order: the donor's
+ * relevant docs all carry this row's project value (a multi-project row has no
+ * single value, so it never qualifies). The build tries the first
+ * plants.split_donor_attempts of them.
+ */
+const splitDonors = (row, rows, index, rule) => rankedOthers(row, rows, index, rule, (o) => o.project === row.project);
 
 /**
  * Population rows with roles, windows, J2 candidates and near-miss donor plans.
@@ -306,42 +363,58 @@ export function buildPopulationRows(points, rule) {
     const role = eligibleDf && single ? (g.stratum === 'doc' ? 'primary' : 'fact-control') : 'nonprimary';
     return {
       identifier, class: classOf(identifier), relevant: g.relevant, df: g.df, stratum: g.stratum,
-      single_project: single, role, seed_id: seed, window,
+      single_project: single, project: single ? [...projects][0] : null, role, seed_id: seed, window,
       c3_eligible: g.relevant.some((id) => id !== seed && isDoc(docText(index, id, identifier))),
       tokens: contentTokens(window.text),
     };
   });
   for (const row of rows) {
+    row.split_eligibility = null;
+    row.split_donors = [];
     if (row.role === 'nonprimary') { row.in_window = []; row.cross = []; row.options = [row.identifier]; continue; }
     row.in_window = inWindowCandidates(row, docText(index, row.seed_id, row.identifier), rule);
     row.cross = crossDocNeighbours(row, rows, index, rule);
     row.options = seededShuffle([row.identifier, ...row.in_window.map((c) => c.identifier), ...row.cross.map((c) => c.identifier)],
       rule.salts.candidate_order, row.identifier);
   }
-  assignDonors(rows.filter((r) => r.role === 'primary'), rule);
-  return { rows, index, E: rows.filter((r) => r.role === 'primary').length };
+  const primary = rows.filter((r) => r.role === 'primary');
+  assignDonors(primary, rule);
+  // Split-plant availability (spec §8.2 R1, R3), decided here — before any LLM call.
+  for (const row of primary) {
+    if (row.df < 2) continue;
+    if (rule.plants.split_project_excluded.includes(row.project)) { row.split_eligibility = 'catch-all'; continue; }
+    row.split_donors = splitDonors(row, rows, index, rule);
+    row.split_eligibility = row.split_donors.length ? 'donor' : 'no-donor';
+  }
+  return {
+    rows, index, E: primary.length,
+    donorStructural: rows.some((r) => r.donor_structural === true),
+    splitStructural: primary.filter((r) => r.split_eligibility === 'donor').length < rule.plants.min_rows,
+  };
 }
 
 /**
- * Near-miss donor plan per primary row (D3): a donor is a candidate with no
- * nested twin in the row's candidate set; the type is set by seeded hash
- * (cross-document / nearest in-window), each falling back to the other when
- * unavailable; when the in-window type would hold fewer than the per-type
- * minimum, the shortfall is structural and every row takes the cross donor.
+ * Near-miss donor plan per primary row (D3, revision 1 R2): a donor is a
+ * candidate with no nested twin in the row's candidate set; the type is set by
+ * seeded hash (cross-document / in-window), each falling back to the other only
+ * when it has no donor at all; when the in-window type would hold fewer than
+ * the per-type minimum, the shortfall is structural and every row takes the
+ * cross type. Decided on availability, before any LLM call. `row.donor` is
+ * { type, assigned, candidates }: the type's first near_miss_donor_attempts
+ * donors in its own order (in-window by distance, cross by Jaccard).
  */
 function assignDonors(primary, rule) {
+  const cap = rule.plants.near_miss_donor_attempts;
   for (const row of primary) {
     const set = [row.identifier, ...row.in_window.map((c) => c.identifier), ...row.cross.map((c) => c.identifier)];
-    const free = (ident) => !set.some((o) => isNested(o, ident));
-    const inDonor = row.in_window.find((c) => free(c.identifier));
-    const crossDonor = row.cross.find((c) => free(c.identifier));
+    const free = (c) => !set.some((o) => isNested(o, c.identifier));
+    const lists = { 'in-window': row.in_window.filter(free).slice(0, cap), cross: row.cross.filter(free).slice(0, cap) };
     const assigned = parseInt(saltedHash(rule.salts.donor_type, row.identifier).slice(0, 8), 16) % 2 === 0 ? 'cross' : 'in-window';
-    row._donors = { inDonor, crossDonor, assigned };
+    row._donors = { lists, assigned };
   }
   const pick = (d, first) => {
-    const order = first === 'cross' ? [['cross', d.crossDonor], ['in-window', d.inDonor]] : [['in-window', d.inDonor], ['cross', d.crossDonor]];
-    const hit = order.find(([, c]) => c);
-    return hit ? { type: hit[0], identifier: hit[1].identifier, window: hit[1].window } : null;
+    const type = [first, first === 'cross' ? 'in-window' : 'cross'].find((t) => d.lists[t].length);
+    return type ? { type, candidates: d.lists[type].map((c) => ({ identifier: c.identifier, window: c.window })) } : null;
   };
   let inWindowCount = 0;
   for (const row of primary) {
@@ -388,7 +461,7 @@ function parseToken(text) {
   return first.replace(/^[\s"'`[(*]+|[\s"'`\]).,:;!*]+$/g, '').toUpperCase();
 }
 
-async function generatePhrase({ kind, identifier, window, llm, rule, retries }) {
+async function generatePhrase({ kind, identifier, window, llm, rule, retries, meta = {} }) {
   const P = rule.prompts;
   let reason = null;
   for (let attempt = 0; ; attempt++) {
@@ -397,7 +470,7 @@ async function generatePhrase({ kind, identifier, window, llm, rule, retries }) 
       NONCE: nonce, WINDOW: fence(window.text, nonce, P), IDENTIFIER: identifier,
     });
     const prompt = attempt === 0 ? base : renderPrompt(P.generator_retry, { PROMPT: base, REASON: P.generator_retry_reasons[reason] });
-    const out = parseGeneration(await llm.generate({ kind, prompt, meta: { identifier, attempt } }));
+    const out = parseGeneration(await llm.generate({ kind, prompt, meta: { ...meta, identifier, attempt } }));
     if (out.kind === 'format') return { status: 'format', attempts: attempt + 1 };
     if (out.kind === 'unknown') return { status: 'unknown', attempts: attempt + 1 };
     const g = gShape(out.phrase, identifier, rule);
@@ -463,6 +536,124 @@ async function judgeJ3(row, windows, plant, { llm, rule }) {
   return ['SAME', 'DIFFERENT', 'UNSURE'].includes(a) ? a : 'INVALID';
 }
 
+// ── the plant validator (revision 1, spec §8.2 R1) ──────────────────────────
+// Replies are parsed like judge tokens; anything outside a validator's
+// vocabulary is recorded as OOV and confirms nothing. One fresh nonce per call,
+// checked against every window the prompt inserts.
+
+const validatorReply = (text, vocabulary) => {
+  const a = parseToken(text);
+  return vocabulary.includes(a) ? a : 'OOV';
+};
+
+/** V1: does the leaky phrase report a one-time happening? Only YES confirms. */
+async function validateLeaky(row, phrase, { llm, rule }) {
+  const P = rule.prompts;
+  const nonce = newNonce([row.window.text]);
+  const prompt = renderPrompt(P.validator_leaky, {
+    NONCE: nonce, WINDOW: fence(row.window.text, nonce, P), IDENTIFIER: row.identifier, PHRASE: phrase,
+  });
+  const a = validatorReply(await llm.validate({ kind: 'v1', prompt, meta: { identifier: row.identifier, phrase, windows: [row.window.text] } }), ['YES', 'NO']);
+  return { validator: a, confirmed: a === 'YES' };
+}
+
+/**
+ * V2: does the donor gloss name the donor (A or B), the target, both or neither?
+ * Only donor-only confirms; the answer is mapped back to DONOR / TARGET.
+ */
+async function validateNearMiss(row, donor, donorType, phrase, rank, { llm, rule }) {
+  const P = rule.prompts;
+  const order = validatorOrder(rule, row.identifier, donor.identifier, rank);
+  const target = { identifier: row.identifier, window: row.window };
+  const [a, b] = order === 'donor-a' ? [donor, target] : [target, donor];
+  const nonce = newNonce([a.window.text, b.window.text]);
+  const prompt = renderPrompt(P.validator_near_miss, {
+    NONCE: nonce, IDENTIFIER_A: a.identifier, WINDOW_A: fence(a.window.text, nonce, P),
+    IDENTIFIER_B: b.identifier, WINDOW_B: fence(b.window.text, nonce, P), PHRASE: phrase,
+  });
+  const reply = validatorReply(await llm.validate({
+    kind: 'v2', prompt,
+    meta: { identifier: row.identifier, donor: donor.identifier, donor_type: donorType, rank, phrase, a: a.identifier, b: b.identifier, windows: [a.window.text, b.window.text] },
+  }), ['A', 'B', 'BOTH', 'NEITHER']);
+  const side = { A: order === 'donor-a' ? 'DONOR' : 'TARGET', B: order === 'donor-a' ? 'TARGET' : 'DONOR' };
+  const validator = side[reply] ?? reply;
+  return { order, validator, confirmed: validator === 'DONOR' };
+}
+
+/** V3: could the seed window and the relabelled passage use the identifier for one thing? Only NO confirms. */
+async function validateSplit(row, donor, relabelled, rank, { llm, rule }) {
+  const P = rule.prompts;
+  const windows = [row.window.text, relabelled];
+  const nonce = newNonce(windows);
+  const prompt = renderPrompt(P.validator_split, {
+    NONCE: nonce, IDENTIFIER: row.identifier, WINDOW_A: fence(windows[0], nonce, P), WINDOW_B: fence(windows[1], nonce, P),
+  });
+  const a = validatorReply(await llm.validate({ kind: 'v3', prompt, meta: { identifier: row.identifier, donor: donor.identifier, rank, windows } }), ['YES', 'NO']);
+  return { validator: a, confirmed: a === 'NO' };
+}
+
+/** An attempt that produced no phrase (UNKNOWN / format / G-shape): neither validated nor judged. */
+const noPhraseAttempt = (rank, status, extra = {}) => ({
+  rank, ...extra, status, phrase: null, validator: null, confirmed: false, answer: null, correct: null,
+});
+
+/** J1's planted case: one generation (the G-shape retry aside), V1, then J1. */
+async function leakyPlant(row, ctx) {
+  const { rule } = ctx;
+  const g = await generatePhrase({ kind: 'leaky', identifier: row.identifier, window: row.window, llm: ctx.llm, rule, retries: rule.plants.retries });
+  if (g.status !== 'ok') return { attempts: [noPhraseAttempt(1, g.status)] };
+  const v = await validateLeaky(row, g.phrase, ctx);
+  const answer = await judgeJ1({ identifier: row.identifier, window: row.window, phrase: g.phrase, plant: 'leaky' }, ctx);
+  return { attempts: [{ rank: 1, status: 'ok', phrase: g.phrase, ...v, answer, correct: answer === 'NO' }] };
+}
+
+/** J2's planted case: the row's donors in order, each glossed, validated and judged, until one is confirmed. */
+async function nearMissPlant(row, ctx) {
+  const { rule } = ctx;
+  const c = row.options.length;
+  const attempts = [];
+  for (const [i, donor] of row.donor.candidates.entries()) {
+    const rank = i + 1;
+    const g = await generatePhrase({
+      kind: 'gloss', identifier: donor.identifier, window: donor.window, llm: ctx.llm, rule, retries: rule.plants.retries,
+      meta: { plant: 'near-miss', row: row.identifier },
+    });
+    if (g.status !== 'ok') { attempts.push(noPhraseAttempt(rank, g.status, { donor: donor.identifier })); continue; }
+    const v = await validateNearMiss(row, donor, row.donor.type, g.phrase, rank, ctx);
+    const answer = await judgeJ2(row, g.phrase, 'near-miss', ctx);
+    attempts.push({ rank, donor: donor.identifier, status: 'ok', phrase: g.phrase, ...v, answer, correct: answer === donor.identifier });
+    if (v.confirmed) break;
+  }
+  return { assigned_type: row.donor.assigned, donor_type: row.donor.type, c, chance: 1 / (c + 2), attempts };
+}
+
+/**
+ * J3's planted case: one NON-seed window (the smallest salted hash) is replaced
+ * by a same-project donor's window with the donor's identifier swapped for this
+ * row's string; V3 and J3 see the relabelled passage; donors in order until one
+ * is confirmed.
+ */
+async function splitPlant(row, ctx) {
+  const { rule, index } = ctx;
+  const wins = j3Windows(row, index, rule);
+  let swapAt = 1;
+  for (let i = 2; i < wins.length; i++) {
+    if (byHash(rule.salts.split_referent)(wins[i].id, wins[swapAt].id) < 0) swapAt = i;
+  }
+  const attempts = [];
+  for (const [i, donor] of row.split_donors.slice(0, rule.plants.split_donor_attempts).entries()) {
+    const rank = i + 1;
+    const relabelled = donor.window.text.split(donor.identifier).join(row.identifier);
+    const v = await validateSplit(row, donor, relabelled, rank, ctx);
+    const texts = wins.map((w) => w.text);
+    texts[swapAt] = relabelled;
+    const answer = await judgeJ3(row, texts, 'split', ctx);
+    attempts.push({ rank, donor: donor.identifier, status: 'ok', ...v, answer, correct: answer === 'DIFFERENT' });
+    if (v.confirmed) break;
+  }
+  return { attempts };
+}
+
 async function processRow(row, ctx) {
   const { rule, index } = ctx;
   const judged = row.role === 'primary' || row.role === 'fact-control';
@@ -492,39 +683,11 @@ async function processRow(row, ctx) {
   }
 
   if (row.role === 'primary') {
-    const plants = { leaky: null, near_miss: null, split: null };
-    const leak = await generatePhrase({ kind: 'leaky', identifier: row.identifier, window: row.window, llm: ctx.llm, rule, retries: rule.plants.retries });
-    if (leak.status === 'ok') {
-      const answer = await judgeJ1({ identifier: row.identifier, window: row.window, phrase: leak.phrase, plant: 'leaky' }, ctx);
-      plants.leaky = { phrase: leak.phrase, answer, correct: answer === 'NO' };
-    }
-    if (row.donor) {
-      const dg = await generatePhrase({ kind: 'gloss', identifier: row.donor.identifier, window: row.donor.window, llm: ctx.llm, rule, retries: rule.plants.retries });
-      if (dg.status === 'ok') {
-        const answer = await judgeJ2(row, dg.phrase, 'near-miss', ctx);
-        const c = row.options.length;
-        plants.near_miss = {
-          donor_type: row.donor.type, assigned_type: row.donor.assigned, donor: row.donor.identifier,
-          phrase: dg.phrase, answer, correct: answer === row.donor.identifier, c, chance: 1 / (c + 2),
-        };
-      }
-    }
-    if (row.df >= 2 && row.cross.length > 0) {
-      // Replace one NON-seed window (the smallest salted hash) with the top
-      // neighbour's window, its identifier swapped for this row's string: the
-      // set is then known to use the string for two things.
-      const wins = j3Windows(row, index, rule);
-      let swapAt = 1;
-      for (let i = 2; i < wins.length; i++) {
-        if (byHash(rule.salts.split_referent)(wins[i].id, wins[swapAt].id) < 0) swapAt = i;
-      }
-      const nb = row.cross[0];
-      const texts = wins.map((w) => w.text);
-      texts[swapAt] = nb.window.text.split(nb.identifier).join(row.identifier);
-      const answer = await judgeJ3(row, texts, 'split', ctx);
-      plants.split = { answer, correct: answer === 'DIFFERENT' };
-    }
-    rec.plants = plants;
+    rec.plants = {
+      leaky: await leakyPlant(row, ctx),
+      near_miss: row.donor ? await nearMissPlant(row, ctx) : null,
+      split: row.split_eligibility === 'donor' ? await splitPlant(row, ctx) : null,
+    };
   }
   return rec;
 }
@@ -546,34 +709,95 @@ async function pool(items, limit, fn) {
 function serialiseRow(row, rec) {
   return {
     kind: 'row', identifier: row.identifier, class: row.class, df: row.df, stratum: row.stratum, role: row.role,
-    single_project: row.single_project, relevant: row.relevant, seed_id: row.seed_id,
+    single_project: row.single_project, project: row.project, relevant: row.relevant, seed_id: row.seed_id,
     window: { text: row.window.text, pos: row.window.pos }, c3_eligible: row.c3_eligible,
     options: row.options, n_in_window: row.in_window.length, k_cross: row.cross.length,
-    donor_type: row.donor?.type ?? null, ...rec,
+    donor_type: row.donor?.type ?? null, split_eligibility: row.split_eligibility, ...rec,
+  };
+}
+
+/** The attempt a plant counts by: its first confirmed one (attempts stop there), or null. */
+export const countedAttempt = (plant) => plant?.attempts?.find((a) => a.confirmed) ?? null;
+
+const accuracyOf = (attempts) => {
+  const correct = attempts.filter((a) => a.correct).length;
+  return { rows: attempts.length, correct, accuracy: attempts.length ? correct / attempts.length : null };
+};
+
+/**
+ * One plant kind: accuracy and row count over COUNTED (confirmed) plants, plus
+ * every attempt's counts — attempted, no phrase, confirmed / not confirmed among
+ * the judged ones (OOV inside not-confirmed, also counted apart), the 2×2 of
+ * confirmed × judge correct over every judged attempt, and the per-rank
+ * histogram with accuracy on the plants counted at that rank.
+ */
+function kindSummary(plants, cap) {
+  const attempts = plants.flatMap((p) => p.attempts);
+  const judged = attempts.filter((a) => a.status === 'ok');
+  const byRank = {};
+  const bucket = (rank) => (byRank[rankKey(rank)] ??= { attempted: 0, judged: 0, confirmed: 0, correct: 0, accuracy: null });
+  for (let r = 1; r <= cap; r++) bucket(r);
+  for (const a of attempts) {
+    const b = bucket(a.rank);
+    b.attempted++;
+    if (a.status === 'ok') b.judged++;
+    if (a.confirmed) { b.confirmed++; if (a.correct) b.correct++; }
+  }
+  for (const b of Object.values(byRank)) b.accuracy = b.confirmed ? b.correct / b.confirmed : null;
+  const n = (pred) => judged.filter(pred).length;
+  return {
+    ...accuracyOf(plants.map(countedAttempt).filter(Boolean)),
+    attempted: attempts.length,
+    no_phrase: attempts.length - judged.length,
+    confirmed: n((a) => a.confirmed),
+    not_confirmed: n((a) => !a.confirmed),
+    oov: n((a) => a.validator === 'OOV'),
+    two_by_two: {
+      confirmed_correct: n((a) => a.confirmed && a.correct),
+      confirmed_miss: n((a) => a.confirmed && !a.correct),
+      unconfirmed_correct: n((a) => !a.confirmed && a.correct),
+      unconfirmed_miss: n((a) => !a.confirmed && !a.correct),
+    },
+    by_rank: byRank,
   };
 }
 
 /**
- * Plant accuracy (D3) over the primary rows, and the codes it triggers:
- * fewer than min_rows plants of a kind, or accuracy below the floor, overall
- * and (near-miss) within each donor type — only the cross type under a
- * structural in-window shortfall.
+ * Plant accuracy (D3, revision 1 R3) over the primary rows, and the codes it
+ * triggers: fewer than min_rows COUNTED plants of a kind, or accuracy below the
+ * floor, overall and (near-miss) within each donor type — only the cross type
+ * under a structural in-window shortfall, which is decided on availability
+ * (header.donor_structural, from assignDonors) and never by validation.
+ * split.structural (also availability) is reported; a split shortfall of either
+ * cause is plant-j3-too-few, listed in non_rebuildable_codes.
  */
 export function plantSummary(rows, header, rule) {
   const prim = rows.filter((r) => r.role === 'primary');
-  const acc = (list) => {
-    const correct = list.filter((x) => x.correct).length;
-    return { rows: list.length, correct, accuracy: list.length ? correct / list.length : null };
-  };
-  const nm = prim.map((r) => r.plants?.near_miss).filter(Boolean);
+  const caps = attemptCaps(rule);
+  const plantsOf = (kind) => prim.map((r) => r.plants?.[kind]).filter(Boolean);
+  const nm = plantsOf('near_miss');
+  const countedOfType = (t) => nm.filter((p) => p.donor_type === t).map(countedAttempt).filter(Boolean);
+  const splitCounted = (pred) => accuracyOf(prim.filter((r) => r.plants?.split && pred(r)).map((r) => countedAttempt(r.plants.split)).filter(Boolean));
   const out = {
-    leaky: acc(prim.map((r) => r.plants?.leaky).filter(Boolean)),
+    leaky: kindSummary(plantsOf('leaky'), caps.leaky),
     near_miss: {
-      ...acc(nm),
+      ...kindSummary(nm, caps.near_miss),
       structural: header.donor_structural === true,
-      by_type: { 'in-window': acc(nm.filter((x) => x.donor_type === 'in-window')), cross: acc(nm.filter((x) => x.donor_type === 'cross')) },
+      by_type: { 'in-window': accuracyOf(countedOfType('in-window')), cross: accuracyOf(countedOfType('cross')) },
     },
-    split: acc(prim.map((r) => r.plants?.split).filter(Boolean)),
+    split: {
+      ...kindSummary(plantsOf('split'), caps.split),
+      structural: header.split_structural === true,
+      rows_with_donor: prim.filter((r) => r.split_eligibility === 'donor').length,
+      catch_all_excluded: prim.filter((r) => r.split_eligibility === 'catch-all').length,
+      no_donor: prim.filter((r) => r.split_eligibility === 'no-donor').length,
+      // Descriptive (limit 13): a row whose own windows J3 judged non-SAME likely draws DIFFERENT regardless.
+      by_row_j3: {
+        same: splitCounted((r) => r.j3 === 'SAME'),
+        not_same: splitCounted((r) => r.j3 != null && r.j3 !== 'SAME'),
+        not_judged: splitCounted((r) => r.j3 == null),
+      },
+    },
   };
   const { accuracy_floor: floor, min_rows: minRows, min_rows_per_donor_type: minType } = rule.plants;
   const codes = [];
@@ -587,23 +811,30 @@ export function plantSummary(rows, header, rule) {
     else if (b.accuracy < floor) codes.push('plant-j2-donor-type-accuracy');
   }
   out.codes = [...new Set(codes)];
+  out.non_rebuildable_codes = out.codes.filter((c) => NON_REBUILDABLE_CODES.includes(c));
   return out;
 }
+
+/**
+ * The plants block as published: build's summary and score's guards.plants
+ * both go through this one projection (spec §8.3), so they cannot drift.
+ */
+export const plantsProjection = (ps) => ({ leaky: ps.leaky, near_miss: ps.near_miss, split: ps.split });
 
 /**
  * Run the build: population rows, glosses, guards, judges and plants.
  * @returns {Promise<{ header: object, rows: object[] }>}
  */
 export async function runBuild({ points, rule, ruleSha256, corpusSha256, llm, now, buildNumber, pointsWithoutCreatedAt }) {
-  const { rows, index, E } = buildPopulationRows(points, rule);
+  // Both structural flags are fixed here, on availability, before any LLM call.
+  const { rows, index, E, donorStructural, splitStructural } = buildPopulationRows(points, rule);
   const ctx = { rule, index, llm };
   const recs = await pool(rows, rule.build.llm_concurrency, (row) => processRow(row, ctx));
   const out = rows.map((row, i) => serialiseRow(row, recs[i]));
-  const structural = rows.some((r) => r.donor_structural === true);
   const header = {
     kind: 'header', schema: QUERY_SET_SCHEMA, rule_sha256: ruleSha256, corpus_manifest_sha256: corpusSha256,
-    build_number: buildNumber, built_at: now().toISOString(), E, donor_structural: structural,
-    points: points.length, points_without_created_at: pointsWithoutCreatedAt,
+    build_number: buildNumber, built_at: now().toISOString(), E, donor_structural: donorStructural,
+    split_structural: splitStructural, points: points.length, points_without_created_at: pointsWithoutCreatedAt,
   };
   return { header, rows: out };
 }
@@ -616,7 +847,10 @@ export function buildSummary(header, rows, rule) {
     doc_rows_df_le_max: 0, multi_project: 0, eligible: 0, kept: 0,
     by_channel: Object.fromEntries(rule.codes.exclusion_channels.map((ch) => [ch, 0])),
     j3_checked: 0, j3_same: 0, in_window_candidates: 0, cross_neighbours: 0,
+    leaky_confirmed: 0, near_miss_confirmed: 0, split_confirmed: 0,
+    split_with_donor: 0, split_catch_all: 0, split_no_donor: 0,
   });
+  const splitKey = { donor: 'split_with_donor', 'catch-all': 'split_catch_all', 'no-donor': 'split_no_donor' };
   for (const r of rows) {
     if (r.stratum === 'doc' && r.df <= rule.population.max_df) {
       const b = ensure(r.class);
@@ -632,6 +866,8 @@ export function buildSummary(header, rows, rule) {
     if (r.j3 !== null) { b.j3_checked++; if (r.j3 === 'SAME') b.j3_same++; }
     b.in_window_candidates += r.n_in_window;
     b.cross_neighbours += r.k_cross;
+    for (const kind of ['leaky', 'near_miss', 'split']) if (countedAttempt(r.plants?.[kind])) b[`${kind}_confirmed`]++;
+    if (splitKey[r.split_eligibility]) b[splitKey[r.split_eligibility]]++;
   }
   const byChannel = Object.fromEntries(rule.codes.exclusion_channels.map((ch) => [ch, prim.filter((r) => r.exclusion === ch).length]));
   const formatFailures = rows.filter((r) => r.gen_format_failure).length;
@@ -655,12 +891,11 @@ export function buildSummary(header, rows, rule) {
     },
     exclusions: { excluded, fraction: prim.length ? excluded / prim.length : 0, by_channel: byChannel },
     by_class: byClass,
-    plants: {
-      leaky: plants.leaky, split: plants.split,
-      near_miss: { rows: plants.near_miss.rows, correct: plants.near_miss.correct, accuracy: plants.near_miss.accuracy, structural: plants.near_miss.structural, by_type: plants.near_miss.by_type },
-    },
+    plants: plantsProjection(plants),
     format_failures: { rows: formatFailures, fraction: formatFraction },
     checks,
     void_codes: voidCodes,
+    // Codes a rebuild cannot move (D7's rebuild rule is the operator's; the code only reports).
+    non_rebuildable_codes: plants.non_rebuildable_codes,
   };
 }

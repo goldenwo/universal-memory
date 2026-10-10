@@ -26,7 +26,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { prng, seededShuffle } from './exact-token-203-random.mjs';
-import { IDENTIFIER_CLASSES } from './exact-token-203-build.mjs';
+import { IDENTIFIER_CLASSES, J3_STRATA, attemptCaps, rankKey } from './exact-token-203-build.mjs';
 import { D10_BRANCHES, PREVALENCE_SIDES } from './query-shape-census.mjs';
 
 export { prng, seededShuffle };
@@ -295,10 +295,27 @@ function sharedSchemas(rule) {
     doc_rows_df_le_max: S.int, multi_project: S.int, eligible: S.int, kept: S.int,
     by_channel: S.map(channels, S.int), j3_checked: S.int, j3_same: S.int,
     in_window_candidates: S.int, cross_neighbours: S.int,
+    leaky_confirmed: S.int, near_miss_confirmed: S.int, split_confirmed: S.int,
+    split_with_donor: S.int, split_catch_all: S.int, split_no_donor: S.int,
   }));
+  // Revision 1 (spec §8.3): per kind, the counted plants (accuracy, rows) and the
+  // filtered denominators beside them — attempts, validator confirmed / not /
+  // out-of-vocabulary, the 2×2, the per-rank histogram (ranks 1..the kind's cap).
+  const caps = attemptCaps(rule);
+  const kind = (cap, extra) => S.obj({
+    rows: S.int, correct: S.int, accuracy: S.numN,
+    attempted: S.int, no_phrase: S.int, confirmed: S.int, not_confirmed: S.int, oov: S.int,
+    two_by_two: S.obj({ confirmed_correct: S.int, confirmed_miss: S.int, unconfirmed_correct: S.int, unconfirmed_miss: S.int }),
+    by_rank: S.map(Array.from({ length: cap }, (_, i) => rankKey(i + 1)),
+      S.obj({ attempted: S.int, judged: S.int, confirmed: S.int, correct: S.int, accuracy: S.numN })),
+    ...extra,
+  });
   const plants = S.obj({
-    leaky: acc, split: acc,
-    near_miss: S.obj({ rows: S.int, correct: S.int, accuracy: S.numN, structural: S.bool, by_type: S.map(['in-window', 'cross'], acc) }),
+    leaky: kind(caps.leaky, {}),
+    near_miss: kind(caps.near_miss, { structural: S.bool, by_type: S.map(['in-window', 'cross'], acc) }),
+    split: kind(caps.split, {
+      structural: S.bool, rows_with_donor: S.int, catch_all_excluded: S.int, no_donor: S.int, by_row_j3: S.map(J3_STRATA, acc),
+    }),
   });
   return { channels, shapes, acc, byClass, plants };
 }
@@ -331,7 +348,8 @@ export function resultSchema(rule) {
     freeze: S.obj({ head_commit: S.hex40, anchor_blob: S.hex40 }),
     hashes: S.obj({ rule: S.hex64, query_set: S.hex64, corpus: S.hex64, transcripts: S.hex64, counters: S.hex64, server_tree: S.hex64 }),
     models: S.obj({
-      generator: S.enum([rule.models.generator.model]), judge: S.enum([rule.models.judge.model]), embedder: S.enum([rule.corpus.embedder.model]),
+      generator: S.enum([rule.models.generator.model]), judge: S.enum([rule.models.judge.model]),
+      validator: S.enum([rule.models.validator.model]), embedder: S.enum([rule.corpus.embedder.model]),
     }),
     qdrant_version: S.version,
     census,
@@ -367,6 +385,8 @@ export function buildSummarySchema(rule) {
     format_failures: S.obj({ rows: S.int, fraction: S.num }),
     checks: S.obj({ plants: S.enum(['PASS', 'FAIL']), format_failures: S.enum(['PASS', 'FAIL']) }),
     void_codes: S.arr(S.enum(rule.codes.void_reasons)),
+    non_rebuildable_codes: S.arr(S.enum(rule.codes.void_reasons)),
+    query_set_sha256: S.hex64,
   });
 }
 
