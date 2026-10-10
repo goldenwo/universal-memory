@@ -39,6 +39,29 @@
  *   P3  a forced VOID with an injected id-space violation writes codes only
  * Plus the exact-token-eval.mjs seams (§4.2.3) and the prompt fences (D2).
  *
+ * Revision 1 (spec §8.3, plan R1-T2) — plant validation:
+ *   H15 only validator-confirmed attempts count toward accuracy and row floors
+ *       (all three kinds); a not-confirmed attempt is recorded and excluded from
+ *       both; an out-of-vocabulary answer does not confirm and is counted; the
+ *       2×2 covers every judged attempt
+ *   H16 near-miss fallback within the assigned type, in its order, ≤ 3 attempts,
+ *       rank recorded, no nested twin; availability fallback unchanged; the split
+ *       donor shares the row's project, excludes identifiers in its docs (X ⊃ Y
+ *       and X ⊂ Y by substring), Jaccard order, ≤ 3 attempts, first confirmed
+ *       stops; a mixed-project donor is refused; a catch-all-project row carries
+ *       no split plant; an UNKNOWN / G-shape-failed donor gloss uses up an
+ *       attempt; a first confirmed attempt that the judge misses ends the plant
+ *   H17 structural shortfalls are decided on availability before generation; a
+ *       validation shortfall is never structural; plant-j3-too-few (either
+ *       cause) is marked non-rebuildable
+ *   H18 V2's A/B order: salted over row, donor and rank, independent of the
+ *       donor-type parity, and an A/B swap maps back to donor / target
+ *   H19 score refuses before the verdict function when a pre-verdict aggregate
+ *       fails the allowlist; guards.plants is the build summary's projection
+ *   K1  the revised rule (validator, salts, plants keys; provider rule; the
+ *       catch-all list holds the missing-project value)
+ *   K2  the plant-only frozen keys hash to the pinned value
+ *
  * Everything is synthetic: stubbed LLMs and a stubbed retrieval, no network.
  */
 
@@ -57,11 +80,13 @@ import {
 } from './fixtures/exact-token-203-corpus.fixture.mjs';
 import { buildPopulation, verbatimProbe, assertIdSpace, projectedId } from '../eval/exact-token-eval.mjs';
 import { IDENTIFIER_RX } from '../lib/query-shape.mjs';
-import { ANCHOR_CODES, ANCHOR_REL_PATH, RULE_REL_PATH, computeAnchorLines, formatAnchor } from '../eval/lib/accept-rule.mjs';
+import {
+  ANCHOR_CODES, ANCHOR_REL_PATH, RULE_REL_PATH, canonicalJson, computeAnchorLines, formatAnchor,
+} from '../eval/lib/accept-rule.mjs';
 import { loadRule } from '../eval/lib/exact-token-203-rule.mjs';
 import {
   IDENTIFIER_CLASSES, buildPopulationRows, chooseRepresentative, chooseSeedDoc, classOf,
-  gShape, indexCorpus, plantSummary, saltedHash,
+  gShape, indexCorpus, jaccard, plantSummary, runBuild, saltedHash, validatorOrder,
 } from '../eval/lib/exact-token-203-build.mjs';
 import {
   assertAllowlisted, bootstrapCI, bootstrapLowerBound, classThinning, decideVerdict, derange,
@@ -110,8 +135,12 @@ function listAll(dir) {
   return out.sort();
 }
 
-/** A merged sandbox repo + arc dir holding a real `build` output and its anchor. */
-async function e2e({ ruleMut, llm, points = CORPUS_POINTS, anchor = true } = {}) {
+/**
+ * A merged sandbox repo + arc dir holding a real `build` output and its anchor.
+ * `tamper(arc)` edits the arc dir between the build and the anchor (so the
+ * anchor still binds what score reads).
+ */
+async function e2e({ ruleMut, llm, points = CORPUS_POINTS, anchor = true, tamper } = {}) {
   const sb = makeGitSandbox();
   const env = cleanEnv(sb.env);
   sb.write(RULE_REL_PATH, ruleBytes(fixtureRule(ruleMut)));
@@ -125,6 +154,7 @@ async function e2e({ ruleMut, llm, points = CORPUS_POINTS, anchor = true } = {})
   const buildOut = [];
   const code = await run(['build', '--arc-dir', arc], { repoDir: sb.repo, env, out: (l) => buildOut.push(String(l)), llm: stub, now: NOW });
   assert.equal(code, 0, buildOut.join('\n'));
+  if (tamper) tamper(arc);
   if (anchor) {
     const entries = {
       rule: join(sb.repo, ...RULE_REL_PATH.split('/')), 'query-set': join(arc, 'query-set.jsonl'),
@@ -257,6 +287,33 @@ test('K1 the tracked rule passes the startup loader; a missing, mistyped or unkn
   assert.equal(loadRule(Buffer.from('{ not json')).code, 'rule-invalid');
 });
 
+test('K1 (revision 1) the validator, its salt and the plants keys: missing or mistyped refused; same-family validator refused', () => {
+  const noValidator = structuredClone(TRACKED); delete noValidator.models.validator;
+  assert.deepEqual(loadRule(ruleBytes(noValidator)), { ok: false, code: 'rule-invalid', key: 'models.validator' });
+  // The validator must come from a different model family from the judge (spec §8.2 R1).
+  const sameFamily = structuredClone(TRACKED); sameFamily.models.validator.provider = sameFamily.models.judge.provider;
+  assert.deepEqual(loadRule(ruleBytes(sameFamily)), { ok: false, code: 'rule-invalid', key: 'models.validator.provider' });
+  const badTokens = structuredClone(TRACKED); badTokens.models.validator.max_tokens = 0;
+  assert.equal(loadRule(ruleBytes(badTokens)).key, 'models.validator.max_tokens');
+  const noSalt = structuredClone(TRACKED); delete noSalt.salts.validator_order;
+  assert.equal(loadRule(ruleBytes(noSalt)).key, 'salts.validator_order');
+  for (const k of ['near_miss_donor_attempts', 'split_donor_attempts']) {
+    const bad = structuredClone(TRACKED); bad.plants[k] = 0;
+    assert.equal(loadRule(ruleBytes(bad)).key, `plants.${k}`, k);
+  }
+  const badList = structuredClone(TRACKED); badList.plants.split_project_excluded = [];
+  assert.equal(loadRule(ruleBytes(badList)).key, 'plants.split_project_excluded');
+  // The catch-all list must hold the value a point without a project gets.
+  const noNone = structuredClone(TRACKED);
+  noNone.plants.split_project_excluded = noNone.plants.split_project_excluded.filter((p) => p !== noNone.population.missing_project_value);
+  assert.equal(loadRule(ruleBytes(noNone)).key, 'plants.split_project_excluded');
+  // Each validator prompt must carry its placeholders (the nonce fence included).
+  for (const [k, ph] of [['validator_leaky', 'PHRASE'], ['validator_near_miss', 'WINDOW_B'], ['validator_split', 'NONCE'], ['validator_split', 'WINDOW_A']]) {
+    const bad = structuredClone(TRACKED); bad.prompts[k] = bad.prompts[k].replaceAll(`{{${ph}}}`, '');
+    assert.equal(loadRule(ruleBytes(bad)).key, `prompts.${k}`, `${k} without ${ph}`);
+  }
+});
+
 test('K1 the tracked rule carries the spec\'s pre-registered values', () => {
   assert.equal(RULE.verdict.margin, 0.1);
   assert.equal(RULE.verdict.ci_level, 0.95);
@@ -265,7 +322,18 @@ test('K1 the tracked rule carries the spec\'s pre-registered values', () => {
   assert.equal(RULE.verdict.pass_disagreement_cap, 0.02);
   assert.deepEqual({ ...RULE.verdict.class_thinning }, { min_class_rows: 20, min_kept_fraction: 0.5 });
   assert.equal(RULE.verdict.discrimination_floor, 0.2);
-  assert.deepEqual({ ...RULE.plants }, { accuracy_floor: 0.9, min_rows: 60, min_rows_per_donor_type: 30, retries: 1 });
+  // Revision 1 (spec §8.3): floors unchanged in value (R3); three new keys.
+  assert.deepEqual({ ...RULE.plants }, {
+    accuracy_floor: 0.9, min_rows: 60, min_rows_per_donor_type: 30, retries: 1,
+    near_miss_donor_attempts: 3, split_donor_attempts: 3, split_project_excluded: ['desktop', 'default', '(none)'],
+  });
+  assert.ok(RULE.plants.split_project_excluded.includes(RULE.population.missing_project_value));
+  assert.deepEqual(Object.keys(RULE.salts),
+    ['representative', 'seed_doc', 'neighbour_tiebreak', 'donor_type', 'candidate_order', 'split_referent', 'validator_order']);
+  for (const v of Object.values(RULE.salts)) assert.match(v, /^[0-9a-f]{32}$/);
+  assert.equal(new Set(Object.values(RULE.salts)).size, 7, 'validator_order is a new salt, so V2\'s position is independent of donor_type');
+  assert.deepEqual({ ...RULE.models.validator }, { provider: 'openai', model: 'gpt-4.1-2025-04-14', temperature: 0, max_tokens: 8 });
+  assert.notEqual(RULE.models.validator.provider, RULE.models.judge.provider);
   assert.equal(RULE.calibration.determinism_floor, 0.98);
   assert.deepEqual({ ...RULE.c3 }, { min_eligible_rows: 30, one_sided_level: 0.95 });
   assert.equal(RULE.population.max_df, 5);
@@ -290,6 +358,34 @@ test('K1 the tracked rule carries the spec\'s pre-registered values', () => {
     assert.ok(RULE.codes.refusals.includes(c), c);
   }
   assert.deepEqual([...RULE.codes.exclusion_channels].sort(), ['g-shape', 'generator-error', 'j1', 'j2', 'j3', 'unglossable']);
+});
+
+// ── K2 ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Spec §8.2 R1/R4: the keys that act only on plants are frozen from the revision
+ * PR to the freeze. The pin below was computed from the revision PR's rule; a
+ * later edit to any of these keys must change the pin too, visibly in its diff.
+ */
+const K2_PIN = '3c71eb83e01e1dce46f59e6ae251186ac4c63296ee4131508897cad465f8e45e';
+
+test('K2 the plant-only frozen keys (validator model, validator prompts, leaky_plant) hash to the pinned value', () => {
+  const frozen = {
+    'models.validator': TRACKED.models.validator,
+    'prompts.validator_leaky': TRACKED.prompts.validator_leaky,
+    'prompts.validator_near_miss': TRACKED.prompts.validator_near_miss,
+    'prompts.validator_split': TRACKED.prompts.validator_split,
+    'prompts.leaky_plant': TRACKED.prompts.leaky_plant,
+  };
+  for (const [k, v] of Object.entries(frozen)) assert.ok(v !== undefined, `${k} present`);
+  assert.equal(sha(canonicalJson(frozen)), K2_PIN);
+  // The pin covers each key: one changed byte anywhere moves it.
+  for (const k of Object.keys(frozen)) {
+    const edited = structuredClone(frozen);
+    if (typeof edited[k] === 'string') edited[k] = `${edited[k]} `;
+    else edited[k] = { ...edited[k], max_tokens: edited[k].max_tokens + 1 };
+    assert.notEqual(sha(canonicalJson(edited)), K2_PIN, k);
+  }
 });
 
 // ── H1 ───────────────────────────────────────────────────────────────────────
@@ -520,6 +616,17 @@ test('P2 build + score end to end: a verdict is written, and the tracked output 
   for (const needle of fixtureStrings(ctx.arc)) assert.ok(!tracked.includes(needle), `tracked output carries ${JSON.stringify(needle)}`);
   // Row-level outcomes go to the arc dir only.
   assert.ok(existsSync(join(ctx.arc, 'score-rows.jsonl')));
+  // Revision 1: the validator ran (stubbed), and the result passes the extended
+  // allowlist with the validator and the filtered denominators in it.
+  assert.ok(ctx.llm.calls.some((c) => c.kind === 'v1') && ctx.llm.calls.some((c) => c.kind === 'v2') && ctx.llm.calls.some((c) => c.kind === 'v3'));
+  assert.doesNotThrow(() => assertAllowlisted(result, resultSchema(loaded(fixtureRule()))));
+  assert.equal(result.models.validator, TRACKED.models.validator.model);
+  for (const kind of ['leaky', 'near_miss', 'split']) {
+    const p = result.guards.plants[kind];
+    assert.equal(typeof p.attempted, 'number', kind);
+    assert.deepEqual(Object.keys(p.two_by_two).sort(), ['confirmed_correct', 'confirmed_miss', 'unconfirmed_correct', 'unconfirmed_miss'], kind);
+  }
+  assert.equal(typeof result.guards.plants.split.structural, 'boolean');
 });
 
 test('P3 a forced VOID with an injected id-space violation writes codes only', async () => {
@@ -728,8 +835,15 @@ test('H12 cross-document neighbours: same class, not in the row\'s docs, top 3 b
   const a = buildPopulationRows(CORPUS_POINTS, r);
   const b = buildPopulationRows(CORPUS_POINTS.map((p) => structuredClone(p)).reverse(), r);
   const alpha = a.rows.find((x) => x.identifier === 'FAKE_ALPHA_FLAG');
-  assert.deepEqual(alpha.cross.map((c) => c.identifier).sort(), ['FAKE_BETA_FLAG', 'FAKE_DELTA_FLAG', 'FAKE_GAMMA_FLAG'],
+  // Revision 1 fixture: FAKE_DESK_FLAG (same class, the closest window) joins the
+  // top 3; FAKE_GAMMA_FLAG and FAKE_DELTA_FLAG tie at Jaccard 0 and the salted
+  // hash keeps FAKE_DELTA_FLAG. J2's neighbours stay project-agnostic.
+  assert.deepEqual(alpha.cross.map((c) => c.identifier).sort(), ['FAKE_BETA_FLAG', 'FAKE_DELTA_FLAG', 'FAKE_DESK_FLAG'],
     'UM_COMMON_TAG occurs in a relevant doc and is excluded');
+  assert.equal(alpha.cross[0].identifier, 'FAKE_DESK_FLAG', 'the highest Jaccard first');
+  assert.equal(alpha.cross[2].identifier, 'FAKE_DELTA_FLAG');
+  assert.ok(saltedHash(r.salts.neighbour_tiebreak, 'FAKE_DELTA_FLAG') < saltedHash(r.salts.neighbour_tiebreak, 'FAKE_GAMMA_FLAG'),
+    'the tie with FAKE_GAMMA_FLAG is broken by the salted hash');
   for (const c of alpha.cross) assert.equal(classOf(c.identifier), 'screaming-snake');
   const dry = a.rows.find((x) => x.identifier === '--dry-crank');
   assert.deepEqual(dry.cross.map((c) => c.identifier), ['--slow-crank']);
@@ -763,21 +877,35 @@ test('H13 nested candidates excluded; nearest non-nested in-window donor; multi-
   assert.deepEqual(v.in_window.map((c) => c.identifier), ['UM_COMMON_TAG']);
   assert.ok(v.options.includes('v7.1.2') && !v.options.includes('7.1.2'));
   const w = rows.find((x) => x.identifier === 'lib/widget.mjs');
-  // Both FAKE_ALPHA_FLAG and UM_COMMON_TAG are in its window; the nearer one is the donor.
-  const near = w.in_window.slice().sort((x, y) => Math.abs(x.pos - w.window.pos) - Math.abs(y.pos - w.window.pos))[0];
-  if (w.donor?.type === 'in-window') assert.equal(w.donor.identifier, near.identifier);
+  // Both FAKE_ALPHA_FLAG and UM_COMMON_TAG are in its window. Revision 1: the
+  // in-window donor list is the non-nested candidates nearest first, so the
+  // nearer one is the first donor tried (rank 1).
+  const byDist = w.in_window.slice().sort((x, y) => Math.abs(x.pos - w.window.pos) - Math.abs(y.pos - w.window.pos));
+  assert.equal(byDist.length, 2);
+  const inPlan = buildPopulationRows(CORPUS_POINTS, loaded(fixtureRule((x) => { x.salts.donor_type = saltFor('lib/widget.mjs', 'in-window'); return x; })));
+  const wIn = inPlan.rows.find((x) => x.identifier === 'lib/widget.mjs');
+  assert.equal(wIn.donor.type, 'in-window');
+  assert.deepEqual(wIn.donor.candidates.map((c) => c.identifier), byDist.map((c) => c.identifier), 'nearest first, both non-nested');
   const beta = rows.find((x) => x.identifier === 'FAKE_BETA_FLAG');
   assert.equal(beta.single_project, false);
   assert.notEqual(beta.role, 'primary');
-  assert.equal(rows.filter((x) => x.role === 'primary').length, 9);
+  // Revision 1 fixture: FAKE_DESK_FLAG (two `desktop` docs) is a tenth primary row.
+  assert.equal(rows.filter((x) => x.role === 'primary').length, 10);
   assert.equal(rows.find((x) => x.identifier === 'UM_COMMON_TAG').role, 'nonprimary', 'df 6 > 5');
   assert.equal(rows.find((x) => x.identifier === 'FAKE_GAMMA_FLAG').role, 'fact-control');
   // Donor types follow the seeded hash, falling back when a type is unavailable.
+  // Revision 1: row.donor carries the type's donor LIST (≤ near_miss_donor_attempts,
+  // in the type's own order, each without a nested twin in the candidate set).
   for (const x of rows.filter((y) => y.role === 'primary' && y.donor)) {
     const assigned = parseInt(saltedHash(r.salts.donor_type, x.identifier).slice(0, 8), 16) % 2 === 0 ? 'cross' : 'in-window';
     assert.equal(x.donor.assigned, assigned, x.identifier);
     if (assigned === 'cross' && x.cross.length) assert.equal(x.donor.type, 'cross');
     if (assigned === 'in-window' && x.in_window.length) assert.equal(x.donor.type, 'in-window');
+    const pool = x.donor.type === 'cross' ? x.cross : x.in_window;
+    const set = [x.identifier, ...x.in_window.map((c) => c.identifier), ...x.cross.map((c) => c.identifier)];
+    const free = pool.filter((c) => !set.some((o) => o !== c.identifier && (o.includes(c.identifier) || c.identifier.includes(o))));
+    assert.ok(x.donor.candidates.length >= 1 && x.donor.candidates.length <= r.plants.near_miss_donor_attempts, x.identifier);
+    assert.deepEqual(x.donor.candidates.map((c) => c.identifier), free.slice(0, r.plants.near_miss_donor_attempts).map((c) => c.identifier), x.identifier);
   }
 });
 
@@ -841,11 +969,11 @@ test('H13 J2: NONE and SEVERAL both exclude; plant accuracy is computed per dono
   for (const x of rows.filter((y) => y.plants?.near_miss)) assert.equal(x.plants.near_miss.chance, 1 / (x.plants.near_miss.c + 2));
 });
 
-test('H14 J3: df ≥ 2 rows get one window per relevant doc; non-SAME excludes; the split plant swaps one window', async () => {
+test('H14 J3: df ≥ 2 rows get one window per relevant doc; non-SAME excludes; the split plant swaps one window from a same-project donor, V3-confirmed', async () => {
   const ctx = await e2e({ anchor: false });
   const j3 = ctx.llm.calls.filter((c) => c.kind === 'j3');
   const alphaCalls = j3.filter((c) => c.meta.identifier === 'FAKE_ALPHA_FLAG');
-  assert.equal(alphaCalls.length, 2, 'one real check and one split-referent plant');
+  assert.equal(alphaCalls.length, 2, 'one real check and one split-referent plant (its first donor is confirmed)');
   const [real, plant] = alphaCalls[0].meta.split ? [alphaCalls[1], alphaCalls[0]] : alphaCalls;
   assert.equal(real.meta.windows.length, 2, 'df 2 → two windows');
   assert.ok(real.meta.windows.every((w) => w.includes('FAKE_ALPHA_FLAG')));
@@ -857,7 +985,27 @@ test('H14 J3: df ≥ 2 rows get one window per relevant doc; non-SAME excludes; 
   const alpha = rows.find((x) => x.identifier === 'FAKE_ALPHA_FLAG');
   assert.ok(!swapped[0].includes(alpha.window.text), 'the seed window is never the one replaced');
   assert.equal(alpha.j3, 'SAME');
-  assert.equal(alpha.plants.split.correct, true);
+  // Revision 1 (spec §8.2 R1): the donor is alpha's top same-project donor (proj-a;
+  // FAKE_BETA_FLAG has a proj-b doc and FAKE_DESK_FLAG is `desktop`), V3 confirmed
+  // it (NO = clearly different) and the plant counts.
+  const plan = buildPopulationRows(CORPUS_POINTS, loaded(fixtureRule())).rows.find((x) => x.identifier === 'FAKE_ALPHA_FLAG');
+  assert.deepEqual(plan.split_donors.map((d) => d.identifier).sort(), ['FAKE_DELTA_FLAG', 'FAKE_GAMMA_FLAG']);
+  assert.equal(alpha.split_eligibility, 'donor');
+  const atts = alpha.plants.split.attempts;
+  assert.equal(atts.length, 1);
+  assert.deepEqual(
+    [atts[0].rank, atts[0].donor, atts[0].validator, atts[0].confirmed, atts[0].answer, atts[0].correct],
+    [1, plan.split_donors[0].identifier, 'NO', true, 'DIFFERENT', true]);
+  assert.equal(swapped[0], plan.split_donors[0].window.text.split(plan.split_donors[0].identifier).join('FAKE_ALPHA_FLAG'));
+  const v3 = ctx.llm.calls.filter((c) => c.kind === 'v3' && c.meta.identifier === 'FAKE_ALPHA_FLAG');
+  assert.equal(v3.length, 1);
+  assert.deepEqual(v3[0].meta.windows, [alpha.window.text, swapped[0]], 'V3 sees the seed window and the relabelled passage J3 sees');
+  // The catch-all-project row has its own J3 check but carries no split plant.
+  const desk = rows.find((x) => x.identifier === 'FAKE_DESK_FLAG');
+  assert.equal(desk.j3, 'SAME');
+  assert.equal(desk.plants.split, null);
+  assert.equal(desk.split_eligibility, 'catch-all');
+  assert.ok(!ctx.llm.calls.some((c) => c.kind === 'v3' && c.meta.identifier === 'FAKE_DESK_FLAG'));
   // df = 1 rows skip J3.
   for (const x of rows.filter((y) => y.df === 1)) assert.equal(x.j3, null, x.identifier);
   assert.ok(!j3.some((c) => rows.find((y) => y.identifier === c.meta.identifier)?.df === 1));
@@ -893,8 +1041,11 @@ test('prompts fence every window with a random per-call nonce and say the conten
 test('build prints a counts-only summary and records E and the build number', async () => {
   const ctx = await e2e({ anchor: false });
   const { header } = readQuerySet(ctx.arc);
-  assert.equal(header.E, 9);
+  assert.equal(header.E, 10, 'revision 1 fixture: FAKE_DESK_FLAG is a tenth primary row');
+  assert.equal(header.schema, 'exact-token-203-query-set/2');
   assert.equal(header.build_number, 1);
+  const summary = JSON.parse(ctx.buildOut.at(-1));
+  assert.equal(summary.query_set_sha256, sha(readFileSync(join(ctx.arc, 'query-set.jsonl'))), 'the summary names the bytes it wrote');
   assert.match(header.rule_sha256, /^[0-9a-f]{64}$/);
   for (const needle of fixtureStrings(ctx.arc)) assert.ok(!ctx.buildOut.join('\n').includes(needle), needle);
   // A rebuild keeps the earlier query set beside the new one.
@@ -915,4 +1066,387 @@ test('P1 the aggregate writer rejects any key outside its allowlist, and any fre
   assert.throws(() => assertAllowlisted({ ...good, void_reasons: ['lib/widget.mjs'] }, schema), /allowlist/);
   assert.throws(() => assertAllowlisted({ ...good, guards: { probe: { fact: { n: 'doc-1' } } } }, schema), /allowlist/);
   assert.throws(() => assertAllowlisted({ ...good, per_class: { 'not-a-class': { n: 1 } } }, schema), /allowlist/);
+});
+
+// ── Revision 1 (spec §8): plant validation — H15–H19 ─────────────────────────
+
+/** A 32-hex salt under which `identifier`'s seeded donor type is `type` (a test-only search). */
+function saltFor(identifier, type) {
+  for (let i = 0; ; i++) {
+    const salt = sha(`et203-test-salt-${i}`).slice(0, 32);
+    const t = parseInt(saltedHash(salt, identifier).slice(0, 8), 16) % 2 === 0 ? 'cross' : 'in-window';
+    if (t === type) return salt;
+  }
+}
+
+/** runBuild over an in-memory fixture: no git, no I/O. */
+const buildDirect = (points, rule, llm) => runBuild({
+  points, rule, ruleSha256: 'a'.repeat(64), corpusSha256: 'b'.repeat(64), llm, now: NOW, buildNumber: 1, pointsWithoutCreatedAt: 0,
+});
+
+const sdoc = (id, project, text) => ({
+  id: `pt-${id}`, vector: [0],
+  payload: { id, data: `Session summary: ${text}`, userId: 'golden', createdAt: '2026-09-15T00:00:00.000Z', ...(project === null ? {} : { project }) },
+});
+
+/**
+ * H16's split corpus. FAKE_SPLIT_FLAG (proj-s, df 3: s06 holds it inside
+ * FAKE_SPLIT_FLAG_WIDE) has four eligible donors in descending window overlap,
+ * and four refused ones that overlap more: a donor with one doc in proj-t, a
+ * proj-t donor, X ⊃ Y and X ⊂ Y. Three df-2 rows sit in the catch-all projects
+ * (each with a same-project donor), and one df-2 row has no same-project donor.
+ */
+const SPLIT_POINTS = [
+  sdoc('s01', 'proj-s', 'topicsa. FAKE_SPLIT_FLAG gates the loom shuttle tension.'),
+  sdoc('s02', 'proj-s', 'topicsb. FAKE_SPLIT_FLAG gates the loom shuttle tension again.'),
+  sdoc('s03', 'proj-s', 'topicsc. FAKE_MIXED_FLAG gates the loom shuttle tension.'),
+  sdoc('s04', 'proj-t', 'topicsd. FAKE_MIXED_FLAG gates the loom shuttle tension.'),
+  sdoc('s05', 'proj-t', 'topicse. FAKE_OTHER_PROJ gates the loom shuttle tension.'),
+  sdoc('s06', 'proj-s', 'topicsf. FAKE_SPLIT_FLAG_WIDE gates the loom shuttle tension.'),
+  sdoc('s07', 'proj-s', 'topicsg. FAKE_SPLIT gates the loom shuttle tension.'),
+  sdoc('s08', 'proj-s', 'topicsh. FAKE_ELIG_ONE gates the loom shuttle.'),
+  sdoc('s09', 'proj-s', 'topicsi. FAKE_ELIG_TWO gates the loom.'),
+  sdoc('s10', 'proj-s', 'topicsj. FAKE_ELIG_THREE gates.'),
+  sdoc('s11', 'proj-s', 'topicsk. FAKE_ELIG_FOUR rests quietly here.'),
+  sdoc('c01', 'desktop', 'topicca. FAKE_DESK_ROW gates the kiln.'),
+  sdoc('c02', 'desktop', 'topiccb. FAKE_DESK_ROW gates the kiln again.'),
+  sdoc('c03', 'desktop', 'topiccc. FAKE_DESK_DONOR gates the kiln.'),
+  sdoc('c04', 'default', 'topiccd. FAKE_DEFAULT_ROW gates the kiln.'),
+  sdoc('c05', 'default', 'topicce. FAKE_DEFAULT_ROW gates the kiln again.'),
+  sdoc('c06', 'default', 'topiccf. FAKE_DEFAULT_DONOR gates the kiln.'),
+  sdoc('c07', null, 'topiccg. FAKE_NONE_ROW gates the kiln.'),
+  sdoc('c08', null, 'topicch. FAKE_NONE_ROW gates the kiln again.'),
+  sdoc('c09', null, 'topicci. FAKE_NONE_DONOR gates the kiln.'),
+  sdoc('u01', 'proj-u', 'topicua. FAKE_LONE_FLAG gates the press.'),
+  sdoc('u02', 'proj-u', 'topicub. FAKE_LONE_FLAG gates the press again.'),
+];
+
+/**
+ * H16's near-miss corpus. FAKE_NEAR_FLAG's window holds six file candidates,
+ * nearest first; lib/fake-alpha.mjs and server/lib/fake-alpha.mjs are nested twins (no
+ * donor). Each file also sits in a doc of its own so no group collapses with the
+ * row. Four same-class rows elsewhere are its cross neighbours, in Jaccard order.
+ */
+const NEAR_POINTS = [
+  sdoc('n01', 'proj-n', 'topicna. FAKE_NEAR_FLAG sits beside lib/fake-alpha.mjs, server/lib/fake-alpha.mjs, lib/fake-beta.mjs, lib/fake-gamma.mjs, lib/fake-delta.mjs and lib/fake-epsilon.mjs.'),
+  sdoc('n02', 'proj-n', 'topicnb. server/lib/fake-alpha.mjs moved.'),
+  sdoc('n03', 'proj-n', 'topicnc. lib/fake-beta.mjs moved.'),
+  sdoc('n04', 'proj-n', 'topicnd. lib/fake-gamma.mjs moved.'),
+  sdoc('n05', 'proj-n', 'topicne. lib/fake-delta.mjs moved.'),
+  sdoc('n06', 'proj-n', 'topicnf. lib/fake-epsilon.mjs moved.'),
+  sdoc('n07', 'proj-n', 'topicng. FAKE_CROSS_ONE sits beside lib/fake-beta.mjs.'),
+  sdoc('n08', 'proj-n', 'topicnh. FAKE_CROSS_TWO sits beside.'),
+  sdoc('n09', 'proj-n', 'topicni. FAKE_CROSS_THREE sits.'),
+  sdoc('n10', 'proj-n', 'topicnj. FAKE_CROSS_FOUR rests.'),
+];
+const NEAR_GLOSSES = {
+  FAKE_NEAR_FLAG: 'shuttle placement marker',
+  'lib/fake-beta.mjs': 'beta loom source', 'lib/fake-gamma.mjs': 'gamma loom source', 'lib/fake-delta.mjs': 'delta loom source',
+  'lib/fake-epsilon.mjs': 'epsilon loom source', 'server/lib/fake-alpha.mjs': 'alpha loom source',
+  FAKE_CROSS_ONE: 'first cross marker', FAKE_CROSS_TWO: 'second cross marker',
+  FAKE_CROSS_THREE: 'third cross marker', FAKE_CROSS_FOUR: 'fourth cross marker',
+};
+const NEAR = 'FAKE_NEAR_FLAG';
+const nearRule = (type) => loaded(fixtureRule((x) => {
+  x.gloss.cross_doc_neighbours = 4;
+  x.salts.donor_type = saltFor(NEAR, type);
+  return x;
+}));
+
+test('H15 only validator-confirmed attempts count toward accuracy and row floors; not-confirmed and OOV are counted apart; the 2×2 covers every judged attempt', () => {
+  const r = loaded(fixtureRule((x) => { x.plants.min_rows = 2; return x; }));
+  const ok = (o) => ({ status: 'ok', phrase: 'FAKE phrase', ...o });
+  const none = (rank) => ({ rank, status: 'unknown', phrase: null, validator: null, confirmed: false, answer: null, correct: null });
+  const nm = (type, attempts) => ({ assigned_type: type, donor_type: type, c: 3, chance: 0.2, attempts });
+  const row = (plants, extra = {}) => ({
+    role: 'primary', class: 'screaming-snake', df: 2, j3: 'SAME', split_eligibility: 'donor',
+    plants: { leaky: null, near_miss: null, split: null, ...plants }, ...extra,
+  });
+  const rows = [
+    row({
+      leaky: { attempts: [ok({ rank: 1, validator: 'YES', confirmed: true, answer: 'NO', correct: true })] },
+      near_miss: nm('cross', [
+        ok({ rank: 1, donor: 'FAKE_D1', validator: 'TARGET', confirmed: false, answer: 'FAKE_D1', correct: true }),
+        ok({ rank: 2, donor: 'FAKE_D2', validator: 'DONOR', confirmed: true, answer: 'FAKE_D2', correct: true }),
+      ]),
+      split: { attempts: [ok({ rank: 1, donor: 'FAKE_S1', validator: 'NO', confirmed: true, answer: 'DIFFERENT', correct: true })] },
+    }),
+    row({
+      leaky: { attempts: [ok({ rank: 1, validator: 'NO', confirmed: false, answer: 'NO', correct: true })] },
+      near_miss: nm('in-window', [
+        ok({ rank: 1, donor: 'FAKE_D3', validator: 'OOV', confirmed: false, answer: 'SEVERAL', correct: false }),
+        { ...none(2), donor: 'FAKE_D4' },
+        ok({ rank: 3, donor: 'FAKE_D5', validator: 'DONOR', confirmed: true, answer: 'NONE', correct: false }),
+      ]),
+      split: { attempts: [
+        ok({ rank: 1, donor: 'FAKE_S2', validator: 'YES', confirmed: false, answer: 'DIFFERENT', correct: true }),
+        ok({ rank: 2, donor: 'FAKE_S3', validator: 'OOV', confirmed: false, answer: 'SAME', correct: false }),
+      ] },
+    }, { j3: 'DIFFERENT' }),
+    row({ leaky: { attempts: [ok({ rank: 1, validator: 'OOV', confirmed: false, answer: 'YES', correct: false })] } }, { df: 1, j3: null, split_eligibility: null }),
+    row({ leaky: { attempts: [none(1)] } }, { df: 1, j3: null, split_eligibility: null }),
+    row({ leaky: { attempts: [ok({ rank: 1, validator: 'YES', confirmed: true, answer: 'YES', correct: false })] } }, { df: 1, j3: null, split_eligibility: null }),
+  ];
+  const ps = plantSummary(rows, { donor_structural: false, split_structural: false }, r);
+  const counts = (s) => ({
+    rows: s.rows, correct: s.correct, accuracy: s.accuracy, attempted: s.attempted, no_phrase: s.no_phrase,
+    confirmed: s.confirmed, not_confirmed: s.not_confirmed, oov: s.oov, two_by_two: s.two_by_two,
+  });
+  assert.deepEqual(counts(ps.leaky), {
+    rows: 2, correct: 1, accuracy: 0.5, attempted: 5, no_phrase: 1, confirmed: 2, not_confirmed: 2, oov: 1,
+    two_by_two: { confirmed_correct: 1, confirmed_miss: 1, unconfirmed_correct: 1, unconfirmed_miss: 1 },
+  });
+  assert.deepEqual(ps.leaky.by_rank, { rank_1: { attempted: 5, judged: 4, confirmed: 2, correct: 1, accuracy: 0.5 } });
+  assert.deepEqual(counts(ps.near_miss), {
+    rows: 2, correct: 1, accuracy: 0.5, attempted: 5, no_phrase: 1, confirmed: 2, not_confirmed: 2, oov: 1,
+    two_by_two: { confirmed_correct: 1, confirmed_miss: 1, unconfirmed_correct: 1, unconfirmed_miss: 1 },
+  });
+  assert.deepEqual(ps.near_miss.by_type, {
+    'in-window': { rows: 1, correct: 0, accuracy: 0 }, cross: { rows: 1, correct: 1, accuracy: 1 },
+  });
+  assert.deepEqual(ps.near_miss.by_rank, {
+    rank_1: { attempted: 2, judged: 2, confirmed: 0, correct: 0, accuracy: null },
+    rank_2: { attempted: 2, judged: 1, confirmed: 1, correct: 1, accuracy: 1 },
+    rank_3: { attempted: 1, judged: 1, confirmed: 1, correct: 0, accuracy: 0 },
+  });
+  assert.deepEqual(counts(ps.split), {
+    rows: 1, correct: 1, accuracy: 1, attempted: 3, no_phrase: 0, confirmed: 1, not_confirmed: 2, oov: 1,
+    two_by_two: { confirmed_correct: 1, confirmed_miss: 0, unconfirmed_correct: 1, unconfirmed_miss: 1 },
+  });
+  // Split accuracy stratified by the row's own real J3 outcome (descriptive).
+  assert.deepEqual(ps.split.by_row_j3, {
+    same: { rows: 1, correct: 1, accuracy: 1 }, not_same: { rows: 0, correct: 0, accuracy: null }, not_judged: { rows: 0, correct: 0, accuracy: null },
+  });
+  // Row floors read counted plants only: three split attempts, one counted → too few.
+  assert.deepEqual([...ps.codes].sort(), ['plant-j1-accuracy', 'plant-j2-accuracy', 'plant-j2-donor-type-accuracy', 'plant-j3-too-few']);
+});
+
+test('H15 (end to end) a not-confirmed or out-of-vocabulary validator answer is recorded and kept out of the counted plants', async () => {
+  const llm = makeStubLlm({
+    validateOverride: ({ kind, meta }) => {
+      if (kind === 'v1' && meta.identifier === 'FAKE_ALPHA_FLAG') return 'Probably yes'; // out of vocabulary
+      if (kind === 'v1' && meta.identifier === 'lib/widget.mjs') return 'NO'; // in vocabulary, not confirming
+      return undefined;
+    },
+  });
+  const ctx = await e2e({ llm, anchor: false });
+  const { rows } = readQuerySet(ctx.arc);
+  const la = rows.find((x) => x.identifier === 'FAKE_ALPHA_FLAG').plants.leaky.attempts;
+  assert.deepEqual([la.length, la[0].validator, la[0].confirmed, la[0].answer, la[0].correct], [1, 'OOV', false, 'NO', true], 'judged and recorded, not counted');
+  const lw = rows.find((x) => x.identifier === 'lib/widget.mjs').plants.leaky.attempts[0];
+  assert.deepEqual([lw.validator, lw.confirmed, lw.answer], ['NO', false, 'NO']);
+  const s = JSON.parse(ctx.buildOut.at(-1)).plants.leaky;
+  const judged = rows.flatMap((x) => x.plants?.leaky?.attempts ?? []).filter((a) => a.status === 'ok');
+  assert.equal(s.oov, 1);
+  assert.equal(s.not_confirmed, 2, 'the OOV answer sits in the not-confirmed row too');
+  assert.equal(s.rows, judged.filter((a) => a.confirmed).length);
+  assert.equal(s.rows, s.confirmed);
+  assert.equal(s.two_by_two.unconfirmed_correct, 2);
+  assert.equal(Object.values(s.two_by_two).reduce((a, b) => a + b, 0), judged.length, 'the 2×2 covers every judged attempt');
+  assert.equal(s.attempted, rows.filter((x) => x.role === 'primary').length, 'one leaky attempt per primary row');
+  assert.equal(s.no_phrase, 1, '#4101 is UNKNOWN: an attempt with no phrase');
+});
+
+test('H16 near-miss donors: within the assigned type, in its order, at most 3, no nested twin; the availability fallback is unchanged', async () => {
+  const inR = nearRule('in-window');
+  const w = buildPopulationRows(NEAR_POINTS, inR).rows.find((x) => x.identifier === NEAR);
+  assert.deepEqual(w.in_window.map((c) => c.identifier),
+    ['lib/fake-alpha.mjs', 'server/lib/fake-alpha.mjs', 'lib/fake-beta.mjs', 'lib/fake-gamma.mjs', 'lib/fake-delta.mjs', 'lib/fake-epsilon.mjs'], 'nearest first');
+  assert.deepEqual([w.donor.assigned, w.donor.type], ['in-window', 'in-window']);
+  assert.deepEqual(w.donor.candidates.map((c) => c.identifier), ['lib/fake-beta.mjs', 'lib/fake-gamma.mjs', 'lib/fake-delta.mjs'],
+    'the nested twins are skipped; the fourth free candidate is never tried');
+  // The validator confirms none: every attempt is made, ranks 1..3, all in-window, in order, each judged.
+  const reject = makeStubLlm({ glosses: NEAR_GLOSSES, validateOverride: ({ kind, meta }) => (kind === 'v2' && meta.identifier === NEAR ? 'NEITHER' : undefined) });
+  const nm = (await buildDirect(NEAR_POINTS, inR, reject)).rows.find((x) => x.identifier === NEAR).plants.near_miss;
+  assert.deepEqual([nm.assigned_type, nm.donor_type], ['in-window', 'in-window']);
+  assert.deepEqual(nm.attempts.map((a) => [a.rank, a.donor, a.status, a.validator, a.confirmed]),
+    [[1, 'lib/fake-beta.mjs', 'ok', 'NEITHER', false], [2, 'lib/fake-gamma.mjs', 'ok', 'NEITHER', false], [3, 'lib/fake-delta.mjs', 'ok', 'NEITHER', false]]);
+  assert.ok(nm.attempts.every((a) => a.answer === a.donor && a.correct === true), 'J2 judged every attempt');
+  assert.ok(!reject.calls.some((c) => c.kind === 'v2' && c.meta.identifier === NEAR && c.meta.donor === 'lib/fake-epsilon.mjs'));
+  // The cross type: J2's Jaccard order.
+  const crossR = nearRule('cross');
+  const wc = buildPopulationRows(NEAR_POINTS, crossR).rows.find((x) => x.identifier === NEAR);
+  assert.deepEqual(wc.cross.map((c) => c.identifier), ['FAKE_CROSS_ONE', 'FAKE_CROSS_TWO', 'FAKE_CROSS_THREE', 'FAKE_CROSS_FOUR']);
+  const nmc = (await buildDirect(NEAR_POINTS, crossR, reject)).rows.find((x) => x.identifier === NEAR).plants.near_miss;
+  assert.equal(nmc.donor_type, 'cross');
+  assert.deepEqual(nmc.attempts.map((a) => [a.rank, a.donor]), [[1, 'FAKE_CROSS_ONE'], [2, 'FAKE_CROSS_TWO'], [3, 'FAKE_CROSS_THREE']]);
+  // Availability fallback (D3, unchanged): assigned a type with no donor, the row takes the other.
+  const spinR = loaded(fixtureRule((x) => { x.salts.donor_type = saltFor('spin_up()', 'cross'); return x; }));
+  const spin = buildPopulationRows(CORPUS_POINTS, spinR).rows.find((x) => x.identifier === 'spin_up()');
+  assert.equal(spin.cross.length, 0);
+  assert.deepEqual([spin.donor.assigned, spin.donor.type, spin.donor.candidates.map((c) => c.identifier)], ['cross', 'in-window', ['UM_COMMON_TAG']]);
+  const twoR = loaded(fixtureRule((x) => { x.gloss.cross_doc_neighbours = 4; x.salts.donor_type = saltFor('FAKE_CROSS_TWO', 'in-window'); return x; }));
+  const two = buildPopulationRows(NEAR_POINTS, twoR).rows.find((x) => x.identifier === 'FAKE_CROSS_TWO');
+  assert.equal(two.in_window.length, 0);
+  assert.deepEqual([two.donor.assigned, two.donor.type], ['in-window', 'cross']);
+});
+
+test('H16 near-miss attempts: an UNKNOWN or G-shape-failed donor gloss uses up an attempt; a confirmed judge miss ends the plant', async () => {
+  const inR = nearRule('in-window');
+  const donorReply = (reply) => ({ kind, meta }) => (kind === 'gloss' && meta.plant === 'near-miss' && meta.identifier === 'lib/fake-beta.mjs' ? reply : undefined);
+  const plantCalls = (llm, kind) => llm.calls.filter((c) => c.kind === kind && c.meta.identifier === NEAR && (kind !== 'j2' || c.meta.plant === 'near-miss'));
+  for (const [reply, status] of [['UNKNOWN', 'unknown'], ['beta loom source 2', 'g-shape']]) {
+    const llm = makeStubLlm({ glosses: NEAR_GLOSSES, generateOverride: donorReply(reply) });
+    const nm = (await buildDirect(NEAR_POINTS, inR, llm)).rows.find((x) => x.identifier === NEAR).plants.near_miss;
+    assert.deepEqual(nm.attempts.map((a) => [a.rank, a.donor, a.status, a.confirmed]),
+      [[1, 'lib/fake-beta.mjs', status, false], [2, 'lib/fake-gamma.mjs', 'ok', true]], status);
+    assert.deepEqual([nm.attempts[0].validator, nm.attempts[0].answer, nm.attempts[0].correct], [null, null, null], 'no phrase: neither validated nor judged');
+    assert.deepEqual(plantCalls(llm, 'v2').map((c) => c.meta.donor), ['lib/fake-gamma.mjs'], status);
+    assert.equal(plantCalls(llm, 'j2').length, 1, status);
+  }
+  // The first attempt is confirmed and J2 misses it: the plant ends there, counted as a miss.
+  const miss = makeStubLlm({ glosses: NEAR_GLOSSES, judgeOverride: ({ kind, meta }) => (kind === 'j2' && meta.plant === 'near-miss' && meta.identifier === NEAR ? 'NONE' : undefined) });
+  const { header, rows } = await buildDirect(NEAR_POINTS, inR, miss);
+  const nm = rows.find((x) => x.identifier === NEAR).plants.near_miss;
+  assert.deepEqual(nm.attempts.map((a) => [a.rank, a.donor, a.validator, a.confirmed, a.answer, a.correct]),
+    [[1, 'lib/fake-beta.mjs', 'DONOR', true, 'NONE', false]]);
+  assert.equal(plantCalls(miss, 'v2').length, 1, 'no further attempt after the first confirmed one');
+  const ps = plantSummary(rows.filter((x) => x.identifier === NEAR), header, inR);
+  assert.deepEqual([ps.near_miss.rows, ps.near_miss.correct], [1, 0]);
+});
+
+test('H16 split donors: same project only, no identifier from the row\'s docs (X ⊃ Y and X ⊂ Y), Jaccard order; catch-all rows get none', () => {
+  const r = loaded(fixtureRule());
+  const { rows } = buildPopulationRows(SPLIT_POINTS, r);
+  const y = rows.find((x) => x.identifier === 'FAKE_SPLIT_FLAG');
+  assert.equal(y.role, 'primary');
+  assert.deepEqual(y.relevant, ['s01', 's02', 's06'], 'X ⊃ Y puts X\'s doc among Y\'s');
+  assert.equal(rows.find((x) => x.identifier === 'FAKE_SPLIT').df, 4, 'X ⊂ Y occurs in every doc of Y');
+  assert.equal(y.split_eligibility, 'donor');
+  assert.deepEqual(y.split_donors.map((d) => d.identifier), ['FAKE_ELIG_ONE', 'FAKE_ELIG_TWO', 'FAKE_ELIG_THREE', 'FAKE_ELIG_FOUR'],
+    'refused: FAKE_MIXED_FLAG (one doc in proj-t), FAKE_OTHER_PROJ (proj-t), FAKE_SPLIT_FLAG_WIDE (X ⊃ Y), FAKE_SPLIT (X ⊂ Y)');
+  const jac = (ident) => jaccard(y.tokens, rows.find((x) => x.identifier === ident).tokens);
+  for (const refused of ['FAKE_MIXED_FLAG', 'FAKE_OTHER_PROJ', 'FAKE_SPLIT_FLAG_WIDE', 'FAKE_SPLIT']) {
+    assert.ok(jac(refused) > jac('FAKE_ELIG_ONE'), `${refused} would rank first by overlap (else the case is vacuous)`);
+  }
+  for (let i = 1; i < y.split_donors.length; i++) assert.ok(jac(y.split_donors[i - 1].identifier) > jac(y.split_donors[i].identifier));
+  for (const [ident, bucket] of [['FAKE_DESK_ROW', 'desktop'], ['FAKE_DEFAULT_ROW', 'default'], ['FAKE_NONE_ROW', '(none)']]) {
+    const row = rows.find((x) => x.identifier === ident);
+    assert.deepEqual([row.role, row.df, row.split_eligibility, row.split_donors], ['primary', 2, 'catch-all', []], bucket);
+  }
+  assert.equal(rows.find((x) => x.identifier === 'FAKE_LONE_FLAG').split_eligibility, 'no-donor');
+  assert.equal(rows.find((x) => x.identifier === 'FAKE_ELIG_ONE').split_eligibility, null, 'df 1: no split plant at all');
+});
+
+test('H16 split attempts: Jaccard order, at most split_donor_attempts, stopping at the first confirmed; J3 judges every attempt', async () => {
+  const r = loaded(fixtureRule());
+  const confirmOnly = (donor) => makeStubLlm({
+    validateOverride: ({ kind, meta }) => (kind === 'v3' && meta.identifier === 'FAKE_SPLIT_FLAG' ? (meta.donor === donor ? 'NO' : 'YES') : undefined),
+  });
+  const llm2 = confirmOnly('FAKE_ELIG_TWO');
+  const { rows } = await buildDirect(SPLIT_POINTS, r, llm2);
+  const y = rows.find((x) => x.identifier === 'FAKE_SPLIT_FLAG');
+  assert.deepEqual(y.plants.split.attempts.map((a) => [a.rank, a.donor, a.validator, a.confirmed]),
+    [[1, 'FAKE_ELIG_ONE', 'YES', false], [2, 'FAKE_ELIG_TWO', 'NO', true]]);
+  assert.ok(y.plants.split.attempts.every((a) => a.answer === 'DIFFERENT' && a.correct === true), 'J3 judged every attempt');
+  assert.equal(llm2.calls.filter((c) => c.kind === 'j3' && c.meta.split && c.meta.identifier === 'FAKE_SPLIT_FLAG').length, 2);
+  // None confirmed: exactly split_donor_attempts attempts; the fourth donor is never tried.
+  const llm0 = confirmOnly('FAKE_NOBODY');
+  const y0 = (await buildDirect(SPLIT_POINTS, r, llm0)).rows.find((x) => x.identifier === 'FAKE_SPLIT_FLAG');
+  assert.deepEqual(y0.plants.split.attempts.map((a) => [a.rank, a.donor, a.confirmed]),
+    [[1, 'FAKE_ELIG_ONE', false], [2, 'FAKE_ELIG_TWO', false], [3, 'FAKE_ELIG_THREE', false]]);
+  assert.ok(!llm0.calls.some((c) => c.kind === 'v3' && c.meta.donor === 'FAKE_ELIG_FOUR'));
+  // Catch-all and donor-less rows: no split plant, no V3 call.
+  for (const ident of ['FAKE_DESK_ROW', 'FAKE_DEFAULT_ROW', 'FAKE_NONE_ROW', 'FAKE_LONE_FLAG']) {
+    assert.equal(rows.find((x) => x.identifier === ident).plants.split, null, ident);
+    assert.ok(!llm2.calls.some((c) => c.kind === 'v3' && c.meta.identifier === ident), ident);
+  }
+});
+
+test('H17 structural shortfalls are decided on availability before generation; a validation shortfall is never structural; plant-j3-too-few is non-rebuildable', async () => {
+  const r = loaded(fixtureRule());
+  // Pure, no LLM anywhere: both structural flags come from availability.
+  const pure = buildPopulationRows(CORPUS_POINTS, r);
+  assert.deepEqual([pure.donorStructural, pure.splitStructural], [false, false]);
+  assert.equal(buildPopulationRows(CORPUS_POINTS, loaded(fixtureRule((x) => { x.plants.min_rows_per_donor_type = 50; return x; }))).donorStructural, true);
+  assert.equal(buildPopulationRows(CORPUS_POINTS, loaded(fixtureRule((x) => { x.plants.min_rows = 2; return x; }))).splitStructural, true,
+    'one row has a same-project donor (FAKE_ALPHA_FLAG); FAKE_DESK_FLAG is catch-all');
+  // Near-miss: a validator that confirms no in-window donor leaves the type non-structural → too few.
+  const noIn = makeStubLlm({ validateOverride: ({ kind, meta }) => (kind === 'v2' && meta.donor_type === 'in-window' ? 'NEITHER' : undefined) });
+  const ctx = await e2e({ llm: noIn, anchor: false });
+  const { header, rows } = readQuerySet(ctx.arc);
+  assert.equal(header.donor_structural, false);
+  assert.ok(rows.some((x) => x.plants?.near_miss?.donor_type === 'in-window' && x.plants.near_miss.attempts.length > 0), 'in-window attempts were made');
+  const ps = plantSummary(rows, header, r);
+  assert.equal(ps.near_miss.by_type['in-window'].rows, 0);
+  assert.ok(ps.codes.includes('plant-j2-donor-type-too-few'));
+  assert.ok(!ps.non_rebuildable_codes.includes('plant-j2-donor-type-too-few'), 'a near-miss validation shortfall stays a rebuild trigger');
+  // Split, validation cause: V3 confirms nothing; split stays non-structural.
+  const noV3 = makeStubLlm({ validateOverride: ({ kind }) => (kind === 'v3' ? 'YES' : undefined) });
+  const ctxV = await e2e({ llm: noV3, anchor: false });
+  const sv = JSON.parse(ctxV.buildOut.at(-1));
+  assert.equal(readQuerySet(ctxV.arc).header.split_structural, false);
+  assert.deepEqual([sv.plants.split.structural, sv.plants.split.rows, sv.plants.split.attempted], [false, 0, 2]);
+  assert.ok(sv.void_codes.includes('plant-j3-too-few'));
+  assert.deepEqual(sv.non_rebuildable_codes, ['plant-j3-too-few']);
+  // Split, availability cause: min_rows above the rows with a donor → structural in the header and the summary.
+  const ctxA = await e2e({ anchor: false, ruleMut: (x) => { x.plants.min_rows = 2; return x; } });
+  const sa = JSON.parse(ctxA.buildOut.at(-1));
+  assert.equal(readQuerySet(ctxA.arc).header.split_structural, true);
+  assert.deepEqual([sa.plants.split.structural, sa.plants.split.rows_with_donor, sa.plants.split.catch_all_excluded, sa.plants.split.no_donor], [true, 1, 1, 0]);
+  assert.ok(sa.void_codes.includes('plant-j3-too-few'));
+  assert.deepEqual(sa.non_rebuildable_codes, ['plant-j3-too-few']);
+});
+
+test('H18 V2\'s A/B order: salted over row, donor and rank; independent of the donor-type parity; an A/B swap maps back', async () => {
+  const r = loaded(fixtureRule());
+  for (const [row, donor, rank] of [['FAKE_X', 'FAKE_Y', 1], ['FAKE_X', 'FAKE_Y', 2], ['#4101', 'lib/widget.mjs', 3]]) {
+    const h = sha(`${r.salts.validator_order}\0${row}\0${donor}\0${rank}`);
+    assert.equal(validatorOrder(r, row, donor, rank), parseInt(h.slice(0, 8), 16) % 2 === 0 ? 'donor-a' : 'donor-b');
+  }
+  const ctx = await e2e({ anchor: false });
+  const v2 = ctx.llm.calls.filter((c) => c.kind === 'v2');
+  assert.ok(v2.length >= 4, 'enough V2 calls on the fixture');
+  let agree = 0;
+  let disagree = 0;
+  for (const c of v2) {
+    const order = validatorOrder(r, c.meta.identifier, c.meta.donor, c.meta.rank);
+    const [a, b] = order === 'donor-a' ? [c.meta.donor, c.meta.identifier] : [c.meta.identifier, c.meta.donor];
+    assert.deepEqual([c.meta.a, c.meta.b], [a, b]);
+    assert.ok(c.prompt.indexOf(`A: ${a}\n`) >= 0 && c.prompt.indexOf(`A: ${a}\n`) < c.prompt.indexOf(`B: ${b}\n`), 'the prompt shows A then B');
+    const parityCross = parseInt(saltedHash(r.salts.donor_type, c.meta.identifier).slice(0, 8), 16) % 2 === 0;
+    if ((order === 'donor-a') === parityCross) agree++; else disagree++;
+  }
+  assert.ok(agree > 0 && disagree > 0, `the order is not a function of the donor-type parity (agree ${agree}, disagree ${disagree})`);
+  // The default stub names the donor's side: every judged attempt maps back to DONOR, in both orders.
+  const judged = (arc) => readQuerySet(arc).rows.flatMap((x) => x.plants?.near_miss?.attempts ?? []).filter((x) => x.status === 'ok');
+  const att = judged(ctx.arc);
+  assert.ok(att.some((x) => x.order === 'donor-a') && att.some((x) => x.order === 'donor-b'), 'both orders occur (else the case is vacuous)');
+  for (const x of att) assert.deepEqual([x.validator, x.confirmed], ['DONOR', true]);
+  // A validator that always answers A: confirmed exactly when the donor is A; a B donor maps to TARGET.
+  const alwaysA = makeStubLlm({ validateOverride: ({ kind }) => (kind === 'v2' ? 'A' : undefined) });
+  const ctxA = await e2e({ anchor: false, llm: alwaysA });
+  const attA = judged(ctxA.arc);
+  assert.ok(attA.some((x) => x.order === 'donor-b'));
+  for (const x of attA) assert.deepEqual([x.validator, x.confirmed], x.order === 'donor-a' ? ['DONOR', true] : ['TARGET', false]);
+});
+
+test('H19 score refuses BEFORE the verdict function when a pre-verdict aggregate fails the allowlist; guards.plants is the build summary\'s projection', async () => {
+  const rewriteRows = (arc, edit) => {
+    const p = join(arc, 'query-set.jsonl');
+    const [head, ...rest] = readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    writeFileSync(p, [head, ...rest.map((x) => edit(x) ?? x)].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  };
+  const cases = [
+    // A shape defect in a revision-1 field: an attempt rank outside the rule's cap.
+    ['attempt rank', (x) => { if (x.identifier === 'FAKE_ALPHA_FLAG') x.plants.leaky.attempts[0].rank = 9; return x; }],
+    // A defect in the build-summary-derived class table, on an excluded row (so only exclusions_by_class carries it).
+    ['class table', (x) => { if (x.identifier === '#4101') x.class = 'not-a-class'; return x; }],
+  ];
+  for (const [label, edit] of cases) {
+    const ctx = await e2e({ tamper: (arc) => rewriteRows(arc, edit) });
+    let called = 0;
+    const s = await score(ctx, { faults: { decideVerdict: (...a) => { called++; return decideVerdict(...a); } } });
+    assert.equal(s.code, 1, `${label}: ${s.outLines.join('\n')}`);
+    assert.match(s.outLines.join('\n'), /"status":"refused","code":"internal-error"/, label);
+    assert.equal(called, 0, `${label}: the verdict function never ran`);
+    assert.deepEqual(s.files, [], `${label}: nothing written`);
+    assert.ok(!existsSync(join(ctx.arc, 'score-rows.jsonl')), label);
+  }
+  // On an untampered build, guards.plants is exactly the build summary's plants (one projection).
+  const ok = await e2e();
+  const s = await score(ok);
+  assert.equal(s.code, 0, s.outLines.join('\n'));
+  const result = JSON.parse(readFileSync(join(s.resultsDir, s.files[0]), 'utf8'));
+  assert.deepEqual(result.guards.plants, JSON.parse(ok.buildOut.at(-1)).plants);
 });

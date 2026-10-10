@@ -37,7 +37,9 @@
  *
  * • OUTCOME-BLIND UNTIL THE END: everything the verdict reads — Δ, its CI, C1,
  *   C2, C3, thinning, the floor, the guards — and everything a VOID record
- *   holds is computed before the verdict function is called. A throw before
+ *   holds is computed before the verdict function is called, and every one of
+ *   those aggregates (the build-summary class table and the plants block
+ *   included) passes the result allowlist before the call. A throw before
  *   the call is a refusal that writes nothing (fixable under a tree-only
  *   re-freeze); a throw from the call on (inside it, or in either writer) is
  *   final: VOID `post-verdict-error`, or `post-verdict-write-failed` (exit 3)
@@ -55,12 +57,12 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertIdSpace, projectedId, verbatimProbe } from './exact-token-eval.mjs';
 import {
-  ANCHOR_LABELS, RULE_REL_PATH, corpusManifestHash, readQuerySetHeader, verifyAnchor,
+  ANCHOR_LABELS, RULE_REL_PATH, corpusManifestHash, sha256Hex, verifyAnchor,
 } from './lib/accept-rule.mjs';
 import { loadRule, EMITTED_REFUSAL_CODES, EMITTED_VOID_CODES } from './lib/exact-token-203-rule.mjs';
 import { runCensus, d10Branch } from './lib/query-shape-census.mjs';
 import {
-  QUERY_SET_SCHEMA, ROLES, buildSummary, checkCorpus, plantSummary, runBuild,
+  QUERY_SET_SCHEMA, ROLES, buildSummary, checkCorpus, plantSummary, plantsProjection, runBuild,
 } from './lib/exact-token-203-build.mjs';
 import {
   RESULT_SCHEMA_ID, assertAllowlisted, bootstrapCI, bootstrapLowerBound, buildSummarySchema, classThinning,
@@ -161,26 +163,31 @@ function guardLlm(llm) {
       throw codeErr('llm-failed');
     }
   };
-  return { generate: wrap((a) => llm.generate(a)), judge: wrap((a) => llm.judge(a)) };
+  return { generate: wrap((a) => llm.generate(a)), judge: wrap((a) => llm.judge(a)), validate: wrap((a) => llm.validate(a)) };
 }
 
-/** The production LLM clients, pinned by the rule (official SDKs, keys from env). */
+/**
+ * The production LLM clients, pinned by the rule (official SDKs, keys from env).
+ * The plant validator (revision 1) is an OpenAI model on the generator's call
+ * shape — a different family from the judge, which the loader enforces.
+ */
 function realLlm(rule, env) {
-  const gen = rule.models.generator;
   const jud = rule.models.judge;
   let openai;
   let anthropic;
+  const chat = async (m, prompt) => {
+    if (!openai) {
+      const { default: OpenAI } = await import('openai');
+      openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+    }
+    const body = { model: m.model, max_tokens: m.max_tokens, messages: [{ role: 'user', content: prompt }] };
+    if (m.temperature !== null) body.temperature = m.temperature;
+    const res = await openai.chat.completions.create(body);
+    return res.choices?.[0]?.message?.content ?? '';
+  };
   return {
-    async generate({ prompt }) {
-      if (!openai) {
-        const { default: OpenAI } = await import('openai');
-        openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-      }
-      const body = { model: gen.model, max_tokens: gen.max_tokens, messages: [{ role: 'user', content: prompt }] };
-      if (gen.temperature !== null) body.temperature = gen.temperature;
-      const res = await openai.chat.completions.create(body);
-      return res.choices?.[0]?.message?.content ?? '';
-    },
+    generate: ({ prompt }) => chat(rule.models.generator, prompt),
+    validate: ({ prompt }) => chat(rule.models.validator, prompt),
     async judge({ prompt }) {
       if (!anthropic) {
         const { default: Anthropic } = await import('@anthropic-ai/sdk');
@@ -304,12 +311,14 @@ async function cmdBuild(args, d) {
     points, rule, ruleSha256: sha256, corpusSha256: corpusManifestHash(points), llm, now: d.now,
     buildNumber, pointsWithoutCreatedAt: cc.pointsWithoutCreatedAt,
   });
-  const summary = buildSummary(header, rows, rule);
+  const text = [header, ...rows].map((x) => JSON.stringify(x)).join('\n') + '\n';
+  // The summary names the bytes it is about to write (the anchor's `query-set` line).
+  const summary = { ...buildSummary(header, rows, rule), query_set_sha256: sha256Hex(Buffer.from(text, 'utf8')) };
   assertAllowlisted(summary, buildSummarySchema(rule));
   // A rebuild keeps the earlier query set beside the new one (D7's rebuild rule
   // is the operator's; the code only reports the criteria).
   if (hasCurrent) renameSync(entries['query-set'], join(args.arcDir, `query-set.build-${prior + 1}.jsonl`));
-  writeFileSync(entries['query-set'], [header, ...rows].map((x) => JSON.stringify(x)).join('\n') + '\n', { flag: 'wx' });
+  writeFileSync(entries['query-set'], text, { flag: 'wx' });
   d.out(JSON.stringify(summary));
   return 0;
 }
@@ -483,6 +492,9 @@ async function cmdScore(args, d) {
   const facts = rows.filter((r) => r.role === 'fact-control' && !r.exclusion);
   const E = primary.length;
   const plants = plantSummary(rows, header, rule);
+  // The build summary's class table (with revision 1's per-class plant counts) is
+  // a pre-verdict aggregate like any other: computed here, checked below.
+  const summary = buildSummary(header, rows, rule);
   const exclusion = {
     eligible: E, excluded: E - scored.length, fraction: E ? (E - scored.length) / E : 1,
     by_channel: Object.fromEntries(rule.codes.exclusion_channels.map((ch) => [ch, primary.filter((r) => r.exclusion === ch).length])),
@@ -584,22 +596,42 @@ async function cmdScore(args, d) {
         rule: va.hashes.rule, query_set: va.hashes['query-set'], corpus: va.hashes.corpus,
         transcripts: va.hashes.transcripts, counters: va.hashes.counters, server_tree: va.hashes['server-tree'],
       },
-      models: { generator: rule.models.generator.model, judge: rule.models.judge.model, embedder: rule.corpus.embedder.model },
+      models: {
+        generator: rule.models.generator.model, judge: rule.models.judge.model,
+        validator: rule.models.validator.model, embedder: rule.corpus.embedder.model,
+      },
       qdrant_version: qdrantVersion,
       census,
       guards: {
         probe: { fact: probe.per.fact, doc: probe.per.doc, floor: probe.floor, ok: probe.ok },
         id_space_ok: idSpaceOk,
-        plants: { leaky: plants.leaky, near_miss: plants.near_miss, split: plants.split },
+        // The same projection build's summary prints (one function, spec §8.3).
+        plants: plantsProjection(plants),
         exclusion,
         pass_disagreement: stats?.passDisagreement ?? null,
       },
+    };
+    // The non-VOID tables are pre-verdict aggregates too (computed, not written, here).
+    const tables = stats && {
+      primary: stats.primary, fact_control: stats.fact,
+      controls: { c1: stats.controls.c1, c2: stats.controls.c2, c3: stats.controls.c3 },
+      per_class: cellsBy(scored, stats.out1, (r) => r.class),
+      per_df_band: cellsBy(scored, stats.out1, (r) => {
+        const band = rule.report.df_bands.find(([lo, hi]) => r.df >= lo && r.df <= hi);
+        return band ? dfBandKey(band) : null;
+      }),
+      exclusions_by_class: summary.by_class,
+      thinning: stats.thinning,
     };
     const voidRecord = (reasons) => ({
       ...common, verdict: 'VOID', void_reasons: reasons, d10_branch: d10Branch('VOID', census),
       timestamps: { started_at: startedAt.toISOString(), finished_at: d.now().toISOString() },
     });
     const schema = resultSchema(rule);
+    // Every pre-verdict aggregate passes the allowlist BEFORE the verdict function
+    // is called: a shape defect is then a refusal (internal-error, nothing written,
+    // fixable under a tree-only re-freeze), never a final post-verdict VOID.
+    assertAllowlisted({ ...common, exclusions_by_class: summary.by_class, ...(tables ?? {}) }, schema);
     const decide = d.faults.decideVerdict ?? decideVerdict; // test seam only; the CLI passes no deps
 
     // ── from the moment the verdict function is CALLED, any throw (inside it,
@@ -612,24 +644,20 @@ async function cmdScore(args, d) {
       if (decided.verdict === 'VOID') {
         result = voidRecord(decided.voidReasons);
       } else {
-        const summary = buildSummary(header, rows, rule);
         result = {
           ...common,
           verdict: decided.verdict, void_reasons: [], d10_branch: d10Branch(decided.verdict, census),
           downgrades: decided.downgrades,
           timestamps: { started_at: startedAt.toISOString(), finished_at: d.now().toISOString() },
-          primary: stats.primary, fact_control: stats.fact,
+          primary: tables.primary, fact_control: tables.fact_control,
           controls: {
-            required: decided.requiredControls, c1: stats.controls.c1, c2: stats.controls.c2,
-            c3: { ...stats.controls.c3, applied: decided.verdict === 'GAP' || decided.verdict === 'GAP (seed-carried)' },
+            required: decided.requiredControls, c1: tables.controls.c1, c2: tables.controls.c2,
+            c3: { ...tables.controls.c3, applied: decided.verdict === 'GAP' || decided.verdict === 'GAP (seed-carried)' },
           },
-          per_class: cellsBy(scored, stats.out1, (r) => r.class),
-          per_df_band: cellsBy(scored, stats.out1, (r) => {
-            const band = rule.report.df_bands.find(([lo, hi]) => r.df >= lo && r.df <= hi);
-            return band ? dfBandKey(band) : null;
-          }),
-          exclusions_by_class: summary.by_class,
-          thinning: stats.thinning,
+          per_class: tables.per_class,
+          per_df_band: tables.per_df_band,
+          exclusions_by_class: tables.exclusions_by_class,
+          thinning: tables.thinning,
         };
         rowsText = scored.map((r, i) => JSON.stringify({
           identifier: r.identifier, class: r.class, df: r.df, exact: stats.out1[i].exact, words: stats.out1[i].words,

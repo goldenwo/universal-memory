@@ -8,10 +8,17 @@
 // its own; the schema below states TYPES and RANGES only.
 //
 // The rule's verdict parameters are pre-registered: they merge in PR 2, before
-// any corpus dump or build. The freeze PR may change only the `prompts` block.
-// K1 (test/exact-token-203-harness.test.mjs) loads the tracked rule through
-// this function in the suite, so a defect in a non-`prompts` key surfaces
-// before the freeze rather than as a post-freeze VOID.
+// any corpus dump or build. K1 (test/exact-token-203-harness.test.mjs) loads
+// the tracked rule through this function in the suite, so a defect in a
+// non-`prompts` key surfaces before the freeze rather than as a post-freeze VOID.
+//
+// Revision 1 (spec §8, after the D7 build-time VOID): the revision PR adds the
+// plant validator (`models.validator`, `salts.validator_order`, the `plants`
+// fallback and catch-all keys, the three validator prompts). From that PR on,
+// the keys that act only on plants — `models.validator`, `prompts.validator_*`
+// and `prompts.leaky_plant` — are frozen (K2 pins them); a rebuild or the freeze
+// PR may reword only `generator`, `generator_retry`(`_reasons`), `j1`, `j2`, `j3`.
+// The validator must come from a different model family from the judge.
 
 import { createHash } from 'node:crypto';
 
@@ -72,7 +79,10 @@ const SCHEMA = {
     generic_words: T.strs, retries: (v) => isInt(v) && v >= 0,
     max_in_window_candidates: T.posInt, cross_doc_neighbours: (v) => isInt(v) && v >= 0,
   },
-  plants: { accuracy_floor: T.prob, min_rows: T.posInt, min_rows_per_donor_type: T.posInt, retries: (v) => isInt(v) && v >= 0 },
+  plants: {
+    accuracy_floor: T.prob, min_rows: T.posInt, min_rows_per_donor_type: T.posInt, retries: (v) => isInt(v) && v >= 0,
+    near_miss_donor_attempts: T.posInt, split_donor_attempts: T.posInt, split_project_excluded: T.strs,
+  },
   build: { max_format_failure_fraction: T.prob, max_rebuilds: (v) => isInt(v) && v >= 0, llm_concurrency: T.posInt },
   verdict: {
     margin: T.openProb, ci_level: T.openProb, bootstrap_resamples: T.posInt, exclusion_cap: T.prob,
@@ -86,7 +96,7 @@ const SCHEMA = {
   report: { df_bands: T.bands },
   salts: {
     representative: T.hex, seed_doc: T.hex, neighbour_tiebreak: T.hex,
-    donor_type: T.hex, candidate_order: T.hex, split_referent: T.hex,
+    donor_type: T.hex, candidate_order: T.hex, split_referent: T.hex, validator_order: T.hex,
   },
   seeds: { scramble: T.hex, derangement: T.hex, bootstrap: T.hex },
   models: {
@@ -95,6 +105,8 @@ const SCHEMA = {
       provider: is('anthropic'), model: T.str, temperature: T.numOrNull,
       thinking: oneOf('disabled', 'adaptive'), effort: oneOf('low', 'medium', 'high'), max_tokens: T.posInt,
     },
+    // The harness implements the validator with the OpenAI client only (realLlm.validate).
+    validator: { provider: is('openai'), model: T.str, temperature: T.numOrNull, max_tokens: T.posInt },
   },
   census: {
     census_from: T.date, census_until: T.date, counters_export_sql: T.str, prevalence_threshold: T.prob,
@@ -119,6 +131,9 @@ const SCHEMA = {
     j2_candidate: prompt('NUMBER', 'IDENTIFIER', 'WINDOW'),
     j3: prompt('NONCE', 'IDENTIFIER', 'PASSAGES'),
     j3_passage: prompt('NUMBER', 'WINDOW'),
+    validator_leaky: prompt('NONCE', 'WINDOW', 'IDENTIFIER', 'PHRASE'),
+    validator_near_miss: prompt('NONCE', 'IDENTIFIER_A', 'WINDOW_A', 'IDENTIFIER_B', 'WINDOW_B', 'PHRASE'),
+    validator_split: prompt('NONCE', 'IDENTIFIER', 'WINDOW_A', 'WINDOW_B'),
   },
 };
 
@@ -162,5 +177,12 @@ export function loadRule(bytes) {
   if (rule.gloss.min_words > rule.gloss.max_words) return { ok: false, code: 'rule-invalid', key: 'gloss.min_words' };
   if (rule.census.census_from > rule.census.census_until) return { ok: false, code: 'rule-invalid', key: 'census.census_from' };
   if (rule.read_path.k > rule.read_path.fetch_depth) return { ok: false, code: 'rule-invalid', key: 'read_path.k' };
+  // Spec §8.2 R1: a validator from the judge's own family would share its bias.
+  // (The provider pins above already differ; this states the rule outright.)
+  if (rule.models.validator.provider === rule.models.judge.provider) return { ok: false, code: 'rule-invalid', key: 'models.validator.provider' };
+  // A point with no project gets missing_project_value, a catch-all by construction.
+  if (!rule.plants.split_project_excluded.includes(rule.population.missing_project_value)) {
+    return { ok: false, code: 'rule-invalid', key: 'plants.split_project_excluded' };
+  }
   return { ok: true, rule: deepFreeze(rule), sha256: createHash('sha256').update(buf).digest('hex') };
 }

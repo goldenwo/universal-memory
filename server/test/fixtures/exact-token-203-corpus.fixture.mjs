@@ -6,10 +6,18 @@
 // Population it produces (each doc is a summary, so `isDoc`):
 //   primary (doc, df <= 5, one project): FAKE_ALPHA_FLAG (df 2), lib/widget.mjs,
 //     v7.1.2 (collapsed with the nested 7.1.2), --dry-crank, --slow-crank,
-//     spin_up(), relay-a:8080, /srv/demo/vault, #4101   -> E = 9
+//     spin_up(), relay-a:8080, /srv/demo/vault, #4101,
+//     FAKE_DESK_FLAG (df 2, project `desktop`)            -> E = 10
 //   fact control: FAKE_GAMMA_FLAG, FAKE_DELTA_FLAG
 //   non-primary: UM_COMMON_TAG (df 6), FAKE_BETA_FLAG (two projects)
 // Each doc carries one `topic*` word so the J3 stub can tell a split referent.
+//
+// Split plants (spec §8.2 R1, revision 1): FAKE_ALPHA_FLAG's same-project,
+// same-class donors are FAKE_GAMMA_FLAG and FAKE_DELTA_FLAG (proj-a, absent from
+// its docs); FAKE_BETA_FLAG (one doc in proj-b) and FAKE_DESK_FLAG (`desktop`)
+// are same-class but refused; UM_COMMON_TAG occurs in its docs and is refused.
+// FAKE_DESK_FLAG is a df 2 row in a catch-all project, so it carries no split
+// plant (plants.split_project_excluded) though it has a J3 check of its own.
 
 const doc = (id, project, text) => ({
   id: `pt-${id}`,
@@ -29,6 +37,8 @@ export const CORPUS_POINTS = Object.freeze([
   doc('d09', 'proj-a', 'Session summary: topiceta. Config lives under /srv/demo/vault for the archive keeper.'),
   doc('d10', 'proj-a', 'Session summary: topictheta. Issue #4101 tracks the beacon dimmer flicker.'),
   doc('d11', 'proj-a', 'Session summary: topiciota. The --slow-crank option throttles the gearbox rotation.'),
+  doc('d12', 'desktop', 'Session summary: topicmu. FAKE_DESK_FLAG gates the crank spinner cooldown.'),
+  doc('d13', 'desktop', 'Session summary: topicmu. The crank spinner cooldown gate FAKE_DESK_FLAG stayed off.'),
   { id: 'pt-f01', vector: [0.04, 0.05, 0.06], payload: { data: 'topickappa: the gauge reader polls FAKE_GAMMA_FLAG at boot.', userId: 'golden', project: 'proj-a', createdAt: '2026-09-16T00:00:00.000Z' } },
   { id: 'pt-f02', vector: [0.07, 0.08, 0.09], payload: { data: 'topiclambda: remember FAKE_DELTA_FLAG for the kiln timer.', userId: 'golden', project: 'proj-a', createdAt: '2026-09-17T00:00:00.000Z' } },
   { id: 'pt-stamp', vector: [1, 0, 0], payload: { id: '_um_embedding_stamp', data: 'embedding stamp', userId: '_um_system' } },
@@ -50,32 +60,59 @@ export const STUB_GLOSSES = Object.freeze({
   FAKE_DELTA_FLAG: 'kiln timer reminder',
   UM_COMMON_TAG: 'shared marker label',
   FAKE_BETA_FLAG: 'orchard sprinkler schedule',
+  FAKE_DESK_FLAG: 'crank spinner cooldown gate',
 });
 
 /** The first attempt for this identifier fails G-shape (a digit), the retry passes. */
 export const STUB_RETRY_FIRST = Object.freeze({ 'relay-a:8080': 'relay listener on port eighty 8080' });
 
-export const leakyPhrase = (identifier) => {
-  const g = STUB_GLOSSES[identifier];
-  return g && g !== 'UNKNOWN' ? `${g.split(' ').slice(0, 3).join(' ')} failed overnight` : 'UNKNOWN';
-};
+/** The stub's leaky plant for a gloss: its first three words plus an event. */
+const leakyOf = (g) => (g && g !== 'UNKNOWN' ? `${g.split(' ').slice(0, 3).join(' ')} failed overnight` : 'UNKNOWN');
+export const leakyPhrase = (identifier) => leakyOf(STUB_GLOSSES[identifier]);
+
+const topicTags = (windows) => new Set(windows.flatMap((w) => w.match(/topic[a-z]+/g) ?? []));
 
 /**
- * Stub LLMs. `generate` / `judge` receive { kind, prompt, meta }; the stubs decide
- * from `meta` (identifier, phrase, options, windows), never from corpus access.
- * Every call is recorded (kind + prompt) so tests can inspect the fences.
+ * Stub LLMs. `generate` / `judge` / `validate` receive { kind, prompt, meta }; the
+ * stubs decide from `meta` (identifier, phrase, options, windows, the V2 sides
+ * `a` / `b`), never from corpus access. Every call is recorded (kind + prompt) so
+ * tests can inspect the fences. Overrides return a reply, or undefined to fall
+ * through to the default; `glosses` extends STUB_GLOSSES for a test's own corpus.
+ *
+ * Default validator (spec §8.2 R1): V1 confirms (YES) the stub's leaky phrases;
+ * V2 names the side whose identifier the phrase is the gloss of; V3 answers NO
+ * (clearly different) when the two windows carry different topic tags.
  */
-export function makeStubLlm({ judgeOverride } = {}) {
+export function makeStubLlm({ judgeOverride, validateOverride, generateOverride, glosses = {} } = {}) {
   const calls = [];
-  const glossToIdent = new Map(Object.entries(STUB_GLOSSES).map(([k, v]) => [v, k]));
-  const leaky = new Set(Object.keys(STUB_GLOSSES).map(leakyPhrase));
+  const all = { ...STUB_GLOSSES, ...glosses };
+  const glossToIdent = new Map(Object.entries(all).map(([k, v]) => [v, k]));
+  const leaky = new Set(Object.values(all).map(leakyOf));
   return {
     calls,
     async generate({ kind, prompt, meta }) {
       calls.push({ kind, prompt, meta });
-      if (kind === 'leaky') return leakyPhrase(meta.identifier);
+      if (generateOverride) {
+        const o = generateOverride({ kind, prompt, meta });
+        if (o !== undefined) return o;
+      }
+      if (kind === 'leaky') return leakyOf(all[meta.identifier]);
       if (meta.attempt === 0 && STUB_RETRY_FIRST[meta.identifier]) return STUB_RETRY_FIRST[meta.identifier];
-      return STUB_GLOSSES[meta.identifier] ?? 'UNKNOWN';
+      return all[meta.identifier] ?? 'UNKNOWN';
+    },
+    async validate({ kind, prompt, meta }) {
+      calls.push({ kind, prompt, meta });
+      if (validateOverride) {
+        const o = validateOverride({ kind, prompt, meta });
+        if (o !== undefined) return o;
+      }
+      if (kind === 'v1') return leaky.has(meta.phrase) ? 'YES' : 'NO';
+      if (kind === 'v2') {
+        const ident = glossToIdent.get(meta.phrase);
+        return ident === meta.a ? 'A' : ident === meta.b ? 'B' : 'NEITHER';
+      }
+      if (kind === 'v3') return topicTags(meta.windows).size > 1 ? 'NO' : 'YES';
+      throw new Error(`unknown validator kind ${kind}`);
     },
     async judge({ kind, prompt, meta }) {
       calls.push({ kind, prompt, meta });
@@ -89,10 +126,7 @@ export function makeStubLlm({ judgeOverride } = {}) {
         const i = meta.options.indexOf(ident);
         return i >= 0 ? String(i + 1) : 'NONE';
       }
-      if (kind === 'j3') {
-        const tags = new Set(meta.windows.flatMap((w) => w.match(/topic[a-z]+/g) ?? []));
-        return tags.size > 1 ? 'DIFFERENT' : 'SAME';
-      }
+      if (kind === 'j3') return topicTags(meta.windows).size > 1 ? 'DIFFERENT' : 'SAME';
       throw new Error(`unknown judge kind ${kind}`);
     },
   };
