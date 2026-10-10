@@ -1079,7 +1079,7 @@ function saltFor(identifier, type) {
   }
 }
 
-/** The build on a test corpus, called directly (no git, no files). */
+/** runBuild over an in-memory fixture: no git, no I/O. */
 const buildDirect = (points, rule, llm) => runBuild({
   points, rule, ruleSha256: 'a'.repeat(64), corpusSha256: 'b'.repeat(64), llm, now: NOW, buildNumber: 1, pointsWithoutCreatedAt: 0,
 });
