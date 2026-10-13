@@ -793,6 +793,41 @@ assert_contains "T23: home cwd fetches /api/state/desktop" \
   "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/desktop"
 
 # ---------------------------------------------------------------------------
+# T25 (tool-config cwd): the read side of session-end.test.sh G17. A cwd
+# inside ~/.claude is tool internals (the plugin cache's package.json minted
+# the project "6.3.0" on 2026-10-08), so recall fetches CLAUDE_PROJECT_DIR's
+# project, or nothing — `state skip=tool-config-cwd`, rubric kept. The
+# CLAUDE_CWD fallback is NOT consulted for a config cwd. The tool env vars
+# are scrubbed first so a Claude Code or Codex parent cannot leak in.
+# ---------------------------------------------------------------------------
+echo "=== T25a: plugin-cache cwd + CLAUDE_PROJECT_DIR fetches the session's project ==="
+T25_PLUG="$FAKE_HOME/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$T25_PLUG"
+touch "$T25_PLUG/package.json"
+STDIN_T25=$("$PY294" -c '
+import json, sys
+print(json.dumps({"session_id": "s-t25", "transcript_path": "t.jsonl",
+                  "cwd": sys.argv[1], "hook_event_name": "SessionStart",
+                  "source": "startup"}))' "$(_wt_native "$T25_PLUG")")
+write_mock_api 400 -
+output=$(run_hook_stdin "$STDIN_T25" -u CLAUDE_PROJECT_DIR -u CLAUDE_CONFIG_DIR -u CODEX_HOME \
+  CLAUDE_PROJECT_DIR="$(_wt_native "$CLAUDE_CWD")")
+assert_contains "T25a: fetch targets CLAUDE_PROJECT_DIR's project" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/testproject"
+assert_not_contains "T25a: no plugin-version fetch" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state/6.3.0"
+
+echo "=== T25b: plugin-cache cwd without CLAUDE_PROJECT_DIR skips the fetch ==="
+rm -f "$FAKE_HOME/.um/hook.log"
+write_mock_api 400 -
+output=$(run_hook_stdin "$STDIN_T25" -u CLAUDE_PROJECT_DIR -u CLAUDE_CONFIG_DIR -u CODEX_HOME)
+assert_not_contains "T25b: no /api/state fetch for a tool-config cwd" \
+  "$(cat "$MOCK_BIN/curl_calls" 2>/dev/null)" "/api/state"
+assert_contains "T25b: D7 skip line with cwd (state skip=tool-config-cwd)" \
+  "$(cat "$FAKE_HOME/.um/hook.log" 2>/dev/null)" "state skip=tool-config-cwd cwd="
+ac=$(extract_additional_context "$output")
+assert_rubric_present "$ac" "T25b: rubric still emitted on skip — "
+
+# ---------------------------------------------------------------------------
 # T24 (#294 T2 step 5): the cross-hook write==read pin — the #294 defect
 # class itself. session-end.sh (write) and session-start.sh (read) are
 # driven against the SAME subdir cwd; the checkpoint body's project and the

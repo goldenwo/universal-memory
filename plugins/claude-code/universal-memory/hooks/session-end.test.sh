@@ -997,6 +997,255 @@ fi
 assert_eq "G16: slug preserves the on-disk case"   "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"MixedCase-Proj","mode":"accepted"}'
 
 # ===========================================================================
+# G17 (tool-config cwd): a cwd AT or INSIDE an AI tool's own config tree
+# (<home>/.claude, <home>/.codex, $CLAUDE_CONFIG_DIR, $CODEX_HOME) is tool
+# internals, never a project. The incident (2026-10-08): a session on
+# kalshi-research-engine ran a superpowers helper from the plugin cache
+# ~/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/, whose
+# package.json made the walk mint the project "6.3.0" — turns, then a
+# session summary, landed in that junk layer. The guard now names the
+# session from $CLAUDE_PROJECT_DIR (the dir Claude Code started in) when it
+# is usable and outside every config dir, and SKIPs as tool-config-cwd
+# otherwise. Every run scrubs the three tool env vars first: a Claude Code
+# or Codex parent exports them, and a case must see only what it sets.
+# ===========================================================================
+run_session_end_cfg() {
+  local home="$1" stdin_json="$2"; shift 2
+  RUN_EXIT=0
+  RUN_OUT=$(env -u CLAUDE_PROJECT_DIR -u CLAUDE_CONFIG_DIR -u CODEX_HOME \
+    HOME="$home" PATH="$MOCK_BIN:$PATH" \
+    UM_SERVER_URL="http://mock.example:6335" \
+    UM_TOKEN_FILE="$home/.um/auth-token" \
+    "$@" bash "$SESSION_END" <<< "$stdin_json" 2>&1) || RUN_EXIT=$?
+}
+# The session's real project: a plain repo outside every config dir.
+G17_REPO="$TMPDIR_ROOT/g17-session-repo"; mkdir -p "$G17_REPO/.git"
+
+echo "=== G17a: plugin-cache cwd + CLAUDE_PROJECT_DIR names the session's repo ==="
+H=$(fresh_home g17a)
+G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+touch "$G17_PLUG/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$G17_PLUG")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G17a: exit 0" "$RUN_EXIT" "0"
+assert_eq "G17a: slug is CLAUDE_PROJECT_DIR's repo, not the plugin version dir" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+echo "=== G17b: plugin-cache cwd without CLAUDE_PROJECT_DIR skips ==="
+H=$(fresh_home g17b)
+G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+touch "$G17_PLUG/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$G17_PLUG")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G17b: exit 0" "$RUN_EXIT" "0"
+assert_eq "G17b: zero POSTs" "$(call_count)" "0"
+assert_contains "G17b: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+echo "=== G17c: CLAUDE_PROJECT_DIR inside ~/.claude is not used ==="
+H=$(fresh_home g17c)
+G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+touch "$G17_PLUG/package.json"
+# The fallback dir carries .git so a guard that accepted it would post.
+G17_INNER="$H/.claude/projects/inner-repo"; mkdir -p "$G17_INNER/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$G17_PLUG")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_INNER")"
+assert_eq "G17c: zero POSTs" "$(call_count)" "0"
+assert_contains "G17c: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+echo "=== G17d: ~/.codex, CLAUDE_CONFIG_DIR and CODEX_HOME are config dirs too ==="
+H=$(fresh_home g17d)
+G17_CODEX="$H/.codex/plugins/cache/p/2.0.0"; mkdir -p "$G17_CODEX"
+touch "$G17_CODEX/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$G17_CODEX")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G17d: ~/.codex cwd posts nothing" "$(call_count)" "0"
+assert_contains "G17d: ~/.codex cwd logs skip=tool-config-cwd" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G17d: ~/.codex cwd + CLAUDE_PROJECT_DIR names the repo" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+# Config dirs OUTSIDE $HOME, named only by the environment. The control run
+# (no env var) names the version dir, so the env var is what makes the
+# difference — the case cannot pass on fixture shape alone.
+for G17_VAR in CLAUDE_CONFIG_DIR CODEX_HOME; do
+  G17_ALT="$TMPDIR_ROOT/alt-config-$G17_VAR"
+  G17_ALT_PLUG="$G17_ALT/plugins/cache/p/1.0.0"; mkdir -p "$G17_ALT_PLUG"
+  touch "$G17_ALT_PLUG/package.json"
+  STDIN=$(make_stdin "$SID" "$(native_path "$G17_ALT_PLUG")")
+  H=$(fresh_home "g17d-$G17_VAR-control")
+  reset_calls
+  run_session_end_cfg "$H" "$STDIN"
+  assert_eq "G17d: control — without $G17_VAR the dir is an ordinary marker dir" \
+    "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"1.0.0","mode":"accepted"}'
+  H=$(fresh_home "g17d-$G17_VAR")
+  reset_calls
+  run_session_end_cfg "$H" "$STDIN" "$G17_VAR=$(native_path "$G17_ALT")"
+  assert_eq "G17d: $G17_VAR outside \$HOME is honoured (zero POSTs)" "$(call_count)" "0"
+  assert_contains "G17d: $G17_VAR outside \$HOME logs skip=tool-config-cwd" \
+    "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+done
+
+echo "=== G17e: ~/.claudette is not ~/.claude (path-boundary compare) ==="
+H=$(fresh_home g17e)
+G17_LOOKALIKE="$H/.claudette/repo"; mkdir -p "$G17_LOOKALIKE/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$G17_LOOKALIKE")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+if wait_for_log "$H" "accepted project="; then
+  pass "G17e: hook accepted"
+else
+  fail "G17e: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G17e: a sibling whose name only starts with .claude is named normally" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"repo","mode":"accepted"}'
+
+echo "=== G17f: a project cwd ignores CLAUDE_PROJECT_DIR ==="
+H=$(fresh_home g17f)
+STDIN=$(make_stdin "$SID" "$(native_path "$CWD_N")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+if wait_for_log "$H" "accepted project="; then
+  pass "G17f: hook accepted"
+else
+  fail "G17f: hook accepted" "hook.log: $(cat "$H/.um/hook.log" 2>/dev/null)"
+fi
+assert_eq "G17f: the cwd's repo names it; CLAUDE_PROJECT_DIR is read only for a config cwd" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"example-project","mode":"accepted"}'
+
+# G17g: the MSYS form (/c/Users/...) of a config cwd folds like the native
+# form (Windows only). MSYS2_ARG_CONV_EXCL stops git-bash rewriting the
+# argument back to C:/... on its way into make_stdin's python — without it
+# the envelope never carries the form this case names (G4 above has that
+# gap) — and the envelope is checked for it before the hook runs.
+echo "=== G17g: MSYS-form config cwd skips (Windows only) ==="
+if command -v cygpath >/dev/null 2>&1; then
+  H=$(fresh_home g17g)
+  G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+  touch "$G17_PLUG/package.json"
+  G17_MIXED=$(cygpath -m "$G17_PLUG")
+  G17_DRIVE="${G17_MIXED:0:1}"
+  G17_MSYS="/${G17_DRIVE,,}${G17_MIXED:2}"
+  STDIN=$(MSYS2_ARG_CONV_EXCL='*' make_stdin "$SID" "$G17_MSYS")
+  assert_contains "G17g: the envelope carries the MSYS form" "$STDIN" "\"cwd\": \"$G17_MSYS\""
+  reset_calls
+  run_session_end_cfg "$H" "$STDIN"
+  assert_eq "G17g: zero POSTs" "$(call_count)" "0"
+  assert_contains "G17g: skip=tool-config-cwd logged" \
+    "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+else
+  pass "G17g: skipped (no cygpath — POSIX platform has no MSYS forms)"
+fi
+
+# ===========================================================================
+# G18 (tool-config cwd vs #328): the worktree rule takes precedence over the
+# config-dir rule. A Codex app session can run in a linked worktree that the
+# app keeps under $CODEX_HOME/worktrees/<id>/<repo>; its project is the main
+# checkout (#328), and Codex sets no CLAUDE_PROJECT_DIR, so without the
+# precedence every such session would SKIP. The walk inside the config dir
+# stops at the first `.git`: only a linked-worktree FILE whose main checkout
+# sits outside every config dir and is not $HOME names the project. A `.git`
+# DIRECTORY (a marketplace clone) and a worktree of a main that is itself in
+# a config dir fall through to CLAUDE_PROJECT_DIR / SKIP as before.
+# ===========================================================================
+# g18_link <main_dir> <worktree_dir> — make <worktree_dir> a linked worktree
+# of <main_dir>: the main's .git/worktrees/<name> dir plus the worktree's
+# .git FILE, its gitdir absolute with forward slashes as git writes it.
+g18_link() {
+  local main="$1" wt="$2" name target
+  name=$(basename "$wt")
+  mkdir -p "$main/.git/worktrees/$name" "$wt"
+  target=$(native_path "$main/.git/worktrees/$name")
+  printf 'gitdir: %s\n' "${target//\\//}" > "$wt/.git"
+}
+
+echo "=== G18a: a ~/.codex worktree of a main outside the config dir names the main ==="
+H=$(fresh_home g18a)
+G18_WT="$H/.codex/worktrees/abc/myrepo"
+g18_link "$TMPDIR_ROOT/main-repo" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18a: worktree at its root names the main checkout" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+# Below the worktree root: the walk climbs to the .git file.
+mkdir -p "$G18_WT/src/deep"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT/src/deep")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18a: a worktree subdir walks up to the .git file and names the main" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+# Precedence: the worktree beats CLAUDE_PROJECT_DIR.
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18a: the worktree rule wins over CLAUDE_PROJECT_DIR" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+
+echo "=== G18b: a worktree whose main is itself in a config dir falls through ==="
+H=$(fresh_home g18b)
+G18_WT="$H/.codex/worktrees/def/wt-cfg"
+g18_link "$H/.claude/plugins/marketplaces/m/main-in-config" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18b: no CLAUDE_PROJECT_DIR -> zero POSTs" "$(call_count)" "0"
+assert_contains "G18b: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18b: CLAUDE_PROJECT_DIR names it, never the in-config main" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+echo "=== G18c: a marketplace clone (.git DIRECTORY) in ~/.claude stays config ==="
+H=$(fresh_home g18c)
+G18_CLONE="$H/.claude/plugins/marketplaces/x"
+mkdir -p "$G18_CLONE/.git" "$G18_CLONE/plugins/p"
+touch "$G18_CLONE/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_CLONE/plugins/p")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18c: no CLAUDE_PROJECT_DIR -> zero POSTs" "$(call_count)" "0"
+assert_contains "G18c: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18c: CLAUDE_PROJECT_DIR names it, never the clone" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+echo "=== G18d: a worktree whose main is \$HOME falls through (#186 boundary) ==="
+H=$(fresh_home g18d)
+G18_WT="$H/.codex/worktrees/ghi/wt-home"
+g18_link "$H" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18d: zero POSTs (never the home basename)" "$(call_count)" "0"
+assert_contains "G18d: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+echo "=== G18e: with .git outside the active marker set, the worktree rule is off ==="
+# The #328 rule rides D1 rule 1's gate (the G5b contract): a marker the
+# operator excluded cannot name a project, inside a config dir or out.
+H=$(fresh_home g18e)
+G18_WT="$H/.codex/worktrees/jkl/myrepo"
+g18_link "$TMPDIR_ROOT/main-repo" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" UM_PROJECT_MARKERS="package.json"
+assert_eq "G18e: zero POSTs" "$(call_count)" "0"
+assert_contains "G18e: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
