@@ -854,6 +854,24 @@ assert_eq "G17b: zero POSTs (no turns, no anomaly signal)" "$(call_count)" "0"
 assert_contains "G17b: skip=tool-config-cwd logged" \
   "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
 
+# G18a-mirror: the worktree rule takes precedence over the config-dir rule
+# (mirrors session-end.test.sh G18). A Codex app worktree kept under
+# $CODEX_HOME/worktrees/<id>/<repo> captures under its MAIN checkout (#328);
+# Codex sets no CLAUDE_PROJECT_DIR, so without the precedence it would SKIP.
+echo "=== G18a: a ~/.codex worktree of a main outside the config dir captures under the main ==="
+H=$(fresh_home g18a)
+G18_WT="$H/.codex/worktrees/abc/myrepo"
+mkdir -p "$TMPDIR_ROOT/main-repo/.git/worktrees/myrepo" "$G18_WT"
+G18_TARGET=$(native_path "$TMPDIR_ROOT/main-repo/.git/worktrees/myrepo")
+printf 'gitdir: %s\n' "${G18_TARGET//\\//}" > "$G18_WT/.git"
+TP="$TMPDIR_ROOT/g18a.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$G18_WT")")
+reset_calls
+run_stop_cfg "$H" "$STDIN"
+assert_eq "G18a: exit 0" "$RUN_EXIT" "0"
+assert_eq "G18a: two POSTs (one per message)" "$(call_count)" "2"
+assert_eq "G18a: turns land under the main checkout" "$(body_field 1 project)" "main-repo"
+
 # ===========================================================================
 # #267 S21: the empty-delta split — four fixture shapes (spec D10)
 # ===========================================================================

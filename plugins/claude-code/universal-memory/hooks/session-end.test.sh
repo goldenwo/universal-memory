@@ -1146,6 +1146,106 @@ else
 fi
 
 # ===========================================================================
+# G18 (tool-config cwd vs #328): the worktree rule takes precedence over the
+# config-dir rule. A Codex app session can run in a linked worktree that the
+# app keeps under $CODEX_HOME/worktrees/<id>/<repo>; its project is the main
+# checkout (#328), and Codex sets no CLAUDE_PROJECT_DIR, so without the
+# precedence every such session would SKIP. The walk inside the config dir
+# stops at the first `.git`: only a linked-worktree FILE whose main checkout
+# sits outside every config dir and is not $HOME names the project. A `.git`
+# DIRECTORY (a marketplace clone) and a worktree of a main that is itself in
+# a config dir fall through to CLAUDE_PROJECT_DIR / SKIP as before.
+# ===========================================================================
+# g18_link <main_dir> <worktree_dir> — make <worktree_dir> a linked worktree
+# of <main_dir>: the main's .git/worktrees/<name> dir plus the worktree's
+# .git FILE, its gitdir absolute with forward slashes as git writes it.
+g18_link() {
+  local main="$1" wt="$2" name target
+  name=$(basename "$wt")
+  mkdir -p "$main/.git/worktrees/$name" "$wt"
+  target=$(native_path "$main/.git/worktrees/$name")
+  printf 'gitdir: %s\n' "${target//\\//}" > "$wt/.git"
+}
+
+echo "=== G18a: a ~/.codex worktree of a main outside the config dir names the main ==="
+H=$(fresh_home g18a)
+G18_WT="$H/.codex/worktrees/abc/myrepo"
+g18_link "$TMPDIR_ROOT/main-repo" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18a: worktree at its root names the main checkout" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+# Below the worktree root: the walk climbs to the .git file.
+mkdir -p "$G18_WT/src/deep"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT/src/deep")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18a: a worktree subdir walks up to the .git file and names the main" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+# Precedence: the worktree beats CLAUDE_PROJECT_DIR.
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18a: the worktree rule wins over CLAUDE_PROJECT_DIR" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"main-repo","mode":"accepted"}'
+
+echo "=== G18b: a worktree whose main is itself in a config dir falls through ==="
+H=$(fresh_home g18b)
+G18_WT="$H/.codex/worktrees/def/wt-cfg"
+g18_link "$H/.claude/plugins/marketplaces/m/main-in-config" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18b: no CLAUDE_PROJECT_DIR -> zero POSTs" "$(call_count)" "0"
+assert_contains "G18b: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18b: CLAUDE_PROJECT_DIR names it, never the in-config main" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+echo "=== G18c: a marketplace clone (.git DIRECTORY) in ~/.claude stays config ==="
+H=$(fresh_home g18c)
+G18_CLONE="$H/.claude/plugins/marketplaces/x"
+mkdir -p "$G18_CLONE/.git" "$G18_CLONE/plugins/p"
+touch "$G18_CLONE/package.json"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_CLONE/plugins/p")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18c: no CLAUDE_PROJECT_DIR -> zero POSTs" "$(call_count)" "0"
+assert_contains "G18c: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+reset_calls
+run_session_end_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G18c: CLAUDE_PROJECT_DIR names it, never the clone" \
+  "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"project":"g17-session-repo","mode":"accepted"}'
+
+echo "=== G18d: a worktree whose main is \$HOME falls through (#186 boundary) ==="
+H=$(fresh_home g18d)
+G18_WT="$H/.codex/worktrees/ghi/wt-home"
+g18_link "$H" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN"
+assert_eq "G18d: zero POSTs (never the home basename)" "$(call_count)" "0"
+assert_contains "G18d: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+echo "=== G18e: with .git outside the active marker set, the worktree rule is off ==="
+# The #328 rule rides D1 rule 1's gate (the G5b contract): a marker the
+# operator excluded cannot name a project, inside a config dir or out.
+H=$(fresh_home g18e)
+G18_WT="$H/.codex/worktrees/jkl/myrepo"
+g18_link "$TMPDIR_ROOT/main-repo" "$G18_WT"
+STDIN=$(make_stdin "$SID" "$(native_path "$G18_WT")")
+reset_calls
+run_session_end_cfg "$H" "$STDIN" UM_PROJECT_MARKERS="package.json"
+assert_eq "G18e: zero POSTs" "$(call_count)" "0"
+assert_contains "G18e: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

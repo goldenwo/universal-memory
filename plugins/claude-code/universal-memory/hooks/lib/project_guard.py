@@ -32,9 +32,13 @@
 #      make $HOME itself look like a project.
 #   2b. cwd AT or INSIDE a tool config dir (<home>/.claude, <home>/.codex,
 #      $CLAUDE_CONFIG_DIR, $CODEX_HOME; path-boundary compare) is tool
-#      internals: CLAUDE_PROJECT_DIR replaces it when usable and outside
-#      every config dir (steps 2 and 3 then apply to it), else
-#      tool-config-cwd. The 2026-10-08 incident: a plugin cache dir named
+#      internals. FIRST the #328 worktree rule: the nearest `.git` inside
+#      the config dir, when a linked-worktree file whose main checkout is
+#      outside every config dir and not $HOME, names that main (a Codex app
+#      worktree under $CODEX_HOME/worktrees). Otherwise CLAUDE_PROJECT_DIR
+#      replaces the cwd when usable and outside every config dir (steps 2
+#      and 3 then apply to it), else tool-config-cwd. The 2026-10-08
+#      incident: a plugin cache dir named
 #      after a version (.../superpowers/6.3.0, package.json) minted the
 #      project "6.3.0". CLAUDE_PROJECT_DIR is read nowhere else.
 #   3. Marker walk-up from cwd toward the root, stopping (exclusive) at any
@@ -196,6 +200,33 @@ def _worktree_main(cur):
     return None
 
 
+def _config_worktree_main(cwd, configs, homes):
+    """The #328 rule for a cwd inside a tool config dir (Semantics 2b): the
+    main checkout to name, or None (the caller falls through to
+    CLAUDE_PROJECT_DIR / SKIP).
+
+    Walks up from cwd while still inside a config dir (the config root
+    included, nothing above it) to the FIRST dir holding `.git`, and stops
+    there. Only a linked-worktree .git FILE whose main checkout is outside
+    every config dir and is not a home candidate names a project — e.g. the
+    Codex app's $CODEX_HOME/worktrees/<id>/<repo> of a repo kept elsewhere.
+    A `.git` DIRECTORY (a marketplace clone under ~/.claude/plugins) or a
+    worktree of a main that itself sits in a config dir is tool internals."""
+    cur = cwd
+    while _inside_any(cur, configs):
+        if os.path.exists(os.path.join(cur, ".git")):
+            main = _worktree_main(cur)
+            if (main is not None and os.path.normcase(main) not in homes
+                    and not _inside_any(main, configs)):
+                return main
+            return None
+        parent = os.path.dirname(cur)
+        if parent == cur:  # fixed point (a config dir set to a root)
+            return None
+        cur = parent
+    return None
+
+
 def guard(cwd_raw, fallback_raw=""):
     # Candidate selection (#294 review catch — the old `cwd == "."` check
     # was dead: realpath absolutizes "." against the hook PROCESS's cwd, so
@@ -214,6 +245,10 @@ def guard(cwd_raw, fallback_raw=""):
     if not cwd:
         return "SKIP:non-project-cwd"
     homes = _home_candidates()
+    markers = [m.strip() for m in
+               (os.environ.get("UM_PROJECT_MARKERS") or DEFAULT_MARKERS).split(",")
+               if m.strip()]
+    git_active = ".git" in markers  # D1 rule 1's gate (comment below)
     # Step 2b (header). A home cwd never enters it — it reaches the home
     # bucket below exactly as before; a substituted cwd meets that same
     # home check next.
@@ -231,6 +266,13 @@ def guard(cwd_raw, fallback_raw=""):
             # and itself outside every config dir — the home check and the
             # walk then apply to it unchanged — else SKIP. CLAUDE_PROJECT_DIR
             # is read HERE only: an ordinary cwd still names its own project.
+            # One exception comes FIRST: a linked worktree kept in a config
+            # dir (the Codex app's $CODEX_HOME/worktrees/<id>/<repo>) names
+            # its main checkout by the #328 rule — Codex sets no
+            # CLAUDE_PROJECT_DIR, so without this every such session SKIPs.
+            main = _config_worktree_main(cwd, configs, homes) if git_active else None
+            if main is not None:
+                return _root_name(main)
             project_dir = usable(os.environ.get("CLAUDE_PROJECT_DIR", ""))
             if not project_dir or _inside_any(project_dir, configs):
                 return "SKIP:tool-config-cwd"
@@ -247,9 +289,6 @@ def guard(cwd_raw, fallback_raw=""):
         home_project = os.environ.get("UM_HOME_PROJECT", "desktop").strip()
         return home_project if home_project and not _all_dots(home_project) else "SKIP:home-cwd"
 
-    markers = [m.strip() for m in
-               (os.environ.get("UM_PROJECT_MARKERS") or DEFAULT_MARKERS).split(",")
-               if m.strip()]
     # #294 D1 — THE naming algorithm (canonical statement; every other
     # comment site is a pointer here). The walk names the project ROOT,
     # not the cwd:
@@ -278,7 +317,6 @@ def guard(cwd_raw, fallback_raw=""):
     # unit. Both naming sites route through _root_name() — the single
     # empty-basename guard (a marker at a drive root yields basename '',
     # which must SKIP, never POST {"project":""} into a server 400).
-    git_active = ".git" in markers
     cur = cwd  # case-preserving (_walkpath); homes comparisons fold both sides
     remembered = None  # nearest non-git-marker dir seen so far
     while True:
