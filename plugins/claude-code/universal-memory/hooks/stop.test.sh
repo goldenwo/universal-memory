@@ -809,6 +809,52 @@ assert_eq "G11: slug is the nearest marker dir, not SKIP and not the subdir" \
   "$(body_field 1 project)" "marker-proj"
 
 # ===========================================================================
+# G17-mirror (tool-config cwd): the write path for turns — the incident's
+# first symptom (mirrors session-end.test.sh G17, which carries the full
+# matrix). A cwd inside ~/.claude is tool internals: the plugin cache's
+# package.json minted the project "6.3.0" on 2026-10-08. CLAUDE_PROJECT_DIR
+# names the session when usable; without it the fire SKIPs as
+# tool-config-cwd, a benign class (no capture-anomaly signal). The tool env
+# vars are scrubbed first so a Claude Code or Codex parent cannot leak in.
+# ===========================================================================
+run_stop_cfg() {
+  local home="$1" stdin_json="$2"; shift 2
+  RUN_EXIT=0
+  RUN_OUT=$(env -u CLAUDE_PROJECT_DIR -u CLAUDE_CONFIG_DIR -u CODEX_HOME \
+    HOME="$home" PATH="$MOCK_BIN:$PATH" \
+    UM_SERVER_URL="http://mock.example:6335" \
+    UM_TOKEN_FILE="$home/.um/auth-token" \
+    "$@" bash "$STOP" <<< "$stdin_json" 2>&1) || RUN_EXIT=$?
+}
+G17_REPO="$TMPDIR_ROOT/g17-session-repo"; mkdir -p "$G17_REPO/.git"
+
+echo "=== G17a: plugin-cache cwd + CLAUDE_PROJECT_DIR captures under the session's repo ==="
+H=$(fresh_home g17a)
+G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+touch "$G17_PLUG/package.json"
+TP="$TMPDIR_ROOT/g17a.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$G17_PLUG")")
+reset_calls
+run_stop_cfg "$H" "$STDIN" CLAUDE_PROJECT_DIR="$(native_path "$G17_REPO")"
+assert_eq "G17a: exit 0" "$RUN_EXIT" "0"
+assert_eq "G17a: two POSTs (one per message)" "$(call_count)" "2"
+assert_eq "G17a: turns land under CLAUDE_PROJECT_DIR's repo, not the plugin version dir" \
+  "$(body_field 1 project)" "g17-session-repo"
+
+echo "=== G17b: plugin-cache cwd without CLAUDE_PROJECT_DIR skips ==="
+H=$(fresh_home g17b)
+G17_PLUG="$H/.claude/plugins/cache/x/plug/6.3.0"; mkdir -p "$G17_PLUG"
+touch "$G17_PLUG/package.json"
+TP="$TMPDIR_ROOT/g17b.jsonl"; write_transcript "$TP" 2
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$G17_PLUG")")
+reset_calls
+run_stop_cfg "$H" "$STDIN"
+assert_eq "G17b: exit 0" "$RUN_EXIT" "0"
+assert_eq "G17b: zero POSTs (no turns, no anomaly signal)" "$(call_count)" "0"
+assert_contains "G17b: skip=tool-config-cwd logged" \
+  "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=tool-config-cwd"
+
+# ===========================================================================
 # #267 S21: the empty-delta split — four fixture shapes (spec D10)
 # ===========================================================================
 echo "=== S21: empty-delta split (stalled/filtered/zero-byte/replaced) ==="
