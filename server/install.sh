@@ -1178,6 +1178,19 @@ fi
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
 [[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
 
+# A re-run keeps the capture switches already in .env when the environment does
+# not set them. The .env writer below emits ${UM_MOUNT_MODE:-ro} and
+# ${UM_MCP_WRITE_ENABLED:-false}, so without this a re-run of a capture-on
+# install silently turned capture back off.
+if [ -f "$ENV_FILE" ]; then
+	for _k in UM_MOUNT_MODE UM_MCP_WRITE_ENABLED; do
+		if [ -z "${!_k:-}" ]; then
+			_pv=$(grep -E "^$_k=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+			if [ -n "$_pv" ]; then printf -v "$_k" '%s' "$_pv"; export "${_k?}"; fi
+		fi
+	done
+fi
+
 # ─── v0.5 env-override validation ────────────────────────────────────────────
 # UM_MOUNT_MODE / UM_MCP_WRITE_ENABLED / UM_CONTAINER_USER are advanced env
 # overrides. Validate format + consistency to catch common footguns early.
