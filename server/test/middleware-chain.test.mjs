@@ -139,18 +139,21 @@ test('server with no UM_AUTH_TOKEN env set → 500 SERVER_INTERNAL', async () =>
   }
 });
 
-test('401 upgrade hint — unknown User-Agent gets plugin-upgrade message', async () => {
+test('401 setup hint — unknown User-Agent is told where the token lives and how to set up', async () => {
   const { close, url } = await startServer({ token: 'secret-token', memory: fakeMemory });
   try {
     const r = await fetch(url('/api/list'), {
       headers: { 'X-Forwarded-For': '1.2.3.4' }, // force auth
     });
     const body = await r.json();
-    assert.match(body.error.message, /upgrade plugin to v0\.6\+/);
+    assert.match(body.error.message, /~\/\.um\/auth-token/);
+    assert.match(body.error.message, /\/um-setup/);
+    // The old hint sent people to a plugin copy Claude Code never loads.
+    assert.doesNotMatch(body.error.message, /--plugin-cc|upgrade plugin/);
   } finally { await close(); }
 });
 
-test('401 upgrade hint — um-cli UA gets terse message (no upgrade hint)', async () => {
+test('401 setup hint — um-cli UA gets terse message (no setup hint)', async () => {
   const { close, url } = await startServer({ token: 'secret-token', memory: fakeMemory });
   try {
     const r = await fetch(url('/api/list'), {
@@ -160,7 +163,7 @@ test('401 upgrade hint — um-cli UA gets terse message (no upgrade hint)', asyn
       },
     });
     const body = await r.json();
-    assert.doesNotMatch(body.error.message, /upgrade plugin/);
+    assert.doesNotMatch(body.error.message, /um-setup|auth-token/);
   } finally { await close(); }
 });
 

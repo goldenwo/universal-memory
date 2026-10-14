@@ -462,6 +462,13 @@ _delegate() {
 # empty, expands to the contents quoted-individually otherwise. This is
 # the canonical fix for empty-array spread under set -u.
 # Surfaced when install-token.test.sh was wired into CI on macos-latest.
+#
+# server/install.sh and install-cli.sh both write UM_SUMMARIZER into the same
+# shell-rc block, and the one that runs last wins. Pick it once, with the same
+# detection server/install.sh uses, so both write the value it announces.
+if [[ -z "${UM_SUMMARIZER:-}" && ( $INSTALL_SERVER -eq 1 || $INSTALL_CLI -eq 1 ) ]]; then
+  if command -v claude >/dev/null 2>&1; then export UM_SUMMARIZER=claude-agent-sdk; else export UM_SUMMARIZER=openai; fi
+fi
 if [[ $INSTALL_SERVER -eq 1 ]]; then
   _delegate "server/install.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
 fi
