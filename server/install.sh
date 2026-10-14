@@ -322,20 +322,16 @@ if [ "${1:-}" = "--verify" ]; then
 
   _PORT="$(_resolved_host_port)"
   _PLUGINS_ROOT="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}"
-  _PLUGIN_DIR="$_PLUGINS_ROOT/universal-memory"
-  # `claude plugin install` (the README path) keeps the plugin in the marketplace
-  # cache, one directory per version; the legacy copy above is what
-  # install-plugin-cc.sh writes. Prefer the legacy copy, else the newest cached
-  # version.
-  if [ ! -e "$_PLUGIN_DIR" ]; then
-    _cached=""
-    for _d in "$_PLUGINS_ROOT"/cache/universal-memory/universal-memory/*/; do
-      [ -f "${_d}.claude-plugin/plugin.json" ] || continue
-      _d="${_d%/}"
-      if [ -z "$_cached" ] || _um_ver_lt "${_cached##*/}" "${_d##*/}"; then _cached="$_d"; fi
-    done
-    [ -n "$_cached" ] && _PLUGIN_DIR="$_cached"
-  fi
+  # Claude Code loads plugins only from its marketplace cache, one directory per
+  # version; take the newest. A copy at $_PLUGINS_ROOT/universal-memory (what
+  # older installers wrote) is never loaded, so it does not count.
+  _OLD_PLUGIN_COPY="$_PLUGINS_ROOT/universal-memory"
+  _PLUGIN_DIR=""
+  for _d in "$_PLUGINS_ROOT"/cache/universal-memory/universal-memory/*/; do
+    [ -f "${_d}.claude-plugin/plugin.json" ] || continue
+    _d="${_d%/}"
+    if [ -z "$_PLUGIN_DIR" ] || _um_ver_lt "${_PLUGIN_DIR##*/}" "${_d##*/}"; then _PLUGIN_DIR="$_d"; fi
+  done
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
 
   echo ""
@@ -362,10 +358,14 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # ── plugin-registered ─────────────────────────────────────────────────────
-  if [ -e "$_PLUGIN_DIR" ]; then
+  _install_cmds="claude plugin marketplace add goldenwo/universal-memory && claude plugin install universal-memory@universal-memory"
+  if [ -n "$_PLUGIN_DIR" ]; then
     _vpass "plugin-registered" "$_PLUGIN_DIR"
+  elif [ -e "$_OLD_PLUGIN_COPY" ]; then
+    _vfail "plugin-registered" "only an old copy at $_OLD_PLUGIN_COPY, which Claude Code does not load. Install it: $_install_cmds"
+    _verify_fail=1
   else
-    _vfail "plugin-registered" "plugin not installed (looked in $_PLUGIN_DIR and its marketplace cache). Install it: claude plugin marketplace add goldenwo/universal-memory && claude plugin install universal-memory@universal-memory"
+    _vfail "plugin-registered" "plugin not installed (no marketplace copy under $_PLUGINS_ROOT/cache). Install it: $_install_cmds"
     _verify_fail=1
   fi
 

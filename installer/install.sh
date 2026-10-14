@@ -354,7 +354,7 @@ fi
 
 if [[ $INSTALL_ALL -eq 1 ]]; then
   INSTALL_SERVER=1
-  [[ -d "${HOME:-}/.claude" ]] && INSTALL_PLUGIN_CC=1
+  command -v claude >/dev/null 2>&1 && INSTALL_PLUGIN_CC=1  # the plugin installs through the claude CLI
   [[ -d "${HOME:-}/.codex" ]] && INSTALL_PLUGIN_CODEX=1
   INSTALL_CLI=1
 fi
