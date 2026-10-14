@@ -56,3 +56,25 @@ test('an existing history file the server cannot write falls back to /tmp', () =
   const r = resolveHistoryDbPath({ MEM0_HISTORY_DB_PATH: path.join(tmp(), 'history.db') }, denying('EACCES', 'file'), noMount());
   assert.deepEqual([r.path, r.fellBack], [EPHEMERAL_HISTORY_DB_PATH, true]);
 });
+
+// countersDbPath() must follow the same rule, or a second process in the
+// container (smoke's S10 reader) looks at a different file than the server
+// writes — the first CI run of this change failed exactly so.
+test('countersDbPath sits next to the resolved history DB, fallback included', async (t) => {
+  const { countersDbPath } = await import('../lib/capture-events.mjs');
+  const saved = { h: process.env.MEM0_HISTORY_DB_PATH, c: process.env.UM_COUNTERS_DB_PATH };
+  t.after(() => {
+    for (const [k, v] of [['MEM0_HISTORY_DB_PATH', saved.h], ['UM_COUNTERS_DB_PATH', saved.c]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+  delete process.env.UM_COUNTERS_DB_PATH;
+  const dir = tmp();
+  process.env.MEM0_HISTORY_DB_PATH = path.join(dir, 'history.db');
+  assert.equal(countersDbPath(), path.join(dir, 'um-counters.db'));
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    // An uncreatable location (non-root under /proc) falls back with the history DB.
+    process.env.MEM0_HISTORY_DB_PATH = '/proc/um-history-test/history.db';
+    assert.equal(countersDbPath(), path.join(path.dirname(EPHEMERAL_HISTORY_DB_PATH), 'um-counters.db'));
+  }
+});
