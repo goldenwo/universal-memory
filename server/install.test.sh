@@ -2054,6 +2054,30 @@ TVL_OUT=$(env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 
   HOME="$T/home" bash "$T/server/install.sh" --verify 2>&1) || true
 assert_contains "TVL: plugin-registered fails" "$(echo "$TVL_OUT" | grep plugin-registered)" "❌"
 assert_contains "TVL: says the old copy is not loaded" "$(echo "$TVL_OUT" | grep plugin-registered)" "does not load"
+# ─── THD: the installer creates the history dir before the stack starts ──────
+# compose mounts ${UM_HISTORY_DIR:-./data/mem0-history} at /var/lib/mem0. A host
+# path Docker creates is root-owned, so the server (node or the host user) could
+# not write it and would fall back to /tmp. The fake docker records whether the
+# dir already existed when `compose up` ran.
+echo ""
+echo "=== THD: data/mem0-history exists before compose up ==="
+T="$TMPROOT/thd"
+mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+cat > "$T/bin/docker" <<FAKE
+#!/usr/bin/env bash
+args="\$*"
+if [[ "\$args" == *"compose version"* ]]; then echo "Docker Compose version v2.27.0"; exit 0; fi
+if [[ "\$args" == *" up "* || "\$args" == *" up" ]]; then [ -d "$T/server/data/mem0-history" ] && echo yes > "$T/up-saw-dir" || echo no > "$T/up-saw-dir"; fi
+exit 0
+FAKE
+chmod +x "$T/bin/docker"
+run_install "$T/bin" "$T/server/install.sh" \
+  UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash HOME="$T/home" >/dev/null || true
+assert_eq "THD: compose up ran with the history dir already there" "$(cat "$T/up-saw-dir" 2>/dev/null)" "yes"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

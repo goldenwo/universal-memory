@@ -63,6 +63,16 @@ _compose_hint() { printf 'cd %s && docker compose %s' "$SCRIPT_DIR" "$*"; }
 #
 # This wrapper centralizes the file selection so every `docker compose`
 # call below honors the same mode without each site repeating the logic.
+# The host dir compose mounts at /var/lib/mem0 (mem0 history + um-counters.db).
+# Created here, as the installing user, before any `compose up`: a dir Docker
+# creates is root-owned, the container could not write it, and the server would
+# fall back to /tmp and forget its counters on every restart.
+_um_ensure_history_dir() {
+	local _d="${UM_HISTORY_DIR:-./data/mem0-history}"
+	case "$_d" in /*) ;; *) _d="$SCRIPT_DIR/${_d#./}" ;; esac
+	mkdir -p "$_d" 2>/dev/null || warn "Could not create $_d — mem0 history and the capture counters will reset on restart until it exists and the container user can write it."
+}
+
 _compose() {
 	local _files=(-f "$COMPOSE_FILE")
 	[ "${UM_BUILD_LOCAL:-0}" = "1" ] && _files+=(-f "$BUILD_OVERRIDE_FILE")
@@ -818,6 +828,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 	echo "[upgrade] Step 4/5 — swapping the container (compose owns ports/mounts/network)..."
 	_UPG_SWAPPED=1
 	_UPG_SWAP_RC=0
+	_um_ensure_history_dir
 	_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_SWAP_RC=$?
 
 	# ── Step 5/5: health-verify, else auto-rollback ──────────────────────────
@@ -1682,6 +1693,7 @@ else
 	else
 		info "Pulling images from GHCR (set UM_BUILD_LOCAL=1 to build from source)..."
 	fi
+	_um_ensure_history_dir
 	_compose up -d 2>&1 | sed 's/^/[compose] /'
 
 	# ─── Poll /health until ready ─────────────────────────────────────────────────

@@ -61,6 +61,12 @@ services:
       # makes the container ALWAYS listen on 6335 and leaves MEM0_MCP_PORT
       # purely host-side. Pinned by test/compose-contract.test.mjs.
       MEM0_MCP_PORT: "6335"
+      # mem0's history DB, and um-counters.db next to it (capture counters,
+      # reaction ledger), live on the host dir mounted at /var/lib/mem0 below so
+      # they survive a restart. .env can point it elsewhere. If the dir is not
+      # writable the server falls back to /tmp and logs HISTORY_DB_FALLBACK.
+      # Pinned by test/compose-contract.test.mjs.
+      MEM0_HISTORY_DB_PATH: "${MEM0_HISTORY_DB_PATH:-/var/lib/mem0/history.db}"
     # UM_CONTAINER_USER lets CI / automated setups pin the container UID:GID
     # to match the host user so files written into the rw-mounted vault are
     # owned by the host user (avoids cross-user cleanup EACCES). Defaults to
@@ -75,17 +81,12 @@ services:
     user: "${UM_CONTAINER_USER:-node}"
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
-      # Optional: persist mem0's history DB across container restarts.
-      # Default MEM0_HISTORY_DB_PATH is /tmp/mem0-history.db — ephemeral,
-      # cleared every restart. To keep mem0's edit/dedup history, uncomment
-      # the next line AND set MEM0_HISTORY_DB_PATH=/var/lib/mem0/history.db
-      # in .env. Host path './data/mem0-history' is created on first up.
-      # The UM-owned capture counters DB (um-counters.db, spec §6 / #171)
-      # defaults to the SAME directory as MEM0_HISTORY_DB_PATH, so this one
-      # mount durably persists both files. Without it the counters still
-      # function on ephemeral /tmp storage (best-effort durability, cleared on
-      # restart). Override the location with UM_COUNTERS_DB_PATH in .env.
-      # - ./data/mem0-history:/var/lib/mem0
+      # mem0's history DB + the UM capture counters DB (um-counters.db, spec
+      # §6 / #171) — see MEM0_HISTORY_DB_PATH above. install.sh creates the
+      # host dir as the installing user so the container can write it; a dir
+      # Docker creates for you is root-owned and leaves the server on /tmp
+      # (it says so in the log). UM_COUNTERS_DB_PATH moves the counters alone.
+      - ${UM_HISTORY_DIR:-./data/mem0-history}:/var/lib/mem0
     ports:
       - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"
     depends_on:

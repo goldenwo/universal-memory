@@ -79,6 +79,7 @@ import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
+import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal, umBouncerTotal } from './lib/metrics.mjs';
@@ -462,6 +463,17 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
 }
 
 export async function initMemory() {
+	// The history DB's dir must be writable before mem0 opens it; an unwritable
+	// one (a Docker-created, root-owned bind mount) falls back to /tmp. The env is
+	// rewritten so countersDbPath(), which reads it lazily, follows the same dir.
+	const history = resolveHistoryDbPath(process.env);
+	if (history.fellBack) {
+		getLogger().warn(
+			{ code: 'HISTORY_DB_FALLBACK', configured: history.configured, reason: history.reason, using: history.path },
+			'[mem0-mcp] MEM0_HISTORY_DB_PATH is not writable; using /tmp, so mem0 history and the capture counters reset on restart. Make the host dir behind /var/lib/mem0 writable by the container user (see UM_CONTAINER_USER).',
+		);
+		process.env.MEM0_HISTORY_DB_PATH = history.path;
+	}
 	memory = new Memory({
 		version: 'v1.1',
 		embedder: getEmbedderConfig(process.env),

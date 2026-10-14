@@ -79,3 +79,20 @@ test('compose contract: MEM0_MCP_PORT stays the host side of the mapping', () =>
   const usesVar = ports.some((e) => (typeof e === 'object' ? JSON.stringify(e) : String(e)).includes('MEM0_MCP_PORT'));
   assert.ok(usesVar, 'MEM0_MCP_PORT no longer selects the published host port');
 });
+
+test('compose contract: mem0 history + capture counters persist by default', () => {
+  // A default install kept mem0's history DB and um-counters.db (next to it) in
+  // the container's /tmp, so both reset on every restart (2026-10-14 clean-room
+  // install). The shipped stack mounts a host dir at /var/lib/mem0 and points
+  // MEM0_HISTORY_DB_PATH into it unless .env says otherwise; the server falls
+  // back to /tmp, with a warning, when that dir is not writable.
+  const env = memoryServer.environment;
+  const value = Array.isArray(env)
+    ? env.find((e) => String(e).startsWith('MEM0_HISTORY_DB_PATH='))?.split('=').slice(1).join('=')
+    : env.MEM0_HISTORY_DB_PATH;
+  assert.ok(value, 'memory-server.environment has no MEM0_HISTORY_DB_PATH');
+  assert.match(String(value), /^\$\{MEM0_HISTORY_DB_PATH:-\/var\/lib\/mem0\/[^}]+\}$/,
+    'MEM0_HISTORY_DB_PATH must default into /var/lib/mem0 and still let .env override it');
+  const volumes = (memoryServer.volumes ?? []).map((v) => (typeof v === 'object' ? `${v.source}:${v.target}` : String(v)));
+  assert.ok(volumes.some((v) => /:\/var\/lib\/mem0(:rw)?$/.test(v)), `no volume mounted at /var/lib/mem0 (volumes: ${volumes.join(', ')})`);
+});
