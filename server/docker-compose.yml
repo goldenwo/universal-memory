@@ -61,12 +61,6 @@ services:
       # makes the container ALWAYS listen on 6335 and leaves MEM0_MCP_PORT
       # purely host-side. Pinned by test/compose-contract.test.mjs.
       MEM0_MCP_PORT: "6335"
-      # mem0's history DB, and um-counters.db next to it (capture counters,
-      # reaction ledger), live on the host dir mounted at /var/lib/mem0 below so
-      # they survive a restart. .env can point it elsewhere. If the dir is not
-      # writable the server falls back to /tmp and logs HISTORY_DB_FALLBACK.
-      # Pinned by test/compose-contract.test.mjs.
-      MEM0_HISTORY_DB_PATH: "${MEM0_HISTORY_DB_PATH:-/var/lib/mem0/history.db}"
     # UM_CONTAINER_USER lets CI / automated setups pin the container UID:GID
     # to match the host user so files written into the rw-mounted vault are
     # owned by the host user (avoids cross-user cleanup EACCES). Defaults to
@@ -82,10 +76,15 @@ services:
     volumes:
       - ${UM_VAULT_DIR}:/vault:${UM_MOUNT_MODE:-ro}
       # mem0's history DB + the UM capture counters DB (um-counters.db, spec
-      # §6 / #171) — see MEM0_HISTORY_DB_PATH above. install.sh creates the
-      # host dir as the installing user so the container can write it; a dir
-      # Docker creates for you is root-owned and leaves the server on /tmp
-      # (it says so in the log). UM_COUNTERS_DB_PATH moves the counters alone.
+      # §6 / #171). With MEM0_HISTORY_DB_PATH unset, the server (1.27.1+) keeps
+      # both here so they survive a restart; older images ignore the mount and
+      # use /tmp, which is why MEM0_HISTORY_DB_PATH is not set in `environment:`
+      # (an older image would open a file on a mount it may not be able to
+      # write). install.sh creates the host dir as the installing user so the
+      # container can write it; a dir Docker creates is root-owned and leaves
+      # the server on /tmp (it logs HISTORY_DB_FALLBACK). MEM0_HISTORY_DB_PATH
+      # or UM_COUNTERS_DB_PATH in .env still move them. Pinned by
+      # test/compose-contract.test.mjs.
       - ${UM_HISTORY_DIR:-./data/mem0-history}:/var/lib/mem0
     ports:
       - "${MEM0_MCP_PORT:-127.0.0.1:6335}:6335"

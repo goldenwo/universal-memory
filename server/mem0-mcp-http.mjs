@@ -463,17 +463,18 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
 }
 
 export async function initMemory() {
-	// The history DB's dir must be writable before mem0 opens it; an unwritable
-	// one (a Docker-created, root-owned bind mount) falls back to /tmp. The env is
-	// rewritten so countersDbPath(), which reads it lazily, follows the same dir.
+	// Pick the history DB's home before mem0 opens it: MEM0_HISTORY_DB_PATH, else
+	// the compose mount at /var/lib/mem0 when it is there, else /tmp — and /tmp
+	// whenever the wanted place is not writable. The env is set to the result so
+	// countersDbPath(), which reads it lazily, puts um-counters.db beside it.
 	const history = resolveHistoryDbPath(process.env);
 	if (history.fellBack) {
 		getLogger().warn(
-			{ code: 'HISTORY_DB_FALLBACK', configured: history.configured, reason: history.reason, using: history.path },
-			'[mem0-mcp] MEM0_HISTORY_DB_PATH is not writable; using /tmp, so mem0 history and the capture counters reset on restart. Make the host dir behind /var/lib/mem0 writable by the container user (see UM_CONTAINER_USER).',
+			{ code: 'HISTORY_DB_FALLBACK', wanted: history.configured, reason: history.reason, using: history.path },
+			'[mem0-mcp] the history DB location is not writable; using /tmp, so mem0 history and the capture counters reset on restart. Make the host dir mounted at /var/lib/mem0 (server/data/mem0-history) writable by the container user (see UM_CONTAINER_USER).',
 		);
-		process.env.MEM0_HISTORY_DB_PATH = history.path;
 	}
+	process.env.MEM0_HISTORY_DB_PATH = history.path;
 	memory = new Memory({
 		version: 'v1.1',
 		embedder: getEmbedderConfig(process.env),
