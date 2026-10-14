@@ -1934,6 +1934,64 @@ TVC_OUT=$(env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 
 assert_contains "TVC: plugin-registered passes on the cache" "$(echo "$TVC_OUT" | grep plugin-registered)" "✅"
 assert_contains "TVC: the newest cached version is reported" "$(echo "$TVC_OUT" | grep version-plugin)" "1.27.0"
 assert_not_contains "TVC: no dead docs/ pointer" "$TVC_OUT" "docs/claude-code-plugin.md"
+# ─── TCU: a fresh Linux install pins the container user to the host user ─────
+# The container runs as `node` (uid 1000) unless UM_CONTAINER_USER is set, and
+# the vault is created by the host user. For any other uid (Ubuntu cloud images
+# reserve 1000 for `ubuntu`, so a second user is 1001), turning writes on fails
+# every capture with EACCES on /vault. Found by the 2026-10-14 clean-room
+# install. Fake `id`/`uname` fix the identity so the test reads the same on any
+# runner.
+_make_identity() {
+  local dest="$1" uid="$2" gid="$3" os="${4:-Linux}"
+  cat > "$dest/id" <<FAKE
+#!/usr/bin/env bash
+case "\$1" in -u) echo $uid ;; -g) echo $gid ;; -un) echo alex ;; *) echo "uid=$uid gid=$gid" ;; esac
+FAKE
+  printf '#!/usr/bin/env bash\necho %s\n' "$os" > "$dest/uname"
+  chmod +x "$dest/id" "$dest/uname"
+}
+_tcu_install() {
+  local t="$1"
+  run_install "$t/bin" "$t/server/install.sh" \
+    UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$t/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+    UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$t/plugins" UM_SKIP_KEY_VALIDATION=1 \
+    SHELL=/bin/bash HOME="$t/home"
+}
+echo ""
+echo "=== TCU: container user pinned on fresh Linux installs ==="
+for case in "tcu1:1001:1001:Linux:fresh:1001:1001" "tcu2:1000:1000:Linux:fresh:" \
+            "tcu3:501:20:Darwin:fresh:" "tcu4:1001:1001:Linux:rerun:"; do
+  IFS=: read -r name uid gid os kind want_u want_g <<< "$case"
+  T="$TMPROOT/$name"
+  mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+  make_fakebin "$T/bin" 200; _make_identity "$T/bin" "$uid" "$gid" "$os"
+  make_isolated_server "$T/server" >/dev/null
+  [ "$kind" = rerun ] && printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+  TCU_OUT=$(_tcu_install "$T") || true
+  TCU_LINE=$(grep -E '^UM_CONTAINER_USER=' "$T/server/.env" 2>/dev/null || true)
+  if [ -n "$want_u" ]; then
+    assert_eq "TCU $name ($os uid $uid, $kind): pinned to the host user" "$TCU_LINE" "UM_CONTAINER_USER=$want_u:$want_g"
+  else
+    assert_eq "TCU $name ($os uid $uid, $kind): left unset" "$TCU_LINE" ""
+  fi
+done
+
+# ─── TNS: the namespace prompt has a default ─────────────────────────────────
+# Interactive installs asked for "Memory namespace / user ID" with no default
+# and looped on Enter ("Required. Please enter a value."), so a first-time
+# reader had to invent an answer. --yes already used `default`; Enter now does.
+echo ""
+echo "=== TNS: interactive namespace prompt accepts Enter ==="
+T="$TMPROOT/tns"
+mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+TNS_OUT=$(printf '\n%.0s' $(seq 1 40) | env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 UM_OPENAI_API_KEY=sk-testkey12345 UM_VAULT_DIR="$T/vault" \
+  CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$T/home" \
+  bash "$T/server/install.sh" 2>&1) || true
+assert_not_contains "TNS: no required-value loop" "$TNS_OUT" "Required. Please enter a value."
+assert_eq "TNS: Enter picks the default namespace" "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=default"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

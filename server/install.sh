@@ -393,7 +393,7 @@ if [ "${1:-}" = "--verify" ]; then
   if python3 -c 'import yaml' 2>/dev/null; then
     _vpass "pyyaml" ""
   else
-    _vfail "pyyaml" "pyyaml not found. Run: pip install pyyaml"
+    _vfail "pyyaml" "pyyaml not found. Install it: sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml"
     _verify_fail=1
   fi
 
@@ -1039,7 +1039,7 @@ ok "Docker is running and server files are present."
 # Shell hooks (Phase C) use python3 + pyyaml to parse session frontmatter.
 # Flag missing pyyaml now so users don't hit cryptic errors at hook time.
 python3 -c 'import yaml' 2>/dev/null || {
-	fail "pyyaml is not available. Install it with: pip install pyyaml"
+	fail "pyyaml is not available. Install it: sudo apt install python3-yaml (Debian/Ubuntu; pip refuses on 24.04), or pip install pyyaml (macOS / venv)"
 }
 ok "pyyaml is available."
 
@@ -1157,7 +1157,7 @@ else
 	# $var names below are hardcoded literals from this script — never user input.
 	# Indirect expansion ("${!var:-}") and the eval inside prompt() are safe.
 	prompt OPENAI_API_KEY "OpenAI API key (input hidden)" "" 1
-	prompt MEM0_USER_ID   "Memory namespace / user ID (any string; identifies this memory store)" "" 0
+	prompt MEM0_USER_ID   "Memory namespace / user ID (any string; identifies this memory store)" "default" 0
 	prompt MEM0_MCP_PORT  "HTTP port to expose" "6335" 0
 
 	# UM_OPENAI_API_KEY defaults to whatever OPENAI_API_KEY was just entered
@@ -1195,6 +1195,20 @@ _writes_effective="${UM_MCP_WRITE_ENABLED:-false}"
 if [ "$_mount_mode_effective" = "rw" ] \
 	&& [ "$_writes_effective" != "true" ] && [ "$_writes_effective" != "1" ]; then
 	fail "UM_MOUNT_MODE=rw requires UM_MCP_WRITE_ENABLED=true. A rw mount without MCP writes is attack surface with no feature benefit — either enable writes explicitly, or leave mount as ro."
+fi
+# A fresh Linux install pins the container to the host user. The image runs as
+# `node` (uid 1000) and the vault is created by whoever runs this script, so any
+# other uid gets EACCES on /vault the moment writes are turned on (Ubuntu cloud
+# images give 1000 to `ubuntu`; the next user is 1001). Fresh installs only: a
+# re-run keeps the identity that already wrote the vault. macOS Docker Desktop
+# maps bind-mount ownership itself, and root is refused below, so both keep node.
+if [ -z "${UM_CONTAINER_USER:-}" ] && [ "$UM_WAS_EXISTING_INSTALL" = "0" ] \
+	&& [ "$(uname -s)" = "Linux" ]; then
+	_host_uid=$(id -u); _host_gid=$(id -g)
+	if [ "$_host_uid" != "1000" ] && [ "$_host_uid" != "0" ] && [ "$_host_gid" != "0" ]; then
+		UM_CONTAINER_USER="$_host_uid:$_host_gid"
+		info "Container user pinned to $UM_CONTAINER_USER (your uid is not the image's 1000), so the server can write your vault."
+	fi
 fi
 # UM_CONTAINER_USER: pins the container UID:GID to match the host user for rw-
 # mount installs (avoids cross-user EACCES on vault writes). Accept either the
