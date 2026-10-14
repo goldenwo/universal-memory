@@ -70,7 +70,7 @@ FAKE
 }
 
 # run_plugin_cc <path_prefix> [env_var=val ...] — run the installer with REPO_ROOT pinned.
-# shellcheck disable=SC2317  # invoked indirectly through _tx_capture
+# shellcheck disable=SC2317,SC2329  # invoked indirectly through _tx_capture (SC2329 is the newer code)
 run_plugin_cc() {
   local prefix="$1"; shift
   env PATH="$prefix:$PATH" _UM_REPO_ROOT="$REPO_ROOT" "$@" bash "$PLUGIN_CC_SH" --yes 2>&1
