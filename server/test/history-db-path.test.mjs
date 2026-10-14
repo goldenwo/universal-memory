@@ -72,9 +72,11 @@ test('countersDbPath sits next to the resolved history DB, fallback included', a
   const dir = tmp();
   process.env.MEM0_HISTORY_DB_PATH = path.join(dir, 'history.db');
   assert.equal(countersDbPath(), path.join(dir, 'um-counters.db'));
-  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
-    // An uncreatable location (non-root under /proc) falls back with the history DB.
-    process.env.MEM0_HISTORY_DB_PATH = '/proc/um-history-test/history.db';
-    assert.equal(countersDbPath(), path.join(path.dirname(EPHEMERAL_HISTORY_DB_PATH), 'um-counters.db'));
-  }
+  // An uncreatable location falls back together with the history DB. A dir under
+  // a regular file fails fast everywhere (ENOTDIR/ENOENT, root included); a
+  // first draft used /proc, where Linux's recursive mkdirSync never returns.
+  const blocker = path.join(tmp(), 'a-file');
+  fs.writeFileSync(blocker, '');
+  process.env.MEM0_HISTORY_DB_PATH = path.join(blocker, 'sub', 'history.db');
+  assert.equal(countersDbPath(), path.join(path.dirname(EPHEMERAL_HISTORY_DB_PATH), 'um-counters.db'));
 });
