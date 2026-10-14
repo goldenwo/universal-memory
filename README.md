@@ -111,11 +111,45 @@ Then run `/um-setup` inside Claude Code once. Accept `http://localhost:6335`. On
 
 Open a session. The Stop hook streams turns to the server, and the SessionEnd hook triggers a server-side summary. Nothing else is required.
 
-**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: the wizard turns that on, but a server installed with `--yes` or by hand needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`. Server must be ≥ v1.7.0.
+**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on, but a server wired by hand needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`. Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 
 At the start of the next session, the SessionStart hook detects the unprocessed captures, writes a fresh `state.md`, and injects it as context before your first message. Run `/um-checkpoint` any time mid-session to refresh `state.md` on demand.
+
+### Install with an AI agent
+
+Paste this into Claude Code, or any coding agent that can run a shell:
+
+> Install universal-memory by following the "Install with an AI agent" section of https://github.com/goldenwo/universal-memory/blob/main/README.md. My OpenAI API key is in the `OPENAI_API_KEY` environment variable. Don't print it, and don't ask me to paste it.
+
+**For the agent:**
+
+1. **Check the prerequisites.** Run `docker compose version`, `git --version`, `curl --version` and `python3 -c 'import yaml'`.
+   - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
+   - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line.
+2. **Install, non-interactively:**
+   ```bash
+   git clone https://github.com/goldenwo/universal-memory
+   cd universal-memory
+   bash installer/install.sh --yes
+   ```
+   This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
+3. **Verify.** `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
+4. **Point the plugin at the server.** Run its setup script, which reads the saved token:
+   ```bash
+   bash "$(ls -d ~/.claude/plugins/cache/universal-memory/universal-memory/*/ | sort -V | tail -1)hooks/um-setup.sh" --endpoint http://localhost:6335
+   ```
+5. **Tell the user to restart Claude Code.** Capture and the session-start briefing begin with the next session.
+
+If a step fails:
+
+| Message | Fix |
+|---|---|
+| `required tools not found: …` | Install what it names. |
+| `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in this shell. |
+| `writes are DISABLED (HTTP 403)` | Set `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`, then run `docker compose up -d` from `server/`. |
+| `rejected the token (HTTP 401)` | `~/.um/auth-token` doesn't match `UM_AUTH_TOKEN` in `server/.env`. |
 
 ### Install the `um` CLI
 

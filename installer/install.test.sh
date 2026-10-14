@@ -409,10 +409,18 @@ if echo "$TWC_OUT" | grep -q "Capture: on"; then pass "T-WIZ-CAPTURE: summary sa
 TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: an explicit export wins"; else fail "T-WIZ-CAPTURE: explicit export overridden (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
-# Control: a --yes install does not change the default.
+# --yes / flag installs turn capture on too (operator ruling 2026-10-14, so an
+# AI agent driving the non-interactive path gets a server that accepts
+# captures); an explicit export still wins there as well. The --cli-only
+# control installs no server, so nothing is exported.
 TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
-if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --yes keeps the default"; else fail "T-WIZ-CAPTURE: --yes changed (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=true mount=rw"; then pass "T-WIZ-CAPTURE: --yes server install turns capture on"; else fail "T-WIZ-CAPTURE: --yes capture not on (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: --yes honours an explicit export"; else fail "T-WIZ-CAPTURE: --yes overrode the export (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --cli --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE"; then fail "T-WIZ-CAPTURE: --cli ran the server installer"; else pass "T-WIZ-CAPTURE: --cli-only installs no server"; fi
 rm -rf "$TWC"
 # ─── T-SUMMARIZER: both installers are handed one UM_SUMMARIZER ──────────────
 # server/install.sh announced "defaulting UM_SUMMARIZER=claude-agent-sdk" when a

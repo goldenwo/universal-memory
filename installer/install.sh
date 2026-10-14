@@ -282,6 +282,19 @@ check_prereqs() {
   fi
 }
 
+# A server install turns capture on (operator rulings 2026-10-14: the wizard
+# first, then --yes and flag installs too, so an AI agent driving the
+# non-interactive path gets a working server). A server that refuses every
+# capture is not what anyone installing asked for, and turning it on later
+# meant a .env edit plus a restart. An explicit export still wins
+# (UM_MCP_WRITE_ENABLED=false keeps a read-only server).
+_um_capture_default() {
+  if [[ $INSTALL_SERVER -eq 1 ]]; then
+    export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
+    export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}"
+  fi
+}
+
 # Mode selection
 if [[ $FORCE_WIZARD -eq 1 ]]; then
   MODE=wizard
@@ -326,15 +339,7 @@ if [[ $MODE == wizard ]]; then
         ;;
   esac
   check_prereqs
-  # A wizard server install turns capture on (operator ruling 2026-10-14): a
-  # server that refuses every capture is not what a wizard user asked for, and
-  # turning it on later meant a .env edit plus a restart. An explicit export
-  # still wins; --yes / flag installs keep the old default (off) for automation.
-  if [[ $INSTALL_SERVER -eq 1 ]]; then
-    export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
-    export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}"
-  fi
-
+  _um_capture_default
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
   # v0.7: 4-path provider picker replaces the v0.6 single-OpenAI-key prompt.
   # wizard_menu_providers exports UM_*_PROVIDER + collects keys for the chosen
@@ -472,6 +477,9 @@ fi
 # Tell server/install.sh the plugin installs right after it, so it doesn't
 # advise the same two `claude plugin` commands first.
 [[ $INSTALL_PLUGIN_CC -eq 1 ]] && export UM_INSTALLING_PLUGIN_CC=1
+# Non-wizard installs (--yes, flags, no TTY) get the same capture default the
+# wizard applied above; idempotent when the wizard already ran it.
+_um_capture_default
 if [[ $INSTALL_SERVER -eq 1 ]]; then
   _delegate "server/install.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
 fi
