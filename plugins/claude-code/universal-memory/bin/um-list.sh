@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
+# shellcheck source=lib/um-json.sh
+source "$SCRIPT_DIR/lib/um-json.sh"
 LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # #159 T6b: file-aware endpoint resolution — same composed semantic as the
@@ -73,11 +75,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "um list: jq is required" >&2
-  exit 3
-fi
-
 # Build query string
 params=()
 [ "$FULL" = "1" ] && params+=("full=1")
@@ -95,4 +92,4 @@ response=$(_um_curl_wrap "um-list" -Ssm 10 --fail-with-body \
   "$URL") || exit 3
 
 # /api/list returns {results: [...]} envelope. Map the inner array.
-echo "$response" | jq -c '.results[]'
+echo "$response" | _um_json_results

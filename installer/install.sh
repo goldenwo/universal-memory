@@ -469,6 +469,9 @@ _delegate() {
 if [[ -z "${UM_SUMMARIZER:-}" && ( $INSTALL_SERVER -eq 1 || $INSTALL_CLI -eq 1 ) ]]; then
   if command -v claude >/dev/null 2>&1; then export UM_SUMMARIZER=claude-agent-sdk; else export UM_SUMMARIZER=openai; fi
 fi
+# Tell server/install.sh the plugin installs right after it, so it doesn't
+# advise the same two `claude plugin` commands first.
+[[ $INSTALL_PLUGIN_CC -eq 1 ]] && export UM_INSTALLING_PLUGIN_CC=1
 if [[ $INSTALL_SERVER -eq 1 ]]; then
   _delegate "server/install.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
 fi

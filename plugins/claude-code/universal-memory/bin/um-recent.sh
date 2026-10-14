@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
+# shellcheck source=lib/um-json.sh
+source "$SCRIPT_DIR/lib/um-json.sh"
 LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # shellcheck source=../hooks/lib/resolve-project.sh
@@ -81,11 +83,6 @@ done
 
 project="$(resolve_project "$CLI_PROJECT")" || exit $?
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "um recent: jq is required" >&2
-  exit 3
-fi
-
 URL="$SERVER/api/recent/$project?limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
@@ -94,4 +91,4 @@ response=$(_um_curl_wrap "um-recent" -Ssm 10 --fail-with-body \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3
 
-echo "$response" | jq -c '.results // [] | .[]'
+echo "$response" | _um_json_results
