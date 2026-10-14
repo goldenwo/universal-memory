@@ -80,7 +80,7 @@ fi
 
 URL="$SERVER/api/state/$project"
 
-response=$(_um_curl_wrap "um-state" -fSsm 10 --fail-with-body \
+response=$(_um_curl_wrap "um-state" -Ssm 10 --fail-with-body \
   -H "Authorization: Bearer ${AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3

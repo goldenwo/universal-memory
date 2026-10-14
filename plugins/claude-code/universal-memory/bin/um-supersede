@@ -132,7 +132,7 @@ ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
 OLD_REL="${OLD_PATH#"$VAULT"/}"
 NEW_REL="${NEW_ABS#"$VAULT"/}"
 for rel in "$NEW_REL" "$OLD_REL"; do
-  _um_curl_wrap "um-supersede" -fSsm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
+  _um_curl_wrap "um-supersede" -Ssm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
     -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
     -H "User-Agent: um-cli/0.6" \
     -H 'Content-Type: application/json' \

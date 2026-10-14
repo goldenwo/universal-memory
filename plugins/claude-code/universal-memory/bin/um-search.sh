@@ -108,7 +108,7 @@ URL="$SERVER/api/search?q=$Q_ENC&limit=$LIMIT"
 [ "$FULL" = "1" ] && URL="$URL&full=1"
 
 # Fetch
-response=$(_um_curl_wrap "um-search" -fSsm 10 --fail-with-body \
+response=$(_um_curl_wrap "um-search" -Ssm 10 --fail-with-body \
   -H "Authorization: Bearer ${AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3

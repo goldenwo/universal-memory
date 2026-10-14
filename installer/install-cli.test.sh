@@ -412,6 +412,43 @@ _tx_capture T11 env PATH="$T11/bin:$PATH" HOME="$T11_HOME" \
   "$_BASH_BIN11" "$INSTALL_CLI" --yes --um-install-dir
 assert_exit_nonzero "T11: --um-install-dir with no value exits non-zero" "$TX_EXIT_T11"
 
+# ─── T12: the installed dispatcher reaches its subcommands ───────────────────
+# The dispatcher is copied into ~/.local/bin, but its subcommands live in CLI_DIR,
+# and the .sh subcommands source lib/um-curl-wrap.sh from their own directory.
+# Before the fix, every `um <sub>` failed with "subcommand script missing" and,
+# once found, with "lib/um-curl-wrap.sh: No such file or directory". Run with a
+# shell env that sources nothing (no UM_CLI_DIR / UM_LIB_DIR), as cron or a
+# script does. `--help` needs no server, so this is the subcommand's own usage.
+echo ""
+echo "=== T12: installed um reaches every subcommand ==="
+T12_ENV=(env -u UM_CLI_DIR -u UM_LIB_DIR PATH="$T1_HOME/.local/bin:$PATH" HOME="$T1_HOME")
+for sub in search state recent list tail; do
+  T12_OUT=$("${T12_ENV[@]}" um "$sub" --help 2>&1) || true
+  assert_not_contains "T12: um $sub finds its script" "$T12_OUT" "subcommand script missing"
+  assert_not_contains "T12: um $sub finds its lib" "$T12_OUT" "No such file or directory"
+  assert_contains "T12: um $sub prints its own usage" "$T12_OUT" "um $sub"
+done
+for sub in forget supersede; do
+  T12_OUT=$("${T12_ENV[@]}" um "$sub" --help 2>&1) || true
+  assert_not_contains "T12: um $sub finds its binary" "$T12_OUT" "pre-existing binary missing"
+done
+
+# ─── T13: the installed CLI's HTTP subcommands run the real curl ─────────────
+# The four read subcommands passed `-f` together with `--fail-with-body`, which
+# curl 8.x (Ubuntu 24.04's 8.5, Debian's 8.14) rejects as a usage error before
+# any request is sent. The per-script tests stub curl, so only a real binary
+# catches it. Port 9 (discard) on loopback is closed: a valid invocation fails
+# to connect, and the wrapper must say it could not reach the server.
+echo ""
+echo "=== T13: real curl, closed port: connection error, not a usage error ==="
+for sub in search state recent list; do
+  case "$sub" in search) arg=probe ;; state) arg=t13 ;; *) arg="" ;; esac
+  T13_OUT=$(env -u UM_CLI_DIR -u UM_LIB_DIR UM_SERVER_URL=http://127.0.0.1:9 \
+    PATH="$T1_HOME/.local/bin:$PATH" HOME="$T1_HOME" um "$sub" ${arg:+"$arg"} 2>&1) || true
+  assert_not_contains "T13: um $sub passes curl valid flags" "$T13_OUT" "curl --help"
+  assert_contains "T13: um $sub reports an unreachable server" "$T13_OUT" "could not reach server"
+done
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
