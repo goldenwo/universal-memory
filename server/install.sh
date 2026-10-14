@@ -321,7 +321,21 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   _PORT="$(_resolved_host_port)"
-  _PLUGIN_DIR="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
+  _PLUGINS_ROOT="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}"
+  _PLUGIN_DIR="$_PLUGINS_ROOT/universal-memory"
+  # `claude plugin install` (the README path) keeps the plugin in the marketplace
+  # cache, one directory per version; the legacy copy above is what
+  # install-plugin-cc.sh writes. Prefer the legacy copy, else the newest cached
+  # version.
+  if [ ! -e "$_PLUGIN_DIR" ]; then
+    _cached=""
+    for _d in "$_PLUGINS_ROOT"/cache/universal-memory/universal-memory/*/; do
+      [ -f "${_d}.claude-plugin/plugin.json" ] || continue
+      _d="${_d%/}"
+      if [ -z "$_cached" ] || _um_ver_lt "${_cached##*/}" "${_d##*/}"; then _cached="$_d"; fi
+    done
+    [ -n "$_cached" ] && _PLUGIN_DIR="$_cached"
+  fi
   _VAULT="${UM_VAULT_DIR:-$HOME/.um/vault}"
 
   echo ""
@@ -351,7 +365,7 @@ if [ "${1:-}" = "--verify" ]; then
   if [ -e "$_PLUGIN_DIR" ]; then
     _vpass "plugin-registered" "$_PLUGIN_DIR"
   else
-    _vfail "plugin-registered" "$_PLUGIN_DIR not found. Re-run install.sh to install the plugin."
+    _vfail "plugin-registered" "plugin not installed (looked in $_PLUGIN_DIR and its marketplace cache). Install it: claude plugin marketplace add goldenwo/universal-memory && claude plugin install universal-memory@universal-memory"
     _verify_fail=1
   fi
 
@@ -455,7 +469,7 @@ print(json.dumps({
       # Stock defaults ship read-only — captures are this arc's whole point,
       # so verify fails, but with the flag-naming prescription (not "check
       # your token").
-      _vfail "hook-smoke" "captures require UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw in server/.env (see docs/claude-code-plugin.md)"
+      _vfail "hook-smoke" "captures require UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw in server/.env, then: docker compose up -d (from server/)"
       _verify_fail=1
     else
       _vfail "hook-smoke" "stop.sh did not post (hook.log: ${_SMOKE_LOG:-empty}). Check server/token."
