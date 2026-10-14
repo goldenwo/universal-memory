@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib/um-curl-wrap.sh
 source "$SCRIPT_DIR/lib/um-curl-wrap.sh"
+# shellcheck source=lib/um-json.sh
+source "$SCRIPT_DIR/lib/um-json.sh"
 LIB_DIR="${UM_LIB_DIR:-$SCRIPT_DIR/../hooks/lib}"
 
 # #159 T6b: file-aware endpoint resolution — same composed semantic as the
@@ -113,34 +115,5 @@ response=$(_um_curl_wrap "um-search" -Ssm 10 --fail-with-body \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3
 
-# Emit JSONL — one object per result
-# Use jq if available; otherwise fall back to a minimal awk-based extractor.
-if command -v jq >/dev/null 2>&1; then
-  echo "$response" | jq -c '.results // [] | .[]'
-else
-  # Minimal fallback: each top-level object in the results array on its own line.
-  # Works for well-formatted single-line JSON from the server.
-  echo "$response" | awk '
-    BEGIN { depth=0; in_results=0; obj="" }
-    {
-      line=$0
-      # look for "results":[ marker
-      if (!in_results && index(line, "\"results\"") > 0) { in_results=1 }
-      if (!in_results) next
-      n=split(line, chars, "")
-      for (i=1; i<=n; i++) {
-        c=chars[i]
-        if (c=="{") {
-          depth++
-          obj=obj c
-        } else if (c=="}") {
-          obj=obj c
-          depth--
-          if (depth==0 && obj!="") { print obj; obj="" }
-        } else if (depth>0) {
-          obj=obj c
-        }
-      }
-    }
-  '
-fi
+# Emit JSONL — one object per result (jq when installed, python otherwise).
+echo "$response" | _um_json_results

@@ -449,6 +449,36 @@ for sub in search state recent list; do
   assert_contains "T13: um $sub reports an unreachable server" "$T13_OUT" "could not reach server"
 done
 
+# ─── T14: the read subcommands work without jq ───────────────────────────────
+# `um state`, `um list` and `um recent` exited "jq is required" on a fresh
+# Ubuntu (2026-10-14 clean room #2): jq is not a prerequisite, python3 is. The
+# installed lib/um-json.sh uses jq when present and python otherwise. Here the
+# dispatch runs with a PATH holding only python3, so jq is really absent, and
+# its output must equal jq's on the same input wherever jq exists.
+echo ""
+echo "=== T14: um-json helper without jq ==="
+T14_LIB="$T1_HOME/.local/share/um/cli/lib/um-json.sh"
+assert_file_exists "T14: um-json.sh installed with the CLI" "$T14_LIB"
+T14_BIN=$(mktemp_in_t "$TMPROOT" "t14.XXXXXX")
+T14_PY=$(command -v python3 || command -v python)
+ln -s "$T14_PY" "$T14_BIN/python3"
+T14_RESULTS='{"ok":true,"results":[{"id":"a","title":"Café ✓","score":0.5,"metadata":{"k":[1,2],"n":null}},{"id":"b","title":"x"}]}'
+T14_STATE='{"ok":true,"project":"p","state":{"frontmatter":{"a":1},"body":"# S\nline two"},"valid_from":"2026-10-14T00:00:00Z"}'
+T14_NULL='{"ok":true,"project":"p","state":null,"valid_from":null}'
+# shellcheck source=/dev/null  # the installed copy of bin/lib/um-json.sh
+_t14() { ( PATH="$T14_BIN"; source "$T14_LIB"; printf '%s' "$2" | "$1" ${3:+"$3"} ); }
+T14_R=$(_t14 _um_json_results "$T14_RESULTS")
+assert_eq "T14: results without jq → one compact object per line" "$T14_R" "$(printf '%s\n%s' '{"id":"a","title":"Café ✓","score":0.5,"metadata":{"k":[1,2],"n":null}}' '{"id":"b","title":"x"}')"
+assert_eq "T14: state text without jq → the body" "$(_t14 _um_json_state "$T14_STATE" text)" "$(printf '# S\nline two')"
+assert_eq "T14: state json without jq" "$(_t14 _um_json_state "$T14_STATE" json)" '{"project":"p","body":"# S\nline two","valid_from":"2026-10-14T00:00:00Z"}'
+assert_eq "T14: null state text without jq → nothing" "$(_t14 _um_json_state "$T14_NULL" text)" ""
+assert_eq "T14: null state json without jq" "$(_t14 _um_json_state "$T14_NULL" json)" '{"project":"p","body":"","valid_from":null}'
+if command -v jq >/dev/null 2>&1; then
+  assert_eq "T14: results match jq" "$T14_R" "$(printf '%s' "$T14_RESULTS" | jq -c '.results // [] | .[]')"
+  assert_eq "T14: state json matches jq" "$(_t14 _um_json_state "$T14_STATE" json)" "$(printf '%s' "$T14_STATE" | jq -c '{project: .project, body: (.state.body // ""), valid_from: .valid_from}')"
+  assert_eq "T14: state text matches jq" "$(_t14 _um_json_state "$T14_STATE" text)" "$(printf '%s' "$T14_STATE" | jq -r '.state.body // empty')"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

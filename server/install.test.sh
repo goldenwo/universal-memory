@@ -2079,6 +2079,29 @@ run_install "$T/bin" "$T/server/install.sh" \
   SHELL=/bin/bash HOME="$T/home" >/dev/null || true
 assert_eq "THD: compose up ran with the history dir already there" "$(cat "$T/up-saw-dir" 2>/dev/null)" "yes"
 
+# ─── TPI: no "install the plugin" advice when the wizard installs it next ────
+# installer/install.sh sets UM_INSTALLING_PLUGIN_CC=1 when its next delegate is
+# install-plugin-cc.sh. The 2026-10-14 clean room #2 printed the two
+# `claude plugin` commands (twice) seconds before the wizard ran them itself.
+echo ""
+echo "=== TPI: plugin advice only when nothing else installs the plugin ==="
+for case in "tpi1:1" "tpi2:"; do
+  IFS=: read -r name flag <<< "$case"
+  T="$TMPROOT/$name"
+  mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+  make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+  TPI_OUT=$(run_install "$T/bin" "$T/server/install.sh" \
+    UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$T/plugins" \
+    UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$T/home" ${flag:+UM_INSTALLING_PLUGIN_CC=1}) || true
+  if [ -n "$flag" ]; then
+    assert_not_contains "TPI $name: no marketplace commands when the wizard installs the plugin" "$TPI_OUT" "claude plugin marketplace add"
+    assert_contains "TPI $name: still points at /um-setup" "$TPI_OUT" "/um-setup"
+  else
+    assert_contains "TPI $name: names the marketplace commands otherwise" "$TPI_OUT" "claude plugin marketplace add goldenwo/universal-memory"
+  fi
+done
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

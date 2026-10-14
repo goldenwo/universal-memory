@@ -1541,10 +1541,14 @@ fi
 # installer/install-plugin-codex.sh.  server/install.sh no longer does it
 # inline.  Use installer/install.sh --plugin-cc / --plugin-codex, or
 # installer/install.sh --all, to install plugins alongside the server.
-info "Claude Code plugin (Claude Code loads plugins only from its marketplace):"
-info "  claude plugin marketplace add goldenwo/universal-memory"
-info "  claude plugin install universal-memory@universal-memory"
-info "  then run /um-setup inside Claude Code."
+# installer/install.sh sets UM_INSTALLING_PLUGIN_CC=1 when it installs the
+# plugin right after this script; advising the same commands then is noise.
+if [ "${UM_INSTALLING_PLUGIN_CC:-0}" != "1" ]; then
+	info "Claude Code plugin (Claude Code loads plugins only from its marketplace):"
+	info "  claude plugin marketplace add goldenwo/universal-memory"
+	info "  claude plugin install universal-memory@universal-memory"
+	info "  then run /um-setup inside Claude Code."
+fi
 
 # ─── P0-2: Shell profile export ──────────────────────────────────────────────
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
@@ -1749,6 +1753,14 @@ EOM
 fi
 
 # ─── Success banner ──────────────────────────────────────────────────────────
+if [ "${UM_INSTALLING_PLUGIN_CC:-0}" = "1" ]; then
+	_plugin_step="║   2. Claude Code: the plugin installs next; then run /um-setup in Claude Code
+║      (it reads ~/.um/auth-token)."
+else
+	_plugin_step="║   2. Claude Code: claude plugin marketplace add goldenwo/universal-memory
+║                   claude plugin install universal-memory@universal-memory
+║      then run /um-setup in Claude Code (it reads ~/.um/auth-token)."
+fi
 _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
 	_profile_hint="  Shell profile updated: source $_SHELL_PROFILE (or open a new terminal)"
@@ -1763,9 +1775,7 @@ cat <<EOF
 ║
 ║ Next steps:
 ║   1. Verify the install:    bash server/install.sh --verify
-║   2. Claude Code: claude plugin marketplace add goldenwo/universal-memory
-║                   claude plugin install universal-memory@universal-memory
-║      then run /um-setup in Claude Code (it reads ~/.um/auth-token).
+$_plugin_step
 ║   3. Upgrade later:         bash server/install.sh --upgrade
 ║   4. Stop the stack:        cd $SCRIPT_DIR && docker compose down
 ║   5. Restart later:         cd $SCRIPT_DIR && docker compose up -d
