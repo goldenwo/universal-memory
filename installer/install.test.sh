@@ -436,6 +436,36 @@ if echo "$TWP_OUT" | grep -q "PyYAML: .*apt install python3-yaml"; then pass "T-
 if echo "$TWP_OUT" | grep -q "v0\.5\.0"; then fail "T-WIZ-PREREQ: stale v0.5.0 banner"; else pass "T-WIZ-PREREQ: banner not pinned to v0.5.0"; fi
 rm -rf "$TWP"
 
+# ─── T-WIZ-CAPTURE: a wizard server install turns capture on ─────────────────
+# Operator ruling 2026-10-14: a fresh install that cannot capture is not what a
+# wizard user asked for (the clean-room install got 403 on its first capture and
+# needed a .env edit + restart). Wizard server installs hand server/install.sh
+# UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw; --yes / flag installs keep the
+# old default (off) for automation. A stub server/install.sh reports what it got.
+_capture_repo() {
+  local repo="$1"
+  mkdir -p "$repo/server" "$repo/.git"
+  # shellcheck disable=SC2016  # the stub expands these when it runs, not here
+  printf '#!/usr/bin/env bash\necho "CAPTURE writes=${UM_MCP_WRITE_ENABLED:-unset} mount=${UM_MOUNT_MODE:-unset}"\n' > "$repo/server/install.sh"
+}
+echo ""
+echo "=== T-WIZ-CAPTURE: wizard server install passes writes on ==="
+TWC=$(mktemp -d)
+make_stubs "$TWC/bin"; _capture_repo "$TWC/repo"
+TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=true mount=rw"; then pass "T-WIZ-CAPTURE: server/install.sh gets writes on + rw"; else fail "T-WIZ-CAPTURE: capture not on (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+if echo "$TWC_OUT" | grep -q "Capture: on"; then pass "T-WIZ-CAPTURE: summary says capture is on"; else fail "T-WIZ-CAPTURE: summary silent about capture"; fi
+# An explicit export still wins (an operator who wants a read-only server).
+TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: an explicit export wins"; else fail "T-WIZ-CAPTURE: explicit export overridden (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+# Control: a --yes install does not change the default.
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --yes keeps the default"; else fail "T-WIZ-CAPTURE: --yes changed (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+rm -rf "$TWC"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

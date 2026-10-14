@@ -1996,6 +1996,28 @@ TNS_OUT=$(printf '\n%.0s' $(seq 1 40) | env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$
 assert_not_contains "TNS: no required-value loop" "$TNS_OUT" "Required. Please enter a value."
 assert_eq "TNS: Enter picks the default namespace" "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=default"
 
+# ─── TCAP: a re-run keeps the capture switches already in .env ───────────────
+# The .env writer emits UM_MOUNT_MODE=${UM_MOUNT_MODE:-ro} and
+# UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED:-false}, so re-running the
+# installer without those exported silently turned a capture-on install back
+# off. Control: a fresh install with neither exported still writes ro/false.
+echo ""
+echo "=== TCAP: re-run keeps capture on; fresh default stays off ==="
+for case in "tcap1:rerun:rw:true" "tcap2:fresh:ro:false"; do
+  IFS=: read -r name kind want_m want_w <<< "$case"
+  T="$TMPROOT/$name"
+  mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+  make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+  [ "$kind" = rerun ] && printf 'MEM0_USER_ID=testuser\nUM_MOUNT_MODE=rw\nUM_MCP_WRITE_ENABLED=true\n' > "$T/server/.env"
+  run_install "$T/bin" "$T/server/install.sh" \
+    UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+    UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 \
+    SHELL=/bin/bash HOME="$T/home" >/dev/null || true
+  assert_eq "TCAP $name ($kind): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=$want_m"
+  assert_eq "TCAP $name ($kind): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=$want_w"
+done
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

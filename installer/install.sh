@@ -326,6 +326,14 @@ if [[ $MODE == wizard ]]; then
         ;;
   esac
   check_prereqs
+  # A wizard server install turns capture on (operator ruling 2026-10-14): a
+  # server that refuses every capture is not what a wizard user asked for, and
+  # turning it on later meant a .env edit plus a restart. An explicit export
+  # still wins; --yes / flag installs keep the old default (off) for automation.
+  if [[ $INSTALL_SERVER -eq 1 ]]; then
+    export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
+    export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}"
+  fi
 
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
   # v0.7: 4-path provider picker replaces the v0.6 single-OpenAI-key prompt.
