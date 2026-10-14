@@ -3173,19 +3173,22 @@ except Exception:
 	# the container. Args: <event>. Echoes the integer sum (0 when the row —
 	# or the whole DB — doesn't exist yet).
 	s10_counter_sum() {
+		# The path comes from the server's own countersDbPath(): the server picks
+		# the history dir at boot (the /var/lib/mem0 mount, else /tmp), so a
+		# re-derivation from this exec's env would point at the wrong file.
 		docker exec -i "$S10_CONTAINER" node -e '
-const path = require("path");
 const [surface, project, event] = process.argv.slice(1);
-let sum = 0;
-try {
-  const Database = require("better-sqlite3");
-  const dbPath = process.env.UM_COUNTERS_DB_PATH
-    || path.join(path.dirname(process.env.MEM0_HISTORY_DB_PATH || "/tmp/mem0-history.db"), "um-counters.db");
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  const row = db.prepare("SELECT COALESCE(SUM(count),0) AS c FROM counters WHERE surface=? AND project=? AND event=?").get(surface, project, event);
-  sum = row ? row.c : 0;
-} catch (e) { /* missing DB ⇒ 0 */ }
-console.log(sum);
+(async () => {
+  let sum = 0;
+  try {
+    const { countersDbPath } = await import("/app/lib/capture-events.mjs");
+    const Database = require("better-sqlite3");
+    const db = new Database(countersDbPath(), { readonly: true, fileMustExist: true });
+    const row = db.prepare("SELECT COALESCE(SUM(count),0) AS c FROM counters WHERE surface=? AND project=? AND event=?").get(surface, project, event);
+    sum = row ? row.c : 0;
+  } catch (e) { /* missing DB ⇒ 0 */ }
+  console.log(sum);
+})();
 ' "$S10_SURFACE" "$S10_PROJECT" "$1" 2>/dev/null || echo "exec-failed"
 	}
 

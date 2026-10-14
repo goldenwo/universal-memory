@@ -79,6 +79,7 @@ import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
+import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
 import { obsFallback, safeLog } from './lib/obs-fallback.mjs';
 import { withRequestContext, currentRequestId } from './lib/request-context.mjs';
 import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTotal, umMcpAuthBranchTotal, umOauthRegistrationsTotal, umOauthConsentTotal, umOauthIdpTotal, umOauthTokenGrantsTotal, umBouncerTotal } from './lib/metrics.mjs';
@@ -462,6 +463,18 @@ export async function initMemoryWithGuard({ memory, stamp, log, env, exit = proc
 }
 
 export async function initMemory() {
+	// Pick the history DB's home before mem0 opens it: MEM0_HISTORY_DB_PATH, else
+	// the compose mount at /var/lib/mem0 when it is there, else /tmp — and /tmp
+	// whenever the wanted place is not writable. The env is set to the result so
+	// countersDbPath(), which reads it lazily, puts um-counters.db beside it.
+	const history = resolveHistoryDbPath(process.env);
+	if (history.fellBack) {
+		getLogger().warn(
+			{ code: 'HISTORY_DB_FALLBACK', wanted: history.configured, reason: history.reason, using: history.path },
+			'[mem0-mcp] the history DB location is not writable; using /tmp, so mem0 history and the capture counters reset on restart. Make the host dir mounted at /var/lib/mem0 (server/data/mem0-history) writable by the container user (see UM_CONTAINER_USER).',
+		);
+	}
+	process.env.MEM0_HISTORY_DB_PATH = history.path;
 	memory = new Memory({
 		version: 'v1.1',
 		embedder: getEmbedderConfig(process.env),

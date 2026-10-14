@@ -122,6 +122,7 @@ import { ProviderError } from '../server/lib/provider/errors.mjs';
 import { umAdd } from '../server/lib/add.mjs';
 import { umGetAll, FULL_SCAN_LIMIT } from '../server/lib/mem0-read.mjs';
 import { parseFrontmatter } from '../server/lib/frontmatter.mjs';
+import { resolveHistoryDbPath } from '../server/lib/history-db-path.mjs';
 import { indexRecord } from '../server/lib/index-record.mjs';
 import { runPhase4Stamp, runPhase5Swap, runPhase6Verify } from './lib/swap.mjs';
 import { runPhase7Report } from './lib/archive.mjs';
@@ -813,7 +814,7 @@ export async function createMemoryInstance({ env, collection }) {
       },
     },
     llm: getFactsLlmConfig(env),
-    historyDbPath: env.MEM0_HISTORY_DB_PATH || '/tmp/mem0-history.db',
+    historyDbPath: resolveHistoryDbPath(env).path, // the server's own rule (/var/lib/mem0 mount, else /tmp)
   });
 }
 

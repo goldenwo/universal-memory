@@ -37,6 +37,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
+import { resolveHistoryDbPath } from './history-db-path.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -98,13 +99,15 @@ const _warnedErrorClasses = new Set(); // warn once per process per error class
 
 /**
  * Resolve the counters DB path (spec §6): UM_COUNTERS_DB_PATH wins; else
- * um-counters.db NEXT TO the configured mem0 history DB location, so the
- * same durable bind mount covers both.
+ * um-counters.db NEXT TO the mem0 history DB, so the same durable bind mount
+ * covers both. The history location goes through resolveHistoryDbPath — the
+ * one rule the server boots with — so a separate process in the same
+ * container (smoke's reader, the reindex CLI) lands on the same file even
+ * though compose no longer sets MEM0_HISTORY_DB_PATH.
  */
 export function countersDbPath() {
   if (process.env.UM_COUNTERS_DB_PATH) return process.env.UM_COUNTERS_DB_PATH;
-  const historyDb = process.env.MEM0_HISTORY_DB_PATH || '/tmp/mem0-history.db';
-  return path.join(path.dirname(historyDb), 'um-counters.db');
+  return path.join(path.dirname(resolveHistoryDbPath(process.env).path), 'um-counters.db');
 }
 
 /**
