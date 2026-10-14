@@ -1961,13 +1961,16 @@ _tcu_install() {
 echo ""
 echo "=== TCU: container user pinned on fresh Linux installs ==="
 for case in "tcu1:1001:1001:Linux:fresh:1001:1001" "tcu2:1000:1000:Linux:fresh:" \
-            "tcu3:501:20:Darwin:fresh:" "tcu4:1001:1001:Linux:rerun:"; do
+            "tcu3:501:20:Darwin:fresh:" "tcu4:1001:1001:Linux:rerun:" \
+            "tcu5:1001:1001:Linux:rerun-pinned:1001:1001"; do
   IFS=: read -r name uid gid os kind want_u want_g <<< "$case"
   T="$TMPROOT/$name"
   mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
   make_fakebin "$T/bin" 200; _make_identity "$T/bin" "$uid" "$gid" "$os"
   make_isolated_server "$T/server" >/dev/null
   [ "$kind" = rerun ] && printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+  # A re-run of a pinned install keeps its pin (the .env writer drops unset keys).
+  [ "$kind" = rerun-pinned ] && printf 'MEM0_USER_ID=testuser\nUM_CONTAINER_USER=1001:1001\n' > "$T/server/.env"
   TCU_OUT=$(_tcu_install "$T") || true
   TCU_LINE=$(grep -E '^UM_CONTAINER_USER=' "$T/server/.env" 2>/dev/null || true)
   if [ -n "$want_u" ]; then

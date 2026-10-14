@@ -1235,6 +1235,12 @@ if [ -f "$ENV_FILE" ]; then
 	# otherwise propagate that 1 → `set -e` would kill the script silently.
 	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 fi
+# A re-run with no UM_CONTAINER_USER in the environment keeps the value already
+# in .env: the .env writer emits the key only when it is set, so a pinned
+# install would otherwise lose its pin on every re-run and fall back to `node`.
+if [ -z "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ]; then
+	UM_CONTAINER_USER="$_PRIOR_CONTAINER_USER"
+fi
 if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
 	&& [ "$UM_CONTAINER_USER" != "$_PRIOR_CONTAINER_USER" ]; then
 	warn "UM_CONTAINER_USER changed: was '$_PRIOR_CONTAINER_USER', now '$UM_CONTAINER_USER'."
