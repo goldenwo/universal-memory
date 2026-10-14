@@ -2,21 +2,22 @@
 # wizard-lib.sh — interactive helpers sourced by install.sh wizard mode
 
 wizard_header() {
+  # The version comes from the checkout this wizard runs from (server/package.json);
+  # a literal here went stale (it said v0.5.0 through v1.27.0).
+  local ver title
+  ver=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$(dirname "${BASH_SOURCE[0]}")/../server/package.json" 2>/dev/null | head -1)
+  title="universal-memory${ver:+ v$ver} installer"
   # ASCII-safe fallback when terminal doesn't handle box-drawing cleanly
   # (Windows cmd.exe / PowerShell without `chcp 65001`; some CI log viewers).
   # Detect by checking if LC_ALL or LANG mentions UTF-8, else fall back to ASCII.
   if [[ "${LC_ALL:-}${LANG:-}" == *UTF-8* || "${LC_ALL:-}${LANG:-}" == *utf8* ]]; then
-    cat <<'EOF'
-╔════════════════════════════════════════════╗
-║  universal-memory v0.5.0 installer         ║
-╚════════════════════════════════════════════╝
-EOF
+    echo "╔════════════════════════════════════════════╗"
+    printf '║  %-42s║\n' "$title"
+    echo "╚════════════════════════════════════════════╝"
   else
-    cat <<'EOF'
-+--------------------------------------------+
-|  universal-memory v0.5.0 installer         |
-+--------------------------------------------+
-EOF
+    echo "+--------------------------------------------+"
+    printf '|  %-42s|\n' "$title"
+    echo "+--------------------------------------------+"
   fi
 }
 
@@ -34,8 +35,8 @@ wizard_detect_env() {
   [[ $DETECTED_DOCKER -eq 1 ]] && echo "  ✓ Docker" || echo "  ✗ Docker not found"
   [[ $DETECTED_CC -eq 1 ]] && echo "  ✓ ~/.claude (Claude Code)" || echo "  ✗ ~/.claude (Claude Code not found)"
   [[ $DETECTED_CODEX -eq 1 ]] && echo "  ✓ ~/.codex (Codex)" || echo "  ✗ ~/.codex (Codex not found — will skip)"
-  [[ $DETECTED_PYTHON3 -eq 1 ]] && echo "  ✓ python3" || echo "  ✗ python3 not found (required for \`um\` CLI)"
-  [[ $DETECTED_PYYAML -eq 1 ]] && echo "  ✓ python3-yaml" || echo "  ✗ python3-yaml not found (required for \`um\` CLI)"
+  [[ $DETECTED_PYTHON3 -eq 1 ]] && echo "  ✓ python3" || echo "  ✗ python3 not found (required for the server and \`um\` CLI)"
+  [[ $DETECTED_PYYAML -eq 1 ]] && echo "  ✓ python3-yaml" || echo "  ✗ python3-yaml not found (required for the server and \`um\` CLI)"
   echo "  bash $DETECTED_BASH_VERSION"
 }
 

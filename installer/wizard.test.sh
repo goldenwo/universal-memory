@@ -81,14 +81,16 @@ else fail "T7: expected 'Aborted.' in output; out: $(echo "$OUT" | head -20)"; f
 # (--interactive forces wizard regardless of other component flags)
 T8=$(mktemp_in "$TMPROOT")
 OUT=$(printf '1\n\n4\nY\n' | HOME="$T8" UM_DRY_RUN=1 bash "$INSTALL" --interactive --cli --dry-run 2>&1 || true)
-if echo "$OUT" | grep -q "universal-memory v0.5.0 installer"; then pass "T8: --interactive + --cli still runs wizard"
+if echo "$OUT" | grep -q "universal-memory v[0-9.]* installer"; then pass "T8: --interactive + --cli still runs wizard"
 else fail "T8: wizard didn't run with --interactive --cli; out: $(echo "$OUT" | head -15)"; fi
 
-# T9: Wizard header shows v0.5.0
+# T9: Wizard header shows the checkout's version (server/package.json), not a
+# literal: the literal said v0.5.0 from v0.5 through v1.27.0.
 T9=$(mktemp_in "$TMPROOT")
+T9_WANT=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$SCRIPT_DIR/../server/package.json" | head -1)
 OUT=$(printf '4\n\n4\nY\n' | HOME="$T9" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
-if echo "$OUT" | grep -q "v0.5.0"; then pass "T9: wizard header shows v0.5.0"
-else fail "T9: v0.5.0 not found in wizard output; out: $(echo "$OUT" | head -5)"; fi
+if [ -n "$T9_WANT" ] && echo "$OUT" | grep -qF "universal-memory v$T9_WANT installer"; then pass "T9: wizard header shows v$T9_WANT"
+else fail "T9: v$T9_WANT not found in wizard header; out: $(echo "$OUT" | head -5)"; fi
 
 # T10: wizard_detect_env prints environment detection block
 T10=$(mktemp_in "$TMPROOT")

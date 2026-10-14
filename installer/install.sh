@@ -245,6 +245,43 @@ if [[ $REMOTE_MODE -eq 1 ]]; then
   fi
 fi
 
+# ─── Prerequisites check ──────────────────────────────────────────────────────
+# Determine which tools are actually needed based on what we're installing. The
+# wizard calls this as soon as the components are chosen, so a missing tool stops
+# it before the vault/provider/proceed prompts rather than after them.
+check_prereqs() {
+  local need_git=0 need_docker=0 need_python3=0
+  # Server and plugins need git + docker
+  [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && need_git=1 && need_docker=1
+  # The CLI and server/install.sh both run python3 with PyYAML (server/install.sh
+  # refuses to continue without it).
+  [[ $INSTALL_CLI -eq 1 || $INSTALL_SERVER -eq 1 ]] && need_python3=1
+
+  local missing=()
+  [[ $need_git -eq 1 ]] && { command -v git >/dev/null 2>&1 || missing+=("git"); }
+  [[ $need_docker -eq 1 ]] && { command -v docker >/dev/null 2>&1 || missing+=("docker"); }
+  if [[ $need_python3 -eq 1 ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      missing+=("python3")
+    elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+      missing+=("PyYAML")
+    fi
+  fi
+  # bash is always needed
+  command -v bash >/dev/null 2>&1 || missing+=("bash")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "ERROR: required tools not found in PATH: ${missing[*]}"
+    echo ""
+    echo "Install hints:"
+    echo "  git:     apt/brew install git, or https://git-scm.com"
+    echo "  docker:  https://docs.docker.com/get-docker/"
+    echo "  python3: apt/brew install python3"
+    echo "  PyYAML:  sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml (macOS / venv)"
+    exit 1
+  fi
+}
+
 # Mode selection
 if [[ $FORCE_WIZARD -eq 1 ]]; then
   MODE=wizard
@@ -288,6 +325,7 @@ if [[ $MODE == wizard ]]; then
         wizard_confirm "Install um CLI?" && INSTALL_CLI=1
         ;;
   esac
+  check_prereqs
 
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
   # v0.7: 4-path provider picker replaces the v0.6 single-OpenAI-key prompt.
@@ -356,33 +394,7 @@ fi
 printf '\nUniversal-memory installer\n==========================\n\n'
 
 # ─── Prerequisites ────────────────────────────────────────────────────────────
-# Determine which tools are actually needed based on what we're installing
-NEED_GIT=0
-NEED_DOCKER=0
-NEED_PYTHON3=0
-# bash is always needed — checked unconditionally below (no NEED_BASH gate).
-
-# Server and plugins need git + docker
-[[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && NEED_GIT=1 && NEED_DOCKER=1
-# CLI needs python3
-[[ $INSTALL_CLI -eq 1 ]] && NEED_PYTHON3=1
-
-missing=()
-[[ $NEED_GIT -eq 1 ]] && { command -v git >/dev/null 2>&1 || missing+=("git"); }
-[[ $NEED_DOCKER -eq 1 ]] && { command -v docker >/dev/null 2>&1 || missing+=("docker"); }
-[[ $NEED_PYTHON3 -eq 1 ]] && { command -v python3 >/dev/null 2>&1 || missing+=("python3"); }
-command -v bash >/dev/null 2>&1 || missing+=("bash")
-
-if [ ${#missing[@]} -gt 0 ]; then
-  echo "ERROR: required tools not found in PATH: ${missing[*]}"
-  echo ""
-  echo "Install hints:"
-  echo "  git:     apt/brew install git, or https://git-scm.com"
-  echo "  docker:  https://docs.docker.com/get-docker/"
-  echo "  python3: apt/brew install python3"
-  exit 1
-fi
-
+check_prereqs
 # ─── OS detection (informational) ─────────────────────────────────────────────
 os_name="$(uname -s 2>/dev/null || echo unknown)"
 case "$os_name" in
