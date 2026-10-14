@@ -415,6 +415,27 @@ if [ "$TF22_EXIT" -eq 0 ]; then pass "T-FLAGS-22: ollama path skips key guard"; 
 if echo "$TF22_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-22: server delegated under ollama config"; else fail "T-FLAGS-22: server not delegated (got: $TF22_OUT)"; fi
 rm -rf "$TF22"
 
+# ─── T-WIZ-PREREQ: the wizard stops at a missing prerequisite before asking more ──
+# The 2026-10-14 clean-room install: the wizard printed "✗ python3 not found",
+# then asked for the component, the vault, the provider and "Proceed?", and only
+# then failed. It also never checked PyYAML for a server install, which
+# server/install.sh then refuses. Here python3 exists but cannot import yaml.
+echo ""
+echo "=== T-WIZ-PREREQ: wizard fails fast on missing PyYAML ==="
+TWP=$(mktemp -d)
+make_stubs "$TWP/bin"
+printf '#!/usr/bin/env bash\n[[ "$*" == *"import yaml"* ]] && exit 1\nexit 0\n' > "$TWP/bin/python3"
+chmod +x "$TWP/bin/python3"
+TWP_OUT=$(printf '1\n\n\n\n\n\n' | env PATH="$TWP/bin:/usr/bin:/bin" HOME="$TWP" \
+  UM_INSTALL_DIR="$TWP/repo" bash "$INSTALLER" --interactive 2>&1) && TWP_EXIT=0 || TWP_EXIT=$?
+if [ "$TWP_EXIT" -ne 0 ]; then pass "T-WIZ-PREREQ: non-zero exit"; else fail "T-WIZ-PREREQ: expected non-zero exit"; fi
+if echo "$TWP_OUT" | grep -q "required tools not found.*PyYAML"; then pass "T-WIZ-PREREQ: names PyYAML"; else fail "T-WIZ-PREREQ: PyYAML not named (got: $TWP_OUT)"; fi
+# `read -p` prompts are silent without a TTY; the provider menu is echoed, so it marks "asked more".
+if echo "$TWP_OUT" | grep -q "Provider setup"; then fail "T-WIZ-PREREQ: kept asking before failing"; else pass "T-WIZ-PREREQ: fails before the next prompt"; fi
+if echo "$TWP_OUT" | grep -q "PyYAML: .*apt install python3-yaml"; then pass "T-WIZ-PREREQ: apt hint shown"; else fail "T-WIZ-PREREQ: no apt hint"; fi
+if echo "$TWP_OUT" | grep -q "v0\.5\.0"; then fail "T-WIZ-PREREQ: stale v0.5.0 banner"; else pass "T-WIZ-PREREQ: banner not pinned to v0.5.0"; fi
+rm -rf "$TWP"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
