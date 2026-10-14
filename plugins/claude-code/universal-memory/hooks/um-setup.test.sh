@@ -48,6 +48,10 @@ case "$url" in
   */api/append-turn) code="${UM_TEST_PROBE_CODE:-400}" ;;
   *)                 code="000" ;;
 esac
+# UM_TEST_REQUIRE_TOKEN: the write probe answers 401 unless that bearer is sent.
+if [ -n "${UM_TEST_REQUIRE_TOKEN:-}" ] && [ "$code" != "000" ] && [[ "$url" == */api/append-turn ]]; then
+  case " $* " in *"Authorization: Bearer $UM_TEST_REQUIRE_TOKEN "*) ;; *) code=401 ;; esac
+fi
 printf '%s' "$code"
 if [ "$code" = "000" ]; then exit 7; fi
 exit 0
@@ -186,6 +190,29 @@ run_setup "$T" -- --bogus
 if [ "$ST_RC" -ne 0 ]; then pass "S9: non-zero exit"; else fail "S9: expected non-zero"; fi
 if echo "$ST_OUT" | grep -qi "unknown argument"; then pass "S9: names the bad argument"; else fail "S9: no error message (out: $ST_OUT)"; fi
 no_config_written "$T/home" "S9"
+rm -rf "$T"
+
+# ─── S10: no --token, an existing ~/.um/auth-token → setup verifies with it ───
+# The server installer writes ~/.um/auth-token on the same host. /um-setup runs
+# the script through Claude's Bash tool (no TTY), so with no --token it probed
+# with an empty bearer, got 401 and wrote nothing, while the right token sat in
+# the file it then announced it had "kept". Found by the 2026-10-14 clean-room
+# install. An explicit --token '' still means no auth (S5).
+echo ""
+echo "=== S10: no --token → verifies with the existing auth-token file ==="
+T=$(mktemp -d)
+mkdir -p "$T/home/.um"; echo "file-token" > "$T/home/.um/auth-token"
+run_setup "$T" UM_TEST_REQUIRE_TOKEN=file-token -- --endpoint http://localhost:6335
+if [ "$ST_RC" -eq 0 ]; then pass "S10: exit 0 with the file's token"; else fail "S10: exit $ST_RC (out: $ST_OUT)"; fi
+if [ -f "$T/home/.um/endpoint" ]; then pass "S10: endpoint written"; else fail "S10: endpoint not written"; fi
+if [ "$(cat "$T/home/.um/auth-token" 2>/dev/null)" = "file-token" ]; then pass "S10: token file unchanged"; else fail "S10: token file changed"; fi
+if echo "$ST_OUT" | grep -q "using the token in"; then pass "S10: says which token it used"; else fail "S10: no token-source note (out: $ST_OUT)"; fi
+rm -rf "$T"
+# Control: the stub really rejects a wrong bearer, so S10 proves the file was sent.
+T=$(mktemp -d)
+mkdir -p "$T/home/.um"; echo "stale-token" > "$T/home/.um/auth-token"
+run_setup "$T" UM_TEST_REQUIRE_TOKEN=file-token -- --endpoint http://localhost:6335
+if [ "$ST_RC" -ne 0 ] && echo "$ST_OUT" | grep -q "401"; then pass "S10b: a stale file token still fails with 401"; else fail "S10b: expected a 401 failure (rc $ST_RC, out: $ST_OUT)"; fi
 rm -rf "$T"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

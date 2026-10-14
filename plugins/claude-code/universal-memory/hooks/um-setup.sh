@@ -84,6 +84,14 @@ if [[ $TOKEN_GIVEN -eq 0 && -t 0 ]]; then
   echo
 fi
 TOKEN="${TOKEN:-}"
+# No token given and none typed: use the one the server installer wrote on this
+# host. /um-setup runs without a TTY, so before this it probed with an empty
+# bearer and failed 401 while the right token sat in the file. An explicit
+# --token '' (or UM_SETUP_TOKEN='') still means no auth.
+if [[ $TOKEN_GIVEN -eq 0 && -z "$TOKEN" && -s "$HOME/.um/auth-token" ]]; then
+  TOKEN=$(head -n1 "$HOME/.um/auth-token" | tr -d '\r\n')
+  echo "[um-setup] no token given — using the token in $HOME/.um/auth-token."
+fi
 
 echo "[um-setup] verifying UM server at $ENDPOINT ..."
 verify_rc=0

@@ -9,8 +9,8 @@ Since v1.7.0 the hooks are **API-always thin HTTP clients** (spec #159): every
 capture goes through the server's `/api/append-turn` + `/api/checkpoint`,
 loopback or remote alike. No client-side vault, no client LLM key.
 
-Full guide (install shapes, config resolution, operator flags,
-troubleshooting): [`docs/claude-code-plugin.md`](../../../docs/claude-code-plugin.md).
+Install, upgrade and troubleshooting: the repository
+[README](../../../README.md).
 
 ## Minimum server version
 
@@ -80,8 +80,7 @@ Token: `${UM_TOKEN_FILE:-~/.um/auth-token}` — absent/empty ⇒ no auth header
 **local** server up on demand (never fires for remote endpoints).
 
 Server-side, captures require `UM_MCP_WRITE_ENABLED=true` +
-`UM_MOUNT_MODE=rw` — see the operator section of
-[`docs/claude-code-plugin.md`](../../../docs/claude-code-plugin.md#operator-side--server-flags-for-capture).
+`UM_MOUNT_MODE=rw` in `server/.env`, then `docker compose up -d` from `server/`.
 
 ## Requirements
 

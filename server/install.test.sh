@@ -1913,6 +1913,28 @@ else
   pass "TQ5: IPv6 loopback is silent"
 fi
 
+# ─── TVC: --verify finds a marketplace-installed plugin ──────────────────────
+# The README installs the plugin with `claude plugin install`, which puts it in
+# ~/.claude/plugins/cache/universal-memory/universal-memory/<version>/. --verify
+# looked only at the legacy copy (~/.claude/plugins/universal-memory), so after
+# following the README it reported "plugin-registered ❌ … Re-run install.sh"
+# and "version-plugin not installed". Found by the 2026-10-14 clean-room install.
+echo ""
+echo "=== TVC: --verify reads the marketplace plugin cache ==="
+T="$TMPROOT/tvc"
+mkdir -p "$T/vault" "$T/home"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+for v in 1.9.0 1.27.0 1.26.1; do
+  mkdir -p "$T/plugins/cache/universal-memory/universal-memory/$v/.claude-plugin"
+  printf '{"name":"universal-memory","version":"%s"}\n' "$v" > "$T/plugins/cache/universal-memory/universal-memory/$v/.claude-plugin/plugin.json"
+done
+TVC_OUT=$(env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$T/plugins" \
+  HOME="$T/home" bash "$T/server/install.sh" --verify 2>&1) || true
+assert_contains "TVC: plugin-registered passes on the cache" "$(echo "$TVC_OUT" | grep plugin-registered)" "✅"
+assert_contains "TVC: the newest cached version is reported" "$(echo "$TVC_OUT" | grep version-plugin)" "1.27.0"
+assert_not_contains "TVC: no dead docs/ pointer" "$TVC_OUT" "docs/claude-code-plugin.md"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

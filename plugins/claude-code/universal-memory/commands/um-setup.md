@@ -7,7 +7,7 @@ Run the plugin's first-run setup: verify a universal-memory server (health check
 Steps:
 
 1. Ask the user for their UM server URL (default `http://localhost:6335` for a local Docker install; a remote server looks like `http://your-host:6337`).
-2. Ask whether the server needs an auth token. Loopback installs usually don't; anything reached through a tunnel/proxy does. If a token is needed and the user prefers not to paste it in chat, tell them to run the script themselves in a terminal — it has a hidden token prompt:
+2. Ask whether the server needs an auth token. If the server was installed on this machine, its installer already wrote the token to `~/.um/auth-token`, and the script uses that file when no `--token` is given — so don't ask for it, just omit the flag. A remote server's token comes from that server's `~/.um/auth-token` (or `UM_AUTH_TOKEN` in its `server/.env`). If a token is needed and the user prefers not to paste it in chat, tell them to run the script themselves in a terminal — it has a hidden token prompt:
    `bash "${CLAUDE_PLUGIN_ROOT}/hooks/um-setup.sh"`
 3. Otherwise execute via the Bash tool (token flag only when one was given):
    `bash "${CLAUDE_PLUGIN_ROOT}/hooks/um-setup.sh" --endpoint <url> [--token <token>]`
