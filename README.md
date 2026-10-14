@@ -68,7 +68,7 @@ Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the 
 
 ### 1. Start the memory server
 
-The one-command wizard asks for your OpenAI API key and vault directory and writes `server/.env`. It starts the Docker stack with capture on and saves the server's access token to `~/.um/auth-token`. If it finds Claude Code, it also installs the plugin and the `um` CLI:
+The one-command wizard asks for your OpenAI API key and vault directory and writes `server/.env`. It starts the Docker stack with capture on and saves the server's access token to `~/.um/auth-token`. It also installs the `um` CLI, and the Claude Code plugin when it finds Claude Code:
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory
