@@ -89,7 +89,7 @@ fi
 
 URL="$SERVER/api/list$QS"
 
-response=$(_um_curl_wrap "um-list" -fSsm 10 --fail-with-body \
+response=$(_um_curl_wrap "um-list" -Ssm 10 --fail-with-body \
   -H "Authorization: Bearer ${AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   "$URL") || exit 3

@@ -38,6 +38,22 @@ _um_verify_lib_dir() {
   return 0
 }
 _um_verify_lib_dir || exit 1
+# Subcommands fall back to the plugin layout ($SCRIPT_DIR/../hooks/lib) when
+# UM_LIB_DIR is unset; hand them the directory resolved above instead, so a shell
+# that never sourced the rc block (cron, scripts) still reaches the libraries.
+export UM_LIB_DIR="$LIB_DIR"
+
+# Subcommand lookup: next to this script first (plugin tree, or CLI_DIR itself),
+# then $UM_CLI_DIR, then the standalone install layout. install-cli.sh copies the
+# dispatcher into ~/.local/bin while the subcommands stay in
+# ~/.local/share/um/cli, so a lookup in $SCRIPT_DIR alone never finds them there.
+_um_find_subcmd() {
+  local name="$1" dir
+  for dir in "$SCRIPT_DIR" "${UM_CLI_DIR:-}" "$HOME/.local/share/um/cli"; do
+    [ -n "$dir" ] && [ -x "$dir/$name" ] && { printf '%s\n' "$dir/$name"; return 0; }
+  done
+  return 1
+}
 
 # shellcheck source=../hooks/lib/config.sh
 source "$LIB_DIR/config.sh"
@@ -108,20 +124,18 @@ EOF
     exit 0
     ;;
   search|state|recent|list|capture|tail)
-    SUBCMD_SH="$SCRIPT_DIR/um-$1.sh"
-    if [ ! -x "$SUBCMD_SH" ]; then
-      echo "um: subcommand script missing or not executable: $SUBCMD_SH" >&2
+    SUBCMD_SH=$(_um_find_subcmd "um-$1.sh") || {
+      echo "um: subcommand script missing or not executable: um-$1.sh (looked in: $SCRIPT_DIR ${UM_CLI_DIR:-} $HOME/.local/share/um/cli)" >&2
       exit 1
-    fi
+    }
     exec "$SUBCMD_SH" "${@:2}"
     ;;
   forget|supersede)
     # Delegate to pre-existing binaries (no .sh suffix)
-    SUBCMD_BIN="$SCRIPT_DIR/um-$1"
-    if [ ! -x "$SUBCMD_BIN" ]; then
-      echo "um: pre-existing binary missing: $SUBCMD_BIN" >&2
+    SUBCMD_BIN=$(_um_find_subcmd "um-$1") || {
+      echo "um: pre-existing binary missing: um-$1 (looked in: $SCRIPT_DIR ${UM_CLI_DIR:-} $HOME/.local/share/um/cli)" >&2
       exit 1
-    fi
+    }
     exec "$SUBCMD_BIN" "${@:2}"
     ;;
   reindex)

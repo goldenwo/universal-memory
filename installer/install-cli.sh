@@ -114,6 +114,11 @@ if [ "$COPIED_SCRIPTS" -lt 3 ]; then
   echo "install-cli.sh: subcommand script copy failed — only $COPIED_SCRIPTS scripts in $CLI_DIR" >&2
   exit 1
 fi
+# The search/state/recent/list subcommands source lib/um-curl-wrap.sh from their
+# own directory, so bin/lib travels with them.
+mkdir -p "$CLI_DIR/lib"
+cp -p "$PLUGIN_BIN/lib/"*.sh "$CLI_DIR/lib/" \
+  || fail "Cannot copy CLI helpers from $PLUGIN_BIN/lib to $CLI_DIR/lib"
 ok "CLI scripts installed: $COPIED_SCRIPTS scripts to $CLI_DIR"
 
 # --- copy dispatcher + plugin.json into BIN_DIR ---

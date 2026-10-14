@@ -111,7 +111,7 @@ mv "$TMP" "$RELPATH" || {
 
 # Reindex best-effort
 ENDPOINT="${UM_SERVER_URL:-${UM_ENDPOINT:-http://localhost:6335}}"
-_um_curl_wrap "um-forget" -fSsm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
+_um_curl_wrap "um-forget" -Ssm 5 --fail-with-body -X POST "$ENDPOINT/api/reindex" \
   -H "Authorization: Bearer ${UM_AUTH_TOKEN:-}" \
   -H "User-Agent: um-cli/0.6" \
   -H 'Content-Type: application/json' \
