@@ -181,16 +181,16 @@ if echo "$TF9_OUT" | grep -q "delegate: server/install.sh"; then pass "T-FLAGS-9
 if echo "$TF9_OUT" | grep -q "delegate: installer/install-cli.sh"; then pass "T-FLAGS-9: cli in --all"; else fail "T-FLAGS-9: cli not in --all (got: $TF9_OUT)"; fi
 rm -rf "$TF9"
 
-# ─── T-FLAGS-10: --all with ~/.claude present → plugin-cc also delegated ─────
+# ─── T-FLAGS-10: --all with a claude CLI → plugin-cc also delegated ──────────
 echo ""
-echo "=== T-FLAGS-10: --all + ~/.claude present → plugin-cc also delegated ==="
+echo "=== T-FLAGS-10: --all + claude CLI → plugin-cc also delegated ==="
 TF10=$(mktemp -d)
 make_stubs "$TF10/bin"
-mkdir -p "$TF10/fakehome/.claude"
+printf '#!/bin/sh\nexit 0\n' > "$TF10/bin/claude"; chmod +x "$TF10/bin/claude"
 TF10_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF10/repo" \
   env PATH="$TF10/bin:/usr/bin:/bin" HOME="$TF10/fakehome" bash "$INSTALLER" --all 2>&1) && TF10_EXIT=0 || TF10_EXIT=$?
 if [ "$TF10_EXIT" -eq 0 ]; then pass "T-FLAGS-10: exit 0"; else fail "T-FLAGS-10: exit $TF10_EXIT (out: $TF10_OUT)"; fi
-if echo "$TF10_OUT" | grep -q "delegate: installer/install-plugin-cc.sh"; then pass "T-FLAGS-10: plugin-cc in --all when ~/.claude exists"; else fail "T-FLAGS-10: plugin-cc not delegated (got: $TF10_OUT)"; fi
+if echo "$TF10_OUT" | grep -q "delegate: installer/install-plugin-cc.sh"; then pass "T-FLAGS-10: plugin-cc in --all when the claude CLI exists"; else fail "T-FLAGS-10: plugin-cc not delegated (got: $TF10_OUT)"; fi
 rm -rf "$TF10"
 
 # ─── T-FLAGS-11: --yes propagates to passthrough args ────────────────────────
@@ -280,68 +280,17 @@ _tx_capture TF15 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
 if echo "$TX_OUT_TF15" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
 rm -rf "$TF15"
 
-# ─── T-PCC-1: --plugin-cc copies prompt files to plugin-local prompts dir ─────
+# (T-PCC-1..3 retired 2026-10-14: they pinned the old copy route, which put
+# prompts in ~/.claude/plugins/universal-memory and UM_PROMPT_DIR in the shell rc.
+# Claude Code never loads that copy; install-plugin-cc.test.sh P1 now pins that
+# neither is written.)
+
+# ─── T-FLAGS-16: --server alone with a claude CLI → plugin-cc NOT triggered
 echo ""
-echo "=== T-PCC-1: install-plugin-cc.sh copies prompts to \$PLUGIN_DIR/hooks/lib/prompts/ ==="
-TPCC1=$(mktemp -d)
-# Set up a fake plugin source with the required structure
-mkdir -p "$TPCC1/repo/plugins/claude-code/universal-memory/.claude-plugin"
-cat > "$TPCC1/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json" <<'JSON'
-{"name":"universal-memory","version":"0.5.0"}
-JSON
-mkdir -p "$TPCC1/repo/plugins/claude-code/universal-memory/hooks/lib"
-# Create canonical prompts in expected server/config/prompts/ location
-mkdir -p "$TPCC1/repo/server/config/prompts"
-echo "summarize prompt" > "$TPCC1/repo/server/config/prompts/summarize.txt"
-echo "update-state prompt" > "$TPCC1/repo/server/config/prompts/update-state.txt"
-
-TPCC1_HOME="$TPCC1/home"
-mkdir -p "$TPCC1_HOME/.claude/plugins"
-# Pre-create .bashrc so the rc-writer finds it (rc writer skips non-existent files)
-touch "$TPCC1_HOME/.bashrc"
-_tx_capture TPCC1 \
-  env _UM_REPO_ROOT="$TPCC1/repo" \
-  CLAUDE_PLUGINS_DIR="$TPCC1_HOME/.claude/plugins" \
-  HOME="$TPCC1_HOME" \
-  UM_NONINTERACTIVE=1 \
-  bash "$SCRIPT_DIR/install-plugin-cc.sh" --yes
-TPCC1_OUT="$TX_OUT_TPCC1"
-_dump_on_fail TPCC1
-
-TPCC1_PLUGIN_DIR="$TPCC1_HOME/.claude/plugins/universal-memory"
-if [ -f "$TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt" ]; then
-  pass "T-PCC-1: summarize.txt copied to plugin prompts dir"
-else
-  fail "T-PCC-1: summarize.txt not found at $TPCC1_PLUGIN_DIR/hooks/lib/prompts/summarize.txt (out: $TPCC1_OUT)"
-fi
-
-# ─── T-PCC-2: --plugin-cc writes UM_PROMPT_DIR to .bashrc ────────────────────
-echo ""
-echo "=== T-PCC-2: install-plugin-cc.sh writes UM_PROMPT_DIR= to shell rc ==="
-# Re-use the same run from T-PCC-1 (same temp dir)
-TPCC1_BASHRC="$TPCC1_HOME/.bashrc"
-if grep -q "UM_PROMPT_DIR" "$TPCC1_BASHRC" 2>/dev/null; then
-  pass "T-PCC-2: UM_PROMPT_DIR present in .bashrc"
-else
-  fail "T-PCC-2: UM_PROMPT_DIR not found in $TPCC1_BASHRC (out: $TPCC1_OUT)"
-fi
-
-# ─── T-PCC-3: UM_PROMPT_DIR value points to plugin-local prompts dir ─────────
-echo ""
-echo "=== T-PCC-3: UM_PROMPT_DIR value in .bashrc points to plugin-local prompts dir ==="
-if grep -q "UM_PROMPT_DIR=.*plugins/universal-memory/hooks/lib/prompts" "$TPCC1_BASHRC" 2>/dev/null; then
-  pass "T-PCC-3: UM_PROMPT_DIR points to plugin-local prompts path"
-else
-  fail "T-PCC-3: UM_PROMPT_DIR path incorrect in $TPCC1_BASHRC"
-fi
-rm -rf "$TPCC1"
-
-# ─── T-FLAGS-16: --server alone with ~/.claude present → plugin-cc NOT triggered
-echo ""
-echo "=== T-FLAGS-16: --server with ~/.claude present → plugin-cc NOT delegated ==="
+echo "=== T-FLAGS-16: --server with a claude CLI → plugin-cc NOT delegated ==="
 TF16=$(mktemp -d)
 make_stubs "$TF16/bin"
-mkdir -p "$TF16/fakehome/.claude"
+printf '#!/bin/sh\nexit 0\n' > "$TF16/bin/claude"; chmod +x "$TF16/bin/claude"
 TF16_OUT=$(UM_DRY_RUN=1 UM_INSTALL_DIR="$TF16/repo" \
   env PATH="$TF16/bin:/usr/bin:/bin" HOME="$TF16/fakehome" bash "$INSTALLER" --server 2>&1) && TF16_EXIT=0 || TF16_EXIT=$?
 if [ "$TF16_EXIT" -eq 0 ]; then pass "T-FLAGS-16: exit 0"; else fail "T-FLAGS-16: exit $TF16_EXIT (out: $TF16_OUT)"; fi

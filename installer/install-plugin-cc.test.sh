@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # install-plugin-cc.test.sh — tests for installer/install-plugin-cc.sh
-# Migrated from server/install.test.sh (T1/T2/T3/T11/T14/T12) as part of
-# Task 3.1 test-ownership fix (post-commit 003d950).
+#
+# The installer registers the plugin through Claude Code's marketplace (the
+# only route Claude Code loads) and installs the optional claude-mem bridge
+# under ~/.local/share/um/bridge. A fake `claude` on PATH records every call;
+# no network. Rewritten 2026-10-14 when the old copy-into-~/.claude/plugins
+# route was retired: a 2026-10-14 clean-room run showed `claude plugin list`
+# reporting "No plugins installed" right after that route ran.
 #
 # Run: bash installer/install-plugin-cc.test.sh
 
@@ -13,7 +18,6 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirna
 # shellcheck source=installer/lib/test-harness.sh
 source "$REPO_ROOT/installer/lib/test-harness.sh"
 PLUGIN_CC_SH="$SCRIPT_DIR/install-plugin-cc.sh"
-PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
 
 # ─── Test harness ─────────────────────────────────────────────────────────────
 PASS=0
@@ -26,405 +30,146 @@ fail_test() {
   FAILURES+=("$1")
   printf '  FAIL: %s — %s\n' "$1" "${2:-}"
 }
-
-assert_eq() {
-  local name="$1" got="$2" want="$3"
-  if [ "$got" = "$want" ]; then pass "$name"; else fail_test "$name" "got='$got', want='$want'"; fi
-}
-
 assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" == *"$needle"* ]]; then pass "$name"; else fail_test "$name" "expected to contain '$needle'"; fi
 }
-
 assert_not_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" != *"$needle"* ]]; then pass "$name"; else fail_test "$name" "should NOT contain '$needle'"; fi
 }
-
 assert_file_exists() {
   local name="$1" file="$2"
   if [ -e "$file" ]; then pass "$name"; else fail_test "$name" "file not found: $file"; fi
 }
-
 assert_exit_zero() {
   local name="$1" code="$2"
   if [ "$code" -eq 0 ]; then pass "$name"; else fail_test "$name" "exit code $code (expected 0)"; fi
 }
 
-# ─── Temp root ───────────────────────────────────────────────────────────────
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
 
-# ─── Helper: make_fakebin ────────────────────────────────────────────────────
+# make_fakebin <dir> [claude_add_rc] — a fake `claude` that appends each call
+# to $dir/claude.calls and exits with claude_add_rc for `marketplace add`, and a
+# fake `npm` that succeeds (UM_TEST_NPM_RC overrides) without touching the net.
 make_fakebin() {
-  local dest="$1"
+  local dest="$1" add_rc="${2:-0}"
   mkdir -p "$dest"
-  # fake docker (not needed by plugin-cc but kept for PATH completeness)
-  cat > "$dest/docker" <<'FAKE'
+  cat > "$dest/claude" <<FAKE
 #!/usr/bin/env bash
+echo "\$*" >> "$dest/claude.calls"
+[[ "\$*" == "plugin marketplace add"* ]] && exit $add_rc
 exit 0
 FAKE
-  chmod +x "$dest/docker"
-  # fake curl
-  cat > "$dest/curl" <<'FAKE'
+  cat > "$dest/npm" <<'FAKE'
 #!/usr/bin/env bash
-exit 0
+exit "${UM_TEST_NPM_RC:-0}"
 FAKE
-  chmod +x "$dest/curl"
-  # fake python3
-  cat > "$dest/python3" <<'FAKE'
-#!/usr/bin/env bash
-[[ "$*" == *"import yaml"* ]] && exit 0
-exec /usr/bin/python3 "$@" 2>/dev/null || exit 0
-FAKE
-  chmod +x "$dest/python3"
+  chmod +x "$dest/claude" "$dest/npm"
 }
 
-# run_plugin_cc <fakebin_dir> [env_var=val ...] -- [script_args...]
-# Run install-plugin-cc.sh with fake PATH injected and REPO_ROOT pinned.
-# env vars before '--' are passed as env overrides; args after '--' go to script.
+# run_plugin_cc <path_prefix> [env_var=val ...] — run the installer with REPO_ROOT pinned.
+# shellcheck disable=SC2317,SC2329  # invoked indirectly through _tx_capture (SC2329 is the newer code)
 run_plugin_cc() {
-  local fakebin="$1"; shift
-  local -a env_vars=()
-  local -a script_args=()
-  local after_sep=0
-  for arg in "$@"; do
-    if [ "$arg" = "--" ]; then after_sep=1; continue; fi
-    if [ "$after_sep" = "1" ]; then script_args+=("$arg")
-    else env_vars+=("$arg"); fi
-  done
-  # Bash 3.2 (macOS default) treats `"${arr[@]}"` on an empty array as an
-  # unbound variable under `set -u`. Use the `${arr[@]+"${arr[@]}"}` idiom
-  # to expand only when set; bash 5+ handles either form. Without this,
-  # tests that pass no `--` script args (T17, T15, T16) fail on macOS.
-  env PATH="$fakebin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" \
-    ${env_vars[@]+"${env_vars[@]}"} \
-    bash "$PLUGIN_CC_SH" ${script_args[@]+"${script_args[@]}"} 2>&1
+  local prefix="$1"; shift
+  env PATH="$prefix:$PATH" _UM_REPO_ROOT="$REPO_ROOT" "$@" bash "$PLUGIN_CC_SH" --yes 2>&1
 }
 
-# ─── T1: Fresh install — plugin copy ─────────────────────────────────────────
+# ─── P1: the plugin goes through the marketplace, nowhere else ───────────────
 echo ""
-echo "=== T1: Fresh install (no plugin) ==="
-T1="$TMPROOT/t1"
-mkdir -p "$T1/plugins" "$T1/home"
-touch "$T1/home/.bashrc"
-make_fakebin "$T1/bin"
-
-T1_EXIT=0
-T1_OUT=$(run_plugin_cc "$T1/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T1/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T1/home") || T1_EXIT=$?
-
-assert_exit_zero "T1: install exits 0" "$T1_EXIT"
-assert_file_exists "T1: plugin directory created" "$T1/plugins/universal-memory"
-assert_file_exists "T1: plugin.json present inside install" "$T1/plugins/universal-memory/.claude-plugin/plugin.json"
-assert_contains "T1: plugin install message in output" "$T1_OUT" "Plugin copied"
-
-# ─── T2: Re-install — same version plugin already installed ───────────────────
-echo ""
-echo "=== T2: Re-install (plugin same version) ==="
-T2="$TMPROOT/t2"
-mkdir -p "$T2/plugins" "$T2/home"
-touch "$T2/home/.bashrc"
-make_fakebin "$T2/bin"
-
-# Pre-install: copy plugin once
-cp -r "$PLUGIN_SRC" "$T2/plugins/universal-memory"
-
-T2_EXIT=0
-T2_OUT=$(run_plugin_cc "$T2/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T2/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T2/home") || T2_EXIT=$?
-
-assert_exit_zero "T2: re-install exits 0" "$T2_EXIT"
-assert_contains "T2: skip message for same-version plugin" "$T2_OUT" "already installed"
-
-# ─── T3: Non-interactive mode ─────────────────────────────────────────────────
-echo ""
-echo "=== T3: Non-interactive mode (UM_NONINTERACTIVE=1) ==="
-T3="$TMPROOT/t3"
-mkdir -p "$T3/plugins" "$T3/home"
-touch "$T3/home/.bashrc"
-make_fakebin "$T3/bin"
-
-_tx_capture T3 run_plugin_cc "$T3/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T3/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T3/home"
-_dump_on_fail T3
-
-assert_exit_zero "T3: non-interactive exits 0" "$TX_EXIT_T3"
-assert_file_exists "T3: plugin installed non-interactively" "$T3/plugins/universal-memory"
-
-# ─── T11: picking 'skip' at install prompt — non-destructive ─────────────────
-# Regression: previously, _install_plugin rm'd the target BEFORE the case that
-# picked the action, so picking (s)kip deleted the user's installed plugin
-# without installing anything. Skip must be non-destructive.
-echo ""
-echo "=== T11: picking 'skip' at install prompt preserves pre-existing plugin ==="
-T11="$TMPROOT/t11"
-mkdir -p "$T11/plugins" "$T11/home"
-touch "$T11/home/.bashrc"
-make_fakebin "$T11/bin"
-
-# Pre-install a plugin dir WITHOUT plugin.json so the version-compare block
-# (needs both src_ver and target_ver non-empty) is skipped and execution
-# reaches the copy/link/skip prompt directly.
-mkdir -p "$T11/plugins/universal-memory"
-echo "user-customized content" > "$T11/plugins/universal-memory/CUSTOM.txt"
-
-# Run interactively (no UM_NONINTERACTIVE), feeding 's' on stdin to skip.
-T11_EXIT=0
-T11_OUT=$(printf 's\n' | env PATH="$T11/bin:$PATH" \
-  _UM_REPO_ROOT="$REPO_ROOT" \
-  CLAUDE_PLUGINS_DIR="$T11/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T11/home" \
-  bash "$PLUGIN_CC_SH" 2>&1) || T11_EXIT=$?
-
-assert_exit_zero "T11: install exits 0 when user picks skip" "$T11_EXIT"
-assert_contains "T11: skip message shown at plugin prompt" "$T11_OUT" "install manually"
-assert_file_exists "T11: pre-existing plugin content preserved on skip" "$T11/plugins/universal-memory/CUSTOM.txt"
-
-# ─── T14: plugin install copies rubric to target ─────────────────────────────
-echo ""
-echo "=== T14: plugin install copies rubric.md to target ==="
-T14="$TMPROOT/t14"
-mkdir -p "$T14/plugins" "$T14/home"
-touch "$T14/home/.bashrc"
-make_fakebin "$T14/bin"
-
-_tx_capture T14 run_plugin_cc "$T14/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T14/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T14/home"
-_dump_on_fail T14
-
-assert_exit_zero "T14: install exits 0" "$TX_EXIT_T14"
-assert_file_exists "T14: rubric.md copied to installed plugin" "$T14/plugins/universal-memory/rubric.md"
-
-# ─── T12: --yes non-interactive with all defaults ─────────────────────────────
-# A single `--yes`/`-y` flag should accept every default (plugin copy) without
-# prompting and without requiring UM_NONINTERACTIVE=1 to be set manually.
-echo ""
-echo "=== T12: --yes accepts all defaults ==="
-T12="$TMPROOT/t12"
-mkdir -p "$T12/plugins" "$T12/home"
-touch "$T12/home/.bashrc"
-make_fakebin "$T12/bin"
-
-T12_EXIT=0
-T12_OUT=$(env PATH="$T12/bin:$PATH" \
-  _UM_REPO_ROOT="$REPO_ROOT" \
-  CLAUDE_PLUGINS_DIR="$T12/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T12/home" \
-  bash "$PLUGIN_CC_SH" --yes 2>&1) || T12_EXIT=$?
-
-assert_exit_zero "T12: --yes exits 0" "$T12_EXIT"
-assert_contains "T12: plugin copied message" "$T12_OUT" "Plugin copied"
-assert_file_exists "T12: plugin installed to default target" "$T12/plugins/universal-memory/.claude-plugin/plugin.json"
-
-# ─── T15: bridge CLI symlink + vendor-copy (copy-mode install, D.9) ──────────
-# In copy mode (_PLUGIN_TARGET is a real directory, not a symlink):
-#   • ~/.local/bin/um-bridge-claude-mem exists and is executable
-#   • $_PLUGIN_TARGET/bin/lib/bridge-contract.mjs exists and is NOT the dev shim
-#   • $_PLUGIN_TARGET/bin/lib/lockdir.mjs exists
-#   • npm install was attempted (better-sqlite3 dir present OR warning was emitted)
-# Note: npm install may fail on this box (no node-gyp prereqs) — that is
-# expected and the installer should still exit 0 (graceful-failure path).
-echo ""
-echo "=== T15: copy-mode install — bridge symlink + vendored lib files (D.9) ==="
-T15="$TMPROOT/t15"
-mkdir -p "$T15/plugins" "$T15/home/.local/bin"
-touch "$T15/home/.bashrc"
-make_fakebin "$T15/bin"
-
-T15_EXIT=0
-T15_OUT=$(run_plugin_cc "$T15/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T15/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T15/home") || T15_EXIT=$?
-
-assert_exit_zero "T15: copy-mode install exits 0" "$T15_EXIT"
-
-# The bridge CLI symlink (or copy fallback) must exist in ~/.local/bin
-T15_BRIDGE_LINK="$T15/home/.local/bin/um-bridge-claude-mem"
-assert_file_exists "T15: um-bridge-claude-mem installed to ~/.local/bin" "$T15_BRIDGE_LINK"
-
-# Must be executable
-if [ -x "$T15_BRIDGE_LINK" ]; then
-  pass "T15: um-bridge-claude-mem is executable"
+echo "=== P1: registers through claude plugin marketplace ==="
+T="$TMPROOT/p1"; mkdir -p "$T/home"; make_fakebin "$T/bin"
+_tx_capture P1 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge"
+_dump_on_fail P1
+assert_exit_zero "P1: exits 0" "$TX_EXIT_P1"
+P1_CALLS=$(cat "$T/bin/claude.calls" 2>/dev/null || true)
+assert_contains "P1: marketplace add goldenwo/universal-memory" "$P1_CALLS" "plugin marketplace add goldenwo/universal-memory"
+assert_contains "P1: marketplace update" "$P1_CALLS" "plugin marketplace update universal-memory"
+assert_contains "P1: plugin install" "$P1_CALLS" "plugin install universal-memory@universal-memory"
+assert_contains "P1: plugin update" "$P1_CALLS" "plugin update universal-memory@universal-memory"
+if [ -e "$T/home/.claude/plugins/universal-memory" ]; then
+  fail_test "P1: no copy under ~/.claude/plugins" "found $T/home/.claude/plugins/universal-memory"
 else
-  fail_test "T15: um-bridge-claude-mem executable bit" "file not executable: $T15_BRIDGE_LINK"
+  pass "P1: no copy under ~/.claude/plugins"
+fi
+assert_contains "P1: next step is /um-setup" "$TX_OUT_P1" "/um-setup"
+if [ -e "$T/home/.bashrc" ] || [ -e "$T/home/.zshrc" ]; then
+  fail_test "P1: no shell rc written" "an rc file appeared in $T/home"
+else
+  pass "P1: no shell rc written"
 fi
 
-# Vendored bridge-contract.mjs must exist
-T15_LIB="$T15/plugins/universal-memory/bin/lib"
-assert_file_exists "T15: vendored bridge-contract.mjs present" "$T15_LIB/bridge-contract.mjs"
-assert_file_exists "T15: vendored lockdir.mjs present" "$T15_LIB/lockdir.mjs"
-
-# In copy mode the vendor files must NOT be the dev-tree shim (first line differs)
-T15_BC_FIRST=$(head -1 "$T15_LIB/bridge-contract.mjs" 2>/dev/null || echo "")
-if [[ "$T15_BC_FIRST" == "// Dev-tree shim"* ]]; then
-  fail_test "T15: bridge-contract.mjs is vendor copy (not shim)" \
-    "first line still looks like dev shim: $T15_BC_FIRST"
-else
-  pass "T15: bridge-contract.mjs is vendor copy (not dev shim)"
-fi
-
-# npm install attempted: either node_modules/better-sqlite3 exists (build succeeded)
-# OR the warning was emitted (build failed gracefully). Either outcome is OK.
-T15_BSQ3="$T15/plugins/universal-memory/bin/node_modules/better-sqlite3"
-if [ -d "$T15_BSQ3" ]; then
-  pass "T15: better-sqlite3 native build succeeded"
-else
-  # npm install failed gracefully — check that installer still exited 0 (already asserted)
-  # and that the warning message was emitted
-  if [[ "$T15_OUT" == *"native build failed"* ]] || [[ "$T15_OUT" == *"better-sqlite3"* ]]; then
-    pass "T15: better-sqlite3 build failed gracefully (warning emitted, exit 0)"
-  else
-    # npm install may have been silently skipped in some environments — treat as pass
-    # as long as the installer exit was 0 (already verified above)
-    pass "T15: npm install outcome OK (exit 0 regardless)"
-  fi
-fi
-
-# T15 copy-mode loadability smoke (E.12 R1 Critical fix verification): the
-# installed bridge CLI must resolve all its imports from its own ./lib/ shim
-# vendor-copy. If it accidentally hard-codes ../../../../server/lib/, copy-mode
-# installs at ~/.claude/plugins/.../bin/ have no server/ four levels up and
-# every systemd/launchd/cron tick fails with ERR_MODULE_NOT_FOUND before main()
-# runs. --help exits before parseArgs touches anything else, so it's the
-# cheapest possible "the module load chain works" check.
-#
-# Invoke via shebang dispatch (not `node $bin_link`) so the test exercises
-# whichever install variant the platform got: a real symlink on POSIX, a bash
-# launcher on Windows where ln -s silently falls back to copy. Both routes end
-# up running node on the plugin-install-dir bridge file where its siblings live.
-set +e
-T15_HELP_OUT=$("$T15_BRIDGE_LINK" --help 2>&1)
-T15_HELP_EXIT=$?
-set -e
-if [ "$T15_HELP_EXIT" -eq 0 ] && [[ "$T15_HELP_OUT" == *"um-bridge-claude-mem"* ]]; then
-  pass "T15: bridge CLI loads from copy-mode plugin path (--help exits 0)"
-else
-  fail_test "T15: bridge CLI loads from copy-mode plugin path" \
-    "exit=$T15_HELP_EXIT, out: ${T15_HELP_OUT:0:200}"
-fi
-
-# ─── T16: symlink-mode install — vendor-copy is SKIPPED (D.9) ─────────────────
-# In symlink mode (_PLUGIN_TARGET is a symlink into the dev tree):
-#   • ~/.local/bin/um-bridge-claude-mem installed
-#   • The dev-tree shim file remains unchanged (no overwrite)
-# Note: ln -s may fall back to cp on Windows without Developer Mode; in that case
-# _PLUGIN_TARGET is a real dir and this test is effectively the same as T15.
-# We detect and document this edge case rather than failing.
+# ─── P2: a local checkout can be the marketplace ─────────────────────────────
 echo ""
-echo "=== T16: symlink-mode install — shim files NOT overwritten (D.9) ==="
-T16="$TMPROOT/t16"
-mkdir -p "$T16/plugins" "$T16/home/.local/bin"
-touch "$T16/home/.bashrc"
-make_fakebin "$T16/bin"
+echo "=== P2: UM_PLUGIN_MARKETPLACE override ==="
+T="$TMPROOT/p2"; mkdir -p "$T/home"; make_fakebin "$T/bin"
+_tx_capture P2 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge" UM_PLUGIN_MARKETPLACE=/src/um
+assert_exit_zero "P2: exits 0" "$TX_EXIT_P2"
+assert_contains "P2: marketplace add uses the override" "$(cat "$T/bin/claude.calls")" "plugin marketplace add /src/um"
 
-# Force symlink mode by pre-creating _PLUGIN_TARGET as a symlink
-T16_LINK_TARGET="$T16/plugins/universal-memory"
-ln -s "$PLUGIN_SRC" "$T16_LINK_TARGET" 2>/dev/null || true
-
-_tx_capture T16 run_plugin_cc "$T16/bin" \
-  UM_NONINTERACTIVE=1 \
-  CLAUDE_PLUGINS_DIR="$T16/plugins" \
-  SHELL=/bin/bash \
-  HOME="$T16/home"
-_dump_on_fail T16
-
-assert_exit_zero "T16: symlink-mode install exits 0" "$TX_EXIT_T16"
-
-# Bridge link must be installed regardless of mode
-T16_BRIDGE_LINK="$T16/home/.local/bin/um-bridge-claude-mem"
-assert_file_exists "T16: um-bridge-claude-mem installed in symlink mode" "$T16_BRIDGE_LINK"
-
-# In symlink mode: _PLUGIN_TARGET is a symlink, so vendor-copy is skipped.
-# The shim in the dev tree (PLUGIN_SRC/bin/lib/bridge-contract.mjs) must still
-# start with "// Dev-tree shim" (was NOT overwritten by the installer).
-T16_SHIM_FILE="$PLUGIN_SRC/bin/lib/bridge-contract.mjs"
-if [ -L "$T16_LINK_TARGET" ]; then
-  # Symlink actually created — verify shim was not overwritten
-  T16_SHIM_FIRST=$(head -1 "$T16_SHIM_FILE" 2>/dev/null || echo "MISSING")
-  if [[ "$T16_SHIM_FIRST" == "// Dev-tree shim"* ]]; then
-    pass "T16: dev-tree shim unchanged in symlink mode"
-  else
-    fail_test "T16: dev-tree shim unchanged" "first line: $T16_SHIM_FIRST"
-  fi
+# ─── P3: no claude CLI — say the two commands, install nothing ───────────────
+echo ""
+echo "=== P3: claude CLI missing ==="
+T="$TMPROOT/p3"; mkdir -p "$T/home"; make_fakebin "$T/bin"; rm -f "$T/bin/claude"
+# Hide any real claude on this machine behind a PATH that lacks it.
+P3_PATH="$T/bin:/usr/bin:/bin"
+_tx_capture P3 env PATH="$P3_PATH" _UM_REPO_ROOT="$REPO_ROOT" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge" bash "$PLUGIN_CC_SH" --yes
+if command -v -p claude >/dev/null 2>&1 || PATH="$P3_PATH" command -v claude >/dev/null 2>&1; then
+  pass "P3: skipped (a claude CLI lives in /usr/bin or /bin on this machine)"
 else
-  # ln -s fell back to cp (Windows without Dev Mode) — symlink mode not available.
-  # Document and skip the shim-preservation check.
-  pass "T16: symlink-mode shim check SKIPPED (ln -s fell back to cp on this platform)"
+  assert_exit_zero "P3: exits 0" "$TX_EXIT_P3"
+  assert_contains "P3: names marketplace add" "$TX_OUT_P3" "claude plugin marketplace add goldenwo/universal-memory"
+  assert_contains "P3: names plugin install" "$TX_OUT_P3" "claude plugin install universal-memory@universal-memory"
 fi
 
-# ─── T17: stale-symlink replacement at $CLAUDE_PLUGINS_DIR/universal-memory ───
-# Migrated from server/install.test.sh T9 (pre-881f229). v0.5 moved plugin
-# installation from server/install.sh to installer/install-plugin-cc.sh, but
-# the symlink-replacement coverage didn't move with the code. T9 guarded
-# against a v0.4-class regression where the installer wrote through a stale
-# plugin-dir symlink and silently corrupted whatever it was pointing at.
-#
-# Invariants (mirror original T9):
-#   1. install exits 0
-#   2. plugin target is replaced (real dir, or symlink to PLUGIN_SRC), NOT
-#      still pointing at the stale `elsewhere/` target
-#   3. `elsewhere/` is empty — the installer did NOT traverse the stale symlink
+# ─── P4: a failing marketplace add fails the installer ───────────────────────
 echo ""
-echo "=== T17: stale-symlink replacement at \$CLAUDE_PLUGINS_DIR/universal-memory ==="
-T17="$TMPROOT/t17"
-mkdir -p "$T17/plugins" "$T17/elsewhere" "$T17/home"
-touch "$T17/home/.bashrc"
-make_fakebin "$T17/bin"
+echo "=== P4: marketplace add fails ==="
+T="$TMPROOT/p4"; mkdir -p "$T/home"; make_fakebin "$T/bin" 1
+_tx_capture P4 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge"
+if [ "$TX_EXIT_P4" -ne 0 ]; then pass "P4: non-zero exit"; else fail_test "P4: non-zero exit" "exit 0"; fi
+assert_contains "P4: says which step failed" "$TX_OUT_P4" "marketplace add goldenwo/universal-memory failed"
+assert_not_contains "P4: no install after a failed add" "$(cat "$T/bin/claude.calls")" "plugin install"
 
-# Stale symlink: $T17/plugins/universal-memory -> $T17/elsewhere (a sibling
-# dir that has nothing to do with the plugin source). The installer must
-# replace this with a real plugin without writing into elsewhere/.
-ln -s "$T17/elsewhere" "$T17/plugins/universal-memory" 2>/dev/null || true
+# ─── P5: an old copy is reported, not deleted ────────────────────────────────
+echo ""
+echo "=== P5: old ~/.claude/plugins copy ==="
+T="$TMPROOT/p5"; mkdir -p "$T/home" "$T/plugins/universal-memory"; make_fakebin "$T/bin"
+echo keep > "$T/plugins/universal-memory/marker"
+_tx_capture P5 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge" \
+  CLAUDE_PLUGINS_DIR="$T/plugins" UM_PROMPT_DIR="$T/plugins/universal-memory/hooks/lib/prompts"
+assert_exit_zero "P5: exits 0" "$TX_EXIT_P5"
+assert_contains "P5: warns Claude Code does not load it" "$TX_OUT_P5" "Claude Code does not load it"
+assert_contains "P5: warns about UM_PROMPT_DIR" "$TX_OUT_P5" "UM_PROMPT_DIR points into that old copy"
+assert_file_exists "P5: the old copy is left in place" "$T/plugins/universal-memory/marker"
 
-if [ ! -L "$T17/plugins/universal-memory" ]; then
-  # ln -s fell back to copy (Windows without Developer Mode) — symlink mode
-  # not available on this platform. Document and skip rather than false-pass.
-  pass "T17: stale-symlink test SKIPPED (ln -s unavailable on this platform)"
+# ─── B1: the bridge lives in its own directory with real modules ─────────────
+echo ""
+echo "=== B1: claude-mem bridge under UM_BRIDGE_DIR ==="
+if ! command -v node >/dev/null 2>&1; then
+  pass "B1: skipped (no node on this machine)"
 else
-  _tx_capture T17 run_plugin_cc "$T17/bin" \
-    UM_NONINTERACTIVE=1 \
-    CLAUDE_PLUGINS_DIR="$T17/plugins" \
-    SHELL=/bin/bash \
-    HOME="$T17/home"
-  _dump_on_fail T17
+  T="$TMPROOT/b1"; mkdir -p "$T/home"; make_fakebin "$T/bin"
+  _tx_capture B1 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge"
+  _dump_on_fail B1
+  assert_exit_zero "B1: exits 0" "$TX_EXIT_B1"
+  for f in um-bridge-claude-mem translate.mjs package.json lib/bridge-contract.mjs lib/lockdir.mjs; do
+    assert_file_exists "B1: $f installed" "$T/bridge/$f"
+  done
+  assert_not_contains "B1: bridge-contract is the real module, not the dev shim" "$(cat "$T/bridge/lib/bridge-contract.mjs")" "Dev-tree shim"
+  assert_not_contains "B1: lockdir is the real module, not the dev shim" "$(cat "$T/bridge/lib/lockdir.mjs")" "Dev-tree shim"
+  assert_file_exists "B1: ~/.local/bin entry" "$T/home/.local/bin/um-bridge-claude-mem"
+  # Loadability: --help imports translate.mjs + lib/* (better-sqlite3 loads only on a run).
+  B1_HELP_RC=0
+  B1_HELP=$(HOME="$T/home" "$T/home/.local/bin/um-bridge-claude-mem" --help 2>&1) || B1_HELP_RC=$?
+  assert_exit_zero "B1: the linked bridge loads (--help) — out: ${B1_HELP:0:200}" "$B1_HELP_RC"
 
-  assert_exit_zero "T17: install exits 0 over stale symlink" "$TX_EXIT_T17"
-
-  # Invariant 2: plugin target replaced (no longer the stale symlink).
-  T17_LINK_DEST=$(readlink "$T17/plugins/universal-memory" 2>/dev/null || true)
-  if [ -L "$T17/plugins/universal-memory" ]; then
-    # Still a symlink — must point at PLUGIN_SRC (link-mode), NOT elsewhere/.
-    assert_not_contains "T17: stale symlink target replaced (no longer points at elsewhere/)" \
-      "$T17_LINK_DEST" "$T17/elsewhere"
-  else
-    # Real directory (copy-mode default under UM_NONINTERACTIVE=1).
-    assert_file_exists "T17: plugin installed as real dir over stale symlink" \
-      "$T17/plugins/universal-memory/.claude-plugin/plugin.json"
-  fi
-
-  # Invariant 3: stale symlink target ($T17/elsewhere) was NOT written into.
-  # Catches the v0.4 regression class where install would traverse the
-  # symlink and corrupt the original target.
-  T17_ELSEWHERE_COUNT=$(find "$T17/elsewhere" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
-  assert_eq "T17: stale symlink target dir not corrupted" "$T17_ELSEWHERE_COUNT" "0"
+  # A failed native build warns and leaves the install successful.
+  T="$TMPROOT/b2"; mkdir -p "$T/home"; make_fakebin "$T/bin"
+  _tx_capture B2 run_plugin_cc "$T/bin" HOME="$T/home" UM_BRIDGE_DIR="$T/bridge" UM_TEST_NPM_RC=1
+  assert_exit_zero "B2: npm failure still exits 0" "$TX_EXIT_B2"
+  assert_contains "B2: npm failure is reported" "$TX_OUT_B2" "native build failed"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

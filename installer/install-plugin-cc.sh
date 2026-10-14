@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
-# install-plugin-cc.sh — standalone Claude Code plugin installer
+# install-plugin-cc.sh — Claude Code plugin installer
 #
-# Extracted from server/install.sh (v0.5). Can be run standalone or via
-# installer/install.sh --plugin-cc.
+# Claude Code loads plugins only from its marketplace, so this registers the
+# plugin through the `claude` CLI, with the same two commands the README gives:
+#   claude plugin marketplace add goldenwo/universal-memory
+#   claude plugin install universal-memory@universal-memory
+# and refreshes both when they are already there (each step is idempotent).
+# Until 2026-10 it copied the plugin into ~/.claude/plugins/universal-memory, a
+# directory Claude Code never reads: `claude plugin list` said "No plugins
+# installed" right after it ran.
+#
+# It also installs the optional claude-mem bridge (um-bridge-claude-mem) into
+# ~/.local/share/um/bridge with its native dependency, linked from ~/.local/bin.
+# The plugin's own directory is a versioned cache that Claude Code replaces on
+# every update, and its bridge modules are dev-tree shims, so the bridge cannot
+# run from there.
 #
 # Usage:
 #   bash installer/install-plugin-cc.sh [--yes]
 #
 # Environment overrides:
-#   CLAUDE_PLUGINS_DIR   Override ~/.claude/plugins
-#   _UM_REPO_ROOT        Override repo root detection
+#   UM_PLUGIN_MARKETPLACE  Marketplace source (default goldenwo/universal-memory;
+#                          a local checkout path works too)
+#   UM_BRIDGE_DIR          Bridge install dir (default ~/.local/share/um/bridge)
+#   CLAUDE_PLUGINS_DIR     Override ~/.claude/plugins (used only to spot an old copy)
+#   _UM_REPO_ROOT          Override repo root detection
 
 set -euo pipefail
 
@@ -22,266 +37,98 @@ warn()  { printf '\033[1;33m[install-plugin-cc]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[1;31m[install-plugin-cc]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ─── CLI args ────────────────────────────────────────────────────────────────
+# --yes is accepted for the dispatcher's sake; nothing here prompts any more.
+# --server-url is accepted and ignored: /um-setup configures the endpoint.
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --yes|-y) UM_NONINTERACTIVE=1 ;;
-    --server-url) UM_SERVER_URL="${2:?--server-url requires a URL argument}"; shift ;;
+    --yes|-y) ;;
+    --server-url) shift ;;
     *) : ;;  # pass-through unknown flags silently
   esac
   shift
 done
 
-# ─── Preflight ───────────────────────────────────────────────────────────────
-if [ -z "${HOME:-}" ] && [ -z "${CLAUDE_PLUGINS_DIR:-}" ]; then
-  fail "Neither HOME nor CLAUDE_PLUGINS_DIR is set — cannot determine plugin directory"
+if [ -z "${HOME:-}" ]; then
+  fail "HOME is not set — cannot locate ~/.claude or ~/.local"
 fi
 
 _PLUGIN_SRC="$REPO_ROOT/plugins/claude-code/universal-memory"
-_PLUGIN_TARGET_BASE="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}"
-_PLUGIN_TARGET="$_PLUGIN_TARGET_BASE/universal-memory"
+[ -d "$_PLUGIN_SRC" ] || fail "Plugin source not found at $_PLUGIN_SRC — is this a full repo checkout?"
+_MARKETPLACE="${UM_PLUGIN_MARKETPLACE:-goldenwo/universal-memory}"
 
-if [ ! -d "$_PLUGIN_SRC" ]; then
-  fail "Plugin source not found at $_PLUGIN_SRC — is this a full repo checkout?"
-fi
-
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-_read_plugin_version() {
-  local dir="$1"
-  local pjson
-  if [ -f "$dir/.claude-plugin/plugin.json" ]; then
-    pjson="$dir/.claude-plugin/plugin.json"
-  elif [ -f "$dir/plugin.json" ]; then
-    pjson="$dir/plugin.json"
-  else
+# ─── Plugin: the marketplace route ───────────────────────────────────────────
+_register_plugin() {
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "Claude Code's CLI (claude) is not on PATH. Install Claude Code, then run:"
+    warn "  claude plugin marketplace add $_MARKETPLACE"
+    warn "  claude plugin install universal-memory@universal-memory"
     return 0
   fi
-  grep '"version"' "$pjson" 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -1
+  info "Registering the plugin with Claude Code (marketplace: $_MARKETPLACE)..."
+  claude plugin marketplace add "$_MARKETPLACE" >/dev/null \
+    || fail "claude plugin marketplace add $_MARKETPLACE failed"
+  # Pull the newest marketplace revision so an existing install moves forward.
+  claude plugin marketplace update universal-memory >/dev/null 2>&1 \
+    || warn "claude plugin marketplace update failed — installing from the copy already on disk"
+  claude plugin install universal-memory@universal-memory >/dev/null \
+    || fail "claude plugin install universal-memory@universal-memory failed"
+  claude plugin update universal-memory@universal-memory >/dev/null 2>&1 || true
+  ok "Claude Code plugin installed. Next: run /um-setup inside Claude Code (restart it first if it is open)."
 }
 
-# ─── Install ─────────────────────────────────────────────────────────────────
-_install_plugin() {
-  local src="$_PLUGIN_SRC"
-  local target="$_PLUGIN_TARGET"
-
-  mkdir -p "$_PLUGIN_TARGET_BASE" || { warn "Could not create plugin directory $_PLUGIN_TARGET_BASE — skipping."; return; }
-
-  # Already a symlink pointing at src?
-  if [ -L "$target" ]; then
-    local link_dest
-    link_dest=$(readlink "$target" 2>/dev/null || true)
-    if [ "$link_dest" = "$src" ]; then
-      ok "Plugin already linked at $target — skipping."
-      return
-    fi
-    warn "Plugin symlink at $target points elsewhere ($link_dest). Will prompt for action."
+# An install from the old copy route leaves a directory Claude Code ignores and
+# may have exported UM_PROMPT_DIR into it, which pins the hooks' prompts to that
+# stale copy. Say so; don't delete the user's files.
+_warn_old_copy() {
+  local old="${CLAUDE_PLUGINS_DIR:-$HOME/.claude/plugins}/universal-memory"
+  if [ -e "$old" ] || [ -L "$old" ]; then
+    warn "$old is a copy from an older installer; Claude Code does not load it."
+    warn "  Remove it when convenient: rm -rf '$old'"
   fi
-
-  # Already a directory?
-  if [ -d "$target" ] && [ ! -L "$target" ]; then
-    local src_ver target_ver
-    src_ver=$(_read_plugin_version "$src")
-    target_ver=$(_read_plugin_version "$target")
-    if [ -n "$src_ver" ] && [ -n "$target_ver" ]; then
-      if [ "$src_ver" = "$target_ver" ]; then
-        ok "Plugin v$target_ver already installed at $target — skipping."
-        return
-      fi
-      if ! sort -V </dev/null >/dev/null 2>&1; then
-        warn "sort -V not available — cannot reliably compare plugin versions; skipping version check."
-      else
-        local newer
-        newer=$(printf '%s\n%s\n' "$src_ver" "$target_ver" | sort -V | tail -1)
-        if [ "$newer" = "$target_ver" ] && [ "$src_ver" != "$target_ver" ]; then
-          warn "Installed plugin (v$target_ver) is newer than source (v$src_ver) — skipping."
-          return
-        fi
-      fi
-      if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
-        printf 'Replace installed plugin v%s with v%s? [Y/n] ' "$target_ver" "$src_ver" >&2
-        read -r _replace
-        _replace="${_replace:-Y}"
-        [[ "$_replace" =~ ^[Nn] ]] && { info "Plugin update skipped."; return; }
-      fi
-      rm -rf "$target"
-    fi
+  if [ -n "${UM_PROMPT_DIR:-}" ] && [[ "$UM_PROMPT_DIR" == "$old"* ]]; then
+    warn "UM_PROMPT_DIR points into that old copy ($UM_PROMPT_DIR); remove its export from your shell rc so the hooks use the plugin's own prompts."
   fi
+}
 
-  # Prompt: copy, link, or skip
-  local _action="c"
-  if [ "${UM_NONINTERACTIVE:-0}" = "1" ]; then
-    _action="c"
+# ─── Optional: the claude-mem bridge CLI ─────────────────────────────────────
+_install_bridge() {
+  local src="$_PLUGIN_SRC/bin"
+  local dir="${UM_BRIDGE_DIR:-$HOME/.local/share/um/bridge}"
+  local link="$HOME/.local/bin/um-bridge-claude-mem"
+  if ! command -v node >/dev/null 2>&1; then
+    info "node not found — skipping the optional claude-mem bridge (um-bridge-claude-mem)."
+    return 0
+  fi
+  mkdir -p "$dir/lib" "$HOME/.local/bin"
+  cp "$src/um-bridge-claude-mem" "$src/translate.mjs" "$src/package.json" "$dir/"
+  chmod +x "$dir/um-bridge-claude-mem"
+  # The plugin tree's lib/*.mjs are dev shims that re-export from server/lib;
+  # the bridge needs the real modules next to it.
+  cp "$REPO_ROOT/server/lib/bridge-contract.mjs" "$dir/lib/bridge-contract.mjs"
+  cp "$REPO_ROOT/server/lib/lockdir.mjs"          "$dir/lib/lockdir.mjs"
+
+  if [ -L "$link" ] || [ -e "$link" ]; then rm -f "$link"; fi
+  if ln -s "$dir/um-bridge-claude-mem" "$link" 2>/dev/null && [ -L "$link" ]; then
+    ok "um-bridge-claude-mem linked: $link -> $dir/um-bridge-claude-mem"
   else
-    printf 'Install plugin to %s? (c)opy, (l)ink for development, (s)kip [c] ' "$target" >&2
-    read -r _action
-    _action="${_action:-c}"
+    # git-bash on Windows copies on `ln -s`; a launcher keeps the script's own
+    # directory (and so its ./lib imports) intact.
+    rm -f "$link"
+    printf '#!/usr/bin/env bash\nexec node "%s" "$@"\n' "$dir/um-bridge-claude-mem" > "$link"
+    chmod +x "$link"
+    ok "um-bridge-claude-mem launcher written: $link"
   fi
 
-  # Before overwriting a directory target, back it up if it has local modifications
-  # (files present in target that are NOT in source indicate local edits).
-  _backup_target_if_modified() {
-    local src_dir="$1"
-    local tgt_dir="$2"
-    if [ ! -d "$tgt_dir" ]; then return; fi
-    local local_only=()
-    while IFS= read -r -d '' f; do
-      local rel="${f#"$tgt_dir"/}"
-      if [ ! -e "$src_dir/$rel" ]; then
-        local_only+=("$rel")
-      fi
-    done < <(find "$tgt_dir" -type f -print0 2>/dev/null)
-    if [ ${#local_only[@]} -gt 0 ]; then
-      warn "existing plugin dir $tgt_dir has local modifications:"
-      local shown=0
-      for f in "${local_only[@]}"; do
-        if [ $shown -lt 5 ]; then
-          warn "  $f"
-          shown=$((shown + 1))
-        fi
-      done
-      if [ ${#local_only[@]} -gt 5 ]; then
-        warn "  ... and $((${#local_only[@]} - 5)) more"
-      fi
-      local bak
-      bak="$tgt_dir.bak-$(date +%s)"
-      warn "Existing dir will be backed up to $bak"
-      mv "$tgt_dir" "$bak"
-    fi
-  }
-
-  case "$_action" in
-    [lL]*)
-      if [ -L "$target" ]; then rm -f "$target"
-      elif [ -d "$target" ]; then _backup_target_if_modified "$src" "$target"; rm -rf "$target" 2>/dev/null || true; fi
-      if ln -s "$src" "$target" 2>/dev/null; then
-        ok "Plugin symlinked: $target -> $src"
-      else
-        warn "ln -s failed (Windows may require Developer Mode). Falling back to copy."
-        if cp -r "$src" "$target"; then
-          ok "Plugin copied to $target (copy fallback)."
-        fi
-      fi
-      ;;
-    [sS]*)
-      info "Plugin install skipped — install manually to $target"
-      return
-      ;;
-    *)
-      if [ -L "$target" ]; then rm -f "$target"
-      elif [ -d "$target" ]; then _backup_target_if_modified "$src" "$target"; rm -rf "$target" 2>/dev/null || true; fi
-      if cp -r "$src" "$target"; then
-        ok "Plugin copied to $target"
-      fi
-      ;;
-  esac
-
-  local installed_ver
-  installed_ver=$(_read_plugin_version "$target")
-  ok "Plugin installed. Restart Claude Code to load v${installed_ver:-?} hooks."
-}
-
-info "Installing Claude Code plugin..."
-_install_plugin
-
-# ─── Prompt-file distribution ─────────────────────────────────────────────────
-# NEW in v0.5: distribute canonical prompts to plugin-local dir so
-# hooks/lib/summarize.sh + update-state.sh can resolve them at runtime
-# without a server round-trip.
-_install_prompts() {
-  local prompt_src="$REPO_ROOT/server/config/prompts"
-  local prompt_dst="$_PLUGIN_TARGET/hooks/lib/prompts"
-  if [[ -d "$prompt_src" ]]; then
-    mkdir -p "$prompt_dst"
-    cp "$prompt_src/"*.txt "$prompt_dst/"
-    info "Prompts installed to: $prompt_dst"
+  # better-sqlite3 needs a native build; failure leaves the bridge unusable but
+  # the plugin unaffected.
+  if ( cd "$dir" && npm install --omit=dev --loglevel=error >/dev/null 2>&1 ); then
+    ok "Bridge dependencies installed (better-sqlite3)."
   else
-    warn "server/config/prompts/ not found — hooks will fall back to their inlined prompts"
+    warn "um-bridge-claude-mem native build failed (better-sqlite3 needs python3, make and a compiler)."
+    warn "  The bridge stays unavailable until: cd '$dir' && npm install"
   fi
 }
-_install_prompts
 
-# ─── Write UM_PROMPT_DIR to shell rc files ────────────────────────────────────
-_write_prompt_dir_to_rc() {
-  local _UM_PROMPT_DIR_VALUE="$_PLUGIN_TARGET/hooks/lib/prompts"
-  # Source marker-block.sh from the same lib dir this script lives in.
-  local _lib_dir
-  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
-  # shellcheck source=installer/lib/marker-block.sh
-  source "$_lib_dir/marker-block.sh"
-
-  local _RC_UPDATED=0
-  local _sh="${SHELL:-}"
-  for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
-    case "$rc" in
-      "${HOME}/.bashrc")
-        [ -f "$rc" ] || [ "${_sh##*/}" = "bash" ] || continue
-        ;;
-      "${HOME}/.zshrc")
-        [ -f "$rc" ] || [ "${_sh##*/}" = "zsh" ] || continue
-        ;;
-    esac
-    touch "$rc"
-    UM_PROMPT_DIR="$_UM_PROMPT_DIR_VALUE" _write_marker_block "$rc" "" ""
-    ok "Shell profile updated with UM_PROMPT_DIR: $rc"
-    _RC_UPDATED=$((_RC_UPDATED + 1))
-  done
-
-  if [ "$_RC_UPDATED" -eq 0 ]; then
-    warn "Could not detect shell rc file — add manually: export UM_PROMPT_DIR='$_UM_PROMPT_DIR_VALUE'"
-  fi
-}
-_write_prompt_dir_to_rc
-
-# ─── um-bridge-claude-mem (D.9) ───────────────────────────────────────────────
-_install_bridge_cli() {
-  local bridge_src="$_PLUGIN_TARGET/bin/um-bridge-claude-mem"
-  local bin_link="${HOME}/.local/bin/um-bridge-claude-mem"
-
-  # 1. Symlink CLI into ~/.local/bin/ — or write a launcher when symlinks aren't
-  #    available. A plain `cp` of $bridge_src is wrong: the bridge CLI uses
-  #    static ESM imports `./translate.mjs` and `./lib/bridge-contract.mjs` that
-  #    resolve relative to import.meta.url. A copy at ~/.local/bin/ has no
-  #    siblings, so Node ≥22 fails with ERR_MODULE_NOT_FOUND before main() runs.
-  #    The launcher exec's node on $bridge_src so resolution stays in the plugin
-  #    install dir where the siblings actually live.
-  #    [ -L ] re-check: git-bash on Windows silently copies on `ln -s` and still
-  #    returns exit 0, so the success branch fires for a non-symlink result —
-  #    we have to verify the link is real before trusting it.
-  mkdir -p "${HOME}/.local/bin"
-  if [ -L "$bin_link" ] || [ -e "$bin_link" ]; then rm -f "$bin_link"; fi
-  if ln -s "$bridge_src" "$bin_link" 2>/dev/null && [ -L "$bin_link" ]; then
-    ok "um-bridge-claude-mem symlinked: $bin_link -> $bridge_src"
-  else
-    rm -f "$bin_link"
-    cat > "$bin_link" <<EOF
-#!/usr/bin/env bash
-# Launcher for um-bridge-claude-mem — written by install-plugin-cc.sh on
-# platforms where filesystem symlinks aren't available (e.g. git-bash on
-# Windows without Developer Mode). Exec's node on the plugin install path so
-# ESM sibling imports (translate.mjs, lib/bridge-contract.mjs) resolve.
-exec node "$bridge_src" "\$@"
-EOF
-    chmod +x "$bin_link"
-    ok "um-bridge-claude-mem launcher written: $bin_link → exec node $bridge_src (symlinks unavailable)"
-  fi
-
-  # 2. Vendor-copy bridge-contract.mjs + lockdir.mjs into plugin's bin/lib/
-  #    Skip in symlink mode: the shim's relative ../ path still resolves through
-  #    the symlink to server/lib/, so no copy is needed.
-  if [ ! -L "$_PLUGIN_TARGET" ]; then
-    local lib_dst="$_PLUGIN_TARGET/bin/lib"
-    mkdir -p "$lib_dst"
-    cp "$REPO_ROOT/server/lib/bridge-contract.mjs" "$lib_dst/bridge-contract.mjs"
-    cp "$REPO_ROOT/server/lib/lockdir.mjs"          "$lib_dst/lockdir.mjs"
-    ok "bridge-contract + lockdir vendored to $lib_dst"
-  fi
-
-  # 3. Build better-sqlite3 native binding (graceful failure — node-gyp prereqs
-  #    may be absent on user machines; bridge warns but plugin install succeeds).
-  if ( cd "$_PLUGIN_TARGET/bin" && npm install --omit=dev --loglevel=error >/dev/null 2>&1 ); then
-    ok "better-sqlite3 built successfully"
-  else
-    warn "um-bridge-claude-mem native build failed (better-sqlite3 needs node-gyp prereqs: python3, make, compiler)"
-    warn "  Bridge will be unavailable until: cd $_PLUGIN_TARGET/bin && npm install"
-  fi
-}
-_install_bridge_cli
+_register_plugin
+_warn_old_copy
+_install_bridge

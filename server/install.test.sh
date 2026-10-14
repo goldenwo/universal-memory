@@ -355,7 +355,7 @@ make_fakebin "$T6/bin" 200
 T6_SH=$(make_isolated_server "$T6/server")
 
 # Pre-install plugin
-cp -r "$PLUGIN_SRC" "$T6/plugins/universal-memory"
+mkdir -p "$T6/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T6/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 T6_EXIT=0
 T6_OUT=$(env PATH="$T6/bin:$PATH" \
@@ -383,7 +383,7 @@ mkdir -p "$T6B/vault" "$T6B/plugins" "$T6B/home"
 touch "$T6B/home/.bashrc"
 make_fakebin "$T6B/bin" 200
 T6B_SH=$(make_isolated_server "$T6B/server")
-cp -r "$PLUGIN_SRC" "$T6B/plugins/universal-memory"
+mkdir -p "$T6B/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T6B/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 # Stock read-only server: /api/* answers 403 (writes disabled); /health still 200.
 cat > "$T6B/bin/curl" <<'FAKE'
@@ -515,7 +515,7 @@ make_fakebin "$T10/bin" 200
 T10_SH=$(make_isolated_server "$T10/server")
 
 # Pre-install plugin so plugin-registered passes
-cp -r "$PLUGIN_SRC" "$T10/plugins/universal-memory"
+mkdir -p "$T10/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T10/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 # Write a .env file with one malformed line (key with a space)
 {
@@ -1423,7 +1423,7 @@ T28="$TMPROOT/t28"
 mkdir -p "$T28/vault" "$T28/plugins" "$T28/home"
 make_fakebin "$T28/bin" 200
 T28_SH=$(make_isolated_server "$T28/server")
-cp -r "$PLUGIN_SRC" "$T28/plugins/universal-memory"
+mkdir -p "$T28/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T28/plugins/cache/universal-memory/universal-memory/1.8.1"
 {
   printf 'MEM0_MCP_PORT="6335"\r\n'
   printf 'UM_VAULT_DIR=%s   # inline comment\n' "$T28/vault"
@@ -1572,7 +1572,7 @@ T33="$TMPROOT/t33"
 mkdir -p "$T33/vault" "$T33/plugins" "$T33/home/.local/.claude-plugin" "$T33/repo/plugins/claude-code"
 make_fakebin "$T33/bin" 200
 T33_SH=$(make_isolated_server "$T33/server")
-cp -r "$PLUGIN_SRC" "$T33/plugins/universal-memory"
+mkdir -p "$T33/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T33/plugins/cache/universal-memory/universal-memory/1.8.1"
 # The fake repo carries the REAL plugin tree (hooks and all) so the other
 # verify checks behave normally and any exit code is attributable to versions.
 cp -r "$PLUGIN_SRC" "$T33/repo/plugins/claude-code/universal-memory"
@@ -1581,7 +1581,7 @@ cp -r "$PLUGIN_SRC" "$T33/repo/plugins/claude-code/universal-memory"
 printf '{"name":"universal-memory","version":"1.6.0"}\n' > "$T33/home/.local/.claude-plugin/plugin.json"
 printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
 # Installed plugin: NEWER than the server we will report (1.7.0).
-printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/plugins/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33/plugins/cache/universal-memory/universal-memory/1.8.1/.claude-plugin/plugin.json"
 # Fake docker that reports a running server carrying an OCI version label.
 cat > "$T33/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
@@ -1628,11 +1628,11 @@ T33B="$TMPROOT/t33b"
 mkdir -p "$T33B/vault" "$T33B/plugins" "$T33B/home/.local/.claude-plugin" "$T33B/repo/plugins/claude-code"
 cp -r "$T33/bin" "$T33B/bin"
 T33B_SH=$(make_isolated_server "$T33B/server")
-cp -r "$PLUGIN_SRC" "$T33B/plugins/universal-memory"
+mkdir -p "$T33B/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T33B/plugins/cache/universal-memory/universal-memory/1.8.1"
 cp -r "$PLUGIN_SRC" "$T33B/repo/plugins/claude-code/universal-memory"
 printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/home/.local/.claude-plugin/plugin.json"
 printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
-printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/plugins/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33B/plugins/cache/universal-memory/universal-memory/1.8.1/.claude-plugin/plugin.json"
 
 T33B_EXIT=0
 T33B_OUT=$(env PATH="$T33B/bin:$PATH" \
@@ -1658,9 +1658,9 @@ T33C="$TMPROOT/t33c"
 mkdir -p "$T33C/vault" "$T33C/plugins" "$T33C/home/.local/.claude-plugin" "$T33C/repo/plugins/claude-code"
 cp -r "$T33/bin" "$T33C/bin"
 T33C_SH=$(make_isolated_server "$T33C/server")
-cp -r "$PLUGIN_SRC" "$T33C/plugins/universal-memory"
+mkdir -p "$T33C/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T33C/plugins/cache/universal-memory/universal-memory/1.8.1"
 cp -r "$PLUGIN_SRC" "$T33C/repo/plugins/claude-code/universal-memory"
-printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/plugins/universal-memory/.claude-plugin/plugin.json"
+printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/plugins/cache/universal-memory/universal-memory/1.8.1/.claude-plugin/plugin.json"
 printf '{"name":"universal-memory","version":"1.8.1"}\n' > "$T33C/repo/plugins/claude-code/universal-memory/.claude-plugin/plugin.json"
 
 T33C_EXIT=0
@@ -1712,7 +1712,7 @@ make_fakebin "$T34/bin" 200
 make_fake_docker_portmap "$T34/bin"
 make_fake_curl_portcheck "$T34/bin" 6337
 T34_SH=$(make_isolated_server "$T34/server")
-cp -r "$PLUGIN_SRC" "$T34/plugins/universal-memory"
+mkdir -p "$T34/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T34/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 T34_EXIT=0
 T34_OUT=$(env PATH="$T34/bin:$PATH" \
@@ -1746,7 +1746,7 @@ make_fakebin "$T35/bin" 200
 make_fake_docker_portmap "$T35/bin"
 make_fake_curl_portcheck "$T35/bin" 6335
 T35_SH=$(make_isolated_server "$T35/server")
-cp -r "$PLUGIN_SRC" "$T35/plugins/universal-memory"
+mkdir -p "$T35/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T35/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 T35_EXIT=0
 T35_OUT=$(env PATH="$T35/bin:$PATH" \
@@ -1794,7 +1794,7 @@ touch "$T36/home/.bashrc"
 make_fakebin "$T36/bin" 200
 make_fake_curl_portcheck "$T36/bin" 6335
 T36_SH=$(make_isolated_server "$T36/server")
-cp -r "$PLUGIN_SRC" "$T36/plugins/universal-memory"
+mkdir -p "$T36/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T36/plugins/cache/universal-memory/universal-memory/1.8.1"
 
 T36_EXIT=0
 T36_OUT=$(env PATH="$T36/bin:$PATH" \
@@ -1885,7 +1885,7 @@ mkdir -p "$TQ4/vault" "$TQ4/plugins" "$TQ4/home"
 touch "$TQ4/home/.bashrc"
 make_fakebin "$TQ4/bin" 200
 TQ4_SH=$(make_isolated_server "$TQ4/server")
-cp -r "$PLUGIN_SRC" "$TQ4/plugins/universal-memory"
+mkdir -p "$TQ4/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$TQ4/plugins/cache/universal-memory/universal-memory/1.8.1"
 printf 'UM_QDRANT_PORT=6336\n' > "$TQ4/server/.env"
 TQ4_EXIT=0
 TQ4_OUT=$(env PATH="$TQ4/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
@@ -1902,7 +1902,7 @@ mkdir -p "$TQ5/vault" "$TQ5/plugins" "$TQ5/home"
 touch "$TQ5/home/.bashrc"
 make_fakebin "$TQ5/bin" 200
 TQ5_SH=$(make_isolated_server "$TQ5/server")
-cp -r "$PLUGIN_SRC" "$TQ5/plugins/universal-memory"
+mkdir -p "$TQ5/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$TQ5/plugins/cache/universal-memory/universal-memory/1.8.1"
 printf 'UM_QDRANT_PORT="[::1]:6333"\n' > "$TQ5/server/.env"
 TQ5_OUT=$(env PATH="$TQ5/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
   UM_VAULT_DIR="$TQ5/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$TQ5/plugins" \
@@ -2039,6 +2039,21 @@ assert_contains "TTXT: names the marketplace install" "$TTXT_OUT" "claude plugin
 assert_contains "TTXT: next step is /um-setup" "$TTXT_OUT" "/um-setup"
 assert_eq "TTXT: summary pipeline default kept" "$(grep -E '^UM_SUMMARY_ENABLED=' "$T/server/.env")" "UM_SUMMARY_ENABLED=true"
 assert_eq "TTXT: temporal decay default kept" "$(grep -E '^UM_TEMPORAL_DECAY=' "$T/server/.env")" "UM_TEMPORAL_DECAY=false"
+# ─── TVL: a copy under ~/.claude/plugins alone is not an installed plugin ────
+# Claude Code loads plugins only from its marketplace; the old installer's copy
+# at ~/.claude/plugins/universal-memory is never read (`claude plugin list` says
+# "No plugins installed"), so --verify must not report it as registered.
+echo ""
+echo "=== TVL: --verify fails a legacy-only plugin copy ==="
+T="$TMPROOT/tvl"
+mkdir -p "$T/vault" "$T/home" "$T/plugins"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+cp -r "$PLUGIN_SRC" "$T/plugins/universal-memory"
+TVL_OUT=$(env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$T/plugins" \
+  HOME="$T/home" bash "$T/server/install.sh" --verify 2>&1) || true
+assert_contains "TVL: plugin-registered fails" "$(echo "$TVL_OUT" | grep plugin-registered)" "❌"
+assert_contains "TVL: says the old copy is not loaded" "$(echo "$TVL_OUT" | grep plugin-registered)" "does not load"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

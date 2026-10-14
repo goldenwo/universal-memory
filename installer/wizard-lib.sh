@@ -25,7 +25,9 @@ wizard_detect_env() {
   # Print detected state: Docker, ~/.claude, ~/.codex, bash, python3, pyyaml
   # Returns via globals: DETECTED_DOCKER, DETECTED_CC, DETECTED_CODEX, etc.
   DETECTED_DOCKER=$(command -v docker >/dev/null 2>&1 && echo 1 || echo 0)
-  DETECTED_CC=$([[ -d "$HOME/.claude" ]] && echo 1 || echo 0)
+  # The plugin installs through the claude CLI (the marketplace route), so the CLI is
+  # what counts; ~/.claude does not exist until Claude Code has run once.
+  DETECTED_CC=$(command -v claude >/dev/null 2>&1 && echo 1 || echo 0)
   DETECTED_CODEX=$([[ -d "$HOME/.codex" ]] && echo 1 || echo 0)
   DETECTED_PYTHON3=$(command -v python3 >/dev/null 2>&1 && echo 1 || echo 0)
   DETECTED_PYYAML=$(python3 -c 'import yaml' 2>/dev/null && echo 1 || echo 0)
@@ -33,7 +35,7 @@ wizard_detect_env() {
 
   echo "Detected environment:"
   [[ $DETECTED_DOCKER -eq 1 ]] && echo "  ✓ Docker" || echo "  ✗ Docker not found"
-  [[ $DETECTED_CC -eq 1 ]] && echo "  ✓ ~/.claude (Claude Code)" || echo "  ✗ ~/.claude (Claude Code not found)"
+  [[ $DETECTED_CC -eq 1 ]] && echo "  ✓ Claude Code (claude CLI)" || echo "  ✗ Claude Code CLI not found (the plugin needs it)"
   [[ $DETECTED_CODEX -eq 1 ]] && echo "  ✓ ~/.codex (Codex)" || echo "  ✗ ~/.codex (Codex not found — will skip)"
   [[ $DETECTED_PYTHON3 -eq 1 ]] && echo "  ✓ python3" || echo "  ✗ python3 not found (required for the server and \`um\` CLI)"
   [[ $DETECTED_PYYAML -eq 1 ]] && echo "  ✓ python3-yaml" || echo "  ✗ python3-yaml not found (required for the server and \`um\` CLI)"
