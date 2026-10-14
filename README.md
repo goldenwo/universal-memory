@@ -29,7 +29,7 @@ bash installer/install.sh
 
 One wizard, and you're capturing memories in minutes.
 
-**You'll need:** Docker (with Compose) · an OpenAI API key · Linux, macOS, or Windows via WSL2.
+**You'll need:** Docker (with Compose) · an OpenAI API key · python3 with PyYAML (`sudo apt install python3-yaml` on Debian/Ubuntu) · Claude Code, for the plugin · Linux, macOS, or Windows via WSL2.
 
 ---
 
@@ -68,7 +68,7 @@ Captures flow in from Claude Code's session hooks, mem0-compatible bots, or the 
 
 ### 1. Start the memory server
 
-The one-command wizard sets up your `.env`, prompts for your OpenAI API key and vault directory, and starts the Docker stack:
+The one-command wizard asks for your OpenAI API key and vault directory and writes `server/.env`. It starts the Docker stack with capture on and saves the server's access token to `~/.um/auth-token`. If it finds Claude Code, it also installs the plugin and the `um` CLI:
 
 ```bash
 git clone https://github.com/goldenwo/universal-memory
@@ -80,9 +80,15 @@ Prefer to wire it yourself? Use Docker Compose directly:
 
 ```bash
 cd universal-memory/server
-cp .env.example .env         # set OPENAI_API_KEY and UM_VAULT_DIR
+cp .env.example .env         # set OPENAI_API_KEY and UM_VAULT_DIR (see below)
+mkdir -p data/mem0-history   # history + capture counters; must be yours, not Docker's
 docker compose up -d
 ```
+
+In `.env`, also set:
+- `UM_AUTH_TOKEN` to a long random string (`openssl rand -hex 32`), and save the same value to `~/.um/auth-token`. Requests to `/api` and `/mcp` need it.
+- `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw`, to accept captures. Both default to off.
+- `UM_CONTAINER_USER=<uid>:<gid>`, your own user (`id -u` and `id -g`), on Linux when your uid isn't 1000. The container must be able to write your vault.
 
 Verify it started:
 
@@ -94,16 +100,18 @@ curl http://localhost:6335/health
 
 ### 2. First Claude Code session
 
-Install the plugin straight from this repo's marketplace and run its first-run setup once:
+The wizard already did this if it found Claude Code. Otherwise, install the plugin from this repo's marketplace:
 
 ```bash
 claude plugin marketplace add goldenwo/universal-memory
 claude plugin install universal-memory@universal-memory
 ```
 
-then `/um-setup` inside Claude Code (endpoint + token prompt; it verifies the server with a health check and an authed write probe before writing any config). Open a session — the Stop hook streams turns to the server, the SessionEnd hook triggers a server-side summary. Nothing else is required.
+Then run `/um-setup` inside Claude Code once. Accept `http://localhost:6335`. On the machine that runs the server, it uses the token the installer saved in `~/.um/auth-token`. It checks the server with a health probe and an authenticated write probe before saving anything.
 
-**Pointing at a remote server?** Same two commands plus `/um-setup` with your server's URL — the hooks are thin HTTP clients, local and remote alike. On the **server**, capture requires `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (both default off). Server must be ≥ v1.7.0.
+Open a session. The Stop hook streams turns to the server, and the SessionEnd hook triggers a server-side summary. Nothing else is required.
+
+**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: the wizard turns that on, but a server installed with `--yes` or by hand needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`. Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 
@@ -135,7 +143,7 @@ The same vault is reachable from every surface below. Capture is automatic where
 | **`um` CLI** | `um capture` | `um state` / `um search` | One command |
 | **mem0-compatible clients** (e.g. Discord bots) | Automatic (client-driven) | Automatic | Point `baseUrl` at UM — opt-in flag `UM_MEM0_COMPAT_ENABLED=true` |
 
-Any request reaching UM through a tunnel or reverse proxy must carry `Authorization: Bearer <UM_AUTH_TOKEN>`; loopback installs skip auth by default.
+Requests to `/api` and `/mcp` must carry `Authorization: Bearer <UM_AUTH_TOKEN>` (or come through the OAuth connector flow); the installer saves the server's token to `~/.um/auth-token`. That includes requests from the same machine: Docker's port forwarding makes them arrive as remote ones.
 
 ---
 
@@ -210,6 +218,7 @@ universal-memory/
 universal-memory is three separately-updated surfaces — the **server**, the **Claude Code plugin**, and the **`um` CLI** — and they update through three different mechanisms. The server is below; do it first, because the plugin will not talk to a server older than itself.
 
 ```bash
+git pull                        # compose and installer changes come with the repo, not the image
 cd server
 ./install.sh --upgrade          # to whatever your compose config resolves
 ./install.sh --upgrade 1.12.0   # to a specific published version
@@ -219,7 +228,7 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-The other two surfaces: `claude plugin update universal-memory` (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 <details>
 <summary><b>Driving compose yourself, and host-specific overrides</b></summary>
@@ -240,7 +249,7 @@ Anything the shipped compose file cannot know — an alternate qdrant image for 
 
 </details>
 
-universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing, and pin a release tag rather than tracking `latest`. Your data is two host directories — the vault (`UM_VAULT_DIR`) and the vector index (`server/data/qdrant`) — snapshot both before crossing versions; the vault is plain markdown, so keeping it under git is enough. The counters/ledger SQLite file (`um-counters.db`) runs in WAL mode, so copy it with the server stopped (or via sqlite's `.backup`) — a mid-write file copy of the `.db` alone misses the `-wal` sibling.
+universal-memory is in active 1.x development and may ship breaking changes between minor versions. Before updating a production install, review the GitHub release notes for the versions you are crossing, and pin a release tag rather than tracking `latest`. Your data is three host directories: the vault (`UM_VAULT_DIR`), the vector index (`server/data/qdrant`), and mem0's history plus the capture counters (`server/data/mem0-history`). Snapshot all three before crossing versions; the vault is plain markdown, so keeping it under git is enough. The counters/ledger SQLite file (`um-counters.db`) runs in WAL mode, so copy it with the server stopped (or via sqlite's `.backup`) — a mid-write file copy of the `.db` alone misses the `-wal` sibling.
 
 Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X.Y.Z`, `X.Y`) and `latest` for stable releases.
 
