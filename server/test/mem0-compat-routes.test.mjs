@@ -235,10 +235,10 @@ test('flag ON + wrong token → 401 in the mem0 dialect ({detail}, no UM envelop
     assert.equal(r.status, 401);
     const body = await r.json();
     // The mem0 client parses {detail} — the UM §5.1 envelope (body.error)
-    // and the plugin-upgrade hint must not appear on compat routes.
+    // and the plugin setup hint must not appear on compat routes.
     assert.equal(typeof body.detail, 'string');
     assert.equal(body.error, undefined);
-    assert.doesNotMatch(body.detail, /upgrade plugin/);
+    assert.doesNotMatch(body.detail, /um-setup|auth-token/);
   } finally { await close(); }
 });
 

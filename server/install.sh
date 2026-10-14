@@ -1160,12 +1160,14 @@ else
 	prompt MEM0_USER_ID   "Memory namespace / user ID (any string; identifies this memory store)" "default" 0
 	prompt MEM0_MCP_PORT  "HTTP port to expose" "6335" 0
 
-	# UM_OPENAI_API_KEY defaults to whatever OPENAI_API_KEY was just entered
-	_um_oai_default="${UM_OPENAI_API_KEY:-$OPENAI_API_KEY}"
-	prompt UM_OPENAI_API_KEY "OpenAI API key for UM hooks (input hidden; default: same as above)" "$_um_oai_default" 1
 	prompt UM_VAULT_DIR       "Vault directory for session summaries" "${UM_VAULT_DIR:-$HOME/.um/vault}" 0
-	prompt UM_SUMMARY_ENABLED "Enable session-summary pipeline (true/false)" "${UM_SUMMARY_ENABLED:-true}" 0
-	prompt UM_TEMPORAL_DECAY  "Enable temporal decay weighting (true/false)" "${UM_TEMPORAL_DECAY:-false}" 0
+	# Not asked: a first-time reader cannot judge these, and each has a safe
+	# default. Export them (or edit server/.env) to change them.
+	# UM_OPENAI_API_KEY (the client-side preview's key) defaults to the key above.
+	UM_OPENAI_API_KEY="${UM_OPENAI_API_KEY:-$OPENAI_API_KEY}"
+	UM_SUMMARY_ENABLED="${UM_SUMMARY_ENABLED:-true}"
+	UM_TEMPORAL_DECAY="${UM_TEMPORAL_DECAY:-false}"
+	export UM_OPENAI_API_KEY UM_SUMMARY_ENABLED UM_TEMPORAL_DECAY
 fi
 
 # Basic sanity
@@ -1528,11 +1530,10 @@ fi
 # installer/install-plugin-codex.sh.  server/install.sh no longer does it
 # inline.  Use installer/install.sh --plugin-cc / --plugin-codex, or
 # installer/install.sh --all, to install plugins alongside the server.
-info "Plugin install is now handled by installer/install-plugin-cc.sh and"
-info "installer/install-plugin-codex.sh. To install plugins, run:"
-info "  bash installer/install.sh --plugin-cc     # Claude Code plugin"
-info "  bash installer/install.sh --plugin-codex  # Codex CLI plugin (if ~/.codex exists)"
-info "  bash installer/install.sh --all           # install everything detected"
+info "Claude Code plugin (Claude Code loads plugins only from its marketplace):"
+info "  claude plugin marketplace add goldenwo/universal-memory"
+info "  claude plugin install universal-memory@universal-memory"
+info "  then run /um-setup inside Claude Code."
 
 # ─── P0-2: Shell profile export ──────────────────────────────────────────────
 _UM_MARKER_START="# --- universal-memory (auto-added by install.sh) ---"
@@ -1540,7 +1541,13 @@ _UM_MARKER_END="# --- end universal-memory ---"
 
 # Detect summarizer default — prefer claude CLI (zero-cost) if available.
 # Probed BEFORE writing the profile so the detected value is the one written.
-if command -v claude >/dev/null 2>&1; then
+# An exported UM_SUMMARIZER wins: installer/install.sh exports the value it
+# chose so install-cli.sh, which rewrites the same rc block afterwards from the
+# environment, writes the same one (it used to overwrite this choice with openai).
+if [ -n "${UM_SUMMARIZER:-}" ]; then
+	_um_summarizer_default="$UM_SUMMARIZER"
+	info "UM_SUMMARIZER=$UM_SUMMARIZER (from the environment)"
+elif command -v claude >/dev/null 2>&1; then
 	_um_summarizer_default="claude-agent-sdk"
 	info "Claude CLI detected — defaulting UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"
 else
@@ -1729,22 +1736,6 @@ EOM
 	unset _added_count
 fi
 
-# ─── v1.1 fresh-install hint: /adr skill ────────────────────────────────────
-# Only on fresh installs (no prior .env). Quiet under UM_QUIET=1. Skipped on
-# upgrades to avoid noise — existing operators learn about /adr via CHANGELOG.
-if [ "${UM_WAS_EXISTING_INSTALL:-0}" = "0" ] && [ -z "${UM_QUIET:-}" ]; then
-	cat <<'EOM'
-
-[install] New in v1.1: the `/adr` Claude Code skill
-  • From any session: /adr "<title>"   → writes docs/decisions/NNNN-<slug>.md,
-                                          commits, and registers atomically
-                                          with the universal-memory server.
-  • /adr sync NNNN   → re-register an existing ADR (recovery for net failures)
-  • /adr --help      → flags + usage
-  • Ships with the Claude Code plugin (skills/create-adr/); nothing to copy
-EOM
-fi
-
 # ─── Success banner ──────────────────────────────────────────────────────────
 _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
@@ -1760,7 +1751,9 @@ cat <<EOF
 ║
 ║ Next steps:
 ║   1. Verify the install:    bash server/install.sh --verify
-║   2. Restart Claude Code to load the plugin and activate hooks.
+║   2. Claude Code: claude plugin marketplace add goldenwo/universal-memory
+║                   claude plugin install universal-memory@universal-memory
+║      then run /um-setup in Claude Code (it reads ~/.um/auth-token).
 ║   3. Upgrade later:         bash server/install.sh --upgrade
 ║   4. Stop the stack:        cd $SCRIPT_DIR && docker compose down
 ║   5. Restart later:         cd $SCRIPT_DIR && docker compose up -d

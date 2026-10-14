@@ -465,6 +465,32 @@ TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --yes keeps the default"; else fail "T-WIZ-CAPTURE: --yes changed (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 rm -rf "$TWC"
+# ─── T-SUMMARIZER: both installers are handed one UM_SUMMARIZER ──────────────
+# server/install.sh announced "defaulting UM_SUMMARIZER=claude-agent-sdk" when a
+# claude CLI was present, then install-cli.sh rewrote the same rc block from the
+# environment with openai (the 2026-10-14 clean-room install ended up on openai).
+# The dispatcher now picks the value once and exports it to every delegate.
+_summarizer_repo() {
+  local repo="$1"
+  mkdir -p "$repo/server" "$repo/installer" "$repo/.git"
+  # shellcheck disable=SC2016  # the stubs expand this when they run, not here
+  printf '#!/usr/bin/env bash\necho "SUMMARIZER ${UM_SUMMARIZER:-unset}"\n' | tee "$repo/server/install.sh" > "$repo/installer/install-cli.sh"
+}
+echo ""
+echo "=== T-SUMMARIZER: one UM_SUMMARIZER for server + CLI ==="
+TSU=$(mktemp -d)
+make_stubs "$TSU/bin"; _summarizer_repo "$TSU/repo"
+TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSU/repo" \
+  bash "$INSTALLER" --server --cli --yes 2>&1) || true
+if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: no claude CLI -> openai for both"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
+printf '#!/bin/sh\nexit 0\n' > "$TSU/bin/claude"; chmod +x "$TSU/bin/claude"
+TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSU/repo" \
+  bash "$INSTALLER" --server --cli --yes 2>&1) || true
+if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER claude-agent-sdk")" = 2 ]; then pass "T-SUMMARIZER: claude CLI -> claude-agent-sdk for both"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
+TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test UM_SUMMARIZER=openai UM_INSTALL_DIR="$TSU/repo" \
+  bash "$INSTALLER" --server --cli --yes 2>&1) || true
+if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: an explicit export wins"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
+rm -rf "$TSU"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

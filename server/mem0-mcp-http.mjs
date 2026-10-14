@@ -2884,15 +2884,15 @@ export function createRequestHandler(ctx = {}) {
 				res.end(JSON.stringify({ detail: 'invalid or missing API key' }));
 				return;
 			}
-			// Round-8 upgrade hint: legacy plugins (pre-v0.6) lack an
-			// identifying User-Agent. When the UA is missing or not a
-			// UM client, steer the user toward the plugin upgrade flow;
-			// recognized UM clients get the terse message (they know).
+			// Setup hint: when the UA is missing or not a UM client, say where
+			// the token lives and how the plugin is configured; recognized UM
+			// clients get the terse message (they know). The hint used to send
+			// people to `install.sh --plugin-cc`, a copy Claude Code never loads.
 			const ua = req.headers['user-agent'] || '';
 			const isUmClient = /um-(cli|bridge|plugin)\//.test(ua);
 			const hint = isUmClient
 				? 'invalid or missing bearer token'
-				: 'invalid or missing bearer token — upgrade plugin to v0.6+ via `git pull && bash installer/install.sh --plugin-cc` or set Authorization: Bearer <token from ~/.um/auth-token>';
+				: 'invalid or missing bearer token — send Authorization: Bearer <token>; the server installer wrote it to ~/.um/auth-token on the server host (Claude Code: run /um-setup)';
 			// Gap-3 OAuth breadcrumb (spec §4.4 / RFC 9728 §5): when OAuth is
 			// enabled AND the failing request is for /mcp, add the
 			// WWW-Authenticate header so RFC 9728-aware clients can discover

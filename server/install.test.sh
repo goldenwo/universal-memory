@@ -176,7 +176,7 @@ assert_exit_zero "T1: install exits 0" "$T1_EXIT"
 assert_file_exists "T1: vault dir created" "$T1/vault"
 assert_contains "T1: UM_OPENAI_API_KEY appended to profile" "$(cat "$T1/home/.bashrc")" "UM_OPENAI_API_KEY"
 assert_contains "T1: marker block present in profile" "$(cat "$T1/home/.bashrc")" "universal-memory (auto-added"
-assert_contains "T1: banner says restart CC" "$T1_OUT" "Restart Claude Code"
+assert_contains "T1: banner names the plugin install + /um-setup" "$T1_OUT" "then run /um-setup in Claude Code"
 assert_contains "T1: banner says source profile" "$T1_OUT" "source"
 
 # ─── T1b: canonical-superset vars in managed block ───────────────────────────
@@ -2017,6 +2017,28 @@ for case in "tcap1:rerun:rw:true" "tcap2:fresh:ro:false"; do
   assert_eq "TCAP $name ($kind): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=$want_m"
   assert_eq "TCAP $name ($kind): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=$want_w"
 done
+# ─── TTXT: a first-time interactive install asks only what a reader can answer ─
+# The 2026-10-14 clean-room install was asked "Enable session-summary pipeline
+# (true/false)", "Enable temporal decay weighting (true/false)" and a second
+# hidden "OpenAI API key for UM hooks", was told plugins install via
+# `install.sh --plugin-cc` (a copy Claude Code never loads), saw a
+# "New in v1.1" banner on v1.27.0, and was told to restart Claude Code for a
+# plugin nothing had installed. The defaults stay and env overrides still work.
+echo ""
+echo "=== TTXT: interactive install prompts and messages ==="
+T="$TMPROOT/ttxt"
+mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+TTXT_OUT=$(printf '\n%.0s' $(seq 1 40) | env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" \
+  OPENAI_API_KEY=sk-testkey12345 UM_VAULT_DIR="$T/vault" CLAUDE_PLUGINS_DIR="$T/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$T/home" bash "$T/server/install.sh" 2>&1) || true
+for gone in "session-summary pipeline" "temporal decay weighting" "for UM hooks" "New in v1.1" "--plugin-cc"; do
+  assert_not_contains "TTXT: no '$gone'" "$TTXT_OUT" "$gone"
+done
+assert_contains "TTXT: names the marketplace install" "$TTXT_OUT" "claude plugin marketplace add goldenwo/universal-memory"
+assert_contains "TTXT: next step is /um-setup" "$TTXT_OUT" "/um-setup"
+assert_eq "TTXT: summary pipeline default kept" "$(grep -E '^UM_SUMMARY_ENABLED=' "$T/server/.env")" "UM_SUMMARY_ENABLED=true"
+assert_eq "TTXT: temporal decay default kept" "$(grep -E '^UM_TEMPORAL_DECAY=' "$T/server/.env")" "UM_TEMPORAL_DECAY=false"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
