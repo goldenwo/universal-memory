@@ -111,13 +111,17 @@ the stack back up.
 and any zero in either half — combined with `UM_MOUNT_MODE=rw` that would
 get root inside the container writing to the host vault.
 
-### Wizard does NOT prompt for writes-enabled (#29)
+### Capture defaults: on through installer/install.sh, off here (#29, #377)
 
-The interactive wizard intentionally does not surface
-`UM_MCP_WRITE_ENABLED` / `UM_MOUNT_MODE=rw` — they're deliberately off the
-happy path. The wizard always defaults to `ro` mounts and writes-disabled,
-so a user who clicks through prompts cannot accidentally open the write
-surface. Writes-enabled deployments require the explicit
+The wizard does not prompt for `UM_MCP_WRITE_ENABLED` / `UM_MOUNT_MODE`.
+`installer/install.sh` (the wizard, `--yes` and flag installs) turns capture
+on for a fresh install: it hands this script `UM_MCP_WRITE_ENABLED=true` and
+`UM_MOUNT_MODE=rw`, since a server that refuses every capture is not what
+anyone installing asked for. An explicit `UM_MCP_WRITE_ENABLED=false` keeps
+it read-only, and a re-run keeps whatever `server/.env` already says.
+
+Run directly, `server/install.sh` still defaults to `ro` mounts and
+writes-disabled; writes-enabled deployments then need the explicit
 `UM_NONINTERACTIVE=1 UM_MCP_WRITE_ENABLED=true UM_MOUNT_MODE=rw` env
 combo above.
 

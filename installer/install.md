@@ -33,7 +33,7 @@ No flags + non-TTY stdin = `--all` (v0.4 back-compat).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `UM_INSTALL_DIR` | `~/universal-memory` | Where to clone/update the repo |
+| `UM_INSTALL_DIR` | the checkout the script runs from (never cloned or pulled); `~/universal-memory` for `curl \| bash` | Where to clone/update the repo |
 | `UM_REPO_URL` | GitHub main | Repo URL to clone from |
 | `UM_DRY_RUN` | `0` | Set to `1` to print-only mode |
 
