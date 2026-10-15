@@ -1559,9 +1559,15 @@ _UM_MARKER_END="# --- end universal-memory ---"
 # An exported UM_SUMMARIZER wins: installer/install.sh exports the value it
 # chose so install-cli.sh, which rewrites the same rc block afterwards from the
 # environment, writes the same one (it used to overwrite this choice with openai).
+# The message says what the value does, not where it came from: usually the
+# dispatcher picked it, and "from the environment" read as if the user had.
 if [ -n "${UM_SUMMARIZER:-}" ]; then
 	_um_summarizer_default="$UM_SUMMARIZER"
-	info "UM_SUMMARIZER=$UM_SUMMARIZER (from the environment)"
+	case "$UM_SUMMARIZER" in
+		claude-agent-sdk) info "Summaries: UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)" ;;
+		openai)           info "Summaries: UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)" ;;
+		*)                info "Summaries: UM_SUMMARIZER=$UM_SUMMARIZER" ;;
+	esac
 elif command -v claude >/dev/null 2>&1; then
 	_um_summarizer_default="claude-agent-sdk"
 	info "Claude CLI detected — defaulting UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"

@@ -125,8 +125,9 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 
 **For the agent:**
 
-1. **Check the prerequisites.** Run `docker compose version`, `git --version`, `curl --version` and `python3 -c 'import yaml'`.
+1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `python3 -c 'import yaml'` and `claude --version`.
    - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
+   - Without `claude`, steps 2 and 3 still install the server and the `um` CLI, but there is no plugin for step 4 to set up. Stop after step 3 and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line.
 2. **Install, non-interactively:**
    ```bash
@@ -135,12 +136,12 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    bash installer/install.sh --yes
    ```
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
-3. **Verify.** `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
+3. **Verify.** From the clone, `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
 4. **Point the plugin at the server.** Run its setup script, which reads the saved token:
    ```bash
    bash "$(ls -d ~/.claude/plugins/cache/universal-memory/universal-memory/*/ | sort -V | tail -1)hooks/um-setup.sh" --endpoint http://localhost:6335
    ```
-5. **Tell the user to restart Claude Code.** Capture and the session-start briefing begin with the next session.
+5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 
 If a step fails:
 

@@ -449,6 +449,32 @@ TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test U
 if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: an explicit export wins"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
 rm -rf "$TSU"
 
+# ─── T-SELF-CLONE: run from a clone, the installer uses that clone ───────────
+# INSTALL_DIR defaulted to ~/universal-memory, so `git clone ... /some/dir;
+# bash installer/install.sh` cloned (or pulled) a second copy there and ran its
+# sub-installers instead of the clone's own (2026-10-14 agent-install test).
+# curl | bash has no clone of its own and keeps the ~/universal-memory default.
+echo ""
+echo "=== T-SELF-CLONE: a clone outside ~/universal-memory installs from itself ==="
+TSC=$(mktemp -d)
+make_stubs "$TSC/bin"
+# shellcheck disable=SC2016  # the stub expands $* when it runs, not here
+printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n' "$TSC" > "$TSC/bin/git"
+mkdir -p "$TSC/clone/installer" "$TSC/clone/server" "$TSC/clone/.git" "$TSC/home"
+cp "$INSTALLER" "$TSC/clone/installer/install.sh"
+# shellcheck disable=SC2016  # the stub expands $0 when it runs, not here
+printf '#!/usr/bin/env bash\necho "SERVER-FROM $(cd "$(dirname "$0")/.." && pwd)"\n' > "$TSC/clone/server/install.sh"
+TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/clone/installer/install.sh" --server --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone"; then pass "T-SELF-CLONE: the clone's own server/install.sh ran"; else fail "T-SELF-CLONE: clone's server installer not run (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
+if [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: no clone or pull"; else fail "T-SELF-CLONE: git ran: $(tr '\n' ' ' < "$TSC/git.log")"; fi
+if [ ! -e "$TSC/home/universal-memory" ]; then pass "T-SELF-CLONE: ~/universal-memory untouched"; else fail "T-SELF-CLONE: ~/universal-memory was created"; fi
+# Control: piped (curl | bash) has no script file, so ~/universal-memory stays the default.
+TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true
+if echo "$TSC_OUT" | grep -q "would: git clone .* $TSC/home/universal-memory"; then pass "T-SELF-CLONE: piped install still clones to ~/universal-memory"; else fail "T-SELF-CLONE: piped default changed (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
+rm -rf "$TSC"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

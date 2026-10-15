@@ -4,6 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/goldenwo/universal-memory/main/installer/install.sh | bash -s -- --yes
 # or with a custom install directory:
 #   curl -fsSL .../installer/install.sh | UM_INSTALL_DIR=/opt/um bash -s -- --yes
+# or from a clone, which installs from that clone (no second copy, no pull):
+#   git clone https://github.com/goldenwo/universal-memory && bash universal-memory/installer/install.sh --yes
 #
 # Component flags (v0.5+):
 #   --server        Install/start the memory server (Docker stack)
@@ -26,7 +28,15 @@
 set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
-INSTALL_DIR="${UM_INSTALL_DIR:-$HOME/universal-memory}"
+# Run from a checkout (`git clone ...; bash installer/install.sh`), the
+# installer uses that checkout. ~/universal-memory is the default only for
+# curl | bash, which has no script file and so no checkout of its own.
+SELF_ROOT=""
+if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+  SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  [[ -f "$SELF_ROOT/server/install.sh" ]] || SELF_ROOT=""
+fi
+INSTALL_DIR="${UM_INSTALL_DIR:-${SELF_ROOT:-$HOME/universal-memory}}"
 DRY_RUN="${UM_DRY_RUN:-0}"
 
 # ---- v0.5 flag parser -------------------------------------------------------
@@ -425,8 +435,13 @@ if [ -e "$SCRIPT_SELF/.git" ] || [ -e "$SCRIPT_SELF/../.git" ] || [ -e "$SCRIPT_
   RUNNING_FROM_LOCAL_REPO=1
 fi
 
-# Only do clone/pull if needed (skip for local --cli-only installs)
-if [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_PLUGIN_CODEX" -eq 1 ] || [ "$RUNNING_FROM_LOCAL_REPO" -eq 0 ]; then
+# Only do clone/pull if needed (skip for local --cli-only installs). The
+# installer's own checkout is never pulled: it is the version the user chose to
+# run (the README's upgrade path runs `git pull` itself), and `pull --ff-only`
+# fails on a branch with no upstream, which would abort the install.
+if [ -n "$SELF_ROOT" ] && [ "$INSTALL_DIR" -ef "$SELF_ROOT" ]; then
+  printf 'Installing from this checkout: %s\n' "$INSTALL_DIR"
+elif [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_PLUGIN_CODEX" -eq 1 ] || [ "$RUNNING_FROM_LOCAL_REPO" -eq 0 ]; then
   if [ -d "$INSTALL_DIR/.git" ]; then
     printf 'Existing clone at %s — pulling latest...\n' "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then

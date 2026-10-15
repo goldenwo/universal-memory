@@ -685,6 +685,19 @@ T17_OUT=$(env -i PATH="$T17_PATH" \
 assert_exit_zero "T17: install exits 0 with fake claude in PATH" "$T17_EXIT"
 assert_contains "T17: detection message for claude present" "$T17_OUT" "Claude CLI detected"
 assert_contains "T17: UM_SUMMARIZER=claude-agent-sdk in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='claude-agent-sdk'"
+# An exported UM_SUMMARIZER (installer/install.sh exports the one it picked)
+# wins over detection, and the message says what it does, not "from the
+# environment", which read as if the user had set it.
+T17_EXIT=0
+T17_OUT=$(env -i PATH="$T17_PATH" _UM_REPO_ROOT="$REPO_ROOT" UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 UM_OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T17/vault" UM_SUMMARY_ENABLED=true UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T17/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$T17/home" UM_SUMMARIZER=openai \
+  bash "$T17_SH" 2>&1) || T17_EXIT=$?
+assert_exit_zero "T17: install exits 0 with UM_SUMMARIZER exported" "$T17_EXIT"
+assert_contains "T17: exported value named by what it does" "$T17_OUT" "Summaries: UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)"
+assert_not_contains "T17: no 'from the environment' wording" "$T17_OUT" "from the environment"
+assert_contains "T17: exported value beats detection in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='openai'"
 
 # ─── T18: v0.2.0-alpha → v0.2.1 re-install backfills UM_SUMMARIZER ──────────
 # Cross-cutting review C1: a user upgrading from v0.2.0-alpha has a marker
