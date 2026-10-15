@@ -120,7 +120,8 @@ FAKE
 #     server/lib/ (all files), installer/install.sh, installer/lib/,
 #     installer/wizard-lib.sh, plugins/ (empty — ok, server/install.sh
 #     no longer copies plugins inline)
-#   Marks .git so RUNNING_FROM_LOCAL_REPO detection is benign.
+#   installer/install.sh runs from the stage and UM_INSTALL_DIR is the
+#   stage, so it installs from this checkout without a clone or pull.
 stage_install_dir() {
   local stage="$1"
   mkdir -p "$stage/server" "$stage/installer/lib" "$stage/plugins"
@@ -130,7 +131,6 @@ stage_install_dir() {
   cp "$REPO_ROOT/installer/install.sh"    "$stage/installer/install.sh"
   cp "$REPO_ROOT/installer/wizard-lib.sh" "$stage/installer/wizard-lib.sh"
   cp "$REPO_ROOT/installer/lib/marker-block.sh" "$stage/installer/lib/marker-block.sh"
-  # Mark as "local repo" so installer/install.sh skips git clone/pull
   mkdir -p "$stage/.git"
 }
 

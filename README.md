@@ -111,7 +111,7 @@ Then run `/um-setup` inside Claude Code once. Accept `http://localhost:6335`. On
 
 Open a session. The Stop hook streams turns to the server, and the SessionEnd hook triggers a server-side summary. Nothing else is required.
 
-**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on, but a server wired by hand needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`. Server must be ≥ v1.7.0.
+**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on for a new install, but a server wired by hand, or installed before v1.28.0 with `--yes`, needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (a re-run keeps what `server/.env` says). Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 
@@ -127,14 +127,16 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 
 1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `python3 -c 'import yaml'` and `claude --version`.
    - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
-   - Without `claude`, steps 2 and 3 still install the server and the `um` CLI, but there is no plugin for step 4 to set up. Stop after step 3 and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
+   - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line.
 2. **Install, non-interactively:**
    ```bash
-   git clone https://github.com/goldenwo/universal-memory
-   cd universal-memory
+   git clone https://github.com/goldenwo/universal-memory ~/universal-memory
+   cd ~/universal-memory
    bash installer/install.sh --yes
    ```
+   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git -C ~/universal-memory pull` instead of cloning.
+
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
 3. **Verify.** From the clone, `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
 4. **Point the plugin at the server.** Run its setup script, which reads the saved token:

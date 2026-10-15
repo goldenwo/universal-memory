@@ -297,11 +297,17 @@ check_prereqs() {
 # non-interactive path gets a working server). A server that refuses every
 # capture is not what anyone installing asked for, and turning it on later
 # meant a .env edit plus a restart. An explicit export still wins
-# (UM_MCP_WRITE_ENABLED=false keeps a read-only server).
+# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The mount default
+# follows the writes switch: server/install.sh refuses rw without writes, so
+# exporting only UM_MCP_WRITE_ENABLED=false must not get rw. Fresh installs
+# only (operator ruling 2026-10-15): a re-run over an existing server/.env keeps
+# the switches written there, so a read-only choice survives.
 _um_capture_default() {
-  if [[ $INSTALL_SERVER -eq 1 ]]; then
+  if [[ $INSTALL_SERVER -eq 1 && ! -f "$INSTALL_DIR/server/.env" ]]; then
     export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
-    export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}"
+    case "$UM_MCP_WRITE_ENABLED" in
+      true|1) export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}" ;;
+    esac
   fi
 }
 
@@ -428,20 +434,13 @@ case "$os_name" in
 esac
 
 # ─── Clone or update ──────────────────────────────────────────────────────────
-# Skip clone/pull if we're running from within a local repo and only installing CLI
-RUNNING_FROM_LOCAL_REPO=0
-SCRIPT_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -e "$SCRIPT_SELF/.git" ] || [ -e "$SCRIPT_SELF/../.git" ] || [ -e "$SCRIPT_SELF/../../.git" ]; then
-  RUNNING_FROM_LOCAL_REPO=1
-fi
-
-# Only do clone/pull if needed (skip for local --cli-only installs). The
-# installer's own checkout is never pulled: it is the version the user chose to
-# run (the README's upgrade path runs `git pull` itself), and `pull --ff-only`
-# fails on a branch with no upstream, which would abort the install.
+# The installer's own checkout is never pulled: it is the version the user chose
+# to run (the README's upgrade path runs `git pull` itself), and `pull --ff-only`
+# fails on a branch with no upstream, which would abort the install. Any other
+# INSTALL_DIR is cloned or pulled, since every delegate runs from it.
 if [ -n "$SELF_ROOT" ] && [ "$INSTALL_DIR" -ef "$SELF_ROOT" ]; then
   printf 'Installing from this checkout: %s\n' "$INSTALL_DIR"
-elif [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_PLUGIN_CODEX" -eq 1 ] || [ "$RUNNING_FROM_LOCAL_REPO" -eq 0 ]; then
+else
   if [ -d "$INSTALL_DIR/.git" ]; then
     printf 'Existing clone at %s — pulling latest...\n' "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then

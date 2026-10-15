@@ -258,7 +258,9 @@ wizard_summarize() {
   if [[ -n "${UM_VAULT_DIR:-}" ]]; then echo "  Vault: $UM_VAULT_DIR"; fi
   if [[ $INSTALL_SERVER -eq 1 ]]; then
     if [[ "${UM_MCP_WRITE_ENABLED:-}" == "true" || "${UM_MCP_WRITE_ENABLED:-}" == "1" ]]; then
-      echo "  Capture: on (the server accepts writes; set UM_MCP_WRITE_ENABLED=false in server/.env to make it read-only)"
+      echo "  Capture: on (the server accepts writes; set UM_MCP_WRITE_ENABLED=false and UM_MOUNT_MODE=ro in server/.env to make it read-only)"
+    elif [[ -z "${UM_MCP_WRITE_ENABLED:-}" && -f "${INSTALL_DIR:-}/server/.env" ]]; then
+      echo "  Capture: as set in the existing server/.env (kept on re-run)"
     else
       echo "  Capture: off (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED:-false})"
     fi

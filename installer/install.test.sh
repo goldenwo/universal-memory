@@ -385,17 +385,17 @@ if echo "$TWP_OUT" | grep -q "PyYAML: .*apt install python3-yaml"; then pass "T-
 if echo "$TWP_OUT" | grep -q "v0\.5\.0"; then fail "T-WIZ-PREREQ: stale v0.5.0 banner"; else pass "T-WIZ-PREREQ: banner not pinned to v0.5.0"; fi
 rm -rf "$TWP"
 
-# ─── T-WIZ-CAPTURE: a wizard server install turns capture on ─────────────────
-# Operator ruling 2026-10-14: a fresh install that cannot capture is not what a
-# wizard user asked for (the clean-room install got 403 on its first capture and
-# needed a .env edit + restart). Wizard server installs hand server/install.sh
-# UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw; --yes / flag installs keep the
-# old default (off) for automation. A stub server/install.sh reports what it got.
+# ─── T-WIZ-CAPTURE: a server install turns capture on ────────────────────────
+# Operator rulings 2026-10-14: a fresh install that cannot capture is not what a
+# user asked for (the clean-room install got 403 on its first capture and needed
+# a .env edit + restart). Server installs, wizard and --yes / flag alike, hand
+# server/install.sh UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw. Stub
+# server/install.sh and install-cli.sh report what they got.
 _capture_repo() {
   local repo="$1"
-  mkdir -p "$repo/server" "$repo/.git"
+  mkdir -p "$repo/server" "$repo/installer" "$repo/.git"
   # shellcheck disable=SC2016  # the stub expands these when it runs, not here
-  printf '#!/usr/bin/env bash\necho "CAPTURE writes=${UM_MCP_WRITE_ENABLED:-unset} mount=${UM_MOUNT_MODE:-unset}"\n' > "$repo/server/install.sh"
+  printf '#!/usr/bin/env bash\necho "CAPTURE writes=${UM_MCP_WRITE_ENABLED:-unset} mount=${UM_MOUNT_MODE:-unset}"\n' | tee "$repo/server/install.sh" > "$repo/installer/install-cli.sh"
 }
 echo ""
 echo "=== T-WIZ-CAPTURE: wizard server install passes writes on ==="
@@ -420,7 +420,23 @@ TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test U
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: --yes honours an explicit export"; else fail "T-WIZ-CAPTURE: --yes overrode the export (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --cli --yes 2>&1) || true
-if echo "$TWC_OUT" | grep -q "CAPTURE"; then fail "T-WIZ-CAPTURE: --cli ran the server installer"; else pass "T-WIZ-CAPTURE: --cli-only installs no server"; fi
+if [ "$(echo "$TWC_OUT" | grep -c "CAPTURE")" = 1 ] && echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --cli-only exports nothing"; else fail "T-WIZ-CAPTURE: --cli got capture vars (got: $(echo "$TWC_OUT" | grep CAPTURE | tr '\n' ' '))"; fi
+# Exporting only the writes switch off must not get a rw mount, which
+# server/install.sh refuses ("UM_MOUNT_MODE=rw requires UM_MCP_WRITE_ENABLED=true").
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MCP_WRITE_ENABLED=false \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=unset"; then pass "T-WIZ-CAPTURE: writes=false alone leaves the mount default"; else fail "T-WIZ-CAPTURE: writes=false alone (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+# A re-run over an existing server/.env exports nothing, so server/install.sh
+# keeps the switches written there (operator ruling 2026-10-15: a read-only
+# choice survives a re-run).
+printf 'UM_MCP_WRITE_ENABLED=false\nUM_MOUNT_MODE=ro\n' > "$TWC/repo/server/.env"
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --yes re-run keeps server/.env's switches"; else fail "T-WIZ-CAPTURE: --yes re-run exported (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset" && echo "$TWC_OUT" | grep -q "Capture: as set in the existing server/.env"; then pass "T-WIZ-CAPTURE: wizard re-run keeps server/.env's switches and says so"; else fail "T-WIZ-CAPTURE: wizard re-run (got: $(echo "$TWC_OUT" | grep -i capture | tr '\n' ' '))"; fi
+rm -f "$TWC/repo/server/.env"
 rm -rf "$TWC"
 # ─── T-SUMMARIZER: both installers are handed one UM_SUMMARIZER ──────────────
 # server/install.sh announced "defaulting UM_SUMMARIZER=claude-agent-sdk" when a
