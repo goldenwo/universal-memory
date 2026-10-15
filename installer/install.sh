@@ -297,18 +297,19 @@ check_prereqs() {
 # non-interactive path gets a working server). A server that refuses every
 # capture is not what anyone installing asked for, and turning it on later
 # meant a .env edit plus a restart. An explicit export still wins
-# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The mount default
-# follows the writes switch: server/install.sh refuses rw without writes, so
-# exporting only UM_MCP_WRITE_ENABLED=false must not get rw. Fresh installs
-# only (operator ruling 2026-10-15): a re-run over an existing server/.env keeps
-# the switches written there, so a read-only choice survives.
+# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The writes default is
+# for fresh installs only (operator ruling 2026-10-15): a re-run over an
+# existing server/.env exports nothing, so the switches written there survive.
+# Whenever the writes switch is set, by default or by export, the mount
+# follows it: server/install.sh refuses rw without writes, and a ro mount with
+# writes on fails every capture, so the other value must not come from .env.
 _um_capture_default() {
-  if [[ $INSTALL_SERVER -eq 1 && ! -f "$INSTALL_DIR/server/.env" ]]; then
-    export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
-    case "$UM_MCP_WRITE_ENABLED" in
-      true|1) export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}" ;;
-    esac
-  fi
+  [[ $INSTALL_SERVER -eq 1 ]] || return 0
+  [[ -f "$INSTALL_DIR/server/.env" ]] || export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
+  case "${UM_MCP_WRITE_ENABLED:-}" in
+    true|1)  export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}" ;;
+    false|0) export UM_MOUNT_MODE="${UM_MOUNT_MODE:-ro}" ;;
+  esac
 }
 
 # Mode selection

@@ -111,7 +111,7 @@ Then run `/um-setup` inside Claude Code once. Accept `http://localhost:6335`. On
 
 Open a session. The Stop hook streams turns to the server, and the SessionEnd hook triggers a server-side summary. Nothing else is required.
 
-**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on for a new install, but a server wired by hand, or installed before v1.28.0 with `--yes`, needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (a re-run keeps what `server/.env` says). Server must be ≥ v1.7.0.
+**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on for a new install, but a server wired by hand, or installed with `--yes` by v1.28.1 or earlier, needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (a re-run keeps what `server/.env` says). Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 

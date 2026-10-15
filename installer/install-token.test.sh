@@ -131,7 +131,6 @@ stage_install_dir() {
   cp "$REPO_ROOT/installer/install.sh"    "$stage/installer/install.sh"
   cp "$REPO_ROOT/installer/wizard-lib.sh" "$stage/installer/wizard-lib.sh"
   cp "$REPO_ROOT/installer/lib/marker-block.sh" "$stage/installer/lib/marker-block.sh"
-  mkdir -p "$stage/.git"
 }
 
 # run_token_install <fakebin> <home> <stage>
