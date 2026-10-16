@@ -113,7 +113,8 @@ Component flags:
   --all             Install all detected components
 
 Behaviour flags:
-  --yes, -y         Non-interactive; accept defaults
+  --yes, -y         Non-interactive; accept defaults (a fresh server install
+                    turns capture on: UM_MCP_WRITE_ENABLED=false keeps it off)
   --interactive     Launch the setup wizard
   --remote [URL]    Remote-client setup: verify a remote UM server (health +
                     authed write probe) and write ~/.um/endpoint +

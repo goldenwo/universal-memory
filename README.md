@@ -138,7 +138,7 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    ```
    Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning. Then, if `~/universal-memory/server/.env` exists, the server is already installed: run `bash server/install.sh --upgrade` from `~/universal-memory` instead of the installer (see [Upgrading](#upgrading)), then go on to step 3.
 
-   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, run it again: a re-run keeps `server/.env`.
+   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, run the same installer command again, even though `server/.env` may now exist: a re-run keeps it.
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
 3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed", with no `version-skew` line. For a failing line, use the table below.
@@ -156,6 +156,8 @@ If a step fails, find its message below and apply that fix, not the hint printed
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
 | `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
 | `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
+| `No running memory-server container found` (step 2, `--upgrade`) | An earlier install stopped before the server started. From `~/universal-memory`, run `bash installer/install.sh --server --yes`. |
+| `plugin-registered` (step 3) | With `claude` installed, run `bash installer/install.sh --plugin-cc --yes` from `~/universal-memory`. Without it, see step 1. |
 | `version-skew` (step 3) | From `~/universal-memory`, run the command the line names (`bash server/install.sh --upgrade` or `bash installer/install-cli.sh --no-path`). |
 | Anything else | Stop, report the message to the user, and change nothing. |
 

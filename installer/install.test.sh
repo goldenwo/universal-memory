@@ -537,6 +537,31 @@ TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin"
 if echo "$TSC_OUT" | grep -q "would: git clone .* $TSC/home/universal-memory"; then pass "T-SELF-CLONE: piped install still clones to ~/universal-memory"; else fail "T-SELF-CLONE: piped default changed (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
 rm -rf "$TSC"
 
+# ─── T-README-KEYS: the agent failure table matches what the scripts print ───
+# An agent matches README's "Install with an AI agent" failure table literally.
+# A reworded message would leave its row unmatched and the agent at "Anything
+# else: stop" (2026-10-15 review round 8), so each key must appear verbatim in
+# both the README and the script that prints it.
+echo ""
+echo "=== T-README-KEYS: failure-table keys exist in their sources ==="
+while IFS='|' read -r _key _src; do
+  if grep -qF -- "\`$_key\`" "$REPO_ROOT/README.md" && grep -qF -- "$_key" "$REPO_ROOT/$_src"; then
+    pass "T-README-KEYS: '$_key'"
+  else
+    fail "T-README-KEYS: '$_key' missing from README.md or $_src"
+  fi
+done <<'KEYS'
+required tools not found|installer/install.sh
+--yes mode requires API key(s)|installer/install.sh
+captures require UM_MCP_WRITE_ENABLED=true|server/install.sh
+writes are DISABLED (HTTP 403)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
+stop.sh did not post|server/install.sh
+rejected the token (HTTP 401)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
+No running memory-server container found|server/install.sh
+plugin-registered|server/install.sh
+version-skew|server/install.sh
+KEYS
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
