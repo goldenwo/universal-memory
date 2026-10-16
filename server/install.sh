@@ -400,7 +400,8 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # ── pyyaml ────────────────────────────────────────────────────────────────
-  if python3 -c 'import yaml' 2>/dev/null; then
+  # From / so a yaml.py in the working directory is not imported (and run).
+  if (cd / && python3 -c 'import yaml') 2>/dev/null; then
     _vpass "pyyaml" ""
   else
     _vfail "pyyaml" "pyyaml not found. Install it: sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml"
@@ -1050,7 +1051,9 @@ ok "Docker is running and server files are present."
 # ─── pyyaml availability ─────────────────────────────────────────────────────
 # Shell hooks (Phase C) use python3 + pyyaml to parse session frontmatter.
 # Flag missing pyyaml now so users don't hit cryptic errors at hook time.
-python3 -c 'import yaml' 2>/dev/null || {
+# From /: python3 -c puts the working directory first on sys.path, so a
+# yaml.py left in it would run as the user.
+(cd / && python3 -c 'import yaml') 2>/dev/null || {
 	fail "pyyaml is not available. Install it: sudo apt install python3-yaml (Debian/Ubuntu; pip refuses on 24.04), or pip install pyyaml (macOS / venv)"
 }
 ok "pyyaml is available."

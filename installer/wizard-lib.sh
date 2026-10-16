@@ -30,7 +30,8 @@ wizard_detect_env() {
   DETECTED_CC=$(command -v claude >/dev/null 2>&1 && echo 1 || echo 0)
   DETECTED_CODEX=$([[ -d "$HOME/.codex" ]] && echo 1 || echo 0)
   DETECTED_PYTHON3=$(command -v python3 >/dev/null 2>&1 && echo 1 || echo 0)
-  DETECTED_PYYAML=$(python3 -c 'import yaml' 2>/dev/null && echo 1 || echo 0)
+  # From / so a yaml.py in the working directory is not imported (and run).
+  DETECTED_PYYAML=$( (cd / && python3 -c 'import yaml') 2>/dev/null && echo 1 || echo 0)
   DETECTED_BASH_VERSION=$(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
 
   echo "Detected environment:"

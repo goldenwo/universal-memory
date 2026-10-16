@@ -12,8 +12,11 @@
 #     UM_SERVER_URL marker block ⇒ updated; bare export ⇒ shadowing warning
 #
 # CI-safe: no network — curl is a PATH stub driven by UM_TEST_HEALTH_CODE /
-# UM_TEST_PROBE_CODE. Runs against a throwaway HOME; never touches the real
-# ~/.um or shell profiles.
+# UM_TEST_PROBE_CODE, and git is a stub that fails loudly. Runs against a
+# throwaway HOME; never touches the real ~/.um or shell profiles. Run it from a
+# git checkout you own (as CI does): --remote takes its libraries only from the
+# installer's own trusted checkout, and anything else would clone GitHub and
+# test that code instead of this tree.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
@@ -131,6 +134,10 @@ run_remote() {
   while [ "$1" != "--" ]; do extra_env+=("$1"); shift; done
   shift
   make_curl_stub "$tmp/bin"
+  # The installer must never reach for git here: from a trusted checkout the
+  # libraries are local. A git call means the run fell back to cloning GitHub.
+  printf '#!/bin/sh\necho "install-remote.test.sh: the installer ran git $* (run this suite from a git checkout you own)" >&2\nexit 97\n' > "$tmp/bin/git"
+  chmod +x "$tmp/bin/git"
   mkdir -p "$tmp/home"
   RT_RC=0
   RT_OUT=$(env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp/home" \

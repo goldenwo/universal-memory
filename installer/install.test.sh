@@ -664,6 +664,29 @@ printf 'UM_AUTH_TOKEN=""\n' > "$TOS/repo/server/.env"
 _tos_check "a quoted empty token still needs it" named
 rm -rf "$TOS"
 
+# ─── T-YAML-CWD: the PyYAML probe never imports from the working directory ──
+# python3 -c puts the working directory first on sys.path, so a yaml.py left
+# there ran as the user (FCP pass 4, pre-existing on main). Every probe runs
+# from /.
+echo ""
+echo "=== T-YAML-CWD: a yaml.py in the working directory is never imported ==="
+TYC=$(mktemp -d)
+if (cd / && python3 -c 'import yaml') >/dev/null 2>&1; then
+  mkdir -p "$TYC/bin" "$TYC/cwd" "$TYC/repo/server" "$TYC/repo/.git"
+  for _t in git docker openssl; do printf '#!/bin/bash\nexit 0\n' > "$TYC/bin/$_t"; chmod +x "$TYC/bin/$_t"; done
+  printf 'open("%s/PLANTED", "w").write("ran")\n' "$TYC" > "$TYC/cwd/yaml.py"
+  (cd "$TYC/cwd" && env PATH="$TYC/bin:/usr/bin:/bin" HOME="$TYC" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TYC/repo" \
+    bash "$INSTALLER" --server --yes --dry-run >/dev/null 2>&1) || true
+  if [ ! -e "$TYC/PLANTED" ]; then pass "T-YAML-CWD: the prerequisite check ignores a yaml.py in the working directory"; else fail "T-YAML-CWD: a planted yaml.py ran"; fi
+else
+  echo "  SKIP: T-YAML-CWD behavioural case (no python3 with PyYAML here)"
+fi
+# Every PyYAML probe on the install path runs from /.
+_tyc_bad=$(grep -n "python3 -c 'import yaml'" "$REPO_ROOT/installer/install.sh" "$REPO_ROOT/installer/wizard-lib.sh" \
+  "$REPO_ROOT/installer/install-cli.sh" "$REPO_ROOT/server/install.sh" | grep -v "cd / && python3 -c 'import yaml'" || true)
+if [ -z "$_tyc_bad" ]; then pass "T-YAML-CWD: every PyYAML probe runs from /"; else fail "T-YAML-CWD: probe(s) run in the working directory: $_tyc_bad"; fi
+rm -rf "$TYC"
+
 # ─── T-README-KEYS: the agent failure table matches what the scripts print ───
 # An agent matches README's "Install with an AI agent" failure table literally.
 # A reworded message would leave its row unmatched and the agent at "Anything

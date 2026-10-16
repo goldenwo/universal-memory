@@ -125,7 +125,7 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 
 **For the agent:**
 
-1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `openssl version`, `python3 -c 'import yaml'` and `claude --version`.
+1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `openssl version`, `(cd / && python3 -c 'import yaml')` (from `/`, so no `yaml.py` in the current directory gets imported) and `claude --version`.
    - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
    - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.

@@ -299,7 +299,9 @@ check_prereqs() {
   if [[ $need_python3 -eq 1 ]]; then
     if ! command -v python3 >/dev/null 2>&1; then
       missing+=("python3")
-    elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    # From /: python3 -c puts the working directory first on sys.path, so a
+    # yaml.py left in it would run as the user.
+    elif ! (cd / && python3 -c 'import yaml') >/dev/null 2>&1; then
       missing+=("PyYAML")
     fi
   fi
