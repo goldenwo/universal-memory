@@ -29,8 +29,9 @@ set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # Run from a checkout (`git clone ...; bash installer/install.sh`), the
-# installer uses that checkout. ~/universal-memory is the default only for
-# curl | bash, which has no script file and so no checkout of its own.
+# installer uses that checkout. Otherwise (curl | bash, which has no script
+# file, or a copy that is not a trusted checkout) the default is
+# ~/universal-memory.
 # Only a real checkout counts: a git checkout (.git, a directory or a
 # worktree's file) whose own installer this script is, with the checkout, its
 # server/ directory and its server installer all the user's own. A zip or
@@ -161,10 +162,13 @@ run_remote_flow() {
 
   # Shared probe logic lives in the plugin subtree (T8's um-setup.sh sources
   # the same file); marker-block.sh is the existing idempotent profile writer.
-  local script_dir verify_lib marker_lib
-  script_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  verify_lib="$script_dir/../plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
-  marker_lib="$script_dir/lib/marker-block.sh"
+  # They come from the installer's own checkout only when SELF_ROOT trusts it,
+  # never from whatever sits beside a downloaded copy.
+  local verify_lib="" marker_lib=""
+  if [[ -n "$SELF_ROOT" ]]; then
+    verify_lib="$SELF_ROOT/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+    marker_lib="$SELF_ROOT/installer/lib/marker-block.sh"
+  fi
   if [[ ! -r "$verify_lib" || ! -r "$marker_lib" ]]; then
     # curl|bash without a checkout: fall back to the clone dir (cloning if needed).
     if [[ ! -d "$INSTALL_DIR/.git" ]]; then
@@ -301,8 +305,10 @@ check_prereqs() {
   fi
   # server/install.sh generates the access token with openssl, unless one is
   # exported or a re-run reuses the one in server/.env (the same test it makes).
+  # A quoted empty value (UM_AUTH_TOKEN="") is no token: server/install.sh
+  # strips the quotes.
   if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" ]] \
-      && ! grep -q '^UM_AUTH_TOKEN=.' "$INSTALL_DIR/server/.env" 2>/dev/null; then
+      && ! grep -qE "^UM_AUTH_TOKEN=[\"']?[^\"'[:space:]]" "$INSTALL_DIR/server/.env" 2>/dev/null; then
     command -v openssl >/dev/null 2>&1 || missing+=("openssl")
   fi
   # bash is always needed
@@ -483,6 +489,12 @@ else
       git -C "$INSTALL_DIR" pull --ff-only
     fi
   else
+    # A zip or tarball copy already there is not a clone to pull, and git
+    # clone refuses a non-empty directory; say so instead of failing inside git.
+    if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+      echo "ERROR: $INSTALL_DIR exists but is not a git clone. Move it aside, or install from a clone: git clone $REPO" >&2
+      exit 1
+    fi
     printf 'Cloning %s to %s...\n' "$REPO" "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then
       echo "[dry-run] would: git clone $REPO $INSTALL_DIR"

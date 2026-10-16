@@ -17,9 +17,10 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-# A developer's own exports must not decide the cases below: each one sets what
-# it needs explicitly.
-unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN
+# The UM_* settings the installer reads must come from each case, not from a
+# developer's own shell.
+unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN UM_DRY_RUN \
+  UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER UM_SERVER_URL UM_REPO_URL
 
 # Helper: create stubs for prereq tools (excluding bash — real bash is needed
 # to execute the installer under test). openssl is stubbed too, so a host
@@ -511,7 +512,7 @@ mkdir -p "$TSC/clone/installer" "$TSC/clone/server" "$TSC/clone/.git" "$TSC/home
 cp "$INSTALLER" "$TSC/clone/installer/install.sh"
 # shellcheck disable=SC2016  # the stub expands $0 when it runs, not here
 printf '#!/usr/bin/env bash\necho "SERVER-FROM $(cd "$(dirname "$0")/.." && pwd)"\n' > "$TSC/clone/server/install.sh"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/clone/installer/install.sh" --server --yes 2>&1) || true
 if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone"; then pass "T-SELF-CLONE: the clone's own server/install.sh ran"; else fail "T-SELF-CLONE: clone's server installer not run (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
 if [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: no clone or pull"; else fail "T-SELF-CLONE: git ran: $(tr '\n' ' ' < "$TSC/git.log")"; fi
@@ -520,21 +521,21 @@ if [ ! -e "$TSC/home/universal-memory" ]; then pass "T-SELF-CLONE: ~/universal-m
 # /tmp/server/install.sh must clone, not run the planted file (round-4 review).
 mkdir -p "$TSC/dl" "$TSC/.git"; cp "$INSTALLER" "$TSC/dl/install.sh"; : > "$TSC/git.log"
 mkdir -p "$TSC/server"; printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/server/install.sh"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone .* $TSC/home/universal-memory" "$TSC/git.log"; then pass "T-SELF-CLONE: a downloaded copy clones instead of running a planted server/install.sh"; else fail "T-SELF-CLONE: downloaded copy (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
 if echo "$TSC_OUT" | grep -q "note: not installing from $TSC"; then pass "T-SELF-CLONE: the rejected checkout is named"; else fail "T-SELF-CLONE: rejection was silent"; fi
 # A different installer/install.sh beside the planted server/install.sh does
 # not make the downloaded copy's parent a checkout either.
 mkdir -p "$TSC/installer"; cp "$INSTALLER" "$TSC/installer/install.sh"; : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: another installer/install.sh beside it does not make a checkout"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # Position, not just identity: a planted installer/install.sh that LINKS to the
 # downloaded copy passes -ef, and on Git Bash -O passes for every file, so the
 # script itself must sit in the checkout's installer/ (FCP pass 1, codex HOLD).
 rm -f "$TSC/installer/install.sh"; ln -s "$TSC/dl/install.sh" "$TSC/installer/install.sh"; : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a planted link back to a downloaded copy does not make a checkout"; else fail "T-SELF-CLONE: position (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # Identity: a script inside a checkout's installer/ that is not its install.sh
@@ -543,7 +544,7 @@ if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.lo
 mkdir -p "$TSC/c2/installer" "$TSC/c2/server" "$TSC/c2/.git"
 cp "$INSTALLER" "$TSC/c2/installer/other.sh"; cp "$INSTALLER" "$TSC/c2/installer/install.sh"
 printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/c2/server/install.sh"; : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/c2/installer/other.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a script that is not the checkout's install.sh is not vouched for"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # Ownership: the script's own checkout whose server/install.sh is not the
@@ -553,7 +554,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _tsc_o=0 ;; *) _tsc_o=1 ;; esac
 if [ "$(id -u)" != 0 ] && [ "$_tsc_o" = 1 ]; then
   mkdir -p "$TSC/unowned/installer" "$TSC/unowned/server" "$TSC/unowned/.git"; cp "$INSTALLER" "$TSC/unowned/installer/install.sh"
   ln -s "$(command -v env)" "$TSC/unowned/server/install.sh"; : > "$TSC/git.log"
-  TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
     bash "$TSC/unowned/installer/install.sh" --server --yes 2>&1) || true
   if echo "$TSC_OUT" | grep -q "note: not installing from $TSC/unowned" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a server/install.sh the user does not own is rejected"; else fail "T-SELF-CLONE: -O (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 else
@@ -565,17 +566,32 @@ fi
 # so only the .git check stands (FCP pass 2, codex HOLD).
 mkdir -p "$TSC/nogit/installer" "$TSC/nogit/server"; cp "$INSTALLER" "$TSC/nogit/installer/install.sh"
 printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/nogit/server/install.sh"; : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/nogit/installer/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a tree that is not a git checkout is not trusted"; else fail "T-SELF-CLONE: .git (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# --remote sources two libraries; a downloaded copy must not take them from
+# beside itself (round 12): only a trusted checkout supplies them, otherwise
+# the clone does. The stub clone stays empty, so the run stops on "not found".
+mkdir -p "$TSC/dl2/lib" "$TSC/plugins/claude-code/universal-memory/hooks/lib"
+cp "$INSTALLER" "$TSC/dl2/install.sh"
+printf 'echo PLANTED-RAN\n' | tee "$TSC/dl2/lib/marker-block.sh" > "$TSC/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+rm -rf "$TSC/home/universal-memory"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash "$TSC/dl2/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN"; then pass "T-SELF-CLONE: --remote does not source libraries beside a downloaded copy"; else fail "T-SELF-CLONE: --remote sourced planted libraries"; fi
+# A non-git copy already at the clone target gets a clear error, not git's.
+mkdir -p "$TSC/zipcopy/server"; : > "$TSC/zipcopy/server/install.sh"
+TSC_OUT=$(env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSC/zipcopy" \
+  bash "$INSTALLER" --server --yes 2>&1) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && echo "$TSC_OUT" | grep -q "exists but is not a git clone"; then pass "T-SELF-CLONE: a non-git copy at the target is named"; else fail "T-SELF-CLONE: non-git target (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -2 | tr '\n' ' '))"; fi
 # A CDPATH that resolves `installer/..` makes cd print the directory into the
 # substitution; detection must still find the clone (round-5 review).
 : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR CDPATH=".:$TSC" PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC/clone" && env CDPATH=".:$TSC" PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash installer/install.sh --server --yes 2>&1) || true
 if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: CDPATH does not break detection"; else fail "T-SELF-CLONE: CDPATH (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
 # Control: piped (curl | bash) has no script file, so ~/universal-memory stays the default.
-TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+TSC_OUT=$(cd "$TSC/clone" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true
 if echo "$TSC_OUT" | grep -q "would: git clone .* $TSC/home/universal-memory"; then pass "T-SELF-CLONE: piped install still clones to ~/universal-memory"; else fail "T-SELF-CLONE: piped default changed (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
 rm -rf "$TSC"
@@ -613,6 +629,8 @@ printf 'MEM0_USER_ID=x\n' > "$TOS/repo/server/.env"
 _tos_check "a server/.env with no token still needs it" named
 printf 'UM_AUTH_TOKEN=\n' > "$TOS/repo/server/.env"
 _tos_check "an empty token line still needs it" named
+printf 'UM_AUTH_TOKEN=""\n' > "$TOS/repo/server/.env"
+_tos_check "a quoted empty token still needs it" named
 rm -rf "$TOS"
 
 # ─── T-README-KEYS: the agent failure table matches what the scripts print ───

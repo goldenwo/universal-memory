@@ -33,7 +33,7 @@ No flags + non-TTY stdin = `--all` (v0.4 back-compat).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `UM_INSTALL_DIR` | the checkout the script runs from (never cloned or pulled); `~/universal-memory` for `curl \| bash` | Where to clone/update the repo. A checkout counts only when the script is its own `installer/install.sh` and you own the checkout, its `server/` and `server/install.sh`; otherwise the installer says so and uses `~/universal-memory`. |
+| `UM_INSTALL_DIR` | the checkout the script runs from (never cloned or pulled); `~/universal-memory` for `curl \| bash` | Where to clone/update the repo. A checkout counts only when it is a git checkout, the script is its own `installer/install.sh`, and you own the checkout, its `server/` and `server/install.sh`; otherwise (a zip or tarball copy, say) the installer uses `~/universal-memory`, with a note when the rejected directory looked like a checkout. |
 | `UM_MCP_WRITE_ENABLED` | `true` on a fresh server install; unset on a re-run | Capture on/off. Exporting it (or `UM_MOUNT_MODE`) alone sets the other to match (`true`/`rw`, `false`/`ro`). A re-run exports nothing, so `server/.env` keeps its values. |
 | `UM_MOUNT_MODE` | `rw` on a fresh server install; unset on a re-run | Vault mount mode, paired with `UM_MCP_WRITE_ENABLED` as above. |
 | `UM_REPO_URL` | GitHub main | Repo URL to clone from |
