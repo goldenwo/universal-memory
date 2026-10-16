@@ -2030,6 +2030,24 @@ for case in "tcap1:rerun:rw:true" "tcap2:fresh:ro:false"; do
   assert_eq "TCAP $name ($kind): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=$want_m"
   assert_eq "TCAP $name ($kind): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=$want_w"
 done
+# ...but an exported pair beats .env: installer/install.sh exports one on a
+# re-run when the user asks (the README agent fix for a 403 is a re-run with
+# UM_MCP_WRITE_ENABLED=true), and a merge that let .env win would leave it off.
+for case in "tcap3:ro:false:rw:true" "tcap4:rw:true:ro:false"; do
+  IFS=: read -r name env_m env_w want_m want_w <<< "$case"
+  T="$TMPROOT/$name"
+  mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+  make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+  printf 'MEM0_USER_ID=testuser\nUM_MOUNT_MODE=%s\nUM_MCP_WRITE_ENABLED=%s\n' "$env_m" "$env_w" > "$T/server/.env"
+  run_install "$T/bin" "$T/server/install.sh" \
+    UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+    UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 \
+    UM_MOUNT_MODE="$want_m" UM_MCP_WRITE_ENABLED="$want_w" \
+    SHELL=/bin/bash HOME="$T/home" >/dev/null || true
+  assert_eq "TCAP $name (export beats .env): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=$want_m"
+  assert_eq "TCAP $name (export beats .env): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=$want_w"
+done
 # ─── TTXT: a first-time interactive install asks only what a reader can answer ─
 # The 2026-10-14 clean-room install was asked "Enable session-summary pipeline
 # (true/false)", "Enable temporal decay weighting (true/false)" and a second

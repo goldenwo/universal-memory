@@ -150,7 +150,7 @@ If a step fails, find its message below and apply that fix, not the hint printed
 
 | Message | Fix |
 |---|---|
-| `required tools not found: …` | Install what it names. |
+| `required tools not found` | Install what it names. |
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
 | `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
 | `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
