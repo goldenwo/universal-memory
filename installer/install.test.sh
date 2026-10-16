@@ -285,7 +285,7 @@ make_stubs "$TF15/bin"
 _tx_capture TF15 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
   PATH="$TF15/bin:/usr/bin:/bin" bash "$INSTALLER" --interactive
 # Real wizard must print the installer header and detected environment
-if echo "$TX_OUT_TF15" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
+if echo "$TX_OUT_TF15" | grep -q "Detected environment:"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
 rm -rf "$TF15"
 
 # (T-PCC-1..3 retired 2026-10-14: they pinned the old copy route, which put
@@ -592,12 +592,24 @@ _tsc_libs "$TSC/clone" SENTINEL-FROM-CHECKOUT; : > "$TSC/git.log"
 TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
   bash "$TSC/clone/installer/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
 if echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CHECKOUT" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: --remote from a trusted checkout uses its own libraries"; else fail "T-SELF-CLONE: --remote checkout (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+# ...even when UM_INSTALL_DIR points elsewhere, so the clone fallback cannot
+# stand in for the checkout's own lookup (round 13: a typo there passed).
+: > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" UM_INSTALL_DIR="$TSC/elsewhere" \
+  bash "$TSC/clone/installer/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CHECKOUT" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: --remote prefers the trusted checkout over UM_INSTALL_DIR"; else fail "T-SELF-CLONE: --remote checkout vs UM_INSTALL_DIR (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+rm -rf "$TSC/elsewhere"
 # The wizard library likewise comes only from a trusted checkout: a downloaded
 # copy beside a planted wizard-lib.sh refuses the wizard (FCP pass 3 HOLD).
 printf 'echo PLANTED-RAN\n' > "$TSC/dl2/wizard-lib.sh"
 TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
   bash "$TSC/dl2/install.sh" --interactive 2>&1 </dev/null) && TSC_RC=0 || TSC_RC=$?
-if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "the setup wizard runs from a git clone"; then pass "T-SELF-CLONE: the wizard refuses outside a trusted checkout"; else fail "T-SELF-CLONE: wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "the setup wizard runs only from a git clone"; then pass "T-SELF-CLONE: the wizard refuses outside a trusted checkout"; else fail "T-SELF-CLONE: wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+# Piped (curl | bash -s -- --interactive): no script file, so a wizard-lib.sh
+# planted in the working directory must not run either.
+TSC_OUT=$(cd "$TSC/dl2" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash -s -- --interactive < "$INSTALLER" 2>&1) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN"; then pass "T-SELF-CLONE: a piped wizard ignores a wizard-lib.sh in the working directory"; else fail "T-SELF-CLONE: piped wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
 # A non-git copy already at the clone target gets a clear error, not git's.
 mkdir -p "$TSC/zipcopy/server"; : > "$TSC/zipcopy/server/install.sh"
 TSC_OUT=$(env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSC/zipcopy" \

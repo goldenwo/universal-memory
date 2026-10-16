@@ -1,6 +1,6 @@
 # `install.sh` — universal-memory bootstrap installer
 
-Clones or updates the repo and delegates to per-component installers based on flags.
+Run from a git clone you own, installs from that clone (it is never pulled; `git pull` it yourself to update). Otherwise (`curl | bash`, a zip or tarball copy) clones or updates `~/universal-memory` first. Then delegates to per-component installers based on flags. With no flags on a terminal it starts the setup wizard, which needs such a clone.
 
 ## Usage
 

@@ -124,7 +124,7 @@ Component flags:
 Behaviour flags:
   --yes, -y         Non-interactive; accept defaults (a fresh server install
                     turns capture on: UM_MCP_WRITE_ENABLED=false keeps it off)
-  --interactive     Launch the setup wizard
+  --interactive     Launch the setup wizard (needs a git clone you own)
   --remote [URL]    Remote-client setup: verify a remote UM server (health +
                     authed write probe) and write ~/.um/endpoint +
                     ~/.um/auth-token (mode 600). Prompts for missing values
@@ -372,7 +372,7 @@ if [[ $MODE == wizard ]]; then
   # run as the user). Outside one there is nothing safe to source; a piped
   # install could not answer the prompts anyway.
   if [[ -z "$SELF_ROOT" ]]; then
-    echo "ERROR: the setup wizard runs from a git clone of universal-memory: git clone $REPO && bash universal-memory/installer/install.sh. Or pass --yes, which clones one for you." >&2
+    echo "ERROR: the setup wizard runs only from a git clone of universal-memory that you own (see any note above for why this one was not used): git clone $REPO && bash universal-memory/installer/install.sh. Or install non-interactively with --yes and without --interactive, which clones one for you." >&2
     exit 1
   fi
   # shellcheck source=installer/wizard-lib.sh
