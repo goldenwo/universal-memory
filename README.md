@@ -136,15 +136,15 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    cd ~/universal-memory
    bash installer/install.sh --yes
    ```
-   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning.
+   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning. If `~/universal-memory/server/.env` exists too and this run did not create it, it is an install whose containers were removed: stop and report, because the installer would reset settings in it that you can't see.
 
-   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, run the same installer command again, even though `server/.env` may now exist: a re-run keeps it.
+   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, wait until that run has exited, then run the same installer command once more, even though `server/.env` may now exist: a re-run keeps it. If that fails too, stop and report.
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
 3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed", with no `version-skew` line. For a failing line, use the table below.
 4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads. The endpoint is the URL on step 3's `server-health` line, minus `/health`; it is `http://localhost:6335` unless an existing install uses another port:
    ```bash
-   bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335
+   bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335 </dev/null
    ```
 5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 

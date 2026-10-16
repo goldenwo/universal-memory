@@ -403,12 +403,12 @@ echo ""
 echo "=== T-WIZ-CAPTURE: wizard server install passes writes on ==="
 TWC=$(mktemp -d)
 make_stubs "$TWC/bin"; _capture_repo "$TWC/repo"
-TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=true mount=rw"; then pass "T-WIZ-CAPTURE: server/install.sh gets writes on + rw"; else fail "T-WIZ-CAPTURE: capture not on (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 if echo "$TWC_OUT" | grep -q "Capture: on"; then pass "T-WIZ-CAPTURE: summary says capture is on"; else fail "T-WIZ-CAPTURE: summary silent about capture"; fi
 # An explicit export still wins (an operator who wants a read-only server).
-TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: an explicit export wins"; else fail "T-WIZ-CAPTURE: explicit export overridden (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 # _twc_yes <pair> <label> [VAR=value ...]: a `--server --yes` install into
@@ -435,12 +435,21 @@ _twc_yes "writes=0 mount=ro" "writes=0 alone gets a ro mount" UM_MCP_WRITE_ENABL
 _twc_yes "writes=1 mount=rw" "writes=1 alone gets a rw mount" UM_MCP_WRITE_ENABLED=1
 _twc_yes "writes=false mount=ro" "mount=ro alone gets writes off" UM_MOUNT_MODE=ro
 _twc_yes "writes=true mount=rw" "mount=rw alone gets writes on" UM_MOUNT_MODE=rw
+# The README's literal command has no component flag: --yes alone expands to
+# --all, and capture must be on by the time the server installer runs (FCP
+# pass 1 HOLD: moving the call above that expansion left every suite green).
+for _twc_args in "--yes" "--all --yes"; do
+  # shellcheck disable=SC2086  # word-split the flag list on purpose
+  TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
+    UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" $_twc_args 2>&1) || true
+  if [ "$(echo "$TWC_OUT" | grep -cx "CAPTURE writes=true mount=rw")" = 2 ]; then pass "T-WIZ-CAPTURE: '$_twc_args' hands both installers capture on"; else fail "T-WIZ-CAPTURE: '$_twc_args' (got: $(echo "$TWC_OUT" | grep CAPTURE | tr '\n' ' '))"; fi
+done
 # A re-run over an existing server/.env exports nothing, so server/install.sh
 # keeps the switches written there (operator ruling 2026-10-15: a read-only
 # choice survives a re-run).
 printf 'UM_MCP_WRITE_ENABLED=false\nUM_MOUNT_MODE=ro\n' > "$TWC/repo/server/.env"
 _twc_yes "writes=unset mount=unset" "--yes re-run keeps server/.env's switches"
-TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset" && echo "$TWC_OUT" | grep -q "Capture: as set in the existing server/.env"; then pass "T-WIZ-CAPTURE: wizard re-run keeps server/.env's switches and says so"; else fail "T-WIZ-CAPTURE: wizard re-run (got: $(echo "$TWC_OUT" | grep -i capture | tr '\n' ' '))"; fi
 # An export on a re-run still moves both switches: the mount must not come from
@@ -490,7 +499,9 @@ echo "=== T-SELF-CLONE: a clone outside ~/universal-memory installs from itself 
 TSC=$(mktemp -d)
 make_stubs "$TSC/bin"
 # shellcheck disable=SC2016  # the stub expands $* when it runs, not here
-printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n' "$TSC" > "$TSC/bin/git"
+# The stub creates a clone's target directory, so "~/universal-memory
+# untouched" below can fail when a clone happens.
+printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n[ "$1" = clone ] && mkdir -p "${@: -1}"\nexit 0\n' "$TSC" > "$TSC/bin/git"
 mkdir -p "$TSC/clone/installer" "$TSC/clone/server" "$TSC/clone/.git" "$TSC/home"
 cp "$INSTALLER" "$TSC/clone/installer/install.sh"
 # shellcheck disable=SC2016  # the stub expands $0 when it runs, not here
@@ -514,6 +525,13 @@ mkdir -p "$TSC/installer"; cp "$INSTALLER" "$TSC/installer/install.sh"; : > "$TS
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: another installer/install.sh beside it does not make a checkout"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# Position, not just identity: a planted installer/install.sh that LINKS to the
+# downloaded copy passes -ef, and on Git Bash -O passes for every file, so the
+# script itself must sit in the checkout's installer/ (FCP pass 1, codex HOLD).
+rm -f "$TSC/installer/install.sh"; ln -s "$TSC/dl/install.sh" "$TSC/installer/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a planted link back to a downloaded copy does not make a checkout"; else fail "T-SELF-CLONE: position (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # Ownership: the script's own checkout whose server/install.sh is not the
 # user's file (a symlink to a root-owned one) is rejected too. Skipped as root,
 # and on Git Bash, where -O is true for every file.
@@ -560,7 +578,7 @@ plugin-registered|server/install.sh
 version-skew|server/install.sh'
 # shellcheck disable=SC2016  # the backticks are literal Markdown, not expansions
 _table_keys=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\| `/' "$REPO_ROOT/README.md" \
-  | cut -d'|' -f2 | grep -o '`[^`]*`' | tr -d '`' | sort -u)
+  | cut -d'|' -f2 | grep -o '`[^`]*`' | tr -d '`' | sort -u || true)
 _list_keys=$(printf '%s\n' "$_readme_keys" | cut -d'|' -f1 | sort -u)
 # Every row before the catch-all must be keyed on a backticked message, or the
 # parse above would skip it silently.

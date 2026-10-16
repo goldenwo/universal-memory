@@ -37,12 +37,17 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # even if someone has planted /tmp/server/install.sh (and
 # /tmp/installer/install.sh linking back to it). Owning the directories, not
 # just the file, means nobody else can swap server/install.sh between this
-# check and the run. CDPATH is cleared so `cd` prints nothing into the
+# check and the run. The script must also sit in the checkout's installer/
+# directory itself, so a link planted at /tmp/installer/install.sh cannot
+# vouch for a copy elsewhere; that check holds on Git Bash too, where -O is
+# true for every file. CDPATH is cleared so `cd` prints nothing into the
 # substitution.
 SELF_ROOT=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
-  SELF_ROOT="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  if ! [[ "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" \
+  _self_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SELF_ROOT="${_self_dir%/*}"
+  if ! [[ "$_self_dir" == "$SELF_ROOT/installer" \
+        && "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" \
         && -O "$SELF_ROOT" && -O "$SELF_ROOT/server" && -O "$SELF_ROOT/server/install.sh" ]]; then
     [[ -e "$SELF_ROOT/server/install.sh" ]] \
       && echo "[install] note: not installing from $SELF_ROOT: this script is not its installer/install.sh, or its files are not yours." >&2
@@ -291,8 +296,11 @@ check_prereqs() {
       missing+=("PyYAML")
     fi
   fi
-  # server/install.sh generates the access token with openssl on a fresh install.
-  [[ $INSTALL_SERVER -eq 1 ]] && { command -v openssl >/dev/null 2>&1 || missing+=("openssl"); }
+  # server/install.sh generates the access token with openssl, unless one is
+  # exported or a re-run reuses the one in server/.env.
+  if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" && ! -f "$INSTALL_DIR/server/.env" ]]; then
+    command -v openssl >/dev/null 2>&1 || missing+=("openssl")
+  fi
   # bash is always needed
   command -v bash >/dev/null 2>&1 || missing+=("bash")
 
