@@ -35,10 +35,15 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # installer, and the checkout's server installer must be the user's own file. A
 # copy downloaded to /tmp/x/install.sh is not one, even if someone has planted
 # /tmp/server/install.sh (and /tmp/installer/install.sh linking back to it).
+# CDPATH is cleared so `cd` prints nothing into the substitution.
 SELF_ROOT=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
-  SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  [[ "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" && -O "$SELF_ROOT/server/install.sh" ]] || SELF_ROOT=""
+  SELF_ROOT="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if ! [[ "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" && -O "$SELF_ROOT/server/install.sh" ]]; then
+    [[ -e "$SELF_ROOT/server/install.sh" ]] \
+      && echo "[install] note: not installing from $SELF_ROOT: this script is not its installer/install.sh, or its files are not yours." >&2
+    SELF_ROOT=""
+  fi
 fi
 INSTALL_DIR="${UM_INSTALL_DIR:-${SELF_ROOT:-$HOME/universal-memory}}"
 DRY_RUN="${UM_DRY_RUN:-0}"
@@ -144,7 +149,7 @@ run_remote_flow() {
   # Shared probe logic lives in the plugin subtree (T8's um-setup.sh sources
   # the same file); marker-block.sh is the existing idempotent profile writer.
   local script_dir verify_lib marker_lib
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   verify_lib="$script_dir/../plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
   marker_lib="$script_dir/lib/marker-block.sh"
   if [[ ! -r "$verify_lib" || ! -r "$marker_lib" ]]; then
@@ -301,15 +306,19 @@ check_prereqs() {
 # non-interactive path gets a working server). A server that refuses every
 # capture is not what anyone installing asked for, and turning it on later
 # meant a .env edit plus a restart. An explicit export still wins
-# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The writes default is
-# for fresh installs only (operator ruling 2026-10-15): a re-run over an
+# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The capture-on default
+# is for fresh installs only (operator ruling 2026-10-15): a re-run over an
 # existing server/.env exports nothing, so the switches written there survive.
-# Whenever the writes switch is set, by default or by export, the mount
-# follows it: server/install.sh refuses rw without writes, and a ro mount with
-# writes on fails every capture, so the other value must not come from .env.
+# When either switch is exported, the other defaults to match it, so neither
+# half comes from .env or the capture-on default: server/install.sh refuses rw
+# without writes, and writes on a ro mount fail every capture.
 _um_capture_default() {
   [[ $INSTALL_SERVER -eq 1 ]] || return 0
-  [[ -f "$INSTALL_DIR/server/.env" ]] || export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
+  case "${UM_MOUNT_MODE:-}" in
+    rw) export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}" ;;
+    ro) export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-false}" ;;
+    *)  [[ -f "$INSTALL_DIR/server/.env" ]] || export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}" ;;
+  esac
   case "${UM_MCP_WRITE_ENABLED:-}" in
     true|1)  export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}" ;;
     false|0) export UM_MOUNT_MODE="${UM_MOUNT_MODE:-ro}" ;;
@@ -332,7 +341,7 @@ else
 fi
 
 if [[ $MODE == wizard ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=installer/wizard-lib.sh
   source "$SCRIPT_DIR/wizard-lib.sh"
   wizard_header

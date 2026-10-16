@@ -139,21 +139,22 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git -C ~/universal-memory pull` instead of cloning.
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
-3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
+3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed". For a failing line, use the table below.
 4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads:
    ```bash
    bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335
    ```
 5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 
-If a step fails:
+If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report.
 
 | Message | Fix |
 |---|---|
 | `required tools not found: …` | Install what it names. |
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
-| `writes are DISABLED (HTTP 403)` | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --yes`. |
-| `rejected the token (HTTP 401)` | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --yes`. It copies the server's token to `~/.um/auth-token` again. |
+| `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
+| `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
+| Anything else | Stop, report the message to the user, and change nothing. |
 
 ### Install the `um` CLI
 

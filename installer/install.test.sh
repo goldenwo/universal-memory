@@ -426,6 +426,11 @@ if [ "$(echo "$TWC_OUT" | grep -c "CAPTURE")" = 1 ] && echo "$TWC_OUT" | grep -q
 TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MCP_WRITE_ENABLED=false \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: writes=false alone gets a ro mount"; else fail "T-WIZ-CAPTURE: writes=false alone (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+# ...and the other way round: a ro mount exported alone must not get writes on
+# from the capture-on default (writes on a ro mount fail every capture).
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MOUNT_MODE=ro \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: mount=ro alone gets writes off"; else fail "T-WIZ-CAPTURE: mount=ro alone (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 # A re-run over an existing server/.env exports nothing, so server/install.sh
 # keeps the switches written there (operator ruling 2026-10-15: a read-only
 # choice survives a re-run).
@@ -446,6 +451,9 @@ printf 'UM_MCP_WRITE_ENABLED=true\nUM_MOUNT_MODE=rw\n' > "$TWC/repo/server/.env"
 TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MCP_WRITE_ENABLED=false \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: re-run exporting writes=false gets ro"; else fail "T-WIZ-CAPTURE: re-run writes=false (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test UM_MOUNT_MODE=ro \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: re-run exporting mount=ro gets writes off"; else fail "T-WIZ-CAPTURE: re-run mount=ro (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 rm -f "$TWC/repo/server/.env"
 rm -rf "$TWC"
 # ─── T-SUMMARIZER: both installers are handed one UM_SUMMARIZER ──────────────
@@ -502,6 +510,13 @@ mkdir -p "$TSC/server"; printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone .* $TSC/home/universal-memory" "$TSC/git.log"; then pass "T-SELF-CLONE: a downloaded copy clones instead of running a planted server/install.sh"; else fail "T-SELF-CLONE: downloaded copy (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+if echo "$TSC_OUT" | grep -q "note: not installing from $TSC"; then pass "T-SELF-CLONE: the rejected checkout is named"; else fail "T-SELF-CLONE: rejection was silent"; fi
+# A CDPATH that resolves `installer/..` makes cd print the directory into the
+# substitution; detection must still find the clone (round-5 review).
+: > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR CDPATH=".:$TSC" PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash installer/install.sh --server --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: CDPATH does not break detection"; else fail "T-SELF-CLONE: CDPATH (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
 # Control: piped (curl | bash) has no script file, so ~/universal-memory stays the default.
 TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true
