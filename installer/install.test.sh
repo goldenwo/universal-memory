@@ -519,8 +519,8 @@ TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME=
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone .* $TSC/home/universal-memory" "$TSC/git.log"; then pass "T-SELF-CLONE: a downloaded copy clones instead of running a planted server/install.sh"; else fail "T-SELF-CLONE: downloaded copy (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
 if echo "$TSC_OUT" | grep -q "note: not installing from $TSC"; then pass "T-SELF-CLONE: the rejected checkout is named"; else fail "T-SELF-CLONE: rejection was silent"; fi
-# Identity, not existence: a different installer/install.sh beside the planted
-# server/install.sh still is not this script's checkout (-ef, not -e).
+# A different installer/install.sh beside the planted server/install.sh does
+# not make the downloaded copy's parent a checkout either.
 mkdir -p "$TSC/installer"; cp "$INSTALLER" "$TSC/installer/install.sh"; : > "$TSC/git.log"
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
@@ -532,6 +532,15 @@ rm -f "$TSC/installer/install.sh"; ln -s "$TSC/dl/install.sh" "$TSC/installer/in
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a planted link back to a downloaded copy does not make a checkout"; else fail "T-SELF-CLONE: position (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# Identity: a script inside a checkout's installer/ that is not its install.sh
+# (installer/other.sh beside a different installer/install.sh) is not that
+# checkout's installer (-ef, not -e; round 11).
+mkdir -p "$TSC/c2/installer" "$TSC/c2/server"
+cp "$INSTALLER" "$TSC/c2/installer/other.sh"; cp "$INSTALLER" "$TSC/c2/installer/install.sh"
+printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/c2/server/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/c2/installer/other.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a script that is not the checkout's install.sh is not vouched for"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # Ownership: the script's own checkout whose server/install.sh is not the
 # user's file (a symlink to a root-owned one) is rejected too. Skipped as root,
 # and on Git Bash, where -O is true for every file.
@@ -556,6 +565,32 @@ TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin"
   bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true
 if echo "$TSC_OUT" | grep -q "would: git clone .* $TSC/home/universal-memory"; then pass "T-SELF-CLONE: piped install still clones to ~/universal-memory"; else fail "T-SELF-CLONE: piped default changed (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
 rm -rf "$TSC"
+
+# ─── T-OPENSSL: openssl only when server/install.sh must generate a token ────
+# server/install.sh reuses an exported UM_AUTH_TOKEN or the one in server/.env
+# and needs openssl only to generate a fresh one; the prerequisite check must
+# not refuse the other two cases (round 11). PATH holds only stubs and the few
+# real tools the check itself runs, so openssl is genuinely absent.
+echo ""
+echo "=== T-OPENSSL: openssl is required only to generate a token ==="
+TOS=$(mktemp -d)
+make_stubs "$TOS/bin"
+for _t in bash dirname grep sort uname; do ln -s "$(command -v "$_t")" "$TOS/bin/$_t"; done
+mkdir -p "$TOS/repo/server"
+_tos_run() { env -i PATH="$TOS/bin" HOME="$TOS" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TOS/repo" "$@" \
+  "$REAL_BASH" "$INSTALLER" --server --yes --dry-run 2>&1 || true; }
+_tos_check() { # <label> <want: named|not-named> [VAR=value ...]
+  local label="$1" want="$2" got; shift 2
+  if _tos_run "$@" | grep -q "required tools not found in PATH: .*openssl"; then got=named; else got=not-named; fi
+  if [ "$got" = "$want" ]; then pass "T-OPENSSL: $label"; else fail "T-OPENSSL: $label (openssl $got)"; fi
+}
+_tos_check "fresh install needs it" named
+_tos_check "an exported token does not" not-named UM_AUTH_TOKEN=tok-test
+printf 'UM_AUTH_TOKEN=tok-test\n' > "$TOS/repo/server/.env"
+_tos_check "a re-run reusing server/.env's token does not" not-named
+printf 'MEM0_USER_ID=x\n' > "$TOS/repo/server/.env"
+_tos_check "a server/.env with no token still needs it" named
+rm -rf "$TOS"
 
 # ─── T-README-KEYS: the agent failure table matches what the scripts print ───
 # An agent matches README's "Install with an AI agent" failure table literally.

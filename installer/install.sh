@@ -297,8 +297,9 @@ check_prereqs() {
     fi
   fi
   # server/install.sh generates the access token with openssl, unless one is
-  # exported or a re-run reuses the one in server/.env.
-  if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" && ! -f "$INSTALL_DIR/server/.env" ]]; then
+  # exported or a re-run reuses the one in server/.env (the same test it makes).
+  if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" ]] \
+      && ! grep -q '^UM_AUTH_TOKEN=.' "$INSTALL_DIR/server/.env" 2>/dev/null; then
     command -v openssl >/dev/null 2>&1 || missing+=("openssl")
   fi
   # bash is always needed
