@@ -44,7 +44,7 @@ try { $cp0 = ((& $env:ComSpec /d /c chcp) -replace '[^0-9]', '') } catch { }
 # environment of a Codex session launched from PowerShell. Then only the launcher's own PATH setup
 # can make cat, sed and cygpath resolvable. Launched from git-bash they are already on PATH, which
 # masked a PATH rewrite that silently did nothing (found by review round 4, 2026-09-23).
-$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -notmatch '\\Git\\(usr\\bin|mingw64\\bin|bin)$') }) -join ';'
+$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -notmatch '\\Git\\(usr\\bin|ucrt64\\bin|mingw64\\bin|bin)$') }) -join ';'
 
 # A failing check also prints the stderr of the last hook run, so a red CI run explains itself.
 function Check([bool]$Condition, [string]$Name) {
@@ -158,11 +158,12 @@ function Hook-LogText([string]$HomeDir) {
     return ''
 }
 
-# A tiny console program compiled in-test (no external tools): writes its argv to the file named
-# by MARKER_FILE and exits 0. The fake bash.exe that proves resolution order.
+# A tiny console program compiled in-test (no external tools): writes three lines to the file named
+# by MARKER_FILE - its argv, MSYSTEM and PATH - and exits 0. The fake bash.exe that proves
+# resolution order and the fast path's setup.
 function New-MarkerExe([string]$Path) {
-    $src = 'public static class MarkerMain { public static int Main(string[] a) { ' +
-           'System.IO.File.WriteAllText(System.Environment.GetEnvironmentVariable("MARKER_FILE"), string.Join("|", a)); return 0; } }'
+    $src = 'public static class MarkerMain { public static int Main(string[] a) { System.Func<string, string> e = System.Environment.GetEnvironmentVariable; ' +
+           'System.IO.File.WriteAllText(e("MARKER_FILE"), string.Join("|", a) + "\n" + e("MSYSTEM") + "\n" + e("PATH")); return 0; } }'
     Add-Type -TypeDefinition $src -OutputType ConsoleApplication -OutputAssembly $Path
 }
 
@@ -181,6 +182,7 @@ cat > "$STUB_DIR/stdin-$(basename "$0").bin"
 cat "$STUB_DIR/stdout.bin"
 cygpath -w "$HOME" > "$STUB_DIR/home-$(basename "$0").txt" 2>/dev/null
 case ":$PATH:" in *um-path-tail*) printf ok > "$STUB_DIR/tail-$(basename "$0").txt" ;; esac
+printf '%s|%s' "$MSYSTEM" "${EXEPATH:+wrapper}" > "$STUB_DIR/env-$(basename "$0").txt"
 exit "${STUB_EXIT:-0}"
 '@
 $stub = $stub -replace "`r`n", "`n"
@@ -200,12 +202,13 @@ $stdoutFixture = Join-Bytes @('{"hookSpecificOutput":{"additionalContext":"na', 
 
 $hooksJson = [System.IO.File]::ReadAllText((Join-Path $here 'hooks.json')) | ConvertFrom-Json
 $base = @{ CLAUDE_PLUGIN_ROOT = $tmp; STUB_DIR = $stubDir; HOME = $fakeHome; STUB_EXIT = '0';
-           UM_GIT_BASH = $null; MARKER_FILE = $null; NoDefaultCurrentDirectoryInExePath = $null }
+           UM_GIT_BASH = $null; MARKER_FILE = $null; NoDefaultCurrentDirectoryInExePath = $null
+           MSYSTEM = $null; EXEPATH = $null }
 function With([hashtable]$Extra) { $h = $base.Clone(); foreach ($k in $Extra.Keys) { $h[$k] = $Extra[$k] }; return $h }
 $launcher = '"' + (Join-Path $fixHooks 'run-hook.cmd') + '" '
 function Received([string]$s) { Join-Path $tmp "stdin-$s.bin" }
 function Ran([string]$s) { $f = Received $s; (Test-Path -LiteralPath $f) -and (Same-Bytes ([System.IO.File]::ReadAllBytes($f)) $payload) }
-function Reset([string]$s) { foreach ($k in 'stdin', 'home', 'tail') { Remove-Item -LiteralPath (Join-Path $tmp "$k-$s.$(if ($k -eq 'stdin') { 'bin' } else { 'txt' })") -ErrorAction SilentlyContinue } }
+function Reset([string]$s) { foreach ($k in 'stdin', 'home', 'tail', 'env') { Remove-Item -LiteralPath (Join-Path $tmp "$k-$s.$(if ($k -eq 'stdin') { 'bin' } else { 'txt' })") -ErrorAction SilentlyContinue } }
 function CommandFor([string]$Event, [string]$Root = $tmp) {
     $h = $hooksJson.hooks.$Event[0].hooks[0]
     return $h.commandWindows.Replace('${CLAUDE_PLUGIN_ROOT}', $Root)
@@ -280,7 +283,18 @@ try {
     #    refused instead) all fail open with skip=no-git-bash. A real path runs, with or without
     #    surrounding quotes, with forward slashes, and as Git's inner usr\bin\bash.exe - which must
     #    still get Git's tool directories (the stub needs cat), not run bare (review of 2026-09-24).
+    #    Each real path takes the fast path (no EXEPATH: only Git's wrapper sets it) with the
+    #    MSYSTEM Git's own wrapper sets on this machine, so a Git release that renames its
+    #    MSYSTEM directory fails here instead of falling back to the wrapper unnoticed: Git 2.56
+    #    moved mingw64 to ucrt64, and usr\bin\bash.exe then ran bare (CI, 2026-10-16).
     $realBash = Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'
+    $envProbe = Join-Path $tmp 'env-probe.sh'
+    [System.IO.File]::WriteAllText($envProbe, ('printf ''%s|%s'' "$MSYSTEM" "${EXEPATH:+wrapper}"' + "`n"), $utf8)
+    $savedEnv = @{ MSYSTEM = $env:MSYSTEM; EXEPATH = $env:EXEPATH }
+    try { Remove-Item Env:\MSYSTEM, Env:\EXEPATH -ErrorAction SilentlyContinue; $wrapperEnv = (& $realBash ($envProbe -replace '\\', '/')) -join '' }
+    finally { foreach ($k in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $savedEnv[$k], 'Process') } }
+    $wrapperMsystem = ($wrapperEnv -split '\|')[0]
+    Check (($wrapperEnv -match '^[A-Z0-9]+\|wrapper$')) "positive control: Git's own bin\bash.exe sets MSYSTEM and EXEPATH (saw '$wrapperEnv')"
     $innerBash = Join-Path (Split-Path -Parent (Split-Path -Parent $realBash)) 'usr\bin\bash.exe'
     $badValues = [ordered]@{ 'missing' = @((Join-Path $empty 'bash.exe'), $tmp); 'a directory' = @((Split-Path -Parent (Split-Path -Parent $realBash)), $tmp)
                              'relative' = @('Git\bin\bash.exe', ${env:ProgramFiles}); 'drive-relative' = @(($realBash.Substring(0, 2) + 'Git\bin\bash.exe'), ${env:ProgramFiles})
@@ -296,6 +310,9 @@ try {
         Reset 'session-end.sh'
         $r = Invoke-Hook 'PS' (CommandFor 'SessionEnd') $payloadFile $tmp (With @{ UM_GIT_BASH = $value })
         Check ((Ran 'session-end.sh') -and ($r.Exit -eq 0)) "UM_GIT_BASH $value`: runs"
+        $envFile = Join-Path $tmp 'env-session-end.sh.txt'
+        $seen = if (Test-Path -LiteralPath $envFile) { [System.IO.File]::ReadAllText($envFile) } else { '' }
+        Check ($seen -eq "$wrapperMsystem|") "UM_GIT_BASH $value`: the fast path ran, MSYSTEM=$wrapperMsystem as Git's wrapper sets it (saw '$seen')"
     }
 
     # 6. Walk-up precedence: a fake Git for Windows layout whose bin\bash.exe and usr\bin\bash.exe
@@ -305,25 +322,36 @@ try {
     #    / Smart App Control enforces (measured on a dev machine 2026-09-22), and that policy judges
     #    each file on its own: the probe runs usr\bin\bash.exe, the copy the fast path starts, and a
     #    run the policy blocks anyway is a SKIP here (on CI, where there is no such policy, a SKIP
-    #    fails the job).
-    $fakeGit = Join-Path $tmp 'G'
-    foreach ($d in @('cmd', 'bin', 'mingw64\bin', 'usr\bin')) { New-Item -ItemType Directory -Path (Join-Path $fakeGit $d) -Force | Out-Null }
-    New-MarkerExe (Join-Path $fakeGit 'usr\bin\bash.exe')
-    Copy-Item -LiteralPath (Join-Path $fakeGit 'usr\bin\bash.exe') -Destination (Join-Path $fakeGit 'bin\bash.exe')
-    foreach ($d in @('cmd', 'mingw64\bin')) { [System.IO.File]::WriteAllBytes((Join-Path $fakeGit "$d\git.exe"), [byte[]]@()) }
+    #    fails the job). Both layouts Git has shipped: mingw64 (before 2.56) and ucrt64 (2.56 on,
+    #    here beside a leftover mingw64\bin, which must not win). The marker records MSYSTEM and
+    #    PATH, so each walk also proves the fast path ran with that layout's setup.
+    $layouts = [ordered]@{ 'mingw64' = @('mingw64\bin'); 'ucrt64' = @('ucrt64\bin', 'mingw64\bin') }
+    $markerExe = Join-Path $tmp 'marker.exe'
+    New-MarkerExe $markerExe
+    foreach ($m in $layouts.Keys) {
+        $fakeGit = Join-Path $tmp "G $m"
+        foreach ($d in (@('cmd', 'bin', 'usr\bin') + $layouts[$m])) { New-Item -ItemType Directory -Path (Join-Path $fakeGit $d) -Force | Out-Null }
+        foreach ($b in @('usr\bin\bash.exe', 'bin\bash.exe')) { Copy-Item -LiteralPath $markerExe -Destination (Join-Path $fakeGit $b) }
+        foreach ($d in @('cmd', "$m\bin")) { [System.IO.File]::WriteAllBytes((Join-Path $fakeGit "$d\git.exe"), [byte[]]@()) }
+    }
     $probe = Join-Path $tmp 'marker-probe.txt'
     $env:MARKER_FILE = $probe
-    try { & (Join-Path $fakeGit 'usr\bin\bash.exe') 'probe' 2>$null | Out-Null } catch { }
+    try { & (Join-Path $tmp 'G mingw64\usr\bin\bash.exe') 'probe' 2>$null | Out-Null } catch { }
     Remove-Item Env:\MARKER_FILE
     if (-not (Test-Path -LiteralPath $probe)) {
-        Skip 'walk-up precedence (x2) - this machine blocks compiled test executables (Device Guard / Smart App Control)'
+        Skip 'walk-up precedence (x4) - this machine blocks compiled test executables (Device Guard / Smart App Control)'
     } else {
-        foreach ($d in @('cmd', 'mingw64\bin')) {
-            $marker = Join-Path $tmp "walk-$($d -replace '\\','-').txt"
-            $path = (Join-Path $fakeGit $d) + ';' + $env:SystemRoot + '\System32;' + $env:SystemRoot + '\System32\WindowsPowerShell\v1.0'
-            $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With @{ MARKER_FILE = $marker; PATH = $path })
-            if (-not (Test-Path -LiteralPath $marker) -and ($r.Err -match 'Device Guard')) { Skip "walk-up from Git\$d - the policy blocked the marker program this time"; $script:lastErr = ''; continue }
-            Check ((Test-Path -LiteralPath $marker) -and ([System.IO.File]::ReadAllText($marker) -like '*/hooks/stop.sh')) "walk-up from Git\$d wins"
+        foreach ($m in $layouts.Keys) {
+            $fakeGit = Join-Path $tmp "G $m"
+            foreach ($d in @('cmd', "$m\bin")) {
+                $marker = Join-Path $tmp "walk-$m-$($d -replace '\\','-').txt"
+                $path = (Join-Path $fakeGit $d) + ';' + $env:SystemRoot + '\System32;' + $env:SystemRoot + '\System32\WindowsPowerShell\v1.0'
+                $r = Invoke-Hook 'PS' (CommandFor 'Stop') $payloadFile $tmp (With @{ MARKER_FILE = $marker; PATH = $path })
+                if (-not (Test-Path -LiteralPath $marker) -and ($r.Err -match 'Device Guard')) { Skip "walk-up from Git\$d ($m layout) - the policy blocked the marker program this time"; $script:lastErr = ''; continue }
+                $lines = if (Test-Path -LiteralPath $marker) { [System.IO.File]::ReadAllText($marker) -split "`n" } else { @('', '', '') }
+                $want = (Join-Path $fakeGit "$m\bin") + ';' + (Join-Path $fakeGit 'usr\bin') + ';'
+                Check (($lines[0] -like '*/hooks/stop.sh') -and ($lines[1] -ceq $m.ToUpper()) -and $lines[2].StartsWith($want)) "walk-up from Git\$d wins ($m layout): the fast path ran with MSYSTEM=$($m.ToUpper()) and $m\bin first on PATH (saw '$($lines[1])', '$(($lines[2] -split ';')[0])')"
+            }
         }
     }
 
