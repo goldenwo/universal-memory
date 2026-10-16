@@ -113,7 +113,7 @@ the stack back up.
 and any zero in either half — combined with `UM_MOUNT_MODE=rw` that would
 get root inside the container writing to the host vault.
 
-### Capture defaults: on through installer/install.sh, off here (#29, #377)
+### Capture defaults: on through installer/install.sh, off here (#29, #377, #384)
 
 The wizard does not prompt for `UM_MCP_WRITE_ENABLED` / `UM_MOUNT_MODE`.
 `installer/install.sh` (the wizard, `--yes` and flag installs) turns capture

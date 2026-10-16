@@ -329,7 +329,8 @@ check_prereqs() {
   fi
 }
 
-# A server install turns capture on (operator rulings 2026-10-14: the wizard
+# A server install turns capture on (operator rulings 2026-10-14, recorded in
+# #384: the wizard
 # first, then --yes and flag installs too, so an AI agent driving the
 # non-interactive path gets a working server). A server that refuses every
 # capture is not what anyone installing asked for, and turning it on later
