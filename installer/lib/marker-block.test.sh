@@ -12,6 +12,10 @@
 # V2-marker-trailer.md §6.2 explicitly flagged this ordering as the correct
 # fix — the v0.6 spec's original "after" wording was unsafe.
 #
+# Also asserts the block never carries the OpenAI key: not from the caller's
+# env, not carried over from an old block (the rewrite is the migration), and
+# a user's own export outside the block is left untouched.
+#
 # All assertions below pass single-quoted EXPRESSIONS to `assert`, which
 # eval's them. Inside those literals, `$trailer_text` etc. are intentionally
 # not expanded by THIS shell — eval expands them at assertion time. Disable
@@ -37,12 +41,23 @@ assert() {
 
 # ─── Setup ────────────────────────────────────────────────────────────────
 tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+tdir=$(mktemp -d)
+trap 'rm -f "$tmp"; rm -rf "$tdir"' EXIT
 
+# A key in the caller's env must NOT reach the block (it used to, via a
+# ${UM_OPENAI_API_KEY:-} fallback). Set one here so the no-key assertions
+# below are not vacuous.
+UM_OPENAI_API_KEY="sk-env-key-must-not-land" \
 UM_SERVER_URL="http://localhost:6335" \
 UM_LIB_DIR="$HOME/.local/share/um/lib" \
 UM_CLI_DIR="$HOME/.local/share/um/cli" \
-  _write_marker_block "$tmp" "test-key" "openai"
+  _write_marker_block "$tmp" "openai"
+
+# ─── No API key in the block ────────────────────────────────────────────────
+assert '! grep -q "UM_OPENAI_API_KEY" "$tmp"' 'block has no UM_OPENAI_API_KEY line'
+assert '! grep -q "sk-env-key-must-not-land" "$tmp"' 'key from the caller env is not written'
+assert 'grep -qx "export UM_SUMMARIZER='"'"'openai'"'"'" "$tmp"' 'block still exports UM_SUMMARIZER'
+assert 'grep -qx "export UM_SERVER_URL='"'"'http://localhost:6335'"'"'" "$tmp"' 'block still exports UM_SERVER_URL'
 
 # ─── Assertions: trailer presence + exact form ──────────────────────────────
 # shellcheck disable=SC2034  # consumed by `assert` via single-quoted bash strings (eval)
@@ -67,13 +82,58 @@ assert '[[ "$trailer_text" == *"\"\$HOME/.um/auth-token\""* ]]' 'trailer uses do
 UM_SERVER_URL="http://localhost:6335" \
 UM_LIB_DIR="$HOME/.local/share/um/lib" \
 UM_CLI_DIR="$HOME/.local/share/um/cli" \
-  _write_marker_block "$tmp" "test-key" "openai"
+  _write_marker_block "$tmp" "openai"
 trailer_count=$(grep -c 'auth-token' "$tmp" || true)
 assert '[ "$trailer_count" = "1" ]' "trailer appears exactly once after re-run (got $trailer_count)"
 
 # ─── Marker block sentinels present ─────────────────────────────────────────
 assert 'grep -qF "universal-memory (auto-added" "$tmp"' 'block start sentinel present'
 assert 'grep -qF "end universal-memory" "$tmp"    ' 'block end sentinel present'
+
+# ─── Migration: an old block's key line is dropped by the rewrite ───────────
+# Blocks written by earlier installers exported the OpenAI key. Rewriting the
+# block (which every installer run does) is what removes it.
+old_rc="$tdir/old-block.rc"
+cat > "$old_rc" <<'RC'
+# user line before
+# --- universal-memory (auto-added by install.sh) ---
+export UM_OPENAI_API_KEY='sk-old-key-in-block'
+export UM_SUMMARIZER='openai'
+export UM_SERVER_URL='http://old:6335'
+# --- end universal-memory ---
+# user line after
+RC
+UM_SERVER_URL="http://localhost:6335" _write_marker_block "$old_rc" "openai"
+assert '! grep -q "UM_OPENAI_API_KEY" "$old_rc"' 'migration: old block key line removed on rewrite'
+assert '! grep -q "sk-old-key-in-block" "$old_rc"' 'migration: old key value gone from the file'
+assert '[ "$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$old_rc")" = "1" ]' 'migration: exactly one block after rewrite'
+assert '! grep -q "http://old:6335" "$old_rc"' 'migration: rest of the old block replaced too'
+assert 'grep -qx "# user line before" "$old_rc" && grep -qx "# user line after" "$old_rc"' 'migration: user lines around the block kept'
+
+# ─── A user's own export OUTSIDE the block is left untouched ────────────────
+own_rc="$tdir/own-export.rc"
+cat > "$own_rc" <<'RC'
+export UM_OPENAI_API_KEY='sk-users-own-key'
+# --- universal-memory (auto-added by install.sh) ---
+export UM_SUMMARIZER='openai'
+# --- end universal-memory ---
+RC
+own_before=$(grep -n "sk-users-own-key" "$own_rc")
+_write_marker_block "$own_rc" "claude-agent-sdk"
+assert '[ "$(grep -n "sk-users-own-key" "$own_rc")" = "$own_before" ]' "user's own export kept verbatim, same line ($own_before)"
+assert '[ "$(grep -c "UM_OPENAI_API_KEY" "$own_rc")" = "1" ]' "only the user's own key line remains (block adds none)"
+assert 'grep -qx "export UM_SUMMARIZER='"'"'claude-agent-sdk'"'"'" "$own_rc"' 'block rewritten with the new summarizer'
+
+# ─── The old three-argument form is refused, nothing written ────────────────
+# A stale caller passing (profile, key, summarizer) would put the key in the
+# UM_SUMMARIZER slot. The function must refuse rather than write it.
+stale_rc="$tdir/stale-caller.rc"
+printf '# untouched\n' > "$stale_rc"
+stale_rc_code=0
+_write_marker_block "$stale_rc" "sk-stale-caller-key" "openai" 2>/dev/null || stale_rc_code=$?
+assert '[ "$stale_rc_code" -ne 0 ]' "old three-argument call fails (rc $stale_rc_code)"
+assert '! grep -q "sk-stale-caller-key" "$stale_rc"' 'old three-argument call writes no key'
+assert '[ "$(cat "$stale_rc")" = "# untouched" ]' 'old three-argument call leaves the file unchanged'
 
 echo ""
 if [ "$fails" -eq 0 ]; then

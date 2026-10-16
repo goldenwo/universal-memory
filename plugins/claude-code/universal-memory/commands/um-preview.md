@@ -17,6 +17,7 @@ It writes nothing:
 - No cost-log.csv telemetry append (`update-state.sh --stdout` suppresses it)
 - No reindex
 
-It needs an OpenAI key on this machine (`UM_OPENAI_API_KEY` or `OPENAI_API_KEY`). It is fail-soft:
+It needs an OpenAI key exported in your environment (`UM_OPENAI_API_KEY` or `OPENAI_API_KEY`); the
+installers keep the server's key in `server/.env` and do not put it in your shell profile. It is fail-soft:
 a missing key, empty captures or an LLM error exits non-zero with a message on stderr and never
 corrupts data.

@@ -128,14 +128,16 @@ The installer writes a canonical managed-block to `~/.bashrc` and/or `~/.zshrc`.
 
 ```bash
 # --- universal-memory (auto-added by install.sh) ---
-export UM_OPENAI_API_KEY=''
 export UM_SUMMARIZER='openai'
 export UM_SERVER_URL='http://localhost:6335'
 export UM_LIB_DIR='/home/<user>/.local/share/um/lib'
 export UM_CLI_DIR='/home/<user>/.local/share/um/cli'
+[ -r "$HOME/.um/auth-token" ] && export UM_AUTH_TOKEN="$(cat "$HOME/.um/auth-token")"
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
 # --- end universal-memory ---
 ```
+
+The block holds no API key. Older installers also wrote `export UM_OPENAI_API_KEY='…'` into it; the next run of either installer rewrites the block without that line. An `export UM_OPENAI_API_KEY=…` you added yourself, outside the block, is left alone.
 
 The installer writes to whichever rc files already exist, or match the current default shell (`$SHELL`). If neither `~/.bashrc` nor `~/.zshrc` exists and neither matches the default shell, the installer prints a warning and shows the block to add manually.
 
@@ -145,7 +147,7 @@ The managed-block is env-sourced, not persisted. Running either installer (`inst
 
 ```bash
 source ~/.bashrc         # load existing env
-bash installer/install-cli.sh  # preserves current UM_OPENAI_API_KEY etc.
+bash installer/install-cli.sh  # preserves current UM_SUMMARIZER, UM_SERVER_URL etc.
 ```
 
 Alternatively, set values in your shell before running the installer and they will be written into the block on this invocation.
@@ -153,8 +155,8 @@ Alternatively, set values in your shell before running the installer and they wi
 ### Key variables
 
 - **`UM_SERVER_URL`** — URL of the UM server (local Docker or remote). CLI subcommands consume this. Default: `http://localhost:6335`.
-- **`UM_OPENAI_API_KEY`** — OpenAI API key used by the summarizer and mem0 embeddings. Empty by default for CLI-only installs. Not required if your server is remote and already has its own key.
-- **`UM_SUMMARIZER`** — `openai` (default) or `claude-agent-sdk`. Controls which provider the session-end hook uses to generate summaries.
+- **`UM_SUMMARIZER`** — `openai` (default) or `claude-agent-sdk`. Controls which backend `um-preview` uses for its summary step.
+- **`UM_OPENAI_API_KEY`** — not in the block. The server keeps its key in `server/.env`. `um-preview` reads `UM_OPENAI_API_KEY` or `OPENAI_API_KEY` from your environment: its summary step needs none with `UM_SUMMARIZER=claude-agent-sdk`, but its merge step always calls OpenAI. Export the key yourself if you use `um-preview`.
 - **`UM_LIB_DIR`** — library path. Default: `$HOME/.local/share/um/lib`. Override to load libraries from a custom location (advanced; used by developers).
 - **`UM_CLI_DIR`** — CLI subcommand script path. Default: `$HOME/.local/share/um/cli`.
 

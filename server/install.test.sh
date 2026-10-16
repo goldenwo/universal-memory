@@ -174,18 +174,24 @@ T1_OUT=$(run_install "$T1/bin" "$T1_SH" \
 
 assert_exit_zero "T1: install exits 0" "$T1_EXIT"
 assert_file_exists "T1: vault dir created" "$T1/vault"
-assert_contains "T1: UM_OPENAI_API_KEY appended to profile" "$(cat "$T1/home/.bashrc")" "UM_OPENAI_API_KEY"
+# The key goes to server/.env (positive control: it was collected) and never
+# into the 0644 shell profile.
+assert_contains "T1: key written to server/.env" "$(cat "$T1/server/.env")" "UM_OPENAI_API_KEY=sk-testkey12345"
+assert_not_contains "T1: no UM_OPENAI_API_KEY line in profile" "$(cat "$T1/home/.bashrc")" "UM_OPENAI_API_KEY"
+assert_not_contains "T1: key value not in profile" "$(cat "$T1/home/.bashrc")" "sk-testkey12345"
 assert_contains "T1: marker block present in profile" "$(cat "$T1/home/.bashrc")" "universal-memory (auto-added"
+assert_contains "T1: says the key stays out of the profile" "$T1_OUT" "not written to your shell profile"
+assert_not_contains "T1: no message claims the key was added to the profile" "$T1_OUT" "UM_OPENAI_API_KEY and UM_SUMMARIZER appended"
 assert_contains "T1: banner names the plugin install + /um-setup" "$T1_OUT" "then run /um-setup in Claude Code"
 assert_contains "T1: banner says source profile" "$T1_OUT" "source"
 
 # ─── T1b: canonical-superset vars in managed block ───────────────────────────
-# Verifies that the shared marker-block helper writes all six managed vars plus
-# the PATH guard — not just UM_OPENAI_API_KEY + UM_SUMMARIZER (old format).
+# Verifies that the shared marker-block helper writes the managed vars plus
+# the PATH guard — and NOT the API key (older blocks exported UM_OPENAI_API_KEY).
 echo ""
-echo "=== T1b: canonical-superset managed block contains all required vars ==="
+echo "=== T1b: canonical-superset managed block contains all required vars, no key ==="
 T1B_BASHRC="$(cat "$T1/home/.bashrc")"
-assert_contains "T1b: UM_OPENAI_API_KEY in block"  "$T1B_BASHRC" "UM_OPENAI_API_KEY"
+assert_not_contains "T1b: UM_OPENAI_API_KEY NOT in block" "$T1B_BASHRC" "UM_OPENAI_API_KEY"
 assert_contains "T1b: UM_SUMMARIZER in block"       "$T1B_BASHRC" "UM_SUMMARIZER"
 assert_contains "T1b: UM_SERVER_URL in block"       "$T1B_BASHRC" "UM_SERVER_URL"
 assert_contains "T1b: UM_LIB_DIR in block"          "$T1B_BASHRC" "UM_LIB_DIR"
@@ -194,19 +200,20 @@ assert_contains "T1b: PATH guard in block"          "$T1B_BASHRC" '.local/bin'
 assert_contains "T1b: block start marker"           "$T1B_BASHRC" "universal-memory (auto-added"
 assert_contains "T1b: block end marker"             "$T1B_BASHRC" "end universal-memory"
 
-# ─── T1c: install-cli.sh first (empty key) → install.sh later (real key) ───────
-# Regression for CRIT-1 / plan RH6: when install-cli.sh runs first it writes a
-# marker block with an empty UM_OPENAI_API_KEY. A subsequent server install.sh
-# with a real UM_OPENAI_API_KEY in env MUST overwrite the block and land the real
-# key — it must not warn-and-return because the stored key is different.
+# ─── T1c: old install-cli.sh block (empty key line) → install.sh later (real key) ─
+# Regression for CRIT-1 / plan RH6: an older install-cli.sh wrote a marker
+# block with an empty UM_OPENAI_API_KEY line. A subsequent server install.sh
+# with a real key in env MUST still rewrite the block unconditionally — it must
+# not warn-and-return because of the stored line. The rewrite now drops the key
+# line altogether: the real key goes to server/.env, never to the profile.
 echo ""
-echo "=== T1c: install-cli then install.sh — real key lands in block ==="
+echo "=== T1c: old install-cli block then install.sh — block rewritten, no key in it ==="
 T1C="$TMPROOT/t1c"
 mkdir -p "$T1C/vault" "$T1C/plugins" "$T1C/home"
 make_fakebin "$T1C/bin" 200
 T1C_SH=$(make_isolated_server "$T1C/server")
 
-# Simulate what install-cli.sh writes: marker block with empty UM_OPENAI_API_KEY
+# Simulate what an older install-cli.sh wrote: marker block with empty UM_OPENAI_API_KEY
 printf '\n# --- universal-memory (auto-added by install.sh) ---\nexport UM_OPENAI_API_KEY=%s\nexport UM_SUMMARIZER=%sopenai%s\n# --- end universal-memory ---\n' \
   "''" "'" "'" >> "$T1C/home/.bashrc"
 
@@ -226,10 +233,49 @@ run_install "$T1C/bin" "$T1C_SH" \
   HOME="$T1C/home" >/dev/null || T1C_EXIT=$?
 
 assert_exit_zero "T1c: server install exits 0 after cli install" "$T1C_EXIT"
-assert_contains "T1c: real key lands in profile" "$(cat "$T1C/home/.bashrc")" "sk-real-key999"
+assert_contains "T1c: real key lands in server/.env" "$(cat "$T1C/server/.env")" "UM_OPENAI_API_KEY=sk-real-key999"
+assert_not_contains "T1c: real key NOT in profile" "$(cat "$T1C/home/.bashrc")" "sk-real-key999"
+assert_not_contains "T1c: old empty key line dropped by the rewrite" "$(cat "$T1C/home/.bashrc")" "UM_OPENAI_API_KEY"
+assert_contains "T1c: block rewritten (UM_SERVER_URL now present)" "$(cat "$T1C/home/.bashrc")" "export UM_SERVER_URL="
 # Exactly one block (no duplicates after rewrite)
 T1C_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T1C/home/.bashrc")
 assert_eq "T1c: exactly one marker-start line" "$T1C_START_COUNT" "1"
+
+# ─── T1d: unknown shell → manual-add hint prints no key line ─────────────────
+# The installer cannot pick a profile for an unknown shell, so it prints what
+# to add by hand. That hint used to include `export UM_OPENAI_API_KEY=...`.
+echo ""
+echo "=== T1d: unknown shell — manual-add hint has no key line ==="
+T1D="$TMPROOT/t1d"
+mkdir -p "$T1D/vault" "$T1D/plugins" "$T1D/home"
+make_fakebin "$T1D/bin" 200
+T1D_SH=$(make_isolated_server "$T1D/server")
+
+T1D_EXIT=0
+T1D_OUT=$(run_install "$T1D/bin" "$T1D_SH" \
+  UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T1D/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false \
+  CLAUDE_PLUGINS_DIR="$T1D/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/usr/bin/fish \
+  HOME="$T1D/home") || T1D_EXIT=$?
+
+assert_exit_zero "T1d: install exits 0 with an unknown shell" "$T1D_EXIT"
+assert_contains "T1d: manual-add hint shown" "$T1D_OUT" "Add manually"
+assert_contains "T1d: hint still names UM_SUMMARIZER" "$T1D_OUT" "export UM_SUMMARIZER="
+assert_not_contains "T1d: hint prints no key export line" "$T1D_OUT" "export UM_OPENAI_API_KEY"
+assert_not_contains "T1d: key value never printed" "$T1D_OUT" "sk-testkey12345"
+if [ ! -e "$T1D/home/.bashrc" ] && [ ! -e "$T1D/home/.zshrc" ]; then
+  pass "T1d: no profile written for an unknown shell"
+else
+  fail_test "T1d: no profile written for an unknown shell" "a profile file was created"
+fi
 
 # ─── T2: Re-install — same version plugin already installed ───────────────────
 echo ""
@@ -243,7 +289,7 @@ T2_SH=$(make_isolated_server "$T2/server")
 # Pre-install: copy plugin once
 cp -r "$PLUGIN_SRC" "$T2/plugins/universal-memory"
 
-# Pre-populate profile with matching key
+# Pre-populate profile with an older install's block, which still exported the key
 printf '\n# --- universal-memory (auto-added by install.sh) ---\nexport UM_OPENAI_API_KEY='"'"'sk-testkey12345'"'"'\n# --- end universal-memory ---\n' >> "$T2/home/.bashrc"
 
 T2_EXIT=0
@@ -263,6 +309,11 @@ T2_OUT=$(run_install "$T2/bin" "$T2_SH" \
 
 assert_exit_zero "T2: re-install exits 0" "$T2_EXIT"
 assert_contains "T2: profile block rewritten with current env" "$T2_OUT" "Managed block found in"
+# Migration: the rewrite drops the old block's key line.
+assert_not_contains "T2: old block's UM_OPENAI_API_KEY line removed" "$(cat "$T2/home/.bashrc")" "UM_OPENAI_API_KEY"
+assert_not_contains "T2: old block's key value removed" "$(cat "$T2/home/.bashrc")" "sk-testkey12345"
+T2_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T2/home/.bashrc")
+assert_eq "T2: exactly one marker-start line" "$T2_START_COUNT" "1"
 
 # ─── T3: Non-interactive mode ─────────────────────────────────────────────────
 echo ""
@@ -290,7 +341,8 @@ T3_OUT=$(run_install "$T3/bin" "$T3_SH" \
 
 assert_exit_zero "T3: non-interactive exits 0" "$T3_EXIT"
 assert_contains "T3: non-interactive mode message" "$T3_OUT" "Non-interactive mode"
-assert_contains "T3: profile updated non-interactively" "$(cat "$T3/home/.bashrc")" "UM_OPENAI_API_KEY"
+assert_contains "T3: profile updated non-interactively" "$(cat "$T3/home/.bashrc")" "universal-memory (auto-added"
+assert_not_contains "T3: non-interactive update writes no key" "$(cat "$T3/home/.bashrc")" "UM_OPENAI_API_KEY"
 
 # ─── T4: Bad API key → fail in non-interactive mode ──────────────────────────
 echo ""
@@ -436,15 +488,19 @@ T7_OUT=$(env PATH="$T7/bin:$PATH" \
 assert_exit_nonzero "T7: --verify exits non-zero when plugin missing" "$T7_EXIT"
 assert_contains "T7: plugin-registered failure shown" "$T7_OUT" "plugin-registered"
 
-# ─── T8: Profile with different value → warns, does not overwrite ─────────────
+# ─── T8: user's own UM_OPENAI_API_KEY export → left untouched, block still added ─
+# The user's own export outside the marker block is theirs. The installer used
+# to skip the whole block when it saw one ("different value" warning); now the
+# block carries no key, so it is written as usual and the user's line stays
+# exactly as it was.
 echo ""
-echo "=== T8: Profile already has different UM_OPENAI_API_KEY value ==="
+echo "=== T8: Profile already has the user's own UM_OPENAI_API_KEY export ==="
 T8="$TMPROOT/t8"
 mkdir -p "$T8/vault" "$T8/plugins" "$T8/home"
 make_fakebin "$T8/bin" 200
 T8_SH=$(make_isolated_server "$T8/server")
 
-# Write a profile with a DIFFERENT key
+# Write a profile with the user's own (different) key export
 printf 'export UM_OPENAI_API_KEY=sk-different-key\n' > "$T8/home/.bashrc"
 
 T8_EXIT=0
@@ -462,10 +518,15 @@ T8_OUT=$(run_install "$T8/bin" "$T8_SH" \
   SHELL=/bin/bash \
   HOME="$T8/home") || T8_EXIT=$?
 
-assert_exit_zero "T8: install still exits 0 despite profile conflict" "$T8_EXIT"
-assert_contains "T8: warn about different value" "$T8_OUT" "different value"
-# Profile should still contain only the original key (not appended with new one)
-assert_not_contains "T8: profile not overwritten" "$(cat "$T8/home/.bashrc")" "sk-testkey12345"
+assert_exit_zero "T8: install exits 0 with the user's own key export present" "$T8_EXIT"
+assert_not_contains "T8: no conflict warning (the block sets no key)" "$T8_OUT" "different value"
+# The user's line is untouched: still the first line, verbatim, and the only key line.
+assert_eq "T8: user's own export kept verbatim as line 1" "$(head -n1 "$T8/home/.bashrc")" "export UM_OPENAI_API_KEY=sk-different-key"
+assert_eq "T8: user's line is the only UM_OPENAI_API_KEY line" "$(grep -c 'UM_OPENAI_API_KEY' "$T8/home/.bashrc")" "1"
+# The installer's key is not appended anywhere in the profile.
+assert_not_contains "T8: installer's key not written to profile" "$(cat "$T8/home/.bashrc")" "sk-testkey12345"
+# The block itself is still written (it used to be skipped here).
+assert_contains "T8: marker block written alongside the user's export" "$(cat "$T8/home/.bashrc")" "universal-memory (auto-added"
 
 # ─── T9: C1 — stale symlink at plugin target is replaced, not corrupted ───────
 echo ""
@@ -609,7 +670,8 @@ fi
 
 # ─── T16: UM_SUMMARIZER auto-detect — claude absent → openai ────────────────
 # A4: when `claude` CLI is not in PATH, install.sh writes UM_SUMMARIZER=openai
-# to the profile alongside UM_OPENAI_API_KEY in the same marker block.
+# to the profile's marker block — and still no UM_OPENAI_API_KEY with it: the
+# openai summarizer reads the key from the user's own environment.
 echo ""
 echo "=== T16: UM_SUMMARIZER=openai written when claude CLI absent ==="
 T16="$TMPROOT/t16"
@@ -643,7 +705,7 @@ T16_OUT=$(env -i PATH="$T16_PATH" \
 assert_exit_zero "T16: install exits 0 with claude absent" "$T16_EXIT"
 assert_contains "T16: detection message for claude absent" "$T16_OUT" "Claude CLI not detected"
 assert_contains "T16: UM_SUMMARIZER=openai in profile" "$(cat "$T16/home/.bashrc")" "export UM_SUMMARIZER='openai'"
-assert_contains "T16: UM_OPENAI_API_KEY also in profile" "$(cat "$T16/home/.bashrc")" "export UM_OPENAI_API_KEY"
+assert_not_contains "T16: UM_OPENAI_API_KEY NOT in profile with the openai summarizer" "$(cat "$T16/home/.bashrc")" "UM_OPENAI_API_KEY"
 assert_contains "T16: UM_SUMMARIZER inside marker block" "$(cat "$T16/home/.bashrc")" "universal-memory (auto-added"
 
 # ─── T17: UM_SUMMARIZER auto-detect — claude present → claude-agent-sdk ─────
@@ -711,7 +773,8 @@ assert_contains "T17: exported claude-agent-sdk named by what it does" "$T17_OUT
 # Cross-cutting review C1: a user upgrading from v0.2.0-alpha has a marker
 # block that pre-dates UM_SUMMARIZER. Re-running install.sh must backfill
 # the missing var, not silently skip it. The fix declaratively rewrites
-# the whole managed block on every run when the key matches.
+# the whole managed block on every run. That legacy block held only the key,
+# and the same rewrite drops it (the block no longer carries the key).
 echo ""
 echo "=== T18: re-install backfills UM_SUMMARIZER into legacy marker block ==="
 T18="$TMPROOT/t18"
@@ -761,8 +824,9 @@ env -i PATH="$T18_PATH" \
 
 assert_exit_zero "T18: upgrade re-install exits 0" "$T18_EXIT"
 T18_BASHRC=$(cat "$T18/home/.bashrc")
-# Block was refreshed, so both managed vars must now be present.
-assert_contains "T18: UM_OPENAI_API_KEY still present after upgrade" "$T18_BASHRC" "export UM_OPENAI_API_KEY='sk-testkey12345'"
+# Block was refreshed: the summarizer is backfilled and the legacy key line is gone.
+assert_not_contains "T18: legacy UM_OPENAI_API_KEY line removed by the upgrade" "$T18_BASHRC" "UM_OPENAI_API_KEY"
+assert_not_contains "T18: legacy key value removed by the upgrade" "$T18_BASHRC" "sk-testkey12345"
 assert_contains "T18: UM_SUMMARIZER backfilled after upgrade" "$T18_BASHRC" "export UM_SUMMARIZER='claude-agent-sdk'"
 # Exactly one marker block (no duplicates).
 T18_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T18/home/.bashrc")
@@ -1499,9 +1563,9 @@ T32_OUT=$(env -i PATH="$T32/bin:/usr/bin:/bin" \
 assert_exit_zero "T32: upgrade exits 0" "$T32_EXIT"
 assert_contains "T32: announces the CLI refresh" "$T32_OUT" "Refreshing the um CLI"
 assert_file_exists "T32: CLI installer was invoked" "$T32_CLI_LOG"
-# --no-path is load-bearing: install-cli.sh rewrites the shell rc marker block
-# from the CURRENT environment, and --upgrade never collects an API key — so a
-# refresh without it would blank UM_OPENAI_API_KEY in the operator's profile.
+# --no-path is load-bearing: install-cli.sh rewrites the whole shell rc marker
+# block from the CURRENT environment — so a refresh without it would rewrite the
+# operator's profile from whatever environment the upgrade ran in.
 assert_contains "T32: refresh passes --no-path (never touches shell profiles)" \
   "$(cat "$T32_CLI_LOG" 2>/dev/null)" "--no-path"
 assert_contains "T32: refresh is non-interactive" \
