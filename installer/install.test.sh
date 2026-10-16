@@ -45,6 +45,8 @@ mkdir "$tmp/empty"
 T1_OUT=$(env -i PATH="$tmp/empty" HOME="$tmp" "$REAL_BASH" "$INSTALLER" --dry-run 2>&1) && T1_EXIT=0 || T1_EXIT=$?
 if [ "$T1_EXIT" -ne 0 ]; then pass "T1: non-zero exit when tools missing"; else fail "T1: expected non-zero exit"; fi
 if echo "$T1_OUT" | grep -q "required tools not found"; then pass "T1: friendly error shown"; else fail "T1: no friendly error (got: $T1_OUT)"; fi
+# A server install needs openssl (server/install.sh generates the token with it).
+if echo "$T1_OUT" | grep -q "required tools not found in PATH: .*openssl"; then pass "T1: openssl is a server prerequisite"; else fail "T1: openssl not named (got: $(echo "$T1_OUT" | head -1))"; fi
 rm -rf "$tmp"
 
 # ─── T2: prereqs present, --dry-run prints clone intent ───────────────────────
@@ -544,14 +546,10 @@ rm -rf "$TSC"
 # both the README and the script that prints it.
 echo ""
 echo "=== T-README-KEYS: failure-table keys exist in their sources ==="
-while IFS='|' read -r _key _src; do
-  if grep -qF -- "\`$_key\`" "$REPO_ROOT/README.md" && grep -qF -- "$_key" "$REPO_ROOT/$_src"; then
-    pass "T-README-KEYS: '$_key'"
-  else
-    fail "T-README-KEYS: '$_key' missing from README.md or $_src"
-  fi
-done <<'KEYS'
-required tools not found|installer/install.sh
+# key|the script that prints it — one line per backticked key in the table's
+# Message column. The table itself is parsed below, so a row added, removed or
+# reworded without updating this list fails too.
+_readme_keys='required tools not found|installer/install.sh
 --yes mode requires API key(s)|installer/install.sh
 captures require UM_MCP_WRITE_ENABLED=true|server/install.sh
 writes are DISABLED (HTTP 403)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
@@ -559,8 +557,15 @@ stop.sh did not post|server/install.sh
 rejected the token (HTTP 401)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
 No running memory-server container found|server/install.sh
 plugin-registered|server/install.sh
-version-skew|server/install.sh
-KEYS
+version-skew|server/install.sh'
+# shellcheck disable=SC2016  # the backticks are literal Markdown, not expansions
+_table_keys=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\| `/' "$REPO_ROOT/README.md" \
+  | cut -d'|' -f2 | grep -o '`[^`]*`' | tr -d '`' | sort -u)
+_list_keys=$(printf '%s\n' "$_readme_keys" | cut -d'|' -f1 | sort -u)
+if [ -n "$_table_keys" ] && [ "$_table_keys" = "$_list_keys" ]; then pass "T-README-KEYS: the table's keys are exactly the listed ones"; else fail "T-README-KEYS: table vs list differ: $(diff <(echo "$_list_keys") <(echo "$_table_keys") | grep '^[<>]' | tr '\n' ' ')"; fi
+while IFS='|' read -r _key _src; do
+  if grep -qF -- "$_key" "$REPO_ROOT/$_src"; then pass "T-README-KEYS: '$_key' is printed by $_src"; else fail "T-README-KEYS: '$_key' not in $_src"; fi
+done <<< "$_readme_keys"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

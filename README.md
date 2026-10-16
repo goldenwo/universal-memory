@@ -125,18 +125,18 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 
 **For the agent:**
 
-1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `python3 -c 'import yaml'` and `claude --version`.
+1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `openssl version`, `python3 -c 'import yaml'` and `claude --version`.
    - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
    - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.
    - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line. `server/.env` and `~/.um/auth-token` hold the key and the server's access token: never print, `cat` or `grep` them. None of the fixes below needs to read them.
-2. **Install, non-interactively:**
+2. **Install, non-interactively.** First look for an existing install with `docker compose ls --all --filter name=universal-memory`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml`, is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
    ```bash
    git clone https://github.com/goldenwo/universal-memory ~/universal-memory
    cd ~/universal-memory
    bash installer/install.sh --yes
    ```
-   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning. Then, if `~/universal-memory/server/.env` exists, the server is already installed: run `bash server/install.sh --upgrade` from `~/universal-memory` instead of the installer (see [Upgrading](#upgrading)), then go on to step 3.
+   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning.
 
    The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, run the same installer command again, even though `server/.env` may now exist: a re-run keeps it.
 
@@ -156,7 +156,7 @@ If a step fails, find its message below and apply that fix, not the hint printed
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
 | `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
 | `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
-| `No running memory-server container found` (step 2, `--upgrade`) | An earlier install stopped before the server started. From `~/universal-memory`, run `bash installer/install.sh --server --yes`. |
+| `No running memory-server container found` (step 2 upgrade) | An earlier install stopped before the server started. From `~/universal-memory`, run `bash installer/install.sh --server --yes`. |
 | `plugin-registered` (step 3) | With `claude` installed, run `bash installer/install.sh --plugin-cc --yes` from `~/universal-memory`. Without it, see step 1. |
 | `version-skew` (step 3) | From `~/universal-memory`, run the command the line names (`bash server/install.sh --upgrade` or `bash installer/install-cli.sh --no-path`). |
 | Anything else | Stop, report the message to the user, and change nothing. |

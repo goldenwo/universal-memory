@@ -259,7 +259,8 @@ wizard_summarize() {
   if [[ $INSTALL_SERVER -eq 1 ]]; then
     if [[ "${UM_MCP_WRITE_ENABLED:-}" == "true" || "${UM_MCP_WRITE_ENABLED:-}" == "1" ]]; then
       echo "  Capture: on (the server accepts writes; set UM_MCP_WRITE_ENABLED=false and UM_MOUNT_MODE=ro in server/.env to make it read-only)"
-    elif [[ -z "${UM_MCP_WRITE_ENABLED:-}" && -f "${INSTALL_DIR:-}/server/.env" ]]; then
+    elif [[ -z "${UM_MCP_WRITE_ENABLED:-}" ]]; then
+      # _um_capture_default has run: unset means a re-run with nothing exported.
       echo "  Capture: as set in the existing server/.env (kept on re-run)"
     else
       echo "  Capture: off (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED:-false})"

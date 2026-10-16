@@ -291,6 +291,8 @@ check_prereqs() {
       missing+=("PyYAML")
     fi
   fi
+  # server/install.sh generates the access token with openssl on a fresh install.
+  [[ $INSTALL_SERVER -eq 1 ]] && { command -v openssl >/dev/null 2>&1 || missing+=("openssl"); }
   # bash is always needed
   command -v bash >/dev/null 2>&1 || missing+=("bash")
 
@@ -300,6 +302,7 @@ check_prereqs() {
     echo "Install hints:"
     echo "  git:     apt/brew install git, or https://git-scm.com"
     echo "  docker:  https://docs.docker.com/get-docker/"
+    echo "  openssl: apt/brew install openssl"
     echo "  python3: apt/brew install python3"
     echo "  PyYAML:  sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml (macOS / venv)"
     exit 1

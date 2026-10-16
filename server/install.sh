@@ -476,7 +476,8 @@ print(json.dumps({
     if printf '%s' "$_SMOKE_LOG" | grep -q 'posted http=2'; then
       _vpass "hook-smoke" "stop.sh posted a smoke turn to /api/append-turn"
     elif printf '%s' "$_SMOKE_LOG" | grep -q 'skip=writes-disabled'; then
-      # Stock defaults ship read-only — captures are this arc's whole point,
+      # A read-only server (this script run directly, or an install made
+      # before installer/install.sh turned capture on) — captures are this arc's whole point,
       # so verify fails, but with the flag-naming prescription (not "check
       # your token").
       _vfail "hook-smoke" "captures require UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw in server/.env, then: docker compose up -d (from server/)"
@@ -696,7 +697,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 	if [ -z "$_UPG_CID" ]; then
 		_ufail "No running memory-server container found — nothing to upgrade, and no image to roll back to.
   If the stack is stopped:  $(_compose_hint 'up -d')
-  If this is a new install: bash server/install.sh"
+  If this is a new install: bash installer/install.sh --server (from the checkout)"
 	fi
 	# Record the image ID (sha256), NOT .Config.Image (the tag). On the common
 	# latest→latest upgrade the tag is byte-identical before and after the
@@ -1191,6 +1192,11 @@ fi
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
 [[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
 
+# installer/install.sh (_um_capture_default, and wizard_summarize in
+# wizard-lib.sh) relies on this .env path, this key-by-key merge and the values
+# validated below: it exports both switches or neither so no half comes from
+# .env. Change them together.
+#
 # A re-run keeps the capture switches already in .env when the environment does
 # not set them. The .env writer below emits ${UM_MOUNT_MODE:-ro} and
 # ${UM_MCP_WRITE_ENABLED:-false}, so without this a re-run of a capture-on
