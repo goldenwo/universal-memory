@@ -128,7 +128,8 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `python3 -c 'import yaml'` and `claude --version`.
    - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
    - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
-   - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line.
+   - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.
+   - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line. `server/.env` and `~/.um/auth-token` hold the key and the server's access token: never print, `cat` or `grep` them. None of the fixes below needs to read them.
 2. **Install, non-interactively:**
    ```bash
    git clone https://github.com/goldenwo/universal-memory ~/universal-memory
@@ -138,10 +139,10 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git -C ~/universal-memory pull` instead of cloning.
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
-3. **Verify.** From the clone, `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
-4. **Point the plugin at the server.** Run its setup script, which reads the saved token:
+3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed". Each failing line names its fix.
+4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads:
    ```bash
-   bash "$(ls -d ~/.claude/plugins/cache/universal-memory/universal-memory/*/ | sort -V | tail -1)hooks/um-setup.sh" --endpoint http://localhost:6335
+   bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335
    ```
 5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 
@@ -150,9 +151,9 @@ If a step fails:
 | Message | Fix |
 |---|---|
 | `required tools not found: …` | Install what it names. |
-| `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in this shell. |
-| `writes are DISABLED (HTTP 403)` | Set `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`, then run `docker compose up -d` from `server/`. |
-| `rejected the token (HTTP 401)` | `~/.um/auth-token` doesn't match `UM_AUTH_TOKEN` in `server/.env`. |
+| `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
+| `writes are DISABLED (HTTP 403)` | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --yes`. |
+| `rejected the token (HTTP 401)` | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --yes`. It copies the server's token to `~/.um/auth-token` again. |
 
 ### Install the `um` CLI
 

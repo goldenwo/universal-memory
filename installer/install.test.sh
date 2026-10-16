@@ -495,6 +495,13 @@ TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME=
 if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone"; then pass "T-SELF-CLONE: the clone's own server/install.sh ran"; else fail "T-SELF-CLONE: clone's server installer not run (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
 if [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: no clone or pull"; else fail "T-SELF-CLONE: git ran: $(tr '\n' ' ' < "$TSC/git.log")"; fi
 if [ ! -e "$TSC/home/universal-memory" ]; then pass "T-SELF-CLONE: ~/universal-memory untouched"; else fail "T-SELF-CLONE: ~/universal-memory was created"; fi
+# A downloaded copy is not a checkout: /tmp/x/install.sh next to a planted
+# /tmp/server/install.sh must clone, not run the planted file (round-4 review).
+mkdir -p "$TSC/dl"; cp "$INSTALLER" "$TSC/dl/install.sh"; : > "$TSC/git.log"
+mkdir -p "$TSC/server"; printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/server/install.sh"
+TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone .* $TSC/home/universal-memory" "$TSC/git.log"; then pass "T-SELF-CLONE: a downloaded copy clones instead of running a planted server/install.sh"; else fail "T-SELF-CLONE: downloaded copy (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
 # Control: piped (curl | bash) has no script file, so ~/universal-memory stays the default.
 TSC_OUT=$(cd "$TSC/clone" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true

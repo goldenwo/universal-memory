@@ -31,10 +31,14 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # Run from a checkout (`git clone ...; bash installer/install.sh`), the
 # installer uses that checkout. ~/universal-memory is the default only for
 # curl | bash, which has no script file and so no checkout of its own.
+# Only a real checkout counts: this script must be that checkout's own
+# installer, and the checkout's server installer must be the user's own file. A
+# copy downloaded to /tmp/x/install.sh is not one, even if someone has planted
+# /tmp/server/install.sh (and /tmp/installer/install.sh linking back to it).
 SELF_ROOT=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
   SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  [[ -f "$SELF_ROOT/server/install.sh" ]] || SELF_ROOT=""
+  [[ "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" && -O "$SELF_ROOT/server/install.sh" ]] || SELF_ROOT=""
 fi
 INSTALL_DIR="${UM_INSTALL_DIR:-${SELF_ROOT:-$HOME/universal-memory}}"
 DRY_RUN="${UM_DRY_RUN:-0}"
