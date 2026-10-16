@@ -562,6 +562,10 @@ version-skew|server/install.sh'
 _table_keys=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\| `/' "$REPO_ROOT/README.md" \
   | cut -d'|' -f2 | grep -o '`[^`]*`' | tr -d '`' | sort -u)
 _list_keys=$(printf '%s\n' "$_readme_keys" | cut -d'|' -f1 | sort -u)
+# Every row before the catch-all must be keyed on a backticked message, or the
+# parse above would skip it silently.
+_unkeyed=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\|/ && !/^\|---/ && !/^\| `/' "$REPO_ROOT/README.md")
+if [ -z "$_unkeyed" ]; then pass "T-README-KEYS: every row is keyed on a backticked message"; else fail "T-README-KEYS: unkeyed row(s): $_unkeyed"; fi
 if [ -n "$_table_keys" ] && [ "$_table_keys" = "$_list_keys" ]; then pass "T-README-KEYS: the table's keys are exactly the listed ones"; else fail "T-README-KEYS: table vs list differ: $(diff <(echo "$_list_keys") <(echo "$_table_keys") | grep '^[<>]' | tr '\n' ' ')"; fi
 while IFS='|' read -r _key _src; do
   if grep -qF -- "$_key" "$REPO_ROOT/$_src"; then pass "T-README-KEYS: '$_key' is printed by $_src"; else fail "T-README-KEYS: '$_key' not in $_src"; fi

@@ -130,7 +130,7 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.
    - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line. `server/.env` and `~/.um/auth-token` hold the key and the server's access token: never print, `cat` or `grep` them. None of the fixes below needs to read them.
-2. **Install, non-interactively.** First look for an existing install with `docker compose ls --all --filter name=universal-memory`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml`, is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
+2. **Install, non-interactively.** First look for an existing install with `docker compose ls --all --filter 'name=^universal-memory$'`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml`, is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
    ```bash
    git clone https://github.com/goldenwo/universal-memory ~/universal-memory
    cd ~/universal-memory
@@ -142,13 +142,13 @@ Paste this into Claude Code, or any coding agent that can run a shell:
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
 3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed", with no `version-skew` line. For a failing line, use the table below.
-4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads:
+4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads. The endpoint is the URL on step 3's `server-health` line, minus `/health`; it is `http://localhost:6335` unless an existing install uses another port:
    ```bash
    bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335
    ```
 5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 
-If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report.
+If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report. The `installer/install.sh` re-runs below are only for a server step 2 installed in this run. For an existing install found in step 2, stop and report instead: a re-run would reset settings in `server/.env` that you can't see, such as its vault directory and port.
 
 | Message | Fix |
 |---|---|
@@ -156,7 +156,7 @@ If a step fails, find its message below and apply that fix, not the hint printed
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
 | `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
 | `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
-| `No running memory-server container found` (step 2 upgrade) | An earlier install stopped before the server started. From `~/universal-memory`, run `bash installer/install.sh --server --yes`. |
+| `No running memory-server container found` (step 2 upgrade) | The install exists but is stopped. From its `server/` directory, run `docker compose up -d`, then run step 2's upgrade again. |
 | `plugin-registered` (step 3) | With `claude` installed, run `bash installer/install.sh --plugin-cc --yes` from `~/universal-memory`. Without it, see step 1. |
 | `version-skew` (step 3) | From `~/universal-memory`, run the command the line names (`bash server/install.sh --upgrade` or `bash installer/install-cli.sh --no-path`). |
 | Anything else | Stop, report the message to the user, and change nothing. |
