@@ -698,6 +698,14 @@ assert_exit_zero "T17: install exits 0 with UM_SUMMARIZER exported" "$T17_EXIT"
 assert_contains "T17: exported value named by what it does" "$T17_OUT" "Summaries: UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)"
 assert_not_contains "T17: no 'from the environment' wording" "$T17_OUT" "from the environment"
 assert_contains "T17: exported value beats detection in profile" "$(cat "$T17/home/.bashrc")" "export UM_SUMMARIZER='openai'"
+# claude-agent-sdk is what the dispatcher exports whenever `claude` is on PATH
+# (the agent path), so its wording is pinned too.
+T17_OUT=$(env -i PATH="$T17_PATH" _UM_REPO_ROOT="$REPO_ROOT" UM_NONINTERACTIVE=1 \
+  OPENAI_API_KEY=sk-testkey12345 UM_OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T17/vault" UM_SUMMARY_ENABLED=true UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T17/plugins" \
+  UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash HOME="$T17/home" UM_SUMMARIZER=claude-agent-sdk \
+  bash "$T17_SH" 2>&1) || true
+assert_contains "T17: exported claude-agent-sdk named by what it does" "$T17_OUT" "Summaries: UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"
 
 # ─── T18: v0.2.0-alpha → v0.2.1 re-install backfills UM_SUMMARIZER ──────────
 # Cross-cutting review C1: a user upgrading from v0.2.0-alpha has a marker

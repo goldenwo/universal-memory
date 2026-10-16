@@ -31,26 +31,29 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # Run from a checkout (`git clone ...; bash installer/install.sh`), the
 # installer uses that checkout. ~/universal-memory is the default only for
 # curl | bash, which has no script file and so no checkout of its own.
-# Only a real checkout counts: this script must be that checkout's own
-# installer, and the checkout, its server/ directory and its server installer
-# must all be the user's own. A copy downloaded to /tmp/x/install.sh is not one,
-# even if someone has planted /tmp/server/install.sh (and
-# /tmp/installer/install.sh linking back to it). Owning the directories, not
-# just the file, means nobody else can swap server/install.sh between this
-# check and the run. The script must also sit in the checkout's installer/
-# directory itself, so a link planted at /tmp/installer/install.sh cannot
-# vouch for a copy elsewhere; that check holds on Git Bash too, where -O is
-# true for every file. CDPATH is cleared so `cd` prints nothing into the
+# Only a real checkout counts: a git checkout (.git, a directory or a
+# worktree's file) whose own installer this script is, with the checkout, its
+# server/ directory and its server installer all the user's own. A zip or
+# tarball download falls back to ~/universal-memory, as main always did. A
+# copy downloaded to /tmp/x/install.sh is not one, even if someone has planted
+# /tmp/server/install.sh (and /tmp/installer/install.sh linking back to it).
+# Owning the directories, not just the file, means nobody else can swap
+# server/install.sh between this check and the run. The script must also sit
+# in the checkout's installer/ directory itself, so a link planted at
+# /tmp/installer/install.sh cannot vouch for a copy elsewhere. On Git Bash -O
+# is true for every file; there the .git, position and identity checks remain,
+# and anyone able to plant files beside a user's directory can usually rewrite
+# the script in it too. CDPATH is cleared so `cd` prints nothing into the
 # substitution.
 SELF_ROOT=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
   _self_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   SELF_ROOT="${_self_dir%/*}"
-  if ! [[ "$_self_dir" == "$SELF_ROOT/installer" \
+  if ! [[ -e "$SELF_ROOT/.git" && "$_self_dir" == "$SELF_ROOT/installer" \
         && "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" \
         && -O "$SELF_ROOT" && -O "$SELF_ROOT/server" && -O "$SELF_ROOT/server/install.sh" ]]; then
     [[ -e "$SELF_ROOT/server/install.sh" ]] \
-      && echo "[install] note: not installing from $SELF_ROOT: this script is not its installer/install.sh, or its files are not yours." >&2
+      && echo "[install] note: not installing from $SELF_ROOT (not a git checkout of yours that holds this script as installer/install.sh); using UM_INSTALL_DIR or ~/universal-memory instead." >&2
     SELF_ROOT=""
   fi
 fi

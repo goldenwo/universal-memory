@@ -17,12 +17,17 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
+# A developer's own exports must not decide the cases below: each one sets what
+# it needs explicitly.
+unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN
+
 # Helper: create stubs for prereq tools (excluding bash — real bash is needed
-# to execute the installer under test).
+# to execute the installer under test). openssl is stubbed too, so a host
+# without it still runs every case; T-OPENSSL removes the stub.
 make_stubs() {
   local bindir="$1"
   mkdir -p "$bindir"
-  for tool in git docker python3; do
+  for tool in git docker python3 openssl; do
     cat > "$bindir/$tool" <<'BIN'
 #!/bin/bash
 exit 0
@@ -513,7 +518,7 @@ if [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: no clone or pull"; else fai
 if [ ! -e "$TSC/home/universal-memory" ]; then pass "T-SELF-CLONE: ~/universal-memory untouched"; else fail "T-SELF-CLONE: ~/universal-memory was created"; fi
 # A downloaded copy is not a checkout: /tmp/x/install.sh next to a planted
 # /tmp/server/install.sh must clone, not run the planted file (round-4 review).
-mkdir -p "$TSC/dl"; cp "$INSTALLER" "$TSC/dl/install.sh"; : > "$TSC/git.log"
+mkdir -p "$TSC/dl" "$TSC/.git"; cp "$INSTALLER" "$TSC/dl/install.sh"; : > "$TSC/git.log"
 mkdir -p "$TSC/server"; printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/server/install.sh"
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
   bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
@@ -535,7 +540,7 @@ if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.lo
 # Identity: a script inside a checkout's installer/ that is not its install.sh
 # (installer/other.sh beside a different installer/install.sh) is not that
 # checkout's installer (-ef, not -e; round 11).
-mkdir -p "$TSC/c2/installer" "$TSC/c2/server"
+mkdir -p "$TSC/c2/installer" "$TSC/c2/server" "$TSC/c2/.git"
 cp "$INSTALLER" "$TSC/c2/installer/other.sh"; cp "$INSTALLER" "$TSC/c2/installer/install.sh"
 printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/c2/server/install.sh"; : > "$TSC/git.log"
 TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
@@ -546,7 +551,7 @@ if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.lo
 # and on Git Bash, where -O is true for every file.
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _tsc_o=0 ;; *) _tsc_o=1 ;; esac
 if [ "$(id -u)" != 0 ] && [ "$_tsc_o" = 1 ]; then
-  mkdir -p "$TSC/unowned/installer" "$TSC/unowned/server"; cp "$INSTALLER" "$TSC/unowned/installer/install.sh"
+  mkdir -p "$TSC/unowned/installer" "$TSC/unowned/server" "$TSC/unowned/.git"; cp "$INSTALLER" "$TSC/unowned/installer/install.sh"
   ln -s "$(command -v env)" "$TSC/unowned/server/install.sh"; : > "$TSC/git.log"
   TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
     bash "$TSC/unowned/installer/install.sh" --server --yes 2>&1) || true
@@ -554,6 +559,15 @@ if [ "$(id -u)" != 0 ] && [ "$_tsc_o" = 1 ]; then
 else
   echo "  SKIP: T-SELF-CLONE -O case (root, or Git Bash where -O is always true)"
 fi
+# A checkout-shaped tree that is not a git checkout: the script saved as
+# <dir>/installer/install.sh beside a planted <dir>/server/install.sh, all the
+# user's own. Position, -ef and -O all pass (as they do anywhere on Git Bash),
+# so only the .git check stands (FCP pass 2, codex HOLD).
+mkdir -p "$TSC/nogit/installer" "$TSC/nogit/server"; cp "$INSTALLER" "$TSC/nogit/installer/install.sh"
+printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/nogit/server/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env -u UM_INSTALL_DIR PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/nogit/installer/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a tree that is not a git checkout is not trusted"; else fail "T-SELF-CLONE: .git (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # A CDPATH that resolves `installer/..` makes cd print the directory into the
 # substitution; detection must still find the clone (round-5 review).
 : > "$TSC/git.log"
@@ -574,14 +588,21 @@ rm -rf "$TSC"
 echo ""
 echo "=== T-OPENSSL: openssl is required only to generate a token ==="
 TOS=$(mktemp -d)
-make_stubs "$TOS/bin"
-for _t in bash dirname grep sort uname; do ln -s "$(command -v "$_t")" "$TOS/bin/$_t"; done
+make_stubs "$TOS/bin"; rm -f "$TOS/bin/openssl"
+# Wrappers, not symlinks: Git Bash's `ln -s` copies binaries, and a copied
+# msys binary cannot find its DLL outside /usr/bin.
+for _t in bash dirname grep sort uname; do
+  printf '#!%s\nexec %s "$@"\n' "$REAL_BASH" "$(command -v "$_t")" > "$TOS/bin/$_t"; chmod +x "$TOS/bin/$_t"
+done
 mkdir -p "$TOS/repo/server"
 _tos_run() { env -i PATH="$TOS/bin" HOME="$TOS" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TOS/repo" "$@" \
   "$REAL_BASH" "$INSTALLER" --server --yes --dry-run 2>&1 || true; }
 _tos_check() { # <label> <want: named|not-named> [VAR=value ...]
-  local label="$1" want="$2" got; shift 2
-  if _tos_run "$@" | grep -q "required tools not found in PATH: .*openssl"; then got=named; else got=not-named; fi
+  local label="$1" want="$2" got out; shift 2
+  out=$(_tos_run "$@")
+  if echo "$out" | grep -q "required tools not found in PATH: .*openssl"; then got=named
+  elif echo "$out" | grep -q "delegate: server/install.sh"; then got=not-named   # positive control: the run got past the check
+  else got="neither (got: $(echo "$out" | tail -2 | tr '\n' ' '))"; fi
   if [ "$got" = "$want" ]; then pass "T-OPENSSL: $label"; else fail "T-OPENSSL: $label (openssl $got)"; fi
 }
 _tos_check "fresh install needs it" named
@@ -590,6 +611,8 @@ printf 'UM_AUTH_TOKEN=tok-test\n' > "$TOS/repo/server/.env"
 _tos_check "a re-run reusing server/.env's token does not" not-named
 printf 'MEM0_USER_ID=x\n' > "$TOS/repo/server/.env"
 _tos_check "a server/.env with no token still needs it" named
+printf 'UM_AUTH_TOKEN=\n' > "$TOS/repo/server/.env"
+_tos_check "an empty token line still needs it" named
 rm -rf "$TOS"
 
 # ─── T-README-KEYS: the agent failure table matches what the scripts print ───

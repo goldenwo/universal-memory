@@ -1082,7 +1082,9 @@ fi
 #
 # Direct-invocation callers (server/install.sh without installer/install.sh
 # in front) get the same preservation — this is the single source of truth
-# for the token lifecycle.
+# for the token lifecycle. installer/install.sh's check_prereqs mirrors the
+# "is a token already available" test below to decide whether openssl is a
+# prerequisite; change them together.
 if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
 	# `|| true` is mandatory: when .env exists but lacks UM_AUTH_TOKEN= (the
 	# v0.5 → v0.6 upgrade case), grep returns 1 and under `set -euo pipefail`

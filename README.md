@@ -130,7 +130,7 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
    - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.
    - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line. `server/.env` and `~/.um/auth-token` hold the key and the server's access token: never print, `cat` or `grep` them. None of the fixes below needs to read them.
-2. **Install, non-interactively.** First look for an existing install with `docker compose ls --all --filter 'name=^universal-memory$'`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml`, is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
+2. **Install, non-interactively.** If `~/.um/endpoint` exists and names a server other than `localhost`, this machine already uses a remote server: stop and ask the user before installing a local one. Then look for an existing install with `docker compose ls --all --filter 'name=^universal-memory$'`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml` (`server\docker-compose.yml` on Windows), is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
    ```bash
    git clone https://github.com/goldenwo/universal-memory ~/universal-memory
    cd ~/universal-memory
@@ -148,7 +148,7 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    ```
 5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
 
-If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report. The `installer/install.sh` re-runs below are only for a server step 2 installed in this run. For an existing install found in step 2, stop and report instead: a re-run would reset settings in `server/.env` that you can't see, such as its vault directory and port.
+If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report. The `installer/install.sh --server` re-runs below are only for a server step 2 installed in this run. For an existing install found in step 2, stop and report instead: a re-run would reset settings in `server/.env` that you can't see, such as its vault directory and port. (The `--plugin-cc` re-run never touches `server/.env`.)
 
 | Message | Fix |
 |---|---|
@@ -194,7 +194,7 @@ Requests to `/api` and `/mcp` must carry `Authorization: Bearer <UM_AUTH_TOKEN>`
 ## What you get
 
 - **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
-- **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (4 read tools by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Read responses return compact snippets by default; opt into full bodies with `full: true`.
+- **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (the 4 read tools always; the write tools when `UM_MCP_WRITE_ENABLED=true`, which `installer/install.sh` sets for a new install). Read responses return compact snippets by default; opt into full bodies with `full: true`.
 - **Cross-environment capture** — capture is not Claude Code-only. claude.ai, ChatGPT Desktop, and Codex feed conversation turns into the same pipeline via `memory_append_turn`, and trigger summaries with `memory_checkpoint`.
 - **Command-line toolkit** — an 8-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `forget`, `supersede`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.

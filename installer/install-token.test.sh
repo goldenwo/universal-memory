@@ -126,7 +126,8 @@ FAKE
 #   stage, so it installs from this checkout without a clone or pull.
 stage_install_dir() {
   local stage="$1"
-  mkdir -p "$stage/server" "$stage/installer/lib" "$stage/plugins"
+  # .git: installer/install.sh trusts only a git checkout as its own.
+  mkdir -p "$stage/server" "$stage/installer/lib" "$stage/plugins" "$stage/.git"
   cp "$REPO_ROOT/server/install.sh"       "$stage/server/install.sh"
   cp "$REPO_ROOT/server/.env.example"     "$stage/server/.env.example"
   cp "$REPO_ROOT/server/docker-compose.yml" "$stage/server/docker-compose.yml"

@@ -75,9 +75,10 @@ See [.env.example](.env.example) for all knobs.
 
 ## Advanced: writes-enabled install (v0.5+)
 
-By default the container mounts the vault read-only (`UM_MOUNT_MODE=ro`) and
-MCP write tools are gated off (`UM_MCP_WRITE_ENABLED=false`). That's the safe
-production posture.
+Run directly, this script defaults to a read-only vault mount (`UM_MOUNT_MODE=ro`)
+with the MCP write tools gated off (`UM_MCP_WRITE_ENABLED=false`).
+`installer/install.sh` turns both on for a new install (see "Capture defaults"
+below).
 
 To opt into the MCP write surface (`memory_append_turn`, `memory_checkpoint`,
 `memory_capture`, `memory_forget`, `memory_supersede`), pass the env overrides
