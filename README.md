@@ -136,10 +136,12 @@ Paste this into Claude Code, or any coding agent that can run a shell:
    cd ~/universal-memory
    bash installer/install.sh --yes
    ```
-   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git -C ~/universal-memory pull` instead of cloning.
+   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning. Then, if `~/universal-memory/server/.env` exists, the server is already installed: run `bash server/install.sh --upgrade` from `~/universal-memory` instead of the installer (see [Upgrading](#upgrading)), then go on to step 3.
+
+   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, run it again: a re-run keeps `server/.env`.
 
    This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
-3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed". For a failing line, use the table below.
+3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed", with no `version-skew` line. For a failing line, use the table below.
 4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads:
    ```bash
    bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335
@@ -154,6 +156,7 @@ If a step fails, find its message below and apply that fix, not the hint printed
 | `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
 | `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
 | `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
+| `version-skew` (step 3) | From `~/universal-memory`, run the command the line names (`bash server/install.sh --upgrade` or `bash installer/install-cli.sh --no-path`). |
 | Anything else | Stop, report the message to the user, and change nothing. |
 
 ### Install the `um` CLI
