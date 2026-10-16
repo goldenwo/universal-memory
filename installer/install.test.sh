@@ -507,7 +507,7 @@ make_stubs "$TSC/bin"
 # shellcheck disable=SC2016  # the stub expands $* when it runs, not here
 # The stub creates a clone's target directory, so "~/universal-memory
 # untouched" below can fail when a clone happens.
-printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n[ "$1" = clone ] && mkdir -p "${@: -1}"\nexit 0\n' "$TSC" > "$TSC/bin/git"
+printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n[ "$1" = clone ] && mkdir -p "${@: -1}"\n[ "$1" = clone ] && [ -n "${STUB_CLONE_LIBS:-}" ] && _tsc_libs_dest="${@: -1}" && mkdir -p "$_tsc_libs_dest/plugins/claude-code/universal-memory/hooks/lib" "$_tsc_libs_dest/installer/lib" && echo "um_verify_endpoint() { echo SENTINEL-FROM-CLONE; return 7; }" > "$_tsc_libs_dest/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh" && : > "$_tsc_libs_dest/installer/lib/marker-block.sh"\nexit 0\n' "$TSC" > "$TSC/bin/git"
 mkdir -p "$TSC/clone/installer" "$TSC/clone/server" "$TSC/clone/.git" "$TSC/home"
 cp "$INSTALLER" "$TSC/clone/installer/install.sh"
 # shellcheck disable=SC2016  # the stub expands $0 when it runs, not here
@@ -571,14 +571,33 @@ TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI
 if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a tree that is not a git checkout is not trusted"; else fail "T-SELF-CLONE: .git (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
 # --remote sources two libraries; a downloaded copy must not take them from
 # beside itself (round 12): only a trusted checkout supplies them, otherwise
-# the clone does. The stub clone stays empty, so the run stops on "not found".
+# the clone does. Each source ships a sentinel um_verify_endpoint, so the test
+# sees which one ran (FCP pass 3: the absence check alone passed a gutted flow).
+printf '#!/bin/bash\nexit 0\n' > "$TSC/bin/curl"; chmod +x "$TSC/bin/curl"
+_tsc_libs() { # <root> <sentinel>: the two --remote libraries, verify printing <sentinel>
+  mkdir -p "$1/plugins/claude-code/universal-memory/hooks/lib" "$1/installer/lib"
+  printf 'um_verify_endpoint() { echo %s; return 7; }\n' "$2" > "$1/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+  : > "$1/installer/lib/marker-block.sh"
+}
 mkdir -p "$TSC/dl2/lib" "$TSC/plugins/claude-code/universal-memory/hooks/lib"
 cp "$INSTALLER" "$TSC/dl2/install.sh"
 printf 'echo PLANTED-RAN\n' | tee "$TSC/dl2/lib/marker-block.sh" > "$TSC/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
 rm -rf "$TSC/home/universal-memory"; : > "$TSC/git.log"
-TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" STUB_CLONE_LIBS=1 \
   bash "$TSC/dl2/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
-if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN"; then pass "T-SELF-CLONE: --remote does not source libraries beside a downloaded copy"; else fail "T-SELF-CLONE: --remote sourced planted libraries"; fi
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CLONE" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: --remote from a downloaded copy uses the clone's libraries, not the planted ones"; else fail "T-SELF-CLONE: --remote downloaded copy (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+rm -rf "$TSC/home/universal-memory"
+# ...and from a trusted checkout it uses that checkout's own, with no clone.
+_tsc_libs "$TSC/clone" SENTINEL-FROM-CHECKOUT; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash "$TSC/clone/installer/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CHECKOUT" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: --remote from a trusted checkout uses its own libraries"; else fail "T-SELF-CLONE: --remote checkout (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+# The wizard library likewise comes only from a trusted checkout: a downloaded
+# copy beside a planted wizard-lib.sh refuses the wizard (FCP pass 3 HOLD).
+printf 'echo PLANTED-RAN\n' > "$TSC/dl2/wizard-lib.sh"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash "$TSC/dl2/install.sh" --interactive 2>&1 </dev/null) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "the setup wizard runs from a git clone"; then pass "T-SELF-CLONE: the wizard refuses outside a trusted checkout"; else fail "T-SELF-CLONE: wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
 # A non-git copy already at the clone target gets a clear error, not git's.
 mkdir -p "$TSC/zipcopy/server"; : > "$TSC/zipcopy/server/install.sh"
 TSC_OUT=$(env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSC/zipcopy" \
@@ -599,8 +618,8 @@ rm -rf "$TSC"
 # ─── T-OPENSSL: openssl only when server/install.sh must generate a token ────
 # server/install.sh reuses an exported UM_AUTH_TOKEN or the one in server/.env
 # and needs openssl only to generate a fresh one; the prerequisite check must
-# not refuse the other two cases (round 11). PATH holds only stubs and the few
-# real tools the check itself runs, so openssl is genuinely absent.
+# not refuse the other two cases (round 11). PATH holds only stubs and the real
+# tools a dry run needs up to its delegate line, so openssl is genuinely absent.
 echo ""
 echo "=== T-OPENSSL: openssl is required only to generate a token ==="
 TOS=$(mktemp -d)
@@ -610,7 +629,7 @@ make_stubs "$TOS/bin"; rm -f "$TOS/bin/openssl"
 for _t in bash dirname grep sort uname; do
   printf '#!%s\nexec %s "$@"\n' "$REAL_BASH" "$(command -v "$_t")" > "$TOS/bin/$_t"; chmod +x "$TOS/bin/$_t"
 done
-mkdir -p "$TOS/repo/server"
+mkdir -p "$TOS/repo/server" "$TOS/repo/.git"   # a clone, so only the openssl check decides
 _tos_run() { env -i PATH="$TOS/bin" HOME="$TOS" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TOS/repo" "$@" \
   "$REAL_BASH" "$INSTALLER" --server --yes --dry-run 2>&1 || true; }
 _tos_check() { # <label> <want: named|not-named> [VAR=value ...]

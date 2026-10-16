@@ -367,9 +367,16 @@ else
 fi
 
 if [[ $MODE == wizard ]]; then
-  SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # The wizard library comes only from the installer's own trusted checkout,
+  # never from beside a downloaded copy (where a planted wizard-lib.sh would
+  # run as the user). Outside one there is nothing safe to source; a piped
+  # install could not answer the prompts anyway.
+  if [[ -z "$SELF_ROOT" ]]; then
+    echo "ERROR: the setup wizard runs from a git clone of universal-memory: git clone $REPO && bash universal-memory/installer/install.sh. Or pass --yes, which clones one for you." >&2
+    exit 1
+  fi
   # shellcheck source=installer/wizard-lib.sh
-  source "$SCRIPT_DIR/wizard-lib.sh"
+  source "$SELF_ROOT/installer/wizard-lib.sh"
   wizard_header
   wizard_detect_env
   wizard_menu_main
