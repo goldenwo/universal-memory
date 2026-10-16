@@ -235,14 +235,16 @@ if grep -q "export UM_SERVER_URL='http://pi:6337'" "$T/home/.bashrc"; then pass 
 if ! grep -q "old-local" "$T/home/.bashrc"; then pass "RT6: old URL removed"; else fail "RT6: old URL still present"; fi
 if [ "$(grep -cF '# --- universal-memory (auto-added by install.sh) ---' "$T/home/.bashrc")" = "1" ]; then pass "RT6: exactly one marker block"; else fail "RT6: marker block duplicated"; fi
 if grep -q "user content stays" "$T/home/.bashrc"; then pass "RT6: user content preserved"; else fail "RT6: user content lost"; fi
-if ! echo "$RT_OUT" | grep -qi "marker-block values"; then pass "RT6: no reset notice when block held no key/summarizer"; else fail "RT6: spurious reset notice (out: $RT_OUT)"; fi
+if ! echo "$RT_OUT" | grep -qi "marker-block values"; then pass "RT6: no reset notice when block held no summarizer"; else fail "RT6: spurious reset notice (out: $RT_OUT)"; fi
 rm -rf "$T"
 
-# ─── RT6b: marker block holds key/summarizer the current env lacks ⇒ notice ──
-# Regenerating the block from a non-hydrated shell silently wipes stored
-# UM_OPENAI_API_KEY / UM_SUMMARIZER — the flow must at least SAY so.
+# ─── RT6b: marker block holds a summarizer the current env lacks ⇒ notice ────
+# Regenerating the block from a non-hydrated shell silently wipes a stored
+# UM_SUMMARIZER — the flow must at least SAY so. The same block's old
+# UM_OPENAI_API_KEY line is dropped on purpose (the block no longer carries
+# the key), so the notice must not name the key.
 echo ""
-echo "=== RT6b: marker block with stored key + summarizer → reset notice printed ==="
+echo "=== RT6b: marker block with stored summarizer (+ old key line) → reset notice, key line dropped ==="
 T=$(mktemp -d)
 mkdir -p "$T/home"
 cat > "$T/home/.bashrc" <<'RC'
@@ -259,7 +261,38 @@ if echo "$RT_OUT" | grep -qi "marker-block values" && echo "$RT_OUT" | grep -qi 
 else
   fail "RT6b: no reset notice (out: $RT_OUT)"
 fi
+if ! echo "$RT_OUT" | grep -q "UM_OPENAI_API_KEY"; then pass "RT6b: notice does not offer the key back"; else fail "RT6b: output still names UM_OPENAI_API_KEY (out: $RT_OUT)"; fi
 if grep -q "export UM_SERVER_URL='http://pi:6337'" "$T/home/.bashrc"; then pass "RT6b: block still regenerated (notice-only, no behavior change)"; else fail "RT6b: block not updated"; fi
+if ! grep -q "UM_OPENAI_API_KEY" "$T/home/.bashrc" && ! grep -q "XXX-stored-key-not-in-env" "$T/home/.bashrc"; then
+  pass "RT6b: old key line removed from the block"
+else
+  fail "RT6b: old key still in profile ($(cat "$T/home/.bashrc"))"
+fi
+rm -rf "$T"
+
+# ─── RT6c: old key line alone ⇒ dropped silently (not a reset) ──────────────
+# A block whose only stale value is the old UM_OPENAI_API_KEY line: the
+# rewrite drops it — that is the migration — and no reset notice fires.
+echo ""
+echo "=== RT6c: marker block with only an old key line → key dropped, no reset notice ==="
+T=$(mktemp -d)
+mkdir -p "$T/home"
+cat > "$T/home/.bashrc" <<'RC'
+# --- universal-memory (auto-added by install.sh) ---
+export UM_OPENAI_API_KEY='XXX-old-key-in-block'
+export UM_SUMMARIZER='openai'
+export UM_SERVER_URL='http://old-local:6335'
+# --- end universal-memory ---
+RC
+run_remote "$T" -- --remote http://pi:6337 --yes
+if [ "$RT_RC" -eq 0 ]; then pass "RT6c: exit 0"; else fail "RT6c: exit $RT_RC (out: $RT_OUT)"; fi
+if ! grep -q "UM_OPENAI_API_KEY" "$T/home/.bashrc" && ! grep -q "XXX-old-key-in-block" "$T/home/.bashrc"; then
+  pass "RT6c: old key line removed from the block"
+else
+  fail "RT6c: old key still in profile ($(cat "$T/home/.bashrc"))"
+fi
+if ! echo "$RT_OUT" | grep -qi "marker-block values"; then pass "RT6c: no reset notice for the dropped key"; else fail "RT6c: spurious reset notice (out: $RT_OUT)"; fi
+if grep -q "export UM_SERVER_URL='http://pi:6337'" "$T/home/.bashrc"; then pass "RT6c: block regenerated with the new URL"; else fail "RT6c: block not updated"; fi
 rm -rf "$T"
 
 # ─── RT7: bare UM_SERVER_URL export (no marker) ⇒ shadowing warning ──────────

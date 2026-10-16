@@ -7,12 +7,14 @@
 # A future release may add self-bootstrap for curl|bash. Until then, clone first.
 #
 # Canonical managed block (env-sourced per RH5 R2-round):
-#   - UM_OPENAI_API_KEY (empty when CLI-only; set if summaries wanted)
 #   - UM_SUMMARIZER
 #   - UM_SERVER_URL
 #   - UM_LIB_DIR
 #   - UM_CLI_DIR
+#   - UM_PROMPT_DIR (only when set)
+#   - UM_AUTH_TOKEN trailer (reads ~/.um/auth-token at shell startup)
 #   - PATH guard for $HOME/.local/bin
+# No API key: the block never exports UM_OPENAI_API_KEY (see lib/marker-block.sh).
 
 set -euo pipefail
 : "${HOME:?HOME is not set; set HOME and re-run}"
@@ -164,8 +166,8 @@ else
         ;;
     esac
     touch "$rc"
-    # key + summarizer empty — leave env-defaults (env-sourced contract)
-    _write_marker_block "$rc" "" ""
+    # summarizer empty — leave env-defaults (env-sourced contract)
+    _write_marker_block "$rc" ""
     ok "Shell profile updated: $rc"
     _RC_UPDATED=$((_RC_UPDATED + 1))
   done

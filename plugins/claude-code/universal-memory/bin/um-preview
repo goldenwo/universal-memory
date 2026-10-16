@@ -59,7 +59,9 @@ differ from this draft.
 
 Env vars:
   UM_VAULT_DIR        - vault root (default: \$HOME/.um/vault)
-  UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY)
+  UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY), read from your own
+                        environment; the installers do not put it in your
+                        shell profile
   UM_SUMMARIZER       - summarizer backend (default: openai)
   CLAUDE_CWD          - override for project name inference
 
@@ -104,7 +106,7 @@ SUMMARY=$(printf '%s' "$RAW_CONTENT" | UM_PROJECT="$PROJECT" bash "$LIB_DIR/summ
 
 if [ -z "$SUMMARY" ]; then
   echo "um-preview: summarize.sh returned empty — cannot produce preview." >&2
-  echo "um-preview: likely causes: missing UM_OPENAI_API_KEY, daily cap hit, transcript <50 chars, or LLM API error." >&2
+  echo "um-preview: likely causes: UM_OPENAI_API_KEY (or OPENAI_API_KEY) not exported in this shell, daily cap hit, transcript <50 chars, or LLM API error." >&2
   exit 1
 fi
 

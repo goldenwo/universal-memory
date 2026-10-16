@@ -387,7 +387,7 @@ if [ "${1:-}" = "--verify" ]; then
   if [ "$_ev_ok" = "1" ]; then
     _vpass "env-vars" "UM_VAULT_DIR, UM_OPENAI_API_KEY"
   else
-    _vfail "env-vars" "$_ev_msg. Source your shell profile or re-run install.sh."
+    _vfail "env-vars" "$_ev_msg. Add the missing value(s) to server/.env or re-run install.sh."
     _verify_fail=1
   fi
 
@@ -934,10 +934,12 @@ if [ "${1:-}" = "--upgrade" ]; then
 			_uwarn "CLI is installed at $_UPG_CLI_DIR, but $_UPG_CLI_INSTALLER is missing."
 			_uwarn "  Your CLI is now OLDER than your server. From a full source tree, run:"
 			_uwarn "    bash installer/install-cli.sh --no-path"
-		# --no-path is load-bearing. install-cli.sh rewrites the shell rc marker
-		# block from the CURRENT environment, and --upgrade never collects an
-		# API key — so refreshing without it would blank UM_OPENAI_API_KEY in
-		# the operator's profile. An upgrade must not touch shell profiles.
+		# --no-path is load-bearing. install-cli.sh rewrites the whole shell rc
+		# marker block from the CURRENT environment, and --upgrade runs in
+		# whatever environment the operator happened to start it from — so
+		# refreshing without it would rewrite their profile's UM_SUMMARIZER,
+		# UM_SERVER_URL and paths from the upgrade's environment. An upgrade
+		# must not touch shell profiles.
 		elif bash "$_UPG_CLI_INSTALLER" --yes --no-path 2>&1 | sed 's/^/[cli] /'; then
 			_UPG_CLI_VER=$(_um_json_version "$HOME/.local/.claude-plugin/plugin.json")
 			_uok "um CLI refreshed${_UPG_CLI_VER:+ to $_UPG_CLI_VER}."
@@ -1636,65 +1638,54 @@ _strip_marker_block() {
 	rm -f "$profile.bak" 2>/dev/null || true
 }
 
+# The profile block carries no API key (installer/lib/marker-block.sh): a
+# 0644 rc file is no place for a secret. The key lives in server/.env (0600)
+# only; um-preview, the one client-side consumer, reads UM_OPENAI_API_KEY or
+# OPENAI_API_KEY from the user's own environment.
 _append_to_profile() {
 	local profile="$1"
-	local key_value="$2"       # literal key string
-	local summarizer="$3"      # auto-detected summarizer default
+	local summarizer="$2"      # auto-detected summarizer default
+
+	info "Your OpenAI key stays in server/.env; it is not written to your shell profile (um-preview reads UM_OPENAI_API_KEY or OPENAI_API_KEY from your environment)."
 
 	if [ -z "$profile" ]; then
-		warn "Unknown shell; cannot auto-append UM_OPENAI_API_KEY. Add manually:"
-		warn "  export UM_OPENAI_API_KEY='<your-key>'"
+		warn "Unknown shell; cannot update your shell profile automatically. Add manually:"
 		warn "  export UM_SUMMARIZER='$summarizer'"
 		return
 	fi
 
 	# Case 1: marker block already exists → env-sourced contract: always strip and
-	# rewrite with the caller's current environment. No key-match check.
-	# Rationale (plan RH6): install-cli.sh may have written the block first with an
-	# empty key; when install.sh later runs with a real key in env, the old block must
-	# be replaced unconditionally so the real key lands in the profile.
+	# rewrite with the caller's current environment. The rewrite is also the
+	# migration for blocks written by older installers: their
+	# `export UM_OPENAI_API_KEY=...` line is not written back.
 	if grep -qF "$_UM_MARKER_START" "$profile" 2>/dev/null; then
 		ok "Managed block found in $profile — rewriting with current environment (env-sourced contract)."
 		_strip_marker_block "$profile"
-		_write_marker_block "$profile" "$key_value" "$summarizer"
+		_write_marker_block "$profile" "$summarizer"
 		ok "Managed block refreshed in $profile."
 		info "Reload your shell or run: source $profile"
 		return
 	fi
 
-	# Case 2: no marker block, but a bare UM_OPENAI_API_KEY export exists
-	# somewhere in the profile (user-managed, outside our block). Respect it.
-	if grep -q 'export UM_OPENAI_API_KEY' "$profile" 2>/dev/null; then
-		if grep -q "export UM_OPENAI_API_KEY='${key_value}'" "$profile" 2>/dev/null || \
-		   grep -q "export UM_OPENAI_API_KEY=\"${key_value}\"" "$profile" 2>/dev/null || \
-		   grep -q "export UM_OPENAI_API_KEY=${key_value}" "$profile" 2>/dev/null; then
-			ok "UM_OPENAI_API_KEY already present in $profile with matching value — skipping."
-		else
-			warn "Found existing UM_OPENAI_API_KEY in $profile with different value; please update manually."
-		fi
-		return
-	fi
-
-	# Case 3: fresh install — prompt, then write the block.
+	# Case 2: no block yet — prompt, then write it. A user's own
+	# `export UM_OPENAI_API_KEY=...` elsewhere in the profile is theirs: it is
+	# left exactly as it is, and the block (which sets no key) cannot clash with it.
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
-		printf 'Append UM_OPENAI_API_KEY to %s? [Y/n] ' "$profile" >&2
+		printf 'Add universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) to %s? [Y/n] ' "$profile" >&2
 		read -r _ans
 		_ans="${_ans:-Y}"
-		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add UM_OPENAI_API_KEY manually."; return; }
+		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add export UM_SUMMARIZER='$summarizer' manually if you want it."; return; }
 	fi
 
-	# Append marker block — use printf to avoid value interpolation.
-	# UM_SUMMARIZER is included in the same marker block so uninstall/re-install
-	# paths manage both together.
-	_write_marker_block "$profile" "$key_value" "$summarizer"
+	_write_marker_block "$profile" "$summarizer"
 
-	ok "UM_OPENAI_API_KEY and UM_SUMMARIZER appended to $profile"
+	ok "universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) added to $profile"
 	info "Reload your shell or run: source $profile"
 }
 
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
-_append_to_profile "$_SHELL_PROFILE" "$UM_OPENAI_API_KEY" "$_um_summarizer_default"
+_append_to_profile "$_SHELL_PROFILE" "$_um_summarizer_default"
 
 # ─── #320: non-loopback Qdrant publish warning ──────────────────────────────
 # Runs after .env is written so the check sees exactly what compose will read
@@ -1782,7 +1773,7 @@ _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
 	_profile_hint="  Shell profile updated: source $_SHELL_PROFILE (or open a new terminal)"
 else
-	_profile_hint="  Add to your shell profile:  export UM_OPENAI_API_KEY='<your-key>'"
+	_profile_hint="  Add to your shell profile:  export UM_SUMMARIZER='$_um_summarizer_default'"
 fi
 
 cat <<EOF

@@ -98,7 +98,11 @@ mkdir -p "$T1_HOME"
 touch "$T1_HOME/.bashrc"
 make_fakepython3 "$T1/bin"
 
-_tx_capture T1 env PATH="$T1/bin:$PATH" HOME="$T1_HOME" bash "$INSTALL_CLI" --yes
+# A key in the installer's env must not reach the profile (the old block
+# picked it up from the env). Set one so the no-key assertion is not vacuous.
+_tx_capture T1 env PATH="$T1/bin:$PATH" HOME="$T1_HOME" \
+  UM_OPENAI_API_KEY=sk-cli-env-key OPENAI_API_KEY=sk-cli-env-key \
+  bash "$INSTALL_CLI" --yes
 _dump_on_fail T1
 
 assert_exit_zero "T1: install exits 0" "$TX_EXIT_T1"
@@ -113,6 +117,8 @@ assert_contains "T1: UM_SERVER_URL in bashrc" "$(cat "$T1_HOME/.bashrc")" "UM_SE
 assert_contains "T1: UM_LIB_DIR in bashrc" "$(cat "$T1_HOME/.bashrc")" "UM_LIB_DIR"
 assert_contains "T1: UM_CLI_DIR in bashrc" "$(cat "$T1_HOME/.bashrc")" "UM_CLI_DIR"
 assert_contains "T1: PATH guard in bashrc" "$(cat "$T1_HOME/.bashrc")" ".local/bin"
+assert_not_contains "T1: no UM_OPENAI_API_KEY line in bashrc" "$(cat "$T1_HOME/.bashrc")" "UM_OPENAI_API_KEY"
+assert_not_contains "T1: env key value not written to bashrc" "$(cat "$T1_HOME/.bashrc")" "sk-cli-env-key"
 
 # um --version: symlink points at CLI_DIR/um; PLUGIN_DIR = CLI_DIR/.. = DATA_DIR
 # which has .claude-plugin/plugin.json installed above.
@@ -127,16 +133,18 @@ else
   fail_test "T1: um --version prints a semver" "expected N.N.N pattern, got: '${T1_VER:0:200}'"
 fi
 
-# ─── T2: server install ran first with key; CLI install env UNSET → block overwritten empty ─
+# ─── T2: block from an older server install still holds a key → CLI install drops it ─
+# Migration: older installers exported UM_OPENAI_API_KEY in the block. The
+# rewrite every install does must leave no key line behind.
 echo ""
-echo "=== T2: server block with key → CLI install (key unset) overwrites block empty ==="
+echo "=== T2: older block with a key line → CLI install rewrites it without the key ==="
 T2="$TMPROOT/t2"
 T2_HOME="$T2/home"
 mkdir -p "$T2_HOME"
 touch "$T2_HOME/.bashrc"
 make_fakepython3 "$T2/bin"
 
-# Pre-populate bashrc with a server-style block containing a key
+# Pre-populate bashrc with an old server-style block containing a key
 cat >> "$T2_HOME/.bashrc" <<'EOF'
 
 # --- universal-memory (auto-added by install.sh) ---
@@ -146,7 +154,7 @@ export UM_SUMMARIZER='openai'
 EOF
 
 _BASH_BIN2="$(command -v bash)"
-# Run CLI install with UM_OPENAI_API_KEY deliberately unset (env-sourced contract)
+# Run CLI install under a clean env (env-sourced contract)
 _tx_capture T2 env -i PATH="$T2/bin:/usr/bin:/bin" HOME="$T2_HOME" SHELL="$_BASH_BIN2" \
   "$_BASH_BIN2" "$INSTALL_CLI" --yes
 _dump_on_fail T2
@@ -156,15 +164,17 @@ assert_exit_zero "T2: install exits 0" "$TX_EXIT_T2"
 T2_BASHRC="$(cat "$T2_HOME/.bashrc")"
 # Block should now be present (overwritten by CLI install)
 assert_contains "T2: marker block present after CLI install" "$T2_BASHRC" "universal-memory (auto-added"
-# The key should now be empty (env-sourced, not inherited from old block)
-assert_not_contains "T2: old server key NOT in overwritten block" "$T2_BASHRC" "sk-from-server"
+# The old key is gone, and so is the line that held it
+assert_not_contains "T2: old server key NOT in rewritten block" "$T2_BASHRC" "sk-from-server"
+assert_not_contains "T2: no UM_OPENAI_API_KEY line left after rewrite" "$T2_BASHRC" "UM_OPENAI_API_KEY"
+assert_contains "T2: rewritten block still has UM_SUMMARIZER" "$T2_BASHRC" "export UM_SUMMARIZER='openai'"
 # Exactly one block (no duplicates)
 T2_START_COUNT=$(grep -cF "# --- universal-memory (auto-added by install.sh) ---" "$T2_HOME/.bashrc")
 assert_eq "T2: exactly one marker-start line" "$T2_START_COUNT" "1"
 
-# ─── T3: CLI install ran first; server install (key unset) overwrites to default ─
+# ─── T3: CLI install ran first; server install (empty env) overwrites to default ─
 echo ""
-echo "=== T3: CLI block first → server install (key unset env) overwrites to default ==="
+echo "=== T3: CLI block first → server install (empty env) overwrites to default ==="
 T3="$TMPROOT/t3"
 T3_HOME="$T3/home"
 mkdir -p "$T3_HOME" "$T3/plugins"
@@ -193,7 +203,7 @@ assert_contains "T3: CLI block contains custom lib path" "$T3_BASHRC_AFTER_CLI" 
 T3_PROFILE_TMP="$T3_HOME/.bashrc"
 env -i HOME="$T3_HOME" "$_BASH_BIN" -c "
   source '$REPO_ROOT/installer/lib/marker-block.sh'
-  _write_marker_block '$T3_PROFILE_TMP' '' ''
+  _write_marker_block '$T3_PROFILE_TMP' ''
 "
 
 T3_BASHRC_AFTER_SERVER="$(cat "$T3_HOME/.bashrc")"
