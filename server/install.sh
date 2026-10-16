@@ -400,7 +400,8 @@ if [ "${1:-}" = "--verify" ]; then
   fi
 
   # ── pyyaml ────────────────────────────────────────────────────────────────
-  if python3 -c 'import yaml' 2>/dev/null; then
+  # From / so a yaml.py in the working directory is not imported (and run).
+  if (cd / && python3 -c 'import yaml') 2>/dev/null; then
     _vpass "pyyaml" ""
   else
     _vfail "pyyaml" "pyyaml not found. Install it: sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml"
@@ -476,7 +477,8 @@ print(json.dumps({
     if printf '%s' "$_SMOKE_LOG" | grep -q 'posted http=2'; then
       _vpass "hook-smoke" "stop.sh posted a smoke turn to /api/append-turn"
     elif printf '%s' "$_SMOKE_LOG" | grep -q 'skip=writes-disabled'; then
-      # Stock defaults ship read-only — captures are this arc's whole point,
+      # A read-only server (this script run directly, or an install made
+      # before installer/install.sh turned capture on) — captures are this arc's whole point,
       # so verify fails, but with the flag-naming prescription (not "check
       # your token").
       _vfail "hook-smoke" "captures require UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw in server/.env, then: docker compose up -d (from server/)"
@@ -696,7 +698,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 	if [ -z "$_UPG_CID" ]; then
 		_ufail "No running memory-server container found — nothing to upgrade, and no image to roll back to.
   If the stack is stopped:  $(_compose_hint 'up -d')
-  If this is a new install: bash server/install.sh"
+  If this is a new install: bash installer/install.sh --server (from the checkout)"
 	fi
 	# Record the image ID (sha256), NOT .Config.Image (the tag). On the common
 	# latest→latest upgrade the tag is byte-identical before and after the
@@ -1049,7 +1051,9 @@ ok "Docker is running and server files are present."
 # ─── pyyaml availability ─────────────────────────────────────────────────────
 # Shell hooks (Phase C) use python3 + pyyaml to parse session frontmatter.
 # Flag missing pyyaml now so users don't hit cryptic errors at hook time.
-python3 -c 'import yaml' 2>/dev/null || {
+# From /: python3 -c puts the working directory first on sys.path, so a
+# yaml.py left in it would run as the user.
+(cd / && python3 -c 'import yaml') 2>/dev/null || {
 	fail "pyyaml is not available. Install it: sudo apt install python3-yaml (Debian/Ubuntu; pip refuses on 24.04), or pip install pyyaml (macOS / venv)"
 }
 ok "pyyaml is available."
@@ -1081,7 +1085,9 @@ fi
 #
 # Direct-invocation callers (server/install.sh without installer/install.sh
 # in front) get the same preservation — this is the single source of truth
-# for the token lifecycle.
+# for the token lifecycle. installer/install.sh's check_prereqs mirrors the
+# "is a token already available" test below to decide whether openssl is a
+# prerequisite; change them together.
 if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
 	# `|| true` is mandatory: when .env exists but lacks UM_AUTH_TOKEN= (the
 	# v0.5 → v0.6 upgrade case), grep returns 1 and under `set -euo pipefail`
@@ -1191,6 +1197,11 @@ fi
 [[ "$UM_SUMMARY_ENABLED" =~ ^(true|false)$ ]] || fail "UM_SUMMARY_ENABLED must be 'true' or 'false'. Got: $UM_SUMMARY_ENABLED"
 [[ "$UM_TEMPORAL_DECAY" =~ ^(true|false)$ ]] || fail "UM_TEMPORAL_DECAY must be 'true' or 'false'. Got: $UM_TEMPORAL_DECAY"
 
+# installer/install.sh (_um_capture_default, and wizard_summarize in
+# wizard-lib.sh) relies on this .env path, this key-by-key merge and the values
+# validated below: it exports both switches or neither so no half comes from
+# .env. Change them together.
+#
 # A re-run keeps the capture switches already in .env when the environment does
 # not set them. The .env writer below emits ${UM_MOUNT_MODE:-ro} and
 # ${UM_MCP_WRITE_ENABLED:-false}, so without this a re-run of a capture-on
@@ -1559,9 +1570,15 @@ _UM_MARKER_END="# --- end universal-memory ---"
 # An exported UM_SUMMARIZER wins: installer/install.sh exports the value it
 # chose so install-cli.sh, which rewrites the same rc block afterwards from the
 # environment, writes the same one (it used to overwrite this choice with openai).
+# The message says what the value does, not where it came from: usually the
+# dispatcher picked it, and "from the environment" read as if the user had.
 if [ -n "${UM_SUMMARIZER:-}" ]; then
 	_um_summarizer_default="$UM_SUMMARIZER"
-	info "UM_SUMMARIZER=$UM_SUMMARIZER (from the environment)"
+	case "$UM_SUMMARIZER" in
+		claude-agent-sdk) info "Summaries: UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)" ;;
+		openai)           info "Summaries: UM_SUMMARIZER=openai (requires UM_OPENAI_API_KEY)" ;;
+		*)                info "Summaries: UM_SUMMARIZER=$UM_SUMMARIZER" ;;
+	esac
 elif command -v claude >/dev/null 2>&1; then
 	_um_summarizer_default="claude-agent-sdk"
 	info "Claude CLI detected — defaulting UM_SUMMARIZER=claude-agent-sdk (zero-cost, uses your existing Claude subscription)"

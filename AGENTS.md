@@ -1,5 +1,9 @@
 # Project conventions for AI agents
 
+> **Installing universal-memory for a user?** Follow the README's
+> [Install with an AI agent](README.md#install-with-an-ai-agent) section. Everything
+> below is for agents working *on* this repository.
+
 > Universal rules live in `~/.claude/CLAUDE.md` (Claude Code) and its generated mirror
 > `~/.codex/AGENTS.md` (Codex CLI) and apply to every repo on this machine. This file
 > is project framing only.

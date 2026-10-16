@@ -72,7 +72,7 @@ goto check_bash
 :find_on_path
 rem The PATH modifier also searches the working directory when PATH has an empty entry (a
 rem leading ";" or ";;") or a "." entry (measured), so a git.exe found there is dropped. Two
-rem fixed ancestor checks from git.exe cover Git\cmd, Git\bin and Git\mingw64\bin, and a
+rem fixed ancestor checks from git.exe cover Git\cmd, Git\bin and Git\<msys>\bin, and a
 rem candidate counts only in a Git for Windows layout (bin\bash.exe beside usr\bin\bash.exe):
 rem an MSYS2 usr\bin or a Cygwin bin holding git.exe and bash.exe side by side resolves to its
 rem own folder, and taking it would skip the registry and start that bash with no setup.
@@ -100,21 +100,25 @@ for %%R in ("%ProgramFiles%" "%ProgramFiles(x86)%" "%LOCALAPPDATA%\Programs") do
 if not defined RH_BASH goto skip_nobash
 
 rem --- 3. Run the script. No redirection: bash reads and writes Codex's own handles.
-rem Git's bin\bash.exe is a wrapper that puts mingw64\bin and usr\bin first on PATH, sets
-rem MSYSTEM and HOME, then starts usr\bin\bash.exe as a second process. The fast path does
-rem that setup here and starts usr\bin\bash.exe directly, keeping the extra process out of
-rem SessionEnd's one-second budget. Deliberately not replicated, inert for these hooks:
-rem PLINK_PROTOCOL, EXEPATH, the ~/bin PATH entry and git-bash.config MSYS= lines.
-rem The Git root is two levels above bin\bash.exe or three above usr\bin\bash.exe (UM_GIT_BASH
-rem may name either); a bash outside any Git for Windows layout runs as given. Git's own
+rem Git's bin\bash.exe is a wrapper that puts <msys>\bin and usr\bin first on PATH, sets
+rem MSYSTEM and HOME, then starts usr\bin\bash.exe as a second process. <msys> is ucrt64
+rem (MSYSTEM=UCRT64) from Git 2.56 on and mingw64 (MINGW64) before; ucrt64 wins when both
+rem exist (the two name lists below stay in step). The fast path does that setup here and starts usr\bin\bash.exe directly, keeping
+rem the extra process out of SessionEnd's one-second budget. Deliberately not replicated,
+rem inert for these hooks: PLINK_PROTOCOL, EXEPATH, the ~/bin PATH entry and git-bash.config
+rem MSYS= lines. The Git root is two levels above bin\bash.exe or three above usr\bin\bash.exe
+rem (UM_GIT_BASH may name either); a bash outside any layout above runs as given. Git's own
 rem bin\bash.exe wrapper runs instead of the fast path when PATH has a character at index 7000
 rem or is too long to expand: cmd cannot expand a variable past 8191 characters, and a set whose
 rem value would pass that limit silently does nothing (measured), which would start bash without
 rem Git's tool directories.
 set "RH_SCRIPT=%RH_SCRIPT:\=/%"
-set "RH_GITROOT="
-for %%G in ("%RH_BASH%\..\.." "%RH_BASH%\..\..\..") do if not defined RH_GITROOT if exist "%%~fG\usr\bin\bash.exe" if exist "%%~fG\mingw64\bin\" set "RH_GITROOT=%%~fG"
-if not defined RH_GITROOT goto run_as_given
+set "RH_MSYS="
+for %%G in ("%RH_BASH%\..\.." "%RH_BASH%\..\..\..") do for %%M in (ucrt64 mingw64) do if not defined RH_MSYS if exist "%%~fG\usr\bin\bash.exe" if exist "%%~fG\%%M\bin\" set "RH_MSYS=%%~fG\%%M"
+if not defined RH_MSYS goto run_as_given
+for %%F in ("%RH_MSYS%\..") do set "RH_GITROOT=%%~fF"
+for %%F in ("%RH_MSYS%") do set "RH_MSYSTEM=%%~nxF"
+for %%U in (UCRT64 MINGW64) do if /i "%%U"=="%RH_MSYSTEM%" set "RH_MSYSTEM=%%U"
 rem RH_P0 is empty for a PATH of 8192+ characters (cmd expands it to nothing); RH_P7 is set for
 rem 7001-8191. Both hand the run to the wrapper (measured, review of 2026-09-24).
 set "RH_P0=%PATH:~0,1%"
@@ -122,8 +126,8 @@ set "RH_P7=%PATH:~7000,1%"
 if defined PATH if not defined RH_P0 goto run_wrapper
 if defined RH_P7 goto run_wrapper
 setlocal EnableDelayedExpansion
-set "PATH=!RH_GITROOT!\mingw64\bin;!RH_GITROOT!\usr\bin;!PATH!"
-set "MSYSTEM=MINGW64"
+set "PATH=!RH_MSYS!\bin;!RH_GITROOT!\usr\bin;!PATH!"
+set "MSYSTEM=!RH_MSYSTEM!"
 if not defined HOME set "HOME=!RH_HOME!"
 "!RH_GITROOT!\usr\bin\bash.exe" "!RH_SCRIPT!"
 exit /b !ERRORLEVEL!

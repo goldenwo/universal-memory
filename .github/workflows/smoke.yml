@@ -714,6 +714,11 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: pip3 install --break-system-packages pyyaml 2>/dev/null || pip3 install pyyaml
       # Sandbox tests first
+      # install.test.sh covers the dispatcher's own decisions: which checkout
+      # it installs from (T-SELF-CLONE) and the capture switches it hands
+      # server/install.sh (T-WIZ-CAPTURE), against stub sub-installers. It was
+      # shellchecked but never run until the agent-install-path PR.
+      - run: bash installer/install.test.sh
       - run: bash installer/install-cli.test.sh
       - run: bash server/install.test.sh
       # install-token.test.sh exercises the v0.6 token-generation +

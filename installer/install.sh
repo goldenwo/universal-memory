@@ -4,6 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/goldenwo/universal-memory/main/installer/install.sh | bash -s -- --yes
 # or with a custom install directory:
 #   curl -fsSL .../installer/install.sh | UM_INSTALL_DIR=/opt/um bash -s -- --yes
+# or from a clone, which installs from that clone (no second copy, no pull):
+#   git clone https://github.com/goldenwo/universal-memory && bash universal-memory/installer/install.sh --yes
 #
 # Component flags (v0.5+):
 #   --server        Install/start the memory server (Docker stack)
@@ -26,7 +28,37 @@
 set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
-INSTALL_DIR="${UM_INSTALL_DIR:-$HOME/universal-memory}"
+# Run from a checkout (`git clone ...; bash installer/install.sh`), the
+# installer uses that checkout. Otherwise (curl | bash, which has no script
+# file, or a copy that is not a trusted checkout) the default is
+# ~/universal-memory.
+# Only a real checkout counts: a git checkout (.git, a directory or a
+# worktree's file) whose own installer this script is, with the checkout, its
+# server/ directory and its server installer all the user's own. A zip or
+# tarball download falls back to ~/universal-memory, as main always did. A
+# copy downloaded to /tmp/x/install.sh is not one, even if someone has planted
+# /tmp/server/install.sh (and /tmp/installer/install.sh linking back to it).
+# Owning the directories, not just the file, means nobody else can swap
+# server/install.sh between this check and the run. The script must also sit
+# in the checkout's installer/ directory itself, so a link planted at
+# /tmp/installer/install.sh cannot vouch for a copy elsewhere. On Git Bash -O
+# is true for every file; there the .git, position and identity checks remain,
+# and anyone able to plant files beside a user's directory can usually rewrite
+# the script in it too. CDPATH is cleared so `cd` prints nothing into the
+# substitution.
+SELF_ROOT=""
+if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+  _self_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SELF_ROOT="${_self_dir%/*}"
+  if ! [[ -e "$SELF_ROOT/.git" && "$_self_dir" == "$SELF_ROOT/installer" \
+        && "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" \
+        && -O "$SELF_ROOT" && -O "$SELF_ROOT/server" && -O "$SELF_ROOT/server/install.sh" ]]; then
+    [[ -e "$SELF_ROOT/server/install.sh" ]] \
+      && echo "[install] note: not installing from $SELF_ROOT (not a git checkout of yours that holds this script as installer/install.sh); using UM_INSTALL_DIR or ~/universal-memory instead." >&2
+    SELF_ROOT=""
+  fi
+fi
+INSTALL_DIR="${UM_INSTALL_DIR:-${SELF_ROOT:-$HOME/universal-memory}}"
 DRY_RUN="${UM_DRY_RUN:-0}"
 
 # ---- v0.5 flag parser -------------------------------------------------------
@@ -90,8 +122,9 @@ Component flags:
   --all             Install all detected components
 
 Behaviour flags:
-  --yes, -y         Non-interactive; accept defaults
-  --interactive     Launch the setup wizard
+  --yes, -y         Non-interactive; accept defaults (a fresh server install
+                    turns capture on: UM_MCP_WRITE_ENABLED=false keeps it off)
+  --interactive     Launch the setup wizard (needs a git clone you own)
   --remote [URL]    Remote-client setup: verify a remote UM server (health +
                     authed write probe) and write ~/.um/endpoint +
                     ~/.um/auth-token (mode 600). Prompts for missing values
@@ -129,10 +162,13 @@ run_remote_flow() {
 
   # Shared probe logic lives in the plugin subtree (T8's um-setup.sh sources
   # the same file); marker-block.sh is the existing idempotent profile writer.
-  local script_dir verify_lib marker_lib
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  verify_lib="$script_dir/../plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
-  marker_lib="$script_dir/lib/marker-block.sh"
+  # They come from the installer's own checkout only when SELF_ROOT trusts it,
+  # never from whatever sits beside a downloaded copy.
+  local verify_lib="" marker_lib=""
+  if [[ -n "$SELF_ROOT" ]]; then
+    verify_lib="$SELF_ROOT/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+    marker_lib="$SELF_ROOT/installer/lib/marker-block.sh"
+  fi
   if [[ ! -r "$verify_lib" || ! -r "$marker_lib" ]]; then
     # curl|bash without a checkout: fall back to the clone dir (cloning if needed).
     if [[ ! -d "$INSTALL_DIR/.git" ]]; then
@@ -263,9 +299,19 @@ check_prereqs() {
   if [[ $need_python3 -eq 1 ]]; then
     if ! command -v python3 >/dev/null 2>&1; then
       missing+=("python3")
-    elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    # From /: python3 -c puts the working directory first on sys.path, so a
+    # yaml.py left in it would run as the user.
+    elif ! (cd / && python3 -c 'import yaml') >/dev/null 2>&1; then
       missing+=("PyYAML")
     fi
+  fi
+  # server/install.sh generates the access token with openssl, unless one is
+  # exported or a re-run reuses the one in server/.env (the same test it makes).
+  # A quoted empty value (UM_AUTH_TOKEN="") is no token: server/install.sh
+  # strips the quotes.
+  if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" ]] \
+      && ! grep -qE "^UM_AUTH_TOKEN=[\"']?[^\"'[:space:]]" "$INSTALL_DIR/server/.env" 2>/dev/null; then
+    command -v openssl >/dev/null 2>&1 || missing+=("openssl")
   fi
   # bash is always needed
   command -v bash >/dev/null 2>&1 || missing+=("bash")
@@ -276,10 +322,36 @@ check_prereqs() {
     echo "Install hints:"
     echo "  git:     apt/brew install git, or https://git-scm.com"
     echo "  docker:  https://docs.docker.com/get-docker/"
+    echo "  openssl: apt/brew install openssl"
     echo "  python3: apt/brew install python3"
     echo "  PyYAML:  sudo apt install python3-yaml (Debian/Ubuntu), or pip install pyyaml (macOS / venv)"
     exit 1
   fi
+}
+
+# A server install turns capture on (operator rulings 2026-10-14, recorded in
+# #384: the wizard
+# first, then --yes and flag installs too, so an AI agent driving the
+# non-interactive path gets a working server). A server that refuses every
+# capture is not what anyone installing asked for, and turning it on later
+# meant a .env edit plus a restart. An explicit export still wins
+# (UM_MCP_WRITE_ENABLED=false keeps a read-only server). The capture-on default
+# is for fresh installs only (operator ruling 2026-10-15): a re-run over an
+# existing server/.env exports nothing, so the switches written there survive.
+# When either switch is exported, the other defaults to match it, so neither
+# half comes from .env or the capture-on default: server/install.sh refuses rw
+# without writes, and writes on a ro mount fail every capture.
+_um_capture_default() {
+  [[ $INSTALL_SERVER -eq 1 ]] || return 0
+  case "${UM_MOUNT_MODE:-}" in
+    rw) export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}" ;;
+    ro) export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-false}" ;;
+    *)  [[ -f "$INSTALL_DIR/server/.env" ]] || export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}" ;;
+  esac
+  case "${UM_MCP_WRITE_ENABLED:-}" in
+    true|1)  export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}" ;;
+    false|0) export UM_MOUNT_MODE="${UM_MOUNT_MODE:-ro}" ;;
+  esac
 }
 
 # Mode selection
@@ -298,9 +370,16 @@ else
 fi
 
 if [[ $MODE == wizard ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # The wizard library comes only from the installer's own trusted checkout,
+  # never from beside a downloaded copy (where a planted wizard-lib.sh would
+  # run as the user). Outside one there is nothing safe to source; a piped
+  # install could not answer the prompts anyway.
+  if [[ -z "$SELF_ROOT" ]]; then
+    echo "ERROR: the setup wizard runs only from a git clone of universal-memory that you own (see any note above for why this one was not used): git clone $REPO && bash universal-memory/installer/install.sh. Or install non-interactively with --yes and without --interactive, which clones one for you." >&2
+    exit 1
+  fi
   # shellcheck source=installer/wizard-lib.sh
-  source "$SCRIPT_DIR/wizard-lib.sh"
+  source "$SELF_ROOT/installer/wizard-lib.sh"
   wizard_header
   wizard_detect_env
   wizard_menu_main
@@ -326,15 +405,7 @@ if [[ $MODE == wizard ]]; then
         ;;
   esac
   check_prereqs
-  # A wizard server install turns capture on (operator ruling 2026-10-14): a
-  # server that refuses every capture is not what a wizard user asked for, and
-  # turning it on later meant a .env edit plus a restart. An explicit export
-  # still wins; --yes / flag installs keep the old default (off) for automation.
-  if [[ $INSTALL_SERVER -eq 1 ]]; then
-    export UM_MCP_WRITE_ENABLED="${UM_MCP_WRITE_ENABLED:-true}"
-    export UM_MOUNT_MODE="${UM_MOUNT_MODE:-rw}"
-  fi
-
+  _um_capture_default
   wizard_prompt UM_VAULT_DIR "Vault directory" "$HOME/.um/vault"
   # v0.7: 4-path provider picker replaces the v0.6 single-OpenAI-key prompt.
   # wizard_menu_providers exports UM_*_PROVIDER + collects keys for the chosen
@@ -413,15 +484,13 @@ case "$os_name" in
 esac
 
 # ─── Clone or update ──────────────────────────────────────────────────────────
-# Skip clone/pull if we're running from within a local repo and only installing CLI
-RUNNING_FROM_LOCAL_REPO=0
-SCRIPT_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -e "$SCRIPT_SELF/.git" ] || [ -e "$SCRIPT_SELF/../.git" ] || [ -e "$SCRIPT_SELF/../../.git" ]; then
-  RUNNING_FROM_LOCAL_REPO=1
-fi
-
-# Only do clone/pull if needed (skip for local --cli-only installs)
-if [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_PLUGIN_CODEX" -eq 1 ] || [ "$RUNNING_FROM_LOCAL_REPO" -eq 0 ]; then
+# The installer's own checkout is never pulled: it is the version the user chose
+# to run (the README's upgrade path runs `git pull` itself), and `pull --ff-only`
+# fails on a branch with no upstream, which would abort the install. Any other
+# INSTALL_DIR is cloned or pulled, since every delegate runs from it.
+if [ -n "$SELF_ROOT" ] && [ "$INSTALL_DIR" -ef "$SELF_ROOT" ]; then
+  printf 'Installing from this checkout: %s\n' "$INSTALL_DIR"
+else
   if [ -d "$INSTALL_DIR/.git" ]; then
     printf 'Existing clone at %s — pulling latest...\n' "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then
@@ -430,6 +499,12 @@ if [ "$INSTALL_SERVER" -eq 1 ] || [ "$INSTALL_PLUGIN_CC" -eq 1 ] || [ "$INSTALL_
       git -C "$INSTALL_DIR" pull --ff-only
     fi
   else
+    # A zip or tarball copy already there is not a clone to pull, and git
+    # clone refuses a non-empty directory; say so instead of failing inside git.
+    if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+      echo "ERROR: $INSTALL_DIR exists but is not a git clone. Move it aside, or install from a clone: git clone $REPO" >&2
+      exit 1
+    fi
     printf 'Cloning %s to %s...\n' "$REPO" "$INSTALL_DIR"
     if [ "$DRY_RUN" = "1" ]; then
       echo "[dry-run] would: git clone $REPO $INSTALL_DIR"
@@ -472,6 +547,9 @@ fi
 # Tell server/install.sh the plugin installs right after it, so it doesn't
 # advise the same two `claude plugin` commands first.
 [[ $INSTALL_PLUGIN_CC -eq 1 ]] && export UM_INSTALLING_PLUGIN_CC=1
+# Non-wizard installs (--yes, flags, no TTY) get the same capture default the
+# wizard applied above; idempotent when the wizard already ran it.
+_um_capture_default
 if [[ $INSTALL_SERVER -eq 1 ]]; then
   _delegate "server/install.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"}
 fi

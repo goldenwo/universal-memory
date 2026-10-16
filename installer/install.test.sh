@@ -17,12 +17,18 @@ PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
+# The UM_* settings the installer reads must come from each case, not from a
+# developer's own shell.
+unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN UM_DRY_RUN \
+  UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER UM_SERVER_URL UM_REPO_URL
+
 # Helper: create stubs for prereq tools (excluding bash — real bash is needed
-# to execute the installer under test).
+# to execute the installer under test). openssl is stubbed too, so a host
+# without it still runs every case; T-OPENSSL removes the stub.
 make_stubs() {
   local bindir="$1"
   mkdir -p "$bindir"
-  for tool in git docker python3; do
+  for tool in git docker python3 openssl; do
     cat > "$bindir/$tool" <<'BIN'
 #!/bin/bash
 exit 0
@@ -45,6 +51,8 @@ mkdir "$tmp/empty"
 T1_OUT=$(env -i PATH="$tmp/empty" HOME="$tmp" "$REAL_BASH" "$INSTALLER" --dry-run 2>&1) && T1_EXIT=0 || T1_EXIT=$?
 if [ "$T1_EXIT" -ne 0 ]; then pass "T1: non-zero exit when tools missing"; else fail "T1: expected non-zero exit"; fi
 if echo "$T1_OUT" | grep -q "required tools not found"; then pass "T1: friendly error shown"; else fail "T1: no friendly error (got: $T1_OUT)"; fi
+# A server install needs openssl (server/install.sh generates the token with it).
+if echo "$T1_OUT" | grep -q "required tools not found in PATH: .*openssl"; then pass "T1: openssl is a server prerequisite"; else fail "T1: openssl not named (got: $(echo "$T1_OUT" | head -1))"; fi
 rm -rf "$tmp"
 
 # ─── T2: prereqs present, --dry-run prints clone intent ───────────────────────
@@ -277,7 +285,7 @@ make_stubs "$TF15/bin"
 _tx_capture TF15 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TF15/repo" \
   PATH="$TF15/bin:/usr/bin:/bin" bash "$INSTALLER" --interactive
 # Real wizard must print the installer header and detected environment
-if echo "$TX_OUT_TF15" | grep -qiE "universal-memory|installer|Detected"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
+if echo "$TX_OUT_TF15" | grep -q "Detected environment:"; then pass "T-FLAGS-15: wizard header/detect printed"; else fail "T-FLAGS-15: expected wizard header (got: $TX_OUT_TF15)"; fi
 rm -rf "$TF15"
 
 # (T-PCC-1..3 retired 2026-10-14: they pinned the old copy route, which put
@@ -385,34 +393,80 @@ if echo "$TWP_OUT" | grep -q "PyYAML: .*apt install python3-yaml"; then pass "T-
 if echo "$TWP_OUT" | grep -q "v0\.5\.0"; then fail "T-WIZ-PREREQ: stale v0.5.0 banner"; else pass "T-WIZ-PREREQ: banner not pinned to v0.5.0"; fi
 rm -rf "$TWP"
 
-# ─── T-WIZ-CAPTURE: a wizard server install turns capture on ─────────────────
-# Operator ruling 2026-10-14: a fresh install that cannot capture is not what a
-# wizard user asked for (the clean-room install got 403 on its first capture and
-# needed a .env edit + restart). Wizard server installs hand server/install.sh
-# UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw; --yes / flag installs keep the
-# old default (off) for automation. A stub server/install.sh reports what it got.
+# ─── T-WIZ-CAPTURE: a server install turns capture on ────────────────────────
+# Operator rulings 2026-10-14: a fresh install that cannot capture is not what a
+# user asked for (the clean-room install got 403 on its first capture and needed
+# a .env edit + restart). Server installs, wizard and --yes / flag alike, hand
+# server/install.sh UM_MCP_WRITE_ENABLED=true + UM_MOUNT_MODE=rw. Stub
+# server/install.sh and install-cli.sh report what they got.
 _capture_repo() {
   local repo="$1"
-  mkdir -p "$repo/server" "$repo/.git"
+  mkdir -p "$repo/server" "$repo/installer" "$repo/.git"
   # shellcheck disable=SC2016  # the stub expands these when it runs, not here
-  printf '#!/usr/bin/env bash\necho "CAPTURE writes=${UM_MCP_WRITE_ENABLED:-unset} mount=${UM_MOUNT_MODE:-unset}"\n' > "$repo/server/install.sh"
+  printf '#!/usr/bin/env bash\necho "CAPTURE writes=${UM_MCP_WRITE_ENABLED:-unset} mount=${UM_MOUNT_MODE:-unset}"\n' | tee "$repo/server/install.sh" > "$repo/installer/install-cli.sh"
 }
 echo ""
 echo "=== T-WIZ-CAPTURE: wizard server install passes writes on ==="
 TWC=$(mktemp -d)
 make_stubs "$TWC/bin"; _capture_repo "$TWC/repo"
-TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=true mount=rw"; then pass "T-WIZ-CAPTURE: server/install.sh gets writes on + rw"; else fail "T-WIZ-CAPTURE: capture not on (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
 if echo "$TWC_OUT" | grep -q "Capture: on"; then pass "T-WIZ-CAPTURE: summary says capture is on"; else fail "T-WIZ-CAPTURE: summary silent about capture"; fi
 # An explicit export still wins (an operator who wants a read-only server).
-TWC_OUT=$(printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro \
   UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
 if echo "$TWC_OUT" | grep -q "CAPTURE writes=false mount=ro"; then pass "T-WIZ-CAPTURE: an explicit export wins"; else fail "T-WIZ-CAPTURE: explicit export overridden (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
-# Control: a --yes install does not change the default.
-TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
-  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
-if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --yes keeps the default"; else fail "T-WIZ-CAPTURE: --yes changed (got: $(echo "$TWC_OUT" | grep CAPTURE))"; fi
+# _twc_yes <pair> <label> [VAR=value ...]: a `--server --yes` install into
+# $TWC/repo with those exports must hand server/install.sh exactly that pair.
+_twc_yes() {
+  local want="$1" label="$2" out; shift 2
+  out=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test "$@" \
+    UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --server --yes 2>&1) || true
+  if echo "$out" | grep -qx "CAPTURE $want"; then pass "T-WIZ-CAPTURE: $label"; else fail "T-WIZ-CAPTURE: $label (got: $(echo "$out" | grep CAPTURE))"; fi
+}
+# --yes / flag installs turn capture on too (operator ruling 2026-10-14, so an
+# AI agent driving the non-interactive path gets a server that accepts
+# captures); an explicit export still wins there as well. The --cli-only
+# control installs no server, so nothing is exported.
+_twc_yes "writes=true mount=rw" "--yes server install turns capture on"
+_twc_yes "writes=false mount=ro" "--yes honours an explicit export" UM_MCP_WRITE_ENABLED=false UM_MOUNT_MODE=ro
+TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --cli --yes 2>&1) || true
+if [ "$(echo "$TWC_OUT" | grep -c "CAPTURE")" = 1 ] && echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset"; then pass "T-WIZ-CAPTURE: --cli-only exports nothing"; else fail "T-WIZ-CAPTURE: --cli got capture vars (got: $(echo "$TWC_OUT" | grep CAPTURE | tr '\n' ' '))"; fi
+# Either switch exported alone sets the other to match: server/install.sh
+# refuses a rw mount without writes, and writes on a ro mount fail every
+# capture. The numeric forms server/install.sh accepts count too.
+_twc_yes "writes=false mount=ro" "writes=false alone gets a ro mount" UM_MCP_WRITE_ENABLED=false
+_twc_yes "writes=0 mount=ro" "writes=0 alone gets a ro mount" UM_MCP_WRITE_ENABLED=0
+_twc_yes "writes=1 mount=rw" "writes=1 alone gets a rw mount" UM_MCP_WRITE_ENABLED=1
+_twc_yes "writes=false mount=ro" "mount=ro alone gets writes off" UM_MOUNT_MODE=ro
+_twc_yes "writes=true mount=rw" "mount=rw alone gets writes on" UM_MOUNT_MODE=rw
+# The README's literal command has no component flag: --yes alone expands to
+# --all, and capture must be on by the time the server installer runs (FCP
+# pass 1 HOLD: moving the call above that expansion left every suite green).
+for _twc_args in "--yes" "--all --yes"; do
+  # shellcheck disable=SC2086  # word-split the flag list on purpose
+  TWC_OUT=$(env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" OPENAI_API_KEY=sk-test \
+    UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" $_twc_args 2>&1) || true
+  if [ "$(echo "$TWC_OUT" | grep -cx "CAPTURE writes=true mount=rw")" = 2 ]; then pass "T-WIZ-CAPTURE: '$_twc_args' hands both installers capture on"; else fail "T-WIZ-CAPTURE: '$_twc_args' (got: $(echo "$TWC_OUT" | grep CAPTURE | tr '\n' ' '))"; fi
+done
+# A re-run over an existing server/.env exports nothing, so server/install.sh
+# keeps the switches written there (operator ruling 2026-10-15: a read-only
+# choice survives a re-run).
+printf 'UM_MCP_WRITE_ENABLED=false\nUM_MOUNT_MODE=ro\n' > "$TWC/repo/server/.env"
+_twc_yes "writes=unset mount=unset" "--yes re-run keeps server/.env's switches"
+TWC_OUT=$(cd "$TWC" && printf '4\n\n4\nY\n' | env PATH="$TWC/bin:/usr/bin:/bin" HOME="$TWC" \
+  UM_INSTALL_DIR="$TWC/repo" bash "$INSTALLER" --interactive 2>&1) || true
+if echo "$TWC_OUT" | grep -q "CAPTURE writes=unset mount=unset" && echo "$TWC_OUT" | grep -q "Capture: as set in the existing server/.env"; then pass "T-WIZ-CAPTURE: wizard re-run keeps server/.env's switches and says so"; else fail "T-WIZ-CAPTURE: wizard re-run (got: $(echo "$TWC_OUT" | grep -i capture | tr '\n' ' '))"; fi
+# An export on a re-run still moves both switches: the mount must not come from
+# .env, or writes=true lands on a ro mount (every capture fails) and
+# writes=false on a rw one (server/install.sh refuses).
+_twc_yes "writes=true mount=rw" "re-run exporting writes=true gets rw" UM_MCP_WRITE_ENABLED=true
+_twc_yes "writes=true mount=rw" "re-run exporting mount=rw gets writes on" UM_MOUNT_MODE=rw
+printf 'UM_MCP_WRITE_ENABLED=true\nUM_MOUNT_MODE=rw\n' > "$TWC/repo/server/.env"
+_twc_yes "writes=false mount=ro" "re-run exporting writes=false gets ro" UM_MCP_WRITE_ENABLED=false
+_twc_yes "writes=false mount=ro" "re-run exporting mount=ro gets writes off" UM_MOUNT_MODE=ro
+rm -f "$TWC/repo/server/.env"
 rm -rf "$TWC"
 # ─── T-SUMMARIZER: both installers are handed one UM_SUMMARIZER ──────────────
 # server/install.sh announced "defaulting UM_SUMMARIZER=claude-agent-sdk" when a
@@ -440,6 +494,230 @@ TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test U
   bash "$INSTALLER" --server --cli --yes 2>&1) || true
 if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: an explicit export wins"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
 rm -rf "$TSU"
+
+# ─── T-SELF-CLONE: run from a clone, the installer uses that clone ───────────
+# INSTALL_DIR defaulted to ~/universal-memory, so `git clone ... /some/dir;
+# bash installer/install.sh` cloned (or pulled) a second copy there and ran its
+# sub-installers instead of the clone's own (2026-10-14 agent-install test).
+# curl | bash has no clone of its own and keeps the ~/universal-memory default.
+echo ""
+echo "=== T-SELF-CLONE: a clone outside ~/universal-memory installs from itself ==="
+TSC=$(mktemp -d)
+make_stubs "$TSC/bin"
+# shellcheck disable=SC2016  # the stub expands $* when it runs, not here
+# The stub creates a clone's target directory, so "~/universal-memory
+# untouched" below can fail when a clone happens.
+printf '#!/bin/bash\necho "git $*" >> "%s/git.log"\n[ "$1" = clone ] && mkdir -p "${@: -1}"\n[ "$1" = clone ] && [ -n "${STUB_CLONE_LIBS:-}" ] && _tsc_libs_dest="${@: -1}" && mkdir -p "$_tsc_libs_dest/plugins/claude-code/universal-memory/hooks/lib" "$_tsc_libs_dest/installer/lib" && echo "um_verify_endpoint() { echo SENTINEL-FROM-CLONE; return 7; }" > "$_tsc_libs_dest/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh" && : > "$_tsc_libs_dest/installer/lib/marker-block.sh"\nexit 0\n' "$TSC" > "$TSC/bin/git"
+mkdir -p "$TSC/clone/installer" "$TSC/clone/server" "$TSC/clone/.git" "$TSC/home"
+cp "$INSTALLER" "$TSC/clone/installer/install.sh"
+# shellcheck disable=SC2016  # the stub expands $0 when it runs, not here
+printf '#!/usr/bin/env bash\necho "SERVER-FROM $(cd "$(dirname "$0")/.." && pwd)"\n' > "$TSC/clone/server/install.sh"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/clone/installer/install.sh" --server --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone"; then pass "T-SELF-CLONE: the clone's own server/install.sh ran"; else fail "T-SELF-CLONE: clone's server installer not run (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
+if [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: no clone or pull"; else fail "T-SELF-CLONE: git ran: $(tr '\n' ' ' < "$TSC/git.log")"; fi
+if [ ! -e "$TSC/home/universal-memory" ]; then pass "T-SELF-CLONE: ~/universal-memory untouched"; else fail "T-SELF-CLONE: ~/universal-memory was created"; fi
+# A downloaded copy is not a checkout: /tmp/x/install.sh next to a planted
+# /tmp/server/install.sh must clone, not run the planted file (round-4 review).
+mkdir -p "$TSC/dl" "$TSC/.git"; cp "$INSTALLER" "$TSC/dl/install.sh"; : > "$TSC/git.log"
+mkdir -p "$TSC/server"; printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/server/install.sh"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone .* $TSC/home/universal-memory" "$TSC/git.log"; then pass "T-SELF-CLONE: a downloaded copy clones instead of running a planted server/install.sh"; else fail "T-SELF-CLONE: downloaded copy (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+if echo "$TSC_OUT" | grep -q "note: not installing from $TSC"; then pass "T-SELF-CLONE: the rejected checkout is named"; else fail "T-SELF-CLONE: rejection was silent"; fi
+# A different installer/install.sh beside the planted server/install.sh does
+# not make the downloaded copy's parent a checkout either.
+mkdir -p "$TSC/installer"; cp "$INSTALLER" "$TSC/installer/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: another installer/install.sh beside it does not make a checkout"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# Position, not just identity: a planted installer/install.sh that LINKS to the
+# downloaded copy passes -ef, and on Git Bash -O passes for every file, so the
+# script itself must sit in the checkout's installer/ (FCP pass 1, codex HOLD).
+rm -f "$TSC/installer/install.sh"; ln -s "$TSC/dl/install.sh" "$TSC/installer/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/dl/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a planted link back to a downloaded copy does not make a checkout"; else fail "T-SELF-CLONE: position (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# Identity: a script inside a checkout's installer/ that is not its install.sh
+# (installer/other.sh beside a different installer/install.sh) is not that
+# checkout's installer (-ef, not -e; round 11).
+mkdir -p "$TSC/c2/installer" "$TSC/c2/server" "$TSC/c2/.git"
+cp "$INSTALLER" "$TSC/c2/installer/other.sh"; cp "$INSTALLER" "$TSC/c2/installer/install.sh"
+printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/c2/server/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/c2/installer/other.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a script that is not the checkout's install.sh is not vouched for"; else fail "T-SELF-CLONE: -ef (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# Ownership: the script's own checkout whose server/install.sh is not the
+# user's file (a symlink to a root-owned one) is rejected too. Skipped as root,
+# and on Git Bash, where -O is true for every file.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _tsc_o=0 ;; *) _tsc_o=1 ;; esac
+if [ "$(id -u)" != 0 ] && [ "$_tsc_o" = 1 ]; then
+  mkdir -p "$TSC/unowned/installer" "$TSC/unowned/server" "$TSC/unowned/.git"; cp "$INSTALLER" "$TSC/unowned/installer/install.sh"
+  ln -s "$(command -v env)" "$TSC/unowned/server/install.sh"; : > "$TSC/git.log"
+  TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+    bash "$TSC/unowned/installer/install.sh" --server --yes 2>&1) || true
+  if echo "$TSC_OUT" | grep -q "note: not installing from $TSC/unowned" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a server/install.sh the user does not own is rejected"; else fail "T-SELF-CLONE: -O (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+else
+  echo "  SKIP: T-SELF-CLONE -O case (root, or Git Bash where -O is always true)"
+fi
+# A checkout-shaped tree that is not a git checkout: the script saved as
+# <dir>/installer/install.sh beside a planted <dir>/server/install.sh, all the
+# user's own. Position, -ef and -O all pass (as they do anywhere on Git Bash),
+# so only the .git check stands (FCP pass 2, codex HOLD).
+mkdir -p "$TSC/nogit/installer" "$TSC/nogit/server"; cp "$INSTALLER" "$TSC/nogit/installer/install.sh"
+printf '#!/usr/bin/env bash\necho PLANTED-RAN\n' > "$TSC/nogit/server/install.sh"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash "$TSC/nogit/installer/install.sh" --server --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: a tree that is not a git checkout is not trusted"; else fail "T-SELF-CLONE: .git (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' '))"; fi
+# --remote sources two libraries; a downloaded copy must not take them from
+# beside itself (round 12): only a trusted checkout supplies them, otherwise
+# the clone does. Each source ships a sentinel um_verify_endpoint, so the test
+# sees which one ran (FCP pass 3: the absence check alone passed a gutted flow).
+printf '#!/bin/bash\nexit 0\n' > "$TSC/bin/curl"; chmod +x "$TSC/bin/curl"
+_tsc_libs() { # <root> <sentinel>: the two --remote libraries, verify printing <sentinel>
+  mkdir -p "$1/plugins/claude-code/universal-memory/hooks/lib" "$1/installer/lib"
+  printf 'um_verify_endpoint() { echo %s; return 7; }\n' "$2" > "$1/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+  : > "$1/installer/lib/marker-block.sh"
+}
+mkdir -p "$TSC/dl2/lib" "$TSC/plugins/claude-code/universal-memory/hooks/lib"
+cp "$INSTALLER" "$TSC/dl2/install.sh"
+printf 'echo PLANTED-RAN\n' | tee "$TSC/dl2/lib/marker-block.sh" > "$TSC/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
+rm -rf "$TSC/home/universal-memory"; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" STUB_CLONE_LIBS=1 \
+  bash "$TSC/dl2/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CLONE" && grep -q "git clone" "$TSC/git.log"; then pass "T-SELF-CLONE: --remote from a downloaded copy uses the clone's libraries, not the planted ones"; else fail "T-SELF-CLONE: --remote downloaded copy (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+rm -rf "$TSC/home/universal-memory"
+# ...and from a trusted checkout it uses that checkout's own, with no clone.
+_tsc_libs "$TSC/clone" SENTINEL-FROM-CHECKOUT; : > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash "$TSC/clone/installer/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CHECKOUT" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: --remote from a trusted checkout uses its own libraries"; else fail "T-SELF-CLONE: --remote checkout (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+# ...even when UM_INSTALL_DIR points elsewhere, so the clone fallback cannot
+# stand in for the checkout's own lookup (round 13: a typo there passed).
+: > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" UM_INSTALL_DIR="$TSC/elsewhere" \
+  bash "$TSC/clone/installer/install.sh" --remote http://127.0.0.1:9 --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -q "SENTINEL-FROM-CHECKOUT" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: --remote prefers the trusted checkout over UM_INSTALL_DIR"; else fail "T-SELF-CLONE: --remote checkout vs UM_INSTALL_DIR (got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+rm -rf "$TSC/elsewhere"
+# The wizard library likewise comes only from a trusted checkout: a downloaded
+# copy beside a planted wizard-lib.sh refuses the wizard (FCP pass 3 HOLD).
+printf 'echo PLANTED-RAN\n' > "$TSC/dl2/wizard-lib.sh"
+TSC_OUT=$(cd "$TSC" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash "$TSC/dl2/install.sh" --interactive 2>&1 </dev/null) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN" && echo "$TSC_OUT" | grep -q "the setup wizard runs only from a git clone"; then pass "T-SELF-CLONE: the wizard refuses outside a trusted checkout"; else fail "T-SELF-CLONE: wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+# Piped (curl | bash -s -- --interactive): no script file, so a wizard-lib.sh
+# planted in the working directory must not run either.
+TSC_OUT=$(cd "$TSC/dl2" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" \
+  bash -s -- --interactive < "$INSTALLER" 2>&1) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && ! echo "$TSC_OUT" | grep -q "PLANTED-RAN"; then pass "T-SELF-CLONE: a piped wizard ignores a wizard-lib.sh in the working directory"; else fail "T-SELF-CLONE: piped wizard (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -3 | tr '\n' ' '))"; fi
+# A non-git copy already at the clone target gets a clear error, not git's.
+mkdir -p "$TSC/zipcopy/server"; : > "$TSC/zipcopy/server/install.sh"
+TSC_OUT=$(env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TSC/zipcopy" \
+  bash "$INSTALLER" --server --yes 2>&1) && TSC_RC=0 || TSC_RC=$?
+if [ "$TSC_RC" -ne 0 ] && echo "$TSC_OUT" | grep -q "exists but is not a git clone"; then pass "T-SELF-CLONE: a non-git copy at the target is named"; else fail "T-SELF-CLONE: non-git target (rc=$TSC_RC, got: $(echo "$TSC_OUT" | tail -2 | tr '\n' ' '))"; fi
+# A CDPATH that resolves `installer/..` makes cd print the directory into the
+# substitution; detection must still find the clone (round-5 review).
+: > "$TSC/git.log"
+TSC_OUT=$(cd "$TSC/clone" && env CDPATH=".:$TSC" PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash installer/install.sh --server --yes 2>&1) || true
+if echo "$TSC_OUT" | grep -qx "SERVER-FROM $TSC/clone" && [ ! -s "$TSC/git.log" ]; then pass "T-SELF-CLONE: CDPATH does not break detection"; else fail "T-SELF-CLONE: CDPATH (got: $(echo "$TSC_OUT" | tail -4 | tr '\n' ' ') git: $(tr '\n' ' ' < "$TSC/git.log"))"; fi
+# Control: piped (curl | bash) has no script file, so ~/universal-memory stays the default.
+TSC_OUT=$(cd "$TSC/clone" && env PATH="$TSC/bin:/usr/bin:/bin" HOME="$TSC/home" OPENAI_API_KEY=sk-test \
+  bash -s -- --server --yes --dry-run < "$INSTALLER" 2>&1) || true
+if echo "$TSC_OUT" | grep -q "would: git clone .* $TSC/home/universal-memory"; then pass "T-SELF-CLONE: piped install still clones to ~/universal-memory"; else fail "T-SELF-CLONE: piped default changed (got: $(echo "$TSC_OUT" | tail -5 | tr '\n' ' '))"; fi
+rm -rf "$TSC"
+
+# ─── T-OPENSSL: openssl only when server/install.sh must generate a token ────
+# server/install.sh reuses an exported UM_AUTH_TOKEN or the one in server/.env
+# and needs openssl only to generate a fresh one; the prerequisite check must
+# not refuse the other two cases (round 11). PATH holds only stubs and the real
+# tools a dry run needs up to its delegate line, so openssl is genuinely absent.
+echo ""
+echo "=== T-OPENSSL: openssl is required only to generate a token ==="
+TOS=$(mktemp -d)
+make_stubs "$TOS/bin"; rm -f "$TOS/bin/openssl"
+# Wrappers, not symlinks: Git Bash's `ln -s` copies binaries, and a copied
+# msys binary cannot find its DLL outside /usr/bin.
+for _t in bash dirname grep sort uname; do
+  printf '#!%s\nexec %s "$@"\n' "$REAL_BASH" "$(command -v "$_t")" > "$TOS/bin/$_t"; chmod +x "$TOS/bin/$_t"
+done
+mkdir -p "$TOS/repo/server" "$TOS/repo/.git"   # a clone, so only the openssl check decides
+_tos_run() { env -i PATH="$TOS/bin" HOME="$TOS" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TOS/repo" "$@" \
+  "$REAL_BASH" "$INSTALLER" --server --yes --dry-run 2>&1 || true; }
+_tos_check() { # <label> <want: named|not-named> [VAR=value ...]
+  local label="$1" want="$2" got out; shift 2
+  out=$(_tos_run "$@")
+  if echo "$out" | grep -q "required tools not found in PATH: .*openssl"; then got=named
+  elif echo "$out" | grep -q "delegate: server/install.sh"; then got=not-named   # positive control: the run got past the check
+  else got="neither (got: $(echo "$out" | tail -2 | tr '\n' ' '))"; fi
+  if [ "$got" = "$want" ]; then pass "T-OPENSSL: $label"; else fail "T-OPENSSL: $label (openssl $got)"; fi
+}
+_tos_check "fresh install needs it" named
+_tos_check "an exported token does not" not-named UM_AUTH_TOKEN=tok-test
+printf 'UM_AUTH_TOKEN=tok-test\n' > "$TOS/repo/server/.env"
+_tos_check "a re-run reusing server/.env's token does not" not-named
+printf 'MEM0_USER_ID=x\n' > "$TOS/repo/server/.env"
+_tos_check "a server/.env with no token still needs it" named
+printf 'UM_AUTH_TOKEN=\n' > "$TOS/repo/server/.env"
+_tos_check "an empty token line still needs it" named
+printf 'UM_AUTH_TOKEN=""\n' > "$TOS/repo/server/.env"
+_tos_check "a quoted empty token still needs it" named
+rm -rf "$TOS"
+
+# ─── T-YAML-CWD: the PyYAML probe never imports from the working directory ──
+# python3 -c puts the working directory first on sys.path, so a yaml.py left
+# there ran as the user (FCP pass 4, pre-existing on main). Every probe runs
+# from /.
+echo ""
+echo "=== T-YAML-CWD: a yaml.py in the working directory is never imported ==="
+TYC=$(mktemp -d)
+if (cd / && python3 -c 'import yaml') >/dev/null 2>&1; then
+  mkdir -p "$TYC/bin" "$TYC/cwd" "$TYC/repo/server" "$TYC/repo/.git"
+  for _t in git docker openssl; do printf '#!/bin/bash\nexit 0\n' > "$TYC/bin/$_t"; chmod +x "$TYC/bin/$_t"; done
+  printf 'open("%s/PLANTED", "w").write("ran")\n' "$TYC" > "$TYC/cwd/yaml.py"
+  (cd "$TYC/cwd" && env PATH="$TYC/bin:/usr/bin:/bin" HOME="$TYC" OPENAI_API_KEY=sk-test UM_INSTALL_DIR="$TYC/repo" \
+    bash "$INSTALLER" --server --yes --dry-run >/dev/null 2>&1) || true
+  if [ ! -e "$TYC/PLANTED" ]; then pass "T-YAML-CWD: the prerequisite check ignores a yaml.py in the working directory"; else fail "T-YAML-CWD: a planted yaml.py ran"; fi
+else
+  echo "  SKIP: T-YAML-CWD behavioural case (no python3 with PyYAML here)"
+fi
+# Every PyYAML probe on the install path runs from /.
+_tyc_bad=$(grep -n "python3 -c 'import yaml'" "$REPO_ROOT/installer/install.sh" "$REPO_ROOT/installer/wizard-lib.sh" \
+  "$REPO_ROOT/installer/install-cli.sh" "$REPO_ROOT/server/install.sh" | grep -v "cd / && python3 -c 'import yaml'" || true)
+if [ -z "$_tyc_bad" ]; then pass "T-YAML-CWD: every PyYAML probe runs from /"; else fail "T-YAML-CWD: probe(s) run in the working directory: $_tyc_bad"; fi
+rm -rf "$TYC"
+
+# ─── T-README-KEYS: the agent failure table matches what the scripts print ───
+# An agent matches README's "Install with an AI agent" failure table literally.
+# A reworded message would leave its row unmatched and the agent at "Anything
+# else: stop" (2026-10-15 review round 8), so each key must appear verbatim in
+# both the README and the script that prints it.
+echo ""
+echo "=== T-README-KEYS: failure-table keys exist in their sources ==="
+# key|the script that prints it — one line per backticked key in the table's
+# Message column. The table itself is parsed below, so a row added, removed or
+# reworded without updating this list fails too.
+_readme_keys='required tools not found|installer/install.sh
+--yes mode requires API key(s)|installer/install.sh
+captures require UM_MCP_WRITE_ENABLED=true|server/install.sh
+writes are DISABLED (HTTP 403)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
+stop.sh did not post|server/install.sh
+rejected the token (HTTP 401)|plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh
+No running memory-server container found|server/install.sh
+plugin-registered|server/install.sh
+version-skew|server/install.sh'
+# shellcheck disable=SC2016  # the backticks are literal Markdown, not expansions
+_table_keys=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\| `/' "$REPO_ROOT/README.md" \
+  | cut -d'|' -f2 | grep -o '`[^`]*`' | tr -d '`' | sort -u || true)
+_list_keys=$(printf '%s\n' "$_readme_keys" | cut -d'|' -f1 | sort -u)
+# Every row before the catch-all must be keyed on a backticked message, or the
+# parse above would skip it silently.
+_unkeyed=$(awk '/^\| Message \| Fix \|/{f=1; next} /^\| Anything else \|/{f=0} f && /^\|/ && !/^\|---/ && !/^\| `/' "$REPO_ROOT/README.md")
+if [ -z "$_unkeyed" ]; then pass "T-README-KEYS: every row is keyed on a backticked message"; else fail "T-README-KEYS: unkeyed row(s): $_unkeyed"; fi
+if [ -n "$_table_keys" ] && [ "$_table_keys" = "$_list_keys" ]; then pass "T-README-KEYS: the table's keys are exactly the listed ones"; else fail "T-README-KEYS: table vs list differ: $(diff <(echo "$_list_keys") <(echo "$_table_keys") | grep '^[<>]' | tr '\n' ' ')"; fi
+while IFS='|' read -r _key _src; do
+  if grep -qF -- "$_key" "$REPO_ROOT/$_src"; then pass "T-README-KEYS: '$_key' is printed by $_src"; else fail "T-README-KEYS: '$_key' not in $_src"; fi
+done <<< "$_readme_keys"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

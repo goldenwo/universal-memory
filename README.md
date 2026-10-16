@@ -111,11 +111,55 @@ Then run `/um-setup` inside Claude Code once. Accept `http://localhost:6335`. On
 
 Open a session. The Stop hook streams turns to the server, and the SessionEnd hook triggers a server-side summary. Nothing else is required.
 
-**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: the wizard turns that on, but a server installed with `--yes` or by hand needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env`. Server must be ≥ v1.7.0.
+**Pointing at a remote server?** Install the plugin the same way, then run `/um-setup` with your server's URL and its token (the server's `~/.um/auth-token`). The hooks are thin HTTP clients, local and remote alike. The server must accept captures: `installer/install.sh` turns that on for a new install, but a server wired by hand, or installed with `--yes` by v1.28.1 or earlier, needs `UM_MCP_WRITE_ENABLED=true` and `UM_MOUNT_MODE=rw` in `server/.env` (a re-run keeps what `server/.env` says). Server must be ≥ v1.7.0.
 
 ### 3. Second session — continuity works
 
 At the start of the next session, the SessionStart hook detects the unprocessed captures, writes a fresh `state.md`, and injects it as context before your first message. Run `/um-checkpoint` any time mid-session to refresh `state.md` on demand.
+
+### Install with an AI agent
+
+Paste this into Claude Code, or any coding agent that can run a shell:
+
+> Install universal-memory by following the "Install with an AI agent" section of https://github.com/goldenwo/universal-memory/blob/main/README.md. My OpenAI API key is in the `OPENAI_API_KEY` environment variable. Don't print it, and don't ask me to paste it.
+
+**For the agent:**
+
+1. **Check the prerequisites.** Run `docker info` (the Docker daemon must be running, not just installed), `docker compose version`, `git --version`, `curl --version`, `openssl version`, `(cd / && python3 -c 'import yaml')` (from `/`, so no `yaml.py` in the current directory gets imported) and `claude --version`.
+   - If one is missing, give the user the command to install it (on Debian/Ubuntu, `sudo apt install python3-yaml`) rather than running `sudo` yourself.
+   - Without `claude`, step 2 still installs the server and the `um` CLI, but no plugin. In step 3, the `plugin-registered` line fails and every other line must pass. Stop there and tell the user to install Claude Code, then run `bash installer/install.sh --plugin-cc --yes` from the clone, then step 4.
+   - Install as a regular user, not root: the server container runs unprivileged and can't write a vault that root creates.
+   - `OPENAI_API_KEY` must already be set. Never echo it, write it into the chat, or put it on a command line. `server/.env` and `~/.um/auth-token` hold the key and the server's access token: never print, `cat` or `grep` them. None of the fixes below needs to read them.
+2. **Install, non-interactively.** If `~/.um/endpoint` exists, or `UM_SERVER_URL` is set, and names a server other than `localhost`, this machine already uses a remote server: stop and ask the user before installing a local one. Then look for an existing install with `docker compose ls --all --filter 'name=^universal-memory$'`. If it lists one, the first path in its CONFIG FILES column, minus its trailing `server/docker-compose.yml` (`server\docker-compose.yml` on Windows), is that install's checkout. Use it wherever this section says `~/universal-memory`: run `git pull` and then `bash server/install.sh --upgrade` in it (see [Upgrading](#upgrading)), and go on to step 3. Otherwise:
+   ```bash
+   git clone https://github.com/goldenwo/universal-memory ~/universal-memory
+   cd ~/universal-memory
+   bash installer/install.sh --yes
+   ```
+   Clone to `~/universal-memory`, not the current directory: the clone becomes the server's home, holding `server/.env` and the memory store. If `~/universal-memory` already exists, run `git pull` in it instead of cloning. If `~/universal-memory/server/.env` exists too and this run did not create it, it is an install whose containers were removed: stop and report, because the installer would reset settings in it that you can't see.
+
+   The install can take several minutes (image pulls, a slow first start), so give the command a timeout of at least 10 minutes. If it timed out or was killed, wait until that run has exited, then run the same installer command once more, even though `server/.env` may now exist: a re-run keeps it. If that fails too, stop and report.
+
+   This writes `server/.env`, starts the Docker stack with capture on, and saves the access token to `~/.um/auth-token`. It also installs the `um` CLI, and registers the Claude Code plugin when `claude` is on `PATH`.
+3. **Verify.** From `~/universal-memory`, `bash server/install.sh --verify` must end with "All checks passed", with no `version-skew` line. For a failing line, use the table below.
+4. **Point the plugin at the server.** Run the setup script from the clone. It reads the saved token and writes `~/.um/endpoint`, which the plugin reads. The endpoint is the URL on step 3's `server-health` line, minus `/health`; it is `http://localhost:6335` unless an existing install uses another port:
+   ```bash
+   bash ~/universal-memory/plugins/claude-code/universal-memory/hooks/um-setup.sh --endpoint http://localhost:6335 </dev/null
+   ```
+5. **Tell the user to restart Claude Code.** Step 4 did what `/um-setup` does, so they don't need to run it. Capture and the session-start briefing begin with the next session. The `um` command works in a new terminal, which picks up the `PATH` change the installer made.
+
+If a step fails, find its message below and apply that fix, not the hint printed next to it (some hints point into `server/.env`). If the fix doesn't clear it, stop and report. The `installer/install.sh --server` re-runs below are only for a server step 2 installed in this run. For an existing install found in step 2, stop and report instead: a re-run would reset settings in `server/.env` that you can't see, such as its vault directory and port. (The `--plugin-cc` re-run never touches `server/.env`.)
+
+| Message | Fix |
+|---|---|
+| `required tools not found` | Install what it names. |
+| `--yes mode requires API key(s)` | `OPENAI_API_KEY` isn't set in your shell. Stop and ask the user to export it in the shell that starts you, then restart you. Don't search files for it. |
+| `captures require UM_MCP_WRITE_ENABLED=true` (step 3) or `writes are DISABLED (HTTP 403)` (step 4) | From `~/universal-memory`, run `UM_MCP_WRITE_ENABLED=true bash installer/install.sh --server --yes`. |
+| `stop.sh did not post` (step 3) or `rejected the token (HTTP 401)` (step 4) | From `~/universal-memory`, run `env -u UM_AUTH_TOKEN bash installer/install.sh --server --yes`. It copies the server's token to `~/.um/auth-token` again. |
+| `No running memory-server container found` (step 2 upgrade) | The install exists but is stopped. From its `server/` directory, run `docker compose up -d`, then run step 2's upgrade again. |
+| `plugin-registered` (step 3) | With `claude` installed, run `bash installer/install.sh --plugin-cc --yes` from `~/universal-memory`. Without it, see step 1. |
+| `version-skew` (step 3) | From `~/universal-memory`, run the command the line names (`bash server/install.sh --upgrade` or `bash installer/install-cli.sh --no-path`). |
+| Anything else | Stop, report the message to the user, and change nothing. |
 
 ### Install the `um` CLI
 
@@ -150,7 +194,7 @@ Requests to `/api` and `/mcp` must carry `Authorization: Bearer <UM_AUTH_TOKEN>`
 ## What you get
 
 - **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
-- **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (4 read tools by default; write tools opt-in via `UM_MCP_WRITE_ENABLED=true`). Read responses return compact snippets by default; opt into full bodies with `full: true`.
+- **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (the 4 read tools always; the write tools when `UM_MCP_WRITE_ENABLED=true`, which `installer/install.sh` sets for a new install). Read responses return compact snippets by default; opt into full bodies with `full: true`.
 - **Cross-environment capture** — capture is not Claude Code-only. claude.ai, ChatGPT Desktop, and Codex feed conversation turns into the same pipeline via `memory_append_turn`, and trigger summaries with `memory_checkpoint`.
 - **Command-line toolkit** — an 8-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `forget`, `supersede`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.

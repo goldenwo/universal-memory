@@ -30,7 +30,8 @@ wizard_detect_env() {
   DETECTED_CC=$(command -v claude >/dev/null 2>&1 && echo 1 || echo 0)
   DETECTED_CODEX=$([[ -d "$HOME/.codex" ]] && echo 1 || echo 0)
   DETECTED_PYTHON3=$(command -v python3 >/dev/null 2>&1 && echo 1 || echo 0)
-  DETECTED_PYYAML=$(python3 -c 'import yaml' 2>/dev/null && echo 1 || echo 0)
+  # From / so a yaml.py in the working directory is not imported (and run).
+  DETECTED_PYYAML=$( (cd / && python3 -c 'import yaml') 2>/dev/null && echo 1 || echo 0)
   DETECTED_BASH_VERSION=$(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
 
   echo "Detected environment:"
@@ -258,7 +259,10 @@ wizard_summarize() {
   if [[ -n "${UM_VAULT_DIR:-}" ]]; then echo "  Vault: $UM_VAULT_DIR"; fi
   if [[ $INSTALL_SERVER -eq 1 ]]; then
     if [[ "${UM_MCP_WRITE_ENABLED:-}" == "true" || "${UM_MCP_WRITE_ENABLED:-}" == "1" ]]; then
-      echo "  Capture: on (the server accepts writes; set UM_MCP_WRITE_ENABLED=false in server/.env to make it read-only)"
+      echo "  Capture: on (the server accepts writes; set UM_MCP_WRITE_ENABLED=false and UM_MOUNT_MODE=ro in server/.env to make it read-only)"
+    elif [[ -z "${UM_MCP_WRITE_ENABLED:-}" ]]; then
+      # _um_capture_default has run: unset means a re-run with nothing exported.
+      echo "  Capture: as set in the existing server/.env (kept on re-run)"
     else
       echo "  Capture: off (UM_MCP_WRITE_ENABLED=${UM_MCP_WRITE_ENABLED:-false})"
     fi

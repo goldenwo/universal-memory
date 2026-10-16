@@ -72,7 +72,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # --- preflight: pyyaml ---
-if ! python3 -c 'import yaml' 2>/dev/null; then
+# From / so a yaml.py in the working directory is not imported (and run).
+if ! (cd / && python3 -c 'import yaml') 2>/dev/null; then
   fail "python3 yaml module is required.
   Install: apt install python3-yaml | brew install python-yaml | pip3 install pyyaml"
 fi
