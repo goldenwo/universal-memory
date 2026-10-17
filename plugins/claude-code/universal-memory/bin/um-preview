@@ -59,10 +59,11 @@ differ from this draft.
 
 Env vars:
   UM_VAULT_DIR        - vault root (default: \$HOME/.um/vault)
-  UM_OPENAI_API_KEY   - required (or OPENAI_API_KEY), read from your own
-                        environment; the installers do not put it in your
-                        shell profile
-  UM_SUMMARIZER       - summarizer backend (default: openai)
+  UM_SUMMARIZER       - backend for both steps: openai (default) or
+                        claude-agent-sdk (the claude CLI, no OpenAI key)
+  UM_OPENAI_API_KEY   - required for openai (or OPENAI_API_KEY), read from
+                        your own environment; the installers do not put it
+                        in your shell profile
   CLAUDE_CWD          - override for project name inference
 
 Note (#294): the project defaults to the CWD BASENAME, while capture layers
@@ -106,7 +107,7 @@ SUMMARY=$(printf '%s' "$RAW_CONTENT" | UM_PROJECT="$PROJECT" bash "$LIB_DIR/summ
 
 if [ -z "$SUMMARY" ]; then
   echo "um-preview: summarize.sh returned empty — cannot produce preview." >&2
-  echo "um-preview: likely causes: UM_OPENAI_API_KEY (or OPENAI_API_KEY) not exported in this shell, daily cap hit, transcript <50 chars, or LLM API error." >&2
+  echo "um-preview: likely causes: no UM_OPENAI_API_KEY (or OPENAI_API_KEY) for UM_SUMMARIZER=openai, the claude CLI failing for UM_SUMMARIZER=claude-agent-sdk, daily cap hit, transcript <50 chars, or LLM API error." >&2
   exit 1
 fi
 
@@ -128,9 +129,19 @@ fi
 # ---------------------------------------------------------------------------
 # Step 3: pipe into update-state.sh --stdout for merge + render
 # --stdout suppresses telemetry append; this script never writes to the vault.
+# Its stderr stays visible: on an empty draft its [um-update-state] line is
+# the specific reason.
 # ---------------------------------------------------------------------------
-{
+DRAFT=$({
   printf '===UM-OLD-STATE===\n%s\n' "$OLD_STATE"
   printf '===UM-SESSION-SUMMARY===\n%s\n' "$SUMMARY"
   printf '===UM-END===\n'
-} | bash "$LIB_DIR/update-state.sh" --stdout --project "$PROJECT"
+} | bash "$LIB_DIR/update-state.sh" --stdout --project "$PROJECT")
+
+if [ -z "$DRAFT" ]; then
+  echo "um-preview: update-state.sh returned an empty draft — nothing to show." >&2
+  echo "um-preview: likely causes: no UM_OPENAI_API_KEY (or OPENAI_API_KEY) for UM_SUMMARIZER=openai, the claude CLI failing for UM_SUMMARIZER=claude-agent-sdk, a reply missing required state.md sections, or an LLM API error (see any [um-update-state] line above)." >&2
+  exit 1
+fi
+
+printf '%s\n' "$DRAFT"

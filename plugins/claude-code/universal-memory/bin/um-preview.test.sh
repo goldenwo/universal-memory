@@ -61,6 +61,75 @@ if [ "$T2_EXIT" -ne 0 ]; then pass "T2: non-zero exit on missing captures"; else
 if echo "$T2_OUT" | grep -qi "no captures\|captures for today"; then pass "T2: user-friendly message shown"; else fail "T2: no friendly message (got: $T2_OUT)"; fi
 rm -rf "$tmp"
 
+# Stub `claude` for the claude-agent-sdk tests: the merge step's prompt ends
+# with "Produce the updated state.md", so it gets $STUB_STATE_FILE back; the
+# summarize step gets a one-line summary. Every call is logged.
+make_fake_claude() {
+  local outdir="$1"
+  mkdir -p "$outdir"
+  cat > "$outdir/claude" <<'BIN'
+#!/bin/bash
+input=$(cat)
+echo "claude $*" >> "$CALL_LOG"
+case "$input" in
+  *"Produce the updated state.md"*) cat "$STUB_STATE_FILE" ;;
+  *) echo "Claude summary: fixed auth bug via JWT refactor." ;;
+esac
+BIN
+  # curl must never be reached on the claude-agent-sdk path.
+  cat > "$outdir/curl" <<'BIN'
+#!/bin/bash
+echo "curl $*" >> "$CALL_LOG"
+exit 7
+BIN
+  chmod +x "$outdir/claude" "$outdir/curl"
+}
+
+# ─── Test 3 (#385): claude-agent-sdk with no OpenAI key prints the draft ─────
+echo ""
+echo "=== T3: UM_SUMMARIZER=claude-agent-sdk, no OpenAI key → draft printed ==="
+tmp=$(mktemp -d)
+export UM_VAULT_DIR="$tmp/vault"
+mkdir -p "$UM_VAULT_DIR/captures/sdk-proj/raw"
+printf '# 2026-04-20T12:00Z\nUser: fixed auth bug via JWT refactor\nThis is a longer capture so we clear the 50-char transcript-length guard in summarize.sh.\n' > "$UM_VAULT_DIR/captures/sdk-proj/raw/$(date -u +%Y-%m-%d).md"
+fake_bin="$tmp/bin"
+make_fake_claude "$fake_bin"
+export CALL_LOG="$tmp/calls.log" STUB_STATE_FILE="$tmp/state-reply.md"
+printf -- '---\nschema_version: 1\ntype: state\nid: state-sdk-proj\nproject: sdk-proj\n---\n\n# State of play\n\n## Current focus\nAuth refactor via claude.\n\n## In flight\n- JWT testing\n\n## Recent decisions\n- Use RS256\n\n## Next actions\n- Deploy staging\n\n## Open questions\n- Key rotation cadence\n\n## Environment\n- branch: main\n' > "$STUB_STATE_FILE"
+
+T3_EXIT=0
+T3_OUT=$(env -u UM_OPENAI_API_KEY -u OPENAI_API_KEY PATH="$fake_bin:$PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash "$BIN" --project sdk-proj 2>/dev/null) || T3_EXIT=$?
+
+if [ "$T3_EXIT" -eq 0 ]; then pass "T3: exits 0"; else fail "T3: expected exit 0, got $T3_EXIT"; fi
+if echo "$T3_OUT" | grep -q "Auth refactor via claude"; then pass "T3: draft from claude printed"; else fail "T3: no draft on stdout (got: '$T3_OUT')"; fi
+if [ "$(grep -c '^claude ' "$CALL_LOG" 2>/dev/null || true)" = "2" ]; then pass "T3: claude ran for both steps"; else fail "T3: expected 2 claude calls (log: $(cat "$CALL_LOG" 2>/dev/null))"; fi
+if ! grep -q '^curl ' "$CALL_LOG" 2>/dev/null; then pass "T3: OpenAI never called"; else fail "T3: curl was called (log: $(cat "$CALL_LOG"))"; fi
+if [ ! -f "$UM_VAULT_DIR/state/sdk-proj/state.md" ]; then pass "T3: state.md NOT written"; else fail "T3: state.md was written"; fi
+rm -rf "$tmp"
+
+# ─── Test 4 (#385): an empty draft says why instead of printing nothing ─────
+echo ""
+echo "=== T4: merge step returns nothing → non-zero exit with a reason ==="
+tmp=$(mktemp -d)
+export UM_VAULT_DIR="$tmp/vault"
+mkdir -p "$UM_VAULT_DIR/captures/sdk-proj/raw"
+printf '# 2026-04-20T12:00Z\nUser: fixed auth bug via JWT refactor\nThis is a longer capture so we clear the 50-char transcript-length guard in summarize.sh.\n' > "$UM_VAULT_DIR/captures/sdk-proj/raw/$(date -u +%Y-%m-%d).md"
+fake_bin="$tmp/bin"
+make_fake_claude "$fake_bin"
+export CALL_LOG="$tmp/calls.log" STUB_STATE_FILE="$tmp/state-reply.md"
+# A reply with no frontmatter or sections: update-state.sh rejects it, and
+# with no OpenAI key there is no fallback, so the draft is empty.
+printf 'Sorry, I cannot produce that.\n' > "$STUB_STATE_FILE"
+
+T4_EXIT=0
+T4_OUT=$(env -u UM_OPENAI_API_KEY -u OPENAI_API_KEY PATH="$fake_bin:$PATH" UM_SUMMARIZER=claude-agent-sdk \
+  bash "$BIN" --project sdk-proj 2>&1) || T4_EXIT=$?
+
+if [ "$T4_EXIT" -ne 0 ]; then pass "T4: non-zero exit on an empty draft"; else fail "T4: expected non-zero exit, got 0 (output: '$T4_OUT')"; fi
+if echo "$T4_OUT" | grep -q "um-preview: .*empty draft"; then pass "T4: says the draft is empty"; else fail "T4: no empty-draft message (got: '$T4_OUT')"; fi
+rm -rf "$tmp"
+
 # ─── Summary ──────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
