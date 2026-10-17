@@ -85,15 +85,6 @@ UM_STATE_MAX_CHARS="${UM_STATE_MAX_CHARS:-12000}"
 UM_STATE_TIMEOUT_SEC="${UM_STATE_TIMEOUT_SEC:-30}"
 
 # ---------------------------------------------------------------------------
-# Resolve API key
-# ---------------------------------------------------------------------------
-api_key="${UM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
-if [ -z "$api_key" ]; then
-  # Silent exit — missing key is a no-op
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
 # Read full stdin
 # ---------------------------------------------------------------------------
 raw_input=$(cat)
@@ -196,7 +187,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Build JSON payload via python3 (handles all escaping correctly)
+# Build the merge prompt (shared by every backend)
 # ---------------------------------------------------------------------------
 
 export _UM_USER_PROMPT="Project: ${project}
@@ -214,9 +205,60 @@ ${session_summary}
 
 Produce the updated state.md (frontmatter + body)."
 
-export _UM_MODEL="$UM_STATE_MODEL"
+# ─── UM_SUMMARIZER dispatch (#385) ────────────────────────────────────────────
+# Same backends and fallbacks as summarize.sh's dispatch: um-preview runs
+# summarize.sh and then this script, so one setting must drive both steps.
+# Default openai. claude-agent-sdk pipes the prompts to `claude -p` and falls
+# back to openai when the CLI is missing, fails or returns nothing; its reply
+# goes through the same validation below. ollama and unknown values fall
+# back to openai with a warning.
+backend="${UM_SUMMARIZER:-openai}"
+state_doc=""
+case "$backend" in
+  openai)
+    :
+    ;;
+  claude-agent-sdk)
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "[um-update-state] UM_SUMMARIZER=claude-agent-sdk requires 'claude' CLI in PATH — falling back to openai" >&2
+      backend=openai
+    else
+      state_doc=$(printf '%s\n\n%s' "$_UM_SYSTEM_PROMPT" "$_UM_USER_PROMPT" | \
+                  UM_IN_SUMMARIZER_SUBPROCESS=1 claude -p --output-format text 2>/dev/null)
+      claude_rc=$?
+      if [ "$claude_rc" -ne 0 ] || [ -z "$state_doc" ]; then
+        echo "[um-update-state] claude -p failed (exit $claude_rc) or returned empty — falling back to openai" >&2
+        state_doc=""
+        backend=openai
+      fi
+    fi
+    ;;
+  ollama)
+    echo "[um-update-state] UM_SUMMARIZER=ollama — not yet implemented, falling back to openai" >&2
+    backend=openai
+    ;;
+  *)
+    echo "[um-update-state] UM_SUMMARIZER='$backend' unknown — falling back to openai" >&2
+    backend=openai
+    ;;
+esac
 
-payload=$(python3 -c '
+if [ "$backend" = "openai" ]; then
+  # -------------------------------------------------------------------------
+  # Resolve API key — the openai backend's only hard requirement
+  # -------------------------------------------------------------------------
+  api_key="${UM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+  if [ -z "$api_key" ]; then
+    echo "[um-update-state] no OpenAI key: export UM_OPENAI_API_KEY (or OPENAI_API_KEY), or set UM_SUMMARIZER=claude-agent-sdk to merge with the claude CLI" >&2
+    exit 0
+  fi
+
+  # -------------------------------------------------------------------------
+  # Build JSON payload via python3 (handles all escaping correctly)
+  # -------------------------------------------------------------------------
+  export _UM_MODEL="$UM_STATE_MODEL"
+
+  payload=$(python3 -c '
 import os, json
 payload = {
     "model": os.environ["_UM_MODEL"],
@@ -228,68 +270,65 @@ payload = {
 print(json.dumps(payload))
 ')
 
-# Clean up env vars
-unset _UM_SYSTEM_PROMPT _UM_USER_PROMPT _UM_MODEL
-
-if [ -z "$payload" ]; then
-  echo "[um-update-state] failed to build request payload" >&2
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# API call with retry once on 5xx / 429
-# ---------------------------------------------------------------------------
-response=""
-http_code=""
-
-for attempt in 1 2; do
-  raw_response=$(curl -s --max-time "$UM_STATE_TIMEOUT_SEC" \
-    -w '\n__UM_HTTP_CODE__%{http_code}' \
-    -H "Authorization: Bearer $api_key" \
-    -H "Content-Type: application/json" \
-    -X POST https://api.openai.com/v1/chat/completions \
-    -d "$payload" 2>&1)
-  curl_status=$?
-
-  # Extract HTTP status from the trailing sentinel line
-  http_code=$(printf '%s' "$raw_response" | grep -o '__UM_HTTP_CODE__[0-9]*' | tail -1 | sed 's/__UM_HTTP_CODE__//')
-  # Strip the sentinel line from the response body
-  response=$(printf '%s' "$raw_response" | sed '/^__UM_HTTP_CODE__[0-9]*$/d')
-
-  if [ $curl_status -ne 0 ]; then
-    if [ "$attempt" -eq 2 ]; then
-      echo "[um-update-state] API failed after retry (curl exit $curl_status), giving up" >&2
-      exit 0
-    fi
-    sleep 1
-    continue
+  if [ -z "$payload" ]; then
+    echo "[um-update-state] failed to build request payload" >&2
+    exit 0
   fi
 
-  # Retry on 5xx or 429
-  if [ -n "$http_code" ]; then
-    if { [ "$http_code" -ge 500 ] 2>/dev/null; } || { [ "$http_code" -eq 429 ] 2>/dev/null; }; then
+  # -------------------------------------------------------------------------
+  # API call with retry once on 5xx / 429
+  # -------------------------------------------------------------------------
+  response=""
+  http_code=""
+
+  for attempt in 1 2; do
+    raw_response=$(curl -s --max-time "$UM_STATE_TIMEOUT_SEC" \
+      -w '\n__UM_HTTP_CODE__%{http_code}' \
+      -H "Authorization: Bearer $api_key" \
+      -H "Content-Type: application/json" \
+      -X POST https://api.openai.com/v1/chat/completions \
+      -d "$payload" 2>&1)
+    curl_status=$?
+
+    # Extract HTTP status from the trailing sentinel line
+    http_code=$(printf '%s' "$raw_response" | grep -o '__UM_HTTP_CODE__[0-9]*' | tail -1 | sed 's/__UM_HTTP_CODE__//')
+    # Strip the sentinel line from the response body
+    response=$(printf '%s' "$raw_response" | sed '/^__UM_HTTP_CODE__[0-9]*$/d')
+
+    if [ $curl_status -ne 0 ]; then
       if [ "$attempt" -eq 2 ]; then
-        echo "[um-update-state] API error HTTP $http_code after retry, giving up" >&2
+        echo "[um-update-state] API failed after retry (curl exit $curl_status), giving up" >&2
         exit 0
       fi
       sleep 1
       continue
     fi
 
-    # Non-retryable 4xx (except 429 already handled)
-    if [ "$http_code" -ge 400 ] 2>/dev/null; then
-      echo "[um-update-state] API error HTTP $http_code, giving up" >&2
-      exit 0
+    # Retry on 5xx or 429
+    if [ -n "$http_code" ]; then
+      if { [ "$http_code" -ge 500 ] 2>/dev/null; } || { [ "$http_code" -eq 429 ] 2>/dev/null; }; then
+        if [ "$attempt" -eq 2 ]; then
+          echo "[um-update-state] API error HTTP $http_code after retry, giving up" >&2
+          exit 0
+        fi
+        sleep 1
+        continue
+      fi
+
+      # Non-retryable 4xx (except 429 already handled)
+      if [ "$http_code" -ge 400 ] 2>/dev/null; then
+        echo "[um-update-state] API error HTTP $http_code, giving up" >&2
+        exit 0
+      fi
     fi
-  fi
 
-  break
-done
+    break
+  done
 
-# ---------------------------------------------------------------------------
-# Parse state document from response
-# ---------------------------------------------------------------------------
-state_doc=$(printf '%s' "$response" | python3 -c '
+  # -------------------------------------------------------------------------
+  # Parse state document from response
+  # -------------------------------------------------------------------------
+  state_doc=$(printf '%s' "$response" | python3 -c '
 import sys, json
 try:
     d = json.loads(sys.stdin.read())
@@ -302,11 +341,15 @@ except Exception as e:
     sys.exit(1)
 ')
 
-parse_status=$?
-if [ $parse_status -ne 0 ] || [ -z "$state_doc" ]; then
-  echo "[um-update-state] failed to parse API response" >&2
-  exit 0
+  parse_status=$?
+  if [ $parse_status -ne 0 ] || [ -z "$state_doc" ]; then
+    echo "[um-update-state] failed to parse API response" >&2
+    exit 0
+  fi
 fi
+
+# Clean up env vars
+unset _UM_SYSTEM_PROMPT _UM_USER_PROMPT _UM_MODEL
 
 # ---------------------------------------------------------------------------
 # Validation — check output has required structure before returning
@@ -354,22 +397,28 @@ fi
 #   In --stdout mode we still log to stderr (useful for preview cost signal)
 #   but skip the persistent cost-log.csv append so preview calls don't
 #   pollute cumulative usage stats.
+#   claude -p reports no token counts, so that backend logs no cost row —
+#   the same as summarize.sh's claude-agent-sdk path.
 # ---------------------------------------------------------------------------
-tokens_in=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("prompt_tokens",0))')
-tokens_out=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("completion_tokens",0))')
-cost=$(python3 -c "print(f'{($tokens_in * 0.00015 + $tokens_out * 0.0006) / 1000:.6f}')")
+if [ "$backend" != "openai" ]; then
+  echo "[um-update-state] backend=$backend mode=$UM_MODE" >&2
+else
+  tokens_in=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("prompt_tokens",0))')
+  tokens_out=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("completion_tokens",0))')
+  cost=$(python3 -c "print(f'{($tokens_in * 0.00015 + $tokens_out * 0.0006) / 1000:.6f}')")
 
-echo "[um-update-state] tokens_in=$tokens_in tokens_out=$tokens_out cost_estimate_usd=$cost mode=$UM_MODE" >&2
+  echo "[um-update-state] tokens_in=$tokens_in tokens_out=$tokens_out cost_estimate_usd=$cost mode=$UM_MODE" >&2
 
-if [ "$UM_MODE" != "stdout" ]; then
-  # Append to cost-log.csv (write mode only — preview must not bump counters)
-  vault=$(vault_path)
-  cost_log="$vault/.telemetry/cost-log.csv"
-  mkdir -p "$(dirname "$cost_log")"
-  if [ ! -f "$cost_log" ]; then
-    echo "timestamp,project,model,tokens_in,tokens_out,cost_usd" > "$cost_log"
+  if [ "$UM_MODE" != "stdout" ]; then
+    # Append to cost-log.csv (write mode only — preview must not bump counters)
+    vault=$(vault_path)
+    cost_log="$vault/.telemetry/cost-log.csv"
+    mkdir -p "$(dirname "$cost_log")"
+    if [ ! -f "$cost_log" ]; then
+      echo "timestamp,project,model,tokens_in,tokens_out,cost_usd" > "$cost_log"
+    fi
+    echo "${timestamp},${project},${UM_STATE_MODEL},${tokens_in},${tokens_out},${cost}" >> "$cost_log"
   fi
-  echo "${timestamp},${project},${UM_STATE_MODEL},${tokens_in},${tokens_out},${cost}" >> "$cost_log"
 fi
 
 # ---------------------------------------------------------------------------
