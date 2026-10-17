@@ -763,6 +763,12 @@ jobs:
       # no network. Wired explicitly, same as um-alert.test.sh above: a new
       # bin/ script is never glob-covered by this job.
       - run: bash plugins/claude-code/universal-memory/bin/um-drain.test.sh
+      # um-preview.test.sh covers the local draft CLI end to end (summarize.sh
+      # then update-state.sh) against stubbed curl/claude: no writes to the
+      # vault, a friendly no-captures error, and #385's claude-agent-sdk path
+      # with no OpenAI key plus the empty-draft message. Shellchecked but never
+      # run until #385 — the same gap class as um-tunnel.test.sh above.
+      - run: bash plugins/claude-code/universal-memory/bin/um-preview.test.sh
       # Real-install leg — validates end-to-end
       - name: Real install + um --version sanity
         run: |
