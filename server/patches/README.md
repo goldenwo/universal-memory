@@ -145,15 +145,22 @@ and npm 11 disagree about optional peers. mongodb has an optional peer,
 mem0ai's required peer `natural` → `mongoose`. UM never loads it, and the
 Dockerfile removes mongoose and natural from the image. Without the
 override, npm 10 nests a `gcp-metadata@7` copy under `mongoose/` to satisfy
-that peer. npm ≥ 11.5 (Dependabot, Windows hosts) prunes any node that only
-an optional peer needs, and then npm 10's `npm ci` (CI, the image) fails
-with EUSAGE `Missing: gcp-metadata@7.0.1 from lock file`. The override lets
-the 8.x already in the tree satisfy the peer, so neither npm wants the
-nested copy and both write the same lock. The range is open-ended on
-purpose: a pin to one major would bring the clash back on the next
-`google-auth-library` bump. If any other optional peer clashes with a
-version already in the tree and causes the same EUSAGE, fix it the same
-way. Never hand-restore the nested entry.
+that peer. npm 11.5 and later (Dependabot, Windows hosts) drop a node that
+only an optional peer needs. 11.5.0–11.6.x also drop some optional
+dependencies of peer packages, such as `pg-cloudflare`. Once the copy is
+dropped, npm 10's `npm ci` (CI, the image) fails with EUSAGE
+`Missing: gcp-metadata@7.0.1 from lock file`. The override lets the 8.x
+already in the tree satisfy the peer, so neither npm adds the nested copy.
+From the committed lock, npm 10.9.8 and npm 11.7+ write the same lock.
+npm 10 keeps a stale nested entry if a lock already has one: delete it.
+The range is open-ended on purpose: a pin to one major would bring the
+clash back on the next `google-auth-library` bump.
+
+The override also frees mongodb to hoist to `node_modules/mongodb` on a
+fresh lock or `npm update`, so the Dockerfile's rm list names that path
+too. If any other optional peer clashes with a version already in the tree
+and causes the same EUSAGE, fix it the same way. Never hand-restore the
+nested entry.
 
 ## Known reconciliation hazards
 
