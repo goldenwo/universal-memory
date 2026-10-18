@@ -158,7 +158,12 @@ The override also frees mongodb to hoist to `node_modules/mongodb` on a
 fresh lock or `npm update`, so the Dockerfile's rm list names that path
 too. If any other optional peer clashes with a version already in the tree
 and causes the same EUSAGE, fix it the same way. Never hand-restore the
-nested entry.
+nested entry. Key the override on the declaring package's bare name: a
+path-scoped key such as `mongoose: { mongodb: … }` passes npm 10's
+`npm ci` on today's lock but fails once mongodb hoists. A bare key applies
+to every copy of that package, so this fix only suits a package UM never
+loads. If mongodb leaves the tree or UM starts loading it, delete the
+override.
 
 ## Known reconciliation hazards
 
