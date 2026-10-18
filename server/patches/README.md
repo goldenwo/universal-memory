@@ -139,7 +139,7 @@ this in the deps-guard suite. `--legacy-peer-deps` is forbidden (blanket
 weakening of the resolution check deps-guard exists to run).
 
 The `mongodb: { gcp-metadata: ">=7.0.1" }` override exists because npm 10
-and npm 11 disagree about optional peers. mongodb has an optional peer,
+and npm 11.5+ disagree about optional peers. mongodb has an optional peer,
 `gcp-metadata ^7.0.1`, and the tree already holds 8.x through
 `@google/genai` → `google-auth-library`. mongodb is in the tree only through
 mem0ai's required peer `natural` → `mongoose`. UM never loads it, and the
