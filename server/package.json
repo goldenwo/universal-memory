@@ -29,6 +29,9 @@
     "mem0ai": {
       "@anthropic-ai/sdk": "$@anthropic-ai/sdk",
       "@google/genai": "$@google/genai"
+    },
+    "mongodb": {
+      "gcp-metadata": ">=7.0.1"
     }
   },
   "license": "MIT",
