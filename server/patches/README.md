@@ -162,8 +162,8 @@ nested entry. Key the override on the declaring package's bare name: a
 path-scoped key such as `mongoose: { mongodb: … }` passes npm 10's
 `npm ci` on today's lock but fails once mongodb hoists. A bare key applies
 to every copy of that package, so this fix only suits a package UM never
-loads. If mongodb leaves the tree or UM starts loading it, delete the
-override.
+loads. Delete the override in the same change that takes mongodb out of
+the lock.
 
 ## Known reconciliation hazards
 
