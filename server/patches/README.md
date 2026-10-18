@@ -138,6 +138,23 @@ provider registry. `test/lint/no-nested-provider-sdk.test.mjs` locks
 this in the deps-guard suite. `--legacy-peer-deps` is forbidden (blanket
 weakening of the resolution check deps-guard exists to run).
 
+The `mongodb: { gcp-metadata: ">=7.0.1" }` override exists because npm 10
+and npm 11 disagree about optional peers. mongodb has an optional peer,
+`gcp-metadata ^7.0.1`, and the tree already holds 8.x through
+`@google/genai` → `google-auth-library`. mongodb is in the tree only through
+mem0ai's required peer `natural` → `mongoose`. UM never loads it, and the
+Dockerfile removes mongoose and natural from the image. Without the
+override, npm 10 nests a `gcp-metadata@7` copy under `mongoose/` to satisfy
+that peer. npm ≥ 11.5 (Dependabot, Windows hosts) prunes any node that only
+an optional peer needs, and then npm 10's `npm ci` (CI, the image) fails
+with EUSAGE `Missing: gcp-metadata@7.0.1 from lock file`. The override lets
+the 8.x already in the tree satisfy the peer, so neither npm wants the
+nested copy and both write the same lock. The range is open-ended on
+purpose: a pin to one major would bring the clash back on the next
+`google-auth-library` bump. If any other optional peer clashes with a
+version already in the tree and causes the same EUSAGE, fix it the same
+way. Never hand-restore the nested entry.
+
 ## Known reconciliation hazards
 
 1. **Module-init destructures of patched names.** If a patched import is
