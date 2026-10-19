@@ -170,7 +170,8 @@ the lock. One more optional-peer clash is known and not fixed: mem0ai's
 from scratch fails its own `npm ci` on it, so regenerate the lock
 incrementally (`npm install --package-lock-only` on the existing lock),
 never from a deleted one. `test/lint/ci-node-matches-image.test.mjs` keeps
-CI and the image on the same Node major, so deps-guard runs the image's npm.
+CI and the image on the same Node major. It checks every setup-node step,
+and in CI it also checks the Node that is actually running the suite.
 
 ## Known reconciliation hazards
 
