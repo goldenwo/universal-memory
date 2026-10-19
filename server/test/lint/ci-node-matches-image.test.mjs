@@ -2,8 +2,8 @@
 //
 // deps-guard (.github/workflows/smoke.yml) is the only gate a secret-less
 // Dependabot PR runs before the image build, and it catches lock failures
-// only while CI runs the same npm as the image. Both use Node 22 today, so
-// both run npm 10. npm 10 and npm >= 11.5 disagree about optional peers
+// only while CI runs the same npm as the image. npm 10 and npm >= 11.5
+// disagree about optional peers
 // (server/patches/README.md §Overrides). Measured in the #387 review loop:
 // with the mongodb override removed, `npm ci` fails EUSAGE under Node 22's
 // npm 10.9.8 but passes under Node 24's npm 11.19.1. A CI-only move to

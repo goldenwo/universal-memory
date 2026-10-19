@@ -33,9 +33,9 @@ COPY patches ./patches
 # the FAT, exclusively-junk directories; a few MB of orphaned micro-deps
 # (bson/kareem/sift/pg-* helpers) deliberately remain rather than risk
 # rm'ing a shared package (e.g. safe-stable-stringify is pino's).
-# `mongodb` is absent on today's lock, where it nests under mongoose/. It is
-# listed because the gcp-metadata override (server/patches/README.md
-# §Overrides) lets a fresh lock or `npm update` hoist it to the root. mem0
+# `mongodb` is listed because the gcp-metadata override (server/patches/
+# README.md §Overrides) lets a fresh lock or `npm update` hoist it from
+# mongoose/ to the root. mem0
 # loads it lazily, and only for its MongoDB vector store, which UM never
 # configures.
 #

@@ -115,8 +115,8 @@ version emits** (and the mirrors: `server/Dockerfile`'s
 9. **Update the canonical counts** here AND in `server/Dockerfile`'s
    `W6.2-reconciliation-counts` block AND `patch-contract.test.mjs`, and
    re-derive the Dockerfile rm list from the REAL installed tree. Keep
-   `node_modules/mongodb` while the mongodb override exists, even when the
-   tree lacks it, and drop both together (see Overrides below).
+   `node_modules/mongodb` while mongodb is anywhere in the lock, even
+   nested under mongoose/ (see Overrides below).
 
 10. **Record the operator-visible boot-log delta** (the `[mem0-patch]`
     warn count) in the NEXT release's GitHub release notes. There is no
@@ -159,9 +159,7 @@ clash back on the next `google-auth-library` bump.
 
 The override also frees mongodb to hoist to `node_modules/mongodb` on a
 fresh lock or `npm update`, so the Dockerfile's rm list names that path
-too. If any other optional peer clashes with a version already in the tree
-and causes the same EUSAGE, fix it the same way. Never hand-restore the
-nested entry. Key the override on the declaring package's bare name: a
+too. Never hand-restore the nested entry. Key the override on the declaring package's bare name: a
 path-scoped key such as `mongoose: { mongodb: … }` passes npm 10's
 `npm ci` on today's lock but fails once mongodb hoists. A bare key applies
 to every copy of that package, so this fix only suits a package UM never
