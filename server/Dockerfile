@@ -33,6 +33,12 @@ COPY patches ./patches
 # the FAT, exclusively-junk directories; a few MB of orphaned micro-deps
 # (bson/kareem/sift/pg-* helpers) deliberately remain rather than risk
 # rm'ing a shared package (e.g. safe-stable-stringify is pino's).
+# `mongodb` is listed because it can hoist from mongoose/ to the root on a
+# fresh lock or `npm update`; today the gcp-metadata override allows that
+# (server/patches/README.md §Overrides). Keep it while mongodb is anywhere
+# in the lock (reconciliation step 9 there). mem0
+# loads it lazily, and only for its MongoDB vector store, which UM never
+# configures.
 #
 # Reconciliation when mem0ai is bumped: see server/patches/README.md —
 # that README is the durable reference for the operator-visible boot-log
@@ -61,6 +67,7 @@ RUN npm ci --no-audit --no-fund \
            node_modules/afinn-165-financialmarketnews \
            node_modules/compromise \
            node_modules/groq-sdk \
+           node_modules/mongodb \
            node_modules/mongoose \
            node_modules/natural \
            node_modules/pg \
