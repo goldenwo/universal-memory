@@ -33,11 +33,11 @@ COPY patches ./patches
 # the FAT, exclusively-junk directories; a few MB of orphaned micro-deps
 # (bson/kareem/sift/pg-* helpers) deliberately remain rather than risk
 # rm'ing a shared package (e.g. safe-stable-stringify is pino's).
-# `mongodb` is listed because it can hoist from mongoose/ to the root on a
-# fresh lock or `npm update`; today the gcp-metadata override allows that
-# (server/patches/README.md §Overrides). Keep it while mongodb is anywhere
-# in the lock (reconciliation step 9 there). mem0
-# loads it lazily, and only for its MongoDB vector store, which UM never
+# `mongodb`, `redis` and `@redis` are listed because a fresh lock or
+# `npm update` can hoist them from mongoose/ and natural/ to the root
+# (server/patches/README.md §Overrides). Keep them while they are anywhere
+# in the lock (reconciliation step 9 there). mem0 loads mongodb and redis
+# lazily, only for its MongoDB and Redis vector stores, which UM never
 # configures.
 #
 # Reconciliation when mem0ai is bumped: see server/patches/README.md —
@@ -62,6 +62,7 @@ RUN npm ci --no-audit --no-fund \
  && npx patch-package \
  && npm prune --omit=dev --no-audit --no-fund \
  && rm -rf node_modules/@cloudflare \
+           node_modules/@redis \
            node_modules/@types \
            node_modules/afinn-165 \
            node_modules/afinn-165-financialmarketnews \
@@ -71,6 +72,7 @@ RUN npm ci --no-audit --no-fund \
            node_modules/mongoose \
            node_modules/natural \
            node_modules/pg \
+           node_modules/redis \
            node_modules/stopwords-iso \
            node_modules/typescript \
            node_modules/wordnet-db \

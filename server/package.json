@@ -28,7 +28,8 @@
   "overrides": {
     "mem0ai": {
       "@anthropic-ai/sdk": "$@anthropic-ai/sdk",
-      "@google/genai": "$@google/genai"
+      "@google/genai": "$@google/genai",
+      "redis": "^5.11.0"
     },
     "mongodb": {
       "gcp-metadata": ">=7.0.1"
