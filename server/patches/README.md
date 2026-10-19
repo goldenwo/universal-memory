@@ -115,8 +115,9 @@ version emits** (and the mirrors: `server/Dockerfile`'s
 9. **Update the canonical counts** here AND in `server/Dockerfile`'s
    `W6.2-reconciliation-counts` block AND `patch-contract.test.mjs`, and
    re-derive the Dockerfile rm list from the REAL installed tree. Keep
-   `node_modules/mongodb` while mongodb is anywhere in the lock, even
-   nested under mongoose/ (see Overrides below).
+   `node_modules/mongodb`, `node_modules/redis` and `node_modules/@redis`
+   while those packages are anywhere in the lock, even nested under
+   mongoose/ or natural/ (see Overrides below).
 
 10. **Record the operator-visible boot-log delta** (the `[mem0-patch]`
     warn count) in the NEXT release's GitHub release notes. There is no
@@ -159,20 +160,32 @@ clash back on the next `google-auth-library` bump.
 
 The override also frees mongodb to hoist to `node_modules/mongodb` on a
 fresh lock or `npm update`, so the Dockerfile's rm list names that path
-too. Never hand-restore the nested entry. Key the override on the declaring package's bare name: a
-path-scoped key such as `mongoose: { mongodb: … }` passes npm 10's
-`npm ci` on today's lock but fails once mongodb hoists. A bare key applies
-to every copy of that package, so this fix only suits a package UM never
-loads. Delete the override in the same change that takes mongodb out of
-the lock. One more optional-peer clash is known and not fixed: mem0ai's
-`redis ^4.6.13` against natural's `redis ^5`. A lock that npm 10 writes
-from scratch fails its own `npm ci` on it, so regenerate the lock
-incrementally (`npm install --package-lock-only` on the existing lock),
-never from a deleted one. `test/lint/ci-node-matches-image.test.mjs` keeps
+too. Never hand-restore the nested entry. Key the override on the
+declaring package's bare name: a path-scoped key such as
+`mongoose: { mongodb: … }` passes npm 10's `npm ci` on today's lock but
+fails once mongodb hoists. A bare key applies to every copy of that
+package, so this fix only suits a peer UM never uses through that
+package. Delete the override in the same change that takes mongodb out of
+the lock.
+
+The `mem0ai: { redis: "^5.11.0" }` entry fixes a second clash of the same
+kind. mem0ai's optional peer is `redis ^4.6.13`, and `natural` depends on
+`redis ^5.11.0`. The committed lock nests redis 5 under `natural/`, but a
+lock that npm 10 writes from scratch or with `npm update` hoists it to the
+root. That lock's `npm ci` then fails:
+`Invalid: lock file's redis@5.12.1 does not satisfy redis@4.7.1`. UM never
+uses mem0's redis vector store, so the entry lets mem0ai's peer accept
+redis 5. Its range matches natural's own on purpose. natural sits inside
+mem0ai's override scope, so an open range such as `>=4.6.13` also moved
+natural's redis to 6.x. A hoisted `node_modules/redis` and
+`node_modules/@redis` (about 12 MB) are in the Dockerfile's rm list.
+
+`test/lint/ci-node-matches-image.test.mjs` keeps
 CI and the image on the same Node major. It checks every setup-node step,
 and in CI it also checks the Node that is actually running the suite. When
 a deliberate Node bump moves both to npm 11.5+, re-run `npm ci` without the
-override and drop this section's notes that no longer apply.
+mongodb and redis overrides and drop this section's notes that no longer
+apply.
 
 ## Known reconciliation hazards
 
