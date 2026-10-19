@@ -115,8 +115,8 @@ version emits** (and the mirrors: `server/Dockerfile`'s
 9. **Update the canonical counts** here AND in `server/Dockerfile`'s
    `W6.2-reconciliation-counts` block AND `patch-contract.test.mjs`, and
    re-derive the Dockerfile rm list from the REAL installed tree. Keep
-   `node_modules/mongodb` even when the tree lacks it (see Overrides
-   below).
+   `node_modules/mongodb` while the mongodb override exists, even when the
+   tree lacks it, and drop both together (see Overrides below).
 
 10. **Record the operator-visible boot-log delta** (the `[mem0-patch]`
     warn count) in the NEXT release's GitHub release notes. There is no
@@ -152,7 +152,8 @@ only an optional peer needs. Once the copy is dropped, npm 10's `npm ci`
 (CI, the image) fails with EUSAGE
 `Missing: gcp-metadata@7.0.1 from lock file`. The override lets the 8.x
 already in the tree satisfy the peer, so neither npm adds the nested copy.
-npm 10 keeps a stale nested entry if a lock already has one: delete it.
+npm 10 keeps a stale nested entry if a lock already has one. Delete it by
+hand in `package-lock.json`, or regenerate once under npm 11.5+.
 The range is open-ended on purpose: a pin to one major would bring the
 clash back on the next `google-auth-library` bump.
 
@@ -171,7 +172,9 @@ from scratch fails its own `npm ci` on it, so regenerate the lock
 incrementally (`npm install --package-lock-only` on the existing lock),
 never from a deleted one. `test/lint/ci-node-matches-image.test.mjs` keeps
 CI and the image on the same Node major. It checks every setup-node step,
-and in CI it also checks the Node that is actually running the suite.
+and in CI it also checks the Node that is actually running the suite. When
+a deliberate Node bump moves both to npm 11.5+, re-run `npm ci` without the
+override and drop this section's notes that no longer apply.
 
 ## Known reconciliation hazards
 

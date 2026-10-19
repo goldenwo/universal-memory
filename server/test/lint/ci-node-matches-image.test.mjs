@@ -43,8 +43,12 @@ function imageFroms() {
   }));
 }
 
+// The tests below compare against this, so an unreadable Dockerfile stops
+// them here instead of reporting "major null" as the thing to fix.
 function imageNodeMajor() {
-  return imageFroms()[0]?.major;
+  const major = imageFroms()[0]?.major;
+  assert.ok(major, `cannot read the image's Node major from ${DOCKERFILE}; see the "the image pins a single Node major" failure`);
+  return major;
 }
 
 function setupNodeSteps() {
@@ -70,7 +74,8 @@ test('the image pins a single Node major', () => {
   assert.deepEqual(
     froms.filter(({ major }) => major === null).map(({ image }) => image),
     [],
-    'every Dockerfile stage must be FROM node:<major>… so its Node major can be checked',
+    'every Dockerfile stage must be FROM node:<digits>[-variant] so its Node major can be checked. ' +
+    'A stage alias, scratch, or a registry-qualified image needs this lint extended first.',
   );
   const majors = froms.map(({ major }) => major);
   assert.equal(new Set(majors).size, 1, `Dockerfile stages disagree on the Node major: ${majors.join(', ')}`);
