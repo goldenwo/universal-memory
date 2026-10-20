@@ -2,6 +2,8 @@
  * server/lib/provider/anthropic.mjs — Anthropic implementation of the Standard Provider Contract.
  *
  * Supports: summarizer (claude-haiku-4-5-20251001), facts (claude-haiku-4-5-20251001).
+ * Request shape is model-aware via MODEL_CAPABILITIES (sampling params, thinking, effort);
+ * unlisted models keep the pre-Haiku-5.5 shape.
  * Does NOT support: embeddings — Anthropic has no first-party embedding model.
  *   embedderConfig is literal `null` per spec §3.2 (registry filter detects null vs function).
  *
@@ -54,6 +56,60 @@ export function extractUsage(raw) {
   };
 }
 
+/**
+ * Per-model request capabilities, keyed by exact model id. Unlisted models (Haiku 4.5,
+ * Sonnet 4.6, any operator-pinned older id) get LEGACY_CAPABILITIES — the request shape
+ * every Anthropic call had before Haiku 5.5.
+ *   samplingParams   — accepts a non-default temperature (Haiku 5.5: any other value is a 400)
+ *   adaptiveThinking — thinks unless told otherwise; thinking tokens count toward max_tokens
+ *                      and the response can start with thinking blocks
+ *   effort           — accepts output_config.effort
+ */
+export const MODEL_CAPABILITIES = Object.freeze({
+  'claude-haiku-5-5': Object.freeze({ samplingParams: false, adaptiveThinking: true, effort: true }),
+});
+
+const LEGACY_CAPABILITIES = Object.freeze({ samplingParams: true, adaptiveThinking: false, effort: false });
+
+export function capabilitiesFor(model) {
+  return MODEL_CAPABILITIES[model] ?? LEGACY_CAPABILITIES;
+}
+
+// Room for adaptive thinking on top of a surface's answer budget, so thinking can't eat
+// the answer and stop at max_tokens before any text block.
+const THINKING_HEADROOM_TOKENS = 4096;
+
+/**
+ * Model-aware messages.create params shared by the three invoke paths. Knobs the model
+ * doesn't take are dropped rather than sent: temperature where sampling params are
+ * rejected, effort/thinking where the model has no such parameter.
+ *
+ * @param {string} model
+ * @param {object} opts
+ * @param {number} opts.maxTokens      - answer budget (headroom is added when the model thinks)
+ * @param {number} [opts.temperature]
+ * @param {string} [opts.effort]       - 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+ * @param {string} [opts.thinking]     - 'adaptive' | 'disabled'; omitted = model default
+ */
+export function requestParams(model, { maxTokens, temperature, effort, thinking }) {
+  const caps = capabilitiesFor(model);
+  const thinks = caps.adaptiveThinking && thinking !== 'disabled';
+  return {
+    model,
+    max_tokens: maxTokens + (thinks ? THINKING_HEADROOM_TOKENS : 0),
+    ...(caps.samplingParams && temperature !== undefined ? { temperature } : {}),
+    ...(caps.adaptiveThinking && thinking ? { thinking: { type: thinking } } : {}),
+    ...(caps.effort && effort ? { output_config: { effort } } : {}),
+  };
+}
+
+// The first text block's text: thinking models can put thinking blocks first, and a
+// thinking-only response (stopped at max_tokens) has no text at all.
+function textOf(raw) {
+  const block = raw.content.find((b) => b.type === 'text') ?? raw.content[0];
+  return block?.text ?? null;
+}
+
 export function normalizeError(err) {
   // Strip sensitive headers from config and request objects
   const clean = {
@@ -94,8 +150,8 @@ export async function summarizerInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      model,
-      max_tokens: 1024, // required by the Anthropic API; mirrors factsInvoke (was a latent omission). Default temperature — only the judge needs temp=0.
+      // max_tokens is required by the Anthropic API. Default temperature — only the judge needs temp=0.
+      ...requestParams(model, { maxTokens: 1024 }),
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
@@ -110,9 +166,8 @@ export async function summarizerInvoke(prompt, opts = {}) {
       cause: norm,
     });
   }
-  // Anthropic SDK returns content as an array of content blocks; extract text from first block
   return {
-    content: raw.content[0].text,
+    content: textOf(raw),
     usage: extractUsage(raw),
   };
 }
@@ -146,9 +201,8 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      model,
-      max_tokens: 1024, // required by the Anthropic API; mirrors factsInvoke (was a latent omission)
-      temperature: 0,   // deterministic supersession decisions (D3.3 follow-up)
+      // temperature 0: deterministic supersession decisions (D3.3 follow-up), on models that take it.
+      ...requestParams(model, { maxTokens: 1024, temperature: 0 }),
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
@@ -163,9 +217,8 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
       cause: norm,
     });
   }
-  // Anthropic SDK returns content as an array of content blocks; extract text from first block.
   return {
-    content: raw.content[0].text,
+    content: textOf(raw),
     usage: extractUsage(raw),
   };
 }
@@ -185,10 +238,19 @@ function parseFactsJson(content) {
   return [];
 }
 
+// Facts effort on models that take one: extraction is a short, high-volume single shot, so
+// the cheapest level — the model still thinks when a row needs it, and can skip thinking on
+// rows that don't. Overridable per call (opts.effort / opts.thinking) for eval arms.
+const FACTS_EFFORT = 'low';
+
 export async function factsInvoke(text, opts = {}) {
   // temperature 0 by default, overridable — mirrors openai's facts pin (#181 sync;
-  // determinism for dedup/supersession + run-to-run eval comparability).
-  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0 } = opts;
+  // determinism for dedup/supersession + run-to-run eval comparability). Dropped on
+  // models that reject sampling params (capabilitiesFor).
+  const {
+    client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0,
+    effort = FACTS_EFFORT, thinking,
+  } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] anthropic fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -210,9 +272,7 @@ export async function factsInvoke(text, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      ...(temperature !== undefined ? { temperature } : {}),
+      ...requestParams(model, { maxTokens: 1024, temperature, effort, thinking }),
       system: FACTS_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: text }],
     });
@@ -227,10 +287,11 @@ export async function factsInvoke(text, opts = {}) {
       cause: norm,
     });
   }
-  // Anthropic returns content as content blocks; the first text block holds the JSON.
-  const textBlock = raw.content.find((b) => b.type === 'text') ?? raw.content[0];
+  // stopReason lets callers tell a clean abstention ({"facts": []}, end_turn) from a
+  // truncated or refused one (max_tokens / refusal), which also parse to [].
   return {
-    facts: parseFactsJson(textBlock.text),
+    facts: parseFactsJson(textOf(raw)),
     usage: extractUsage(raw),
+    stopReason: raw.stop_reason ?? null,
   };
 }

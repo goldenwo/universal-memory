@@ -153,6 +153,18 @@ test('factsInvoke calls injected client and returns { facts: string[], usage }',
   assert.deepEqual(result.usage, { tokensIn: 50, tokensOut: 12 });
 });
 
+test('factsInvoke returns the finish reason as stopReason (a length stop also parses to [])', async () => {
+  const fakeClient = {
+    chat: { completions: { create: async () => ({
+      choices: [{ message: { content: '{"facts": ["a"' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 5, completion_tokens: 5 },
+    }) } },
+  };
+  const result = await openai.factsInvoke('t', { client: fakeClient });
+  assert.deepEqual(result.facts, []);
+  assert.equal(result.stopReason, 'length');
+});
+
 test('factsInvoke pins temperature 0 by default (deterministic extraction, matches the judges)', async () => {
   let seen = null;
   const fakeClient = {

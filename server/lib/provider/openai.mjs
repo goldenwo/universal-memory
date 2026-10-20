@@ -348,8 +348,11 @@ export async function factsInvoke(text, opts = {}) {
       cause: norm,
     });
   }
+  // stopReason: a truncated ('length') or filtered reply also parses to [] — callers can
+  // tell it from a clean abstention.
   return {
     facts: parseFactsJson(raw.choices[0].message.content),
     usage: extractUsage(raw),
+    stopReason: raw.choices[0].finish_reason ?? null,
   };
 }

@@ -55,3 +55,15 @@ test('staleness advisory: warn (not fail) if any last_verified > 90 days', () =>
   // ADVISORY: this test never fails; it only emits a warning.
   assert.ok(true);
 });
+
+test('anthropic prices Haiku 5.5 at the published $0.10 / $0.50 per MTok', () => {
+  assert.deepEqual(priceFor('anthropic', 'claude-haiku-5-5').in, 0.0001);
+  assert.deepEqual(priceFor('anthropic', 'claude-haiku-5-5').out, 0.0005);
+});
+
+test('computeCost bills a Haiku 5.5 prompt over 100K input tokens at the long-prompt rate ($0.50 / $2.50)', () => {
+  const short = computeCost('anthropic', 'claude-haiku-5-5', 100_000, 1000);
+  assert.ok(Math.abs(short - (100 * 0.0001 + 1 * 0.0005)) < 1e-12, `short=${short}`);
+  const long = computeCost('anthropic', 'claude-haiku-5-5', 100_001, 1000);
+  assert.ok(Math.abs(long - (100.001 * 0.0005 + 1 * 0.0025)) < 1e-12, `long=${long}`);
+});
