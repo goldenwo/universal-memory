@@ -153,6 +153,63 @@ if [ "$TF6_EXIT" -eq 0 ]; then pass "T-FLAGS-6: exit 0 (soft-skip)"; else fail "
 if echo "$TF6_OUT" | grep -q "soft-skipping Codex plugin"; then pass "T-FLAGS-6: soft-skip message printed"; else fail "T-FLAGS-6: expected soft-skip message (got: $TF6_OUT)"; fi
 rm -rf "$TF6"
 
+# ─── T-CODEX-1..3: Codex is detected by its CLI, not only by ~/.codex ────────
+# The plugin installs through `codex plugin marketplace add`, which creates
+# ~/.codex itself (measured 2026-10-20), so a codex CLI that has never run must
+# still get the plugin.
+echo ""
+echo "=== T-CODEX-1: --plugin-codex with a codex CLI and no ~/.codex → delegated ==="
+TC1=$(mktemp -d)
+make_stubs "$TC1/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TC1/bin/codex"; chmod +x "$TC1/bin/codex"
+_tx_capture TC1 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TC1/repo" \
+  PATH="$TC1/bin:/usr/bin:/bin" HOME="$TC1/fakehome" bash "$INSTALLER" --plugin-codex
+if [ "$TX_EXIT_TC1" -eq 0 ]; then pass "T-CODEX-1: exit 0"; else fail "T-CODEX-1: exit $TX_EXIT_TC1 (out: $TX_OUT_TC1)"; fi
+if echo "$TX_OUT_TC1" | grep -q "delegate: installer/install-plugin-codex.sh"; then pass "T-CODEX-1: install-plugin-codex.sh delegated"; else fail "T-CODEX-1: not delegated (got: $TX_OUT_TC1)"; fi
+if ! echo "$TX_OUT_TC1" | grep -q "soft-skipping Codex plugin"; then pass "T-CODEX-1: no soft-skip"; else fail "T-CODEX-1: soft-skipped with a codex CLI on PATH"; fi
+rm -rf "$TC1"
+
+echo ""
+echo "=== T-CODEX-2: --all with a codex CLI and no ~/.codex → plugin-codex delegated ==="
+TC2=$(mktemp -d)
+make_stubs "$TC2/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TC2/bin/codex"; chmod +x "$TC2/bin/codex"
+_tx_capture TC2 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TC2/repo" \
+  PATH="$TC2/bin:/usr/bin:/bin" HOME="$TC2/fakehome" bash "$INSTALLER" --all
+if [ "$TX_EXIT_TC2" -eq 0 ]; then pass "T-CODEX-2: exit 0"; else fail "T-CODEX-2: exit $TX_EXIT_TC2 (out: $TX_OUT_TC2)"; fi
+if echo "$TX_OUT_TC2" | grep -q "delegate: installer/install-plugin-codex.sh"; then pass "T-CODEX-2: plugin-codex in --all when the codex CLI exists"; else fail "T-CODEX-2: plugin-codex not delegated (got: $TX_OUT_TC2)"; fi
+rm -rf "$TC2"
+
+echo ""
+echo "=== T-CODEX-3: the wizard detects Codex by its CLI ==="
+TC3=$(mktemp -d)
+make_stubs "$TC3/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TC3/bin/codex"; chmod +x "$TC3/bin/codex"
+_tx_capture TC3 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TC3/repo" \
+  PATH="$TC3/bin:/usr/bin:/bin" HOME="$TC3/fakehome" bash "$INSTALLER" --interactive
+if echo "$TX_OUT_TC3" | grep -q "✓ Codex (codex CLI)"; then pass "T-CODEX-3: wizard reports Codex detected"; else fail "T-CODEX-3: wizard did not detect Codex (got: $TX_OUT_TC3)"; fi
+rm -rf "$TC3"
+
+# ─── T-CODEX-4: a plugin-only install does not need Docker ───────────────────
+# Both plugins install through their tool's CLI; only the server runs Docker. A
+# laptop that talks to a remote server has no reason to install it.
+echo ""
+echo "=== T-CODEX-4: --plugin-codex / --plugin-cc without docker → not refused ==="
+TC4=$(mktemp -d)
+mkdir -p "$TC4/bin"
+for _t in git python3 openssl codex claude; do printf '#!/bin/sh\nexit 0\n' > "$TC4/bin/$_t"; chmod +x "$TC4/bin/$_t"; done
+if PATH="/usr/bin:/bin" command -v docker >/dev/null 2>&1; then
+  pass "T-CODEX-4: skipped (docker lives in /usr/bin or /bin on this machine)"
+else
+  for _flag in --plugin-codex --plugin-cc; do
+    _tx_capture TC4 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TC4/repo" \
+      PATH="$TC4/bin:/usr/bin:/bin" HOME="$TC4/fakehome" bash "$INSTALLER" "$_flag"
+    if [ "$TX_EXIT_TC4" -eq 0 ]; then pass "T-CODEX-4: $_flag exits 0 without docker"; else fail "T-CODEX-4: $_flag exit $TX_EXIT_TC4 (out: $TX_OUT_TC4)"; fi
+    if ! echo "$TX_OUT_TC4" | grep -q "required tools not found"; then pass "T-CODEX-4: $_flag does not ask for docker"; else fail "T-CODEX-4: $_flag refused (got: $TX_OUT_TC4)"; fi
+  done
+fi
+rm -rf "$TC4"
+
 # ─── T-FLAGS-7: --plugin-cc + --cli → two delegations ───────────────────────
 echo ""
 echo "=== T-FLAGS-7: --plugin-cc + --cli → both install-plugin-cc.sh + install-cli.sh ==="

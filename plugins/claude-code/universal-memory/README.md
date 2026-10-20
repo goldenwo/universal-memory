@@ -31,6 +31,12 @@ claude plugin install universal-memory@universal-memory
 Or from a repo checkout: `bash installer/install.sh --plugin-cc`
 (add `--remote <url>` for a remote server).
 
+Codex CLI installs this same plugin from the same marketplace:
+`codex plugin marketplace add goldenwo/universal-memory`, then
+`codex plugin add universal-memory@universal-memory` (or
+`bash installer/install.sh --plugin-codex`). Approve the hooks once when `codex`
+first lists them; see [Codex on Windows](#codex-on-windows) for the approval rules.
+
 ## First run: `/um-setup`
 
 A fresh install ships hooks but no config. Run **`/um-setup`** once (or

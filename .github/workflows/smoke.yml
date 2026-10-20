@@ -732,7 +732,8 @@ jobs:
       # executed in CI — same gap class as install-token.test.sh in v0.6 R3.
       - run: bash installer/install-plugin-cc.test.sh
       # install-plugin-codex.test.sh covers the Codex CLI plugin installer
-      # (T13 detection + T19 absence path). Companion to install-plugin-cc;
+      # (the codex plugin marketplace calls against a fake codex, the
+      # no-codex paths, and the old-copy warning). Companion to install-plugin-cc;
       # was the second half of the same shellchecked-but-unrun gap. Wired
       # in as a follow-up to PR #39's installer-cc wire-up.
       - run: bash installer/install-plugin-codex.test.sh
