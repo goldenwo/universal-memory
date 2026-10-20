@@ -230,3 +230,17 @@ test('factsInvoke sends the shared policy prompt as the system message (#181 syn
   assert.equal(seen.messages[0].role, 'system');
   assert.equal(seen.messages[0].content, FACTS_SYSTEM_PROMPT);
 });
+
+test('factsInvoke reports parseOk, and a populated refusal field as stopReason refusal', async () => {
+  const reply = (message, finish_reason = 'stop') => ({
+    chat: { completions: { create: async () => ({ choices: [{ message, finish_reason }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) } },
+  });
+  const bad = await openai.factsInvoke('t', { client: reply({ content: 'not json' }) });
+  assert.equal(bad.parseOk, false);
+  const empty = await openai.factsInvoke('t', { client: reply({ content: '{"facts": []}' }) });
+  assert.equal(empty.parseOk, true);
+  assert.equal(empty.stopReason, 'stop');
+  const refused = await openai.factsInvoke('t', { client: reply({ content: null, refusal: 'I cannot help with that.' }) });
+  assert.deepEqual(refused.facts, []);
+  assert.equal(refused.stopReason, 'refusal');
+});

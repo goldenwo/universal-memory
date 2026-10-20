@@ -29,13 +29,15 @@
  *   --control <gold-echo|always-abstain|input-echo> swaps the extractor for a canned one
  *   (positive controls: proves the scoring can reach both ends before any model arm runs).
  *
- * Every run also saves the raw per-call record (`calls`: extracted facts, stop reason,
- * tokens, cost, wall-clock latency, and the judge's per-fact verdicts) plus `callStats`.
+ * Every run also saves the raw per-call record (`calls`: extracted facts, stop reason, parse
+ * status, tokens, cost, wall-clock latency, and the judge's per-fact verdicts), `callStats`,
+ * and the sha256 of each fixture file it read.
  */
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { createHash } from 'node:crypto';
 import {
   extractionFidelity,
   extractionByStratum,
@@ -80,6 +82,13 @@ export function controlProvider(kind, row) {
 
 const round = (x, places) => (x == null ? null : +x.toFixed(places));
 
+/** sha256 of each fixture file's bytes, so a result names exactly what it scored. */
+export async function fixtureDigests(paths) {
+  const out = {};
+  for (const path of paths) out[path] = createHash('sha256').update(await readFile(path)).digest('hex');
+  return out;
+}
+
 /** Nearest-rank percentile of an ascending-sorted array (null when empty). */
 function percentile(sorted, q) {
   return sorted.length === 0 ? null : sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
@@ -108,6 +117,7 @@ export function callStats(calls) {
       mean: round(mean('latencyMs'), 1),
     },
     stopReasons,
+    parseFailures: calls.filter((c) => c.parseOk === false).length,
   };
 }
 
@@ -167,6 +177,7 @@ async function cliMain() {
   const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? 'gpt-4o-mini';
   const rows = [];
   for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
+  const fixtureSha256 = await fixtureDigests(args.fixtures);
 
   // Truthful provider/model labels: captured from facts()'s own per-call return
   // ({provider, model} — facts.mjs), NEVER re-derived from env/registry (the old
@@ -190,7 +201,7 @@ async function cliMain() {
     factsModelSeen = factsResult.model ?? factsModelSeen;
     const extracted = normalizeExtracted(factsResult);
     const call = {
-      id: row.id, extracted, stopReason: factsResult.stopReason ?? null,
+      id: row.id, extracted, stopReason: factsResult.stopReason ?? null, parseOk: factsResult.parseOk ?? null,
       tokensIn: factsResult.tokensIn, tokensOut: factsResult.tokensOut,
       costUsd: factsResult.costUsd, latencyMs,
     };
@@ -213,7 +224,7 @@ async function cliMain() {
     }
     const verdictGate = computeVerdictGate(verdictRows);
     result = {
-      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'verdict-only',
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, fixtureSha256, mode: 'verdict-only',
       judgeModel: null,
       factsProvider,
       factsModel: factsModelSeen,
@@ -253,7 +264,7 @@ async function cliMain() {
     }
     const extraction = { ...extractionFidelity(judgedRows), byStratum: extractionByStratum(judgedRows) };
     result = {
-      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'judged', judgeModel: model,
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, fixtureSha256, mode: 'judged', judgeModel: model,
       factsProvider,
       factsModel: factsModelSeen,
       factsConfig,
@@ -277,7 +288,7 @@ async function cliMain() {
     if (!result.pinnable) console.error(`[extraction-eval] WARNING: parseFails=${e.parseFails} > 0 — result NOT pinnable (treat as unmeasured); fix judge truncation/format before pinning targets.`);
   }
   const cs = result.callStats;
-  console.log(`[extraction-eval] calls=${cs.n} costUsd mean=${cs.costUsd.mean} total=${cs.costUsd.total} latencyMs p50=${cs.latencyMs.p50} p95=${cs.latencyMs.p95} stopReasons=${JSON.stringify(cs.stopReasons)}`);
+  console.log(`[extraction-eval] calls=${cs.n} costUsd mean=${cs.costUsd.mean} total=${cs.costUsd.total} latencyMs p50=${cs.latencyMs.p50} p95=${cs.latencyMs.p95} stopReasons=${JSON.stringify(cs.stopReasons)} parseFailures=${cs.parseFailures}`);
   console.log(`[extraction-eval] written to ${out}`);
 
   if (gateThresholds) {

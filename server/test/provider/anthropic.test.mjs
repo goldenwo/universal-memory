@@ -276,3 +276,12 @@ test('contradictionJudgeInvoke drops temperature 0 on Haiku 5.5 and keeps it on 
   assert.equal(c45.calls[0].temperature, 0);
   assert.equal(c45.calls[0].max_tokens, 1024);
 });
+
+test('factsInvoke reports parseOk: false for a malformed reply and true for a clean empty one', async () => {
+  const bad = await anthropic.factsInvoke('t', { client: capturingClient([{ type: 'text', text: 'not json' }]), model: 'claude-haiku-5-5' });
+  assert.deepEqual(bad.facts, []);
+  assert.equal(bad.parseOk, false);
+  const empty = await anthropic.factsInvoke('t', { client: capturingClient([{ type: 'text', text: '{"facts": []}' }]), model: 'claude-haiku-5-5' });
+  assert.deepEqual(empty.facts, []);
+  assert.equal(empty.parseOk, true);
+});

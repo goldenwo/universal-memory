@@ -226,6 +226,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
 // Facts prompt: shared v1.5.2 policy from facts-prompt.mjs since the #181 sync
 // (pinned by test/provider-prompts-snapshot.test.mjs).
 
+// The facts list, or null when the reply is not a valid {"facts": string[]} object.
 function parseFactsJson(content) {
   // Null-guard: SDK may return null content for refusals / content filter.
   const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
@@ -235,7 +236,7 @@ function parseFactsJson(content) {
       return parsed.facts;
     }
   } catch { /* fall through */ }
-  return [];
+  return null;
 }
 
 // Facts effort on models that take one: extraction is a short, high-volume single shot, so
@@ -287,11 +288,13 @@ export async function factsInvoke(text, opts = {}) {
       cause: norm,
     });
   }
-  // stopReason lets callers tell a clean abstention ({"facts": []}, end_turn) from a
-  // truncated or refused one (max_tokens / refusal), which also parse to [].
+  // A malformed, truncated or refused reply also yields facts: []. parseOk and stopReason
+  // let callers tell those from a clean abstention ({"facts": []} with end_turn).
+  const parsed = parseFactsJson(textOf(raw));
   return {
-    facts: parseFactsJson(textOf(raw)),
+    facts: parsed ?? [],
     usage: extractUsage(raw),
     stopReason: raw.stop_reason ?? null,
+    parseOk: parsed !== null,
   };
 }
