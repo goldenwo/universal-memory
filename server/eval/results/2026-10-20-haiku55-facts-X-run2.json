@@ -1,0 +1,3184 @@
+{
+  "timestamp": "2026-10-20T03:04:53.236Z",
+  "fixtures": [
+    "eval/production-noise-set.jsonl",
+    "eval/collision-slice.jsonl",
+    "eval/extraction-set.jsonl"
+  ],
+  "fixtureSha256": {
+    "eval/production-noise-set.jsonl": "7391a26745d14aa45e6601ba13edd15bc1f3867776a2cb2b5e46f043b12e57c0",
+    "eval/collision-slice.jsonl": "106036a2e3d4aa88b669b9e702aed816c07818f26aa28a228e975e7e6ce77cf6",
+    "eval/extraction-set.jsonl": "e0d00401e4526bd12cc69c8956f51a8d93c8e42b11fd43736418c4c6a800771a"
+  },
+  "mode": "judged",
+  "judgeModel": "gpt-4o-mini",
+  "factsProvider": "anthropic",
+  "factsModel": "claude-haiku-5-5",
+  "factsConfig": {
+    "temperature": 0,
+    "effort": "low",
+    "thinking": "disabled"
+  },
+  "pinnable": true,
+  "extraction": {
+    "rows": 132,
+    "graded": 132,
+    "parseFails": 0,
+    "precision": 0.989,
+    "recall": 0.922,
+    "f1": 0.954,
+    "noiseAbstained": 16,
+    "noiseTotal": 76,
+    "perRow": [
+      {
+        "id": "n01",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n02",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n04",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n05",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n07",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n09",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n10",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n12",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n13",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n14",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n15",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n16",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n17",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n18",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n19",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n20",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n21",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n24",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n25",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n26",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n27",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n28",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n29",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n30",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n33",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n34",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n35",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n36",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n37",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n38",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n39",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n40",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n41",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n42",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n43",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n44",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n45",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n46",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n47",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n48",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n49",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n50",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n51",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n52",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n53",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n54",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n55",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n56",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n57",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n58",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n59",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n60",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n61",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n62",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n63",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n64",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n65",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n66",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n67",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n68",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n69",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n70",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n71",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n72",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n73",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n74",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 5,
+        "extractedSupported": 4
+      },
+      {
+        "id": "n75",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n76",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n77",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n78",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n79",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n80",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c01",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c02",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c03",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c04",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c05",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "c06",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c07",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c08",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c10",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c11",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c12",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      }
+    ],
+    "byStratum": {
+      "ephemeral": {
+        "rows": 39,
+        "parseFails": 0,
+        "noiseTotal": 39,
+        "noiseAbstained": 3,
+        "abstentionRate": 0.077,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "telemetry": {
+        "rows": 16,
+        "parseFails": 0,
+        "noiseTotal": 16,
+        "noiseAbstained": 1,
+        "abstentionRate": 0.063,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "referent-stripped": {
+        "rows": 13,
+        "parseFails": 0,
+        "noiseTotal": 13,
+        "noiseAbstained": 4,
+        "abstentionRate": 0.308,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "durable": {
+        "rows": 12,
+        "parseFails": 0,
+        "noiseTotal": 0,
+        "noiseAbstained": 0,
+        "abstentionRate": null,
+        "goldTotal": 14,
+        "goldMatched": 14,
+        "recall": 1
+      },
+      "unknown": {
+        "rows": 52,
+        "parseFails": 0,
+        "noiseTotal": 8,
+        "noiseAbstained": 8,
+        "abstentionRate": 1,
+        "goldTotal": 63,
+        "goldMatched": 57,
+        "recall": 0.905
+      }
+    }
+  },
+  "callStats": {
+    "n": 132,
+    "costUsd": {
+      "total": 0.0138619,
+      "mean": 0.0001050144
+    },
+    "tokensIn": {
+      "mean": 859.77
+    },
+    "tokensOut": {
+      "mean": 38.08
+    },
+    "latencyMs": {
+      "p50": 686,
+      "p95": 966,
+      "max": 1239,
+      "mean": 698.7
+    },
+    "stopReasons": {
+      "end_turn": 132
+    },
+    "parseFailures": 1
+  },
+  "calls": [
+    {
+      "id": "n01",
+      "extracted": [
+        "The kiosk session stays active with 2 hours and 50 minutes remaining."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 861,
+      "tokensOut": 37,
+      "costUsd": 0.00010460000000000001,
+      "latencyMs": 797
+    },
+    {
+      "id": "n02",
+      "extracted": [
+        "There are currently two renderers.",
+        "Renderer 4402 was spawned at 09:12.",
+        "Renderer 7718 was spawned at 13:40:06."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 869,
+      "tokensOut": 62,
+      "costUsd": 0.00011789999999999999,
+      "latencyMs": 771
+    },
+    {
+      "id": "n03",
+      "extracted": [
+        "Ticket #58 is an open change request."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 848,
+      "tokensOut": 24,
+      "costUsd": 0.0000968,
+      "latencyMs": 758
+    },
+    {
+      "id": "n04",
+      "extracted": [
+        "The importer will be made schema-aware instead of assuming the manifest layout"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 35,
+      "costUsd": 0.0001033,
+      "latencyMs": 767
+    },
+    {
+      "id": "n05",
+      "extracted": [
+        "Gateway console credentials were renewed",
+        "A new badge became active",
+        "The new badge has premium tier",
+        "The new badge has full permissions"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 864,
+      "tokensOut": 54,
+      "costUsd": 0.00011339999999999999,
+      "latencyMs": 599
+    },
+    {
+      "id": "n06",
+      "extracted": [
+        "The pre-seeded cache is confirmed."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 26,
+      "costUsd": 0.00009800000000000001,
+      "latencyMs": 650
+    },
+    {
+      "id": "n07",
+      "extracted": [
+        "The kiosk rollout environment is confirmed ready.",
+        "The kiosk rollout environment runs Ruby 3.4.2.",
+        "Systemd timers are active in the kiosk rollout environment.",
+        "The kiosk rollout environment has no existing unit files."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 881,
+      "tokensOut": 96,
+      "costUsd": 0.0001361,
+      "latencyMs": 763
+    },
+    {
+      "id": "n08",
+      "extracted": [
+        "The depot-primary host proxy config was verified.",
+        "No :7071 tunnel exists on the depot-primary host proxy.",
+        "Ports :9090 and :6060 remain intact on the depot-primary host proxy."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 881,
+      "tokensOut": 81,
+      "costUsd": 0.0001286,
+      "latencyMs": 651
+    },
+    {
+      "id": "n09",
+      "extracted": [
+        "The dashboard reads quota with HTTP 200 after the depot rotated its access badge."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 40,
+      "costUsd": 0.0001063,
+      "latencyMs": 596
+    },
+    {
+      "id": "n10",
+      "extracted": [
+        "Batch 4 was archived."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 845,
+      "tokensOut": 21,
+      "costUsd": 0.000095,
+      "latencyMs": 540
+    },
+    {
+      "id": "n11",
+      "extracted": [
+        "Monthly is at 61% after the tweak."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 26,
+      "costUsd": 0.00009800000000000001,
+      "latencyMs": 498
+    },
+    {
+      "id": "n12",
+      "extracted": [
+        "The session key rotated from digest '…kPzR41Qw' to '…mBhT77wt'."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 867,
+      "tokensOut": 43,
+      "costUsd": 0.0001082,
+      "latencyMs": 703
+    },
+    {
+      "id": "n13",
+      "extracted": [
+        "The writer reports that Stage 3b is drafted, checked, and passing."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 35,
+      "costUsd": 0.0001027,
+      "latencyMs": 876
+    },
+    {
+      "id": "n14",
+      "extracted": [
+        "The ledger trail has 22 entries."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 24,
+      "costUsd": 0.0000972,
+      "latencyMs": 473
+    },
+    {
+      "id": "n15",
+      "extracted": [
+        "The depot is up at revision d41c9ea from May 8."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 855,
+      "tokensOut": 30,
+      "costUsd": 0.0001005,
+      "latencyMs": 735
+    },
+    {
+      "id": "n16",
+      "extracted": [
+        "The depot was rolled to commit f7a20cc."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 28,
+      "costUsd": 0.00009900000000000001,
+      "latencyMs": 556
+    },
+    {
+      "id": "n17",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 843,
+      "tokensOut": 9,
+      "costUsd": 0.0000888,
+      "latencyMs": 475
+    },
+    {
+      "id": "n18",
+      "extracted": [
+        "The render is finished."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 842,
+      "tokensOut": 17,
+      "costUsd": 0.0000927,
+      "latencyMs": 495
+    },
+    {
+      "id": "n19",
+      "extracted": [
+        "The writer has vet and bundle CI checks in flight."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 849,
+      "tokensOut": 29,
+      "costUsd": 0.0000994,
+      "latencyMs": 740
+    },
+    {
+      "id": "n20",
+      "extracted": [
+        "The writer reports that 9 out of 9 probes for Step 6 in orchard-sync passed."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 859,
+      "tokensOut": 43,
+      "costUsd": 0.0001074,
+      "latencyMs": 641
+    },
+    {
+      "id": "n21",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 9,
+      "costUsd": 0.0000898,
+      "latencyMs": 966
+    },
+    {
+      "id": "n22",
+      "extracted": [
+        "All 7 cases covering the full #42 charter §3 agreement passed on the first run of halt.rb v3."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 871,
+      "tokensOut": 47,
+      "costUsd": 0.0001106,
+      "latencyMs": 731
+    },
+    {
+      "id": "n23",
+      "extracted": [
+        "Item 5 was fully accepted with 18 out of 18."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 855,
+      "tokensOut": 31,
+      "costUsd": 0.000101,
+      "latencyMs": 1028
+    },
+    {
+      "id": "n24",
+      "extracted": [
+        "The hex slice of rows 130–410 is queued as qw7e2kd90.",
+        "The hex slice of rows 130–410 has no output blob yet."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 869,
+      "tokensOut": 60,
+      "costUsd": 0.0001169,
+      "latencyMs": 708
+    },
+    {
+      "id": "n25",
+      "extracted": [
+        "All citations resolve.",
+        "Passwords are excluded from the archive.",
+        "4.1 GB of sample media is excluded from the archive.",
+        "Disposable scratch files are excluded from the archive."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 879,
+      "tokensOut": 73,
+      "costUsd": 0.00012440000000000002,
+      "latencyMs": 793
+    },
+    {
+      "id": "n26",
+      "extracted": [
+        "The Orchard Sync stage-3-4-export Item 2 upload is complete.",
+        "Polish tweaks are recorded for Orchard Sync stage-3-4-export.",
+        "Re-sign-off is in progress for Orchard Sync stage-3-4-export."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 892,
+      "tokensOut": 98,
+      "costUsd": 0.0001382,
+      "latencyMs": 700
+    },
+    {
+      "id": "n27",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": false,
+      "tokensIn": 845,
+      "tokensOut": 103,
+      "costUsd": 0.000136,
+      "latencyMs": 1009
+    },
+    {
+      "id": "n28",
+      "extracted": [
+        "The roster.yaml file is 9 weeks old."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 28,
+      "costUsd": 0.0000992,
+      "latencyMs": 681
+    },
+    {
+      "id": "n29",
+      "extracted": [
+        "Client handshake HEAD calls were returning status 5."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 859,
+      "tokensOut": 29,
+      "costUsd": 0.0001004,
+      "latencyMs": 518
+    },
+    {
+      "id": "n30",
+      "extracted": [
+        "The polish pass is scheduled to occur after the charter re-check clears."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 34,
+      "costUsd": 0.00010260000000000001,
+      "latencyMs": 588
+    },
+    {
+      "id": "n31",
+      "extracted": [
+        "The layout brief is 87 lines long."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 848,
+      "tokensOut": 24,
+      "costUsd": 0.0000968,
+      "latencyMs": 686
+    },
+    {
+      "id": "n32",
+      "extracted": [
+        "Six cycles have been finished."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 845,
+      "tokensOut": 21,
+      "costUsd": 0.000095,
+      "latencyMs": 509
+    },
+    {
+      "id": "n33",
+      "extracted": [
+        "Pagination checks have been repaired."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 23,
+      "costUsd": 0.0000962,
+      "latencyMs": 740
+    },
+    {
+      "id": "n34",
+      "extracted": [
+        "Item 7, the OrchardFetcher implementation, passed an independent charter check.",
+        "All 15 probes passed in the independent charter check of the OrchardFetcher implementation (Item 7)."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 869,
+      "tokensOut": 75,
+      "costUsd": 0.0001244,
+      "latencyMs": 760
+    },
+    {
+      "id": "n35",
+      "extracted": [
+        "The cache fix was verified live on depot at 08:15:33.",
+        "Handshake replies on depot returned 204 and 401 and were header-readable."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 874,
+      "tokensOut": 58,
+      "costUsd": 0.00011640000000000001,
+      "latencyMs": 844
+    },
+    {
+      "id": "n36",
+      "extracted": [
+        "The depot's boot routine has been running for 3 minutes and 10 seconds."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 861,
+      "tokensOut": 37,
+      "costUsd": 0.00010460000000000001,
+      "latencyMs": 629
+    },
+    {
+      "id": "n37",
+      "extracted": [
+        "The file flatten.rb has existing checks that do not require changes when rowKeys are added."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 39,
+      "costUsd": 0.0001058,
+      "latencyMs": 639
+    },
+    {
+      "id": "n38",
+      "extracted": [
+        "Sweep 7 had zero issues."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 848,
+      "tokensOut": 24,
+      "costUsd": 0.0000968,
+      "latencyMs": 510
+    },
+    {
+      "id": "n39",
+      "extracted": [
+        "The registry's plugin checker never contacted the service during the trial."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 855,
+      "tokensOut": 31,
+      "costUsd": 0.000101,
+      "latencyMs": 1239
+    },
+    {
+      "id": "n40",
+      "extracted": [
+        "The session date is 2025-03-09."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 23,
+      "costUsd": 0.0000962,
+      "latencyMs": 703
+    },
+    {
+      "id": "n41",
+      "extracted": [
+        "The feed-poller.spec.rb test failed with ERR_GEM_MISSING on 2025-03-10T11:20:15.330Z."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 881,
+      "tokensOut": 58,
+      "costUsd": 0.0001171,
+      "latencyMs": 625
+    },
+    {
+      "id": "n42",
+      "extracted": [
+        "The cycle is currently paused.",
+        "The helper is waiting on the operator's depot job."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 39,
+      "costUsd": 0.0001053,
+      "latencyMs": 736
+    },
+    {
+      "id": "n43",
+      "extracted": [
+        "A workspace named '77-ui-widget-local' was created."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 854,
+      "tokensOut": 30,
+      "costUsd": 0.0001004,
+      "latencyMs": 937
+    },
+    {
+      "id": "n44",
+      "extracted": [
+        "The watcher was switched to failures-only for the rest of the shift."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 32,
+      "costUsd": 0.0001016,
+      "latencyMs": 632
+    },
+    {
+      "id": "n45",
+      "extracted": [
+        "The scribe-bot's recorder ran 29 background drafting sessions while the operator was out"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 864,
+      "tokensOut": 41,
+      "costUsd": 0.0001069,
+      "latencyMs": 761
+    },
+    {
+      "id": "n46",
+      "extracted": [
+        "Zero visits arrived during the window",
+        "Only the probe visit was recorded"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 36,
+      "costUsd": 0.0001038,
+      "latencyMs": 780
+    },
+    {
+      "id": "n47",
+      "extracted": [
+        "The patch titled 'MEND-8 Done — guides/feed-spec.md R4 Origin Notes Refreshed' was made."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 879,
+      "tokensOut": 55,
+      "costUsd": 0.00011540000000000001,
+      "latencyMs": 621
+    },
+    {
+      "id": "n48",
+      "extracted": [
+        "The main workspace is being recorded"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 845,
+      "tokensOut": 22,
+      "costUsd": 0.0000955,
+      "latencyMs": 768
+    },
+    {
+      "id": "n49",
+      "extracted": [
+        "A choice was made to launch the Orchard Sync Charter Check — Pass 2 with a broad-structure lens."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 873,
+      "tokensOut": 49,
+      "costUsd": 0.00011180000000000001,
+      "latencyMs": 746
+    },
+    {
+      "id": "n50",
+      "extracted": [
+        "The active folder during the shift was D:\\Workbench\\orchard-sync."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 859,
+      "tokensOut": 37,
+      "costUsd": 0.0001044,
+      "latencyMs": 681
+    },
+    {
+      "id": "n51",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 854,
+      "tokensOut": 9,
+      "costUsd": 0.0000899,
+      "latencyMs": 645
+    },
+    {
+      "id": "n52",
+      "extracted": [
+        "The buffer is at 70%."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 844,
+      "tokensOut": 21,
+      "costUsd": 0.0000949,
+      "latencyMs": 687
+    },
+    {
+      "id": "n53",
+      "extracted": [
+        "The feature titled 'S2c Mid-Flight Check Gate' was assigned a NEEDS-WORK status.",
+        "The 'S2c Mid-Flight Check Gate' review found 3 MAJOR issues and 5 MINOR issues.",
+        "The 'S2c Mid-Flight Check Gate' review was conducted by a helper on the 503 path using ruby3 on macOS."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 911,
+      "tokensOut": 141,
+      "costUsd": 0.0001616,
+      "latencyMs": 927
+    },
+    {
+      "id": "n54",
+      "extracted": [
+        "A shift-open.rb script was used.",
+        "It was confirmed that S2c did not introduce breakage."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 867,
+      "tokensOut": 44,
+      "costUsd": 0.00010870000000000001,
+      "latencyMs": 681
+    },
+    {
+      "id": "n55",
+      "extracted": [
+        "A feature titled 'Mirror Check Upgraded — Shelf-Shift Mid Snare + Clock-Pulse Rhythm Check' was observed.",
+        "The feature involves check_stocker_rerun_mirror.rb.",
+        "check_stocker_rerun_mirror.rb exercises the close-out beat-pulse gate."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 923,
+      "tokensOut": 123,
+      "costUsd": 0.0001538,
+      "latencyMs": 1016
+    },
+    {
+      "id": "n56",
+      "extracted": [
+        "No reboot was needed for the filter to take hold."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 27,
+      "costUsd": 0.00009850000000000001,
+      "latencyMs": 763
+    },
+    {
+      "id": "n57",
+      "extracted": [
+        "The writer considers the transport proven.",
+        "The writer considers the sensing premise not proven."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 851,
+      "tokensOut": 39,
+      "costUsd": 0.00010460000000000001,
+      "latencyMs": 641
+    },
+    {
+      "id": "n58",
+      "extracted": [
+        "The new slug_key matches the tuple."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 24,
+      "costUsd": 0.00009669999999999999,
+      "latencyMs": 648
+    },
+    {
+      "id": "n59",
+      "extracted": [
+        "The handler currently returns quietly in the case being discussed."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 848,
+      "tokensOut": 29,
+      "costUsd": 0.0000993,
+      "latencyMs": 673
+    },
+    {
+      "id": "n60",
+      "extracted": [
+        "The writer reports that this was the third wrong announcement in the same manifest file."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 35,
+      "costUsd": 0.0001028,
+      "latencyMs": 716
+    },
+    {
+      "id": "n61",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 9,
+      "costUsd": 0.0000898,
+      "latencyMs": 756
+    },
+    {
+      "id": "n62",
+      "extracted": [
+        "The patch was recorded and shipped."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 846,
+      "tokensOut": 23,
+      "costUsd": 0.00009609999999999999,
+      "latencyMs": 649
+    },
+    {
+      "id": "n63",
+      "extracted": [
+        "Storefront is in."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 842,
+      "tokensOut": 18,
+      "costUsd": 0.0000932,
+      "latencyMs": 703
+    },
+    {
+      "id": "n64",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 841,
+      "tokensOut": 9,
+      "costUsd": 0.0000886,
+      "latencyMs": 568
+    },
+    {
+      "id": "n65",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 849,
+      "tokensOut": 9,
+      "costUsd": 0.0000894,
+      "latencyMs": 645
+    },
+    {
+      "id": "n66",
+      "extracted": [
+        "The reissue ran clean under plain systemd."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 26,
+      "costUsd": 0.0000983,
+      "latencyMs": 495
+    },
+    {
+      "id": "n67",
+      "extracted": [
+        "The manifest imported smoothly.",
+        "Existing playbooks were retained."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 35,
+      "costUsd": 0.00010310000000000001,
+      "latencyMs": 702
+    },
+    {
+      "id": "n68",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 849,
+      "tokensOut": 9,
+      "costUsd": 0.0000894,
+      "latencyMs": 634
+    },
+    {
+      "id": "n69",
+      "extracted": [
+        "The cause of the issue is the full AfterAction event payload capture combined with a jammed outbox queue."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 884,
+      "tokensOut": 44,
+      "costUsd": 0.0001104,
+      "latencyMs": 1146,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n70",
+      "extracted": [
+        "The operator's Traillog archive is now a live portal.example bridge."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 857,
+      "tokensOut": 33,
+      "costUsd": 0.00010219999999999999,
+      "latencyMs": 557,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n71",
+      "extracted": [
+        "Recorder shifts have been running at 3 to 8 times the real-output rate since March 9, 2025."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 869,
+      "tokensOut": 45,
+      "costUsd": 0.0001094,
+      "latencyMs": 575,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n72",
+      "extracted": [
+        "The banner-notice fix was deployed to production.",
+        "A full 6-step handshake probe passed on 2025-03-10 at 09:42:11 UTC."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 884,
+      "tokensOut": 62,
+      "costUsd": 0.0001194,
+      "latencyMs": 678,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n73",
+      "extracted": [
+        "The orchard-sync visit log was recorded and deployed to the depot on March 10, 2025."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 866,
+      "tokensOut": 42,
+      "costUsd": 0.00010760000000000001,
+      "latencyMs": 678,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n74",
+      "extracted": [
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was built.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was patched.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was checked.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was rolled out to a shed server.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting uses the 'renew-badge.rb' credential helper."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 899,
+      "tokensOut": 195,
+      "costUsd": 0.0001874,
+      "latencyMs": 904,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "id": "n75",
+      "extracted": [
+        "An update to the Handshake Path Probe was made to assert that session_reply_origin_flag_enabled is absent."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 872,
+      "tokensOut": 48,
+      "costUsd": 0.0001112,
+      "latencyMs": 702,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n76",
+      "extracted": [
+        "A fix for banner-notice removal was pushed to the stage-2-4-bridge branch.",
+        "The banner-notice removal fix has commit ID e81b2ad."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 874,
+      "tokensOut": 65,
+      "costUsd": 0.00011990000000000001,
+      "latencyMs": 722,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n77",
+      "extracted": [
+        "Change #37 has been merged into trunk at commit f7a20cc"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 855,
+      "tokensOut": 34,
+      "costUsd": 0.00010250000000000001,
+      "latencyMs": 742,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n78",
+      "extracted": [
+        "The full rollout of quota-scan.rb on the depot has been completed."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 34,
+      "costUsd": 0.0001028,
+      "latencyMs": 655,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n79",
+      "extracted": [
+        "A private archive was created and pushed to codehub.example/plumworks/orchard-sync"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 40,
+      "costUsd": 0.0001063,
+      "latencyMs": 940,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n80",
+      "extracted": [
+        "A helper script named renew-badge.rb was created for badge renewal."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 33,
+      "costUsd": 0.00010229999999999999,
+      "latencyMs": 540,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c01",
+      "extracted": [
+        "The billing service runs on Postgres 16.",
+        "The old Mongo cluster for the billing service has been decommissioned."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 49,
+      "costUsd": 0.0001108,
+      "latencyMs": 897,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c02",
+      "extracted": [
+        "The team no longer deploys on Fridays; the Friday deployment freeze is permanent."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 862,
+      "tokensOut": 40,
+      "costUsd": 0.0001062,
+      "latencyMs": 610,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c03",
+      "extracted": [
+        "The vendor contract is signed for renewal on March 3rd."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 877,
+      "tokensOut": 31,
+      "costUsd": 0.0001032,
+      "latencyMs": 501,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c04",
+      "extracted": [
+        "The API rate limit is 600 requests per minute."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 862,
+      "tokensOut": 27,
+      "costUsd": 0.00009970000000000001,
+      "latencyMs": 670,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c05",
+      "extracted": [
+        "The canary deployment went out at 14:02.",
+        "The full rollout was at 14:40.",
+        "The retention policy is currently 90 days, down from 365 days."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 882,
+      "tokensOut": 61,
+      "costUsd": 0.0001187,
+      "latencyMs": 789,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c06",
+      "extracted": [
+        "Auth tokens use ECDSA.",
+        "The old HMAC token scheme is no longer in use."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 877,
+      "tokensOut": 43,
+      "costUsd": 0.0001092,
+      "latencyMs": 718,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c07",
+      "extracted": [
+        "The auditor said the warehouse passed the fire inspection."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 854,
+      "tokensOut": 30,
+      "costUsd": 0.0001004,
+      "latencyMs": 465,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c08",
+      "extracted": [
+        "Priya mentioned during standup that the mobile team owns the push-notification service."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 862,
+      "tokensOut": 36,
+      "costUsd": 0.00010420000000000001,
+      "latencyMs": 908,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c09",
+      "extracted": [
+        "The failover region is Frankfurt."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 867,
+      "tokensOut": 23,
+      "costUsd": 0.0000982,
+      "latencyMs": 602,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c10",
+      "extracted": [
+        "A contractor stated that the load-bearing wall is the north wall."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 32,
+      "costUsd": 0.00010229999999999999,
+      "latencyMs": 577,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c11",
+      "extracted": [
+        "Line 4 is certified for food-grade production, as confirmed by the plant manager.",
+        "The 14:31 check-in sensor sweep was normal."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 875,
+      "tokensOut": 59,
+      "costUsd": 0.000117,
+      "latencyMs": 712,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c12",
+      "extracted": [
+        "Legal signed off on the project.",
+        "The data residency requirement is EU-only storage."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 864,
+      "tokensOut": 38,
+      "costUsd": 0.0001054,
+      "latencyMs": 767,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e01",
+      "extracted": [
+        "The writer switched their primary editor from VS Code to Neovim last week."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 34,
+      "costUsd": 0.00010260000000000001,
+      "latencyMs": 788,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e02",
+      "extracted": [
+        "The team standup was moved to 9:30am.",
+        "The team standup is capped at 15 minutes."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 860,
+      "tokensOut": 42,
+      "costUsd": 0.000107,
+      "latencyMs": 670,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e03",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 859,
+      "tokensOut": 9,
+      "costUsd": 0.0000904,
+      "latencyMs": 584
+    },
+    {
+      "id": "e04",
+      "extracted": [
+        "The writer has a daughter named Mia",
+        "Mia started kindergarten in the fall",
+        "Mia's teacher is Ms. Patel"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 865,
+      "tokensOut": 56,
+      "costUsd": 0.0001145,
+      "latencyMs": 710,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e05",
+      "extracted": [
+        "The writer moved to Oakland.",
+        "The writer now takes the train to work.",
+        "The writer no longer bikes to work."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 857,
+      "tokensOut": 49,
+      "costUsd": 0.0001102,
+      "latencyMs": 660,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e06",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 9,
+      "costUsd": 0.0000897,
+      "latencyMs": 741
+    },
+    {
+      "id": "e07",
+      "extracted": [
+        "The prod database is Postgres 16.",
+        "The prod database is hosted on RDS in us-east-1."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 861,
+      "tokensOut": 44,
+      "costUsd": 0.0001081,
+      "latencyMs": 705,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e08",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 9,
+      "costUsd": 0.00008950000000000001,
+      "latencyMs": 500
+    },
+    {
+      "id": "e09",
+      "extracted": [
+        "The writer is allergic to penicillin."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 24,
+      "costUsd": 0.00009669999999999999,
+      "latencyMs": 721,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e10",
+      "extracted": [
+        "The team chose Stripe over Adyen for payments.",
+        "The team chose Stripe because its integration was faster."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 46,
+      "costUsd": 0.0001088,
+      "latencyMs": 716,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e11",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 863,
+      "tokensOut": 9,
+      "costUsd": 0.0000908,
+      "latencyMs": 798
+    },
+    {
+      "id": "e12",
+      "extracted": [
+        "The writer's manager is Dana.",
+        "Raj moved to the platform team."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 855,
+      "tokensOut": 35,
+      "costUsd": 0.00010300000000000001,
+      "latencyMs": 1181,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e13",
+      "extracted": [
+        "The writer only buys the newer-model car seats since the recall last year."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 32,
+      "costUsd": 0.0001016,
+      "latencyMs": 712,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e14",
+      "extracted": [
+        "The team does not deploy on Fridays."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 850,
+      "tokensOut": 24,
+      "costUsd": 0.000097,
+      "latencyMs": 587,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e15",
+      "extracted": [
+        "The writer is no longer the on-call lead for the billing service."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 30,
+      "costUsd": 0.0001003,
+      "latencyMs": 659,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e16",
+      "extracted": [
+        "The SLA is 99.95% uptime.",
+        "The error budget is 21 minutes per month."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 864,
+      "tokensOut": 41,
+      "costUsd": 0.0001069,
+      "latencyMs": 727,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e17",
+      "extracted": [
+        "The lease renews on March 3rd.",
+        "Rent goes up to $2,150."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 37,
+      "costUsd": 0.0001043,
+      "latencyMs": 614,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e18",
+      "extracted": [
+        "The writer has a son named Theo.",
+        "Theo turns 8 years old next week."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 848,
+      "tokensOut": 37,
+      "costUsd": 0.0001033,
+      "latencyMs": 720,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e19",
+      "extracted": [
+        "The team cut over from Jenkins to GitHub Actions.",
+        "The new build takes about 6 minutes."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 884,
+      "tokensOut": 46,
+      "costUsd": 0.00011140000000000001,
+      "latencyMs": 665,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e20",
+      "extracted": [
+        "The writer's team was previously a Python shop.",
+        "The writer's team migrated everything to Go last quarter."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 856,
+      "tokensOut": 45,
+      "costUsd": 0.0001081,
+      "latencyMs": 725,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e21",
+      "extracted": [
+        "The writer moved from product to engineering in January."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 25,
+      "costUsd": 0.0000972,
+      "latencyMs": 650,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e22",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 862,
+      "tokensOut": 9,
+      "costUsd": 0.00009070000000000001,
+      "latencyMs": 652
+    },
+    {
+      "id": "e23",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 857,
+      "tokensOut": 9,
+      "costUsd": 0.0000902,
+      "latencyMs": 547
+    },
+    {
+      "id": "e24",
+      "extracted": [
+        "The writer's email address is sam@acme.io"
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 860,
+      "tokensOut": 26,
+      "costUsd": 0.00009900000000000001,
+      "latencyMs": 686,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e25",
+      "extracted": [
+        "Dana mentioned the launch slipped to Q3."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 29,
+      "costUsd": 0.0000998,
+      "latencyMs": 525,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e26",
+      "extracted": [
+        "The writer's doctor said the writer's cholesterol is back to normal."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 34,
+      "costUsd": 0.0001022,
+      "latencyMs": 562,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e27",
+      "extracted": [
+        "The writer is vegetarian."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 844,
+      "tokensOut": 21,
+      "costUsd": 0.0000949,
+      "latencyMs": 532,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e28",
+      "extracted": [
+        "The team uses Notion for docs.",
+        "The team uses Slack for chat."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 854,
+      "tokensOut": 35,
+      "costUsd": 0.00010290000000000001,
+      "latencyMs": 784,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e29",
+      "extracted": [
+        "The writer switched banks to Ally for a better savings rate."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 30,
+      "costUsd": 0.0001002,
+      "latencyMs": 864,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e30",
+      "extracted": [
+        "The conference is held in Berlin this year."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 24,
+      "costUsd": 0.0000972,
+      "latencyMs": 685,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e31",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 852,
+      "tokensOut": 9,
+      "costUsd": 0.0000897,
+      "latencyMs": 618
+    },
+    {
+      "id": "e32",
+      "extracted": [],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 847,
+      "tokensOut": 9,
+      "costUsd": 0.0000892,
+      "latencyMs": 608
+    },
+    {
+      "id": "e33",
+      "extracted": [
+        "The writer runs about 25 miles a week."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 846,
+      "tokensOut": 25,
+      "costUsd": 0.0000971,
+      "latencyMs": 632,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e34",
+      "extracted": [
+        "Standup is held every weekday at 10:15."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 849,
+      "tokensOut": 26,
+      "costUsd": 0.00009790000000000001,
+      "latencyMs": 552,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e35",
+      "extracted": [
+        "The writer's new landlord is Mr. Okafor.",
+        "The writer's unit is 4B."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 42,
+      "costUsd": 0.0001068,
+      "latencyMs": 747,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e36",
+      "extracted": [
+        "The writer's organization hired two engineers named Priya and Wen.",
+        "Priya and Wen joined the data team."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 857,
+      "tokensOut": 47,
+      "costUsd": 0.0001092,
+      "latencyMs": 701,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e37",
+      "extracted": [
+        "The writer biked to the gym this morning.",
+        "The writer signed up for the 6am spin class."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 858,
+      "tokensOut": 41,
+      "costUsd": 0.0001063,
+      "latencyMs": 751,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e38",
+      "extracted": [
+        "The writer's infrastructure is not on AWS.",
+        "The writer's infrastructure runs on GCP."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 853,
+      "tokensOut": 45,
+      "costUsd": 0.00010779999999999999,
+      "latencyMs": 659,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e39",
+      "extracted": [
+        "The meeting is at 4pm."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 862,
+      "tokensOut": 22,
+      "costUsd": 0.0000972,
+      "latencyMs": 533,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e40",
+      "extracted": [
+        "The writer's company closed a Series A round at $12M.",
+        "Marcus joins the company as CFO on Monday.",
+        "The company is opening a Denver office."
+      ],
+      "stopReason": "end_turn",
+      "parseOk": true,
+      "tokensIn": 884,
+      "tokensOut": 60,
+      "costUsd": 0.0001184,
+      "latencyMs": 807,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  ]
+}
