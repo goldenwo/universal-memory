@@ -29,12 +29,13 @@ test('callStats on no calls is all-null, not NaN', () => {
   assert.equal(s.latencyMs.p95, null);
 });
 
-test('controlProvider: gold-echo returns the gold, always-abstain nothing, input-echo the input', async () => {
+test('controlProvider: gold-echo returns the gold, first-gold its first fact, always-abstain nothing, input-echo the input', async () => {
   const row = { id: 'x', input_text: 'The build is green again.', expected_facts: ['A', 'B'] };
   const run = async (kind) => (await facts(row.input_text, {
     provider: `control:${kind}`, _providerOverride: controlProvider(kind, row), metrics: NOOP,
   })).facts;
   assert.deepEqual(await run('gold-echo'), ['A', 'B']);
+  assert.deepEqual(await run('first-gold'), ['A']);
   assert.deepEqual(await run('always-abstain'), []);
   assert.deepEqual(await run('input-echo'), ['The build is green again.']);
   assert.throws(() => controlProvider('bogus', row), /unknown control/);

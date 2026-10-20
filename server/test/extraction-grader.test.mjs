@@ -69,3 +69,16 @@ test('judgeExtraction failCause: override without answerGradeInvoke → no-invok
   assert.equal(r.ok, false);
   assert.equal(r.failCause, 'no-invoke');
 });
+
+test('judgeExtraction: an empty extracted list matches no gold fact, without asking the judge', async () => {
+  // Measured 2026-10-20 (always-abstain control): given EXTRACTED (0), gpt-4o-mini marked gold
+  // facts matched on 49 of 50 rows — reading them off the INPUT — so an abstaining extractor
+  // paid no recall cost. Nothing extracted can express a gold fact; the answer is fixed.
+  let called = false;
+  const override = { answerGradeInvoke: async () => { called = true; return { content: '{"goldMatched":[true,true],"extractedSupported":[],"reasoning":"x"}' }; } };
+  const v = await judgeExtraction('Alice moved to Berlin and works at Acme.', ['Alice lives in Berlin', 'Alice works at Acme'], [], { _providerOverride: override });
+  assert.equal(called, false);
+  assert.deepEqual(v.goldMatched, [false, false]);
+  assert.deepEqual(v.extractedSupported, []);
+  assert.equal(v.ok, true);
+});

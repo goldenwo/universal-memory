@@ -26,8 +26,9 @@
  *   hand against pre-registered arc gates instead (#181 arc).
  *   --effort <level> / --thinking <adaptive|disabled> / --thinking-headroom <tokens> pass
  *   through to factsInvoke (ignored by models that take no such knob — anthropic capabilitiesFor).
- *   --control <gold-echo|always-abstain|input-echo> swaps the extractor for a canned one
- *   (positive controls: proves the scoring can reach both ends before any model arm runs).
+ *   --control <gold-echo|first-gold|always-abstain|input-echo> swaps the extractor for a canned
+ *   one (positive controls: proves the scoring can reach both ends before any model arm runs;
+ *   first-gold returns only each row's first gold fact, so the judge must leave the rest unmatched).
  *
  * Every run also saves the raw per-call record (`calls`: extracted facts, stop reason, parse
  * status, tokens, cost, wall-clock latency, and the judge's per-fact verdicts), `callStats`,
@@ -70,6 +71,7 @@ function parseArgs(argv) {
 export function controlProvider(kind, row) {
   const outputs = {
     'gold-echo': () => row.expected_facts ?? [],
+    'first-gold': () => (row.expected_facts ?? []).slice(0, 1),
     'always-abstain': () => [],
     'input-echo': () => [row.input_text],
   };
