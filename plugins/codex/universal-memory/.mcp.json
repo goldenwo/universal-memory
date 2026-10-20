@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "universal-memory": {
-      "url": "http://localhost:6335/mcp",
-      "startup_timeout_sec": 10,
-      "tool_timeout_sec": 60
-    }
-  }
-}

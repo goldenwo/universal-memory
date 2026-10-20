@@ -117,6 +117,17 @@ Open a session. The Stop hook streams turns to the server, and the SessionEnd ho
 
 At the start of the next session, the SessionStart hook detects the unprocessed captures, writes a fresh `state.md`, and injects it as context before your first message. Run `/um-checkpoint` any time mid-session to refresh `state.md` on demand.
 
+### Codex CLI
+
+Codex installs the same plugin, hooks included, from the same marketplace. `bash installer/install.sh --plugin-codex` runs these two commands for you (a full `--yes` install does too when it finds Codex):
+
+```bash
+codex plugin marketplace add goldenwo/universal-memory
+codex plugin add universal-memory@universal-memory
+```
+
+Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
+
 ### Install with an AI agent
 
 Paste this into Claude Code, or any coding agent that can run a shell:
@@ -176,11 +187,12 @@ See [installer/install-cli.md](installer/install-cli.md) for the subcommand refe
 
 ## Surfaces
 
-The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write.
+The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, Codex CLI, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write.
 
 | Surface | Capture | Recall | Setup |
 |---|---|---|---|
 | **Claude Code** | Automatic (session hooks) | Automatic (`state.md` injected at session start) | One command |
+| **Codex CLI** | Automatic (the same session hooks) | Automatic (`state.md` injected at session start) | One command, then trust the hooks once |
 | **claude.ai** (web + mobile) | Say "remember" | On demand, via MCP tools | OAuth connector |
 | **ChatGPT** (Desktop / Custom GPT) | Say "remember" | On demand, via MCP or REST | Connector + tunnel |
 | **Claude Desktop** | Say "remember" | On demand, via MCP tools | Local config, no tunnel |
@@ -195,7 +207,7 @@ Requests to `/api` and `/mcp` must carry `Authorization: Bearer <UM_AUTH_TOKEN>`
 
 - **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
 - **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (the 4 read tools always; the write tools when `UM_MCP_WRITE_ENABLED=true`, which `installer/install.sh` sets for a new install). Read responses return compact snippets by default; opt into full bodies with `full: true`.
-- **Cross-environment capture** — capture is not Claude Code-only. claude.ai, ChatGPT Desktop, and Codex feed conversation turns into the same pipeline via `memory_append_turn`, and trigger summaries with `memory_checkpoint`.
+- **Cross-environment capture** — capture is not Claude Code-only. The Codex CLI runs the same session hooks, and claude.ai and ChatGPT Desktop feed conversation turns into the same pipeline via `memory_append_turn` and trigger summaries with `memory_checkpoint`.
 - **Command-line toolkit** — an 8-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `forget`, `supersede`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.
 - **Markdown as source of truth** — no vendor lock-in. Swap the vector store, LLM provider, or plugin format and your knowledge survives as readable files under git.
@@ -251,7 +263,7 @@ universal-memory/
 ├── server/       Self-hostable backend (Qdrant + mem0 + MCP/REST endpoints)
 ├── installer/    Install wizards (server, CLI, plugins)
 ├── cli/          `um` command-line toolkit source
-├── plugins/      Per-surface connectors (Claude Code, Codex, OpenClaw, ChatGPT Custom GPT)
+├── plugins/      Per-surface connectors (Claude Code and Codex share one; OpenClaw, ChatGPT Custom GPT)
 └── examples/     Integration examples (OpenAI Assistants, …)
 ```
 
@@ -272,7 +284,7 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory` (adding again installs the new version), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 <details>
 <summary><b>Driving compose yourself, and host-specific overrides</b></summary>

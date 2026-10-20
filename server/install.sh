@@ -1550,7 +1550,7 @@ if [ "${#preserved_keys[@]}" -gt 0 ]; then
 fi
 
 # ─── Plugin install (v0.5: delegated to standalone scripts) ──────────────────
-# In v0.5+, plugin-copy is handled by installer/install-plugin-cc.sh and
+# In v0.5+, plugin installs are handled by installer/install-plugin-cc.sh and
 # installer/install-plugin-codex.sh.  server/install.sh no longer does it
 # inline.  Use installer/install.sh --plugin-cc / --plugin-codex, or
 # installer/install.sh --all, to install plugins alongside the server.

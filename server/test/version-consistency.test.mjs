@@ -9,8 +9,9 @@
  * Policy (which manifests track the server release version):
  *   - server/package.json                                      → the single source (server/lib/version.mjs reads it)
  *   - plugins/claude-code/.../.claude-plugin/plugin.json       → MUST track (user-installed; bumped at every prior tag)
- *   - .claude-plugin/marketplace.json (universal-memory entry)  → MUST track (what `claude plugin install` advertises — #159 T8)
- *   - plugins/codex/.../.codex-plugin/plugin.json              → intentionally EXCLUDED (tracks v0.7, config-only — issue #17)
+ *   - .claude-plugin/marketplace.json (universal-memory entry)  → MUST track (what `claude plugin install` and
+ *     `codex plugin add` advertise — #159 T8; Codex installs the same entry since the MCP-only
+ *     plugins/codex copy was retired in 2026-10)
  *   - plugins/openclaw/reaction-producer/                       → intentionally EXCLUDED (#201 PR 2: bot-side sidecar,
  *     no manifest; producer ↔ server compatibility rides the additive-only /api/reaction OpenAPI contract, no version pinning)
  */

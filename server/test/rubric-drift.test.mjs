@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const CANONICAL_PATH = path.join(REPO, 'plugins/claude-code/universal-memory/rubric.md');
 // The two docs/ mirrors were removed with the 2026-07-28 public-docs strip;
-// the surviving mirrors are all plugin-local.
+// the surviving mirrors are all plugin-local. The Codex README's paste-in copy
+// left with the MCP-only Codex plugin (2026-10): Codex now installs the Claude
+// Code plugin, whose SessionStart hook injects the canonical rubric itself.
 const MIRROR_PATHS = [
-  'plugins/codex/universal-memory/README.md',
   'plugins/chatgpt-custom-gpt/universal-memory/README.md',
   'plugins/chatgpt-custom-gpt/universal-memory/system-prompt.md',
 ].map((p) => path.join(REPO, p));

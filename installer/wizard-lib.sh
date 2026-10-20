@@ -22,13 +22,16 @@ wizard_header() {
 }
 
 wizard_detect_env() {
-  # Print detected state: Docker, ~/.claude, ~/.codex, bash, python3, pyyaml
+  # Print detected state: Docker, Claude Code, Codex, bash, python3, pyyaml
   # Returns via globals: DETECTED_DOCKER, DETECTED_CC, DETECTED_CODEX, etc.
   DETECTED_DOCKER=$(command -v docker >/dev/null 2>&1 && echo 1 || echo 0)
   # The plugin installs through the claude CLI (the marketplace route), so the CLI is
   # what counts; ~/.claude does not exist until Claude Code has run once.
   DETECTED_CC=$(command -v claude >/dev/null 2>&1 && echo 1 || echo 0)
-  DETECTED_CODEX=$([[ -d "$HOME/.codex" ]] && echo 1 || echo 0)
+  # Codex the same way: its CLI does the install and creates ~/.codex on first use.
+  # A Codex home without the CLI still counts; the installer then prints the commands.
+  DETECTED_CODEX_CLI=$(command -v codex >/dev/null 2>&1 && echo 1 || echo 0)
+  DETECTED_CODEX=$([[ $DETECTED_CODEX_CLI -eq 1 || -d "${CODEX_HOME:-$HOME/.codex}" ]] && echo 1 || echo 0)
   DETECTED_PYTHON3=$(command -v python3 >/dev/null 2>&1 && echo 1 || echo 0)
   # From / so a yaml.py in the working directory is not imported (and run).
   DETECTED_PYYAML=$( (cd / && python3 -c 'import yaml') 2>/dev/null && echo 1 || echo 0)
@@ -37,7 +40,9 @@ wizard_detect_env() {
   echo "Detected environment:"
   [[ $DETECTED_DOCKER -eq 1 ]] && echo "  ✓ Docker" || echo "  ✗ Docker not found"
   [[ $DETECTED_CC -eq 1 ]] && echo "  ✓ Claude Code (claude CLI)" || echo "  ✗ Claude Code CLI not found (the plugin needs it)"
-  [[ $DETECTED_CODEX -eq 1 ]] && echo "  ✓ ~/.codex (Codex)" || echo "  ✗ ~/.codex (Codex not found — will skip)"
+  if [[ $DETECTED_CODEX_CLI -eq 1 ]]; then echo "  ✓ Codex (codex CLI)"
+  elif [[ $DETECTED_CODEX -eq 1 ]]; then echo "  ✓ ~/.codex (Codex; its CLI is not on PATH, so the install prints the commands)"
+  else echo "  ✗ Codex not found — will skip"; fi
   [[ $DETECTED_PYTHON3 -eq 1 ]] && echo "  ✓ python3" || echo "  ✗ python3 not found (required for the server and \`um\` CLI)"
   [[ $DETECTED_PYYAML -eq 1 ]] && echo "  ✓ python3-yaml" || echo "  ✗ python3-yaml not found (required for the server and \`um\` CLI)"
   echo "  bash $DETECTED_BASH_VERSION"

@@ -9,8 +9,8 @@
 #
 # Component flags (v0.5+):
 #   --server        Install/start the memory server (Docker stack)
-#   --plugin-cc     Install the Claude Code plugin (~/.claude/plugins/)
-#   --plugin-codex  Install the Codex CLI plugin (~/.codex/plugins/)
+#   --plugin-cc     Install the Claude Code plugin (through Claude Code's marketplace)
+#   --plugin-codex  Install the Codex CLI plugin (through Codex's marketplace)
 #   --cli           Install the um CLI tool
 #   --all           Install all detected components (default when no flags + non-TTY)
 #   --interactive   Launch the interactive wizard
@@ -117,7 +117,7 @@ Usage: bash installer/install.sh [FLAGS]
 Component flags:
   --server          Install the memory server (Docker stack)
   --plugin-cc       Install the Claude Code plugin
-  --plugin-codex    Install the Codex CLI plugin (skipped if ~/.codex absent)
+  --plugin-codex    Install the Codex CLI plugin (skipped if Codex is absent)
   --cli             Install the um CLI tool
   --all             Install all detected components
 
@@ -281,14 +281,23 @@ if [[ $REMOTE_MODE -eq 1 ]]; then
   fi
 fi
 
+# Codex counts as present with its CLI on PATH (the plugin installs through it,
+# and its first `codex plugin marketplace add` creates ~/.codex), or with its home
+# alone (install-plugin-codex.sh then prints the commands).
+_codex_present() {
+  command -v codex >/dev/null 2>&1 || [[ -d "${CODEX_HOME:-${HOME:-}/.codex}" ]]
+}
+
 # ─── Prerequisites check ──────────────────────────────────────────────────────
 # Determine which tools are actually needed based on what we're installing. The
 # wizard calls this as soon as the components are chosen, so a missing tool stops
 # it before the vault/provider/proceed prompts rather than after them.
 check_prereqs() {
   local need_git=0 need_docker=0 need_python3=0
-  # Server and plugins need git + docker
-  [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && need_git=1 && need_docker=1
+  # Server and plugins need git (for the installer's own checkout); only the server
+  # runs Docker. The plugins install through the claude and codex CLIs.
+  [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && need_git=1
+  [[ $INSTALL_SERVER -eq 1 ]] && need_docker=1
   # The CLI and server/install.sh both run python3 with PyYAML (server/install.sh
   # refuses to continue without it).
   [[ $INSTALL_CLI -eq 1 || $INSTALL_SERVER -eq 1 ]] && need_python3=1
@@ -426,7 +435,7 @@ fi
 if [[ $INSTALL_ALL -eq 1 ]]; then
   INSTALL_SERVER=1
   command -v claude >/dev/null 2>&1 && INSTALL_PLUGIN_CC=1  # the plugin installs through the claude CLI
-  [[ -d "${HOME:-}/.codex" ]] && INSTALL_PLUGIN_CODEX=1
+  _codex_present && INSTALL_PLUGIN_CODEX=1
   INSTALL_CLI=1
 fi
 
@@ -557,8 +566,8 @@ if [[ $INSTALL_PLUGIN_CC -eq 1 ]]; then
   _delegate "installer/install-plugin-cc.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
 fi
 if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
-  if [[ ! -d "${HOME:-}/.codex" ]]; then
-    echo "[install] ~/.codex not found — soft-skipping Codex plugin" >&2
+  if ! _codex_present; then
+    echo "[install] Codex not found (no codex CLI, no ~/.codex) — soft-skipping Codex plugin" >&2
   else
     _delegate "installer/install-plugin-codex.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
   fi
