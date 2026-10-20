@@ -42,7 +42,10 @@ export function getFactsLlmConfig(env) {
  * @param {string} [ctx.model]               - Model override
  * @param {object} [ctx._providerOverride]   - Test seam: object with `factsInvoke(text, opts)` method
  * @param {object} [ctx.metrics]             - DI metrics sink ({ counter, histogram }); defaults to no-op
- * @returns {Promise<{facts: any, tokensIn: number, tokensOut: number, costUsd: number}>}
+ * @returns {Promise<{facts: any, tokensIn: number, tokensOut: number, costUsd: number, stopReason: string|null, parseOk: boolean|null}>}
+ *   stopReason is the provider's (end_turn / stop on a clean reply; max_tokens / length / refusal
+ *   mean the [] was not a real abstention); parseOk is false when the reply was not valid facts
+ *   JSON. Both are null when the provider doesn't report them.
  */
 export async function facts(text, ctx = {}) {
   const providerName = ctx.provider ?? process.env.UM_FACTS_PROVIDER ?? 'openai';
@@ -89,5 +92,5 @@ export async function facts(text, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model };
+  return { facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model, stopReason: raw.stopReason ?? null, parseOk: raw.parseOk ?? null };
 }

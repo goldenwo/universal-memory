@@ -293,6 +293,7 @@ function parseFactsJson(content) {
   // Tolerate accidental markdown fences (```json ... ```) — common LLM drift.
   // OpenAI also returns null content for refusals / content-filter stops,
   // so guard against TypeError before .replace runs.
+  // Returns null (not []) when the reply is not a valid {"facts": string[]} object.
   const stripped = (content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
   try {
     const parsed = JSON.parse(stripped);
@@ -300,7 +301,7 @@ function parseFactsJson(content) {
       return parsed.facts;
     }
   } catch { /* fall through */ }
-  return [];
+  return null;
 }
 
 export async function factsInvoke(text, opts = {}) {
@@ -348,8 +349,15 @@ export async function factsInvoke(text, opts = {}) {
       cause: norm,
     });
   }
+  // A malformed, truncated ('length'), filtered or refused reply also yields facts: [].
+  // parseOk and stopReason let callers tell those from a clean abstention. A refusal can
+  // arrive with finish_reason 'stop', so the message's refusal field wins.
+  const { message, finish_reason } = raw.choices[0];
+  const parsed = parseFactsJson(message.content);
   return {
-    facts: parseFactsJson(raw.choices[0].message.content),
+    facts: parsed ?? [],
     usage: extractUsage(raw),
+    stopReason: message.refusal ? 'refusal' : (finish_reason ?? null),
+    parseOk: parsed !== null,
   };
 }

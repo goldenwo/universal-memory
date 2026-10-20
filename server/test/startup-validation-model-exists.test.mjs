@@ -35,3 +35,7 @@ test('silently skips unknown provider (DE6 owns the unknown-provider error)', ()
     UM_EMBEDDING_PROVIDER: 'cohere', UM_EMBEDDING_MODEL: 'embed-english-v3.0',
   }));
 });
+
+test('accepts claude-haiku-5-5 on the anthropic facts surface once it is priced', () => {
+  assert.doesNotThrow(() => validateModelExists({ UM_FACTS_PROVIDER: 'anthropic', UM_FACTS_MODEL: 'claude-haiku-5-5' }));
+});

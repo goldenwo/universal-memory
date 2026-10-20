@@ -6,6 +6,8 @@
  * @property {number} out  - USD per 1k OUTPUT tokens (0 for embedding-type)
  * @property {'chat'|'embed'|'unknown'} type
  * @property {number} [dim] - vector dimension; only present for type:'embed'
+ * @property {{overTokensIn: number, in: number, out: number}} [longPrompt] - rates for a request
+ *   whose input exceeds overTokensIn (the whole request is billed at them, not just the excess)
  *
  * @typedef {Object} ProviderPricing
  * @property {string} last_verified - ISO date or 'n/a' for self-hosted
@@ -31,8 +33,10 @@ export const PRICING = {
     },
   },
   anthropic: {
-    last_verified: '2026-04-27',
+    last_verified: '2026-10-20',
     models: {
+      'claude-haiku-5-5':          { in: 0.00010, out: 0.00050, type: 'chat',
+                                     longPrompt: { overTokensIn: 100_000, in: 0.00050, out: 0.00250 } },
       'claude-haiku-4-5-20251001': { in: 0.00100, out: 0.00500, type: 'chat' },
       'claude-sonnet-4-6':         { in: 0.00300, out: 0.01500, type: 'chat' },
     },
@@ -55,6 +59,7 @@ export function priceFor(provider, model) {
 }
 
 export function computeCost(provider, model, tokensIn, tokensOut) {
-  const p = priceFor(provider, model);
+  const base = priceFor(provider, model);
+  const p = base.longPrompt && tokensIn > base.longPrompt.overTokensIn ? base.longPrompt : base;
   return (tokensIn / 1000) * p.in + (tokensOut / 1000) * p.out;
 }

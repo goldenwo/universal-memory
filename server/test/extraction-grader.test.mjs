@@ -69,3 +69,39 @@ test('judgeExtraction failCause: override without answerGradeInvoke → no-invok
   assert.equal(r.ok, false);
   assert.equal(r.failCause, 'no-invoke');
 });
+
+test('judgeExtraction: an empty extracted list matches no gold fact, without asking the judge', async () => {
+  // Measured 2026-10-20 (always-abstain control): given EXTRACTED (0), gpt-4o-mini marked gold
+  // facts matched on 49 of 50 rows — reading them off the INPUT — so an abstaining extractor
+  // paid no recall cost. Nothing extracted can express a gold fact; the answer is fixed.
+  let called = false;
+  const override = { answerGradeInvoke: async () => { called = true; return { content: '{"goldMatched":[true,true],"extractedSupported":[],"reasoning":"x"}' }; } };
+  const v = await judgeExtraction('Alice moved to Berlin and works at Acme.', ['Alice lives in Berlin', 'Alice works at Acme'], [], { _providerOverride: override });
+  assert.equal(called, false);
+  assert.deepEqual(v.goldMatched, [false, false]);
+  assert.deepEqual(v.extractedSupported, []);
+  assert.equal(v.ok, true);
+});
+
+test('judgeExtraction: recall is judged without the INPUT, precision without the GOLD list', async () => {
+  // Measured 2026-10-20 (first-gold control): with INPUT in view, gpt-4o-mini credited gold
+  // facts the EXTRACTED list did not contain on 17 of 17 multi-fact rows (recall 0.973 where
+  // 56/77 = 0.727 was right). Recall compares the two lists only; precision needs the INPUT.
+  const prompts = [];
+  const override = { answerGradeInvoke: async (prompt, opts) => {
+    prompts.push({ prompt, system: opts.systemPrompt });
+    return { content: JSON.stringify({ goldMatched: [true, false], extractedSupported: [true], reasoning: 'x' }), usage: { tokensIn: 2, tokensOut: 1 } };
+  } };
+  const v = await judgeExtraction('SECRET-INPUT-TEXT standup at 9:30am, capped at 15 minutes',
+    ['GOLD-ONE standup is at 9:30am', 'GOLD-TWO standup is capped at 15 minutes'], ['standup is at 9:30am'], { _providerOverride: override });
+  assert.equal(prompts.length, 2);
+  const recall = prompts.find((p) => p.prompt.includes('GOLD-ONE'));
+  const precision = prompts.find((p) => p.prompt.includes('SECRET-INPUT-TEXT'));
+  assert.ok(recall && precision && recall !== precision);
+  assert.equal(recall.prompt.includes('SECRET-INPUT-TEXT'), false, 'recall prompt must not carry the INPUT');
+  assert.equal(precision.prompt.includes('GOLD-ONE'), false, 'precision prompt must not carry the GOLD list');
+  assert.deepEqual(v.goldMatched, [true, false]);
+  assert.deepEqual(v.extractedSupported, [true]);
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.usage, { tokensIn: 4, tokensOut: 2 });
+});

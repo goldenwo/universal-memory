@@ -24,10 +24,21 @@
  *   undefined → guaranteed 'unmeasured' breaches) and their pool floors are calibrated
  *   to the CI's openai fixture set. Judged runs and non-openai providers are gated by
  *   hand against pre-registered arc gates instead (#181 arc).
+ *   --effort <level> / --thinking <adaptive|disabled> / --thinking-headroom <tokens> pass
+ *   through to factsInvoke (ignored by models that take no such knob — anthropic capabilitiesFor).
+ *   --control <gold-echo|first-gold|always-abstain|input-echo> swaps the extractor for a canned
+ *   one (positive controls: proves the scoring can reach both ends before any model arm runs;
+ *   first-gold returns only each row's first gold fact, so the judge must leave the rest unmatched).
+ *
+ * Every run also saves the raw per-call record (`calls`: extracted facts, stop reason, parse
+ * status, tokens, cost, wall-clock latency, and the judge's per-fact verdicts), `callStats`,
+ * and the sha256 of each fixture file it read.
  */
 import { fileURLToPath } from 'node:url';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { createHash } from 'node:crypto';
 import {
   extractionFidelity,
   extractionByStratum,
@@ -45,8 +56,72 @@ function parseArgs(argv) {
     else if (argv[i] === '--out') args.out = argv[++i];
     else if (argv[i] === '--verdict-only') args.verdictOnly = true;
     else if (argv[i] === '--gate') args.gate = argv[++i];
+    else if (argv[i] === '--effort') args.effort = argv[++i];
+    else if (argv[i] === '--thinking') args.thinking = argv[++i];
+    else if (argv[i] === '--thinking-headroom') args.thinkingHeadroom = Number(argv[++i]);
+    else if (argv[i] === '--control') args.control = argv[++i];
   }
   return args;
+}
+
+/**
+ * Canned extractors for positive controls, shaped like a provider module so they run
+ * through the real facts() → scoring path. Per-row: gold-echo needs the row's gold.
+ */
+export function controlProvider(kind, row) {
+  const outputs = {
+    'gold-echo': () => row.expected_facts ?? [],
+    'first-gold': () => (row.expected_facts ?? []).slice(0, 1),
+    'always-abstain': () => [],
+    'input-echo': () => [row.input_text],
+  };
+  if (!outputs[kind]) throw new Error(`unknown control '${kind}' (valid: ${Object.keys(outputs).join(', ')})`);
+  return {
+    supports: { facts: true },
+    defaults: { factsModel: kind },
+    factsInvoke: async () => ({ facts: outputs[kind](), usage: { tokensIn: 0, tokensOut: 0 }, stopReason: 'control' }),
+  };
+}
+
+const round = (x, places) => (x == null ? null : +x.toFixed(places));
+
+/** sha256 of each fixture file's bytes, so a result names exactly what it scored. */
+export async function fixtureDigests(paths) {
+  const out = {};
+  for (const path of paths) out[path] = createHash('sha256').update(await readFile(path)).digest('hex');
+  return out;
+}
+
+/** Nearest-rank percentile of an ascending-sorted array (null when empty). */
+function percentile(sorted, q) {
+  return sorted.length === 0 ? null : sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
+}
+
+/**
+ * Per-call cost / token / latency / stop-reason summary over the raw call records.
+ * Means are per extraction call; latency is facts() wall-clock (network included).
+ */
+export function callStats(calls) {
+  const n = calls.length;
+  const sum = (key) => calls.reduce((acc, c) => acc + (c[key] ?? 0), 0);
+  const mean = (key) => (n === 0 ? null : sum(key) / n);
+  const latencies = calls.map((c) => c.latencyMs).sort((a, b) => a - b);
+  const stopReasons = {};
+  for (const c of calls) stopReasons[c.stopReason ?? 'null'] = (stopReasons[c.stopReason ?? 'null'] ?? 0) + 1;
+  return {
+    n,
+    costUsd: { total: round(sum('costUsd'), 8), mean: round(mean('costUsd'), 10) },
+    tokensIn: { mean: round(mean('tokensIn'), 2) },
+    tokensOut: { mean: round(mean('tokensOut'), 2) },
+    latencyMs: {
+      p50: percentile(latencies, 0.5),
+      p95: percentile(latencies, 0.95),
+      max: n === 0 ? null : latencies[n - 1],
+      mean: round(mean('latencyMs'), 1),
+    },
+    stopReasons,
+    parseFailures: calls.filter((c) => c.parseOk === false).length,
+  };
 }
 
 /** Normalize facts() output to a plain string list (factsInvoke returns string[]; defensive on objects). */
@@ -79,6 +154,10 @@ async function cliMain() {
     console.error('[extraction-eval] GATE FAIL: --gate requires --verdict-only (extractionThresholds are verdictGate-pathed; a judged run leaves them unmeasured — config error, not a breach).');
     process.exit(2);
   }
+  if (args.gate && args.control) {
+    console.error('[extraction-eval] GATE FAIL: --gate cannot score a --control run (config error, not a breach).');
+    process.exit(2);
+  }
   if (args.gate && (process.env.UM_FACTS_PROVIDER ?? 'openai') !== 'openai') {
     console.error(`[extraction-eval] GATE FAIL: --gate thresholds are openai-calibrated; UM_FACTS_PROVIDER=${process.env.UM_FACTS_PROVIDER} runs are gated by hand (config error, not a breach).`);
     process.exit(2);
@@ -101,17 +180,37 @@ async function cliMain() {
   const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? 'gpt-4o-mini';
   const rows = [];
   for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
+  const fixtureSha256 = await fixtureDigests(args.fixtures);
 
   // Truthful provider/model labels: captured from facts()'s own per-call return
   // ({provider, model} — facts.mjs), NEVER re-derived from env/registry (the old
   // env-only label reported 'gpt-4.1-nano (provider default)' on anthropic runs).
   let factsProvider = null;
   let factsModelSeen = null;
-  const runFacts = async (text) => {
-    const factsResult = await facts(text, { temperature: 0 });
+  const factsConfig = {
+    temperature: 0,
+    ...(args.effort ? { effort: args.effort } : {}),
+    ...(args.thinking ? { thinking: args.thinking } : {}),
+    ...(args.thinkingHeadroom ? { thinkingHeadroom: args.thinkingHeadroom } : {}),
+  };
+  const calls = [];
+  const runFacts = async (row) => {
+    const ctx = args.control
+      ? { ...factsConfig, provider: `control:${args.control}`, _providerOverride: controlProvider(args.control, row) }
+      : factsConfig;
+    const t0 = performance.now();
+    const factsResult = await facts(row.input_text, ctx);
+    const latencyMs = Math.round(performance.now() - t0);
     factsProvider = factsResult.provider ?? factsProvider;
     factsModelSeen = factsResult.model ?? factsModelSeen;
-    return factsResult;
+    const extracted = normalizeExtracted(factsResult);
+    const call = {
+      id: row.id, extracted, stopReason: factsResult.stopReason ?? null, parseOk: factsResult.parseOk ?? null,
+      tokensIn: factsResult.tokensIn, tokensOut: factsResult.tokensOut,
+      costUsd: factsResult.costUsd, latencyMs,
+    };
+    calls.push(call);
+    return { extracted, call };
   };
 
   let result;
@@ -119,7 +218,7 @@ async function cliMain() {
     // Judge-free: verdict = did the extractor produce anything at all.
     const verdictRows = [];
     for (const row of rows) {
-      const extracted = normalizeExtracted(await runFacts(row.input_text));
+      const { extracted } = await runFacts(row);
       verdictRows.push({
         id: row.id,
         expected: deriveExpectedVerdict(row),
@@ -129,19 +228,22 @@ async function cliMain() {
     }
     const verdictGate = computeVerdictGate(verdictRows);
     result = {
-      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'verdict-only',
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, fixtureSha256, mode: 'verdict-only',
       judgeModel: null,
       factsProvider,
       factsModel: factsModelSeen,
+      factsConfig,
       extraction: null,
       verdictGate,
+      callStats: callStats(calls),
+      calls,
     };
   } else {
     const { judgeExtraction } = await import('../lib/extraction-grader.mjs');
     const judgedRows = [];
     for (const row of rows) {
       const gold = row.expected_facts ?? [];
-      const extracted = normalizeExtracted(await runFacts(row.input_text));
+      const { extracted, call } = await runFacts(row);
       if (gold.length === 0) {
         // Noise row: nothing to judge — the only signal is whether extraction abstained.
         judgedRows.push({
@@ -152,6 +254,7 @@ async function cliMain() {
         continue;
       }
       const v = await judgeExtraction(row.input_text, gold, extracted, { model });
+      call.judge = { ok: v.ok, goldMatched: v.goldMatched, extractedSupported: v.extractedSupported };
       judgedRows.push({
         id: row.id, ok: v.ok, stratum: row.stratum,
         goldTotal: gold.length,
@@ -165,11 +268,14 @@ async function cliMain() {
     }
     const extraction = { ...extractionFidelity(judgedRows), byStratum: extractionByStratum(judgedRows) };
     result = {
-      timestamp: new Date().toISOString(), fixtures: args.fixtures, mode: 'judged', judgeModel: model,
+      timestamp: new Date().toISOString(), fixtures: args.fixtures, fixtureSha256, mode: 'judged', judgeModel: model,
       factsProvider,
       factsModel: factsModelSeen,
+      factsConfig,
       pinnable: extraction.parseFails === 0,
       extraction,
+      callStats: callStats(calls),
+      calls,
     };
   }
 
@@ -185,6 +291,8 @@ async function cliMain() {
     console.log(`[extraction-eval] judge=${model} graded=${e.graded} parseFails=${e.parseFails} precision=${e.precision} recall=${e.recall} f1=${e.f1} noiseAbstained=${e.noiseAbstained}/${e.noiseTotal}`);
     if (!result.pinnable) console.error(`[extraction-eval] WARNING: parseFails=${e.parseFails} > 0 — result NOT pinnable (treat as unmeasured); fix judge truncation/format before pinning targets.`);
   }
+  const cs = result.callStats;
+  console.log(`[extraction-eval] calls=${cs.n} costUsd mean=${cs.costUsd.mean} total=${cs.costUsd.total} latencyMs p50=${cs.latencyMs.p50} p95=${cs.latencyMs.p95} stopReasons=${JSON.stringify(cs.stopReasons)} parseFailures=${cs.parseFailures}`);
   console.log(`[extraction-eval] written to ${out}`);
 
   if (gateThresholds) {

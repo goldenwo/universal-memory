@@ -178,3 +178,119 @@ test('factsInvoke honors an explicit temperature override (overridable default, 
   await anthropic.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
   assert.equal(seen.temperature, 0.7);
 });
+
+// --- Haiku 5.5: model-capability table (sampling params, thinking, effort) ---------
+
+function capturingClient(content = [{ type: 'text', text: '{"facts": []}' }], extra = {}) {
+  const calls = [];
+  return {
+    calls,
+    messages: { create: async (args) => {
+      calls.push(args);
+      return { content, usage: { input_tokens: 1, output_tokens: 1 }, stop_reason: 'end_turn', ...extra };
+    } },
+  };
+}
+
+test('capabilitiesFor: Haiku 5.5 rejects sampling params and thinks adaptively; unlisted models keep the legacy shape', () => {
+  assert.deepEqual(anthropic.capabilitiesFor('claude-haiku-5-5'), { samplingParams: false, adaptiveThinking: true, effort: true });
+  const legacy = { samplingParams: true, adaptiveThinking: false, effort: false };
+  assert.deepEqual(anthropic.capabilitiesFor('claude-haiku-4-5-20251001'), legacy);
+  assert.deepEqual(anthropic.capabilitiesFor('claude-sonnet-4-6'), legacy);
+  assert.deepEqual(anthropic.capabilitiesFor('some-future-model'), legacy);
+});
+
+test('factsInvoke on Haiku 5.5 drops temperature even when the caller passes 0 explicitly (a non-default value is a 400)', async () => {
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5', temperature: 0 });
+  assert.equal('temperature' in client.calls[0], false);
+});
+
+test('factsInvoke on Haiku 5.5 runs adaptive thinking at effort low, with max_tokens headroom above the 1024-token answer', async () => {
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5' });
+  const req = client.calls[0];
+  assert.deepEqual(req.output_config, { effort: 'low' });
+  assert.equal('thinking' in req, false, 'adaptive is the model default; nothing to send');
+  assert.ok(req.max_tokens >= 1024 + 4096, `max_tokens ${req.max_tokens} leaves no room for thinking`);
+});
+
+test('factsInvoke on Haiku 5.5 honors effort and thinking overrides (eval arms); disabled thinking needs no headroom', async () => {
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5', effort: 'medium', thinking: 'disabled' });
+  const req = client.calls[0];
+  assert.deepEqual(req.output_config, { effort: 'medium' });
+  assert.deepEqual(req.thinking, { type: 'disabled' });
+  assert.equal(req.max_tokens, 1024);
+});
+
+test('factsInvoke on Haiku 4.5 sends exactly the pre-5.5 request; effort/thinking overrides are ignored there', async () => {
+  const { FACTS_SYSTEM_PROMPT } = await import('../../lib/provider/facts-prompt.mjs');
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-4-5-20251001', effort: 'low', thinking: 'disabled' });
+  assert.deepEqual(client.calls[0], {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    temperature: 0,
+    system: FACTS_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: 't' }],
+  });
+});
+
+test('factsInvoke reads the text block after a leading thinking block, and returns the stop reason', async () => {
+  const client = capturingClient([
+    { type: 'thinking', thinking: '', signature: 'sig' },
+    { type: 'text', text: '{"facts": ["fact A"]}' },
+  ]);
+  const result = await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5' });
+  assert.deepEqual(result.facts, ['fact A']);
+  assert.equal(result.stopReason, 'end_turn');
+});
+
+test('factsInvoke surfaces a thinking-only max_tokens stop as stopReason, not as a silent clean abstention', async () => {
+  const client = capturingClient([{ type: 'thinking', thinking: '', signature: 'sig' }], { stop_reason: 'max_tokens' });
+  const result = await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5' });
+  assert.deepEqual(result.facts, []);
+  assert.equal(result.stopReason, 'max_tokens');
+});
+
+test('summarizerInvoke on Haiku 5.5 reads past a thinking block and leaves room for thinking', async () => {
+  const client = capturingClient([
+    { type: 'thinking', thinking: '', signature: 'sig' },
+    { type: 'text', text: 'summary' },
+  ]);
+  const result = await anthropic.summarizerInvoke('p', { client, model: 'claude-haiku-5-5' });
+  assert.equal(result.content, 'summary');
+  assert.ok(client.calls[0].max_tokens >= 1024 + 4096);
+  assert.equal('temperature' in client.calls[0], false);
+});
+
+test('contradictionJudgeInvoke drops temperature 0 on Haiku 5.5 and keeps it on Haiku 4.5', async () => {
+  const content = [{ type: 'text', text: '{"contradicts": false, "confidence": 0.1, "reasoning": "r"}' }];
+  const c55 = capturingClient([{ type: 'thinking', thinking: '', signature: 'sig' }, ...content]);
+  const r55 = await anthropic.contradictionJudgeInvoke('p', { client: c55, model: 'claude-haiku-5-5' });
+  assert.equal('temperature' in c55.calls[0], false);
+  assert.equal(r55.content, content[0].text);
+  const c45 = capturingClient(content);
+  await anthropic.contradictionJudgeInvoke('p', { client: c45, model: 'claude-haiku-4-5-20251001' });
+  assert.equal(c45.calls[0].temperature, 0);
+  assert.equal(c45.calls[0].max_tokens, 1024);
+});
+
+test('factsInvoke reports parseOk: false for a malformed reply and true for a clean empty one', async () => {
+  const bad = await anthropic.factsInvoke('t', { client: capturingClient([{ type: 'text', text: 'not json' }]), model: 'claude-haiku-5-5' });
+  assert.deepEqual(bad.facts, []);
+  assert.equal(bad.parseOk, false);
+  const empty = await anthropic.factsInvoke('t', { client: capturingClient([{ type: 'text', text: '{"facts": []}' }]), model: 'claude-haiku-5-5' });
+  assert.deepEqual(empty.facts, []);
+  assert.equal(empty.parseOk, true);
+});
+
+test('factsInvoke takes a thinkingHeadroom override (the pre-registered truncation fix is a flag, not a code edit)', async () => {
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5', thinkingHeadroom: 16384 });
+  assert.equal(client.calls[0].max_tokens, 1024 + 16384);
+  const c45 = capturingClient();
+  await anthropic.factsInvoke('t', { client: c45, model: 'claude-haiku-4-5-20251001', thinkingHeadroom: 16384 });
+  assert.equal(c45.calls[0].max_tokens, 1024, 'no headroom on a model that does not think');
+});

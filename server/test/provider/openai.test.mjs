@@ -153,6 +153,18 @@ test('factsInvoke calls injected client and returns { facts: string[], usage }',
   assert.deepEqual(result.usage, { tokensIn: 50, tokensOut: 12 });
 });
 
+test('factsInvoke returns the finish reason as stopReason (a length stop also parses to [])', async () => {
+  const fakeClient = {
+    chat: { completions: { create: async () => ({
+      choices: [{ message: { content: '{"facts": ["a"' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 5, completion_tokens: 5 },
+    }) } },
+  };
+  const result = await openai.factsInvoke('t', { client: fakeClient });
+  assert.deepEqual(result.facts, []);
+  assert.equal(result.stopReason, 'length');
+});
+
 test('factsInvoke pins temperature 0 by default (deterministic extraction, matches the judges)', async () => {
   let seen = null;
   const fakeClient = {
@@ -217,4 +229,18 @@ test('factsInvoke sends the shared policy prompt as the system message (#181 syn
   await openai.factsInvoke('any text', { client: fakeClient });
   assert.equal(seen.messages[0].role, 'system');
   assert.equal(seen.messages[0].content, FACTS_SYSTEM_PROMPT);
+});
+
+test('factsInvoke reports parseOk, and a populated refusal field as stopReason refusal', async () => {
+  const reply = (message, finish_reason = 'stop') => ({
+    chat: { completions: { create: async () => ({ choices: [{ message, finish_reason }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) } },
+  });
+  const bad = await openai.factsInvoke('t', { client: reply({ content: 'not json' }) });
+  assert.equal(bad.parseOk, false);
+  const empty = await openai.factsInvoke('t', { client: reply({ content: '{"facts": []}' }) });
+  assert.equal(empty.parseOk, true);
+  assert.equal(empty.stopReason, 'stop');
+  const refused = await openai.factsInvoke('t', { client: reply({ content: null, refusal: 'I cannot help with that.' }) });
+  assert.deepEqual(refused.facts, []);
+  assert.equal(refused.stopReason, 'refusal');
 });
