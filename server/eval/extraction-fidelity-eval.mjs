@@ -24,8 +24,8 @@
  *   undefined → guaranteed 'unmeasured' breaches) and their pool floors are calibrated
  *   to the CI's openai fixture set. Judged runs and non-openai providers are gated by
  *   hand against pre-registered arc gates instead (#181 arc).
- *   --effort <level> / --thinking <adaptive|disabled> pass through to factsInvoke (ignored by
- *   models that take no such knob — anthropic capabilitiesFor).
+ *   --effort <level> / --thinking <adaptive|disabled> / --thinking-headroom <tokens> pass
+ *   through to factsInvoke (ignored by models that take no such knob — anthropic capabilitiesFor).
  *   --control <gold-echo|always-abstain|input-echo> swaps the extractor for a canned one
  *   (positive controls: proves the scoring can reach both ends before any model arm runs).
  *
@@ -57,6 +57,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--gate') args.gate = argv[++i];
     else if (argv[i] === '--effort') args.effort = argv[++i];
     else if (argv[i] === '--thinking') args.thinking = argv[++i];
+    else if (argv[i] === '--thinking-headroom') args.thinkingHeadroom = Number(argv[++i]);
     else if (argv[i] === '--control') args.control = argv[++i];
   }
   return args;
@@ -188,6 +189,7 @@ async function cliMain() {
     temperature: 0,
     ...(args.effort ? { effort: args.effort } : {}),
     ...(args.thinking ? { thinking: args.thinking } : {}),
+    ...(args.thinkingHeadroom ? { thinkingHeadroom: args.thinkingHeadroom } : {}),
   };
   const calls = [];
   const runFacts = async (row) => {

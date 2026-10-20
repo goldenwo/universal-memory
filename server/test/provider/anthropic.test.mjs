@@ -285,3 +285,12 @@ test('factsInvoke reports parseOk: false for a malformed reply and true for a cl
   assert.deepEqual(empty.facts, []);
   assert.equal(empty.parseOk, true);
 });
+
+test('factsInvoke takes a thinkingHeadroom override (the pre-registered truncation fix is a flag, not a code edit)', async () => {
+  const client = capturingClient();
+  await anthropic.factsInvoke('t', { client, model: 'claude-haiku-5-5', thinkingHeadroom: 16384 });
+  assert.equal(client.calls[0].max_tokens, 1024 + 16384);
+  const c45 = capturingClient();
+  await anthropic.factsInvoke('t', { client: c45, model: 'claude-haiku-4-5-20251001', thinkingHeadroom: 16384 });
+  assert.equal(c45.calls[0].max_tokens, 1024, 'no headroom on a model that does not think');
+});

@@ -90,13 +90,14 @@ const THINKING_HEADROOM_TOKENS = 4096;
  * @param {number} [opts.temperature]
  * @param {string} [opts.effort]       - 'low' | 'medium' | 'high' | 'xhigh' | 'max'
  * @param {string} [opts.thinking]     - 'adaptive' | 'disabled'; omitted = model default
+ * @param {number} [opts.thinkingHeadroom] - tokens added for thinking (default THINKING_HEADROOM_TOKENS)
  */
-export function requestParams(model, { maxTokens, temperature, effort, thinking }) {
+export function requestParams(model, { maxTokens, temperature, effort, thinking, thinkingHeadroom = THINKING_HEADROOM_TOKENS }) {
   const caps = capabilitiesFor(model);
   const thinks = caps.adaptiveThinking && thinking !== 'disabled';
   return {
     model,
-    max_tokens: maxTokens + (thinks ? THINKING_HEADROOM_TOKENS : 0),
+    max_tokens: maxTokens + (thinks ? thinkingHeadroom : 0),
     ...(caps.samplingParams && temperature !== undefined ? { temperature } : {}),
     ...(caps.adaptiveThinking && thinking ? { thinking: { type: thinking } } : {}),
     ...(caps.effort && effort ? { output_config: { effort } } : {}),
@@ -241,7 +242,8 @@ function parseFactsJson(content) {
 
 // Facts effort on models that take one: extraction is a short, high-volume single shot, so
 // the cheapest level — the model still thinks when a row needs it, and can skip thinking on
-// rows that don't. Overridable per call (opts.effort / opts.thinking) for eval arms.
+// rows that don't. Overridable per call (opts.effort / opts.thinking / opts.thinkingHeadroom)
+// for eval arms.
 const FACTS_EFFORT = 'low';
 
 export async function factsInvoke(text, opts = {}) {
@@ -250,7 +252,7 @@ export async function factsInvoke(text, opts = {}) {
   // models that reject sampling params (capabilitiesFor).
   const {
     client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0,
-    effort = FACTS_EFFORT, thinking,
+    effort = FACTS_EFFORT, thinking, thinkingHeadroom,
   } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] anthropic fact'], usage: { tokensIn: 10, tokensOut: 5 } };
@@ -273,7 +275,7 @@ export async function factsInvoke(text, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      ...requestParams(model, { maxTokens: 1024, temperature, effort, thinking }),
+      ...requestParams(model, { maxTokens: 1024, temperature, effort, thinking, thinkingHeadroom }),
       system: FACTS_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: text }],
     });
