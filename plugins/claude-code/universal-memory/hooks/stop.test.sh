@@ -42,7 +42,10 @@
 # fire now emits exactly one /api/capture-anomaly POST and zero append-turns):
 #   S21. empty-delta split: cursor==total ⇒ stalled; grew-all-filtered ⇒
 #        filtered (cursor still advances, END semantics unchanged);
-#        zero-byte ⇒ stalled; replaced-shorter ⇒ stalled + cursor rewind.
+#        zero-byte ⇒ stalled; replaced-shorter ⇒ stalled + cursor rewind;
+#        injected isMeta turn + thinking/tool_use-only reply ⇒ nontext
+#        (benign, no signal); unknown block type or no injected record ⇒
+#        still filtered.
 #   S22. Benign guards (stop-hook-active, bad-session-id) post NOTHING.
 #   S23. signal= token map per HTTP code (404⇒server-too-old, 429⇒http-429,
 #        000⇒http-000, 403⇒writes-disabled, 401⇒auth, 400⇒input-invalid,
@@ -930,6 +933,72 @@ run_stop "$H" "$STDIN"
 assert_eq "S21d: one signal POST" "$(signal_post_count)" "1"
 assert_eq "S21d: reason empty-delta-stalled (replaced-shorter folds into stalled)" "$(body_field 1 reason)" "empty-delta-stalled"
 assert_eq "S21d: cursor REWINDS to the new total (correct baseline for the new file)" "$(cat "$H/.um/state/stop-cursor-$SID")" "3"
+
+# (e)-(g) the nontext split (2026-10-21 measurement: 12 of 12 filtered fires
+# in a week were this shape). A turn opened by an injected isMeta record (a
+# background agent's hand-back) whose reply is only thinking/tool_use blocks
+# has nothing to capture: benign, logged, NO signal. The two mutations keep
+# the alarm: an unknown block type (format drift) and no injected record
+# (the user input itself went unrecognized).
+# write_nontext_turn <path> <benign|unknown-block|no-injected> — 2 eligible
+# messages, then one such turn appended (lines 3..9, or 3..8 without the
+# injected record).
+write_nontext_turn() {
+  write_transcript "$1" 2 "s21-nontext"
+  "$PYBIN" -c '
+import json, sys
+path, variant = sys.argv[1], sys.argv[2]
+def asst(*blocks): return {"type": "assistant", "message": {"role": "assistant", "content": list(blocks)}}
+def tool_result(tid): return {"type": "user", "message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": tid, "content": "ok"}]}}
+recs = []
+if variant != "no-injected":
+    recs.append({"type": "user", "isMeta": True, "message": {"role": "user", "content":
+        "Another Claude session sent a message: <agent-message from=\"a1\">[Subagent hand-back] report</agent-message>"}})
+recs.append({"type": "attachment", "attachment": {"type": "output_style"}})
+recs.append(asst({"type": "thinking", "thinking": "", "signature": "sig"}))
+recs.append(asst({"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}))
+recs.append(tool_result("t1"))
+last = ({"type": "output_text", "text": "Drifted reply text"} if variant == "unknown-block"
+        else {"type": "tool_use", "id": "t2", "name": "mcp__ccd_turn__wrap_up", "input": {"recap": "r"}})
+recs.append(asst(last))
+recs.append(tool_result("t2"))
+with open(path, "a", encoding="utf-8") as fh:
+    for r in recs: fh.write(json.dumps(r) + "\n")' "$1" "$2"
+}
+
+H=$(fresh_home s21e)
+TP="$TMPDIR_ROOT/s21e.jsonl"
+write_nontext_turn "$TP" benign
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '2' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21e: exit 0" "$RUN_EXIT" "0"
+assert_eq "S21e: zero wire traffic (no turns, no anomaly signal)" "$(call_count)" "0"
+assert_contains "S21e: benign split logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-nontext"
+assert_not_contains "S21e: no signal= field on a benign line" "$(cat "$H/.um/hook.log" 2>/dev/null)" "signal="
+assert_eq "S21e: cursor advances past the turn (END semantics unchanged)" "$(cat "$H/.um/state/stop-cursor-$SID")" "9"
+
+H=$(fresh_home s21f)
+TP="$TMPDIR_ROOT/s21f.jsonl"
+write_nontext_turn "$TP" unknown-block
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '2' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21f: unknown block type still signals" "$(signal_post_count)/$(append_post_count)" "1/0"
+assert_eq "S21f: reason empty-delta-filtered" "$(body_field 1 reason)" "empty-delta-filtered"
+
+H=$(fresh_home s21g)
+TP="$TMPDIR_ROOT/s21g.jsonl"
+write_nontext_turn "$TP" no-injected
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+mkdir -p "$H/.um/state"; printf '2' > "$H/.um/state/stop-cursor-$SID"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S21g: tool-only turn with no injected record still signals" "$(signal_post_count)/$(append_post_count)" "1/0"
+assert_eq "S21g: reason empty-delta-filtered" "$(body_field 1 reason)" "empty-delta-filtered"
 
 # ===========================================================================
 # #267 S22: benign guards self-report NOTHING
