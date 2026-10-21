@@ -41,6 +41,12 @@
 #     eligibility filters — the format-drift family, the 2026-07-16 class).
 #     Pass 2 ALWAYS emits an EMPTY record when the delta is empty; the bash
 #     ${SHAPE:-stalled} default is a set-u-safe tripwire, not a path.
+#   - Nontext split (2026-10-21): a filtered delta that is exactly an injected
+#     isMeta turn (a background agent's hand-back) answered only with
+#     thinking/tool_use blocks logs skip=empty-delta-nontext and does NOT
+#     self-report. Measured as 12 of 12 filtered fires in a week, all benign,
+#     with every typed prompt in the vault. Any other filtered shape still
+#     signals.
 #   - Age sweep: cursor files >7 days old are removed in the same pass.
 #   - Fail-open: never exits non-zero — CC session integrity beats capture.
 
@@ -177,13 +183,15 @@ fi
 #                                          immediately (not an ack claim)
 #   MSG\t<line>\t<truncated 0|1>\t<json> — one POST body per record
 #   CAPPED\t<dropped>                    — messages beyond the per-fire cap
-#   EMPTY\t<stalled|filtered>            — #267: ALWAYS emitted when the
+#   EMPTY\t<stalled|filtered|nontext>    — #267: ALWAYS emitted when the
 #                                          delta is empty; stalled = the file
 #                                          did not grow past the cursor
 #                                          (zero-byte and replaced-shorter
 #                                          included), filtered = new lines
 #                                          existed but none survived the
-#                                          eligibility filters
+#                                          eligibility filters, nontext = the
+#                                          benign filtered shape (see
+#                                          nontext_turn)
 #   END\t<total-lines>                   — cursor target on full clean success
 # ---------------------------------------------------------------------------
 # Pass-2 stderr goes to a per-fire diagnostic file (see the nothing-extracted
@@ -214,7 +222,55 @@ try:
 except OSError:
     print("SKIP\tno-transcript"); sys.exit(0)
 
+# isascii() guard (review catch): str.isdigit() is True for Unicode digits
+# where int() raises — bash pre-validates ^[0-9]+$, but this block must not
+# depend on that distant guard.
+cursor_n = int(cursor) if cursor.isascii() and cursor.isdigit() else None
+
+# Nontext split (2026-10-21): the one MEASURED benign shape of a filtered
+# delta. A turn opened by an injected isMeta user record (a background
+# agent`s hand-back) and answered only with thinking/tool_use blocks has
+# nothing to capture. Benign iff every user/assistant record past the cursor
+# is a known non-text kind (the injected record, tool_result-only or
+# reminder-only user content, a thinking/tool_use-only reply) AND both an
+# injected record and such a reply are present. Anything else (an unknown
+# block type, image-only input, no injected record, a Codex rollout) stays
+# filtered and signals: that is the format-drift family the alarm is for.
+NONTEXT_REPLY_BLOCKS = ("thinking", "tool_use")
+
+def is_reminder(text):
+    return text.strip().startswith("<system-reminder>")
+
+def nontext_turn(records):
+    injected = replied = False
+    for e in records:
+        t = e.get("type")
+        if t not in ("user", "assistant"):
+            continue
+        if e.get("isSidechain") or e.get("isApiErrorMessage"):
+            return False
+        c = (e.get("message") or {}).get("content")
+        blocks = c if isinstance(c, list) and c and all(isinstance(b, dict) for b in c) else None
+        if t == "user":
+            if e.get("isMeta"):
+                injected = True
+            elif isinstance(c, str) and is_reminder(c):
+                pass
+            elif blocks and all(b.get("type") == "tool_result"
+                                or (b.get("type") == "text" and is_reminder(b.get("text") or ""))
+                                for b in blocks):
+                pass
+            else:
+                return False
+        elif e.get("isMeta") or not blocks or not all(
+                b.get("type") in NONTEXT_REPLY_BLOCKS for b in blocks):
+            return False
+        else:
+            replied = True
+    return injected and replied
+
 msgs = []   # (lineno, role, text, timestamp)
+tail = []   # records past the cursor, for nontext_turn
 total = 0
 with fh:
     for lineno, raw in enumerate(fh, 1):
@@ -226,6 +282,8 @@ with fh:
             e = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        if cursor_n is not None and lineno > cursor_n:
+            tail.append(e)
         if e.get("isSidechain") or e.get("isMeta"):
             continue
         # Client-synthesized API-error lines pass naive type filters
@@ -305,11 +363,8 @@ with fh:
             continue
         msgs.append((lineno, role, text, e.get("timestamp")))
 
-# isascii() guard (review catch): str.isdigit() is True for Unicode digits
-# where int() raises — bash pre-validates ^[0-9]+$, but this block must not
-# depend on that distant guard.
-if cursor.isascii() and cursor.isdigit():
-    delta = [m for m in msgs if m[0] > int(cursor)]
+if cursor_n is not None:
+    delta = [m for m in msgs if m[0] > cursor_n]
 else:
     # Cursor absent/unreadable: bounded trailing window (spec §5, "last 6
     # exchanges" = 12 messages) — older messages are dropped by decision, so
@@ -323,8 +378,11 @@ else:
 # cursor/total orderings (spec D10). Emitted UNCONDITIONALLY whenever the
 # delta is empty, so the bash-side default can only ever be a tripwire.
 if not delta:
-    if cursor.isascii() and cursor.isdigit():
-        shape = "stalled" if total <= int(cursor) else "filtered"
+    if cursor_n is not None:
+        if total <= cursor_n:
+            shape = "stalled"
+        else:
+            shape = "nontext" if nontext_turn(tail) else "filtered"
     else:
         shape = "filtered" if total > 0 else "stalled"
     print("EMPTY\t%s" % shape)
@@ -457,7 +515,11 @@ elif [ "$FAILED" = 0 ]; then
   # ONE expansion feeds both the log token and the wire reason (the
   # one-vocabulary contract must not be driftable between them).
   EMPTY_REASON="empty-delta-${SHAPE:-stalled}"
-  um_log "skip=$EMPTY_REASON signal=$(um_signal_anomaly "$EMPTY_REASON" "$PROJECT")"
+  case "$EMPTY_REASON" in
+    # Benign class (nontext split above): logged, never self-reported.
+    empty-delta-nontext) um_log "skip=$EMPTY_REASON" ;;
+    *) um_log "skip=$EMPTY_REASON signal=$(um_signal_anomaly "$EMPTY_REASON" "$PROJECT")" ;;
+  esac
 fi
 
 exit 0
