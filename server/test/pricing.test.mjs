@@ -67,3 +67,47 @@ test('computeCost bills a Haiku 5.5 prompt over 100K input tokens at the long-pr
   const long = computeCost('anthropic', 'claude-haiku-5-5', 100_001, 1000);
   assert.ok(Math.abs(long - (100.001 * 0.0005 + 1 * 0.0025)) < 1e-12, `long=${long}`);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-10-23 model migration (spec R2). Every model a provider can pick by default
+// is priced — an unpriced default costs $0 silently and the idle sweep's cost cap
+// cannot bind — and the replacement models carry their published rates.
+// ---------------------------------------------------------------------------
+
+const PROVIDER_MODULES = {
+  openai: await import('../lib/provider/openai.mjs'),
+  anthropic: await import('../lib/provider/anthropic.mjs'),
+  google: await import('../lib/provider/google.mjs'),
+  ollama: await import('../lib/provider/ollama.mjs'),
+};
+const SURFACE_DEFAULT = { summarizer: 'summarizerModel', facts: 'factsModel', embeddings: 'embeddingModel' };
+
+test('every provider default model is in PRICING (unsupported surfaces and skipModelValidation providers excepted)', () => {
+  for (const [provider, mod] of Object.entries(PROVIDER_MODULES)) {
+    if (mod.defaults.skipModelValidation) continue; // ollama: user-pulled models, no vendor table
+    for (const [surface, key] of Object.entries(SURFACE_DEFAULT)) {
+      if (!mod.supports[surface]) continue;
+      const model = mod.defaults[key];
+      assert.ok(PRICING[provider].models[model], `${provider}.${key} '${model}' is not priced`);
+    }
+  }
+});
+
+test('the luna models and gpt-4.1-mini carry OpenAI\'s published rates (read 2026-10-23)', () => {
+  assert.deepEqual(PRICING.openai.models['gpt-6-luna'], { in: 0.00010, out: 0.00050, type: 'chat' });
+  assert.deepEqual(PRICING.openai.models['gpt-5.6-luna'], { in: 0.00020, out: 0.00120, type: 'chat' });
+  assert.deepEqual(PRICING.openai.models['gpt-4.1-mini'], { in: 0.00040, out: 0.00160, type: 'chat' });
+  assert.equal(PRICING.openai.last_verified, '2026-10-23');
+});
+
+test('the Gemini replacements carry Google\'s published rates and the embedding model its default dimension', () => {
+  assert.deepEqual(PRICING.google.models['gemini-3.6-flash'], { in: 0.00075, out: 0.00375, type: 'chat' });
+  assert.deepEqual(PRICING.google.models['gemini-embedding-2'], { in: 0.00020, out: 0, type: 'embed', dim: 3072 });
+  assert.equal(PRICING.google.last_verified, '2026-10-23');
+});
+
+test('retired model ids stay priced, so a .env that still pins one keeps booting', () => {
+  for (const [provider, model] of [['openai', 'gpt-4.1-nano-2025-04-14'], ['google', 'gemini-2.0-flash'], ['google', 'text-embedding-004']]) {
+    assert.ok(PRICING[provider].models[model], `${provider} '${model}' must stay in PRICING`);
+  }
+});
