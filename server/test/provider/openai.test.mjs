@@ -334,3 +334,10 @@ test('factsInvoke reports the params it sent, the served model and the reasoning
   assert.equal(result.servedModel, 'gpt-6-luna');
   assert.equal(result.reasoningTokens, 3);
 });
+
+test('capabilitiesFor: a dated snapshot of a listed alias gets the alias\'s capabilities (model migration review)', () => {
+  assert.deepEqual(openai.capabilitiesFor('gpt-6-luna-2026-11-02'), openai.capabilitiesFor('gpt-6-luna'));
+  assert.deepEqual(openai.capabilitiesFor('gpt-5.6-luna-2026-09-01'), openai.capabilitiesFor('gpt-5.6-luna'));
+  assert.equal(openai.capabilitiesFor('gpt-6-luna-pro').samplingParams, true, 'only a -YYYY-MM-DD suffix maps to the alias');
+  assert.equal(openai.capabilitiesFor('gpt-4o-mini-2024-07-18').samplingParams, true, 'legacy stays legacy');
+});

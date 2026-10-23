@@ -222,3 +222,22 @@ test('existing ollama-path test still passes after orchestrator reshape', async 
   // (This test is a marker; the real assertion is the file-level test pass.)
   assert.ok(true);
 });
+
+test('model migration review: a blank UM_SUMMARIZER_MODEL is treated as unset, not sent as model ""', async () => {
+  const openaiMod = await import('../lib/provider/openai.mjs');
+  assert.deepEqual(summarizerTarget({ model: null }, { UM_SUMMARIZER_MODEL: '' }),
+    { provider: 'openai', model: openaiMod.defaults.summarizerModel });
+  const prev = process.env.UM_SUMMARIZER_MODEL;
+  process.env.UM_SUMMARIZER_MODEL = '';
+  let seenModel;
+  try {
+    await summarize('t', {
+      model: null,
+      _providerOverride: { summarizerInvoke: async (_p, o) => { seenModel = o.model; return { content: 's', usage: { tokensIn: 1, tokensOut: 1 } }; } },
+      metrics: { counter: () => {}, histogram: () => {} },
+    });
+  } finally {
+    if (prev === undefined) delete process.env.UM_SUMMARIZER_MODEL; else process.env.UM_SUMMARIZER_MODEL = prev;
+  }
+  assert.equal(seenModel, openaiMod.defaults.summarizerModel, `summarize sent model ${JSON.stringify(seenModel)}`);
+});

@@ -190,3 +190,8 @@ test('factsInvoke honors an explicit temperature override (overridable default, 
   await google.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
   assert.equal(seen.config.temperature, 0.7);
 });
+
+test('extractUsage counts thinking tokens as output (Gemini 3 bills thoughtsTokenCount as output — model migration review)', () => {
+  const raw = { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, thoughtsTokenCount: 7 } };
+  assert.deepEqual(google.extractUsage(raw), { tokensIn: 10, tokensOut: 27 });
+});

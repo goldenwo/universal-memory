@@ -72,7 +72,9 @@ export function factsLlmConfig(env) {
 export function extractUsage(raw) {
   return {
     tokensIn: raw?.usageMetadata?.promptTokenCount ?? 0,
-    tokensOut: raw?.usageMetadata?.candidatesTokenCount ?? 0,
+    // Gemini 3 bills thinking as output but reports it apart, in thoughtsTokenCount
+    // (the gemini-3.6-flash default thinks); without it computeCost under-counts.
+    tokensOut: (raw?.usageMetadata?.candidatesTokenCount ?? 0) + (raw?.usageMetadata?.thoughtsTokenCount ?? 0),
   };
 }
 

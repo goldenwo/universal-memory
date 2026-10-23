@@ -81,8 +81,10 @@ export const MODEL_CAPABILITIES = Object.freeze({
 
 const LEGACY_CAPABILITIES = Object.freeze({ samplingParams: true, reasoningEffort: false, defaultEffort: null, completionTokens: false });
 
+// A dated snapshot (`<alias>-YYYY-MM-DD`) takes its alias's entry, so an operator who pins
+// one (and prices it) is not sent a temperature it rejects.
 export function capabilitiesFor(model) {
-  return MODEL_CAPABILITIES[model] ?? LEGACY_CAPABILITIES;
+  return MODEL_CAPABILITIES[model] ?? MODEL_CAPABILITIES[String(model).replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? LEGACY_CAPABILITIES;
 }
 
 /**

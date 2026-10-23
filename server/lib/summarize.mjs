@@ -60,7 +60,9 @@ export function summarizerTarget(ctx = {}, env = process.env) {
     provider = backend?.fallback ?? env.UM_SUMMARIZER_FALLBACK ?? 'openai';
     backend = BACKENDS[provider];
   }
-  return { provider, model: ctx.model ?? env.UM_SUMMARIZER_MODEL ?? backend?.defaults?.summarizerModel };
+  // A blank UM_SUMMARIZER_MODEL counts as unset (`||`), like a blank checkpoint pin — never
+  // model '' (since checkpoint.json's summary_model is null, checkpoints follow this env too).
+  return { provider, model: ctx.model ?? (env.UM_SUMMARIZER_MODEL || backend?.defaults?.summarizerModel) };
 }
 
 /**
@@ -111,7 +113,7 @@ export async function summarize(transcript, ctx = {}) {
     return summarize(transcript, { ...ctx, provider: fallback, backend: fallback, systemPrompt: callerPrompt });
   }
 
-  const model = ctx.model ?? process.env.UM_SUMMARIZER_MODEL ?? b.defaults?.summarizerModel;
+  const model = ctx.model ?? (process.env.UM_SUMMARIZER_MODEL || b.defaults?.summarizerModel); // blank env = unset (summarizerTarget)
 
   // Provider override hook for tests — bypasses backend dispatch entirely.
   const invoke = ctx._providerOverride?.summarizerInvoke ?? b.invoke;
