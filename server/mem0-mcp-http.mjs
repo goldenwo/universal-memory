@@ -76,7 +76,7 @@ import { extractBearer, extractCompatToken, compareTokens, shouldBypassLoopback 
 import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { isRecallable } from './lib/recallable.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
-import { createRateLimiter, extractRateLimitKey } from './lib/rate-limit.mjs';
+import { createRateLimiter, extractRateLimitKey, isMcpHandshakeMessage, defersChargeToMessage, MCP_HANDSHAKE_BUCKET } from './lib/rate-limit.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
@@ -2561,6 +2561,11 @@ export function createRequestHandler(ctx = {}) {
 	// /mcp or /api/* traffic and vice versa. Fixed at rpm:30/burst:10;
 	// future /oauth/* handlers (PR 2) use this same instance.
 	const oauthAdmit = createRateLimiter({ rpm: 30, burst: 10 });
+	// The MCP handshake's own bucket (2026-10-23 UTC restore burst): the
+	// messages every connect sends draw on it instead of the shared `admit`,
+	// so a burst of session restores cannot refuse anyone's tools/call or
+	// REST traffic. Sizing lives with the handshake list in lib/rate-limit.mjs.
+	const handshakeAdmit = createRateLimiter(MCP_HANDSHAKE_BUCKET);
 	// #171 Stage B: the /control operator page's handlers. Built once per handler
 	// instance so its DEDICATED unlock throttle (global, exponential — NOT the
 	// shared per-IP limiter, spec §3 step 6) is shared across every request this
@@ -2967,14 +2972,27 @@ export function createRequestHandler(ctx = {}) {
 	// U2 R4-a): /api/stats runs a full corpus getAll per hit — a bridge
 	// peer must not skip rate-limiting on it. Its 429s stay UM-enveloped
 	// (send429 compat flag keys on route.compat alone).
-	if (!route.bypassRateLimit && (route.compat === true || route.noLoopbackBypass === true || !shouldBypassLoopback(req))) {
-		const ipKey = extractRateLimitKey(req);
-		const decision = admit(ipKey);
-		if (!decision.admitted) {
-			send429(res, decision.retryAfterSec, route.compat === true);
-			return;
-		}
-	}
+	// /mcp splits its charge (2026-10-23 UTC restore burst). The handshake a
+	// client sends on every connect draws on handshakeAdmit, not the shared
+	// bucket:
+	//   - every non-POST method (a static 405 in the /mcp route) pays it here;
+	//   - a POST that declares a small body (defersChargeToMessage) is read
+	//     first, then pays the bucket its parsed message belongs to
+	//     (isMcpHandshakeMessage), in the /mcp route;
+	//   - a larger or length-less POST pays the shared bucket here, before
+	//     its body is read, as every request did before.
+	const rateLimited = !route.bypassRateLimit && (route.compat === true || route.noLoopbackBypass === true || !shouldBypassLoopback(req));
+	// Spends one token of this peer's `bucket`; on denial answers the 429 and
+	// returns false.
+	const spendToken = (bucket) => {
+		const decision = bucket(extractRateLimitKey(req));
+		if (decision.admitted) return true;
+		send429(res, decision.retryAfterSec, route.compat === true);
+		return false;
+	};
+	const isMcp = url.pathname === '/mcp';
+	const chargeDeferred = isMcp && defersChargeToMessage(req);
+	if (rateLimited && !chargeDeferred && !spendToken(isMcp && req.method !== 'POST' ? handshakeAdmit : admit)) return;
 
 	// B.6b: UM_HTTP_MAX_REQUEST_BYTES cap enforced inside readBody() below.
 	//   Overrun throws an error with .code='INPUT_TOO_LARGE' which is caught
@@ -3159,12 +3177,20 @@ export function createRequestHandler(ctx = {}) {
 		}
 		if (url.pathname === '/mcp' && req.method === 'POST') {
 			let body;
+			let parseFailed = false;
 			try {
 				body = JSON.parse(await readBody(req));
 			} catch (e) {
 				// B.6b: re-throw INPUT_TOO_LARGE so the outer catch emits the 413
 				// envelope.
 				if (e && e.code === 'INPUT_TOO_LARGE') throw e;
+				parseFailed = true;
+			}
+			// Step 5's deferred charge: a handshake message pays handshakeAdmit, and
+			// everything else pays the shared bucket, a body that did not parse
+			// included.
+			if (rateLimited && chargeDeferred && !spendToken(isMcpHandshakeMessage(body) ? handshakeAdmit : admit)) return;
+			if (parseFailed) {
 				// B.13 (§5.1) JSON-RPC dual-shape: malformed JSON-RPC request →
 				// JSON-RPC standard parse-error -32700. The OUTER transport
 				// envelope is a well-formed JSON-RPC response; the body is the
@@ -3208,6 +3234,17 @@ export function createRequestHandler(ctx = {}) {
 			}
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(result ? JSON.stringify(result) : '');
+			return;
+		}
+		// Every other method on /mcp. Under the streamable-HTTP transport, a
+		// server that offers no SSE stream on GET and no client-initiated session
+		// termination on DELETE answers 405. These used to fall through to the
+		// unknown-route 404, which Claude Code logged on every connect as
+		// "Failed to open SSE stream: Not Found" and a dropped connection. Step 5
+		// charged it to the handshake bucket.
+		if (url.pathname === '/mcp') {
+			res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'POST' });
+			res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Method not allowed' } }));
 			return;
 		}
 		// mem0 Platform-compat facade dispatch (compat spec §3/§6, plan Task 3).
