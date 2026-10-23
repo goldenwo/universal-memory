@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as openai from '../../lib/provider/openai.mjs';
+import { FACTS_SYSTEM_PROMPT } from '../../lib/provider/facts-prompt.mjs';
 
 test('exports providerName and supports table', () => {
   assert.equal(openai.providerName, 'openai');
@@ -243,4 +244,91 @@ test('factsInvoke reports parseOk, and a populated refusal field as stopReason r
   const refused = await openai.factsInvoke('t', { client: reply({ content: null, refusal: 'I cannot help with that.' }) });
   assert.deepEqual(refused.facts, []);
   assert.equal(refused.stopReason, 'refusal');
+});
+
+// ---------------------------------------------------------------------------
+// Per-model request capabilities (2026-10-23 model migration, spec R1). The luna
+// models reject any temperature but the default and take reasoning_effort and
+// max_completion_tokens; every other model keeps today's request byte-for-byte.
+// ---------------------------------------------------------------------------
+
+const LUNA_MODELS = ['gpt-6-luna', 'gpt-5.6-luna'];
+const LEGACY_MODELS = ['gpt-4o-mini', 'gpt-4.1-mini', 'some-unlisted-model'];
+
+function capturingClient(reply = '{"facts": []}') {
+  const calls = [];
+  return {
+    calls,
+    chat: { completions: { create: async (args) => {
+      calls.push(args);
+      return {
+        model: args.model,
+        choices: [{ message: { content: reply }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, completion_tokens_details: { reasoning_tokens: 3 } },
+      };
+    } } },
+  };
+}
+
+// Each call site as production and the evals call it. The facts and grader rows pass
+// the explicit knobs the eval harness passes (temperature 0, a 768-token budget).
+const CALL_SITES = {
+  summarizer: (client, model) => openai.summarizerInvoke('p', { client, model }),
+  contradictionJudge: (client, model) => openai.contradictionJudgeInvoke('p', { client, model }),
+  grader: (client, model) => openai.answerGradeInvoke('p', { client, model, maxTokens: 768 }),
+  facts: (client, model) => openai.factsInvoke('p', { client, model, temperature: 0 }),
+};
+
+for (const model of LUNA_MODELS) {
+  for (const [site, call] of Object.entries(CALL_SITES)) {
+    test(`${site} on ${model}: drops temperature, sends reasoning_effort none and max_completion_tokens`, async () => {
+      const client = capturingClient();
+      await call(client, model);
+      const args = client.calls[0];
+      assert.equal('temperature' in args, false, 'luna rejects any temperature but the default');
+      assert.equal(args.reasoning_effort, 'none');
+      assert.equal('max_tokens' in args, false);
+      if (site === 'grader') assert.equal(args.max_completion_tokens, 768);
+    });
+  }
+}
+
+test('factsInvoke on a luna model sends the caller\'s effort when one is given', async () => {
+  const client = capturingClient();
+  await openai.factsInvoke('p', { client, model: 'gpt-6-luna', effort: 'low' });
+  assert.equal(client.calls[0].reasoning_effort, 'low');
+});
+
+for (const model of LEGACY_MODELS) {
+  test(`${model}: every call site sends exactly today's request`, async () => {
+    const client = capturingClient();
+    await openai.summarizerInvoke('p', { client, model });
+    await openai.contradictionJudgeInvoke('p', { client, model });
+    await openai.answerGradeInvoke('p', { client, model, maxTokens: 768 });
+    await openai.factsInvoke('p', { client, model, temperature: 0, effort: 'low' });
+    const user = [{ role: 'user', content: 'p' }];
+    assert.deepEqual(client.calls, [
+      { model, messages: user },
+      { model, temperature: 0, messages: user },
+      { model, temperature: 0, max_tokens: 768, messages: user },
+      { model, temperature: 0, messages: [{ role: 'system', content: FACTS_SYSTEM_PROMPT }, ...user] },
+    ]);
+  });
+}
+
+test('capabilitiesFor: luna entries, and the legacy shape for anything unlisted', () => {
+  for (const model of LUNA_MODELS) {
+    assert.deepEqual(openai.capabilitiesFor(model),
+      { samplingParams: false, reasoningEffort: true, defaultEffort: 'none', completionTokens: true });
+  }
+  assert.deepEqual(openai.capabilitiesFor('gpt-4o-mini'),
+    { samplingParams: true, reasoningEffort: false, defaultEffort: null, completionTokens: false });
+});
+
+test('factsInvoke reports the params it sent, the served model and the reasoning tokens', async () => {
+  const client = capturingClient('{"facts": ["a"]}');
+  const result = await openai.factsInvoke('p', { client, model: 'gpt-6-luna', temperature: 0 });
+  assert.deepEqual(result.requestParams, { model: 'gpt-6-luna', reasoning_effort: 'none' });
+  assert.equal(result.servedModel, 'gpt-6-luna');
+  assert.equal(result.reasoningTokens, 3);
 });
