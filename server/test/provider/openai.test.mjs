@@ -12,7 +12,9 @@ test('defaults exposes all three surfaces', () => {
   assert.equal(openai.defaults.summarizerModel, 'gpt-4o-mini');
   assert.equal(openai.defaults.embeddingModel, 'text-embedding-3-small');
   assert.equal(openai.defaults.embeddingDim, 1536);
-  assert.equal(openai.defaults.factsModel, 'gpt-4.1-nano-2025-04-14');
+  // gpt-4.1-nano was shut down 2026-10-23; gpt-6-luna won the pre-registered replacement
+  // measurement (docs/plans/2026-10-23-model-migration/report.md).
+  assert.equal(openai.defaults.factsModel, 'gpt-6-luna');
 });
 
 test('requires lists UM_-prefixed first, then standard', () => {
@@ -186,8 +188,8 @@ test('factsInvoke honors an explicit temperature override (knob preserved for di
       return { choices: [{ message: { content: '{"facts": []}' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
     } } },
   };
-  await openai.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
-  assert.equal(seen.temperature, 0.7);
+  await openai.factsInvoke('any text', { client: fakeClient, model: 'gpt-4o-mini', temperature: 0.7 });
+  assert.equal(seen.temperature, 0.7); // a sampling-capable model; a luna default drops it (capability tests below)
 });
 
 test('factsInvoke UM_TEST_MOCK_SDK=1 short-circuits to canned facts', async () => {

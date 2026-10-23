@@ -332,7 +332,7 @@ g2_assert_metric 'um_provider_request_duration_seconds_count' "embed histogram" 
 g2_assert_metric 'um_provider_cost_usd_total' "embed cost_usd" 'surface="embed"'
 
 # All four series for facts surface.
-g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-4.1-nano-2025-04-14"'
+g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-6-luna"'
 g2_assert_metric 'um_provider_request_duration_seconds_count' "facts histogram" 'surface="facts"'
 g2_assert_metric 'um_provider_cost_usd_total' "facts cost_usd" 'surface="facts"'
 

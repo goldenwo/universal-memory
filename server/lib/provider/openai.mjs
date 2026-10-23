@@ -2,7 +2,8 @@
  * server/lib/provider/openai.mjs — OpenAI implementation of the Standard Provider Contract.
  *
  * Supports all three surfaces: embeddings (text-embedding-3-small), summarizer
- * (gpt-4o-mini), and facts (gpt-4.1-nano-2025-04-14).
+ * (gpt-4o-mini), and facts (gpt-6-luna — gpt-4.1-nano was shut down 2026-10-23; the
+ * replacement was chosen by docs/plans/2026-10-23-model-migration/prereg.md).
  *
  * Auth: UM_OPENAI_API_KEY (preferred) or OPENAI_API_KEY. The UM_-prefix wins
  * to allow power users to override OPENAI_API_KEY (used by other tools) with a
@@ -22,7 +23,7 @@ export const defaults = {
   summarizerModel: 'gpt-4o-mini',
   embeddingModel: 'text-embedding-3-small',
   embeddingDim: 1536,
-  factsModel: 'gpt-4.1-nano-2025-04-14',
+  factsModel: 'gpt-6-luna',
 };
 
 export const requires = ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'];

@@ -22,10 +22,15 @@ export const providerName = 'google';
 export const supports = { embeddings: true, summarizer: true, facts: true };
 
 export const defaults = {
-  summarizerModel: 'gemini-2.0-flash',
-  embeddingModel: 'text-embedding-004',
-  embeddingDim: 768,
-  factsModel: 'gemini-2.0-flash',
+  // 2026-10-23: Google's named replacements for gemini-2.0-flash (shut down 2026-06-01) and
+  // text-embedding-004 (2026-01-14). gemini-embedding-2 returns 3072 dims when embedContent
+  // sends no outputDimensionality (embed() below sends none). Not exercised live: the Gemini
+  // account has been at quota 0 since 2026-05-01 (FIN1). A text-embedding-004 collection
+  // mismatches this stamp at boot and needs `um-cli reindex --confirm`.
+  summarizerModel: 'gemini-3.6-flash',
+  embeddingModel: 'gemini-embedding-2',
+  embeddingDim: 3072,
+  factsModel: 'gemini-3.6-flash',
 };
 
 export const requires = ['UM_GOOGLE_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'];

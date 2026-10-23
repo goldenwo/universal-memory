@@ -611,3 +611,18 @@ test('T3 #314: startIdleSweep warns about an unpriced model by the one a sweep c
     'the chunk transaction passes summary_model as the model, whatever the provider');
   assert.deepEqual(priceWarnings({ env: { UM_SUMMARIZER: 'claude-agent-sdk' } }), [], 'the agent-sdk backend falls back to openai server-side');
 });
+
+test('model migration 2026-10-23: the shipped checkpoint.json pins no summary model, so a non-openai summarizer reaches the checkpoint path with its own default', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const shipped = JSON.parse(await readFile(new URL('../config/checkpoint.json', import.meta.url), 'utf8'));
+  assert.equal(shipped.summary_model, null, "null = the provider's summarizer default (spec R3)");
+  const { summarizerTarget } = await import('../lib/summarize.mjs');
+  const anthropic = await import('../lib/provider/anthropic.mjs');
+  assert.deepEqual(summarizerTarget({ model: shipped.summary_model }, { UM_SUMMARIZER_PROVIDER: 'anthropic' }),
+    { provider: 'anthropic', model: anthropic.defaults.summarizerModel }, 'no OpenAI model name sent to anthropic');
+  assert.deepEqual(summarizerTarget({ model: shipped.summary_model }, { UM_SUMMARIZER_MODEL: 'gpt-4o-mini' }),
+    { provider: 'openai', model: 'gpt-4o-mini' }, "the Pi's env (UM_SUMMARIZER_MODEL=gpt-4o-mini) resolves as before");
+  const b = bootDeps({ config: shipped, env: { UM_SUMMARIZER_PROVIDER: 'anthropic' } });
+  startIdleSweep(b.deps);
+  assert.deepEqual(b.logs.filter((l) => l.level === 'warn' && /price/.test(l.msg)), [], 'the sweep prices the anthropic default, no unpriced warning');
+});

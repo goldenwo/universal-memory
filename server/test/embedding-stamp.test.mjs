@@ -149,3 +149,11 @@ test('createStampClient binds memory + collection, returns DI-friendly object', 
     await new Promise((resolve) => qdrant.close(resolve));
   }
 });
+
+test('model migration 2026-10-23: a text-embedding-004 collection mismatches the new Google default, so boot refuses it until reindex', async () => {
+  const google = await import('../lib/provider/google.mjs');
+  const old = { provider: 'google', model: 'text-embedding-004', dim: 768 };
+  const current = { provider: 'google', model: google.defaults.embeddingModel, dim: google.defaults.embeddingDim };
+  assert.equal(compareStamp(old, current), 'mismatch');
+  assert.equal(compareStamp(current, current), 'match');
+});
