@@ -20,10 +20,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import { createRequestHandler } from '../mem0-mcp-http.mjs';
 import { tempDir } from './helpers/tmpdir.mjs';
+import { MCP_HANDSHAKE_BUCKET, MCP_HANDSHAKE_BODY_MAX } from '../lib/rate-limit.mjs';
 
 const fakeMemory = {
   getAll: async () => ({
@@ -487,5 +488,221 @@ test('C.7: forwarded header forces rate-limit even from loopback IP', async () =
     });
     assert.equal(r2.status, 429, 'forwarded header opts out of loopback bypass — rate-limit kicks in');
     await r2.text();
+  } finally { await close(); }
+});
+
+// ---------------------------------------------------------------------------
+// MCP handshake metering (2026-10-23 UTC restore burst). /mcp is charged per
+// JSON-RPC message: the handshake a client sends on every connect draws on its
+// own bounded bucket, so it never spends the shared one, while tools/call — and
+// every other message that is not on the handshake list — still pays the
+// shared bucket. A POST that declares a body over MCP_HANDSHAKE_BODY_MAX (or
+// none) pays the shared bucket before its body is read. Non-POST /mcp answers a
+// static 405. rpm:1 keeps shared refill negligible, so each assertion counts
+// tokens exactly.
+// ---------------------------------------------------------------------------
+
+const MCP_HEADERS = {
+  'Authorization': 'Bearer secret',
+  'X-Forwarded-For': '192.0.2.50',
+  'Content-Type': 'application/json',
+};
+
+async function mcpPost(url, message) {
+  const r = await fetch(url('/mcp'), {
+    method: 'POST',
+    headers: MCP_HEADERS,
+    body: typeof message === 'string' ? message : JSON.stringify(message),
+  });
+  return { status: r.status, headers: r.headers, text: await r.text() };
+}
+
+// The exact sequence Claude Code 2.1.308 sent per connect on 2026-10-23 (Pi
+// request log): server/discover, initialize, notifications/initialized, the
+// GET that probes for an SSE stream, tools/list.
+async function claudeCodeHandshake(url) {
+  const statuses = [];
+  statuses.push((await mcpPost(url, { jsonrpc: '2.0', id: 0, method: 'server/discover' })).status);
+  statuses.push((await mcpPost(url, {
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
+  })).status);
+  statuses.push((await mcpPost(url, { jsonrpc: '2.0', method: 'notifications/initialized' })).status);
+  const sse = await fetch(url('/mcp'), { headers: { ...MCP_HEADERS, Accept: 'text/event-stream' } });
+  await sse.text();
+  statuses.push(sse.status);
+  statuses.push((await mcpPost(url, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).status);
+  return statuses;
+}
+
+test('MCP metering: twelve back-to-back handshakes never draw on the shared bucket', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (let i = 0; i < 12; i++) {
+      const statuses = await claudeCodeHandshake(url);
+      assert.deepEqual(statuses, [200, 200, 202, 405, 200], `handshake ${i + 1}`);
+    }
+    // The bucket's single token is still there — the REST surface still pays.
+    const r1 = await fetch(url('/api/list'), { headers: MCP_HEADERS });
+    await r1.text();
+    assert.equal(r1.status, 200, 'the handshakes left the token unspent');
+    const r2 = await fetch(url('/api/list'), { headers: MCP_HEADERS });
+    await r2.text();
+    assert.equal(r2.status, 429, 'REST routes stay metered');
+  } finally { await close(); }
+});
+
+test('MCP metering: tools/call still pays, and its 429 keeps the unified envelope', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 2, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const call = (id) => mcpPost(url, {
+      jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'memory_list', arguments: {} },
+    });
+    assert.equal((await call(1)).status, 200);
+    assert.equal((await call(2)).status, 200);
+    const denied = await call(3);
+    assert.equal(denied.status, 429, 'third tools/call exceeds burst=2');
+    assert.match(denied.headers.get('retry-after') ?? '', /^\d+$/);
+    const body = JSON.parse(denied.text);
+    assert.equal(body.error.code, 'LIMIT_RATE_EXCEEDED');
+    assert.equal(body.error.retryable, true);
+  } finally { await close(); }
+});
+
+test('MCP metering: a method off the handshake list and a body that does not parse both pay', async () => {
+  // burst=1: the unknown method spends the token, so the malformed body 429s.
+  // Were either one free, the second request would answer 200.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const unknown = await mcpPost(url, { jsonrpc: '2.0', id: 1, method: 'resources/read', params: { uri: 'x' } });
+    assert.equal(unknown.status, 200, 'answered with JSON-RPC method-not-found');
+    const malformed = await mcpPost(url, 'not json');
+    assert.equal(malformed.status, 429);
+  } finally { await close(); }
+});
+
+test('MCP metering: a JSON-RPC batch pays even when every member is a handshake method', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const batch = [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }];
+    assert.equal((await mcpPost(url, batch)).status, 202, 'the first batch spends the token');
+    const second = await mcpPost(url, batch);
+    assert.equal(second.status, 429, 'a batch is not on the handshake list');
+  } finally { await close(); }
+});
+
+test('GET and DELETE /mcp answer 405 with Allow: POST (no SSE stream, no client session termination)', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (const method of ['GET', 'DELETE']) {
+      const r = await fetch(url('/mcp'), { method, headers: { ...MCP_HEADERS, Accept: 'text/event-stream' } });
+      const body = await r.json();
+      assert.equal(r.status, 405, `${method} /mcp`);
+      assert.equal(r.headers.get('allow'), 'POST');
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.id, null);
+      assert.equal(typeof body.error.code, 'number');
+    }
+  } finally { await close(); }
+});
+
+test('GET /mcp without a token still answers 401 — auth runs before the 405', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 60, burst: 10, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const r = await fetch(url('/mcp'), { headers: { 'X-Forwarded-For': '192.0.2.51' } });
+    await r.text();
+    assert.equal(r.status, 401);
+  } finally { await close(); }
+});
+
+test('MCP metering: handshake traffic has its own bounded bucket', async () => {
+  // A client stuck in a reconnect loop sends exactly this traffic, so it must
+  // still hit a ceiling — just not the shared one.
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const ping = (id) => mcpPost(url, { jsonrpc: '2.0', id, method: 'ping' });
+    for (let i = 0; i < MCP_HANDSHAKE_BUCKET.burst; i++) {
+      assert.notEqual((await ping(i)).status, 429, `handshake message ${i + 1} is inside the handshake burst`);
+    }
+    const extra = [];
+    for (let i = 0; i < 10; i++) extra.push(await ping(1000 + i));
+    const denied = extra.find((r) => r.status === 429);
+    assert.ok(denied, 'past the handshake burst, handshake messages 429');
+    assert.equal(JSON.parse(denied.text).error.code, 'LIMIT_RATE_EXCEEDED');
+    // The shared bucket's single token is untouched by all of that.
+    const call = await mcpPost(url, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'memory_list', arguments: {} },
+    });
+    assert.equal(call.status, 200, 'the handshake bucket ran dry, the shared one did not');
+  } finally { await close(); }
+});
+
+test('MCP metering: a body over MCP_HANDSHAKE_BODY_MAX pays the shared bucket, whatever its method', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const padded = { jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: 'x'.repeat(MCP_HANDSHAKE_BODY_MAX) } };
+    assert.equal((await mcpPost(url, padded)).status, 200, 'the first spends the token');
+    assert.equal((await mcpPost(url, padded)).status, 429, 'a padded handshake method is not free');
+  } finally { await close(); }
+});
+
+// Sends only the headers of a POST /mcp that declares `length` body bytes and
+// resolves with the status, or 'no-answer' if the server waits for the body.
+function postHeadersOnly(port, length) {
+  return new Promise((resolve, reject) => {
+    const req = request({
+      host: '127.0.0.1', port, path: '/mcp', method: 'POST',
+      headers: { ...MCP_HEADERS, 'Content-Length': String(length) },
+    }, (res) => { res.resume(); resolve(res.statusCode); req.destroy(); });
+    req.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); });
+    req.flushHeaders();
+    setTimeout(() => { resolve('no-answer'); req.destroy(); }, 1000);
+  });
+}
+
+test('MCP metering: an over-limit POST that declares a large body is refused before the body is read', async () => {
+  const { close, url, port } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    const call = await mcpPost(url, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'memory_list', arguments: {} },
+    });
+    assert.equal(call.status, 200, 'spends the only token');
+    assert.equal(await postHeadersOnly(port, MCP_HANDSHAKE_BODY_MAX + 1), 429,
+      'refused on its headers, as every request was before the deferred charge');
+  } finally { await close(); }
+});
+
+test('MCP metering: loopback /mcp with no forwarded header stays unmetered', async () => {
+  const { close, url } = await startServerWithRateLimit({
+    rpm: 1, burst: 1, token: 'secret', memory: fakeMemory,
+  });
+  try {
+    for (let i = 0; i < 5; i++) {
+      const r = await fetch(url('/mcp'), {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: i, method: 'tools/call', params: { name: 'memory_list', arguments: {} } }),
+      });
+      await r.text();
+      assert.equal(r.status, 200, `loopback tools/call ${i + 1}`);
+    }
   } finally { await close(); }
 });

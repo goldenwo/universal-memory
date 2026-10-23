@@ -14,7 +14,7 @@
 //      reset).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRateLimiter } from '../lib/rate-limit.mjs';
+import { createRateLimiter, isMcpHandshakeMessage, defersChargeToMessage, MCP_HANDSHAKE_BODY_MAX } from '../lib/rate-limit.mjs';
 
 test('admits requests under limit, denies over', () => {
   const admit = createRateLimiter({ rpm: 60, burst: 10 });
@@ -119,4 +119,56 @@ test('admit does NOT evict when size <= 90% cap', () => {
   }
   const r = admit('10.0.0.1', now);
   assert.equal(r.admitted, false, 'bucket should be exhausted, not refreshed by eviction');
+});
+
+// ---------------------------------------------------------------------------
+// /mcp metering policy (2026-10-23 UTC: a desktop relaunch restored 12 sessions
+// in 96 s and the 5-request handshake per connect drained the shared burst of
+// 10). isMcpHandshakeMessage picks the bucket a parsed message pays;
+// defersChargeToMessage says whether a POST is small enough to read before
+// charging it.
+// ---------------------------------------------------------------------------
+
+test('isMcpHandshakeMessage: the handshake and discovery methods are handshake', () => {
+  for (const method of [
+    'initialize', 'notifications/initialized', 'tools/list', 'ping',
+    'server/discover', 'resources/list', 'resources/templates/list', 'prompts/list',
+  ]) {
+    assert.equal(isMcpHandshakeMessage({ jsonrpc: '2.0', id: 1, method }), true, method);
+  }
+});
+
+test('isMcpHandshakeMessage: tools/call, unknown methods and malformed shapes are not', () => {
+  for (const message of [
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'memory_search' } },
+    { jsonrpc: '2.0', id: 1, method: 'resources/read' },
+    { jsonrpc: '2.0', id: 1, method: 'Initialize' },
+    { jsonrpc: '2.0', id: 1, method: 42 },
+    { jsonrpc: '2.0', id: 1 },
+    [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }],
+    null,
+    undefined,
+    'initialize',
+  ]) {
+    assert.equal(isMcpHandshakeMessage(message), false, JSON.stringify(message) ?? String(message));
+  }
+});
+
+test('isMcpHandshakeMessage: an inherited property name is not a method on the list', () => {
+  assert.equal(isMcpHandshakeMessage({ jsonrpc: '2.0', id: 1, method: 'constructor' }), false);
+  assert.equal(isMcpHandshakeMessage({ jsonrpc: '2.0', id: 1, method: '__proto__' }), false);
+});
+
+test('defersChargeToMessage: only a POST that declares a small body defers', () => {
+  const req = (method, length) => ({ method, headers: length === undefined ? {} : { 'content-length': length } });
+  assert.equal(defersChargeToMessage(req('POST', '312')), true);
+  assert.equal(defersChargeToMessage(req('POST', '0')), true);
+  assert.equal(defersChargeToMessage(req('POST', String(MCP_HANDSHAKE_BODY_MAX))), true);
+  assert.equal(defersChargeToMessage(req('POST', String(MCP_HANDSHAKE_BODY_MAX + 1))), false, 'over the size pays up front');
+  assert.equal(defersChargeToMessage(req('POST', undefined)), false, 'no declared length (chunked) pays up front');
+  for (const bad of ['', 'abc', '-1', '1e3', '12 ', '0x10']) {
+    assert.equal(defersChargeToMessage(req('POST', bad)), false, `content-length ${JSON.stringify(bad)}`);
+  }
+  assert.equal(defersChargeToMessage(req('GET', '0')), false);
+  assert.equal(defersChargeToMessage(req('DELETE', '0')), false);
 });

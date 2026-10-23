@@ -85,6 +85,56 @@ export function createRateLimiter(opts = {}) {
   };
 }
 
+// /mcp is charged per JSON-RPC message, not per request. These are the
+// messages a client sends on every connect, plus the list/discovery calls
+// it may send alongside them. handleMcpMessage answers each one from
+// static data or with method-not-found, with no memory, vault or LLM work.
+// Charging them to the shared bucket let a desktop relaunch that restored
+// 12 sessions in 96 s drain the burst of 10 on handshakes alone
+// (2026-10-23 UTC: 5 requests per connect, 3 sessions refused their MCP
+// tools). They draw on their own bucket instead, sized here. Everything
+// else pays the shared bucket, including tools/call, any other method, a
+// batch and an unparseable body. Add a method here only if its answer
+// does no I/O.
+const MCP_HANDSHAKE_METHODS = new Set([
+  'initialize',
+  'notifications/initialized',
+  'tools/list',
+  'ping',
+  'server/discover',
+  'resources/list',
+  'resources/templates/list',
+  'prompts/list',
+]);
+
+// The handshake bucket. The burst holds two 12-session restores
+// (5 requests each) back to back, and the rate still caps a client stuck in
+// a reconnect loop.
+export const MCP_HANDSHAKE_BUCKET = Object.freeze({ rpm: 300, burst: 120 });
+
+// The largest declared body a POST /mcp may have and still be read before
+// it is charged, so that its parsed message can pick the bucket. Handshake
+// messages are well under 1 KB. A larger POST, or one with no declared
+// length, pays the shared bucket before its body is read.
+export const MCP_HANDSHAKE_BODY_MAX = 16 * 1024;
+
+// Arrays (batches) and primitives have no own `method`, and a Set never
+// matches inherited names, so neither is ever a handshake message.
+export function isMcpHandshakeMessage(message) {
+  return MCP_HANDSHAKE_METHODS.has(message?.method);
+}
+
+// True for a POST whose Content-Length is a plain decimal no larger than
+// MCP_HANDSHAKE_BODY_MAX: its charge can wait until the message is parsed.
+// Node caps the body it delivers at the declared length.
+export function defersChargeToMessage(req) {
+  if (req.method !== 'POST') return false;
+  const declared = req.headers?.['content-length'];
+  return typeof declared === 'string'
+    && /^\d+$/.test(declared)
+    && Number(declared) <= MCP_HANDSHAKE_BODY_MAX;
+}
+
 // Extract the rate-limit key from a request. Default: the socket's remote
 // address (correct for direct connections). Behind a reverse proxy, set
 // UM_RATE_LIMIT_TRUSTED_PROXY_HEADER=x-forwarded-for (or similar) to trust
