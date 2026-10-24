@@ -1,0 +1,3999 @@
+{
+  "timestamp": "2026-10-23T21:13:45.752Z",
+  "fixtures": [
+    "eval/production-noise-set.jsonl",
+    "eval/collision-slice.jsonl",
+    "eval/extraction-set.jsonl"
+  ],
+  "fixtureSha256": {
+    "eval/production-noise-set.jsonl": "7391a26745d14aa45e6601ba13edd15bc1f3867776a2cb2b5e46f043b12e57c0",
+    "eval/collision-slice.jsonl": "106036a2e3d4aa88b669b9e702aed816c07818f26aa28a228e975e7e6ce77cf6",
+    "eval/extraction-set.jsonl": "e0d00401e4526bd12cc69c8956f51a8d93c8e42b11fd43736418c4c6a800771a"
+  },
+  "mode": "judged",
+  "judgeModel": "gpt-4o-mini",
+  "factsProvider": "openai",
+  "factsModel": "gpt-5.6-luna",
+  "factsConfig": {
+    "temperature": 0
+  },
+  "pinnable": true,
+  "extraction": {
+    "rows": 132,
+    "graded": 132,
+    "parseFails": 0,
+    "precision": 0.989,
+    "recall": 0.922,
+    "f1": 0.954,
+    "noiseAbstained": 11,
+    "noiseTotal": 76,
+    "perRow": [
+      {
+        "id": "n01",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n02",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n04",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n05",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n07",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n09",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n10",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n12",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n13",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n14",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n15",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n16",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n17",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n18",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n19",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n20",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n21",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n24",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n25",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n26",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n27",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n28",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n29",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n30",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n33",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n34",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n35",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n36",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n37",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n38",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n39",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n40",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n41",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n42",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n43",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n44",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n45",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n46",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n47",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n48",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n49",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n50",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n51",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n52",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n53",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n54",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n55",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n56",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n57",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n58",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n59",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n60",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n61",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n62",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n63",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n64",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n65",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n66",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n67",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n68",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n69",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n70",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n71",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n72",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n73",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n74",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 5,
+        "extractedSupported": 5
+      },
+      {
+        "id": "n75",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n76",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n77",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n78",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n79",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n80",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c01",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c02",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c03",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c04",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c05",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 4,
+        "extractedSupported": 4
+      },
+      {
+        "id": "c06",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c07",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c08",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c10",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c11",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c12",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      }
+    ],
+    "byStratum": {
+      "ephemeral": {
+        "rows": 39,
+        "parseFails": 0,
+        "noiseTotal": 39,
+        "noiseAbstained": 2,
+        "abstentionRate": 0.051,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "telemetry": {
+        "rows": 16,
+        "parseFails": 0,
+        "noiseTotal": 16,
+        "noiseAbstained": 0,
+        "abstentionRate": 0,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "referent-stripped": {
+        "rows": 13,
+        "parseFails": 0,
+        "noiseTotal": 13,
+        "noiseAbstained": 1,
+        "abstentionRate": 0.077,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "durable": {
+        "rows": 12,
+        "parseFails": 0,
+        "noiseTotal": 0,
+        "noiseAbstained": 0,
+        "abstentionRate": null,
+        "goldTotal": 14,
+        "goldMatched": 13,
+        "recall": 0.929
+      },
+      "unknown": {
+        "rows": 52,
+        "parseFails": 0,
+        "noiseTotal": 8,
+        "noiseAbstained": 8,
+        "abstentionRate": 1,
+        "goldTotal": 63,
+        "goldMatched": 58,
+        "recall": 0.921
+      }
+    }
+  },
+  "callStats": {
+    "n": 132,
+    "costUsd": {
+      "total": 0.0189302,
+      "mean": 0.0001434106
+    },
+    "tokensIn": {
+      "mean": 571.92
+    },
+    "tokensOut": {
+      "mean": 24.19
+    },
+    "latencyMs": {
+      "p50": 1058,
+      "p95": 1454,
+      "max": 1933,
+      "mean": 1085.7
+    },
+    "stopReasons": {
+      "stop": 132
+    },
+    "parseFailures": 0
+  },
+  "calls": [
+    {
+      "id": "n01",
+      "extracted": [
+        "The kiosk session has 2 hours and 50 minutes remaining."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 21,
+      "costUsd": 0.0001394,
+      "latencyMs": 1080,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n02",
+      "extracted": [
+        "There are two renderers: 4402 and 7718.",
+        "Renderer 4402 started at 09:12.",
+        "Renderer 7718 spawned at 13:40:06."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 46,
+      "costUsd": 0.00017199999999999998,
+      "latencyMs": 1039,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n03",
+      "extracted": [
+        "Ticket #58 is an open change request."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 17,
+      "costUsd": 0.0001334,
+      "latencyMs": 1067,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n04",
+      "extracted": [
+        "The importer will be made schema-aware.",
+        "The importer will no longer assume a fixed manifest layout."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 27,
+      "costUsd": 0.0001462,
+      "latencyMs": 975,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n05",
+      "extracted": [
+        "Gateway console credentials were renewed.",
+        "A new badge became active.",
+        "The new badge has premium tier.",
+        "The new badge has full permissions."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 34,
+      "costUsd": 0.00015539999999999998,
+      "latencyMs": 932,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n06",
+      "extracted": [
+        "The cache is pre-seeded.",
+        "The pre-seeded cache is confirmed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 23,
+      "costUsd": 0.0001404,
+      "latencyMs": 816,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n07",
+      "extracted": [
+        "The kiosk rollout environment has Ruby 3.4.2 installed.",
+        "Systemd timers are active in the kiosk rollout environment.",
+        "The kiosk rollout environment has no existing unit files."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 43,
+      "costUsd": 0.00016859999999999998,
+      "latencyMs": 887,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n08",
+      "extracted": [
+        "The depot-primary host proxy configuration was verified.",
+        "No :7071 tunnel exists on the depot-primary host.",
+        "Ports :9090 and :6060 remain intact on the depot-primary host."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 45,
+      "costUsd": 0.00017099999999999998,
+      "latencyMs": 1454,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n09",
+      "extracted": [
+        "The dashboard reads quota with HTTP 200 after the depot rotated its access badge."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 24,
+      "costUsd": 0.000143,
+      "latencyMs": 1186,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n10",
+      "extracted": [
+        "Batch 4 was archived."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 14,
+      "costUsd": 0.00012920000000000002,
+      "latencyMs": 875,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n11",
+      "extracted": [
+        "Monthly's is at 61% after the tweak."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 19,
+      "costUsd": 0.000136,
+      "latencyMs": 947,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n12",
+      "extracted": [
+        "The session key rotated from digest '…kPzR41Qw' to '…mBhT77wt'."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 33,
+      "costUsd": 0.0001558,
+      "latencyMs": 961,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n13",
+      "extracted": [
+        "Stage 3b is drafted.",
+        "Stage 3b has been checked.",
+        "Stage 3b is passing."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 30,
+      "costUsd": 0.0001494,
+      "latencyMs": 1102,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n14",
+      "extracted": [
+        "The ledger trail has 22 entries."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 16,
+      "costUsd": 0.0001324,
+      "latencyMs": 1329,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n15",
+      "extracted": [
+        "The depot is at revision d41c9ea as of May 8."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 24,
+      "costUsd": 0.0001434,
+      "latencyMs": 921,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n16",
+      "extracted": [
+        "The depot is at revision f7a20cc."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 19,
+      "costUsd": 0.0001362,
+      "latencyMs": 1002,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n17",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 7,
+      "costUsd": 0.00012080000000000002,
+      "latencyMs": 1035,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n18",
+      "extracted": [
+        "The render is finished."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 13,
+      "costUsd": 0.00012800000000000002,
+      "latencyMs": 1058,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n19",
+      "extracted": [
+        "Vet and bundle CI checks are in flight."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 17,
+      "costUsd": 0.00013319999999999999,
+      "latencyMs": 1197,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n20",
+      "extracted": [
+        "All 9 probes for Step 6 in orchard-sync passed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 21,
+      "costUsd": 0.0001392,
+      "latencyMs": 1014,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n21",
+      "extracted": [
+        "The day-one validation was plumbing.",
+        "The day-one validation reads clean all day."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 24,
+      "costUsd": 0.0001422,
+      "latencyMs": 857,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n22",
+      "extracted": [
+        "All 7 cases covering the full #42 charter §3 agreement passed on the first run of halt.rb v3."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 580,
+      "tokensOut": 32,
+      "costUsd": 0.0001544,
+      "latencyMs": 1286,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n23",
+      "extracted": [
+        "Item 5 was fully accepted with a score of 18 out of 18."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 25,
+      "costUsd": 0.00014399999999999998,
+      "latencyMs": 966,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n24",
+      "extracted": [
+        "The hex slice of rows 130–410 is queued as qw7e2kd90.",
+        "The queued hex slice has no output blob yet."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 580,
+      "tokensOut": 37,
+      "costUsd": 0.0001604,
+      "latencyMs": 1038,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n25",
+      "extracted": [
+        "All citations resolve.",
+        "Passwords are excluded from the archive.",
+        "4.1 GB of sample media is excluded from the archive.",
+        "Disposable scratch files are excluded from the archive."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 583,
+      "tokensOut": 41,
+      "costUsd": 0.0001658,
+      "latencyMs": 1313,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n26",
+      "extracted": [
+        "Orchard Sync stage-3-4-export Item 2 upload is complete.",
+        "Polish tweaks for Orchard Sync stage-3-4-export Item 2 are recorded.",
+        "Re-sign-off for Orchard Sync stage-3-4-export Item 2 is in progress."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 589,
+      "tokensOut": 62,
+      "costUsd": 0.0001922,
+      "latencyMs": 1140,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n27",
+      "extracted": [
+        "31/31 probes are passing."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 15,
+      "costUsd": 0.0001306,
+      "latencyMs": 970,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n28",
+      "extracted": [
+        "The `roster.yaml` file is 9 weeks old."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 21,
+      "costUsd": 0.00013859999999999998,
+      "latencyMs": 767,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n29",
+      "extracted": [
+        "Client handshake HEAD calls were returning 5."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 17,
+      "costUsd": 0.0001344,
+      "latencyMs": 936,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n30",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 7,
+      "costUsd": 0.0001222,
+      "latencyMs": 933,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n31",
+      "extracted": [
+        "The layout brief is 87 lines long."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 17,
+      "costUsd": 0.0001334,
+      "latencyMs": 1122,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n32",
+      "extracted": [
+        "6 cycles have been finished."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 14,
+      "costUsd": 0.00012920000000000002,
+      "latencyMs": 939,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n33",
+      "extracted": [
+        "Pagination checks have been repaired."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 14,
+      "costUsd": 0.00012920000000000002,
+      "latencyMs": 874,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n34",
+      "extracted": [
+        "The OrchardFetcher implementation passed an independent charter check.",
+        "All 15 probes in the independent charter check passed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 29,
+      "costUsd": 0.0001496,
+      "latencyMs": 1005,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n35",
+      "extracted": [
+        "The cache fix was verified live on depot at 08:15:33.",
+        "The handshake returned 204 replies that were header-readable.",
+        "The handshake returned 401 replies that were header-readable."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 46,
+      "costUsd": 0.00017199999999999998,
+      "latencyMs": 1049,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n36",
+      "extracted": [
+        "The depot's boot routine has been running for 3 minutes and 10 seconds."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 25,
+      "costUsd": 0.0001446,
+      "latencyMs": 1106,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n37",
+      "extracted": [
+        "The file flatten.rb has existing checks that do not require changes when rowKeys are added."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 26,
+      "costUsd": 0.000146,
+      "latencyMs": 1137,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n38",
+      "extracted": [
+        "Sweep 7 had zero issues."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 15,
+      "costUsd": 0.0001306,
+      "latencyMs": 839,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n39",
+      "extracted": [
+        "The registry's plugin checker did not contact the service during the trial."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 22,
+      "costUsd": 0.0001402,
+      "latencyMs": 1154,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n40",
+      "extracted": [
+        "The session date is March 9, 2025."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 20,
+      "costUsd": 0.00013759999999999998,
+      "latencyMs": 860,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n41",
+      "extracted": [
+        "The feed-poller.spec.rb test failed with ERR_GEM_MISSING on 2025-03-10T11:20:15.330Z."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 587,
+      "tokensOut": 40,
+      "costUsd": 0.00016539999999999998,
+      "latencyMs": 1288,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n42",
+      "extracted": [
+        "The cycle is paused.",
+        "The helper is waiting on the operator's depot job."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 24,
+      "costUsd": 0.000143,
+      "latencyMs": 1094,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n43",
+      "extracted": [
+        "A workspace named '77-ui-widget-local' was created."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 20,
+      "costUsd": 0.00013759999999999998,
+      "latencyMs": 1230,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n44",
+      "extracted": [
+        "The watcher was switched to failures-only for the rest of the shift."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 22,
+      "costUsd": 0.0001404,
+      "latencyMs": 938,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n45",
+      "extracted": [
+        "The scribe-bot's recorder ran 29 background drafting sessions while the operator was away."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 27,
+      "costUsd": 0.0001472,
+      "latencyMs": 1242,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n46",
+      "extracted": [
+        "Zero visits arrived during the window.",
+        "Only the probe visit was recorded."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 22,
+      "costUsd": 0.0001404,
+      "latencyMs": 1233,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n47",
+      "extracted": [
+        "A patch titled \"MEND-8 Done — guides/feed-spec.md R4 Origin Notes Refreshed\" was made."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 33,
+      "costUsd": 0.0001558,
+      "latencyMs": 1154,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n48",
+      "extracted": [
+        "The main workspace is being recorded."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 15,
+      "costUsd": 0.00013040000000000003,
+      "latencyMs": 1104,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n49",
+      "extracted": [
+        "The Orchard Sync Charter Check — Pass 2 was launched with a broad-structure lens."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 578,
+      "tokensOut": 26,
+      "costUsd": 0.0001468,
+      "latencyMs": 1185,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n50",
+      "extracted": [
+        "The active folder during the shift was D:\\Workbench\\orchard-sync."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 23,
+      "costUsd": 0.0001418,
+      "latencyMs": 994,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n51",
+      "extracted": [
+        "The last sweeps included a halt trigger with the fresh badge."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 21,
+      "costUsd": 0.00013859999999999998,
+      "latencyMs": 942,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n52",
+      "extracted": [
+        "The buffer is at 70%."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 15,
+      "costUsd": 0.0001306,
+      "latencyMs": 1073,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n53",
+      "extracted": [
+        "A feature titled \"S2c Mid-Flight Check Gate — NEEDS-WORK: 3 MAJOR + 5 MINORs Found by Helper (503 Path, ruby3 on macOS)\" was observed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 600,
+      "tokensOut": 53,
+      "costUsd": 0.0001836,
+      "latencyMs": 1176,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n54",
+      "extracted": [
+        "The shift-open.rb script was used.",
+        "S2c did not introduce breakage."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 578,
+      "tokensOut": 25,
+      "costUsd": 0.0001456,
+      "latencyMs": 1081,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n55",
+      "extracted": [
+        "A feature titled “Mirror Check Upgraded — Shelf-Shift Mid Snare + Clock-Pulse Rhythm Check” was observed.",
+        "The script check_stocker_rerun_mirror.rb exercises the close-out beat-pulse gate."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 600,
+      "tokensOut": 53,
+      "costUsd": 0.0001836,
+      "latencyMs": 1710,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n56",
+      "extracted": [
+        "No reboot was needed for the filter to take effect."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 19,
+      "costUsd": 0.000136,
+      "latencyMs": 932,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n57",
+      "extracted": [
+        "The transport is proven.",
+        "The sensing premise is not proven."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 20,
+      "costUsd": 0.00013739999999999998,
+      "latencyMs": 1145,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n58",
+      "extracted": [
+        "The new slug_key matches the tuple."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 16,
+      "costUsd": 0.0001318,
+      "latencyMs": 994,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n59",
+      "extracted": [
+        "The handler currently returns quietly in that case."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 17,
+      "costUsd": 0.00013319999999999999,
+      "latencyMs": 1132,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n60",
+      "extracted": [
+        "The manifest file has contained three incorrect announcements."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 17,
+      "costUsd": 0.000134,
+      "latencyMs": 1376,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n61",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 7,
+      "costUsd": 0.000122,
+      "latencyMs": 1464,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n62",
+      "extracted": [
+        "The patch was recorded.",
+        "The patch was shipped."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 18,
+      "costUsd": 0.000134,
+      "latencyMs": 717,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n63",
+      "extracted": [
+        "The storefront is in."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 561,
+      "tokensOut": 13,
+      "costUsd": 0.00012780000000000002,
+      "latencyMs": 1933,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n64",
+      "extracted": [
+        "The parser cannot."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 559,
+      "tokensOut": 12,
+      "costUsd": 0.00012620000000000003,
+      "latencyMs": 958,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n65",
+      "extracted": [
+        "A backward-compatibility smoke check has been added."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 19,
+      "costUsd": 0.000136,
+      "latencyMs": 840,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n66",
+      "extracted": [
+        "The reissue ran clean under plain systemd."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 18,
+      "costUsd": 0.00013519999999999998,
+      "latencyMs": 1204,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n67",
+      "extracted": [
+        "The manifest was imported successfully.",
+        "Existing playbooks were retained."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 20,
+      "costUsd": 0.00013739999999999998,
+      "latencyMs": 1490,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n68",
+      "extracted": [
+        "Entries 3 and 4 are depot edits."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 18,
+      "costUsd": 0.0001346,
+      "latencyMs": 1378,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n69",
+      "extracted": [
+        "The cause was the full AfterAction event payload capture plus a jammed outbox queue."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 26,
+      "costUsd": 0.0001482,
+      "latencyMs": 1235,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n70",
+      "extracted": [
+        "The operator's Traillog archive is now a live portal.example bridge."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 23,
+      "costUsd": 0.0001418,
+      "latencyMs": 977,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n71",
+      "extracted": [
+        "Recorder shifts have been running at 3 to 8 times the real-output rate since March 9, 2025."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 33,
+      "costUsd": 0.0001558,
+      "latencyMs": 1113,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n72",
+      "extracted": [
+        "The banner-notice fix was deployed to production.",
+        "A full 6-step handshake probe passed on 2025-03-10 at 09:42:11 UTC."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 591,
+      "tokensOut": 43,
+      "costUsd": 0.0001698,
+      "latencyMs": 1141,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n73",
+      "extracted": [
+        "The orchard-sync visit log was recorded on March 10, 2025.",
+        "The orchard-sync visit log was deployed to the depot on March 10, 2025."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 43,
+      "costUsd": 0.000167,
+      "latencyMs": 1406,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n74",
+      "extracted": [
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was built.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was patched.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was checked.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was rolled out to a shed server.",
+        "The rollout used the 'renew-badge.rb' credential helper."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 593,
+      "tokensOut": 86,
+      "costUsd": 0.00022179999999999997,
+      "latencyMs": 1317,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n75",
+      "extracted": [
+        "The Handshake Path Probe was updated to assert that session_reply_origin_flag_enabled is absent."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 26,
+      "costUsd": 0.00014659999999999999,
+      "latencyMs": 1099,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n76",
+      "extracted": [
+        "A fix for banner-notice removal was pushed to the stage-2-4-bridge branch.",
+        "The fix for banner-notice removal has commit e81b2ad."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 583,
+      "tokensOut": 43,
+      "costUsd": 0.0001682,
+      "latencyMs": 1016,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n77",
+      "extracted": [
+        "Change #37 has been merged into trunk at commit f7a20cc."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 24,
+      "costUsd": 0.0001428,
+      "latencyMs": 1407,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n78",
+      "extracted": [
+        "The full rollout of quota-scan.rb on the depot has been completed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 23,
+      "costUsd": 0.0001418,
+      "latencyMs": 976,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n79",
+      "extracted": [
+        "A private archive was created and pushed to codehub.example/plumworks/orchard-sync."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 27,
+      "costUsd": 0.0001472,
+      "latencyMs": 1310,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n80",
+      "extracted": [
+        "A helper script named `renew-badge.rb` was created for badge renewal."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 24,
+      "costUsd": 0.000143,
+      "latencyMs": 943,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c01",
+      "extracted": [
+        "The billing service now uses Postgres 16.",
+        "The old Mongo cluster has been decommissioned."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 28,
+      "costUsd": 0.0001484,
+      "latencyMs": 1239,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c02",
+      "extracted": [
+        "The team no longer deploys on Fridays.",
+        "The Friday deployment freeze is permanent."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 24,
+      "costUsd": 0.000143,
+      "latencyMs": 1475,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c03",
+      "extracted": [
+        "The vendor contract is signed for renewal on March 3rd."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 583,
+      "tokensOut": 21,
+      "costUsd": 0.0001418,
+      "latencyMs": 951,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c04",
+      "extracted": [
+        "The API rate limit is 600 requests per minute."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 19,
+      "costUsd": 0.000138,
+      "latencyMs": 1143,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c05",
+      "extracted": [
+        "The canary deployment went out at 14:02.",
+        "The full rollout occurred at 14:40.",
+        "The retention policy is 90 days.",
+        "The previous retention policy was 365 days."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 594,
+      "tokensOut": 47,
+      "costUsd": 0.0001752,
+      "latencyMs": 1140,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c06",
+      "extracted": [
+        "Auth tokens use ECDSA.",
+        "The old HMAC authentication scheme is no longer used."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 583,
+      "tokensOut": 26,
+      "costUsd": 0.0001478,
+      "latencyMs": 1009,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c07",
+      "extracted": [
+        "The warehouse passed the fire inspection."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.0001312,
+      "latencyMs": 977,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c08",
+      "extracted": [
+        "The mobile team owns the push-notification service."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 18,
+      "costUsd": 0.00013659999999999999,
+      "latencyMs": 1197,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c09",
+      "extracted": [
+        "The failover region is Frankfurt."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 15,
+      "costUsd": 0.00013319999999999999,
+      "latencyMs": 948,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c10",
+      "extracted": [
+        "The load-bearing wall is the north wall.",
+        "The shelving should be planned around the north load-bearing wall."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 29,
+      "costUsd": 0.00014979999999999998,
+      "latencyMs": 1131,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c11",
+      "extracted": [
+        "The sensor sweep was normal at 14:31.",
+        "The plant manager confirmed that line 4 is certified for food-grade production."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 580,
+      "tokensOut": 34,
+      "costUsd": 0.00015680000000000002,
+      "latencyMs": 1193,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c12",
+      "extracted": [
+        "Legal signed off.",
+        "The data residency requirement is EU-only storage."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 21,
+      "costUsd": 0.00013979999999999998,
+      "latencyMs": 941,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e01",
+      "extracted": [
+        "The writer's primary editor is Neovim.",
+        "The writer previously used VS Code as their primary editor."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 29,
+      "costUsd": 0.000149,
+      "latencyMs": 1251,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e02",
+      "extracted": [
+        "The team standup is scheduled for 9:30am.",
+        "The team standup is capped at 15 minutes."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 32,
+      "costUsd": 0.0001536,
+      "latencyMs": 973,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e03",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 7,
+      "costUsd": 0.0001226,
+      "latencyMs": 1001,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e04",
+      "extracted": [
+        "The writer has a daughter named Mia.",
+        "Mia started kindergarten in fall 2026.",
+        "Mia's teacher is Ms. Patel."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 35,
+      "costUsd": 0.0001562,
+      "latencyMs": 1294,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          false,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          false,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e05",
+      "extracted": [
+        "The writer lives in Oakland.",
+        "The writer takes the train to work.",
+        "The writer previously biked to work."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 30,
+      "costUsd": 0.00015059999999999997,
+      "latencyMs": 1091,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e06",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 7,
+      "costUsd": 0.000122,
+      "latencyMs": 881,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e07",
+      "extracted": [
+        "The production database uses Postgres 16.",
+        "The production database is hosted on Amazon RDS.",
+        "The production database is hosted in us-east-1."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 38,
+      "costUsd": 0.0001606,
+      "latencyMs": 964,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e08",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 7,
+      "costUsd": 0.00012179999999999999,
+      "latencyMs": 693,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e09",
+      "extracted": [
+        "The writer is allergic to penicillin."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 16,
+      "costUsd": 0.00013160000000000003,
+      "latencyMs": 1010,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e10",
+      "extracted": [
+        "The team chose Stripe for payments over Adyen because Stripe's integration was faster."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 24,
+      "costUsd": 0.0001428,
+      "latencyMs": 984,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e11",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 7,
+      "costUsd": 0.0001222,
+      "latencyMs": 749,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e12",
+      "extracted": [
+        "The writer's current manager is Dana.",
+        "Raj moved to the platform team."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 23,
+      "costUsd": 0.0001414,
+      "latencyMs": 1330,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e13",
+      "extracted": [
+        "The writer only buys newer-model car seats since the recall last year."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 22,
+      "costUsd": 0.0001406,
+      "latencyMs": 1122,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e14",
+      "extracted": [
+        "The team does not deploy on Fridays anymore."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 17,
+      "costUsd": 0.000133,
+      "latencyMs": 1058,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e15",
+      "extracted": [
+        "The writer is no longer the on-call lead for the billing service."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 22,
+      "costUsd": 0.00014,
+      "latencyMs": 1000,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e16",
+      "extracted": [
+        "The SLA is 99.95% uptime.",
+        "The monthly error budget is 21 minutes."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 27,
+      "costUsd": 0.00014759999999999998,
+      "latencyMs": 835,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e17",
+      "extracted": [
+        "The lease renews on March 3rd.",
+        "The rent increases to $2,150."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 27,
+      "costUsd": 0.00014739999999999998,
+      "latencyMs": 1125,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e18",
+      "extracted": [
+        "The writer has a son named Theo.",
+        "Theo turns 8 next week."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 23,
+      "costUsd": 0.0001406,
+      "latencyMs": 1031,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e19",
+      "extracted": [
+        "The team has cut over from Jenkins to GitHub Actions.",
+        "The new build takes about 6 minutes."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 29,
+      "costUsd": 0.0001518,
+      "latencyMs": 1182,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e20",
+      "extracted": [
+        "The team migrated everything from Python to Go last quarter.",
+        "The team previously primarily used Python."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 26,
+      "costUsd": 0.000145,
+      "latencyMs": 1447,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e21",
+      "extracted": [
+        "The writer moved from product to engineering in January."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 18,
+      "costUsd": 0.0001346,
+      "latencyMs": 947,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e22",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 8,
+      "costUsd": 0.0001246,
+      "latencyMs": 1084,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e23",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 8,
+      "costUsd": 0.00012299999999999998,
+      "latencyMs": 918,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e24",
+      "extracted": [
+        "The writer's email address is sam@acme.io."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 20,
+      "costUsd": 0.0001392,
+      "latencyMs": 821,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e25",
+      "extracted": [
+        "Dana mentioned that the launch slipped to Q3."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 18,
+      "costUsd": 0.0001346,
+      "latencyMs": 1526,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e26",
+      "extracted": [
+        "The writer's doctor said the writer's cholesterol is back to normal."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 22,
+      "costUsd": 0.0001396,
+      "latencyMs": 1192,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e27",
+      "extracted": [
+        "The writer is vegetarian."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 559,
+      "tokensOut": 13,
+      "costUsd": 0.0001274,
+      "latencyMs": 901,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e28",
+      "extracted": [
+        "The team uses Notion for documentation.",
+        "The team uses Slack for chat."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 23,
+      "costUsd": 0.0001412,
+      "latencyMs": 961,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e29",
+      "extracted": [
+        "The writer switched banks to Ally.",
+        "The writer switched banks to obtain a better savings rate."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 26,
+      "costUsd": 0.0001446,
+      "latencyMs": 957,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e30",
+      "extracted": [
+        "The conference is in Berlin this year."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 16,
+      "costUsd": 0.0001326,
+      "latencyMs": 1148,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e31",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 8,
+      "costUsd": 0.0001228,
+      "latencyMs": 992,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e32",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 7,
+      "costUsd": 0.00012119999999999999,
+      "latencyMs": 813,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e33",
+      "extracted": [
+        "The writer runs about 25 miles per week."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 18,
+      "costUsd": 0.0001346,
+      "latencyMs": 859,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e34",
+      "extracted": [
+        "Standup occurs every weekday at 10:15."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 19,
+      "costUsd": 0.0001362,
+      "latencyMs": 991,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e35",
+      "extracted": [
+        "The writer's new landlord is Mr. Okafor.",
+        "The writer's unit is 4B."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 573,
+      "tokensOut": 29,
+      "costUsd": 0.0001494,
+      "latencyMs": 1144,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e36",
+      "extracted": [
+        "Priya is an engineer on the data team.",
+        "Wen is an engineer on the data team."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 28,
+      "costUsd": 0.0001478,
+      "latencyMs": 1131,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e37",
+      "extracted": [
+        "The writer biked to the gym this morning.",
+        "The writer signed up for the 6am spin class."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 30,
+      "costUsd": 0.00015099999999999998,
+      "latencyMs": 1150,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e38",
+      "extracted": [
+        "The writer's infrastructure is not on AWS.",
+        "Everything in the writer's infrastructure runs on GCP."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 28,
+      "costUsd": 0.0001472,
+      "latencyMs": 1107,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e39",
+      "extracted": [
+        "The meeting is at 4pm."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 16,
+      "costUsd": 0.0001344,
+      "latencyMs": 1028,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e40",
+      "extracted": [
+        "The company closed a $12 million Series A financing.",
+        "Marcus is joining the company as CFO on Monday.",
+        "The company is opening a Denver office."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 586,
+      "tokensOut": 37,
+      "costUsd": 0.0001616,
+      "latencyMs": 1168,
+      "requestParams": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "none"
+      },
+      "servedModel": "gpt-5.6-luna",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  ]
+}

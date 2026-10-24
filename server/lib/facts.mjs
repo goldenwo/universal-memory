@@ -92,5 +92,12 @@ export async function facts(text, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model, stopReason: raw.stopReason ?? null, parseOk: raw.parseOk ?? null };
+  return {
+    facts: extracted, tokensIn, tokensOut, costUsd, provider: providerName, model,
+    stopReason: raw.stopReason ?? null, parseOk: raw.parseOk ?? null,
+    // The eval's record of the request actually sent and the model that answered (openai
+    // reports them; null elsewhere). Production callers ignore them.
+    requestParams: raw.requestParams ?? null, servedModel: raw.servedModel ?? null,
+    reasoningTokens: raw.reasoningTokens ?? null,
+  };
 }

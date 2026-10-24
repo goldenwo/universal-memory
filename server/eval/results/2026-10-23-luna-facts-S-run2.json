@@ -1,0 +1,4017 @@
+{
+  "timestamp": "2026-10-23T21:22:40.514Z",
+  "fixtures": [
+    "eval/production-noise-set.jsonl",
+    "eval/collision-slice.jsonl",
+    "eval/extraction-set.jsonl"
+  ],
+  "fixtureSha256": {
+    "eval/production-noise-set.jsonl": "7391a26745d14aa45e6601ba13edd15bc1f3867776a2cb2b5e46f043b12e57c0",
+    "eval/collision-slice.jsonl": "106036a2e3d4aa88b669b9e702aed816c07818f26aa28a228e975e7e6ce77cf6",
+    "eval/extraction-set.jsonl": "e0d00401e4526bd12cc69c8956f51a8d93c8e42b11fd43736418c4c6a800771a"
+  },
+  "mode": "judged",
+  "judgeModel": "gpt-4o-mini",
+  "factsProvider": "openai",
+  "factsModel": "gpt-4o-mini",
+  "factsConfig": {
+    "temperature": 0
+  },
+  "pinnable": true,
+  "extraction": {
+    "rows": 132,
+    "graded": 132,
+    "parseFails": 0,
+    "precision": 1,
+    "recall": 0.857,
+    "f1": 0.923,
+    "noiseAbstained": 11,
+    "noiseTotal": 76,
+    "perRow": [
+      {
+        "id": "n01",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n02",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n04",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n05",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n07",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n09",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n10",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n12",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n13",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n14",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n15",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n16",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n17",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n18",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n19",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n20",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n21",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n24",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n25",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n26",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n27",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n28",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n29",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n30",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n33",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n34",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n35",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n36",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n37",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n38",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n39",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n40",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n41",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n42",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n43",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n44",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n45",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n46",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n47",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n48",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n49",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n50",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n51",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n52",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n53",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n54",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n55",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n56",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n57",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n58",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n59",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n60",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n61",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n62",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n63",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n64",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n65",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n66",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n67",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n68",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n69",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n70",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n71",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n72",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n73",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n74",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 5,
+        "extractedSupported": 5
+      },
+      {
+        "id": "n75",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n76",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n77",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n78",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n79",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n80",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c01",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c02",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c03",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c04",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c05",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 4,
+        "extractedSupported": 4
+      },
+      {
+        "id": "c06",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c07",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c08",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c10",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c11",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c12",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 1,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 4,
+        "extractedSupported": 4
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      }
+    ],
+    "byStratum": {
+      "ephemeral": {
+        "rows": 39,
+        "parseFails": 0,
+        "noiseTotal": 39,
+        "noiseAbstained": 1,
+        "abstentionRate": 0.026,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "telemetry": {
+        "rows": 16,
+        "parseFails": 0,
+        "noiseTotal": 16,
+        "noiseAbstained": 0,
+        "abstentionRate": 0,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "referent-stripped": {
+        "rows": 13,
+        "parseFails": 0,
+        "noiseTotal": 13,
+        "noiseAbstained": 2,
+        "abstentionRate": 0.154,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "durable": {
+        "rows": 12,
+        "parseFails": 0,
+        "noiseTotal": 0,
+        "noiseAbstained": 0,
+        "abstentionRate": null,
+        "goldTotal": 14,
+        "goldMatched": 13,
+        "recall": 0.929
+      },
+      "unknown": {
+        "rows": 52,
+        "parseFails": 0,
+        "noiseTotal": 8,
+        "noiseAbstained": 8,
+        "abstentionRate": 1,
+        "goldTotal": 63,
+        "goldMatched": 53,
+        "recall": 0.841
+      }
+    }
+  },
+  "callStats": {
+    "n": 132,
+    "costUsd": {
+      "total": 0.01310475,
+      "mean": 0.0000992784
+    },
+    "tokensIn": {
+      "mean": 572.92
+    },
+    "tokensOut": {
+      "mean": 22.23
+    },
+    "latencyMs": {
+      "p50": 713,
+      "p95": 1102,
+      "max": 2655,
+      "mean": 766.4
+    },
+    "stopReasons": {
+      "stop": 132
+    },
+    "parseFailures": 0
+  },
+  "calls": [
+    {
+      "id": "n01",
+      "extracted": [
+        "The kiosk session stays active with 2 hours and 50 minutes remaining."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 21,
+      "costUsd": 0.00009839999999999998,
+      "latencyMs": 827,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n02",
+      "extracted": [
+        "there are two renderers",
+        "renderer 4402 was created at 09:12",
+        "renderer 7718 was spawned at 13:40:06"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 39,
+      "costUsd": 0.00011114999999999999,
+      "latencyMs": 819,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n03",
+      "extracted": [
+        "Ticket #58 is an open change request."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.00009389999999999999,
+      "latencyMs": 910,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n04",
+      "extracted": [
+        "the importer will be made schema-aware instead of assuming the manifest layout"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 19,
+      "costUsd": 0.0000969,
+      "latencyMs": 684,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n05",
+      "extracted": [
+        "Gateway console credentials were renewed.",
+        "A new badge became active with premium tier and full permissions."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 25,
+      "costUsd": 0.00010109999999999999,
+      "latencyMs": 717,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n06",
+      "extracted": [
+        "the pre-seeded cache is confirmed"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 13,
+      "costUsd": 0.00009254999999999999,
+      "latencyMs": 581,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n07",
+      "extracted": [
+        "The kiosk rollout environment is confirmed to be ready.",
+        "The kiosk rollout environment is using Ruby 3.4.2.",
+        "The kiosk rollout environment has systemd timers active.",
+        "The kiosk rollout environment has no existing unit files."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 586,
+      "tokensOut": 53,
+      "costUsd": 0.00011969999999999998,
+      "latencyMs": 814,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n08",
+      "extracted": [
+        "the depot-primary host proxy config was verified",
+        "there is no :7071 tunnel existing",
+        "ports :9090 and :6060 remain intact"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 586,
+      "tokensOut": 36,
+      "costUsd": 0.00010949999999999998,
+      "latencyMs": 803,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n09",
+      "extracted": [
+        "the dashboard reads quota with HTTP 200",
+        "the depot rotated its access badge"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 22,
+      "costUsd": 0.00009899999999999998,
+      "latencyMs": 609,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n10",
+      "extracted": [
+        "Batch 4 was archived."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 12,
+      "costUsd": 0.00009164999999999998,
+      "latencyMs": 631,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n11",
+      "extracted": [
+        "Monthly's at 61% after the tweak."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 16,
+      "costUsd": 0.00009464999999999998,
+      "latencyMs": 890,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n12",
+      "extracted": [
+        "The session key rotated from digest '…kPzR41Qw' to '…mBhT77wt'."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 582,
+      "tokensOut": 31,
+      "costUsd": 0.00010589999999999997,
+      "latencyMs": 905,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n13",
+      "extracted": [
+        "Stage 3b is drafted.",
+        "Stage 3b is checked.",
+        "Stage 3b is passing."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 29,
+      "costUsd": 0.00010259999999999999,
+      "latencyMs": 812,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n14",
+      "extracted": [
+        "the ledger trail has 22 entries"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 13,
+      "costUsd": 0.00009284999999999998,
+      "latencyMs": 556,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n15",
+      "extracted": [
+        "The depot is up at revision d41c9ea",
+        "The revision date is May 8"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 26,
+      "costUsd": 0.00010169999999999999,
+      "latencyMs": 685,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n16",
+      "extracted": [
+        "The depot was rolled to f7a20cc."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 17,
+      "costUsd": 0.00009539999999999999,
+      "latencyMs": 809,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n17",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 5,
+      "costUsd": 0.00008744999999999998,
+      "latencyMs": 684,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n18",
+      "extracted": [
+        "the render is finished"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 10,
+      "costUsd": 0.00009044999999999998,
+      "latencyMs": 762,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n19",
+      "extracted": [
+        "vet CI checks are in flight",
+        "bundle CI checks are in flight"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 20,
+      "costUsd": 0.00009674999999999998,
+      "latencyMs": 629,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n20",
+      "extracted": [
+        "9 out of 9 probes for Step 6 in orchard-sync passed."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 21,
+      "costUsd": 0.00009824999999999998,
+      "latencyMs": 648,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n21",
+      "extracted": [
+        "the day-one validation was plumbing",
+        "the plumbing reads clean all day"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 20,
+      "costUsd": 0.00009719999999999998,
+      "latencyMs": 693,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n22",
+      "extracted": [
+        "All 7 cases covering the full #42 charter §3 agreement passed on the first run of halt.rb v3."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 30,
+      "costUsd": 0.00010514999999999998,
+      "latencyMs": 718,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n23",
+      "extracted": [
+        "Item 5 was fully accepted.",
+        "Item 5 received a score of 18 out of 18."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 28,
+      "costUsd": 0.00010244999999999998,
+      "latencyMs": 825,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n24",
+      "extracted": [
+        "the hex slice of rows 130–410 is queued as qw7e2kd90",
+        "there is no output blob yet"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 32,
+      "costUsd": 0.00010634999999999998,
+      "latencyMs": 733,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n25",
+      "extracted": [
+        "All citations resolve.",
+        "Passwords are correctly excluded from the archive.",
+        "4.1 GB of sample media are correctly excluded from the archive.",
+        "Disposable scratch files are correctly excluded from the archive."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 45,
+      "costUsd": 0.00011459999999999998,
+      "latencyMs": 1035,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n26",
+      "extracted": [
+        "Orchard Sync stage-3-4-export Item 2 upload is complete.",
+        "Polish tweaks are recorded.",
+        "Re-sign-off is in progress."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 590,
+      "tokensOut": 38,
+      "costUsd": 0.00011129999999999998,
+      "latencyMs": 860,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n27",
+      "extracted": [
+        "31 probes are passing."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 11,
+      "costUsd": 0.00009119999999999998,
+      "latencyMs": 554,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n28",
+      "extracted": [
+        "the roster.yaml is 9 weeks old"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 14,
+      "costUsd": 0.00009359999999999998,
+      "latencyMs": 985,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n29",
+      "extracted": [
+        "Client handshake HEAD calls were returning 5."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 15,
+      "costUsd": 0.00009464999999999998,
+      "latencyMs": 621,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n30",
+      "extracted": [
+        "the polish pass will be scheduled after the charter re-check clears"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 18,
+      "costUsd": 0.00009629999999999998,
+      "latencyMs": 876,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n31",
+      "extracted": [
+        "The layout brief is 87 lines long."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.00009389999999999999,
+      "latencyMs": 608,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n32",
+      "extracted": [
+        "6 cycles have been finished."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 12,
+      "costUsd": 0.00009164999999999998,
+      "latencyMs": 596,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n33",
+      "extracted": [
+        "Pagination checks have been repaired."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 12,
+      "costUsd": 0.00009164999999999998,
+      "latencyMs": 621,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n34",
+      "extracted": [
+        "OrchardFetcher implementation passed independent charter check",
+        "All 15 probes passed"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 22,
+      "costUsd": 0.00009944999999999998,
+      "latencyMs": 706,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n35",
+      "extracted": [
+        "the cache fix was verified live on depot at 08:15:33",
+        "handshake 204 replies are header-readable",
+        "handshake 401 replies are header-readable"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 585,
+      "tokensOut": 41,
+      "costUsd": 0.00011235,
+      "latencyMs": 813,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n36",
+      "extracted": [
+        "The depot's boot routine has been running for 3 minutes and 10 seconds."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 23,
+      "costUsd": 0.00009989999999999999,
+      "latencyMs": 748,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n37",
+      "extracted": [
+        "The file flatten.rb has existing checks that do not require changes when rowKeys are added."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 24,
+      "costUsd": 0.00010064999999999998,
+      "latencyMs": 715,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n38",
+      "extracted": [
+        "Sweep 7 had zero issues."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 13,
+      "costUsd": 0.00009239999999999998,
+      "latencyMs": 561,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n39",
+      "extracted": [
+        "The registry's plugin checker never contacted the service during the trial."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 19,
+      "costUsd": 0.0000969,
+      "latencyMs": 688,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n40",
+      "extracted": [
+        "The session date is 2025-03-09."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 18,
+      "costUsd": 0.00009614999999999998,
+      "latencyMs": 817,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n41",
+      "extracted": [
+        "the feed-poller.spec.rb failed with ERR_GEM_MISSING",
+        "the failure occurred on 2025-03-10 at 11:20:15.330Z"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 588,
+      "tokensOut": 42,
+      "costUsd": 0.00011339999999999999,
+      "latencyMs": 818,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n42",
+      "extracted": [
+        "the cycle is paused",
+        "the helper is waiting on the operator's depot job"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 22,
+      "costUsd": 0.00009899999999999998,
+      "latencyMs": 669,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n43",
+      "extracted": [
+        "A workspace named '77-ui-widget-local' was created."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 18,
+      "costUsd": 0.00009614999999999998,
+      "latencyMs": 933,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n44",
+      "extracted": [
+        "The watcher was switched to failures-only for the rest of the shift."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 20,
+      "costUsd": 0.00009764999999999997,
+      "latencyMs": 658,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n45",
+      "extracted": [
+        "the scribe-bot's recorder ran 29 background drafting sessions while the operator was out"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 24,
+      "costUsd": 0.00010064999999999998,
+      "latencyMs": 668,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n46",
+      "extracted": [
+        "Zero visits arrived during the window.",
+        "Only the probe visit was recorded."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 21,
+      "costUsd": 0.00009824999999999998,
+      "latencyMs": 643,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n47",
+      "extracted": [
+        "A patch titled 'MEND-8 Done — guides/feed-spec.md R4 Origin Notes Refreshed' was made."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 582,
+      "tokensOut": 31,
+      "costUsd": 0.00010589999999999997,
+      "latencyMs": 669,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n48",
+      "extracted": [
+        "the main workspace is being recorded"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 12,
+      "costUsd": 0.00009164999999999998,
+      "latencyMs": 948,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n49",
+      "extracted": [
+        "A choice was made to launch the Orchard Sync Charter Check — Pass 2 with a broad-structure lens."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 579,
+      "tokensOut": 28,
+      "costUsd": 0.00010364999999999999,
+      "latencyMs": 808,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n50",
+      "extracted": [
+        "The active folder during the shift was D:\\Workbench\\orchard-sync."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 21,
+      "costUsd": 0.00009839999999999998,
+      "latencyMs": 788,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n51",
+      "extracted": [
+        "the last sweeps included halt trigger with the fresh badge"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 17,
+      "costUsd": 0.00009539999999999999,
+      "latencyMs": 675,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n52",
+      "extracted": [
+        "the buffer is at 70%"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 13,
+      "costUsd": 0.00009239999999999998,
+      "latencyMs": 968,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n53",
+      "extracted": [
+        "The feature titled 'S2c Mid-Flight Check Gate' needs work.",
+        "3 major issues were found by Helper.",
+        "5 minor issues were found by Helper.",
+        "The observation was made on the 503 Path using ruby3 on macOS."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 601,
+      "tokensOut": 57,
+      "costUsd": 0.00012435,
+      "latencyMs": 942,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n54",
+      "extracted": [
+        "A shift-open.rb script was used.",
+        "It was confirmed that S2c did not introduce breakage."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 579,
+      "tokensOut": 28,
+      "costUsd": 0.00010364999999999999,
+      "latencyMs": 858,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n55",
+      "extracted": [
+        "A feature titled 'Mirror Check Upgraded — Shelf-Shift Mid Snare + Clock-Pulse Rhythm Check' was observed.",
+        "The feature involves check_stocker_rerun_mirror.rb exercising the close-out beat-pulse gate."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 601,
+      "tokensOut": 53,
+      "costUsd": 0.00012194999999999998,
+      "latencyMs": 939,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n56",
+      "extracted": [
+        "no reboot was needed for the filter to take hold"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 16,
+      "costUsd": 0.00009464999999999998,
+      "latencyMs": 673,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n57",
+      "extracted": [
+        "the transport is proven",
+        "the sensing premise is not proven"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 18,
+      "costUsd": 0.00009599999999999998,
+      "latencyMs": 647,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n58",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 5,
+      "costUsd": 0.00008759999999999999,
+      "latencyMs": 511,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n59",
+      "extracted": [
+        "the handler currently returns quietly in that case"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 14,
+      "costUsd": 0.00009314999999999999,
+      "latencyMs": 637,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n60",
+      "extracted": [
+        "This was the third wrong announcement in the same manifest file."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 18,
+      "costUsd": 0.00009614999999999998,
+      "latencyMs": 689,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n61",
+      "extracted": [
+        "the passphrase in that vault would not spill if revealed"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 17,
+      "costUsd": 0.00009554999999999999,
+      "latencyMs": 713,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n62",
+      "extracted": [
+        "the patch was recorded",
+        "the patch was shipped"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 16,
+      "costUsd": 0.00009404999999999998,
+      "latencyMs": 724,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n63",
+      "extracted": [
+        "Storefront is in."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 562,
+      "tokensOut": 11,
+      "costUsd": 0.0000909,
+      "latencyMs": 779,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n64",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 560,
+      "tokensOut": 5,
+      "costUsd": 0.000087,
+      "latencyMs": 508,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n65",
+      "extracted": [
+        "A backward-compat smoke check has been added."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 16,
+      "costUsd": 0.00009464999999999998,
+      "latencyMs": 706,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n66",
+      "extracted": [
+        "the reissue landed",
+        "the reissue ran clean under plain systemd"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 21,
+      "costUsd": 0.00009794999999999998,
+      "latencyMs": 638,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n67",
+      "extracted": [
+        "the manifest imported smoothly",
+        "existing playbooks were retained"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 17,
+      "costUsd": 0.00009539999999999999,
+      "latencyMs": 701,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n68",
+      "extracted": [
+        "entries 3 and 4 are depot edits"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.00009389999999999999,
+      "latencyMs": 684,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "n69",
+      "extracted": [
+        "the author initially claimed the cause was feedback-loop echo",
+        "the author corrected the cause to the full AfterAction event payload capture plus a jammed outbox queue"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 586,
+      "tokensOut": 38,
+      "costUsd": 0.00011069999999999998,
+      "latencyMs": 782,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n70",
+      "extracted": [
+        "The operator's Traillog archive is now a live portal."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 19,
+      "costUsd": 0.00009719999999999998,
+      "latencyMs": 664,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n71",
+      "extracted": [
+        "Recorder shifts have been running at 3 to 8 times the real-output rate since March 9, 2025."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 582,
+      "tokensOut": 31,
+      "costUsd": 0.00010589999999999997,
+      "latencyMs": 706,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n72",
+      "extracted": [
+        "the banner-notice fix was deployed to production",
+        "a full 6-step handshake probe passed on 2025-03-10 at 09:42:11 UTC"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 592,
+      "tokensOut": 41,
+      "costUsd": 0.00011339999999999999,
+      "latencyMs": 845,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n73",
+      "extracted": [
+        "The orchard-sync visit log was recorded on March 10, 2025.",
+        "The orchard-sync visit log was deployed to the depot on March 10, 2025."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 578,
+      "tokensOut": 42,
+      "costUsd": 0.00011189999999999998,
+      "latencyMs": 791,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n74",
+      "extracted": [
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was built.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was patched.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was checked.",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was rolled out to a shed server.",
+        "The 'renew-badge.rb' credential helper was used."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 594,
+      "tokensOut": 87,
+      "costUsd": 0.00014129999999999997,
+      "latencyMs": 1242,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n75",
+      "extracted": [
+        "An update to the Handshake Path Probe was made.",
+        "The session_reply_origin_flag_enabled is absent."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 578,
+      "tokensOut": 27,
+      "costUsd": 0.00010289999999999998,
+      "latencyMs": 780,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n76",
+      "extracted": [
+        "A fix for banner-notice removal was pushed to the stage-2-4-bridge branch.",
+        "The commit ID for the fix is e81b2ad."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 40,
+      "costUsd": 0.00011159999999999999,
+      "latencyMs": 1102,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n77",
+      "extracted": [
+        "Change #37 has been merged into trunk@f7a20cc"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 20,
+      "costUsd": 0.00009764999999999997,
+      "latencyMs": 678,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n78",
+      "extracted": [
+        "the full rollout of quota-scan.rb on the depot has been completed"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 20,
+      "costUsd": 0.00009779999999999998,
+      "latencyMs": 629,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "n79",
+      "extracted": [
+        "a private archive was created",
+        "the private archive was pushed to codehub.example/plumworks/orchard-sync"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 29,
+      "costUsd": 0.00010364999999999999,
+      "latencyMs": 2655,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "n80",
+      "extracted": [
+        "A helper script named renew-badge.rb was created for badge renewal."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 20,
+      "costUsd": 0.00009779999999999998,
+      "latencyMs": 717,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c01",
+      "extracted": [
+        "The billing service is now on Postgres 16.",
+        "The old Mongo cluster is gone."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 575,
+      "tokensOut": 25,
+      "costUsd": 0.00010124999999999998,
+      "latencyMs": 808,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c02",
+      "extracted": [
+        "the organization no longer deploys on Fridays",
+        "the freeze on deploying on Fridays is permanent"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 24,
+      "costUsd": 0.00010019999999999998,
+      "latencyMs": 749,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c03",
+      "extracted": [
+        "The vendor contract is signed for renewal on March 3rd."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 19,
+      "costUsd": 0.000099,
+      "latencyMs": 661,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c04",
+      "extracted": [
+        "the API rate limit is 600 requests per minute",
+        "the API rate limit was previously 250 requests per minute"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 29,
+      "costUsd": 0.00010394999999999999,
+      "latencyMs": 695,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c05",
+      "extracted": [
+        "the canary deployment went out at 14:02",
+        "the full rollout occurred at 14:40",
+        "the retention policy is 90 days",
+        "the retention policy was previously 365 days"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 595,
+      "tokensOut": 47,
+      "costUsd": 0.00011744999999999998,
+      "latencyMs": 977,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c06",
+      "extracted": [
+        "auth tokens are ECDSA now",
+        "the old HMAC scheme is dead"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 584,
+      "tokensOut": 22,
+      "costUsd": 0.00010079999999999998,
+      "latencyMs": 790,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c07",
+      "extracted": [
+        "the warehouse passed the fire inspection"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 12,
+      "costUsd": 0.00009224999999999998,
+      "latencyMs": 610,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c08",
+      "extracted": [
+        "Priya mentioned that the mobile team owns the push-notification service now."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 21,
+      "costUsd": 0.00009899999999999998,
+      "latencyMs": 625,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c09",
+      "extracted": [
+        "the failover region is Frankfurt"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 12,
+      "costUsd": 0.00009374999999999999,
+      "latencyMs": 767,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c10",
+      "extracted": [
+        "the contractor said the load-bearing wall is the north one"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 17,
+      "costUsd": 0.00009659999999999999,
+      "latencyMs": 621,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "c11",
+      "extracted": [
+        "the sensor sweep is normal",
+        "the plant manager confirmed line 4 is certified for food-grade production"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 581,
+      "tokensOut": 26,
+      "costUsd": 0.00010274999999999999,
+      "latencyMs": 727,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "c12",
+      "extracted": [
+        "the legal team signed off",
+        "the data residency requirement is EU-only storage"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 21,
+      "costUsd": 0.00009869999999999999,
+      "latencyMs": 775,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e01",
+      "extracted": [
+        "the writer switched their primary editor from VS Code to Neovim last week"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 21,
+      "costUsd": 0.00009839999999999998,
+      "latencyMs": 695,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e02",
+      "extracted": [
+        "the team standup is scheduled for 9:30am",
+        "the team standup is capped at 15 minutes"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 30,
+      "costUsd": 0.00010455,
+      "latencyMs": 687,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e03",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 5,
+      "costUsd": 0.00008879999999999999,
+      "latencyMs": 653,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e04",
+      "extracted": [
+        "the writer has a daughter named Mia",
+        "Mia started kindergarten this fall",
+        "Mia's teacher is Ms. Patel"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 31,
+      "costUsd": 0.00010439999999999999,
+      "latencyMs": 993,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e05",
+      "extracted": [
+        "the writer used to bike to work",
+        "the writer now takes the train to work",
+        "the writer moved to Oakland"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 30,
+      "costUsd": 0.00010409999999999998,
+      "latencyMs": 718,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e06",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 5,
+      "costUsd": 0.00008834999999999999,
+      "latencyMs": 560,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e07",
+      "extracted": [
+        "The production database is Postgres 16.",
+        "The production database is hosted on RDS.",
+        "The production database is located in us-east-1."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 37,
+      "costUsd": 0.00010859999999999998,
+      "latencyMs": 1423,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e08",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 5,
+      "costUsd": 0.00008819999999999999,
+      "latencyMs": 720,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e09",
+      "extracted": [
+        "the writer is allergic to penicillin"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 563,
+      "tokensOut": 13,
+      "costUsd": 0.00009224999999999998,
+      "latencyMs": 711,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e10",
+      "extracted": [
+        "the writer picked Stripe for payments over Adyen",
+        "the integration with Stripe was faster than with Adyen"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 571,
+      "tokensOut": 27,
+      "costUsd": 0.00010184999999999998,
+      "latencyMs": 646,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e11",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 5,
+      "costUsd": 0.0000885,
+      "latencyMs": 537,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e12",
+      "extracted": [
+        "the writer's manager is Dana",
+        "Raj moved to the platform team"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 20,
+      "costUsd": 0.00009749999999999998,
+      "latencyMs": 915,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e13",
+      "extracted": [
+        "the writer only buys newer-model car seats since the recall last year"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 19,
+      "costUsd": 0.00009719999999999998,
+      "latencyMs": 952,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e14",
+      "extracted": [
+        "the writer does not deploy on Fridays anymore"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 564,
+      "tokensOut": 14,
+      "costUsd": 0.00009299999999999998,
+      "latencyMs": 708,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e15",
+      "extracted": [
+        "the writer is no longer the on-call lead for the billing service"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 19,
+      "costUsd": 0.00009675,
+      "latencyMs": 853,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e16",
+      "extracted": [
+        "The SLA is 99.95% uptime.",
+        "The error budget is 21 minutes a month."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 27,
+      "costUsd": 0.00010274999999999999,
+      "latencyMs": 1116,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e17",
+      "extracted": [
+        "the lease renews on March 3rd",
+        "rent goes up to $2,150"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 25,
+      "costUsd": 0.00010139999999999998,
+      "latencyMs": 1180,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e18",
+      "extracted": [
+        "the writer has a son named Theo",
+        "Theo turns 8 next week"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 21,
+      "costUsd": 0.00009749999999999998,
+      "latencyMs": 620,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e19",
+      "extracted": [
+        "the writer's team cut over from Jenkins to GitHub Actions",
+        "the new build takes about 6 minutes"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 586,
+      "tokensOut": 28,
+      "costUsd": 0.00010469999999999998,
+      "latencyMs": 851,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e20",
+      "extracted": [
+        "the writer's team was a Python shop",
+        "the writer's team migrated everything to Go last quarter"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 570,
+      "tokensOut": 26,
+      "costUsd": 0.00010109999999999999,
+      "latencyMs": 779,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e21",
+      "extracted": [
+        "the writer moved from product to engineering in January"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.00009389999999999999,
+      "latencyMs": 691,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e22",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 5,
+      "costUsd": 0.00008939999999999999,
+      "latencyMs": 572,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e23",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 5,
+      "costUsd": 0.00008819999999999999,
+      "latencyMs": 768,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e24",
+      "extracted": [
+        "the writer's email is sam@acme.io"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 16,
+      "costUsd": 0.00009614999999999999,
+      "latencyMs": 625,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e25",
+      "extracted": [
+        "the launch slipped to Q3"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 12,
+      "costUsd": 0.00009209999999999999,
+      "latencyMs": 615,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e26",
+      "extracted": [
+        "the writer's cholesterol is back to normal"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 14,
+      "costUsd": 0.00009344999999999998,
+      "latencyMs": 665,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e27",
+      "extracted": [
+        "the writer is vegetarian"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 560,
+      "tokensOut": 10,
+      "costUsd": 0.00008999999999999999,
+      "latencyMs": 717,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e28",
+      "extracted": [
+        "the team uses Notion for docs",
+        "the team uses Slack for chat"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 21,
+      "costUsd": 0.00009794999999999998,
+      "latencyMs": 905,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e29",
+      "extracted": [
+        "the writer switched banks to Ally",
+        "the reason for switching banks was the better savings rate"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 24,
+      "costUsd": 0.00009959999999999998,
+      "latencyMs": 657,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e30",
+      "extracted": [
+        "The conference is in Berlin this year.",
+        "The conference is not in Paris this year."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 24,
+      "costUsd": 0.00009959999999999998,
+      "latencyMs": 1176,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e31",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 567,
+      "tokensOut": 5,
+      "costUsd": 0.00008804999999999999,
+      "latencyMs": 641,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e32",
+      "extracted": [],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 565,
+      "tokensOut": 5,
+      "costUsd": 0.00008774999999999999,
+      "latencyMs": 660,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0
+    },
+    {
+      "id": "e33",
+      "extracted": [
+        "the writer runs about 25 miles a week"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 566,
+      "tokensOut": 15,
+      "costUsd": 0.00009389999999999999,
+      "latencyMs": 767,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e34",
+      "extracted": [
+        "Standup is every weekday at 10:15."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 568,
+      "tokensOut": 17,
+      "costUsd": 0.00009539999999999999,
+      "latencyMs": 730,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e35",
+      "extracted": [
+        "the writer's new landlord is Mr. Okafor",
+        "the unit is 4B"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 574,
+      "tokensOut": 25,
+      "costUsd": 0.00010109999999999999,
+      "latencyMs": 697,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e36",
+      "extracted": [
+        "the writer hired two engineers",
+        "the engineers are named Priya and Wen",
+        "Priya is on the data team",
+        "Wen is on the data team"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 572,
+      "tokensOut": 39,
+      "costUsd": 0.00010919999999999998,
+      "latencyMs": 791,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e37",
+      "extracted": [
+        "the writer biked to the gym this morning",
+        "the writer signed up for the 6am spin class"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 576,
+      "tokensOut": 28,
+      "costUsd": 0.00010319999999999999,
+      "latencyMs": 697,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e38",
+      "extracted": [
+        "the writer's organization runs everything on GCP",
+        "the writer's organization is not on AWS"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 569,
+      "tokensOut": 25,
+      "costUsd": 0.00010034999999999999,
+      "latencyMs": 635,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "e39",
+      "extracted": [
+        "The meeting is at 4pm."
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 577,
+      "tokensOut": 14,
+      "costUsd": 0.00009494999999999999,
+      "latencyMs": 632,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ]
+      }
+    },
+    {
+      "id": "e40",
+      "extracted": [
+        "the Series A was closed at $12M",
+        "Marcus joins as CFO on Monday",
+        "a Denver office is opening"
+      ],
+      "stopReason": "stop",
+      "parseOk": true,
+      "tokensIn": 587,
+      "tokensOut": 30,
+      "costUsd": 0.00010604999999999998,
+      "latencyMs": 671,
+      "requestParams": {
+        "model": "gpt-4o-mini",
+        "temperature": 0
+      },
+      "servedModel": "gpt-4o-mini-2024-07-18",
+      "reasoningTokens": 0,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  ]
+}
