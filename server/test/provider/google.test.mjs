@@ -8,10 +8,12 @@ test('exports providerName and supports table', () => {
 });
 
 test('defaults exposes all four surfaces', () => {
-  assert.equal(google.defaults.summarizerModel, 'gemini-2.0-flash');
-  assert.equal(google.defaults.embeddingModel, 'text-embedding-004');
-  assert.equal(google.defaults.embeddingDim, 768);
-  assert.equal(google.defaults.factsModel, 'gemini-2.0-flash');
+  // gemini-2.0-flash (shut down 2026-06-01) and text-embedding-004 (2026-01-14) → Google's
+  // named replacements; gemini-embedding-2 returns 3072 dims when no outputDimensionality is sent.
+  assert.equal(google.defaults.summarizerModel, 'gemini-3.6-flash');
+  assert.equal(google.defaults.embeddingModel, 'gemini-embedding-2');
+  assert.equal(google.defaults.embeddingDim, 3072);
+  assert.equal(google.defaults.factsModel, 'gemini-3.6-flash');
 });
 
 test('requires lists three keys in precedence order', () => {
@@ -122,7 +124,7 @@ test('embed calls injected client and returns { vector, usage }', async () => {
 
 test('embed UM_TEST_MOCK_SDK=1 short-circuits to canned vector', async () => {
   const result = await google.embed('text', { env: { UM_TEST_MOCK_SDK: '1' } });
-  assert.equal(result.vector.length, 768);  // google default dim
+  assert.equal(result.vector.length, google.defaults.embeddingDim);  // google default dim (3072 for gemini-embedding-2)
   assert.deepEqual(result.usage, { tokensIn: 5, tokensOut: 0 });
 });
 
@@ -187,4 +189,9 @@ test('factsInvoke honors an explicit temperature override (overridable default, 
   };
   await google.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
   assert.equal(seen.config.temperature, 0.7);
+});
+
+test('extractUsage counts thinking tokens as output (Gemini 3 bills thoughtsTokenCount as output — model migration review)', () => {
+  const raw = { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, thoughtsTokenCount: 7 } };
+  assert.deepEqual(google.extractUsage(raw), { tokensIn: 10, tokensOut: 27 });
 });

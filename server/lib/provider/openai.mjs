@@ -2,7 +2,8 @@
  * server/lib/provider/openai.mjs — OpenAI implementation of the Standard Provider Contract.
  *
  * Supports all three surfaces: embeddings (text-embedding-3-small), summarizer
- * (gpt-4o-mini), and facts (gpt-4.1-nano-2025-04-14).
+ * (gpt-4o-mini), and facts (gpt-6-luna — gpt-4.1-nano was shut down 2026-10-23; the
+ * replacement was chosen by docs/plans/2026-10-23-model-migration/prereg.md).
  *
  * Auth: UM_OPENAI_API_KEY (preferred) or OPENAI_API_KEY. The UM_-prefix wins
  * to allow power users to override OPENAI_API_KEY (used by other tools) with a
@@ -22,7 +23,7 @@ export const defaults = {
   summarizerModel: 'gpt-4o-mini',
   embeddingModel: 'text-embedding-3-small',
   embeddingDim: 1536,
-  factsModel: 'gpt-4.1-nano-2025-04-14',
+  factsModel: 'gpt-6-luna',
 };
 
 export const requires = ['UM_OPENAI_API_KEY', 'OPENAI_API_KEY'];
@@ -62,6 +63,48 @@ export function factsLlmConfig(env) {
       apiKey: resolveApiKey(env),
     },
   };
+}
+
+/**
+ * Per-model request capabilities, keyed by exact model id. Unlisted models (gpt-4o-mini,
+ * gpt-4.1-*, any operator-pinned older id) get LEGACY_CAPABILITIES — the request shape every
+ * OpenAI call had before the luna models (2026-10-23 migration, spec R1).
+ *   samplingParams   — accepts a non-default temperature (luna: any other value is a 400)
+ *   reasoningEffort  — accepts reasoning_effort; defaultEffort is sent when the caller names
+ *                      none ('none' keeps the call free of reasoning tokens)
+ *   completionTokens — takes the answer budget as max_completion_tokens, not max_tokens
+ */
+export const MODEL_CAPABILITIES = Object.freeze({
+  'gpt-6-luna': Object.freeze({ samplingParams: false, reasoningEffort: true, defaultEffort: 'none', completionTokens: true }),
+  'gpt-5.6-luna': Object.freeze({ samplingParams: false, reasoningEffort: true, defaultEffort: 'none', completionTokens: true }),
+});
+
+const LEGACY_CAPABILITIES = Object.freeze({ samplingParams: true, reasoningEffort: false, defaultEffort: null, completionTokens: false });
+
+// A dated snapshot (`<alias>-YYYY-MM-DD`) takes its alias's entry, so an operator who pins
+// one (and prices it) is not sent a temperature it rejects.
+export function capabilitiesFor(model) {
+  return MODEL_CAPABILITIES[model] ?? MODEL_CAPABILITIES[String(model).replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? LEGACY_CAPABILITIES;
+}
+
+/**
+ * Model-aware chat.completions params (everything but messages) shared by the four call
+ * sites. Knobs the model doesn't take are dropped rather than sent: a caller's temperature
+ * on a model without sampling params, effort on a model without reasoning_effort.
+ *
+ * @param {string} model
+ * @param {object} [opts]
+ * @param {number} [opts.temperature]
+ * @param {number} [opts.maxTokens] - answer budget; sent under the model's own parameter name
+ * @param {string} [opts.effort]    - reasoning_effort; omitted = the model's defaultEffort
+ */
+export function requestParams(model, { temperature, maxTokens, effort } = {}) {
+  const caps = capabilitiesFor(model);
+  const params = { model };
+  if (caps.samplingParams && temperature !== undefined) params.temperature = temperature;
+  if (caps.reasoningEffort) params.reasoning_effort = effort ?? caps.defaultEffort;
+  if (maxTokens !== undefined) params[caps.completionTokens ? 'max_completion_tokens' : 'max_tokens'] = maxTokens;
+  return params;
 }
 
 export function extractUsage(raw) {
@@ -109,7 +152,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      model,
+      ...requestParams(model),
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -161,8 +204,9 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      model,
-      temperature: 0, // deterministic supersession decisions (D3.3 follow-up)
+      // Deterministic supersession decisions (D3.3 follow-up) where the model allows it;
+      // a luna model has no temperature 0 (spec R1 — its thresholds are re-measured in Phase B).
+      ...requestParams(model, { temperature: 0 }),
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -217,9 +261,9 @@ export async function answerGradeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      model,
-      temperature: 0, // deterministic grading
-      max_tokens: maxTokens ?? ANSWER_GRADER_MAX_TOKENS, // default unchanged; extraction judge overrides (two arrays + reasoning)
+      // Deterministic grading where the model allows it. Budget default unchanged; the
+      // extraction judge overrides it (two arrays + reasoning).
+      ...requestParams(model, { temperature: 0, maxTokens: maxTokens ?? ANSWER_GRADER_MAX_TOKENS }),
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -305,7 +349,7 @@ function parseFactsJson(content) {
 }
 
 export async function factsInvoke(text, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0 } = opts;
+  const { client: providedClient, env = process.env, model = defaults.factsModel, temperature = 0, effort } = opts;
   if (env.UM_TEST_MOCK_SDK === '1') {
     return { facts: ['[MOCK] openai fact'], usage: { tokensIn: 10, tokensOut: 5 } };
   }
@@ -324,15 +368,16 @@ export async function factsInvoke(text, opts = {}) {
     const { default: OpenAI } = await import('openai');
     client = new OpenAI({ apiKey });
   }
+  // Deterministic by default (temperature 0), matching the two structured-output judges
+  // (contradictionJudgeInvoke / answerGradeInvoke). Extraction is a single-shot structured
+  // task — diversity buys no coverage, only run-to-run drift in dedup/supersession. The knob
+  // stays overridable (opts.temperature) for the fidelity eval + diversity experiments; a
+  // model without sampling params drops it (capabilitiesFor).
+  const params = requestParams(model, { temperature, effort });
   let raw;
   try {
     raw = await client.chat.completions.create({
-      model,
-      // Deterministic by default (temperature 0), matching the two structured-output judges
-      // (contradictionJudgeInvoke / answerGradeInvoke). Extraction is a single-shot structured
-      // task — diversity buys no coverage, only run-to-run drift in dedup/supersession. The knob
-      // stays overridable (opts.temperature) for the fidelity eval + diversity experiments.
-      ...(temperature !== undefined ? { temperature } : {}),
+      ...params,
       messages: [
         { role: 'system', content: FACTS_SYSTEM_PROMPT },
         { role: 'user', content: text },
@@ -354,10 +399,16 @@ export async function factsInvoke(text, opts = {}) {
   // arrive with finish_reason 'stop', so the message's refusal field wins.
   const { message, finish_reason } = raw.choices[0];
   const parsed = parseFactsJson(message.content);
+  // requestParams / servedModel / reasoningTokens are the eval's record of what was asked
+  // for and what answered (prereg 2026-10-23: request shape proven, alias moves visible);
+  // production callers ignore them.
   return {
     facts: parsed ?? [],
     usage: extractUsage(raw),
     stopReason: message.refusal ? 'refusal' : (finish_reason ?? null),
     parseOk: parsed !== null,
+    requestParams: params,
+    servedModel: raw.model ?? null,
+    reasoningTokens: raw.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
   };
 }

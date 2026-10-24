@@ -26,6 +26,7 @@ import {
   buildImportMetadata,
 } from './lib/mem0-import-manifest.mjs';
 import { umAdd } from '../server/lib/add.mjs';
+import { defaults as openaiDefaults, requestParams } from '../server/lib/provider/openai.mjs';
 import { embed } from '../server/lib/embed.mjs';
 import { classifyLane } from '../server/lib/lane-classifier.mjs';
 
@@ -112,15 +113,19 @@ async function readExistingManifest(p) {
   }
 }
 
-// Build the prod LLM invoke (cheapest model). Injected as a seam in tests.
-export function makeJudgeInvoke(env) {
+// Build the prod LLM invoke (the facts model by default). Injected as a seam in tests;
+// opts.client replaces the OpenAI client. Params go through the provider's requestParams so
+// a model without temperature 0 (the luna models) is not sent one (2026-10-23 migration).
+export function makeJudgeInvoke(env, { client: providedClient } = {}) {
   return async (system, user) => {
-    const { default: OpenAI } = await import('openai');
-    const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-    const model = env.UM_IMPORT_JUDGE_MODEL || env.UM_FACTS_MODEL || 'gpt-4.1-nano';
+    let client = providedClient;
+    if (!client) {
+      const { default: OpenAI } = await import('openai');
+      client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+    }
+    const model = env.UM_IMPORT_JUDGE_MODEL || env.UM_FACTS_MODEL || openaiDefaults.factsModel;
     const resp = await client.chat.completions.create({
-      model,
-      temperature: 0,
+      ...requestParams(model, { temperature: 0 }),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },

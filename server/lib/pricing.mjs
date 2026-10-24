@@ -24,10 +24,17 @@
  */
 export const PRICING = {
   openai: {
-    last_verified: '2026-04-27',
+    // 2026-10-23: rates read from developers.openai.com/api/docs/pricing (standard tier,
+    // short context). gpt-4.1-nano was shut down that day; gpt-4o-mini and gpt-4.1-mini
+    // shut down 2027-01-14. Retired ids stay listed so a .env that still pins one boots
+    // (boot FATALs on an unpriced configured model — startup-validation validateModelExists).
+    last_verified: '2026-10-23',
     models: {
+      'gpt-6-luna':               { in: 0.00010, out: 0.00050, type: 'chat'  },
+      'gpt-5.6-luna':             { in: 0.00020, out: 0.00120, type: 'chat'  },
+      'gpt-4.1-mini':             { in: 0.00040, out: 0.00160, type: 'chat'  },
       'gpt-4o-mini':              { in: 0.00015, out: 0.00060, type: 'chat'  },
-      'gpt-4.1-nano-2025-04-14':  { in: 0.00010, out: 0.00040, type: 'chat'  },
+      'gpt-4.1-nano-2025-04-14':  { in: 0.00010, out: 0.00040, type: 'chat'  }, // retired 2026-10-23
       'text-embedding-3-small':   { in: 0.00002, out: 0,       type: 'embed', dim: 1536 },
       'text-embedding-3-large':   { in: 0.00013, out: 0,       type: 'embed', dim: 3072 },
     },
@@ -42,10 +49,17 @@ export const PRICING = {
     },
   },
   google: {
-    last_verified: '2026-04-27',
+    // 2026-10-23: rates read from ai.google.dev/gemini-api/docs/pricing (paid tier,
+    // standard). gemini-3.6-flash's rates double on 2027-01-01 ($1.50 / $7.50 per MTok) —
+    // re-verify then. gemini-embedding-2 returns 3072 dims when no outputDimensionality is
+    // sent (google.mjs embed sends none). gemini-2.0-flash (shut down 2026-06-01) and
+    // text-embedding-004 (2026-01-14) stay listed so a pinning .env still boots.
+    last_verified: '2026-10-23',
     models: {
-      'gemini-2.0-flash':     { in: 0.00010, out: 0.00040, type: 'chat'  },
-      'text-embedding-004':   { in: 0.00001, out: 0,       type: 'embed', dim: 768 },
+      'gemini-3.6-flash':     { in: 0.00075, out: 0.00375, type: 'chat'  },
+      'gemini-embedding-2':   { in: 0.00020, out: 0,       type: 'embed', dim: 3072 },
+      'gemini-2.0-flash':     { in: 0.00010, out: 0.00040, type: 'chat'  }, // retired 2026-06-01
+      'text-embedding-004':   { in: 0.00001, out: 0,       type: 'embed', dim: 768 }, // retired 2026-01-14
     },
   },
   ollama: {

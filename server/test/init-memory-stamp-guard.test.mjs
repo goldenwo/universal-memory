@@ -134,7 +134,7 @@ test('null stamp branch with provider=google + no UM_EMBEDDING_MODEL uses regist
   assert.notEqual(writtenStamp.model, undefined, 'model must not be undefined');
   // Lock the contract to google's current registry default. If google.mjs
   // changes embeddingModel, this test forces the change to be intentional.
-  assert.equal(writtenStamp.model, 'text-embedding-004');
+  assert.equal(writtenStamp.model, 'gemini-embedding-2');
 });
 
 test('verifyDim failure on match branch propagates as fatal', async () => {

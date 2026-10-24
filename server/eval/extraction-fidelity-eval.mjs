@@ -26,9 +26,11 @@
  *   hand against pre-registered arc gates instead (#181 arc).
  *   --effort <level> / --thinking <adaptive|disabled> / --thinking-headroom <tokens> pass
  *   through to factsInvoke (ignored by models that take no such knob — anthropic capabilitiesFor).
- *   --control <gold-echo|first-gold|always-abstain|input-echo> swaps the extractor for a canned
+ *   --control <gold-echo|first-gold|always-abstain|input-echo|replay> swaps the extractor for a canned
  *   one (positive controls: proves the scoring can reach both ends before any model arm runs;
  *   first-gold returns only each row's first gold fact, so the judge must leave the rest unmatched).
+ *   replay (with --replay-file <result.json>) returns a recorded run's own extraction per row, so
+ *   a retired extractor's run can be re-judged in today's window (judge-drift anchor).
  *
  * Every run also saves the raw per-call record (`calls`: extracted facts, stop reason, parse
  * status, tokens, cost, wall-clock latency, and the judge's per-fact verdicts), `callStats`,
@@ -60,6 +62,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--thinking') args.thinking = argv[++i];
     else if (argv[i] === '--thinking-headroom') args.thinkingHeadroom = Number(argv[++i]);
     else if (argv[i] === '--control') args.control = argv[++i];
+    else if (argv[i] === '--replay-file') args.replayFile = argv[++i];
   }
   return args;
 }
@@ -68,19 +71,32 @@ function parseArgs(argv) {
  * Canned extractors for positive controls, shaped like a provider module so they run
  * through the real facts() → scoring path. Per-row: gold-echo needs the row's gold.
  */
-export function controlProvider(kind, row) {
+export function controlProvider(kind, row, { replay } = {}) {
   const outputs = {
     'gold-echo': () => row.expected_facts ?? [],
     'first-gold': () => (row.expected_facts ?? []).slice(0, 1),
     'always-abstain': () => [],
     'input-echo': () => [row.input_text],
+    // A recorded run's own extraction for the row, re-judged in today's window — the
+    // judge-drift anchor when the recorded extractor can no longer be run (2026-10-23 prereg C0).
+    replay: () => replay.get(row.id),
   };
   if (!outputs[kind]) throw new Error(`unknown control '${kind}' (valid: ${Object.keys(outputs).join(', ')})`);
+  if (kind === 'replay') {
+    if (!replay) throw new Error('control replay needs --replay-file <recorded result.json>');
+    if (!replay.has(row.id)) throw new Error(`row '${row.id}' is not in the replay record`);
+  }
   return {
     supports: { facts: true },
     defaults: { factsModel: kind },
     factsInvoke: async () => ({ facts: outputs[kind](), usage: { tokensIn: 0, tokensOut: 0 }, stopReason: 'control' }),
   };
+}
+
+/** Row id → recorded extraction, from a prior run's result file (its `calls`). */
+export async function loadReplay(path) {
+  const { calls } = JSON.parse(await readFile(path, 'utf8'));
+  return new Map(calls.map((c) => [c.id, c.extracted]));
 }
 
 const round = (x, places) => (x == null ? null : +x.toFixed(places));
@@ -193,10 +209,11 @@ async function cliMain() {
     ...(args.thinking ? { thinking: args.thinking } : {}),
     ...(args.thinkingHeadroom ? { thinkingHeadroom: args.thinkingHeadroom } : {}),
   };
+  const replay = args.replayFile ? await loadReplay(args.replayFile) : undefined;
   const calls = [];
   const runFacts = async (row) => {
     const ctx = args.control
-      ? { ...factsConfig, provider: `control:${args.control}`, _providerOverride: controlProvider(args.control, row) }
+      ? { ...factsConfig, provider: `control:${args.control}`, _providerOverride: controlProvider(args.control, row, { replay }) }
       : factsConfig;
     const t0 = performance.now();
     const factsResult = await facts(row.input_text, ctx);
@@ -208,6 +225,10 @@ async function cliMain() {
       id: row.id, extracted, stopReason: factsResult.stopReason ?? null, parseOk: factsResult.parseOk ?? null,
       tokensIn: factsResult.tokensIn, tokensOut: factsResult.tokensOut,
       costUsd: factsResult.costUsd, latencyMs,
+      // What was actually sent and what answered — factsConfig above is only what was asked
+      // for (a luna model drops its temperature 0); null for providers that don't report it.
+      requestParams: factsResult.requestParams, servedModel: factsResult.servedModel,
+      reasoningTokens: factsResult.reasoningTokens,
     };
     calls.push(call);
     return { extracted, call };

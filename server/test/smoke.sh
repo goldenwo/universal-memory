@@ -332,7 +332,7 @@ g2_assert_metric 'um_provider_request_duration_seconds_count' "embed histogram" 
 g2_assert_metric 'um_provider_cost_usd_total' "embed cost_usd" 'surface="embed"'
 
 # All four series for facts surface.
-g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-4.1-nano-2025-04-14"'
+g2_assert_metric 'um_provider_tokens_total' "facts tokens" 'surface="facts"' 'provider="openai"' 'model="gpt-6-luna"'
 g2_assert_metric 'um_provider_request_duration_seconds_count' "facts histogram" 'surface="facts"'
 g2_assert_metric 'um_provider_cost_usd_total' "facts cost_usd" 'surface="facts"'
 
@@ -2509,7 +2509,7 @@ fi
 # asserts both directions of the classifier's contract:
 #   (1) ROUTE   — a clearly work-flavored fact written with NO metadata.lane lands
 #       lane:work-filterable. Its text is kept near a `work` taxonomy exemplar
-#       ("Closed out a sprint ticket and updated the board.") so routing is robust
+#       ("Discussed priorities in the weekly team sync.") so routing is robust
 #       to mem0's facts-extractor rephrasing the stored text — the classifier
 #       embeds the EXTRACTED fact, not the raw input (same jitter S2/D2 handle).
 #   (2) ABSTAIN — an off-taxonomy "noise" fact (no exemplar resembles it) is stored
@@ -2552,11 +2552,15 @@ if [ "${UM_SMOKE_LANE_ON:-}" = "1" ]; then
 	# The work fact is SINGLE-CLAIM (no "and …"): a compound sentence splits into
 	# multiple mem0 facts (S5 header lesson ~L1994) and the assertions key on
 	# results[0], so a second clause landing first would break them. One claim →
-	# one fact → deterministic results[0]. Kept near the work exemplar "Closed out
-	# a sprint ticket …" so routing survives mem0 rephrasing the stored text. (CI
-	# run 27320317851 confirmed "Closed out the sprint ticket …" extracts to "The
-	# user closed out a sprint ticket." and auto-routes to lane:work.)
-	_lane_work_text="Closed out the sprint ticket after the standup (lane-${MARKER})."
+	# one fact → deterministic results[0]. Kept near the work exemplar "Discussed
+	# priorities in the weekly team sync." so routing survives mem0 rephrasing the
+	# stored text. It is a DURABLE fact (a recurring practice), not a one-off event:
+	# the old probe "Closed out the sprint ticket after the standup" is an ephemeral
+	# event the extraction policy abstains on, and only gpt-4.1-nano's over-extraction
+	# made it pass. On the gpt-6-luna facts default (2026-10-23) it extracted 3/10;
+	# this text extracted 10/10 and routed to lane:work 10/10 (measured locally with
+	# the real factsInvoke + embed + classifyLane; model-migration report).
+	_lane_work_text="The team discusses priorities in the weekly team sync every Monday (lane-${MARKER})."
 	_lane_noise_text="The spare umbrella is in the hall closet (lane-noise-${MARKER})."
 
 	# Helper: write a fact via /api/add with NO lane in metadata; mirrors _d2_add /
