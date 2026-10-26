@@ -17,6 +17,8 @@ import {
   pass2Conditions,
   aggregate,
   THRESHOLDS,
+  parseArgs,
+  runMerge,
 } from '../eval/state-cap-eval.mjs';
 import { SECTION_LIMITS } from '../lib/state-cap.mjs';
 
@@ -237,4 +239,43 @@ test('aggregate: thresholds vs results, with the OLD-arm control', () => {
   assert.equal(weak.control.ok, false, 'an OLD arm that passes everything proves nothing');
   assert.equal(weak.thresholds.invented_dates_zero.ok, false);
   assert.equal(weak.all_ok, false);
+});
+
+// --- model migration Phase B (spec R2, plan T2): --model, the call record, invoke-errors ------
+
+test('parseArgs: --model and --provider (default openai); no recorded temperature', () => {
+  const a = parseArgs(['node', 'x', '--inputs', 'i', '--out', 'o', '--model', 'gpt-6-luna']);
+  assert.equal(a.model, 'gpt-6-luna');
+  assert.equal(a.provider, 'openai');
+  assert.equal('temperature' in a, false, 'update-state never sent its 0.2; the eval no longer records it');
+  assert.equal(parseArgs(['node', 'x', '--provider', 'anthropic']).provider, 'anthropic');
+});
+
+// A fake updateState that, like the real one, catches a throwing summarizeFn (llmFailure).
+const fakeUpdateState = async (args, ctx) => {
+  try {
+    const r = await ctx.summarizeFn('user prompt', { backend: undefined, systemPrompt: 'sys', temperature: 0.2 });
+    return { ok: true, mergedMd: r.summary, shaping: { added: [] }, costUsd: 0, tokensIn: 1, tokensOut: 1, llmFailure: false };
+  } catch {
+    return { ok: true, mergedMd: 'fallback', shaping: { added: [] }, llmFailure: true };
+  }
+};
+const R1 = { requestParams: { model: 'gpt-6-luna', reasoning_effort: 'none' }, servedModel: 'gpt-6-luna', systemFingerprint: 'fp', reasoningTokens: 0, stopReason: 'stop' };
+
+test('runMerge: summarizes with the named provider and model, and records the call\'s R1 fields and latency', async () => {
+  let seen;
+  const summarize = async (prompt, opts) => { seen = opts; return { summary: 'raw', costUsd: 0, tokensIn: 1, tokensOut: 1, ...R1 }; };
+  const m = await runMerge({ updateState: fakeUpdateState, summarize, model: 'gpt-6-luna', provider: 'openai', promptDir: 'p', oldStateMd: '', newSummary: 's', projectId: 'x', asOf: '2026-09-25T00:00:00.000Z' });
+  assert.deepEqual([seen.model, seen.provider, seen.backend], ['gpt-6-luna', 'openai', 'openai']);
+  assert.equal(m.raw, 'raw');
+  assert.equal(m.call.ok, true);
+  for (const [k, v] of Object.entries(R1)) assert.deepEqual(m.call[k], v, k);
+  assert.equal(typeof m.call.ms, 'number');
+});
+
+test('runMerge: a thrown summarize() is recorded as an invoke-error call, not a run exception', async () => {
+  const summarize = async () => { throw new Error('429'); };
+  const m = await runMerge({ updateState: fakeUpdateState, summarize, model: 'gpt-6-luna', provider: 'openai', promptDir: 'p', oldStateMd: '', newSummary: 's', projectId: 'x', asOf: '2026-09-25T00:00:00.000Z' });
+  assert.deepEqual([m.call.ok, m.call.failCause, 'requestParams' in m.call], [false, 'invoke-error', false]);
+  assert.equal(m.raw, null);
 });

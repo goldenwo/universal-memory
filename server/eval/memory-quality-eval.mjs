@@ -46,6 +46,8 @@ import { fileURLToPath } from 'node:url';
 import { bounceTopHit } from '../lib/bouncer.mjs';
 import { wrapMem0Read, FULL_SCAN_LIMIT } from '../lib/mem0-read.mjs';
 import { percentile, summarize } from './lib/stats.mjs';
+import { TAU_ANSWER } from '../lib/answer-grader.mjs';
+import { autoSupersedeJudgeThreshold } from '../lib/supersede.mjs';
 
 // ---------------------------------------------------------------------------
 // PURE scoring functions (no I/O) — unit-tested directly.
@@ -831,8 +833,21 @@ export function parseArgs(argv) {
       args.storageSizes = parsed.length ? parsed : undefined;
     }
     else if (a === '--storage-dim') { const v = parseInt(argv[++i], 10); if (Number.isInteger(v) && v > 0) args.storageDim = v; }
+    // Model migration Phase B (plan T5): the verdict's τ_answer reaches the answer pass and the
+    // bouncer sweep as a flag, so the observations run on the frozen code. Validates loudly.
+    else if (a === '--tau-answer') {
+      const raw = argv[++i];
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > 1) throw new Error(`mq-eval: --tau-answer needs a number in [0, 1], got '${raw}'`);
+      args.tauAnswer = v;
+    }
   }
   return args;
+}
+
+/** The answer-verdict τ a run uses: --tau-answer when given, else the pinned TAU_ANSWER. */
+export function resolveTauAnswer(args) {
+  return args.tauAnswer ?? TAU_ANSWER;
 }
 
 // ===========================================================================
@@ -2079,7 +2094,7 @@ export async function recallPass({ doSearch, embed, cosineStrict, NOOP_METRICS, 
  * (the collection is cleared before each row so same-lane rows can't cross-contaminate).
  * seed original+updated → real detector → real supersedePoint (if fired) → real doSearch.
  */
-async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory, client, collection, rows, latency, metrics, imputation = undefined }) {
+export async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, supersedePoint, memory, client, collection, rows, latency, metrics, imputation = undefined }) {
   const searchCtx = imputation ? { memory, _undatedImputation: imputation } : { memory }; // #297 seam
   const perRow = [];
   for (const row of rows) {
@@ -2103,8 +2118,12 @@ async function stalenessPass({ umAdd, doSearch, detectContradictionsInBatch, sup
       fired = true; firedPath = 'inband';
       supersededTarget = u.results?.[0]?.supersededId ?? originalId;
     } else if (updatedEvent === 'ADD') {
+      // The detector gets autoSupersedeJudgeThreshold(env), as the production checkpoint's
+      // UM_AUTOSUPERSEDE_THRESHOLD does (model migration Phase B): without it the detector used
+      // its own 0.80 default whatever the env said.
       const detected = await detectContradictionsInBatch(row.updated_fact, {
         userId: EVAL_USER, lane: row.lane, collection, client,
+        judgeThreshold: autoSupersedeJudgeThreshold(),
         _facts: () => ({ facts: [row.updated_fact] }),
       });
       if (detected.length > 0) {
@@ -2356,7 +2375,7 @@ export async function runOnce(args = {}) {
   return withDecayEnv(args.decay, (resolved) => runOnceDecayPinned({ ...args, decay: resolved }));
 }
 
-async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false, decay }) {
+async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswerRows = [], runid, recallFixturePath, stalenessFixturePath, noAnswerFixturePath, sweep = false, decay, tauAnswer }) {
   // --- pin env BEFORE any import that captures it (review B1 / G2) ---
   // UM_TEMPORAL_DECAY is pinned by withDecayEnv one frame up, and cleared when it returns.
   process.env.MEM0_USER_ID = EVAL_USER;
@@ -2442,18 +2461,18 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
       // corpus, using the pinned τ_answer. Needs the LLM grader; runs only with a corpus.
       if (noAnswerRows.length > 0) {
         const { gradeAnswer } = await import('../lib/answer-grader.mjs');
-        const { TAU_ANSWER } = await import('./answer-grader-eval.mjs');
+        const tau = resolveTauAnswer({ tauAnswer });
         const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
         if (sweep) {
           // Manual gate-pin run (--sweep): grade every top-1 ONCE, then sweep the cost gate
           // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
           // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
           const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, imputation: mainImputation });
-          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau: TAU_ANSWER, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
+          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
         } else {
           // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
           // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.
-          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau: TAU_ANSWER, imputation: mainImputation });
+          answerGrading = await answerCorrectnessPass({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, tau, imputation: mainImputation });
           const ag = answerGrading;
           umAnswerGradedTotal.inc({ outcome: 'answers' }, ag.answerCorrectness.correct + ag.noAnswer.leaks);
           umAnswerGradedTotal.inc({ outcome: 'declines' }, (ag.answerCorrectness.total - ag.answerCorrectness.correct) + (ag.noAnswer.total - ag.noAnswer.leaks));
@@ -2486,6 +2505,14 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
     provider, model, fixtureRev,
     evalUser: EVAL_USER,
     flags: evalRunFlags({ decay }),
+    // Model migration Phase B (T5): the judge settings this run executed under, the record the
+    // observation scorer checks against the verdict.
+    judges: {
+      tauAnswer: resolveTauAnswer({ tauAnswer }),
+      autosupersedeThreshold: autoSupersedeJudgeThreshold(),
+      contradictionModel: process.env.UM_CONTRADICTION_MODEL ?? null,
+      answerGraderModel: process.env.UM_ANSWER_GRADER_MODEL ?? null,
+    },
     // #297 D26: the main run's imputation stamp (null on decay-OFF runs; presence = version signal).
     undatedImputation: mainImputationStamp,
     env: { node: process.version, platform: process.platform },
@@ -3048,7 +3075,7 @@ async function cliMain() {
 
   console.log(`[mq-eval] recall rows=${recallRows.length} staleness rows=${stalenessRows.length} no-answer rows=${noAnswerRows.length} — running live (scratch collections, real vault untouched)...`);
 
-  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer, sweep: args.sweep });
+  const result = await runOnce({ recallRows, stalenessRows, noAnswerRows, recallFixturePath: args.recall, stalenessFixturePath: args.staleness, noAnswerFixturePath: args.noAnswer, sweep: args.sweep, tauAnswer: args.tauAnswer });
 
   const resultsDir = args.outPrefix ? dirname(args.outPrefix) : args.out ? dirname(args.out) : 'eval/results';
   const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'mq-eval')}-run1.json`;

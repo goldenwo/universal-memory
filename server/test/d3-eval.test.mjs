@@ -21,8 +21,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tempDir } from './helpers/tmpdir.mjs';
 
 import {
@@ -34,6 +35,9 @@ import {
   formatSummaryTable,
   loadFixtureJsonl,
   defaultThresholds,
+  runD3,
+  outputPaths,
+  parseArgs,
 } from '../eval/d3-eval.mjs';
 
 // Helper: float compare to a small epsilon.
@@ -292,4 +296,64 @@ test('defaultThresholds: 0.70..0.99 step 0.01, 2-decimal rounded', () => {
     if (i > 0) assert.ok(t[i] > t[i - 1], 'strictly increasing');
   }
   assert.ok(t.length >= 29 && t.length <= 31, `~30 values, got ${t.length}`);
+});
+
+// ── runD3 + outputs (model migration Phase B, spec R2 / plan T2) ─────────────
+//
+// One code path for a live run and the offline replay control: the CLI calls runD3 with the
+// real judge; the replay calls it with a stub that answers June's recorded verdicts.
+
+const PAIRS = [
+  { olderFact: 'a1', newerFact: 'b1', olderLane: 'w', newerLane: 'w', label: 'contradiction', category: 'c' },
+  { olderFact: 'a2', newerFact: 'b2', olderLane: 'w', newerLane: 'h', label: 'not', category: 'x' },
+];
+const R1 = { requestParams: { model: 'm', temperature: 0 }, servedModel: 'm', systemFingerprint: 'fp', reasoningTokens: 0, stopReason: 'stop' };
+
+test('runD3: one record per pair with the verdict, its raw confidence, ok/failCause, the R1 fields and latency', async () => {
+  const judge = async (o) => (o === 'a1'
+    ? { contradicts: true, confidence: 0.9, reasoning: 'r', ok: true, ...R1 }
+    : { contradicts: false, confidence: 0, reasoning: 'parse-fail', ok: false, failCause: 'invoke-error' });
+  const { judged } = await runD3({ pairs: PAIRS, judge });
+  assert.equal(judged.length, 2);
+  const [a, b] = judged;
+  assert.deepEqual([a.label, a.comparable, a.contradicts, a.confidence, a.ok, a.cosine], ['contradiction', true, true, 0.9, true, null]);
+  for (const [k, v] of Object.entries(R1)) assert.deepEqual(a[k], v, k);
+  assert.equal(typeof a.ms, 'number');
+  assert.deepEqual([b.ok, b.failCause, 'requestParams' in b, b.comparable], [false, 'invoke-error', false, false]);
+});
+
+test('runD3: calls are serial (JL reads serial latency)', async () => {
+  let inFlight = 0, maxInFlight = 0;
+  const judge = async () => { inFlight++; maxInFlight = Math.max(maxInFlight, inFlight); await new Promise((r) => setTimeout(r, 5)); inFlight--; return { contradicts: false, confidence: 0, ok: true }; };
+  await runD3({ pairs: [...PAIRS, ...PAIRS], judge });
+  assert.equal(maxInFlight, 1);
+});
+
+test('runD3: with an embedder, records each pair\'s cosine', async () => {
+  const vec = { a1: [1, 0], b1: [1, 0], a2: [1, 0], b2: [0, 1] };
+  const { judged } = await runD3({ pairs: PAIRS, judge: async () => ({ contradicts: false, confidence: 0, ok: true }), embed: async (t) => vec[t] });
+  assert.deepEqual(judged.map((j) => j.cosine), [1, 0]);
+});
+
+test('runD3 replay: June\'s recorded verdicts through the harness reproduce June\'s sweep at every recorded τ', async () => {
+  const june = JSON.parse(await readFile(new URL('../eval/results/2026-06-03-d3-openai-temp0.json', import.meta.url), 'utf8'));
+  const byPair = new Map(june.judged.map((j) => [`${j.olderFact}\u0000${j.newerFact}`, j]));
+  const pairs = await loadFixtureJsonl(fileURLToPath(new URL('../eval/d3-contradiction-set.jsonl', import.meta.url)));
+  const judge = async (o, n) => { const j = byPair.get(`${o}\u0000${n}`); return { contradicts: j.contradicts, confidence: j.confidence, reasoning: j.reasoning, ok: true }; };
+  const { judged } = await runD3({ pairs, judge });
+  const sweep = sweepThresholds({ judged, thresholds: june.thresholds });
+  const pr = (rows) => rows.map(({ tau, tp, fp, fn, tn, precision, recall }) => ({ tau, tp, fp, fn, tn, precision, recall }));
+  assert.deepEqual(pr(sweep), pr(june.sweep));
+});
+
+test('d3 outputs: d3-latest.json is written only when --out is absent', () => {
+  assert.deepEqual(outputPaths({ out: 'x/run.json' }), { primaryPath: 'x/run.json', latestPath: null });
+  const def = outputPaths({});
+  assert.equal(def.latestPath, join('eval/results', 'd3-latest.json'));
+  assert.equal(def.primaryPath, join('eval/results', 'd3-eval') + '-run1.json');
+});
+
+test('d3 parseArgs: --runs N, default 1', () => {
+  assert.equal(parseArgs(['node', 'x', '--fixture', 'f']).runs, 1);
+  assert.equal(parseArgs(['node', 'x', '--fixture', 'f', '--runs', '3']).runs, 3);
 });

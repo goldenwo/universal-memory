@@ -140,6 +140,21 @@ export function callStats(calls) {
   };
 }
 
+/**
+ * A judged row's grader record: the verdicts, why ok is false, and one record per judge call
+ * (recall, then precision) with its R1 fields and latency, from judgeExtraction (model
+ * migration Phase B, spec R2 — G's request shape and served model are checked per call).
+ */
+export function judgeRecord(v) {
+  return {
+    ok: v.ok,
+    ...(v.failCause ? { failCause: v.failCause } : {}),
+    goldMatched: v.goldMatched,
+    extractedSupported: v.extractedSupported,
+    calls: v.calls ?? [],
+  };
+}
+
 /** Normalize facts() output to a plain string list (factsInvoke returns string[]; defensive on objects). */
 function normalizeExtracted(factsResult) {
   const f = factsResult?.facts;
@@ -275,7 +290,7 @@ async function cliMain() {
         continue;
       }
       const v = await judgeExtraction(row.input_text, gold, extracted, { model });
-      call.judge = { ok: v.ok, goldMatched: v.goldMatched, extractedSupported: v.extractedSupported };
+      call.judge = judgeRecord(v);
       judgedRows.push({
         id: row.id, ok: v.ok, stratum: row.stratum,
         goldTotal: gold.length,

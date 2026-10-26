@@ -48,6 +48,8 @@ import {
   formatSummaryTable,
   loadFixtureJsonl,
   parseArgs,
+  stalenessPass,
+  resolveTauAnswer,
   evaluateGate,
   formatGateReport,
   answerCorrectnessPass,
@@ -1139,4 +1141,39 @@ test('extractionFidelity: perRow propagates judgeError:true on ok:false rows (in
   assert.equal(out.parseFails, 2);
   assert.deepEqual(out.perRow[0], { id: 'flake', ok: false, judgeError: true });
   assert.deepEqual(out.perRow[1], { id: 'misaligned', ok: false });
+});
+
+// --- model migration Phase B (spec R2, plan T2) ------------------------------------------
+// The staleness pass hands the session-end detector autoSupersedeJudgeThreshold(env), as the
+// production checkpoint does; before, the detector silently used its own 0.80 default, so a
+// re-measured UM_AUTOSUPERSEDE_THRESHOLD never reached the fireRate / staleReturnRate floors.
+test('stalenessPass: UM_AUTOSUPERSEDE_THRESHOLD reaches the detector as its judgeThreshold', async () => {
+  const seen = [];
+  const deps = {
+    umAdd: async ({ text }) => ({ results: [{ id: `id-${text}`, event: 'ADD' }] }),
+    doSearch: async () => ({ results: [] }),
+    detectContradictionsInBatch: async (_fact, opts) => { seen.push(opts.judgeThreshold); return []; },
+    supersedePoint: async () => {},
+    memory: {}, client: { delete: async () => {} }, collection: 'eval_mq_test_staleness',
+    rows: [{ id: 'r1', lane: 'work', original_fact: 'a', updated_fact: 'b', query: 'q' }],
+    latency: { umAdd: [], doSearch: [] }, metrics: undefined,
+  };
+  const prev = process.env.UM_AUTOSUPERSEDE_THRESHOLD;
+  try {
+    process.env.UM_AUTOSUPERSEDE_THRESHOLD = '0.85';
+    await stalenessPass(deps);
+    delete process.env.UM_AUTOSUPERSEDE_THRESHOLD;
+    await stalenessPass(deps);
+  } finally {
+    if (prev === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = prev;
+  }
+  assert.deepEqual(seen, [0.85, 0.80], 'the env when set, the shared default when not');
+});
+
+test('parseArgs: --tau-answer overrides TAU_ANSWER for the answer pass and the bouncer sweep', () => {
+  const a = parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl', '--tau-answer', '0.15']);
+  assert.equal(a.tauAnswer, 0.15);
+  assert.equal(resolveTauAnswer(a), 0.15);
+  assert.equal(resolveTauAnswer(parseArgs(['node', 'x.mjs', '--recall', 'r.jsonl'])), 0.05, 'unset → the pinned TAU_ANSWER');
+  assert.throws(() => parseArgs(['node', 'x.mjs', '--tau-answer', 'x']), /--tau-answer/);
 });
