@@ -526,9 +526,14 @@ test('collectBounceRows collects raw per-query grades (score + answers + confide
   const gradeAnswer = async (_q, body) => ({ answers: body.includes('yes'), confidence: 0.9, ok: true });
   const rows = await collectBounceRows({ gradeAnswer, doSearch, memory, recallRows: [{ id: 'r1', query: 'yes' }], noAnswerRows: [{ id: 'n1', query: 'no' }, { id: 'n2', query: 'empty' }], model: 'stub' });
   assert.equal(rows.length, 3);
-  assert.deepEqual(rows[0], { id: 'r1', answerable: true, score: 0.5, answers: true, confidence: 0.9, ok: true });
+  const { gradeMs, ...r0 } = rows[0];
+  assert.deepEqual(r0, { id: 'r1', answerable: true, score: 0.5, answers: true, confidence: 0.9, ok: true });
+  // Model migration Phase B (T5): each grade's latency, for the share of grades slower than the
+  // bouncer's 1500 ms timeout; null when nothing was graded.
+  assert.equal(typeof gradeMs, 'number');
   assert.equal(rows[1].answerable, false);
   assert.equal(rows[2].score, null);            // empty result → null score
+  assert.equal(rows[2].gradeMs, null);
 });
 
 // --- recallByParaphraseLevel ----------------------------------------------

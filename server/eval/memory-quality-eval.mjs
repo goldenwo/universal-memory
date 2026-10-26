@@ -2252,9 +2252,12 @@ export async function collectBounceRows({ gradeAnswer, doSearch, memory, recallR
   const grade1 = async (query, answerable) => {
     const sr = await doSearch(query, 10, false, true, searchCtx);
     const top = (sr.results ?? [])[0];
-    if (!top) return { answerable, score: null, answers: false, confidence: 0, ok: true };
+    if (!top) return { answerable, score: null, answers: false, confidence: 0, ok: true, gradeMs: null };
+    // gradeMs: the grade call's latency (model migration Phase B, T5 reports the share of
+    // grades slower than the bouncer's 1500 ms timeout).
+    const t0 = performance.now();
     const v = await gradeAnswer(query, top.body ?? '', { model });
-    return { answerable, score: top.score, answers: v.answers, confidence: v.confidence, ok: v.ok };
+    return { answerable, score: top.score, answers: v.answers, confidence: v.confidence, ok: v.ok, gradeMs: performance.now() - t0 };
   };
   const rows = [];
   for (const r of recallRows) rows.push({ id: r.id, ...(await grade1(r.query, true)) });
