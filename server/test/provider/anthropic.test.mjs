@@ -294,3 +294,47 @@ test('factsInvoke takes a thinkingHeadroom override (the pre-registered truncati
   await anthropic.factsInvoke('t', { client: c45, model: 'claude-haiku-4-5-20251001', thinkingHeadroom: 16384 });
   assert.equal(c45.calls[0].max_tokens, 1024, 'no headroom on a model that does not think');
 });
+
+// --- R1 call records (model migration Phase B, spec R1) ---------------------------
+// Anthropic has no system_fingerprint (null) and reports thinking inside output_tokens,
+// with no separate count, so reasoningTokens is null on a live call.
+
+const R1_SITES = {
+  summarizer: (opts) => anthropic.summarizerInvoke('p', opts),
+  contradictionJudge: (opts) => anthropic.contradictionJudgeInvoke('p', opts),
+};
+
+for (const [site, call] of Object.entries(R1_SITES)) {
+  for (const model of ['claude-haiku-5-5', 'claude-haiku-4-5-20251001']) {
+    test(`${site} on ${model}: returns requestParams equal to what the client received, plus servedModel and stop reason`, async () => {
+      const client = capturingClient([{ type: 'text', text: 'x' }], { model: `${model}-served`, stop_reason: 'end_turn' });
+      const r = await call({ client, model });
+      const { messages, system, ...sent } = client.calls[0];
+      assert.deepEqual(r.requestParams, sent);
+      assert.equal(r.servedModel, `${model}-served`);
+      assert.equal(r.systemFingerprint, null);
+      assert.equal(r.reasoningTokens, null);
+      assert.equal(r.stopReason, 'end_turn');
+    });
+  }
+
+  test(`${site}: a refusal or max_tokens stop is reported as the stop reason`, async () => {
+    for (const stop of ['refusal', 'max_tokens']) {
+      const client = capturingClient([{ type: 'text', text: '' }], { model: 'claude-haiku-5-5', stop_reason: stop });
+      const r = await call({ client, model: 'claude-haiku-5-5' });
+      assert.equal(r.stopReason, stop);
+    }
+  });
+
+  test(`${site} UM_TEST_MOCK_SDK=1: returns the built request params and the R1 fields`, async () => {
+    const live = capturingClient([{ type: 'text', text: 'x' }]);
+    await call({ client: live, model: 'claude-haiku-5-5' });
+    const { messages, system, ...built } = live.calls[0];
+    const r = await call({ env: { UM_TEST_MOCK_SDK: '1' }, model: 'claude-haiku-5-5' });
+    assert.deepEqual(r.requestParams, built);
+    assert.equal(r.servedModel, 'claude-haiku-5-5');
+    assert.equal(r.systemFingerprint, null);
+    assert.equal(r.reasoningTokens, 0);
+    assert.equal(r.stopReason, 'stop');
+  });
+}

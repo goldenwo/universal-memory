@@ -704,6 +704,38 @@ test('Gap-5 P3: in-band but judge declines → keep-older merge', async () => {
   assert.ok(!q.setPayloads.some((s) => s.body.payload.status === 'superseded'), 'no demotion when judge declines');
 });
 
+// Model migration Phase B (spec R1): an in-band judge whose call failed is a judge_error
+// outcome with one warn line, not a decline — a dead judge was otherwise invisible. Either
+// way the write keep-older merges. A parse-fail stays a decline (the judge answered).
+const inbandOutcome = async (outcome) => {
+  const text = await registry.metrics();
+  return Number((text.match(new RegExp(`um_inband_supersede_total\\{outcome="${outcome}"\\} (\\d+)`)) ?? [, '0'])[1]);
+};
+
+for (const [cause, expected] of [['invoke-error', 'judge_error'], ['parse-fail', 'declined']]) {
+  test(`Phase B R1: an in-band judge ${cause} → outcome ${expected}, keep-older merge`, async () => {
+    const older = { id: `older-${cause}`, score: 0.85, payload: { valid_from: '2026-01-01T00:00:00.000Z', data: 'I live in Boston', lane: 'work', status: 'current' } };
+    const q = makeMockQdrantInband({ searchHit: older });
+    const warns = [];
+    const before = { judge_error: await inbandOutcome('judge_error'), declined: await inbandOutcome('declined') };
+    const result = await umAdd({
+      memory: makeMockMemory(), text: 'I live in Denver now', userId: 'u1', metadata: { lane: 'work' }, infer: false,
+      _embedProviderOverride: embedDummy, _qdrantClient: q.client,
+      _logger: { info: () => {}, warn: (obj, msg) => warns.push({ obj, msg }) },
+      _autoSupersedeEnabled: true,
+      _judgeContradiction: async () => ({ contradicts: false, confidence: 0, reasoning: 'parse-fail', ok: false, failCause: cause, usage: {} }),
+    });
+    assert.equal(result.results[0].event, 'DEDUP_MERGED');
+    assert.equal(q.upserts.length, 0);
+    const other = expected === 'judge_error' ? 'declined' : 'judge_error';
+    assert.equal(await inbandOutcome(expected), before[expected] + 1, `${expected} counted once`);
+    assert.equal(await inbandOutcome(other), before[other], `${other} not counted`);
+    const judgeWarns = warns.filter((w) => w.obj?.event === 'inband_supersede.judge_error');
+    assert.equal(judgeWarns.length, expected === 'judge_error' ? 1 : 0);
+    if (judgeWarns.length) assert.equal(judgeWarns[0].obj.olderId, older.id);
+  });
+}
+
 // #276 seam proof — the direction wiring at the evaluateInBandSupersession call site. The pure
 // rule and the evaluator are pinned in supersession-direction.test.mjs; these two pin that umAdd
 // actually HANDS them the truth fields (a mutant that drops metadata.valid_from or invents a

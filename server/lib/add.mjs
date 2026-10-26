@@ -804,7 +804,16 @@ export async function umAdd({
                 'in-band contradiction confirmed; newer fact will supersede the older point',
               );
             } else {
-              if (decision.judged) {
+              if (decision.judged && decision.verdict?.failCause === 'invoke-error') {
+                // The judge call itself failed (model migration Phase B, spec R1): keep-older
+                // like a decline, but counted apart — a dead judge read as "declined" before,
+                // which left a model shutdown invisible. A parse-fail stays a decline.
+                try { umInbandSupersedeTotal.inc({ outcome: 'judge_error' }); } catch { /* obs fail-safe */ }
+                logger.warn(
+                  { event: 'inband_supersede.judge_error', olderId: embeddingHit.id, score: embeddingHit.score },
+                  'in-band contradiction judge call failed; keep-older merge',
+                );
+              } else if (decision.judged) {
                 // Judge was consulted (eligible+in-band) but declined → keep-older.
                 try { umInbandSupersedeTotal.inc({ outcome: 'declined' }); } catch { /* obs fail-safe */ }
               } else if (decision.direction !== null && decision.direction !== undefined) {

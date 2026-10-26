@@ -237,9 +237,9 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * demotion in a crash-safe order (upsert-newer-first, then demote-older).
  *
  * PURE w.r.t. metrics — emits none. Callers own the
- * `um_inband_supersede_total{superseded|declined|demote_error}` emission, keyed
- * off the returned `{supersede, judged}` plus their own demotion result (the
- * canonical 3-outcome mapping lives in add.mjs's umAdd).
+ * `um_inband_supersede_total{superseded|declined|demote_error|judge_error}` emission,
+ * keyed off the returned `{supersede, judged, verdict}` plus their own demotion result
+ * (the canonical 4-outcome mapping lives in add.mjs's umAdd).
  *
  * The judge fires ONLY for the eligible-in-band slice (returns `judged:true`):
  * flag-off, unpartitioned, and out-of-band hits short-circuit before any judge
@@ -265,8 +265,9 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * @param {boolean}  [p.enabled]        - Auto-supersession flag (default: isAutoSupersedeEnabled()).
  * @param {{valid_from?: string}} [p.olderTruth]  - Recorded truth time of the stored candidate (its payload `valid_from`).
  * @param {{valid_from?: string, assertedAt: string}} [p.newerTruth] - Incoming truth time (staged metadata `valid_from`) + the decision instant.
- * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning}. Already fail-safe.
- * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null, incomingAt: string|null, storedAt: string|null}>}
+ * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning, ok, failCause?}. Already fail-safe.
+ * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null, incomingAt: string|null, storedAt: string|null, verdict?: object}>}
+ *   `verdict` (the judge's whole return) is present exactly when judged.
  */
 export async function evaluateInBandSupersession({
   score,
@@ -305,5 +306,8 @@ export async function evaluateInBandSupersession({
   // above has already established that the incoming side is the newer one.
   const v = await _judge(olderText, newerText);
   const supersede = v.contradicts === true && v.confidence >= judgeThreshold;
-  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction, incomingAt, storedAt };
+  // verdict: the judge's whole return (model migration Phase B, spec R1). The caller tells an
+  // errored judge (failCause 'invoke-error' → judge_error) from a decline by it, and the
+  // supersession-gate harness reads each row's own call record from it.
+  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction, incomingAt, storedAt, verdict: v };
 }

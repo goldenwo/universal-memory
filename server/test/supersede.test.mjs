@@ -73,6 +73,22 @@ test('autoSupersedeJudgeThreshold: default 0.80 (mirrors detector judgeThreshold
 const ELIGIBLE = { lane: 'work', persona: undefined, bandFloor: 0.84, bandCeiling: 0.95, judgeThreshold: 0.80, enabled: true,
   olderTruth: { valid_from: '2026-01-01T00:00:00.000Z' }, newerTruth: { valid_from: '2026-06-01T00:00:00.000Z', assertedAt: '2026-06-01T00:00:00.000Z' } };
 
+// Model migration Phase B (spec R1): the judged return carries the judge's whole verdict, so
+// the in-band path can tell an errored judge (judge_error) from a decline, and the
+// supersession-gate harness reads each row's own call record from it.
+test('evaluateInBandSupersession: a judged decision returns the injected judge\'s whole verdict object as verdict', async () => {
+  const verdict = { contradicts: false, confidence: 0, reasoning: 'parse-fail', ok: false, failCause: 'invoke-error', usage: {} };
+  const r = await evaluateInBandSupersession({ ...ELIGIBLE, score: 0.85, olderText: 'a', newerText: 'b', _judge: judgeStub(verdict) });
+  assert.equal(r.judged, true);
+  assert.equal(r.supersede, false);
+  assert.equal(r.verdict, verdict, 'the same object, not a copy');
+});
+
+test('evaluateInBandSupersession: short-circuits before the judge carry no verdict', async () => {
+  const r = await evaluateInBandSupersession({ ...ELIGIBLE, enabled: false, score: 0.85, olderText: 'a', newerText: 'b', _judge: judgeStub({}) });
+  assert.equal(r.verdict, undefined);
+});
+
 test('evaluateInBandSupersession: flag off → no supersede, judge NOT consulted', async () => {
   const judge = judgeStub({ contradicts: true, confidence: 0.99 });
   const r = await evaluateInBandSupersession({

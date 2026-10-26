@@ -111,6 +111,25 @@ function textOf(raw) {
   return block?.text ?? null;
 }
 
+// The R1 call record (model migration Phase B, spec R1), as openai.mjs's: what the call sent
+// and how it ended. Anthropic has no system_fingerprint, and counts thinking inside
+// output_tokens with no separate figure, so reasoningTokens is null (not reported), never 0.
+// A refusal is its own stop_reason here.
+function callRecord(raw, params) {
+  return {
+    requestParams: params,
+    servedModel: raw.model ?? null,
+    systemFingerprint: null,
+    reasoningTokens: null,
+    stopReason: raw.stop_reason ?? null,
+  };
+}
+
+// UM_TEST_MOCK_SDK's record: the params the real builder made, answered by the model asked for.
+function mockCallRecord(params) {
+  return { requestParams: params, servedModel: params.model, systemFingerprint: null, reasoningTokens: 0, stopReason: 'stop' };
+}
+
 export function normalizeError(err) {
   // Strip sensitive headers from config and request objects
   const clean = {
@@ -122,15 +141,18 @@ export function normalizeError(err) {
 
 export async function summarizerInvoke(prompt, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  // max_tokens is required by the Anthropic API. Default temperature — only the judge needs temp=0.
+  const params = requestParams(model, { maxTokens: 1024 });
   // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
   // tests can spin the container up without real API calls (spec §9.4).
-  // Mock shape mirrors the real return below: { content, usage }.
+  // Mock shape mirrors the real return below: { content, usage, ...R1 record }.
   // Strict `=== '1'` check matches the UM_SKIP_BOOT_SMOKE pattern — avoids
   // the string-truthy footgun where 'false'/'0' would silently activate.
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: '[MOCK] anthropic summary',
       usage: { tokensIn: 10, tokensOut: 5 },
+      ...mockCallRecord(params),
     };
   }
   let client = providedClient;
@@ -151,8 +173,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      // max_tokens is required by the Anthropic API. Default temperature — only the judge needs temp=0.
-      ...requestParams(model, { maxTokens: 1024 }),
+      ...params,
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
@@ -170,6 +191,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   return {
     content: textOf(raw),
     usage: extractUsage(raw),
+    ...callRecord(raw, params),
   };
 }
 
@@ -178,10 +200,13 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   // same mock-sdk short-circuit. The dispatcher passes systemPrompt with the
   // §3.4 temporal-context guard already embedded.
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  // temperature 0: deterministic supersession decisions (D3.3 follow-up), on models that take it.
+  const params = requestParams(model, { maxTokens: 1024, temperature: 0 });
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: JSON.stringify({ contradicts: false, confidence: 0.1, reasoning: '[MOCK] anthropic judge' }),
       usage: { tokensIn: 10, tokensOut: 5 },
+      ...mockCallRecord(params),
     };
   }
   let client = providedClient;
@@ -202,8 +227,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.messages.create({
-      // temperature 0: deterministic supersession decisions (D3.3 follow-up), on models that take it.
-      ...requestParams(model, { maxTokens: 1024, temperature: 0 }),
+      ...params,
       ...(systemPrompt ? { system: systemPrompt } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
@@ -221,6 +245,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   return {
     content: textOf(raw),
     usage: extractUsage(raw),
+    ...callRecord(raw, params),
   };
 }
 

@@ -241,3 +241,14 @@ test('model migration review: a blank UM_SUMMARIZER_MODEL is treated as unset, n
   }
   assert.equal(seenModel, openaiMod.defaults.summarizerModel, `summarize sent model ${JSON.stringify(seenModel)}`);
 });
+
+test('model migration Phase B (spec R1): summarize() passes the provider\'s R1 call record through on its return', async () => {
+  const R1 = { requestParams: { model: 'gpt-6-luna', reasoning_effort: 'none' }, servedModel: 'gpt-6-luna', systemFingerprint: 'fp_1', reasoningTokens: 0, stopReason: 'stop' };
+  const result = await summarize('t', {
+    provider: 'openai', model: 'gpt-6-luna',
+    _providerOverride: { summarizerInvoke: async () => ({ content: 's', usage: { tokensIn: 1, tokensOut: 1 }, ...R1 }) },
+    metrics: { counter: () => {}, histogram: () => {} },
+  });
+  assert.equal(result.summary, 's');
+  for (const [k, val] of Object.entries(R1)) assert.deepEqual(result[k], val, k);
+});

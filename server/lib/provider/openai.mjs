@@ -114,6 +114,30 @@ export function extractUsage(raw) {
   };
 }
 
+/**
+ * The R1 call record (model migration Phase B, spec R1): what a summarizer, judge or grader
+ * call sent and how it ended. The eval harnesses record it per call; production callers
+ * ignore it. A field the response lacks is null, never a default, so the frozen scorer can
+ * fail closed on it (a missing reasoning-token count must not read as 0). A refusal can
+ * arrive with finish_reason 'stop', so the message's refusal field wins.
+ */
+function callRecord(raw, params) {
+  const { message, finish_reason } = raw.choices[0];
+  return {
+    requestParams: params,
+    servedModel: raw.model ?? null,
+    systemFingerprint: raw.system_fingerprint ?? null,
+    reasoningTokens: raw.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    stopReason: message.refusal ? 'refusal' : (finish_reason ?? null),
+  };
+}
+
+// UM_TEST_MOCK_SDK's record: the params the real builder made, answered by the model asked for.
+// It carries every field a live record does, which is why runs.sh refuses a leaked mock.
+function mockCallRecord(params) {
+  return { requestParams: params, servedModel: params.model, systemFingerprint: null, reasoningTokens: 0, stopReason: 'stop' };
+}
+
 export function normalizeError(err) {
   return {
     status: err?.status ?? err?.response?.status ?? 500,
@@ -123,15 +147,17 @@ export function normalizeError(err) {
 
 export async function summarizerInvoke(prompt, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  const params = requestParams(model);
   // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
   // tests can spin the container up without real API calls (spec §9.4).
-  // Mock shape mirrors the real return below: { content, usage }.
+  // Mock shape mirrors the real return below: { content, usage, ...R1 record }.
   // Strict `=== '1'` check matches the UM_SKIP_BOOT_SMOKE pattern — avoids
   // the string-truthy footgun where 'false'/'0' would silently activate.
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: '[MOCK] openai summary',
       usage: { tokensIn: 10, tokensOut: 5 },
+      ...mockCallRecord(params),
     };
   }
   let client = providedClient;
@@ -152,7 +178,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      ...requestParams(model),
+      ...params,
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -172,6 +198,7 @@ export async function summarizerInvoke(prompt, opts = {}) {
   return {
     content: raw.choices[0].message.content,
     usage: extractUsage(raw),
+    ...callRecord(raw, params),
   };
 }
 
@@ -180,10 +207,14 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   // same mock-sdk short-circuit. The dispatcher passes systemPrompt with the
   // §3.4 temporal-context guard already embedded.
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
+  // Deterministic supersession decisions (D3.3 follow-up) where the model allows it;
+  // a luna model has no temperature 0 (spec R1 — its thresholds are re-measured in Phase B).
+  const params = requestParams(model, { temperature: 0 });
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: JSON.stringify({ contradicts: false, confidence: 0.1, reasoning: '[MOCK] openai judge' }),
       usage: { tokensIn: 10, tokensOut: 5 },
+      ...mockCallRecord(params),
     };
   }
   let client = providedClient;
@@ -204,9 +235,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      // Deterministic supersession decisions (D3.3 follow-up) where the model allows it;
-      // a luna model has no temperature 0 (spec R1 — its thresholds are re-measured in Phase B).
-      ...requestParams(model, { temperature: 0 }),
+      ...params,
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -226,6 +255,7 @@ export async function contradictionJudgeInvoke(prompt, opts = {}) {
   return {
     content: raw.choices[0].message.content,
     usage: extractUsage(raw),
+    ...callRecord(raw, params),
   };
 }
 
@@ -237,10 +267,14 @@ export const ANSWER_GRADER_MAX_TOKENS = 256; // one-line JSON + brief reasoning;
 // already wrapped as untrusted data. One home for max_tokens, referenced once here.
 export async function answerGradeInvoke(prompt, opts = {}) {
   const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '', maxTokens } = opts;
+  // Deterministic grading where the model allows it. Budget default unchanged; the
+  // extraction judge overrides it (two arrays + reasoning).
+  const params = requestParams(model, { temperature: 0, maxTokens: maxTokens ?? ANSWER_GRADER_MAX_TOKENS });
   if (env.UM_TEST_MOCK_SDK === '1') {
     return {
       content: JSON.stringify({ answers: false, confidence: 0.1, reasoning: '[MOCK] openai answer grader' }),
       usage: { tokensIn: 10, tokensOut: 5 },
+      ...mockCallRecord(params),
     };
   }
   let client = providedClient;
@@ -261,9 +295,7 @@ export async function answerGradeInvoke(prompt, opts = {}) {
   let raw;
   try {
     raw = await client.chat.completions.create({
-      // Deterministic grading where the model allows it. Budget default unchanged; the
-      // extraction judge overrides it (two arrays + reasoning).
-      ...requestParams(model, { temperature: 0, maxTokens: maxTokens ?? ANSWER_GRADER_MAX_TOKENS }),
+      ...params,
       messages: [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         { role: 'user', content: prompt },
@@ -283,6 +315,7 @@ export async function answerGradeInvoke(prompt, opts = {}) {
   return {
     content: raw.choices[0].message.content,
     usage: extractUsage(raw),
+    ...callRecord(raw, params),
   };
 }
 

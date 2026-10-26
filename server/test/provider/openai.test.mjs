@@ -341,3 +341,81 @@ test('capabilitiesFor: a dated snapshot of a listed alias gets the alias\'s capa
   assert.equal(openai.capabilitiesFor('gpt-6-luna-pro').samplingParams, true, 'only a -YYYY-MM-DD suffix maps to the alias');
   assert.equal(openai.capabilitiesFor('gpt-4o-mini-2024-07-18').samplingParams, true, 'legacy stays legacy');
 });
+
+// ---------------------------------------------------------------------------
+// R1 call records (model migration Phase B, spec R1): the summarizer, judge and grader
+// invokes report what they sent and how the call ended, as factsInvoke does. The eval
+// harnesses record them per call; production callers ignore them.
+// ---------------------------------------------------------------------------
+
+const R1_SITES = {
+  summarizer: (opts) => openai.summarizerInvoke('p', opts),
+  contradictionJudge: (opts) => openai.contradictionJudgeInvoke('p', opts),
+  grader: (opts) => openai.answerGradeInvoke('p', { maxTokens: 768, ...opts }),
+};
+
+function recordingClient(response) {
+  const calls = [];
+  return { calls, chat: { completions: { create: async (args) => { calls.push(args); return response(args); } } } };
+}
+
+for (const [site, call] of Object.entries(R1_SITES)) {
+  for (const model of ['gpt-6-luna', 'gpt-4o-mini']) {
+    test(`${site} on ${model}: returns requestParams equal to what the client received, plus servedModel, fingerprint, reasoning tokens and stop reason`, async () => {
+      const client = recordingClient((args) => ({
+        model: `${args.model}-served`,
+        system_fingerprint: 'fp_abc123',
+        choices: [{ message: { content: 'x' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 2, completion_tokens_details: { reasoning_tokens: 0 } },
+      }));
+      const r = await call({ client, model });
+      const { messages, ...sent } = client.calls[0];
+      assert.deepEqual(r.requestParams, sent);
+      assert.equal(r.servedModel, `${model}-served`);
+      assert.equal(r.systemFingerprint, 'fp_abc123');
+      assert.equal(r.reasoningTokens, 0);
+      assert.equal(r.stopReason, 'stop');
+    });
+  }
+
+  test(`${site}: a populated refusal field is stopReason refusal, whatever the finish reason`, async () => {
+    const client = recordingClient(() => ({
+      model: 'gpt-6-luna', choices: [{ message: { content: null, refusal: 'no' }, finish_reason: 'stop' }], usage: {},
+    }));
+    const r = await call({ client, model: 'gpt-6-luna' });
+    assert.equal(r.stopReason, 'refusal');
+  });
+
+  test(`${site}: a length stop is reported, and absent fields are null, never a default (the scorer fails closed on them)`, async () => {
+    const client = recordingClient(() => ({ choices: [{ message: { content: 'x' }, finish_reason: 'length' }], usage: {} }));
+    const r = await call({ client, model: 'gpt-6-luna' });
+    assert.equal(r.stopReason, 'length');
+    assert.equal(r.servedModel, null);
+    assert.equal(r.systemFingerprint, null);
+    assert.equal(r.reasoningTokens, null, 'a missing reasoning-token count must not read as 0');
+  });
+
+  // The mock branch carries the same R1 fields as a live call, with requestParams from the
+  // real request builder (plan T1), so the pre-freeze dry run exercises the scorer's checks.
+  for (const model of ['gpt-6-luna', 'gpt-4o-mini']) {
+    test(`${site} UM_TEST_MOCK_SDK=1 on ${model}: returns the built request params and the R1 fields`, async () => {
+      const live = recordingClient(() => ({ model, choices: [{ message: { content: 'x' }, finish_reason: 'stop' }], usage: {} }));
+      await call({ client: live, model });
+      const { messages, ...built } = live.calls[0];
+      const r = await call({ env: { UM_TEST_MOCK_SDK: '1' }, model });
+      assert.deepEqual(r.requestParams, built);
+      assert.equal(r.servedModel, model);
+      assert.equal(r.systemFingerprint, null);
+      assert.equal(r.reasoningTokens, 0);
+      assert.equal(r.stopReason, 'stop');
+      assert.deepEqual(r.usage, { tokensIn: 10, tokensOut: 5 });
+    });
+  }
+}
+
+test('UM_TEST_MOCK_SDK=1 still short-circuits before any key check (smoke boot needs no key)', async () => {
+  for (const call of Object.values(R1_SITES)) {
+    const r = await call({ env: { UM_TEST_MOCK_SDK: '1' } });
+    assert.equal(typeof r.content, 'string');
+  }
+});

@@ -12,6 +12,7 @@
 // extraction is deferred to the 3rd judge — spec §5).
 
 import * as openaiP from './provider/openai.mjs';
+import { r1Record } from './provider/call-record.mjs';
 
 // The memory body is UNTRUSTED user data — it is wrapped in a delimited block and the
 // system prompt declares everything inside it data-to-evaluate, never an instruction (spec §7 R7).
@@ -40,7 +41,11 @@ const GRADER_BACKENDS = {
  * @param {string}   [opts.model]
  * @param {object}   [opts.client]            - pre-made provider SDK client (stub seam)
  * @param {object}   [opts._providerOverride] - test seam: object with answerGradeInvoke
- * @returns {Promise<{answers:boolean, confidence:number, reasoning:string, ok:boolean, usage:object}>}
+ * @returns {Promise<{answers:boolean, confidence:number, reasoning:string, ok:boolean, usage:object,
+ *   failCause?: 'invoke-error'|'parse-fail', requestParams?: object, servedModel?: string|null,
+ *   systemFingerprint?: string|null, reasoningTokens?: number|null, stopReason?: string|null}>}
+ *   failCause says why ok is false; the R1 fields (model migration Phase B, spec R1) are what
+ *   the call sent and how it ended, absent on an invoke-error (there was no response).
  */
 export async function gradeAnswer(query, memory, opts = {}) {
   const providerName =
@@ -55,10 +60,11 @@ export async function gradeAnswer(query, memory, opts = {}) {
     b?.defaults?.summarizerModel;
   const invoke = opts._providerOverride?.answerGradeInvoke ?? b?.invoke;
 
-  const failsafe = (usage = { tokensIn: 0, tokensOut: 0 }) =>
-    ({ answers: false, confidence: 0, reasoning: 'parse-fail', ok: false, usage });
+  const failsafe = (failCause, usage = { tokensIn: 0, tokensOut: 0 }, record = {}) =>
+    ({ answers: false, confidence: 0, reasoning: 'parse-fail', ok: false, failCause, usage, ...record });
 
-  if (!invoke) return failsafe();
+  // Unknown provider: the call cannot be made, which is an invoke-error.
+  if (!invoke) return failsafe('invoke-error');
 
   const prompt =
     `QUERY:\n${query}\n\n` +
@@ -68,9 +74,10 @@ export async function gradeAnswer(query, memory, opts = {}) {
   try {
     raw = await invoke(prompt, { ...opts, model, client: opts.client, systemPrompt: ANSWER_SYSTEM_PROMPT });
   } catch {
-    return failsafe();
+    return failsafe('invoke-error');
   }
   const usage = raw.usage ?? { tokensIn: 0, tokensOut: 0 };
+  const record = r1Record(raw);
   try {
     const stripped = (raw.content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
     const parsed = JSON.parse(stripped);
@@ -80,9 +87,10 @@ export async function gradeAnswer(query, memory, opts = {}) {
       reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
       ok: true,
       usage,
+      ...record,
     };
   } catch {
-    return failsafe(usage);
+    return failsafe('parse-fail', usage, record);
   }
 }
 

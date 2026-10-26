@@ -37,6 +37,7 @@ import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP from './provider/google.mjs';
 import * as ollamaP from './provider/ollama.mjs';
 import { computeCost } from './pricing.mjs';
+import { r1Record } from './provider/call-record.mjs';
 import { PROVIDER_METRICS, NOOP_METRICS, PROVIDER_METRICS_ADAPTER, SURFACES } from './metrics.mjs';
 
 export const BACKENDS = {
@@ -161,7 +162,9 @@ export async function summarize(transcript, ctx = {}) {
   metrics.counter(PROVIDER_METRICS.COST_USD_TOTAL, labels, costUsd);
   metrics.histogram(PROVIDER_METRICS.REQUEST_DURATION_SECONDS, labels, elapsedSec);
 
-  return { summary, costUsd, tokensIn, tokensOut };
+  // The R1 call record (model migration Phase B, spec R1) passes through for the S harnesses;
+  // production callers read only the four fields above.
+  return { summary, costUsd, tokensIn, tokensOut, ...r1Record(raw) };
 }
 
 // C2 migration done: BACKENDS.openai.invoke now points at provider/openai.mjs's

@@ -108,3 +108,43 @@ test('judge: system prompt contains temporal-context guard (§3.4 R1-Lens-B-G4)'
     `system prompt must reference time/temporal concepts; got: ${capturedSystemPrompt.slice(0, 300)}`,
   );
 });
+
+// ── (d) ok / failCause and the R1 call record (model migration Phase B, spec R1) ──
+//
+// The eval harnesses read why a verdict failed (an invoke-error is excluded and counted
+// toward the 5% rule; a parse-fail is measured), and the in-band path counts an
+// invoke-error as judge_error. The fail-safe verdicts themselves are unchanged.
+
+const R1 = { requestParams: { model: 'm', temperature: 0 }, servedModel: 'm', systemFingerprint: 'fp_1', reasoningTokens: 0, stopReason: 'stop' };
+const judgeVia = (invoke) => judgeContradiction('older', 'newer', { provider: 'openai', _providerOverride: { contradictionJudgeInvoke: invoke } });
+
+test('judge: a parsed verdict is ok and carries the five R1 fields', async () => {
+  const v = await judgeVia(async () => ({ content: '{"contradicts":true,"confidence":0.9,"reasoning":"r"}', usage: { tokensIn: 1, tokensOut: 1 }, ...R1 }));
+  assert.equal(v.ok, true);
+  assert.equal(v.failCause, undefined);
+  assert.equal(v.contradicts, true);
+  assert.equal(v.confidence, 0.9);
+  for (const [k, val] of Object.entries(R1)) assert.deepEqual(v[k], val, k);
+});
+
+test('judge: a parse-fail is ok:false, failCause parse-fail, keeps the R1 fields and the fail-safe verdict', async () => {
+  const v = await judgeVia(async () => ({ content: 'not json', usage: { tokensIn: 1, tokensOut: 1 }, ...R1 }));
+  assert.deepEqual({ ok: v.ok, failCause: v.failCause, contradicts: v.contradicts, confidence: v.confidence, reasoning: v.reasoning },
+    { ok: false, failCause: 'parse-fail', contradicts: false, confidence: 0, reasoning: 'parse-fail' });
+  assert.equal(v.stopReason, 'stop');
+  assert.deepEqual(v.requestParams, R1.requestParams);
+});
+
+test('judge: a throwing invoke is ok:false, failCause invoke-error, with the fail-safe verdict and no response fields', async () => {
+  const v = await judgeVia(async () => { throw new Error('429'); });
+  assert.deepEqual({ ok: v.ok, failCause: v.failCause, contradicts: v.contradicts, confidence: v.confidence },
+    { ok: false, failCause: 'invoke-error', contradicts: false, confidence: 0 });
+  assert.equal('requestParams' in v, false, 'an invoke-error carries no response');
+});
+
+test('judge: an unknown provider is an invoke-error (the call could not be made), fail-safe', async () => {
+  const v = await judgeContradiction('a', 'b', { provider: 'not-a-provider' });
+  assert.equal(v.ok, false);
+  assert.equal(v.failCause, 'invoke-error');
+  assert.equal(v.contradicts, false);
+});

@@ -13,6 +13,7 @@ import * as openaiP    from './provider/openai.mjs';
 import * as anthropicP from './provider/anthropic.mjs';
 import * as googleP    from './provider/google.mjs';
 import * as ollamaP    from './provider/ollama.mjs';
+import { r1Record }    from './provider/call-record.mjs';
 
 // §3.4 temporal-context guard — must appear verbatim in every judge system prompt.
 // Exported so tests can assert exact presence without re-spelling the string.
@@ -55,7 +56,13 @@ export const JUDGE_BACKENDS = {
  * @param {string}   [opts.host]              - Ollama host override
  * @param {object}   [opts._providerOverride] - Test seam: object with contradictionJudgeInvoke;
  *                                              bypasses backend dispatch entirely.
- * @returns {Promise<{contradicts: boolean, confidence: number, reasoning: string, usage: object}>}
+ * @returns {Promise<{contradicts: boolean, confidence: number, reasoning: string, usage: object,
+ *   ok: boolean, failCause?: 'invoke-error'|'parse-fail', requestParams?: object, servedModel?: string|null,
+ *   systemFingerprint?: string|null, reasoningTokens?: number|null, stopReason?: string|null}>}
+ *   `ok`/`failCause` say why a verdict is the fail-safe one, and the R1 fields say what the call
+ *   sent and how it ended (model migration Phase B, spec R1). An invoke-error carries no R1
+ *   fields: there was no response. Production reads only the verdict, plus failCause on the
+ *   in-band path (add.mjs counts an invoke-error as judge_error).
  */
 export async function judgeContradiction(olderFact, newerFact, opts = {}) {
   // Provider resolution: opts.provider → UM_CONTRADICTION_PROVIDER → UM_SUMMARIZER_PROVIDER → 'openai'
@@ -77,10 +84,12 @@ export async function judgeContradiction(olderFact, newerFact, opts = {}) {
   // Test seam: _providerOverride bypasses backend dispatch (mirrors summarize.mjs).
   const invoke = opts._providerOverride?.contradictionJudgeInvoke ?? b?.invoke;
 
-  if (!invoke) {
-    // Unknown / missing provider — fail-safe.
-    return { contradicts: false, confidence: 0, reasoning: 'parse-fail', usage: { tokensIn: 0, tokensOut: 0 } };
-  }
+  // Fail toward NOT superseding — a false supersession is silent recall loss.
+  const failsafe = (failCause, usage = { tokensIn: 0, tokensOut: 0 }, record = {}) =>
+    ({ contradicts: false, confidence: 0, reasoning: 'parse-fail', usage, ok: false, failCause, ...record });
+
+  // Unknown / missing provider: the call cannot be made, which is an invoke-error.
+  if (!invoke) return failsafe('invoke-error');
 
   const prompt =
     `OLDER FACT:\n${olderFact}\n\nNEWER FACT:\n${newerFact}`;
@@ -94,14 +103,13 @@ export async function judgeContradiction(olderFact, newerFact, opts = {}) {
       systemPrompt: JUDGE_SYSTEM_PROMPT,
     });
   } catch {
-    // Invoke error → fail-safe (same as parse failure).
-    return { contradicts: false, confidence: 0, reasoning: 'parse-fail', usage: { tokensIn: 0, tokensOut: 0 } };
+    return failsafe('invoke-error');
   }
 
   const usage = raw.usage ?? { tokensIn: 0, tokensOut: 0 };
+  const record = r1Record(raw);
 
   // Strict JSON parse; ANY throw → fail-safe.
-  // Fail toward NOT superseding — a false supersession is silent recall loss.
   try {
     const stripped = (raw.content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
     const parsed = JSON.parse(stripped);
@@ -110,8 +118,10 @@ export async function judgeContradiction(olderFact, newerFact, opts = {}) {
       confidence:  typeof parsed.confidence === 'number' ? parsed.confidence : 0,
       reasoning:   typeof parsed.reasoning  === 'string' ? parsed.reasoning  : '',
       usage,
+      ok: true,
+      ...record,
     };
   } catch {
-    return { contradicts: false, confidence: 0, reasoning: 'parse-fail', usage };
+    return failsafe('parse-fail', usage, record);
   }
 }

@@ -105,3 +105,42 @@ test('judgeExtraction: recall is judged without the INPUT, precision without the
   assert.equal(v.ok, true);
   assert.deepEqual(v.usage, { tokensIn: 4, tokensOut: 2 });
 });
+
+// --- R1 call records, per judge call (model migration Phase B, spec R1) ---
+
+test('judgeExtraction: passes each judge call\'s R1 fields through in calls[], recall first, with its latency', async () => {
+  const override = { answerGradeInvoke: async (prompt) => {
+    const recall = prompt.startsWith('GOLD');
+    return {
+      content: JSON.stringify(recall ? { goldMatched: [true] } : { extractedSupported: [false] }),
+      usage: { tokensIn: 1, tokensOut: 1 },
+      requestParams: { model: 'm', max_tokens: 768 }, servedModel: recall ? 'm-r' : 'm-p',
+      systemFingerprint: null, reasoningTokens: 0, stopReason: 'stop',
+    };
+  } };
+  const v = await judgeExtraction('in', ['g1'], ['e1'], { _providerOverride: override });
+  assert.equal(v.calls.length, 2);
+  assert.deepEqual(v.calls.map((c) => [c.question, c.ok, c.servedModel]), [['recall', true, 'm-r'], ['precision', true, 'm-p']]);
+  for (const c of v.calls) {
+    assert.deepEqual(c.requestParams, { model: 'm', max_tokens: 768 });
+    assert.equal(c.stopReason, 'stop');
+    assert.equal(typeof c.ms, 'number');
+  }
+});
+
+test('judgeExtraction: a failed call keeps its own failCause in calls[]; an invoke-error call has no response fields', async () => {
+  const override = { answerGradeInvoke: async (prompt) => {
+    if (prompt.startsWith('GOLD')) throw new Error('500');
+    return { content: 'not json', usage: {}, requestParams: { model: 'm' }, servedModel: 'm', systemFingerprint: null, reasoningTokens: 0, stopReason: 'length' };
+  } };
+  const v = await judgeExtraction('in', ['g1'], ['e1'], { _providerOverride: override });
+  assert.equal(v.ok, false);
+  const [recall, precision] = v.calls;
+  assert.deepEqual([recall.ok, recall.failCause, 'requestParams' in recall], [false, 'invoke-error', false]);
+  assert.deepEqual([precision.ok, precision.failCause, precision.stopReason], [false, 'parse-fail', 'length']);
+});
+
+test('judgeExtraction: nothing extracted → no judge calls recorded', async () => {
+  const v = await judgeExtraction('in', ['g1'], [], { _providerOverride: fake('{}') });
+  assert.deepEqual(v.calls, []);
+});
