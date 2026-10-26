@@ -2,7 +2,14 @@
 // (docs/plans/2026-10-25-model-migration-phase-b/prereg.md "Roles, inputs and records"): the R1
 // fields, ok and failCause, and the call's latency. An invoke-error carries only ok, failCause and
 // its latency (there was no response), which the frozen scorer relies on.
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { R1_FIELDS } from '../../lib/provider/call-record.mjs';
+
+/** sha256 of a file's bytes: each run records the inputs it read, which the frozen scorer checks. */
+export async function fileSha256(path) {
+  return createHash('sha256').update(await readFile(path)).digest('hex');
+}
 
 export const CALL_FIELDS = Object.freeze(['ok', 'failCause', ...R1_FIELDS, 'ms']);
 

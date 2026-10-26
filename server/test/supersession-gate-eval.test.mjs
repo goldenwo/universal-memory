@@ -4,7 +4,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { runGate, juneInBand, inBandIntegrity, loadGateRows, FLOOR } from '../eval/supersession-gate-eval.mjs';
+import { createHash } from 'node:crypto';
+import { runGate, juneInBand, inBandIntegrity, loadGateRows, FLOOR, gateFixtureDigests, GATE_FIXTURES } from '../eval/supersession-gate-eval.mjs';
+
+test('gateFixtureDigests: the sha256 of each fixture loadGateRows reads, keyed by path (a run records them)', async () => {
+  const d = await gateFixtureDigests();
+  assert.deepEqual(Object.keys(d), [...GATE_FIXTURES]);
+  for (const f of GATE_FIXTURES) {
+    assert.equal(d[f], createHash('sha256').update(await readFile(new URL(`../${f}`, import.meta.url))).digest('hex'));
+  }
+});
 
 const june = JSON.parse(await readFile(new URL('../eval/results/2026-06-19-supersession-gate-eval-ceil1.json', import.meta.url), 'utf8'));
 const juneById = new Map(june.perRow.map((r) => [r.id, r]));

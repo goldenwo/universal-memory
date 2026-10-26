@@ -19,7 +19,7 @@ import { dirname } from 'node:path';
 import { fHalfFrom, f1From } from './fbeta.mjs';
 import { pickThreshold } from './d3-eval.mjs';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
-import { timed, callRecord } from './lib/call-record.mjs';
+import { timed, callRecord, fileSha256 } from './lib/call-record.mjs';
 // TAU_ANSWER relocated to lib/answer-grader.mjs (read-path bouncer needs it without a prod→eval
 // import). Re-exported here so existing importers (memory-quality-eval.mjs) keep working.
 export { TAU_ANSWER } from '../lib/answer-grader.mjs';
@@ -126,7 +126,7 @@ async function cliMain() {
   const model = process.env.UM_ANSWER_GRADER_MODEL;
   const rows = await loadFixtureJsonl(args.fixture);
   const runs = await runGrader({ rows, grade: gradeAnswer, model, runs: args.runs });
-  const result = { timestamp: new Date().toISOString(), fixture: args.fixture, model, precisionFloor: PRECISION_FLOOR, runs };
+  const result = { timestamp: new Date().toISOString(), fixture: args.fixture, fixtureSha256: await fileSha256(args.fixture), model, precisionFloor: PRECISION_FLOOR, runs };
   await mkdir(dirname(args.out), { recursive: true });
   await writeFile(args.out, JSON.stringify(result, null, 2) + '\n', 'utf8');
   for (const r of runs) {

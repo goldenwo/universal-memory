@@ -19,8 +19,13 @@ import {
   THRESHOLDS,
   parseArgs,
   runMerge,
+  loadInputs,
 } from '../eval/state-cap-eval.mjs';
 import { SECTION_LIMITS } from '../lib/state-cap.mjs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { tempDir } from './helpers/tmpdir.mjs';
 
 const FM = '---\nschema_version: 1\ntype: state\nid: state-x\nvalid_from: 2026-09-20T00:00:00.000Z\nproject: x\n---\n\n# State of play — x\n';
 const SUPPLIED = '2026-09-25';
@@ -271,6 +276,21 @@ test('runMerge: summarizes with the named provider and model, and records the ca
   assert.equal(m.call.ok, true);
   for (const [k, v] of Object.entries(R1)) assert.deepEqual(m.call[k], v, k);
   assert.equal(typeof m.call.ms, 'number');
+});
+
+test('loadInputs: each project\'s state and summary, with the sha256 of both files as read', async () => {
+  const dir = tempDir('um-state-cap-inputs-');
+  await mkdir(join(dir, 'state', 'p'), { recursive: true });
+  await mkdir(join(dir, 'sessions', 'p'), { recursive: true });
+  const stateMd = '# state\n';
+  const sessionMd = '---\ncovers_until: 2026-09-25T00:00:00.000Z\n---\nbody\n';
+  await writeFile(join(dir, 'state', 'p', 'state.md'), stateMd);
+  await writeFile(join(dir, 'sessions', 'p', 's.md'), sessionMd);
+  const inputs = await loadInputs(dir, { p: { summary: 's.md' } });
+  const h = (s) => createHash('sha256').update(s).digest('hex');
+  assert.deepEqual(inputs.p.sha256, { state: h(stateMd), session: h(sessionMd) });
+  assert.equal(inputs.p.summary, 'body\n');
+  assert.equal(inputs.p.asOf, '2026-09-25T00:00:00.000Z');
 });
 
 test('runMerge: a thrown summarize() is recorded as an invoke-error call, not a run exception', async () => {

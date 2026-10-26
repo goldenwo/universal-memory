@@ -29,7 +29,7 @@ import {
   SECTION_LIMITS,
   STATE_CAP_CHARS,
 } from '../lib/state-cap.mjs';
-import { callRecord } from './lib/call-record.mjs';
+import { callRecord, fileSha256 } from './lib/call-record.mjs';
 
 const DAY_MS = 86_400_000;
 const RETENTION_SECTIONS = ['In flight', 'Next actions'];
@@ -356,15 +356,25 @@ function splitFrontmatter(md) {
   return { fm, body: md.slice(m[0].length) };
 }
 
-async function loadInputs(inputsDir, labels) {
+/**
+ * Each project's input state and summary, with the sha256 of both files as read (model migration
+ * Phase B: a run records the inputs it used, which the frozen scorer checks — the inputs are
+ * gitignored, so a clean tree does not pin them).
+ */
+export async function loadInputs(inputsDir, labels) {
   const inputs = {};
   for (const [project, lab] of Object.entries(labels)) {
-    const state = await fs.readFile(path.join(inputsDir, 'state', project, 'state.md'), 'utf8');
-    const summaryRaw = await fs.readFile(path.join(inputsDir, 'sessions', project, lab.summary), 'utf8');
+    const statePath = path.join(inputsDir, 'state', project, 'state.md');
+    const sessionPath = path.join(inputsDir, 'sessions', project, lab.summary);
+    const state = await fs.readFile(statePath, 'utf8');
+    const summaryRaw = await fs.readFile(sessionPath, 'utf8');
     const { fm, body } = splitFrontmatter(summaryRaw);
     const asOf = fm.covers_until ?? fm.valid_from;
     if (!asOf) throw new Error(`${project}: the summary has neither covers_until nor valid_from`);
-    inputs[project] = { state, summary: body, asOf, asOfSource: fm.covers_until ? 'covers_until' : 'valid_from' };
+    inputs[project] = {
+      state, summary: body, asOf, asOfSource: fm.covers_until ? 'covers_until' : 'valid_from',
+      sha256: { state: await fileSha256(statePath), session: await fileSha256(sessionPath) },
+    };
   }
   return inputs;
 }
@@ -458,6 +468,8 @@ if (IS_MAIN) {
   const ranAt = new Date().toISOString();
   const projects = args.project ? [args.project] : Object.keys(labels);
   const arm = { model: args.model, provider: args.provider };
+  // The inputs this run read, by sha256 (the scorer checks them against the freeze).
+  const provenance = { inputs_sha256: Object.fromEntries(Object.entries(inputs).map(([p, v]) => [p, v.sha256])), labels_sha256: await fileSha256(labelsPath) };
 
   if (!args.pass2) {
     if (!args.promptDir) { console.error('--prompt-dir is required for a pass-1 arm'); process.exit(2); }
@@ -475,7 +487,7 @@ if (IS_MAIN) {
       docs.push({ project, as_of: inp.asOf, as_of_source: inp.asOfSource, supplied_date: suppliedDate, call: merge.call, metrics, report: merge.report, cost_usd: merge.cost_usd, tokens_in: merge.tokens_in, tokens_out: merge.tokens_out, raw: merge.raw, written: merge.written });
       console.log(`[state-cap-eval] ${args.arm} ${project}: len ${metrics.length} headings ${metrics.headings}/6 inflight ${metrics.inflight_units} stamped ${metrics.all_stamped} invented ${metrics.dating.invented} retention ${metrics.retention.ok} cf ${metrics.current_focus_len}`);
     }
-    await fs.writeFile(args.out, JSON.stringify({ arm: args.arm, ...arm, prompt_dir: args.promptDir, ran_at: ranAt, control, docs }, null, 2) + '\n', 'utf8');
+    await fs.writeFile(args.out, JSON.stringify({ arm: args.arm, ...arm, ...provenance, prompt_dir: args.promptDir, ran_at: ranAt, control, docs }, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] pass 1 (${args.arm}) written to ${args.out}`);
   } else {
     const pass1 = JSON.parse(await fs.readFile(args.pass2, 'utf8'));
@@ -506,7 +518,7 @@ if (IS_MAIN) {
       docs.push({ project, supplied_date: suppliedDate, backdated_date: backdatedDate, selected, call: merge.call, conditions, report: merge.report, cost_usd: merge.cost_usd, input2, raw2: merge.raw, written2: merge.written });
       console.log(`[state-cap-eval] pass 2 ${project}: n ${conditions.n} cond1 ${conditions.cond1.ok} cond2 ${conditions.cond2.ok} cond3 ${conditions.cond3.ok} (backdated ${selected.filter(s => s.backdated).length}/${selected.length}, dropped by model ${conditions.backdated_dropped_by_model})`);
     }
-    await fs.writeFile(args.out, JSON.stringify({ arm: 'new', pass: 2, ...arm, prompt_dir: promptDir, ran_at: ranAt, docs }, null, 2) + '\n', 'utf8');
+    await fs.writeFile(args.out, JSON.stringify({ arm: 'new', pass: 2, ...arm, ...provenance, prompt_dir: promptDir, ran_at: ranAt, docs }, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] pass 2 written to ${args.out}`);
   }
 }

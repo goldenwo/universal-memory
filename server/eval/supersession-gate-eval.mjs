@@ -38,7 +38,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
-import { timed, callRecord } from './lib/call-record.mjs';
+import { timed, callRecord, fileSha256 } from './lib/call-record.mjs';
 
 // Labels in dedup-labels.json that are genuine re-ingests (must MERGE, never supersede).
 const MERGE_POSITIVE = new Set(['identical', 'duplicate', 'paraphrase', 'near-duplicate', 'near_dup']);
@@ -73,6 +73,15 @@ export async function loadGateRows() {
       kind: 'dup', group: r.label,
     })),
   ];
+}
+
+export const GATE_FIXTURES = Object.freeze(['eval/held-out-contradiction-set.jsonl', 'eval/over-supersession-set.jsonl', 'test/fixtures/dedup-labels.json']);
+
+/** sha256 of each fixture loadGateRows reads, keyed by its server-relative path (a run records them). */
+export async function gateFixtureDigests() {
+  const out = {};
+  for (const f of GATE_FIXTURES) out[f] = await fileSha256(fileURLToPath(new URL(`../${f}`, import.meta.url)));
+  return out;
 }
 
 /** The June in-band id lists by kind (sorted), from that run's perRow — the frozen set. */
@@ -195,6 +204,7 @@ async function main() {
     judgeModel: JUDGE_MODEL,
     embeddingModel: process.env.UM_EMBEDDING_MODEL ?? 'text-embedding-3-small',
     floor: FLOOR, ceiling: CEILING, runs: RUNS, judgeThreshold: 0,
+    fixtureSha256: await gateFixtureDigests(),
     inBandRef: 'eval/results/2026-06-19-supersession-gate-eval-ceil1.json',
     integrity,
     perRow: judged.map(({ id, kind, group, lane, cosine, inBand, runs, older, newer }) => ({ id, kind, group, lane, cosine, inBand, runs, older, newer })),
