@@ -2,14 +2,12 @@
 
 Two dimensions of examples:
 
-- **Developer integrations** — code showing how to call UM from external agent frameworks. Shipped in v0.3.0-alpha.
+- **Developer integrations** — code showing how to call UM from external agent frameworks.
 - **Deployment scenarios** — end-to-end setups for common environments. Scaffold; examples will be added as real-world configurations stabilize.
 
 ## Developer integrations
 
-### [`openai-assistants/`](openai-assistants/) — OpenAI Assistants API
-
-Runnable Node + Python examples of an Assistant equipped with `memory_search` and `memory_state` as function tools backed by UM's HTTP surface. Smoke-tested end-to-end. See its [README](openai-assistants/README.md) for run commands, expected output, and the known-issues list (including the Assistants-API-deprecated note).
+The OpenAI Assistants API example (shipped in v0.3.0-alpha) was removed in v1.30.0: OpenAI removed the Assistants API on 2026-08-26, so it could not run under any model.
 
 ### [`openai-agents-sdk/DEFERRED.md`](openai-agents-sdk/DEFERRED.md) — deferred to v0.4
 

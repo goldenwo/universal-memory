@@ -93,8 +93,6 @@ const ALLOWED = new Map([
   ['cli/test/reindex-phase4-7.test.mjs', 'text-embedding-004 is an embedding-switch fixture, never called'],
   ['plugins/claude-code/universal-memory/hooks/lib/summarize.test.sh', 'pins the legacy (pre-luna) request body for an operator-pinned model'],
   ['plugins/claude-code/universal-memory/hooks/lib/update-state.test.sh', 'pins the legacy (pre-luna) request body for an operator-pinned model'],
-  ['examples/openai-assistants/assistants-memory-tool.mjs', 'the Assistants API example, dead since 2026-08-26; deleted under spec R8 (plan T8)'],
-  ['examples/openai-assistants/assistants-memory-tool.py', 'the Assistants API example, dead since 2026-08-26; deleted under spec R8 (plan T8)'],
 ]);
 
 const EXT = /\.(mjs|js|sh|py)$/;

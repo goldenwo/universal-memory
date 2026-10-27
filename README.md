@@ -264,7 +264,7 @@ universal-memory/
 ├── installer/    Install wizards (server, CLI, plugins)
 ├── cli/          `um` command-line toolkit source
 ├── plugins/      Per-surface connectors (Claude Code and Codex share one; OpenClaw, ChatGPT Custom GPT)
-└── examples/     Integration examples (OpenAI Assistants, …)
+└── examples/     Integration examples and deferred-example notes
 ```
 
 ---
