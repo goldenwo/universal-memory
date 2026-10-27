@@ -311,7 +311,7 @@ test('detectContradictionsInBatch: omitted thresholds apply eval-derived default
   const _embed = async () => ({ vector: TEST_VECTOR });
   const makeFind = () => async ({ threshold }) => { findThreshold = threshold; return [CANDIDATE]; };
 
-  // Judged at 0.90 (≥ default judge 0.80) → supersedes.
+  // Judged at 0.90 (≥ every provider's default judge τ: 0.85 openai, 0.80 elsewhere) → supersedes.
   const resultHigh = await detectContradictionsInBatch('transcript', {
     userId: TEST_USER,
     lane: TEST_LANE,
@@ -324,10 +324,11 @@ test('detectContradictionsInBatch: omitted thresholds apply eval-derived default
 
   // Default retrieval τ must be ≤ 0.50 (candidate at 0.50 was retrievable) and is the pinned 0.45.
   assert.equal(findThreshold, 0.45, 'default retrievalThreshold must be the eval-derived 0.45');
-  assert.equal(resultHigh.length, 1, 'confidence 0.90 ≥ default judge τ (0.80) → must supersede');
+  assert.equal(resultHigh.length, 1, 'confidence 0.90 ≥ default judge τ → must supersede');
   assert.equal(resultHigh[0].targetId, CANDIDATE.id);
 
-  // Judged at 0.70 (< default judge 0.80) → does NOT supersede, proving the default judge τ is 0.80 not lower.
+  // Judged at 0.70 (< every provider's default judge τ) → does NOT supersede, proving the default
+  // is above 0.70 (test 6b pins the exact per-provider value).
   const resultLow = await detectContradictionsInBatch('transcript', {
     userId: TEST_USER,
     lane: TEST_LANE,

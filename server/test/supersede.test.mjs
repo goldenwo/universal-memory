@@ -18,6 +18,7 @@ import {
   contradictionBandCeiling,
   autoSupersedeJudgeThreshold,
   defaultJudgeThreshold,
+  judgeThresholdOverride,
   evaluateInBandSupersession,
 } from '../lib/supersede.mjs';
 
@@ -77,6 +78,20 @@ test('autoSupersedeJudgeThreshold: resolves per judge provider (openai 0.85; ant
     'the contradiction provider wins over the summarizer provider');
   assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: 'openai', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.85);
   assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'no-such-provider' }), 0.80, 'an unknown provider keeps 0.80');
+});
+
+// One parser for UM_AUTOSUPERSEDE_THRESHOLD, shared by the in-band path and the checkpoint's
+// detector call, so a malformed value resolves the same way on both: to no override.
+test('judgeThresholdOverride: the parsed env value, or undefined when unset, blank or non-numeric', () => {
+  assert.equal(judgeThresholdOverride({}), undefined);
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: '0.9' }), 0.9);
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: '' }), undefined);
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: ' ' }), undefined);
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: 'abc' }), undefined);
+  for (const v of ['', ' ', 'abc', '0.9']) {
+    const env = { UM_AUTOSUPERSEDE_THRESHOLD: v };
+    assert.equal(autoSupersedeJudgeThreshold(env), judgeThresholdOverride(env) ?? defaultJudgeThreshold(env), `in-band agrees for ${JSON.stringify(v)}`);
+  }
 });
 
 test('defaultJudgeThreshold: the provider default alone, without the env override', () => {

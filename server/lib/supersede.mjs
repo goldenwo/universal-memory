@@ -225,17 +225,27 @@ export function defaultJudgeThreshold(env = process.env) {
 }
 
 /**
+ * The operator's UM_AUTOSUPERSEDE_THRESHOLD as a number, or undefined when it is unset, blank
+ * or not numeric. The one parser for the variable: the in-band path (below) and the
+ * checkpoint's detector call (checkpoint-chunk-txn.mjs) both use it, so a malformed value
+ * falls back to the default on both, never to NaN (never supersede) or 0 (always supersede).
+ */
+export function judgeThresholdOverride(env = process.env) {
+  const n = Number.parseFloat(env.UM_AUTOSUPERSEDE_THRESHOLD);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
  * Judge-confidence threshold for an inline in-band supersession:
  * UM_AUTOSUPERSEDE_THRESHOLD, else defaultJudgeThreshold().
  *
  * Reuses UM_AUTOSUPERSEDE_THRESHOLD — the same env var the session-end detector is handed
- * (checkpoint-chunk-txn.mjs passes it, or undefined so the detector applies the same
- * defaultJudgeThreshold), so the write-time and session-end paths agree on what counts as a
- * confident contradiction.
+ * (checkpoint-chunk-txn.mjs passes judgeThresholdOverride(), undefined when unset, so the
+ * detector applies the same defaultJudgeThreshold), so the write-time and session-end paths
+ * agree on what counts as a confident contradiction.
  */
 export function autoSupersedeJudgeThreshold(env = process.env) {
-  const n = Number.parseFloat(env.UM_AUTOSUPERSEDE_THRESHOLD);
-  return Number.isFinite(n) ? n : defaultJudgeThreshold(env);
+  return judgeThresholdOverride(env) ?? defaultJudgeThreshold(env);
 }
 
 /**
