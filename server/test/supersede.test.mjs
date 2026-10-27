@@ -78,6 +78,10 @@ test('autoSupersedeJudgeThreshold: resolves per judge provider (openai 0.85; ant
     'the contradiction provider wins over the summarizer provider');
   assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: 'openai', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.85);
   assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'no-such-provider' }), 0.80, 'an unknown provider keeps 0.80');
+  // A blank variable is unset (the summarize.mjs convention), so it falls through the chain
+  // exactly as judgeContradiction's provider does.
+  assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: '' }), 0.85, 'blank → the next link (openai)');
+  assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: '', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.80);
 });
 
 // One parser for UM_AUTOSUPERSEDE_THRESHOLD, shared by the in-band path and the checkpoint's

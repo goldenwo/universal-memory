@@ -211,7 +211,7 @@ async function cliMain() {
   // The grader: G's verdict, gpt-5.6-luna (model migration Phase B window 2, committed 0c4ca22),
   // through the library's own fallback constant so the eval and judgeExtraction cannot disagree.
   const { EXTRACTION_GRADER_FALLBACK_MODEL } = await import('../lib/extraction-grader.mjs');
-  const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? EXTRACTION_GRADER_FALLBACK_MODEL;
+  const model = process.env.UM_EXTRACTION_GRADER_MODEL || EXTRACTION_GRADER_FALLBACK_MODEL;
   const rows = [];
   for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
   const fixtureSha256 = await fixtureDigests(args.fixtures);

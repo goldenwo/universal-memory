@@ -360,9 +360,10 @@ test('UM_SUMMARIZER_EFFORT is the summarizer\'s alone: judge, grader and facts k
   assert.deepEqual(legacy.calls[0], { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'p' }] });
 });
 
+// The env value differs from the default (low), so a mock that ignored the env would go red.
 test('summarizerInvoke under UM_TEST_MOCK_SDK=1 records the effort it would send', async () => {
-  const r = await openai.summarizerInvoke('p', { model: 'gpt-6-luna', env: { UM_TEST_MOCK_SDK: '1', UM_SUMMARIZER_EFFORT: 'low' } });
-  assert.deepEqual(r.requestParams, { model: 'gpt-6-luna', reasoning_effort: 'low' });
+  const r = await openai.summarizerInvoke('p', { model: 'gpt-6-luna', env: { UM_TEST_MOCK_SDK: '1', UM_SUMMARIZER_EFFORT: 'high' } });
+  assert.deepEqual(r.requestParams, { model: 'gpt-6-luna', reasoning_effort: 'high' });
 });
 
 test('factsInvoke on a luna model sends the caller\'s effort when one is given', async () => {

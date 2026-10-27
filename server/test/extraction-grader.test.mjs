@@ -120,7 +120,7 @@ test('judgeExtraction: model resolves opts.model → UM_EXTRACTION_GRADER_MODEL 
   } };
   const saved = process.env.UM_EXTRACTION_GRADER_MODEL;
   try {
-    delete process.env.UM_EXTRACTION_GRADER_MODEL;
+    process.env.UM_EXTRACTION_GRADER_MODEL = ''; // blank = unset
     await judgeExtraction('in', ['g'], ['e'], { _providerOverride: override });
     process.env.UM_EXTRACTION_GRADER_MODEL = 'env-model';
     await judgeExtraction('in', ['g'], ['e'], { _providerOverride: override });

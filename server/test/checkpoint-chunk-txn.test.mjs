@@ -882,6 +882,31 @@ test('5b: judgeThreshold threads through as undefined when UM_AUTOSUPERSEDE_THRE
   assert.equal(seen[3].judgeThreshold, undefined, 'non-numeric → undefined (Number("abc") would be NaN: never supersede)');
 });
 
+// The same class for the retrieval cosine override: whitespace must not become 0 (retrieve every
+// candidate) nor 'abc' NaN (retrieve none). Blank or non-numeric → undefined, the detector's 0.45.
+test('5b: retrievalThreshold is undefined when UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD is unset or malformed, and its number when set', async () => {
+  const saved = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD;
+  const seen = [];
+  try {
+    for (const value of [undefined, '0.5', ' ', 'abc']) {
+      if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = value;
+      const vault = makeVault();
+      const result = await runChunkTransaction(
+        baseArgs(vault, { lane: 'work' }),
+        baseDeps({
+          isAutoSupersedeEnabled: () => true,
+          detectContradictions: async (text, opts) => { seen.push(opts.retrievalThreshold); return []; },
+        }),
+      );
+      assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+      await fs.rm(vault, { recursive: true, force: true });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = saved;
+  }
+  assert.deepEqual(seen, [undefined, 0.5, undefined, undefined]);
+});
+
 // ===========================================================================
 // Section F — per-chunk cost telemetry.
 // ===========================================================================

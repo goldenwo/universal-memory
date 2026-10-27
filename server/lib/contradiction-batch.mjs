@@ -93,7 +93,7 @@ export async function detectContradictionsInBatch(transcript, {
   // The judge τ is the judge provider's own, resolved per call (defaultJudgeThreshold):
   // 0.85 on openai, τ* re-measured on gpt-6-luna at effort none (model migration Phase B
   // window 2, committed 0c4ca22) because luna takes no temperature 0; 0.80 on a provider
-  // with no measurement of its own (pinned 2026-06-02 on gpt-4o-mini, d3-latest.json).
+  // with no τ* of its own (pinned 2026-06-02 on gpt-4o-mini, d3-latest.json).
   judgeThreshold = defaultJudgeThreshold(), // judge-confidence gate (supersede iff confidence >= this)
   retrievalThreshold = 0.45, // candidate-retrieval cosine (passed to _find as score_threshold)
   collection,

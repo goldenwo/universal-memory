@@ -26,7 +26,9 @@ export const defaults = {
   // better identifier recall, retention and cost, but it failed S-state invented dates (9.6
   // against ≥ 9.8), SS5 length (3298 against ≤ 2575) and the SS4 guard (3 of 3 red, each a
   // refusal naming the injected function), and the judge (no τ reaches JR1 0.95). The release
-  // notes carry the flag and the pin that keeps today's behaviour. facts: #391 (2026-10-20),
+  // notes carry the flag, and the pins that keep today's behaviour: UM_SUMMARIZER_MODEL,
+  // UM_CONTRADICTION_MODEL (the judge never reads UM_SUMMARIZER_MODEL) and UM_FACTS_MODEL, each
+  // = claude-haiku-4-5-20251001. facts: #391 (2026-10-20),
   // Haiku 5.5 at effort low, equal noise abstention and precision to the baseline.
   summarizerModel: 'claude-haiku-5-5',
   factsModel: 'claude-haiku-5-5',

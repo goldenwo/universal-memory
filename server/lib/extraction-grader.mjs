@@ -59,15 +59,16 @@ const numbered = (facts) => facts.map((f, i) => `${i + 1}. ${f}`).join('\n');
  *   {question, ok, failCause?, ms, ...the five R1 fields}; an invoke-error call has no R1 fields.
  */
 export async function judgeExtraction(inputText, goldFacts, extractedFacts, opts = {}) {
+  // A blank variable counts as unset (the summarize.mjs convention).
   const providerName =
     opts.provider ??
-    process.env.UM_EXTRACTION_GRADER_PROVIDER ??
-    process.env.UM_ANSWER_GRADER_PROVIDER ??
-    'openai';
+    (process.env.UM_EXTRACTION_GRADER_PROVIDER ||
+    process.env.UM_ANSWER_GRADER_PROVIDER ||
+    'openai');
   const invoke =
     opts._providerOverride?.answerGradeInvoke ??
     (providerName === 'openai' ? openaiP.answerGradeInvoke : null);
-  const model = opts.model ?? process.env.UM_EXTRACTION_GRADER_MODEL ?? EXTRACTION_GRADER_FALLBACK_MODEL;
+  const model = opts.model ?? (process.env.UM_EXTRACTION_GRADER_MODEL || EXTRACTION_GRADER_FALLBACK_MODEL);
 
   const goldArr = goldFacts ?? [];
   const extractedArr = extractedFacts ?? [];

@@ -299,9 +299,9 @@ export async function runChunkTransaction(args, deps = {}) {
   // checkpoint.mjs; undefined lets the detector apply its own eval-derived default (the judge
   // provider's τ). The judge override is parsed exactly as the in-band path parses it.
   const autoJudgeThreshold = judgeThresholdOverride();
-  const autoRetrievalThreshold = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD
-    ? Number(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD)
-    : undefined;
+  // Parsed the same way: blank or non-numeric → undefined (the detector's 0.45), never 0 or NaN.
+  const retrievalOverride = Number.parseFloat(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD);
+  const autoRetrievalThreshold = Number.isFinite(retrievalOverride) ? retrievalOverride : undefined;
 
   // Single clock() call (append-turn.mjs convention) — reused for both the
   // per-day telemetry path and the frontmatter's valid_from so both reflect

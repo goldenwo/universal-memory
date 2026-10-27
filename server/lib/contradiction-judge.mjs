@@ -45,11 +45,13 @@ export const JUDGE_BACKENDS = {
 
 /**
  * The judge's provider when the caller names none: UM_CONTRADICTION_PROVIDER →
- * UM_SUMMARIZER_PROVIDER → 'openai'. The supersede threshold default resolves through the
- * same chain (supersede.mjs defaultJudgeThreshold), so a provider's measured τ* goes with it.
+ * UM_SUMMARIZER_PROVIDER → 'openai', a blank variable counting as unset (the summarize.mjs
+ * convention). The supersede threshold default keys on this provider
+ * (supersede.mjs defaultJudgeThreshold), so each provider's default judge model gets the
+ * threshold set for it.
  */
 export function judgeProviderName(env = process.env) {
-  return env.UM_CONTRADICTION_PROVIDER ?? env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+  return env.UM_CONTRADICTION_PROVIDER || env.UM_SUMMARIZER_PROVIDER || 'openai';
 }
 
 /**
@@ -80,11 +82,11 @@ export async function judgeContradiction(olderFact, newerFact, opts = {}) {
   const b = JUDGE_BACKENDS[providerName];
 
   // R3-G1: model is resolved against the CONTRADICTION provider's own default —
-  // never the summarizer provider's default, never UM_SUMMARIZER_MODEL.
+  // never the summarizer provider's default, never UM_SUMMARIZER_MODEL. A blank
+  // UM_CONTRADICTION_MODEL is unset.
   const model =
     opts.model ??
-    process.env.UM_CONTRADICTION_MODEL ??
-    b?.defaults?.summarizerModel;
+    (process.env.UM_CONTRADICTION_MODEL || b?.defaults?.summarizerModel);
 
   // Test seam: _providerOverride bypasses backend dispatch (mirrors summarize.mjs).
   const invoke = opts._providerOverride?.contradictionJudgeInvoke ?? b?.invoke;

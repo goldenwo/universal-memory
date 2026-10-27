@@ -14,10 +14,12 @@
 // models are out of scope. An Anthropic "Not sooner than" floor is not an announced date
 // (claude-haiku-4-5-20251001 stays pinnable).
 //
-// The match follows no-raw-mkdtemp: literal shapes, not bare tokens — a quoted id, or an id
-// after `=`, `:-` or `model:` — so prose can name a retired model freely, and comments are
-// not stripped. An id matches with or without a dated `-YYYY-MM-DD` snapshot suffix, and
-// never as a prefix of a longer id (gpt-4o does not match gpt-4o-mini).
+// The match follows no-raw-mkdtemp: literal shapes, not bare tokens (SHAPE below: quoted,
+// vendor-prefixed, assigned, a shell default, a --model flag or a model: key), so prose can
+// name a retired model freely, and comments are not stripped. An id matches with or without a
+// dated `-YYYY-MM-DD` snapshot suffix, and never as a prefix of a longer id (gpt-4o does not
+// match gpt-4o-mini). Spec R5's walk (.mjs, .js, .sh, .py) also takes .cmd and .ps1, and the
+// extensionless executables (by shebang) that plugins/ ships as entry points.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -61,6 +63,14 @@ const RETIRING = Object.freeze([
   ['2026-01-05', ['claude-3-opus-20240229']],
   ['2025-10-28', ['claude-3-5-sonnet-20240620', 'claude-3-5-sonnet-20241022']],
   ['2025-07-21', ['claude-2.0', 'claude-2.1', 'claude-3-sonnet-20240229']],
+  ['2024-11-06', ['claude-1.0', 'claude-1.1', 'claude-1.2', 'claude-1.3', 'claude-instant-1.0', 'claude-instant-1.1', 'claude-instant-1.2']],
+  // Anthropic aliases resolve to the dated ids above and retire with them.
+  ['2026-11-30', ['claude-sonnet-4-5']],
+  ['2026-08-05', ['claude-opus-4-1']],
+  ['2026-06-15', ['claude-opus-4-0', 'claude-sonnet-4-0']],
+  ['2026-02-19', ['claude-3-7-sonnet-latest', 'claude-3-5-haiku-latest']],
+  ['2026-01-05', ['claude-3-opus-latest']],
+  ['2025-10-28', ['claude-3-5-sonnet-latest']],
   // Google
   ['2027-05-07', ['gemini-3.1-flash-lite']],
   ['2026-08-10', ['embedding-2-preview']],
@@ -79,8 +89,11 @@ const RETIRING = Object.freeze([
 const RETIRING_IDS = [...new Set(RETIRING.flatMap(([, ids]) => ids))];
 
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The shapes a default takes: quoted ('id', "id", `id`), a vendor-prefixed quoted id
+// ('models/id', 'openai/id'), an assignment (=id, --model=id), a shell default (${X:-id},
+// ${X-id}), a flag (--model id) or a key (model: id).
 const SHAPE = new RegExp(
-  `(?:['"\`]|=|:-|model:\\s*)(${RETIRING_IDS.map(escape).join('|')})(?:-\\d{4}-\\d{2}-\\d{2})?(?![\\w.-])`, 'g');
+  `(?:['"\`](?:[\\w.-]+/)*|=|:-|\\$\\{\\w+-|--model\\s+|model:\\s*)(${RETIRING_IDS.map(escape).join('|')})(?:-\\d{4}-\\d{2}-\\d{2})?(?![\\w.-])`, 'g');
 
 // Per-file exemptions, each with its reason. A file earns one only by pinning a legacy shape or
 // keeping a retired id bootable, never by defaulting to one.
@@ -95,7 +108,15 @@ const ALLOWED = new Map([
   ['plugins/claude-code/universal-memory/hooks/lib/update-state.test.sh', 'pins the legacy (pre-luna) request body for an operator-pinned model'],
 ]);
 
-const EXT = /\.(mjs|js|sh|py)$/;
+const EXT = /\.(mjs|js|sh|py|cmd|ps1)$/;
+
+// A source file by extension, or an extensionless executable script (the plugin's bin/ entry
+// points: um, um-capture, …) by its shebang.
+function isScript(p, name) {
+  if (EXT.test(p)) return true;
+  if (name.includes('.')) return false;
+  return readFileSync(p).subarray(0, 2).toString('latin1') === '#!';
+}
 
 function* walk(dir) {
   let entries;
@@ -103,7 +124,7 @@ function* walk(dir) {
   for (const e of entries) {
     const p = join(dir, e);
     if (statSync(p).isDirectory()) { if (e !== 'node_modules' && e !== '.git') yield* walk(p); }
-    else if (EXT.test(p)) yield p;
+    else if (isScript(p, e)) yield p;
   }
 }
 
@@ -180,8 +201,18 @@ test('mutation control: a retiring default in a .mjs and in a .sh is caught; pro
   put('plugins/p/hooks/fixture.sh', 'MODEL="${UM_MODEL:-gpt-4.1}"\n# gpt-4.1 in prose is fine\n');
   put('server/.env.example', '#UM_SUMMARIZER_MODEL=gpt-4o-mini\nUM_FACTS_MODEL=gemini-2.0-flash\nUM_OTHER=gpt-6-luna\n');
   put('server/test/ignored.test.mjs', "const legacy = 'gpt-4o-mini';\n");
+  // The other shapes and file kinds, one hit each.
+  put('plugins/p/bin/um-tool', '#!/usr/bin/env bash\nMODEL="${UM_MODEL-gpt-4o}"\nnode run.mjs --model gpt-4o-mini\n');
+  put('plugins/p/bin/data-blob', "not a script: 'gpt-4o-mini'\n");
+  put('installer/run.cmd', '@echo off\r\nset UM_MODEL=gpt-4.1-mini\r\n');
+  put('cli/vendor.mjs', "const g = 'models/gemini-2.0-flash';\nconst a = { model: 'claude-3-5-haiku-latest' };\nconst ok = 'claude-haiku-4-5-20251001';\n// measured on openai/gpt-4.1-nano in prose: quiet\n");
   const { found } = scan(root);
   assert.deepEqual(found.map((h) => `${h.rel}:${h.line}:${h.id}`).sort(), [
+    'cli/vendor.mjs:1:gemini-2.0-flash',
+    'cli/vendor.mjs:2:claude-3-5-haiku-latest',
+    'installer/run.cmd:2:gpt-4.1-mini',
+    'plugins/p/bin/um-tool:2:gpt-4o',
+    'plugins/p/bin/um-tool:3:gpt-4o-mini',
     'plugins/p/hooks/fixture.sh:1:gpt-4.1',
     'server/.env.example:2:gemini-2.0-flash',
     'server/lib/fixture.mjs:1:gpt-4o-mini',

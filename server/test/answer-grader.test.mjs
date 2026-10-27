@@ -12,6 +12,7 @@ test('answerGraderModel: UM_ANSWER_GRADER_MODEL, else the resolved provider\'s s
   assert.equal(answerGraderModel({}), 'gpt-6-luna');
   assert.equal(answerGraderModel({ UM_ANSWER_GRADER_MODEL: 'pinned' }), 'pinned');
   assert.equal(answerGraderModel({ UM_ANSWER_GRADER_PROVIDER: 'no-such-provider' }), null, 'an unsupported provider resolves no model');
+  assert.equal(answerGraderModel({ UM_ANSWER_GRADER_MODEL: '', UM_ANSWER_GRADER_PROVIDER: '' }), 'gpt-6-luna', 'blank = unset');
 });
 
 test('gradeAnswer: sends the model answerGraderModel resolves when the caller names none', async () => {

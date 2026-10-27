@@ -28,7 +28,8 @@ const GRADER_BACKENDS = {
   openai: { invoke: openaiP.answerGradeInvoke, requires: openaiP.requires, defaults: openaiP.defaults },
 };
 
-const graderProviderName = (env) => env.UM_ANSWER_GRADER_PROVIDER ?? env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+// A blank variable counts as unset (the summarize.mjs convention), here and in answerGraderModel.
+const graderProviderName = (env) => env.UM_ANSWER_GRADER_PROVIDER || env.UM_SUMMARIZER_PROVIDER || 'openai';
 
 /**
  * The model gradeAnswer sends when the caller names none: UM_ANSWER_GRADER_MODEL, else the
@@ -37,7 +38,7 @@ const graderProviderName = (env) => env.UM_ANSWER_GRADER_PROVIDER ?? env.UM_SUMM
  * spec R4 adds no per-role field. The mq eval records this name beside its answer pass.
  */
 export function answerGraderModel(env = process.env) {
-  return env.UM_ANSWER_GRADER_MODEL ?? GRADER_BACKENDS[graderProviderName(env)]?.defaults?.summarizerModel ?? null;
+  return env.UM_ANSWER_GRADER_MODEL || GRADER_BACKENDS[graderProviderName(env)]?.defaults?.summarizerModel || null;
 }
 
 /**
@@ -62,7 +63,7 @@ export function answerGraderModel(env = process.env) {
 export async function gradeAnswer(query, memory, opts = {}) {
   const providerName = opts.provider ?? graderProviderName(process.env);
   const b = GRADER_BACKENDS[providerName];
-  const model = opts.model ?? process.env.UM_ANSWER_GRADER_MODEL ?? b?.defaults?.summarizerModel;
+  const model = opts.model ?? (process.env.UM_ANSWER_GRADER_MODEL || b?.defaults?.summarizerModel);
   const invoke = opts._providerOverride?.answerGradeInvoke ?? b?.invoke;
 
   const failsafe = (failCause, usage = { tokensIn: 0, tokensOut: 0 }, record = {}) =>

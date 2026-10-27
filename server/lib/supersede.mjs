@@ -207,17 +207,19 @@ export function contradictionBandCeiling(env = process.env) {
   return Number.isFinite(n) ? n : 0.95;
 }
 
-// The judge threshold a provider keeps until its own judge is measured: the value pinned
-// 2026-06-02 on gpt-4o-mini (server/eval/results/d3-latest.json), re-validated at temperature
-// 0 on 06-03.
+// The judge threshold of a provider with no τ* of its own: the value pinned 2026-06-02 on
+// gpt-4o-mini (server/eval/results/d3-latest.json), re-validated at temperature 0 on 06-03.
 const UNMEASURED_JUDGE_THRESHOLD = 0.80;
 
 /**
  * The judge provider's own judge-confidence threshold (model migration Phase B, spec R4 and
  * R6(a)): `defaults.judgeThreshold` of the provider judgeContradiction resolves, else 0.80.
- * OpenAI's is τ* 0.85, measured on gpt-6-luna at effort none (window 2, committed 0c4ca22).
- * A threshold is a property of the model it was measured on, so an install on another
- * provider never inherits OpenAI's. This is the session-end detector's default
+ * OpenAI's is τ* 0.85, measured on its default judge model, gpt-6-luna, at effort none
+ * (window 2, committed 0c4ca22); Anthropic keeps 0.80 explicitly (no τ* held on
+ * claude-haiku-5-5). It keys on the provider, so it fits that provider's default judge model:
+ * an install that pins UM_CONTRADICTION_MODEL to another model must pin
+ * UM_AUTOSUPERSEDE_THRESHOLD as well (server/.env.example). A caller's opts.provider is not
+ * seen here; no production caller passes one. This is the session-end detector's default
  * (contradiction-batch.mjs `judgeThreshold`); it does not read UM_AUTOSUPERSEDE_THRESHOLD.
  */
 export function defaultJudgeThreshold(env = process.env) {

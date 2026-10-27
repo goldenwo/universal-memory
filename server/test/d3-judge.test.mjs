@@ -48,6 +48,27 @@ test('judge: R3-G1 — uses contradiction-provider own default model, not summar
   process.env.UM_SUMMARIZER_PROVIDER    = savedSumm;
 });
 
+// A blank provider or model variable is unset (the summarize.mjs convention, model migration
+// Phase B review): the judge falls through to the next link instead of sending model '' or
+// dispatching to a provider named ''.
+test('judge: a blank UM_CONTRADICTION_PROVIDER / UM_CONTRADICTION_MODEL falls through the chain', async () => {
+  const VARS = ['UM_CONTRADICTION_PROVIDER', 'UM_CONTRADICTION_MODEL', 'UM_SUMMARIZER_PROVIDER'];
+  const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
+  let seen;
+  const stub = { contradictionJudgeInvoke: async (p, o) => { seen = o.model; return { content: '{"contradicts":false,"confidence":0}', usage: {} }; } };
+  try {
+    for (const k of VARS) delete process.env[k];
+    process.env.UM_CONTRADICTION_PROVIDER = '';
+    process.env.UM_CONTRADICTION_MODEL = '';
+    process.env.UM_SUMMARIZER_PROVIDER = 'anthropic';
+    const v = await judgeContradiction('a', 'b', { _providerOverride: stub });
+    assert.equal(v.ok, true);
+    assert.equal(seen, JUDGE_BACKENDS.anthropic.defaults.summarizerModel);
+  } finally {
+    for (const k of VARS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});
+
 // ── (b) JSON parse fail-safe ─────────────────────────────────────────────────
 //
 // If the provider returns non-JSON / malformed content, the dispatcher must
