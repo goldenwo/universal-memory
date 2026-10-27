@@ -295,6 +295,42 @@ for (const model of LUNA_MODELS) {
   }
 }
 
+// The summarizer's reasoning effort (model migration Phase B, addendum 3): UM_SUMMARIZER_EFFORT,
+// read by the summarizer alone.
+test('summarizerInvoke on a luna model sends UM_SUMMARIZER_EFFORT; unset keeps none', async () => {
+  for (const [value, want] of [[undefined, 'none'], ['low', 'low'], ['high', 'high']]) {
+    const client = capturingClient();
+    await openai.summarizerInvoke('p', { client, model: 'gpt-6-luna', env: value ? { UM_SUMMARIZER_EFFORT: value } : {} });
+    assert.equal(client.calls[0].reasoning_effort, want, `UM_SUMMARIZER_EFFORT=${value}`);
+  }
+});
+
+test('summarizerInvoke: an explicit effort wins over UM_SUMMARIZER_EFFORT; an unknown value is ignored', async () => {
+  const explicit = capturingClient();
+  await openai.summarizerInvoke('p', { client: explicit, model: 'gpt-6-luna', effort: 'medium', env: { UM_SUMMARIZER_EFFORT: 'low' } });
+  assert.equal(explicit.calls[0].reasoning_effort, 'medium');
+  const unknown = capturingClient();
+  await openai.summarizerInvoke('p', { client: unknown, model: 'gpt-6-luna', env: { UM_SUMMARIZER_EFFORT: 'max' } });
+  assert.equal(unknown.calls[0].reasoning_effort, 'none', 'an unknown value falls back to the model default');
+});
+
+test('UM_SUMMARIZER_EFFORT is the summarizer\'s alone: judge, grader and facts keep none; a legacy model drops it', async () => {
+  const env = { UM_SUMMARIZER_EFFORT: 'low' };
+  const client = capturingClient();
+  await openai.contradictionJudgeInvoke('p', { client, model: 'gpt-6-luna', env });
+  await openai.answerGradeInvoke('p', { client, model: 'gpt-6-luna', maxTokens: 768, env });
+  await openai.factsInvoke('p', { client, model: 'gpt-6-luna', env });
+  assert.deepEqual(client.calls.map((c) => c.reasoning_effort), ['none', 'none', 'none']);
+  const legacy = capturingClient();
+  await openai.summarizerInvoke('p', { client: legacy, model: 'gpt-4o-mini', env });
+  assert.deepEqual(legacy.calls[0], { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'p' }] });
+});
+
+test('summarizerInvoke under UM_TEST_MOCK_SDK=1 records the effort it would send', async () => {
+  const r = await openai.summarizerInvoke('p', { model: 'gpt-6-luna', env: { UM_TEST_MOCK_SDK: '1', UM_SUMMARIZER_EFFORT: 'low' } });
+  assert.deepEqual(r.requestParams, { model: 'gpt-6-luna', reasoning_effort: 'low' });
+});
+
 test('factsInvoke on a luna model sends the caller\'s effort when one is given', async () => {
   const client = capturingClient();
   await openai.factsInvoke('p', { client, model: 'gpt-6-luna', effort: 'low' });

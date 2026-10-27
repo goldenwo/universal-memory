@@ -145,9 +145,18 @@ export function normalizeError(err) {
   };
 }
 
+// The summarizer's reasoning effort (model migration Phase B, addendum 3): opts.effort, else
+// UM_SUMMARIZER_EFFORT, else the model's default. Only the summarizer reads the variable — the
+// judge, the graders and facts keep their own — and a model without reasoning_effort drops it.
+export const SUMMARIZER_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high']);
+function summarizerEffort(effort, env) {
+  const e = effort ?? env.UM_SUMMARIZER_EFFORT;
+  return SUMMARIZER_EFFORTS.includes(e) ? e : undefined;
+}
+
 export async function summarizerInvoke(prompt, opts = {}) {
-  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '' } = opts;
-  const params = requestParams(model);
+  const { client: providedClient, env = process.env, model = defaults.summarizerModel, systemPrompt = '', effort } = opts;
+  const params = requestParams(model, { effort: summarizerEffort(effort, env) });
   // UM_TEST_MOCK_SDK: short-circuit to canned response so smoke-gate boot
   // tests can spin the container up without real API calls (spec §9.4).
   // Mock shape mirrors the real return below: { content, usage, ...R1 record }.
