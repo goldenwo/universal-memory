@@ -660,6 +660,33 @@ test('T14: UM_DEDUP_EMBEDDING_THRESHOLD env var flows through to qdrant.search s
   }
 });
 
+// The dedup threshold is also the in-band supersession band's floor, so it reads like every
+// supersession knob (supersede.mjs parseNumberEnv): a value that is not wholly numeric is no
+// override. parseFloat read '0.1garbage' as 0.1, which widened the band to almost every hit.
+test('T14b: a malformed UM_DEDUP_EMBEDDING_THRESHOLD (partly numeric, blank) falls back to 0.84', async () => {
+  const prevThreshold = process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
+  const seen = [];
+  try {
+    for (const value of ['0.1garbage', ' ']) {
+      process.env.UM_DEDUP_EMBEDDING_THRESHOLD = value;
+      await withDedupOn(async () => {
+        const qdrant = makeMockQdrant();
+        qdrant.scrollResult = { points: [] };
+        qdrant.searchResult = [];
+        await umAdd({
+          memory: makeMockMemory(), text: 'something', userId: 'u-1', surface: 'cli', infer: false,
+          _factsProviderOverride: factsOverride, _embedProviderOverride: embedOverride, _qdrantClient: qdrant.client,
+        });
+        seen.push(qdrant.searches[0]?.body.score_threshold);
+      });
+    }
+  } finally {
+    if (prevThreshold === undefined) delete process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
+    else process.env.UM_DEDUP_EMBEDDING_THRESHOLD = prevThreshold;
+  }
+  assert.deepEqual(seen, [0.84, 0.84]);
+});
+
 test('T7b: multi-tenant isolation under uuidv5 — different userIds with same hash produce different point IDs', async () => {
   await withDedupOn(async () => {
     const qdrant = makeMockQdrant();

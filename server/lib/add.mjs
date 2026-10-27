@@ -67,7 +67,7 @@ import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface, mergeSet } fr
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
-import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
+import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint, parseNumberEnv } from './supersede.mjs';
 import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { normalizeReactionMetadata, SIGNAL_EVENTS } from './reaction-signal.mjs';
 
@@ -475,14 +475,13 @@ function computeDedupEligible({ metadata, _systemMigration }) {
 }
 
 function dedupEmbeddingThreshold() {
-  const raw = process.env.UM_DEDUP_EMBEDDING_THRESHOLD;
-  const n = Number.parseFloat(raw);
   // Default 0.84 derived from a 50-pair labeled eval against text-embedding-3-small
   // (F_0.5=0.77 at τ=0.84, plateau midpoint of 8-τ band where precision saturates
   // at 1.0). See docs/architecture/dedup.md. Keep in lockstep with
   // server/.env.example UM_DEDUP_EMBEDDING_THRESHOLD and the T2 assertion in
-  // server/test/dedup.test.mjs.
-  return Number.isFinite(n) ? n : 0.84;
+  // server/test/dedup.test.mjs. It is also the in-band supersession band's floor, so it
+  // reads like every supersession knob: not wholly numeric → no override (parseNumberEnv).
+  return parseNumberEnv(process.env.UM_DEDUP_EMBEDDING_THRESHOLD) ?? 0.84;
 }
 
 export async function umAdd({
