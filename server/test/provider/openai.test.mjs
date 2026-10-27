@@ -9,12 +9,27 @@ test('exports providerName and supports table', () => {
 });
 
 test('defaults exposes all three surfaces', () => {
-  assert.equal(openai.defaults.summarizerModel, 'gpt-4o-mini');
+  // gpt-4o-mini shuts down 2027-01-14; gpt-6-luna at effort low won model migration Phase B's
+  // summarizer measurement (addendum 3, results committed 9c5eaa0).
+  assert.equal(openai.defaults.summarizerModel, 'gpt-6-luna');
+  assert.equal(openai.defaults.summarizerEffort, 'low');
   assert.equal(openai.defaults.embeddingModel, 'text-embedding-3-small');
   assert.equal(openai.defaults.embeddingDim, 1536);
   // gpt-4.1-nano was shut down 2026-10-23; gpt-6-luna won the pre-registered replacement
   // measurement (docs/plans/2026-10-23-model-migration/report.md).
   assert.equal(openai.defaults.factsModel, 'gpt-6-luna');
+});
+
+// Phase B's judge and answer grader verdicts equal the summarizer's (gpt-6-luna, window 2,
+// 0c4ca22), so spec R4 adds no per-role model field: both keep resolving to summarizerModel.
+test('defaults: no per-role judge or grader model (J and A resolve to the summarizer, spec R4)', () => {
+  assert.equal('contradictionModel' in openai.defaults, false);
+  assert.equal('answerGraderModel' in openai.defaults, false);
+});
+
+// τ* for the contradiction judge on gpt-6-luna at effort none (Phase B window 2, 0c4ca22).
+test('defaults: the judge threshold is gpt-6-luna\'s measured τ* 0.85', () => {
+  assert.equal(openai.defaults.judgeThreshold, 0.85);
 });
 
 test('requires lists UM_-prefixed first, then standard', () => {
@@ -273,32 +288,37 @@ function capturingClient(reply = '{"facts": []}') {
 }
 
 // Each call site as production and the evals call it. The facts and grader rows pass
-// the explicit knobs the eval harness passes (temperature 0, a 768-token budget).
+// the explicit knobs the eval harness passes (temperature 0, a 768-token budget). env is
+// empty so a host UM_SUMMARIZER_EFFORT cannot leak in.
 const CALL_SITES = {
-  summarizer: (client, model) => openai.summarizerInvoke('p', { client, model }),
-  contradictionJudge: (client, model) => openai.contradictionJudgeInvoke('p', { client, model }),
-  grader: (client, model) => openai.answerGradeInvoke('p', { client, model, maxTokens: 768 }),
-  facts: (client, model) => openai.factsInvoke('p', { client, model, temperature: 0 }),
+  summarizer: (client, model) => openai.summarizerInvoke('p', { client, model, env: {} }),
+  contradictionJudge: (client, model) => openai.contradictionJudgeInvoke('p', { client, model, env: {} }),
+  grader: (client, model) => openai.answerGradeInvoke('p', { client, model, maxTokens: 768, env: {} }),
+  facts: (client, model) => openai.factsInvoke('p', { client, model, temperature: 0, env: {} }),
 };
+
+// The summarizer's default effort is low (addendum 3); every other role stays at none.
+const SITE_EFFORT = { summarizer: 'low', contradictionJudge: 'none', grader: 'none', facts: 'none' };
 
 for (const model of LUNA_MODELS) {
   for (const [site, call] of Object.entries(CALL_SITES)) {
-    test(`${site} on ${model}: drops temperature, sends reasoning_effort none and max_completion_tokens`, async () => {
+    test(`${site} on ${model}: drops temperature, sends reasoning_effort ${SITE_EFFORT[site]} and max_completion_tokens`, async () => {
       const client = capturingClient();
       await call(client, model);
       const args = client.calls[0];
       assert.equal('temperature' in args, false, 'luna rejects any temperature but the default');
-      assert.equal(args.reasoning_effort, 'none');
+      assert.equal(args.reasoning_effort, SITE_EFFORT[site]);
       assert.equal('max_tokens' in args, false);
       if (site === 'grader') assert.equal(args.max_completion_tokens, 768);
     });
   }
 }
 
-// The summarizer's reasoning effort (model migration Phase B, addendum 3): UM_SUMMARIZER_EFFORT,
-// read by the summarizer alone.
-test('summarizerInvoke on a luna model sends UM_SUMMARIZER_EFFORT; unset keeps none', async () => {
-  for (const [value, want] of [[undefined, 'none'], ['low', 'low'], ['high', 'high']]) {
+// The summarizer's reasoning effort (model migration Phase B, addendum 3): opts.effort, else
+// UM_SUMMARIZER_EFFORT, else defaults.summarizerEffort ('low', the measured verdict). Read by
+// the summarizer alone.
+test('summarizerInvoke on a luna model sends UM_SUMMARIZER_EFFORT; unset sends the default low', async () => {
+  for (const [value, want] of [[undefined, 'low'], ['none', 'none'], ['low', 'low'], ['high', 'high']]) {
     const client = capturingClient();
     await openai.summarizerInvoke('p', { client, model: 'gpt-6-luna', env: value ? { UM_SUMMARIZER_EFFORT: value } : {} });
     assert.equal(client.calls[0].reasoning_effort, want, `UM_SUMMARIZER_EFFORT=${value}`);
@@ -307,11 +327,25 @@ test('summarizerInvoke on a luna model sends UM_SUMMARIZER_EFFORT; unset keeps n
 
 test('summarizerInvoke: an explicit effort wins over UM_SUMMARIZER_EFFORT; an unknown value is ignored', async () => {
   const explicit = capturingClient();
-  await openai.summarizerInvoke('p', { client: explicit, model: 'gpt-6-luna', effort: 'medium', env: { UM_SUMMARIZER_EFFORT: 'low' } });
-  assert.equal(explicit.calls[0].reasoning_effort, 'medium');
+  await openai.summarizerInvoke('p', { client: explicit, model: 'gpt-6-luna', effort: 'none', env: { UM_SUMMARIZER_EFFORT: 'high' } });
+  assert.equal(explicit.calls[0].reasoning_effort, 'none');
   const unknown = capturingClient();
   await openai.summarizerInvoke('p', { client: unknown, model: 'gpt-6-luna', env: { UM_SUMMARIZER_EFFORT: 'max' } });
-  assert.equal(unknown.calls[0].reasoning_effort, 'none', 'an unknown value falls back to the model default');
+  assert.equal(unknown.calls[0].reasoning_effort, 'low', 'an unknown value falls through to the default');
+});
+
+// τ* 0.85 was measured on the judge at effort none (window 2, 0c4ca22). The summarizer's
+// effort default must not reach it: on the shipped defaults, with nothing set, the summarizer
+// sends low and the judge none.
+test('shipped defaults, nothing set: the summarizer sends effort low while the judge, grader and facts send none', async () => {
+  const client = capturingClient();
+  await openai.summarizerInvoke('p', { client, env: {} });
+  await openai.contradictionJudgeInvoke('p', { client, env: {} });
+  await openai.answerGradeInvoke('p', { client, env: {} });
+  await openai.factsInvoke('p', { client, env: {} });
+  assert.deepEqual(client.calls.map((c) => [c.model, c.reasoning_effort]), [
+    ['gpt-6-luna', 'low'], ['gpt-6-luna', 'none'], ['gpt-6-luna', 'none'], ['gpt-6-luna', 'none'],
+  ]);
 });
 
 test('UM_SUMMARIZER_EFFORT is the summarizer\'s alone: judge, grader and facts keep none; a legacy model drops it', async () => {

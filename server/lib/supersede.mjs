@@ -28,7 +28,7 @@
  * + ADR-0007 Option C (the in-band decision). Plan refs: D3.1 Task 1.3; Gap-5 P3.
  */
 
-import { judgeContradiction } from './contradiction-judge.mjs';
+import { judgeContradiction, judgeProviderName, JUDGE_BACKENDS } from './contradiction-judge.mjs';
 import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
 
 /**
@@ -207,17 +207,35 @@ export function contradictionBandCeiling(env = process.env) {
   return Number.isFinite(n) ? n : 0.95;
 }
 
+// The judge threshold a provider keeps until its own judge is measured: the value pinned
+// 2026-06-02 on gpt-4o-mini (server/eval/results/d3-latest.json), re-validated at temperature
+// 0 on 06-03.
+const UNMEASURED_JUDGE_THRESHOLD = 0.80;
+
 /**
- * Judge-confidence threshold for an inline in-band supersession (default 0.80).
+ * The judge provider's own judge-confidence threshold (model migration Phase B, spec R4 and
+ * R6(a)): `defaults.judgeThreshold` of the provider judgeContradiction resolves, else 0.80.
+ * OpenAI's is τ* 0.85, measured on gpt-6-luna at effort none (window 2, committed 0c4ca22).
+ * A threshold is a property of the model it was measured on, so an install on another
+ * provider never inherits OpenAI's. This is the session-end detector's default
+ * (contradiction-batch.mjs `judgeThreshold`); it does not read UM_AUTOSUPERSEDE_THRESHOLD.
+ */
+export function defaultJudgeThreshold(env = process.env) {
+  return JUDGE_BACKENDS[judgeProviderName(env)]?.defaults?.judgeThreshold ?? UNMEASURED_JUDGE_THRESHOLD;
+}
+
+/**
+ * Judge-confidence threshold for an inline in-band supersession:
+ * UM_AUTOSUPERSEDE_THRESHOLD, else defaultJudgeThreshold().
  *
- * Reuses UM_AUTOSUPERSEDE_THRESHOLD — the same env var and default the
- * session-end detector uses (contradiction-batch.mjs `judgeThreshold`), so the
- * write-time and session-end paths agree on what counts as a confident
- * contradiction. Keep the 0.80 default in lockstep with that detector default.
+ * Reuses UM_AUTOSUPERSEDE_THRESHOLD — the same env var the session-end detector is handed
+ * (checkpoint-chunk-txn.mjs passes it, or undefined so the detector applies the same
+ * defaultJudgeThreshold), so the write-time and session-end paths agree on what counts as a
+ * confident contradiction.
  */
 export function autoSupersedeJudgeThreshold(env = process.env) {
   const n = Number.parseFloat(env.UM_AUTOSUPERSEDE_THRESHOLD);
-  return Number.isFinite(n) ? n : 0.80;
+  return Number.isFinite(n) ? n : defaultJudgeThreshold(env);
 }
 
 /**

@@ -2,7 +2,8 @@
  * server/lib/provider/openai.mjs — OpenAI implementation of the Standard Provider Contract.
  *
  * Supports all three surfaces: embeddings (text-embedding-3-small), summarizer
- * (gpt-4o-mini), and facts (gpt-6-luna — gpt-4.1-nano was shut down 2026-10-23; the
+ * (gpt-6-luna at effort low — gpt-4o-mini shuts down 2027-01-14; chosen by model migration
+ * Phase B), and facts (gpt-6-luna — gpt-4.1-nano was shut down 2026-10-23; the
  * replacement was chosen by docs/plans/2026-10-23-model-migration/prereg.md).
  *
  * Auth: UM_OPENAI_API_KEY (preferred) or OPENAI_API_KEY. The UM_-prefix wins
@@ -20,7 +21,16 @@ export const providerName = 'openai';
 export const supports = { embeddings: true, summarizer: true, facts: true };
 
 export const defaults = {
-  summarizerModel: 'gpt-4o-mini',
+  // Model migration Phase B, each measured on its own model (none carried over by name):
+  //   summarizerModel + summarizerEffort — gpt-6-luna at effort low passed every summarizer
+  //     rule against gpt-4o-mini (addendum 3, eval/results/2026-10-27-phaseb-s3-report.json,
+  //     committed 9c5eaa0). The effort is the summarizer's alone (summarizerEffort below).
+  //   judgeThreshold — the contradiction judge's τ*, measured on gpt-6-luna at effort none
+  //     (window 2, committed 0c4ca22). The judge and the answer grader resolve to
+  //     summarizerModel: their verdicts equal S's, so spec R4 adds no per-role model field.
+  summarizerModel: 'gpt-6-luna',
+  summarizerEffort: 'low',
+  judgeThreshold: 0.85,
   embeddingModel: 'text-embedding-3-small',
   embeddingDim: 1536,
   factsModel: 'gpt-6-luna',
@@ -146,12 +156,12 @@ export function normalizeError(err) {
 }
 
 // The summarizer's reasoning effort (model migration Phase B, addendum 3): opts.effort, else
-// UM_SUMMARIZER_EFFORT, else the model's default. Only the summarizer reads the variable — the
-// judge, the graders and facts keep their own — and a model without reasoning_effort drops it.
+// UM_SUMMARIZER_EFFORT, else defaults.summarizerEffort; an unknown value falls through to the
+// next. Only the summarizer reads these — the judge, the graders and facts keep the model's
+// own default (none), at which τ* was measured — and a model without reasoning_effort drops it.
 export const SUMMARIZER_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high']);
 function summarizerEffort(effort, env) {
-  const e = effort ?? env.UM_SUMMARIZER_EFFORT;
-  return SUMMARIZER_EFFORTS.includes(e) ? e : undefined;
+  return [effort, env.UM_SUMMARIZER_EFFORT].find((e) => SUMMARIZER_EFFORTS.includes(e)) ?? defaults.summarizerEffort;
 }
 
 export async function summarizerInvoke(prompt, opts = {}) {

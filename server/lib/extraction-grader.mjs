@@ -37,6 +37,12 @@ export const PRECISION_SYSTEM_PROMPT =
   '{"extractedSupported": [<boolean per EXTRACTED fact, same order/length>], ' +
   '"reasoning": "<one short clause, max 12 words>"}';
 
+// The grader model when neither the caller nor UM_EXTRACTION_GRADER_MODEL names one. Model
+// migration Phase B (window 2, committed 0c4ca22): gpt-5.6-luna was the only eligible arm
+// (gpt-6-luna failed self-agreement), and is preferred anyway over grading with the gpt-6-luna
+// facts default itself. extraction-fidelity-eval.mjs defaults to the same constant.
+export const EXTRACTION_GRADER_FALLBACK_MODEL = 'gpt-5.6-luna';
+
 const numbered = (facts) => facts.map((f, i) => `${i + 1}. ${f}`).join('\n');
 
 /**
@@ -61,7 +67,7 @@ export async function judgeExtraction(inputText, goldFacts, extractedFacts, opts
   const invoke =
     opts._providerOverride?.answerGradeInvoke ??
     (providerName === 'openai' ? openaiP.answerGradeInvoke : null);
-  const model = opts.model ?? process.env.UM_EXTRACTION_GRADER_MODEL ?? openaiP.defaults?.summarizerModel;
+  const model = opts.model ?? process.env.UM_EXTRACTION_GRADER_MODEL ?? EXTRACTION_GRADER_FALLBACK_MODEL;
 
   const goldArr = goldFacts ?? [];
   const extractedArr = extractedFacts ?? [];

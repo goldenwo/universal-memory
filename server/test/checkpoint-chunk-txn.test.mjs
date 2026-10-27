@@ -848,6 +848,36 @@ test('5b: DI seam contract — persona threads through as undefined (not null) w
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// Spec R4 (model migration Phase B): with UM_AUTOSUPERSEDE_THRESHOLD unset, the chunk
+// transaction passes judgeThreshold undefined, so the detector applies its own provider-
+// resolved default (τ* 0.85 on openai). A manufactured number here would pin every provider
+// to one value. Set, the env value is passed as a number.
+test('5b: judgeThreshold threads through as undefined when UM_AUTOSUPERSEDE_THRESHOLD is unset, and as its number when set', async () => {
+  const saved = process.env.UM_AUTOSUPERSEDE_THRESHOLD;
+  const seen = [];
+  try {
+    for (const value of [undefined, '0.9']) {
+      if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = value;
+      const vault = makeVault();
+      const result = await runChunkTransaction(
+        baseArgs(vault, { lane: 'work' }),
+        baseDeps({
+          isAutoSupersedeEnabled: () => true,
+          detectContradictions: async (text, opts) => { seen.push(opts); return []; },
+        }),
+      );
+      assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+      await fs.rm(vault, { recursive: true, force: true });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = saved;
+  }
+  assert.equal(seen.length, 2);
+  assert.equal('judgeThreshold' in seen[0], true, 'the key is passed');
+  assert.equal(seen[0].judgeThreshold, undefined, 'unset → undefined, so the detector default applies');
+  assert.equal(seen[1].judgeThreshold, 0.9);
+});
+
 // ===========================================================================
 // Section F — per-chunk cost telemetry.
 // ===========================================================================

@@ -296,13 +296,14 @@ test('detectContradictionsInBatch: retrievalThreshold and judgeThreshold honored
 // ── (6) Eval-derived defaults applied when thresholds omitted (D3.3) ────────
 //
 // When neither threshold is supplied, the detector must apply its pinned
-// eval-derived defaults: retrieval τ = 0.45, judge τ = 0.80. A candidate at
+// eval-derived defaults: retrieval τ = 0.45, and the judge provider's τ (0.85 on
+// openai since model migration Phase B; 0.80 elsewhere). A candidate at
 // cosine 0.50 (≥ default retrieval, < default judge) judged at confidence 0.90
 // (≥ default judge) must be retrieved (proving default retrieval τ ≤ 0.50) and
 // superseded (proving default judge τ ≤ 0.90). The same candidate judged at
-// 0.70 must NOT supersede (proving default judge τ > 0.70, i.e. it is 0.80).
+// 0.70 must NOT supersede (proving default judge τ > 0.70). Test (6b) pins the exact value.
 
-test('detectContradictionsInBatch: omitted thresholds apply eval-derived defaults (retrieval 0.45 / judge 0.80)', async () => {
+test('detectContradictionsInBatch: omitted thresholds apply eval-derived defaults (retrieval 0.45 / judge in (0.70, 0.90])', async () => {
   const CANDIDATE = { id: 'cand-default', payload: { data: 'older fact default', status: 'current', valid_from: STORED_PAST }, score: 0.50 };
 
   let findThreshold;
@@ -335,7 +336,38 @@ test('detectContradictionsInBatch: omitted thresholds apply eval-derived default
     _find: makeFind(),
     _judge: async () => ({ contradicts: true, confidence: 0.70, reasoning: 'mid', usage: {} }),
   });
-  assert.deepEqual(resultLow, [], 'confidence 0.70 < default judge τ (0.80) → must NOT supersede');
+  assert.deepEqual(resultLow, [], 'confidence 0.70 < default judge τ → must NOT supersede');
+});
+
+// ── (6b) The judge default is the judge provider's τ (spec R4 / R6(a)) ──────
+//
+// checkpoint-chunk-txn passes judgeThreshold undefined when UM_AUTOSUPERSEDE_THRESHOLD is
+// unset, so this default is what production runs at. OpenAI's is τ* 0.85, measured on
+// gpt-6-luna at effort none (Phase B window 2, 0c4ca22); a provider without a measured
+// value keeps 0.80. The provider resolves at call time, as judgeContradiction's does.
+
+test('detectContradictionsInBatch: the omitted judge threshold is the judge provider\'s (openai 0.85, anthropic 0.80)', async () => {
+  const CANDIDATE = { id: 'cand-provider', payload: { data: 'older fact provider', status: 'current', valid_from: STORED_PAST }, score: 0.50 };
+  const run = (confidence) => detectContradictionsInBatch('transcript', {
+    userId: TEST_USER,
+    lane: TEST_LANE,
+    _facts: async () => ({ facts: [TEST_TEXT], usage: {} }),
+    _embed: async () => ({ vector: TEST_VECTOR }),
+    _find: async () => [CANDIDATE],
+    _judge: async () => ({ contradicts: true, confidence, reasoning: 'r', usage: {} }),
+  });
+  const VARS = ['UM_CONTRADICTION_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_AUTOSUPERSEDE_THRESHOLD'];
+  const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of VARS) delete process.env[k];
+    assert.equal((await run(0.85)).length, 1, 'openai: 0.85 supersedes');
+    assert.deepEqual(await run(0.84), [], 'openai: 0.84 is below τ* 0.85');
+    process.env.UM_CONTRADICTION_PROVIDER = 'anthropic';
+    assert.equal((await run(0.80)).length, 1, 'anthropic: 0.80 supersedes');
+    assert.deepEqual(await run(0.79), [], 'anthropic: 0.79 is below 0.80');
+  } finally {
+    for (const k of VARS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
 });
 
 // ── (7) Direction (#276) — judge only when truth time resolves incoming-newer ──

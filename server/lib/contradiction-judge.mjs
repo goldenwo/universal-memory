@@ -44,6 +44,15 @@ export const JUDGE_BACKENDS = {
 };
 
 /**
+ * The judge's provider when the caller names none: UM_CONTRADICTION_PROVIDER →
+ * UM_SUMMARIZER_PROVIDER → 'openai'. The supersede threshold default resolves through the
+ * same chain (supersede.mjs defaultJudgeThreshold), so a provider's measured τ* goes with it.
+ */
+export function judgeProviderName(env = process.env) {
+  return env.UM_CONTRADICTION_PROVIDER ?? env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+}
+
+/**
  * Decide whether newerFact contradicts olderFact using a configured LLM judge.
  *
  * @param {string} olderFact - The existing / older fact text
@@ -66,11 +75,7 @@ export const JUDGE_BACKENDS = {
  */
 export async function judgeContradiction(olderFact, newerFact, opts = {}) {
   // Provider resolution: opts.provider → UM_CONTRADICTION_PROVIDER → UM_SUMMARIZER_PROVIDER → 'openai'
-  const providerName =
-    opts.provider ??
-    process.env.UM_CONTRADICTION_PROVIDER ??
-    process.env.UM_SUMMARIZER_PROVIDER ??
-    'openai';
+  const providerName = opts.provider ?? judgeProviderName();
 
   const b = JUDGE_BACKENDS[providerName];
 

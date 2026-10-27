@@ -17,7 +17,11 @@ import { gradeAnswer as defaultGradeAnswer, TAU_ANSWER } from './answer-grader.m
 // 0.967 >= 0.95). IMPORTANT COST CAVEAT — at this precision-safe gate the skip-rate is only
 // ~0.063, i.e. ~94% of searches still grade: answer vs non-answer cosine bands overlap heavily
 // (the parked no-answer-floor lesson), so the gate saves little hot-path cost. Weigh that before
-// the default-on flip. RE-EVAL TRIGGER: a grader-model OR text-embedding-3-small change → re-run
+// the default-on flip. RE-PINNED on the gpt-6-luna grader (model migration Phase B T5, 3 live
+// sweeps, eval/results/2026-10-27-phaseb-bouncer-{1,2,3}.json, committed 894dcec): 0.60 again,
+// the lowest grid gate where all 3 sweeps hold the new floors (answerCorrectness 0.841,
+// noAnswerPrecision 0.95) there and above; skip rate 21.9%, 32.3% of grades slower than 1500 ms.
+// The bouncer still ships off. RE-EVAL TRIGGER: a grader-model OR text-embedding-3-small change → re-run
 // `node --env-file=.env eval/memory-quality-eval.mjs --recall … --no-answer … --sweep` to re-pin.
 export const BOUNCER_SCORE_GATE = 0.60;
 

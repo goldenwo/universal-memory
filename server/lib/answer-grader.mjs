@@ -28,6 +28,18 @@ const GRADER_BACKENDS = {
   openai: { invoke: openaiP.answerGradeInvoke, requires: openaiP.requires, defaults: openaiP.defaults },
 };
 
+const graderProviderName = (env) => env.UM_ANSWER_GRADER_PROVIDER ?? env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+
+/**
+ * The model gradeAnswer sends when the caller names none: UM_ANSWER_GRADER_MODEL, else the
+ * resolved provider's summarizerModel (null for an unsupported provider). A's verdict in model
+ * migration Phase B equals the summarizer's (gpt-6-luna, window 2, committed 0c4ca22), so
+ * spec R4 adds no per-role field. The mq eval records this name beside its answer pass.
+ */
+export function answerGraderModel(env = process.env) {
+  return env.UM_ANSWER_GRADER_MODEL ?? GRADER_BACKENDS[graderProviderName(env)]?.defaults?.summarizerModel ?? null;
+}
+
 /**
  * Decide whether `memory` answers `query` using a configured LLM judge.
  * Fail-safe: any invoke/parse error → {answers:false, confidence:0, reasoning:'parse-fail', ok:false}.
@@ -48,16 +60,9 @@ const GRADER_BACKENDS = {
  *   the call sent and how it ended, absent on an invoke-error (there was no response).
  */
 export async function gradeAnswer(query, memory, opts = {}) {
-  const providerName =
-    opts.provider ??
-    process.env.UM_ANSWER_GRADER_PROVIDER ??
-    process.env.UM_SUMMARIZER_PROVIDER ??
-    'openai';
+  const providerName = opts.provider ?? graderProviderName(process.env);
   const b = GRADER_BACKENDS[providerName];
-  const model =
-    opts.model ??
-    process.env.UM_ANSWER_GRADER_MODEL ??
-    b?.defaults?.summarizerModel;
+  const model = opts.model ?? process.env.UM_ANSWER_GRADER_MODEL ?? b?.defaults?.summarizerModel;
   const invoke = opts._providerOverride?.answerGradeInvoke ?? b?.invoke;
 
   const failsafe = (failCause, usage = { tokensIn: 0, tokensOut: 0 }, record = {}) =>
@@ -97,7 +102,9 @@ export async function gradeAnswer(query, memory, opts = {}) {
 // Pinned confidence threshold for the answer verdict (answers===true && confidence>=TAU_ANSWER).
 // Lives in lib (NOT eval) so the live read-path bouncer (lib/bouncer.mjs) and the eval both
 // consume it without a prod→eval import. PINNED 2026-06-22 from 2 IDENTICAL live gpt-4o-mini
-// runs (temp 0): precision 1.000 / recall 0.86 across the whole τ≥0.05 plateau.
+// runs (temp 0): precision 1.000 / recall 0.86 across the whole τ≥0.05 plateau. RE-MEASURED
+// on the gpt-6-luna grader (model migration Phase B window 2, 5 runs, committed 0c4ca22):
+// τ_answer* 0.05 again, recall 0.916 at precision 1.000.
 // RE-EVAL TRIGGER: a change to the grader model OR text-embedding-3-small invalidates this pin
 // (and the mq §4e gate floors) — re-run eval/answer-grader-eval.mjs to re-pin.
 export const TAU_ANSWER = 0.05;

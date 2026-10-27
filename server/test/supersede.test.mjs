@@ -17,6 +17,7 @@ import {
   isAutoSupersedeEnabled,
   contradictionBandCeiling,
   autoSupersedeJudgeThreshold,
+  defaultJudgeThreshold,
   evaluateInBandSupersession,
 } from '../lib/supersede.mjs';
 
@@ -55,10 +56,42 @@ test('contradictionBandCeiling: default 0.95 (band-widening validation; confiden
   assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: 'not-a-number' }), 0.95, 'invalid → default');
 });
 
-test('autoSupersedeJudgeThreshold: default 0.80 (mirrors detector judgeThreshold), env-overridable', () => {
-  assert.equal(autoSupersedeJudgeThreshold({}), 0.80);
+// Drift gate. OpenAI's default is τ* 0.85, measured on gpt-6-luna at effort none (model
+// migration Phase B window 2, committed 0c4ca22). A provider without its own measured value
+// keeps the pre-Phase-B 0.80. Re-run Phase B's J suites to change either.
+test('autoSupersedeJudgeThreshold: default is the judge provider\'s τ* (openai 0.85), env-overridable', () => {
+  assert.equal(autoSupersedeJudgeThreshold({}), 0.85, 'unset provider resolves to openai');
   assert.equal(autoSupersedeJudgeThreshold({ UM_AUTOSUPERSEDE_THRESHOLD: '0.95' }), 0.95);
-  assert.equal(autoSupersedeJudgeThreshold({ UM_AUTOSUPERSEDE_THRESHOLD: 'x' }), 0.80, 'invalid → default');
+  assert.equal(autoSupersedeJudgeThreshold({ UM_AUTOSUPERSEDE_THRESHOLD: 'x' }), 0.85, 'invalid → default');
+  assert.equal(autoSupersedeJudgeThreshold({ UM_AUTOSUPERSEDE_THRESHOLD: '0.7', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.7, 'the env wins on every provider');
+});
+
+// The threshold follows the judge's own provider, resolved as judgeContradiction resolves it:
+// UM_CONTRADICTION_PROVIDER → UM_SUMMARIZER_PROVIDER → openai (spec R6(a)).
+test('autoSupersedeJudgeThreshold: resolves per judge provider (openai 0.85; anthropic, google, ollama 0.80)', () => {
+  assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'openai' }), 0.85);
+  assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.80);
+  assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'google' }), 0.80);
+  assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'ollama' }), 0.80);
+  assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: 'anthropic', UM_SUMMARIZER_PROVIDER: 'openai' }), 0.80,
+    'the contradiction provider wins over the summarizer provider');
+  assert.equal(autoSupersedeJudgeThreshold({ UM_CONTRADICTION_PROVIDER: 'openai', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 0.85);
+  assert.equal(autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'no-such-provider' }), 0.80, 'an unknown provider keeps 0.80');
+});
+
+test('defaultJudgeThreshold: the provider default alone, without the env override', () => {
+  assert.equal(defaultJudgeThreshold({}), 0.85);
+  assert.equal(defaultJudgeThreshold({ UM_AUTOSUPERSEDE_THRESHOLD: '0.5' }), 0.85, 'the env override is autoSupersedeJudgeThreshold\'s, not the default\'s');
+  assert.equal(defaultJudgeThreshold({ UM_CONTRADICTION_PROVIDER: 'anthropic' }), 0.80);
+});
+
+// .env.example documents the OpenAI default on its commented UM_AUTOSUPERSEDE_THRESHOLD line;
+// the two move together.
+test('autoSupersedeJudgeThreshold: .env.example\'s commented example equals the OpenAI default', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const text = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
+  const line = text.split(/\r?\n/).find((l) => /^#UM_AUTOSUPERSEDE_THRESHOLD=/.test(l));
+  assert.equal(line, `#UM_AUTOSUPERSEDE_THRESHOLD=${autoSupersedeJudgeThreshold({ UM_SUMMARIZER_PROVIDER: 'openai' }).toFixed(2)}`);
 });
 
 // ---------------------------------------------------------------------------

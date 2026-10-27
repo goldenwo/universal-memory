@@ -134,7 +134,7 @@ test('summarize: unknown backend falls back to UM_SUMMARIZER_FALLBACK', async ()
 
 test('#314 summarizerTarget: the same provider and model summarize() resolves and bills, case by case', async () => {
   const cases = [
-    { env: {}, ctx: {}, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: {}, ctx: {}, want: { provider: 'openai', model: 'gpt-6-luna' } },
     { env: {}, ctx: { model: 'gpt-4.1-nano-2025-04-14' }, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: {}, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: { model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
@@ -186,8 +186,8 @@ test('summarize: openai cost formula is correct', async () => {
     },
   };
   const result = await summarize('t', { backend: 'openai', openaiClient });
-  // 1M input @ $0.15/1M + 1M output @ $0.60/1M = $0.75
-  assert.ok(Math.abs(result.costUsd - 0.75) < 0.001, `expected ~0.75 got ${result.costUsd}`);
+  // The default model, gpt-6-luna (model migration Phase B): 1M input @ $0.10/1M + 1M output @ $0.50/1M = $0.60
+  assert.ok(Math.abs(result.costUsd - 0.60) < 0.001, `expected ~0.60 got ${result.costUsd}`);
 });
 
 // ---------- C1: orchestrator contract + anthropic/google registration ----------

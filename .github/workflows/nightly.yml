@@ -167,8 +167,8 @@ jobs:
   # tripwire around OBSERVED extraction verdicts on the sanitized production-noise
   # twins + collision slice + 40-row set: the abstain floor catches a future prompt
   # edit that re-admits more noise; the extract floor catches one that over-abstains
-  # on real facts. Judge-free (--verdict-only): gpt-4.1-nano extraction calls only,
-  # no gpt-4o-mini judge — the judge's documented wobble cannot red this job.
+  # on real facts. Judge-free (--verdict-only): facts-default (gpt-6-luna) extraction
+  # calls only, no grader judge — a judge's wobble cannot red this job.
   # Scope: canonical-repo nightly only; fork PRs are NOT guarded (G5 honesty).
   # NOT proof of calibration fidelity — see eval/production-noise-set.header.md (A4b).
   extraction-calibration-gate:

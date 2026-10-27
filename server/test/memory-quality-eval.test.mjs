@@ -54,6 +54,7 @@ import {
   formatGateReport,
   answerCorrectnessPass,
   sweepBounceGate,
+  bouncerSweepFloors,
   collectBounceRows,
   percentile,
   summarizeLatency,
@@ -382,11 +383,19 @@ const GATE_CFG = {
     { metric: 'recall@5',        path: ['recall', 'aggregate', '5'],       direction: 'min', floor: 0.96 },
     { metric: 'mrr',             path: ['recall', 'mrr'],                   direction: 'min', floor: 0.95 },
     { metric: 'staleReturnRate', path: ['staleness', 'staleReturnRate'],   direction: 'max', floor: 0.00 },
-    { metric: 'fireRate',        path: ['staleness', 'fireRate'],          direction: 'min', floor: 0.80 },
+    { metric: 'fireRate',        path: ['staleness', 'fireRate'],          direction: 'min', floor: 0.744 },
     { metric: 'seedCount',       path: ['recall', 'seedCount'],            direction: 'min', floor: 50 },
     { metric: 'stalenessTotal',  path: ['staleness', 'total'],             direction: 'min', floor: 18 },
   ],
 };
+
+test('GATE_CFG mirror: every entry equals the committed eval/mq-gate-thresholds.json entry for its metric', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const committed = JSON.parse(await readFile(new URL('../eval/mq-gate-thresholds.json', import.meta.url), 'utf8'));
+  for (const t of GATE_CFG.thresholds) {
+    assert.deepEqual(t, committed.thresholds.find((c) => c.metric === t.metric), `mirror drifted on ${t.metric}`);
+  }
+});
 // A healthy v1.5.0-baseline-shaped result (clears every floor). Factory so each
 // test mutates its OWN copy without cross-test bleed.
 const passResult = () => ({
@@ -429,7 +438,7 @@ test('evaluateGate: corpus-intactness breach (partial seeding cannot pass vacuou
 test('evaluateGate: floors are INCLUSIVE (observed == floor passes)', () => {
   const r = {
     recall: { aggregate: { '1': 0.90, '5': 0.96 }, mrr: 0.95, seedCount: 50 },
-    staleness: { staleReturnRate: 0.0, fireRate: 0.80, total: 18 },
+    staleness: { staleReturnRate: 0.0, fireRate: 0.744, total: 18 },
   };
   assert.equal(evaluateGate(r, GATE_CFG).pass, true);
 });
@@ -492,6 +501,17 @@ test('answerCorrectnessPass routes through bounceTopHit (gate applied, empty=cor
   assert.equal(res.noAnswer.leaks, 0);
   // skipRate: 1 of 4 graded queries skipped (r2)
   assert.ok(res.bouncer.skipRate > 0 && res.bouncer.skipRate < 1);
+});
+
+// The --sweep run pins BOUNCER_SCORE_GATE against the mq gate's two answer floors. It reads
+// them from the committed gate config (model migration Phase B re-pinned answerCorrectness to
+// 0.841), so a sweep can never hold a stale copy of a floor.
+test('bouncerSweepFloors: the committed gate config\'s answer floors, failing closed on a missing one', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const committed = JSON.parse(await readFile(new URL('../eval/mq-gate-thresholds.json', import.meta.url), 'utf8'));
+  assert.deepEqual(bouncerSweepFloors(committed), { answerCorrectness: 0.841, noAnswerPrecision: 0.95 });
+  const missing = { thresholds: committed.thresholds.filter((t) => t.metric !== 'noAnswerPrecision') };
+  assert.throws(() => bouncerSweepFloors(missing), /noAnswerPrecision/);
 });
 
 test('sweepBounceGate: lower gate raises skipRate; pins the lowest gate holding both floors', async () => {
@@ -1163,16 +1183,19 @@ test('stalenessPass: UM_AUTOSUPERSEDE_THRESHOLD reaches the detector as its judg
     rows: [{ id: 'r1', lane: 'work', original_fact: 'a', updated_fact: 'b', query: 'q' }],
     latency: { umAdd: [], doSearch: [] }, metrics: undefined,
   };
-  const prev = process.env.UM_AUTOSUPERSEDE_THRESHOLD;
+  // The env value differs from every provider default, so the two cases cannot coincide.
+  const VARS = ['UM_AUTOSUPERSEDE_THRESHOLD', 'UM_CONTRADICTION_PROVIDER', 'UM_SUMMARIZER_PROVIDER'];
+  const prev = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
   try {
-    process.env.UM_AUTOSUPERSEDE_THRESHOLD = '0.85';
+    for (const k of VARS) delete process.env[k];
+    process.env.UM_AUTOSUPERSEDE_THRESHOLD = '0.9';
     await stalenessPass(deps);
     delete process.env.UM_AUTOSUPERSEDE_THRESHOLD;
     await stalenessPass(deps);
   } finally {
-    if (prev === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = prev;
+    for (const k of VARS) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
   }
-  assert.deepEqual(seen, [0.85, 0.80], 'the env when set, the shared default when not');
+  assert.deepEqual(seen, [0.9, 0.85], 'the env when set, the shared (openai) default when not');
 });
 
 test('parseArgs: --tau-answer overrides TAU_ANSWER for the answer pass and the bouncer sweep', () => {

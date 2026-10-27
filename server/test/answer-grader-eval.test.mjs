@@ -30,7 +30,7 @@ test('PRECISION_FLOOR is the single pinned constant 0.90', () => {
   assert.equal(PRECISION_FLOOR, 0.90);
 });
 
-test('TAU_ANSWER drift gate: pinned at 0.05 (2 live gpt-4o-mini runs; re-run the eval to change)', () => {
+test('TAU_ANSWER drift gate: pinned at 0.05 (re-measured on gpt-6-luna, Phase B window 2, 0c4ca22; re-run the eval to change)', () => {
   assert.equal(TAU_ANSWER, 0.05);
 });
 

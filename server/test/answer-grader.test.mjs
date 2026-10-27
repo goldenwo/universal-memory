@@ -2,7 +2,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { answerGradeInvoke, ANSWER_GRADER_MAX_TOKENS } from '../lib/provider/openai.mjs';
-import { gradeAnswer, ANSWER_SYSTEM_PROMPT } from '../lib/answer-grader.mjs';
+import { gradeAnswer, ANSWER_SYSTEM_PROMPT, answerGraderModel } from '../lib/answer-grader.mjs';
+
+// --- model resolution (model migration Phase B, spec R4) -------------------
+
+// A's verdict (gpt-6-luna, window 2, 0c4ca22) equals the summarizer's, so the grader keeps
+// resolving to the provider's summarizerModel; the mq eval records this resolved name.
+test('answerGraderModel: UM_ANSWER_GRADER_MODEL, else the resolved provider\'s summarizer default (gpt-6-luna)', () => {
+  assert.equal(answerGraderModel({}), 'gpt-6-luna');
+  assert.equal(answerGraderModel({ UM_ANSWER_GRADER_MODEL: 'pinned' }), 'pinned');
+  assert.equal(answerGraderModel({ UM_ANSWER_GRADER_PROVIDER: 'no-such-provider' }), null, 'an unsupported provider resolves no model');
+});
+
+test('gradeAnswer: sends the model answerGraderModel resolves when the caller names none', async () => {
+  let seen;
+  const saved = process.env.UM_ANSWER_GRADER_MODEL;
+  try {
+    delete process.env.UM_ANSWER_GRADER_MODEL;
+    await gradeAnswer('q', 'm', { _providerOverride: { answerGradeInvoke: async (p, o) => { seen = o.model; return { content: '{"answers":true,"confidence":1,"reasoning":""}', usage: {} }; } } });
+  } finally {
+    if (saved === undefined) delete process.env.UM_ANSWER_GRADER_MODEL; else process.env.UM_ANSWER_GRADER_MODEL = saved;
+  }
+  assert.equal(seen, answerGraderModel(process.env));
+  assert.equal(seen, 'gpt-6-luna');
+});
 
 // --- answerGradeInvoke (openai transport) ----------------------------------
 

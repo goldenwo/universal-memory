@@ -2,7 +2,7 @@
 // Uses the _providerOverride seam (a fake answerGradeInvoke); no live SDK.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeExtraction } from '../lib/extraction-grader.mjs';
+import { judgeExtraction, EXTRACTION_GRADER_FALLBACK_MODEL } from '../lib/extraction-grader.mjs';
 
 const fake = (content) => ({ answerGradeInvoke: async () => ({ content, usage: { tokensIn: 1, tokensOut: 1 } }) });
 
@@ -104,6 +104,31 @@ test('judgeExtraction: recall is judged without the INPUT, precision without the
   assert.deepEqual(v.extractedSupported, [true]);
   assert.equal(v.ok, true);
   assert.deepEqual(v.usage, { tokensIn: 4, tokensOut: 2 });
+});
+
+// --- The fallback grader model (model migration Phase B, G's verdict) ---
+
+// gpt-5.6-luna was the only eligible extraction grader in Phase B window 2 (0c4ca22), and is
+// preferred over the gpt-6-luna facts default anyway (no same-model grading). It is the
+// library's fallback and the fidelity eval's default; opts.model and the env still win.
+test('judgeExtraction: model resolves opts.model → UM_EXTRACTION_GRADER_MODEL → gpt-5.6-luna', async () => {
+  assert.equal(EXTRACTION_GRADER_FALLBACK_MODEL, 'gpt-5.6-luna');
+  const seen = [];
+  const override = { answerGradeInvoke: async (prompt, opts) => {
+    seen.push(opts.model);
+    return { content: JSON.stringify({ goldMatched: [true], extractedSupported: [true], reasoning: 'x' }), usage: {} };
+  } };
+  const saved = process.env.UM_EXTRACTION_GRADER_MODEL;
+  try {
+    delete process.env.UM_EXTRACTION_GRADER_MODEL;
+    await judgeExtraction('in', ['g'], ['e'], { _providerOverride: override });
+    process.env.UM_EXTRACTION_GRADER_MODEL = 'env-model';
+    await judgeExtraction('in', ['g'], ['e'], { _providerOverride: override });
+    await judgeExtraction('in', ['g'], ['e'], { _providerOverride: override, model: 'opts-model' });
+  } finally {
+    if (saved === undefined) delete process.env.UM_EXTRACTION_GRADER_MODEL; else process.env.UM_EXTRACTION_GRADER_MODEL = saved;
+  }
+  assert.deepEqual(seen, ['gpt-5.6-luna', 'gpt-5.6-luna', 'env-model', 'env-model', 'opts-model', 'opts-model']);
 });
 
 // --- R1 call records, per judge call (model migration Phase B, spec R1) ---

@@ -2241,6 +2241,22 @@ export async function sweepBounceGate({ rows, grid, tau, floors }) {
 // cluster (0.30–0.45, the parked no-answer-floor data) up through clearly-strong hits.
 export const BOUNCER_SWEEP_GRID = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80];
 
+export const MQ_GATE_THRESHOLDS_PATH = fileURLToPath(new URL('./mq-gate-thresholds.json', import.meta.url));
+
+/**
+ * The two answer floors a --sweep holds BOUNCER_SCORE_GATE to, read from the committed mq gate
+ * config, so a re-pinned floor (model migration Phase B: answerCorrectness 0.841) reaches the
+ * next sweep. Fails closed: a missing floor throws rather than sweeping against nothing.
+ */
+export function bouncerSweepFloors(config) {
+  const floorOf = (metric) => {
+    const t = config?.thresholds?.find((x) => x.metric === metric);
+    if (typeof t?.floor !== 'number') throw new Error(`mq gate config has no ${metric} floor`);
+    return t.floor;
+  };
+  return { answerCorrectness: floorOf('answerCorrectness'), noAnswerPrecision: floorOf('noAnswerPrecision') };
+}
+
 /**
  * Collect RAW per-query grades for the gate sweep: grade every top-1 ONCE (doSearch top-1 +
  * gradeAnswer), returning {id, answerable, score, answers, confidence, ok} so sweepBounceGate
@@ -2463,15 +2479,18 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
       // answerable recall queries + the unanswerable no-answer queries against the seeded
       // corpus, using the pinned τ_answer. Needs the LLM grader; runs only with a corpus.
       if (noAnswerRows.length > 0) {
-        const { gradeAnswer } = await import('../lib/answer-grader.mjs');
+        const { gradeAnswer, answerGraderModel } = await import('../lib/answer-grader.mjs');
         const tau = resolveTauAnswer({ tauAnswer });
-        const agModel = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
+        // The grader: A's verdict, gpt-6-luna (model migration Phase B window 2, committed
+        // 0c4ca22), which is the summarizer default — answerGraderModel resolves it as gradeAnswer does.
+        const agModel = answerGraderModel();
         if (sweep) {
           // Manual gate-pin run (--sweep): grade every top-1 ONCE, then sweep the cost gate
           // over the grid to pin BOUNCER_SCORE_GATE. Skips the nightly answerCorrectnessPass
-          // (no double-grading). floors mirror the mq gate (answerCorrectness>=0.78, noAnswerPrecision>=0.95).
+          // (no double-grading). Its floors are the committed mq gate's (bouncerSweepFloors).
+          const floors = bouncerSweepFloors(JSON.parse(await readFile(MQ_GATE_THRESHOLDS_PATH, 'utf8')));
           const rows = await collectBounceRows({ gradeAnswer, doSearch, memory: recallMemory, recallRows, noAnswerRows, model: agModel, imputation: mainImputation });
-          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau, floors: { answerCorrectness: 0.78, noAnswerPrecision: 0.95 } })), rows };
+          bouncerSweep = { ...(await sweepBounceGate({ rows, grid: BOUNCER_SWEEP_GRID, tau, floors })), rows };
         } else {
           // UNGATED on purpose: nightly measures prod-with-bouncer-OFF answer-correctness (the
           // #132 baseline); the cost gate is pinned separately (--sweep) + applied at the flip.
