@@ -1,7 +1,7 @@
 /**
  * server/lib/provider/anthropic.mjs — Anthropic implementation of the Standard Provider Contract.
  *
- * Supports: summarizer (claude-haiku-4-5-20251001), facts (claude-haiku-4-5-20251001).
+ * Supports: summarizer (claude-haiku-5-5), facts (claude-haiku-5-5).
  * Request shape is model-aware via MODEL_CAPABILITIES (sampling params, thinking, effort);
  * unlisted models keep the pre-Haiku-5.5 shape.
  * Does NOT support: embeddings — Anthropic has no first-party embedding model.
@@ -20,8 +20,20 @@ export const providerName = 'anthropic';
 export const supports = { embeddings: false, summarizer: true, facts: true };
 
 export const defaults = {
-  summarizerModel: 'claude-haiku-4-5-20251001',
-  factsModel: 'claude-haiku-4-5-20251001',
+  // Model migration Phase B, spec R6(a) (operator ruling 2026-10-26): claude-haiku-5-5, moved
+  // FLAGGED. The Anthropic prereg (H55, eval/results/2026-10-27-phaseb-h55-report.json,
+  // committed cb9525c) measured it against claude-haiku-4-5-20251001 as summarizer and judge:
+  // better identifier recall, retention and cost, but it failed S-state invented dates (9.6
+  // against ≥ 9.8), SS5 length (3298 against ≤ 2575) and the SS4 guard (3 of 3 red, each a
+  // refusal naming the injected function), and the judge (no τ reaches JR1 0.95). The release
+  // notes carry the flag and the pin that keeps today's behaviour. facts: #391 (2026-10-20),
+  // Haiku 5.5 at effort low, equal noise abstention and precision to the baseline.
+  summarizerModel: 'claude-haiku-5-5',
+  factsModel: 'claude-haiku-5-5',
+  // The judge (which resolves to summarizerModel) keeps today's threshold: H55 found no τ* on
+  // haiku-5-5, so there is no measured value to move to, and OpenAI's 0.85 was measured on
+  // gpt-6-luna, not here (supersede.mjs defaultJudgeThreshold).
+  judgeThreshold: 0.80,
 };
 
 export const requires = ['UM_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'];

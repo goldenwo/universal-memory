@@ -80,7 +80,9 @@ fi
 # ---------------------------------------------------------------------------
 # Config / defaults
 # ---------------------------------------------------------------------------
-UM_STATE_MODEL="${UM_STATE_MODEL:-gpt-4o-mini}"
+# The server summarizer's measured default (model migration Phase B, addendum 3): gpt-6-luna
+# at reasoning effort low, measured on this state merge. gpt-4o-mini shuts down 2027-01-14.
+UM_STATE_MODEL="${UM_STATE_MODEL:-gpt-6-luna}"
 UM_STATE_MAX_CHARS="${UM_STATE_MAX_CHARS:-12000}"
 UM_STATE_TIMEOUT_SEC="${UM_STATE_TIMEOUT_SEC:-30}"
 
@@ -258,8 +260,11 @@ if [ "$backend" = "openai" ]; then
   # -------------------------------------------------------------------------
   export _UM_MODEL="$UM_STATE_MODEL"
 
+  # A luna model (dated snapshot included) takes reasoning_effort: the summarizer's, as the
+  # server sends it (server/lib/provider/openai.mjs) — UM_SUMMARIZER_EFFORT, else low. Any
+  # other model gets exactly the pre-luna body.
   payload=$(python3 -c '
-import os, json
+import os, json, re
 payload = {
     "model": os.environ["_UM_MODEL"],
     "messages": [
@@ -267,6 +272,9 @@ payload = {
         {"role": "user",   "content": os.environ["_UM_USER_PROMPT"]}
     ]
 }
+if re.search(r"-luna(-[0-9]{4}-[0-9]{2}-[0-9]{2})?$", payload["model"]):
+    effort = os.environ.get("UM_SUMMARIZER_EFFORT", "")
+    payload["reasoning_effort"] = effort if effort in ("none", "low", "medium", "high") else "low"
 print(json.dumps(payload))
 ')
 
@@ -405,7 +413,8 @@ if [ "$backend" != "openai" ]; then
 else
   tokens_in=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("prompt_tokens",0))')
   tokens_out=$(printf '%s' "$response" | python3 -c 'import sys,json; d=json.loads(sys.stdin.read()); print(d.get("usage",{}).get("completion_tokens",0))')
-  cost=$(python3 -c "print(f'{($tokens_in * 0.00015 + $tokens_out * 0.0006) / 1000:.6f}')")
+  # gpt-6-luna's rates, $0.10 / $0.50 per 1M (server/lib/pricing.mjs)
+  cost=$(python3 -c "print(f'{($tokens_in * 0.0001 + $tokens_out * 0.0005) / 1000:.6f}')")
 
   echo "[um-update-state] tokens_in=$tokens_in tokens_out=$tokens_out cost_estimate_usd=$cost mode=$UM_MODE" >&2
 

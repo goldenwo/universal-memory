@@ -213,6 +213,9 @@ q_ckpt 200 "$(ckpt_complete proj-a)"
 run_drain --yes proj-a
 assert_contains "T2c: pending_bytes printed before any POST" "$output" "pending_bytes=40000"
 assert_contains "T2c: a cost estimate is printed" "$output" "cost estimate"
+# 40000 bytes / 4 = 10000 input tokens at the server summarizer default's input rate,
+# gpt-6-luna's $0.10/1M (model migration Phase B; server/lib/pricing.mjs)
+assert_contains "T2c: the estimate is at gpt-6-luna's input rate" "$output" 'cost estimate ~$0.0010 (~10000 input tokens @ gpt-6-luna rate'
 
 echo ""
 echo "=== T2d (review round 1, MINOR 6): the #215 per-doc-reindex-only reminder is printed ==="

@@ -218,7 +218,7 @@ async function cliMain() {
 
   // Truthful provider/model labels: captured from facts()'s own per-call return
   // ({provider, model} — facts.mjs), NEVER re-derived from env/registry (the old
-  // env-only label reported 'gpt-4.1-nano (provider default)' on anthropic runs).
+  // env-only label reported the openai facts default, gpt-4.1-nano, on anthropic runs).
   let factsProvider = null;
   let factsModelSeen = null;
   const factsConfig = {

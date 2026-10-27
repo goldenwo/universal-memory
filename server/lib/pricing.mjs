@@ -50,13 +50,15 @@ export const PRICING = {
   },
   google: {
     // 2026-10-23: rates read from ai.google.dev/gemini-api/docs/pricing (paid tier,
-    // standard). gemini-3.6-flash's rates double on 2027-01-01 ($1.50 / $7.50 per MTok) —
-    // re-verify then. gemini-embedding-2 returns 3072 dims when no outputDimensionality is
+    // standard); re-read 2026-10-27. gemini-3.6-flash is priced at its 2027-01-01 rates
+    // ($1.50 / $7.50 per MTok, double the $0.75 / $3.75 before then; model migration Phase B,
+    // spec R7): the conservative side, so before 01-01 the cost cap binds early, never late.
+    // gemini-embedding-2 returns 3072 dims when no outputDimensionality is
     // sent (google.mjs embed sends none). gemini-2.0-flash (shut down 2026-06-01) and
     // text-embedding-004 (2026-01-14) stay listed so a pinning .env still boots.
-    last_verified: '2026-10-23',
+    last_verified: '2026-10-27',
     models: {
-      'gemini-3.6-flash':     { in: 0.00075, out: 0.00375, type: 'chat'  },
+      'gemini-3.6-flash':     { in: 0.00150, out: 0.00750, type: 'chat'  },
       'gemini-embedding-2':   { in: 0.00020, out: 0,       type: 'embed', dim: 3072 },
       'gemini-2.0-flash':     { in: 0.00010, out: 0.00040, type: 'chat'  }, // retired 2026-06-01
       'text-embedding-004':   { in: 0.00001, out: 0,       type: 'embed', dim: 768 }, // retired 2026-01-14

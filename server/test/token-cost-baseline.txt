@@ -61,7 +61,7 @@ Note: numbers are stable across runs (fixture-driven, no timestamps).
 
 === LOCATION 4: Summarizer prompt ===
   Source: plugins/claude-code/universal-memory/hooks/lib/summarize.sh
-  Surface consumed by: OpenAI gpt-4o-mini (default) or Claude (UM_SUMMARIZER=claude-agent-sdk)
+  Surface consumed by: OpenAI gpt-6-luna (default) or Claude (UM_SUMMARIZER=claude-agent-sdk)
   Note: system prompt has NO runtime placeholders (measured as-is);
         user message includes the transcript (variable; see per-char estimate below).
 

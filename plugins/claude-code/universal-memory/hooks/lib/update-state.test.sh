@@ -94,9 +94,14 @@ with open(out_path, "w") as f:
     json.dump(resp, f)
 PYEOF
 
-  # Write mock curl script that cats the fixture JSON then emits the sentinel
+  # Write mock curl script that saves the -d request body to last-payload.json, then
+  # cats the fixture JSON and emits the sentinel
   cat > "$mock_path" <<MOCK_EOF
 #!/usr/bin/env bash
+while [ \$# -gt 0 ]; do
+  if [ "\$1" = "-d" ]; then printf '%s' "\$2" > "$bin_dir/last-payload.json"; shift; fi
+  shift
+done
 cat "$fixture_json_file"
 printf '\n__UM_HTTP_CODE__200'
 MOCK_EOF
@@ -466,6 +471,35 @@ if [ -f "$T8_VAULT/.telemetry/cost-log.csv" ]; then
 else
   fail "T8: default mode must still write cost-log.csv"
 fi
+
+# ============================================================
+# Test 8b: the request body and cost rate (model migration Phase B, spec R7 +
+#   addendum 3). The default is gpt-6-luna at the summarizer's measured effort
+#   (low); a luna id, dated snapshot included, carries reasoning_effort, and any
+#   other id sends exactly today's body. Cost is at gpt-6-luna's rates.
+# ============================================================
+echo "=== Test 8b: request body (model + reasoning_effort) and cost rate ==="
+
+write_mock_curl "$MOCK_BIN" "$FIXTURE_STATE_UPDATED_FILE"
+T8B_INPUT=$(make_stdin "$SAMPLE_OLD_STATE" "$SAMPLE_SUMMARY")
+
+# state_body_of <env assignments...> — prints "model|reasoning_effort-or-ABSENT|sorted keys"
+state_body_of() {
+  rm -f "$MOCK_BIN/last-payload.json"
+  env "$@" PATH="$MOCK_BIN:$PATH" UM_PROJECT="testproject" bash "$UPDATE_STATE" --stdout <<< "$T8B_INPUT" >/dev/null 2>&1
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("%s|%s|%s" % (d["model"], d.get("reasoning_effort","ABSENT"), ",".join(sorted(d))))' "$MOCK_BIN/last-payload.json" 2>/dev/null || echo "NO-BODY"
+}
+
+assert_eq "T8b: default → gpt-6-luna at effort low" "$(state_body_of -u UM_STATE_MODEL -u UM_SUMMARIZER_EFFORT)" "gpt-6-luna|low|messages,model,reasoning_effort"
+assert_eq "T8b: UM_SUMMARIZER_EFFORT=none is sent" "$(state_body_of -u UM_STATE_MODEL UM_SUMMARIZER_EFFORT=none)" "gpt-6-luna|none|messages,model,reasoning_effort"
+assert_eq "T8b: an unknown effort falls back to low" "$(state_body_of -u UM_STATE_MODEL UM_SUMMARIZER_EFFORT=max)" "gpt-6-luna|low|messages,model,reasoning_effort"
+assert_eq "T8b: a dated luna snapshot takes the effort" "$(state_body_of -u UM_SUMMARIZER_EFFORT UM_STATE_MODEL=gpt-6-luna-2026-11-02)" "gpt-6-luna-2026-11-02|low|messages,model,reasoning_effort"
+assert_eq "T8b: a legacy model sends today's body, no effort" "$(state_body_of UM_STATE_MODEL=gpt-4.1-mini UM_SUMMARIZER_EFFORT=high)" "gpt-4.1-mini|ABSENT|messages,model"
+assert_eq "T8b: only a -YYYY-MM-DD suffix maps to luna" "$(state_body_of -u UM_SUMMARIZER_EFFORT UM_STATE_MODEL=gpt-6-luna-pro)" "gpt-6-luna-pro|ABSENT|messages,model"
+
+# (250*0.0001 + 180*0.0005)/1000 at gpt-6-luna's $0.10 / $0.50 per 1M (server/lib/pricing.mjs)
+T8B_STDERR=$(PATH="$MOCK_BIN:$PATH" UM_PROJECT="testproject" bash "$UPDATE_STATE" --stdout <<< "$T8B_INPUT" 2>&1 >/dev/null)
+assert_contains "T8b: cost estimate at the default model's rates" "$T8B_STDERR" "cost_estimate_usd=0.000115"
 
 unset CLAUDE_CWD
 

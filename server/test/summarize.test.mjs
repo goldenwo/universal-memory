@@ -138,12 +138,12 @@ test('#314 summarizerTarget: the same provider and model summarize() resolves an
     { env: {}, ctx: { model: 'gpt-4.1-nano-2025-04-14' }, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: {}, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: { model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
-    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
     { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: { backend: 'openai', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
     { env: { UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'ollama', model: 'llama3' } },
-    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
     { env: {}, ctx: { backend: 'claude-agent-sdk', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
-    { env: { UM_SUMMARIZER_FALLBACK: 'anthropic' }, ctx: { backend: 'nonexistent-backend' }, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_FALLBACK: 'anthropic' }, ctx: { backend: 'nonexistent-backend' }, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
   ];
   const VARS = ['UM_SUMMARIZER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_MODEL', 'UM_SUMMARIZER_FALLBACK'];
   const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));

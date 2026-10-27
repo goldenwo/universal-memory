@@ -226,8 +226,8 @@ print(int(pb))
 # /api/stats layers block already knows (pending_bytes, last_capture_at,
 # last_summary_at, lag_hours, stale) — the layers block IS the init-point
 # signal (§6). Cost estimate is deliberately order-of-magnitude only (spec
-# §5): bytes/4 ≈ tokens, priced at gpt-4o-mini's input rate
-# ($0.00015/1k tok, server/lib/pricing.mjs) — input dominates a summarize
+# §5): bytes/4 ≈ tokens, priced at the server summarizer default's input rate
+# (gpt-6-luna, $0.0001/1k tok, server/lib/pricing.mjs) — input dominates a summarize
 # call's cost, so omitting output tokens keeps this a rough-but-honest
 # lower-ish bound, not a precise quote.
 _print_project_preflight() {
@@ -252,8 +252,8 @@ print("  %s: pending_bytes=%s last_capture_at=%s last_summary_at=%s lag_hours=%s
     info.get("last_summary_at"), info.get("lag_hours"), info.get("stale")))
 if isinstance(pending, (int, float)) and not isinstance(pending, bool):
     tokens_est = pending / 4.0
-    cost_est = (tokens_est / 1000.0) * 0.00015
-    print("  %s: cost estimate ~$%.4f (~%d input tokens @ gpt-4o-mini rate — order-of-magnitude only)" % (
+    cost_est = (tokens_est / 1000.0) * 0.0001
+    print("  %s: cost estimate ~$%.4f (~%d input tokens @ gpt-6-luna rate — order-of-magnitude only)" % (
         project, cost_est, int(tokens_est)))
 ' "$1" "$STATS_FILE"
 }

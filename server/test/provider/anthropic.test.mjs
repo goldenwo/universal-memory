@@ -12,11 +12,19 @@ test('embedderConfig is literal null (not a function) — spec §3.2 unsupported
   assert.equal(typeof anthropic.embedderConfig, 'object');
 });
 
+// Model migration Phase B, spec R6(a) (operator ruling 2026-10-26): the summarizer and facts
+// defaults move to claude-haiku-5-5, flagged in the release notes (Anthropic prereg H55,
+// eval/results/2026-10-27-phaseb-h55-report.json, committed cb9525c). No grid τ held the
+// judge rules on haiku-5-5, so its judge threshold stays at today's 0.80.
 test('defaults exposes summarizer + facts models (no embedding fields)', () => {
-  assert.equal(anthropic.defaults.summarizerModel, 'claude-haiku-4-5-20251001');
-  assert.equal(anthropic.defaults.factsModel, 'claude-haiku-4-5-20251001');
+  assert.equal(anthropic.defaults.summarizerModel, 'claude-haiku-5-5');
+  assert.equal(anthropic.defaults.factsModel, 'claude-haiku-5-5');
   assert.equal(anthropic.defaults.embeddingModel, undefined);
   assert.equal(anthropic.defaults.embeddingDim, undefined);
+});
+
+test('defaults: the judge threshold stays at today\'s 0.80 (H55 measured no τ*), never OpenAI\'s', () => {
+  assert.equal(anthropic.defaults.judgeThreshold, 0.80);
 });
 
 test('requires lists UM_-prefixed first, then standard', () => {
@@ -162,9 +170,15 @@ test('factsInvoke sends the shared policy prompt as system and pins temperature 
       return { content: [{ type: 'text', text: '{"facts": []}' }], usage: { input_tokens: 1, output_tokens: 1 } };
     } },
   };
-  await anthropic.factsInvoke('any text', { client: fakeClient });
+  // A sampling-capable model, named: the default (claude-haiku-5-5 since model migration
+  // Phase B) takes no temperature, and drops it (asserted below).
+  await anthropic.factsInvoke('any text', { client: fakeClient, model: 'claude-haiku-4-5-20251001' });
   assert.equal(seen.system, FACTS_SYSTEM_PROMPT);
   assert.equal(seen.temperature, 0); // prod passes no temperature → deterministic default
+  await anthropic.factsInvoke('any text', { client: fakeClient });
+  assert.equal(seen.model, 'claude-haiku-5-5');
+  assert.equal(seen.system, FACTS_SYSTEM_PROMPT);
+  assert.equal('temperature' in seen, false, 'the 5.5 default rejects a temperature, so none is sent');
 });
 
 test('factsInvoke honors an explicit temperature override (overridable default, not a hardcoded literal)', async () => {
@@ -175,7 +189,7 @@ test('factsInvoke honors an explicit temperature override (overridable default, 
       return { content: [{ type: 'text', text: '{"facts": []}' }], usage: { input_tokens: 1, output_tokens: 1 } };
     } },
   };
-  await anthropic.factsInvoke('any text', { client: fakeClient, temperature: 0.7 });
+  await anthropic.factsInvoke('any text', { client: fakeClient, model: 'claude-haiku-4-5-20251001', temperature: 0.7 });
   assert.equal(seen.temperature, 0.7);
 });
 
@@ -275,6 +289,40 @@ test('contradictionJudgeInvoke drops temperature 0 on Haiku 5.5 and keeps it on 
   await anthropic.contradictionJudgeInvoke('p', { client: c45, model: 'claude-haiku-4-5-20251001' });
   assert.equal(c45.calls[0].temperature, 0);
   assert.equal(c45.calls[0].max_tokens, 1024);
+});
+
+// Spec R6: the judge resolves to the provider's summarizerModel, so moving the summarizer moves
+// the judge. On the shipped defaults, with nothing set, the 5.5 judge sends no temperature (5.5
+// rejects one), no thinking and no effort (the model's own adaptive thinking, as H55 measured
+// it), and the thinking headroom on top of its answer budget; the call record carries exactly
+// that request.
+test('contradictionJudgeInvoke on the shipped default (Haiku 5.5): the exact request, and requestParams record it', async () => {
+  const client = capturingClient([{ type: 'text', text: '{"contradicts": false, "confidence": 0.1, "reasoning": "r"}' }]);
+  const r = await anthropic.contradictionJudgeInvoke('p', { client, systemPrompt: 'sys', env: {} });
+  assert.deepEqual(client.calls[0], {
+    model: 'claude-haiku-5-5',
+    max_tokens: 1024 + 4096,
+    system: 'sys',
+    messages: [{ role: 'user', content: 'p' }],
+  });
+  assert.deepEqual(r.requestParams, { model: 'claude-haiku-5-5', max_tokens: 1024 + 4096 });
+  const mock = await anthropic.contradictionJudgeInvoke('p', { env: { UM_TEST_MOCK_SDK: '1' } });
+  assert.deepEqual(mock.requestParams, r.requestParams, 'the mock records the same shape');
+});
+
+test('the judge dispatcher on anthropic resolves claude-haiku-5-5 when nothing pins a model', async () => {
+  const { judgeContradiction } = await import('../../lib/contradiction-judge.mjs');
+  const VARS = ['UM_CONTRADICTION_PROVIDER', 'UM_CONTRADICTION_MODEL', 'UM_SUMMARIZER_PROVIDER'];
+  const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
+  let seen;
+  try {
+    for (const k of VARS) delete process.env[k];
+    process.env.UM_CONTRADICTION_PROVIDER = 'anthropic';
+    await judgeContradiction('a', 'b', { _providerOverride: { contradictionJudgeInvoke: async (p, o) => { seen = o.model; return { content: '{}', usage: {} }; } } });
+  } finally {
+    for (const k of VARS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+  assert.equal(seen, 'claude-haiku-5-5');
 });
 
 test('factsInvoke reports parseOk: false for a malformed reply and true for a clean empty one', async () => {

@@ -19,7 +19,7 @@ import { judgeContradiction, JUDGE_BACKENDS } from '../lib/contradiction-judge.m
 //
 // Scenario: UM_CONTRADICTION_PROVIDER=anthropic, UM_SUMMARIZER_PROVIDER=openai
 // The model that arrives at the invoke MUST be anthropic's own default
-// (claude-haiku-4-5-20251001), NOT openai's default (gpt-4o-mini).
+// (claude-haiku-5-5), NOT openai's default (gpt-6-luna).
 
 test('judge: R3-G1 — uses contradiction-provider own default model, not summarizer provider default', async () => {
   const savedContra = process.env.UM_CONTRADICTION_PROVIDER;
