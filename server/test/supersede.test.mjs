@@ -55,6 +55,7 @@ test('contradictionBandCeiling: default 0.95 (band-widening validation; confiden
   assert.equal(contradictionBandCeiling({}), 0.95, 'pinned default — lockstep with .env.example + the band-widening validation (results/2026-06-19-supersession-band-widening-validation.md; s009)');
   assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: '0.90' }), 0.90);
   assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: 'not-a-number' }), 0.95, 'invalid → default');
+  assert.equal(contradictionBandCeiling({ UM_CONTRADICTION_BAND_CEILING: '0.5x' }), 0.95, 'partly numeric → default, as every supersession knob parses (model migration Phase B review)');
 });
 
 // Drift gate. OpenAI's default is τ* 0.85, measured on gpt-6-luna at effort none (model
@@ -86,13 +87,15 @@ test('autoSupersedeJudgeThreshold: resolves per judge provider (openai 0.85; ant
 
 // One parser for UM_AUTOSUPERSEDE_THRESHOLD, shared by the in-band path and the checkpoint's
 // detector call, so a malformed value resolves the same way on both: to no override.
-test('judgeThresholdOverride: the parsed env value, or undefined when unset, blank or non-numeric', () => {
+test('judgeThresholdOverride: the parsed env value, or undefined when unset, blank, non-numeric or partly numeric', () => {
   assert.equal(judgeThresholdOverride({}), undefined);
   assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: '0.9' }), 0.9);
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: ' 0.9 ' }), 0.9, 'surrounding whitespace is trimmed');
   assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: '' }), undefined);
   assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: ' ' }), undefined);
   assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: 'abc' }), undefined);
-  for (const v of ['', ' ', 'abc', '0.9']) {
+  assert.equal(judgeThresholdOverride({ UM_AUTOSUPERSEDE_THRESHOLD: '0.1garbage' }), undefined, 'a numeric prefix is not a number (parseFloat would lower the bar to 0.1)');
+  for (const v of ['', ' ', 'abc', '0.1garbage', '0.9']) {
     const env = { UM_AUTOSUPERSEDE_THRESHOLD: v };
     assert.equal(autoSupersedeJudgeThreshold(env), judgeThresholdOverride(env) ?? defaultJudgeThreshold(env), `in-band agrees for ${JSON.stringify(v)}`);
   }

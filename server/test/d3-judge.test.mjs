@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeContradiction, JUDGE_BACKENDS } from '../lib/contradiction-judge.mjs';
+import { judgeContradiction, JUDGE_BACKENDS, judgeProviderName, judgeModelName } from '../lib/contradiction-judge.mjs';
 
 // ── (a) Provider + model resolution (R3-G1) ─────────────────────────────────
 //
@@ -67,6 +67,18 @@ test('judge: a blank UM_CONTRADICTION_PROVIDER / UM_CONTRADICTION_MODEL falls th
   } finally {
     for (const k of VARS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
+});
+
+// The names the eval harnesses record (d3-eval, supersession-gate-eval): the same resolution as
+// judgeContradiction's, blank = unset, so a record never names a model the call did not use.
+test('judgeProviderName / judgeModelName: the judge\'s resolution, blank = unset', () => {
+  assert.equal(judgeProviderName({}), 'openai');
+  assert.equal(judgeProviderName({ UM_CONTRADICTION_PROVIDER: '', UM_SUMMARIZER_PROVIDER: 'anthropic' }), 'anthropic');
+  assert.equal(judgeModelName({}), JUDGE_BACKENDS.openai.defaults.summarizerModel);
+  assert.equal(judgeModelName({ UM_CONTRADICTION_MODEL: '' }), JUDGE_BACKENDS.openai.defaults.summarizerModel);
+  assert.equal(judgeModelName({ UM_CONTRADICTION_MODEL: 'pinned' }), 'pinned');
+  assert.equal(judgeModelName({ UM_CONTRADICTION_PROVIDER: 'anthropic' }), JUDGE_BACKENDS.anthropic.defaults.summarizerModel);
+  assert.equal(judgeModelName({ UM_CONTRADICTION_PROVIDER: 'no-such-provider' }), null);
 });
 
 // ── (b) JSON parse fail-safe ─────────────────────────────────────────────────

@@ -2532,8 +2532,9 @@ async function runOnceDecayPinned({ recallRows = [], stalenessRows = [], noAnswe
     judges: {
       tauAnswer: resolveTauAnswer({ tauAnswer }),
       autosupersedeThreshold: autoSupersedeJudgeThreshold(),
-      contradictionModel: process.env.UM_CONTRADICTION_MODEL ?? null,
-      answerGraderModel: process.env.UM_ANSWER_GRADER_MODEL ?? null,
+      // The pins (null = the default model); a blank pin is unset, as the call paths treat it.
+      contradictionModel: process.env.UM_CONTRADICTION_MODEL || null,
+      answerGraderModel: process.env.UM_ANSWER_GRADER_MODEL || null,
     },
     // #297 D26: the main run's imputation stamp (null on decay-OFF runs; presence = version signal).
     undatedImputation: mainImputationStamp,

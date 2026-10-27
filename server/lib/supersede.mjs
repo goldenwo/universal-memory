@@ -203,8 +203,19 @@ export function isAutoSupersedeEnabled(env = process.env) {
  * server/test/supersede.test.mjs.
  */
 export function contradictionBandCeiling(env = process.env) {
-  const n = Number.parseFloat(env.UM_CONTRADICTION_BAND_CEILING);
-  return Number.isFinite(n) ? n : 0.95;
+  return parseNumberEnv(env.UM_CONTRADICTION_BAND_CEILING) ?? 0.95;
+}
+
+/**
+ * A numeric override from the environment, as every supersession knob reads it: the whole
+ * trimmed value must be a finite number, else undefined (no override, so the caller's default
+ * applies). A malformed value never becomes a partial number ('0.1garbage' read as 0.1 by
+ * parseFloat), 0 (' ' read by Number) or NaN ('abc').
+ */
+export function parseNumberEnv(raw) {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  const n = s === '' ? Number.NaN : Number(s);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 // The judge threshold of a provider with no τ* of its own: the value pinned 2026-06-02 on
@@ -228,13 +239,13 @@ export function defaultJudgeThreshold(env = process.env) {
 
 /**
  * The operator's UM_AUTOSUPERSEDE_THRESHOLD as a number, or undefined when it is unset, blank
- * or not numeric. The one parser for the variable: the in-band path (below) and the
- * checkpoint's detector call (checkpoint-chunk-txn.mjs) both use it, so a malformed value
- * falls back to the default on both, never to NaN (never supersede) or 0 (always supersede).
+ * or not wholly numeric (parseNumberEnv). The one reader of the variable: the in-band path
+ * (below) and the checkpoint's detector call (checkpoint-chunk-txn.mjs) both use it, so a
+ * malformed value falls back to the default on both, never to NaN (never supersede), 0
+ * (always supersede) or a numeric prefix.
  */
 export function judgeThresholdOverride(env = process.env) {
-  const n = Number.parseFloat(env.UM_AUTOSUPERSEDE_THRESHOLD);
-  return Number.isFinite(n) ? n : undefined;
+  return parseNumberEnv(env.UM_AUTOSUPERSEDE_THRESHOLD);
 }
 
 /**

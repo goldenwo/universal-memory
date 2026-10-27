@@ -351,9 +351,10 @@ function buildThresholds(min, max, step) {
   return out;
 }
 
-/** Resolve the contradiction provider name from env (judge resolution order). */
-function resolveProvider() {
-  return process.env.UM_CONTRADICTION_PROVIDER ?? process.env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+/** Resolve the contradiction provider name from env (the judge's own resolution, blank = unset). */
+async function resolveProvider() {
+  const { judgeProviderName } = await import('../lib/contradiction-judge.mjs');
+  return judgeProviderName();
 }
 
 /** Map a provider to its API-key env var(s). ollama needs none. */
@@ -454,10 +455,11 @@ async function runLive({ pairs, fixturePath, doEmbed, thresholds, runs }) {
  * Assemble the canonical result JSON (mirrors D1's buildResultJson shape), one entry per run.
  */
 async function buildResultJson({ pairs, fixturePath, thresholds, runs, cost }) {
-  const provider = resolveProvider();
-  // The model the judge resolves to (contradiction-judge.mjs: env, else that provider's default).
-  const { JUDGE_BACKENDS } = await import('../lib/contradiction-judge.mjs');
-  const model = process.env.UM_CONTRADICTION_MODEL ?? JUDGE_BACKENDS[provider]?.defaults?.summarizerModel ?? null;
+  const provider = await resolveProvider();
+  // The model the judge resolves to (contradiction-judge.mjs judgeModelName: env, else that
+  // provider's default; blank = unset).
+  const { judgeModelName } = await import('../lib/contradiction-judge.mjs');
+  const model = judgeModelName();
 
   const byCategory = {};
   const byLabel = { contradiction: 0, not: 0 };
@@ -512,7 +514,7 @@ async function cliMain() {
   // Preflight provider-key check. Try process.loadEnvFile() (Node ≥20.12 loads
   // ./.env) before giving up — the project keeps keys in server/.env with no
   // dotenv dependency.
-  const provider = resolveProvider();
+  const provider = await resolveProvider();
   const keyVars = providerKeyVars(provider);
   if (keyVars.length > 0) {
     const hasKey = () => keyVars.some((v) => process.env[v]);

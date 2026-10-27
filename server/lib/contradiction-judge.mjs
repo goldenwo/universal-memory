@@ -55,6 +55,15 @@ export function judgeProviderName(env = process.env) {
 }
 
 /**
+ * The judge's model when the caller names neither a model nor a provider: UM_CONTRADICTION_MODEL
+ * (blank = unset), else judgeProviderName's provider default; null for an unknown provider. The
+ * eval harnesses record this, so a record names the model the call used.
+ */
+export function judgeModelName(env = process.env) {
+  return env.UM_CONTRADICTION_MODEL || JUDGE_BACKENDS[judgeProviderName(env)]?.defaults?.summarizerModel || null;
+}
+
+/**
  * Decide whether newerFact contradicts olderFact using a configured LLM judge.
  *
  * @param {string} olderFact - The existing / older fact text

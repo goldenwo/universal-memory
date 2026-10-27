@@ -177,11 +177,12 @@ async function main() {
   const { embed } = await import('../lib/embed.mjs');
   const { cosineStrict } = await import('../lib/vector.mjs');
   const { NOOP_METRICS } = await import('../lib/metrics.mjs');
-  const { judgeContradiction, JUDGE_BACKENDS } = await import('../lib/contradiction-judge.mjs');
+  const { judgeContradiction, judgeProviderName, judgeModelName } = await import('../lib/contradiction-judge.mjs');
   const { autoSupersedeJudgeThreshold } = await import('../lib/supersede.mjs');
-  const provider = process.env.UM_CONTRADICTION_PROVIDER ?? process.env.UM_SUMMARIZER_PROVIDER ?? 'openai';
-  // The model the judge resolves to (contradiction-judge.mjs): env, else that provider's default.
-  const JUDGE_MODEL = process.env.UM_CONTRADICTION_MODEL ?? JUDGE_BACKENDS[provider]?.defaults?.summarizerModel ?? null;
+  const provider = judgeProviderName();
+  // The model the judge resolves to (contradiction-judge.mjs judgeModelName): env, else that
+  // provider's default; blank = unset.
+  const JUDGE_MODEL = judgeModelName();
 
   const rows = await loadGateRows();
   const frozen = juneInBand(JSON.parse(await readFile(JUNE_REF, 'utf8')).perRow);

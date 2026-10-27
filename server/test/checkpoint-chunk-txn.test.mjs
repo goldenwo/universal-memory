@@ -858,7 +858,7 @@ test('5b: judgeThreshold threads through as undefined when UM_AUTOSUPERSEDE_THRE
   const saved = process.env.UM_AUTOSUPERSEDE_THRESHOLD;
   const seen = [];
   try {
-    for (const value of [undefined, '0.9', ' ', 'abc']) {
+    for (const value of [undefined, '0.9', ' ', 'abc', '0.1garbage']) {
       if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = value;
       const vault = makeVault();
       const result = await runChunkTransaction(
@@ -874,7 +874,8 @@ test('5b: judgeThreshold threads through as undefined when UM_AUTOSUPERSEDE_THRE
   } finally {
     if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = saved;
   }
-  assert.equal(seen.length, 4);
+  assert.equal(seen.length, 5);
+  assert.equal(seen[4].judgeThreshold, undefined, 'partly numeric → undefined (parseFloat would read 0.1)');
   assert.equal('judgeThreshold' in seen[0], true, 'the key is passed');
   assert.equal(seen[0].judgeThreshold, undefined, 'unset → undefined, so the detector default applies');
   assert.equal(seen[1].judgeThreshold, 0.9);
@@ -888,7 +889,7 @@ test('5b: retrievalThreshold is undefined when UM_AUTOSUPERSEDE_RETRIEVAL_THRESH
   const saved = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD;
   const seen = [];
   try {
-    for (const value of [undefined, '0.5', ' ', 'abc']) {
+    for (const value of [undefined, '0.5', ' ', 'abc', '0.1garbage']) {
       if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = value;
       const vault = makeVault();
       const result = await runChunkTransaction(
@@ -904,7 +905,7 @@ test('5b: retrievalThreshold is undefined when UM_AUTOSUPERSEDE_RETRIEVAL_THRESH
   } finally {
     if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = saved;
   }
-  assert.deepEqual(seen, [undefined, 0.5, undefined, undefined]);
+  assert.deepEqual(seen, [undefined, 0.5, undefined, undefined, undefined]);
 });
 
 // ===========================================================================
