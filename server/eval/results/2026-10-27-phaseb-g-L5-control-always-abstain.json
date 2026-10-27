@@ -1,0 +1,3199 @@
+{
+  "timestamp": "2026-10-27T03:39:50.184Z",
+  "fixtures": [
+    "eval/production-noise-set.jsonl",
+    "eval/collision-slice.jsonl",
+    "eval/extraction-set.jsonl"
+  ],
+  "fixtureSha256": {
+    "eval/production-noise-set.jsonl": "7391a26745d14aa45e6601ba13edd15bc1f3867776a2cb2b5e46f043b12e57c0",
+    "eval/collision-slice.jsonl": "106036a2e3d4aa88b669b9e702aed816c07818f26aa28a228e975e7e6ce77cf6",
+    "eval/extraction-set.jsonl": "e0d00401e4526bd12cc69c8956f51a8d93c8e42b11fd43736418c4c6a800771a"
+  },
+  "mode": "judged",
+  "judgeModel": "gpt-5.6-luna",
+  "factsProvider": "control:always-abstain",
+  "factsModel": "always-abstain",
+  "factsConfig": {
+    "temperature": 0
+  },
+  "pinnable": true,
+  "extraction": {
+    "rows": 132,
+    "graded": 132,
+    "parseFails": 0,
+    "precision": null,
+    "recall": 0,
+    "f1": null,
+    "noiseAbstained": 76,
+    "noiseTotal": 76,
+    "perRow": [
+      {
+        "id": "n01",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n02",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n04",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n05",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n07",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n09",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n10",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n12",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n13",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n14",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n15",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n16",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n17",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n18",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n19",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n20",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n21",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n24",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n25",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n26",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n27",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n28",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n29",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n30",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n33",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n34",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n35",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n36",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n37",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n38",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n39",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n40",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n41",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n42",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n43",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n44",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n45",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n46",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n47",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n48",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n49",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n50",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n51",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n52",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n53",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n54",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n55",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n56",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n57",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n58",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n59",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n60",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n61",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n62",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n63",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n64",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n65",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n66",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n67",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n68",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n69",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n70",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n71",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n72",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n73",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n74",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n75",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n76",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n77",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n78",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n79",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "n80",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c01",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c02",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c03",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c04",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c05",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c06",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c07",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c08",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c10",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c11",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "c12",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 0,
+        "extractedTotal": 0,
+        "extractedSupported": 0
+      }
+    ],
+    "byStratum": {
+      "ephemeral": {
+        "rows": 39,
+        "parseFails": 0,
+        "noiseTotal": 39,
+        "noiseAbstained": 39,
+        "abstentionRate": 1,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "telemetry": {
+        "rows": 16,
+        "parseFails": 0,
+        "noiseTotal": 16,
+        "noiseAbstained": 16,
+        "abstentionRate": 1,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "referent-stripped": {
+        "rows": 13,
+        "parseFails": 0,
+        "noiseTotal": 13,
+        "noiseAbstained": 13,
+        "abstentionRate": 1,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "durable": {
+        "rows": 12,
+        "parseFails": 0,
+        "noiseTotal": 0,
+        "noiseAbstained": 0,
+        "abstentionRate": null,
+        "goldTotal": 14,
+        "goldMatched": 0,
+        "recall": 0
+      },
+      "unknown": {
+        "rows": 52,
+        "parseFails": 0,
+        "noiseTotal": 8,
+        "noiseAbstained": 8,
+        "abstentionRate": 1,
+        "goldTotal": 63,
+        "goldMatched": 0,
+        "recall": 0
+      }
+    }
+  },
+  "callStats": {
+    "n": 132,
+    "costUsd": {
+      "total": 0,
+      "mean": 0
+    },
+    "tokensIn": {
+      "mean": 0
+    },
+    "tokensOut": {
+      "mean": 0
+    },
+    "latencyMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0,
+      "mean": 0
+    },
+    "stopReasons": {
+      "control": 132
+    },
+    "parseFailures": 0
+  },
+  "calls": [
+    {
+      "id": "n01",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n02",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n03",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n04",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n05",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n06",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n07",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n08",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n09",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n10",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n11",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n12",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n13",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n14",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n15",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n16",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n17",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n18",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n19",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n20",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n21",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n22",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n23",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n24",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n25",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n26",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n27",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n28",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n29",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n30",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n31",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n32",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n33",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n34",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n35",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n36",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n37",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n38",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n39",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n40",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n41",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n42",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n43",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n44",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n45",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n46",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n47",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n48",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n49",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n50",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n51",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n52",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n53",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n54",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n55",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n56",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n57",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n58",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n59",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n60",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n61",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n62",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n63",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n64",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n65",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n66",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n67",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n68",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n69",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n70",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n71",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n72",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n73",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n74",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n75",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n76",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n77",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n78",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n79",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "n80",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c01",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c02",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c03",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c04",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c05",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c06",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c07",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c08",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c09",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c10",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c11",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "c12",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e01",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e02",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e03",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e04",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e05",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e06",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e07",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e08",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e09",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e10",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e11",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e12",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e13",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e14",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e15",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e16",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e17",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e18",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e19",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e20",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e21",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e22",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e23",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e24",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e25",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e26",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e27",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e28",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e29",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e30",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e31",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e32",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e33",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e34",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e35",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e36",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e37",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e38",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e39",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    },
+    {
+      "id": "e40",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false,
+          false
+        ],
+        "extractedSupported": [],
+        "calls": []
+      }
+    }
+  ]
+}
