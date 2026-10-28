@@ -35,7 +35,7 @@ project_name() {
 # i.e. 10 minutes), remove it. Legitimate runs complete in seconds; a lockdir
 # older than 10 minutes was left by a crashed process.
 #
-# Call this BEFORE each retry loop that uses mkdir-based locking.
+# Call this BEFORE each retry loop that takes a lockdir with atomic_mkdir.
 try_clear_stale_lock() {
   local lockdir="$1"
   local grace="${2:-600}"
@@ -47,4 +47,18 @@ try_clear_stale_lock() {
       rmdir "$lockdir" 2>/dev/null || true
     fi
   fi
+}
+
+# atomic_mkdir DIR
+#
+# Create DIR (not its parents) with the mkdir(2) system call itself: of two
+# racing callers exactly one succeeds (exit 0), and the other fails on EEXIST.
+# This is how bin/um-forget and bin/um-supersede take a <doc>.lockdir, the same
+# directory lock the server takes with Node's fs.mkdir (server/lib/lockdir.mjs).
+# The `mkdir` command is not used because it is not atomic everywhere: Ubuntu
+# 26.04's uutils mkdir returns 0 when a racing mkdir created the directory
+# first (both succeeded in 85 of 300 measured races). Both callers already
+# require python3.
+atomic_mkdir() {
+  python3 -c 'import os, sys; os.mkdir(sys.argv[1])' "$1" 2>/dev/null
 }

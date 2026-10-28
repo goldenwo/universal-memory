@@ -149,6 +149,39 @@ val=$(env -i PATH="$PATH" HOME="$HOME" PYTHONUTF8=0 PYTHONIOENCODING=cp1252 \
   | grep -cE '^(PYTHONUTF8=1|PYTHONIOENCODING=utf-8)$' || true)
 assert_eq "T11: frontmatter.sh exports both UTF-8 variables over inherited values" "$val" "2"
 
+# Test 12: atomic_mkdir — the lockdir primitive of bin/um-forget and bin/um-supersede.
+# The `mkdir` command is not atomic everywhere: Ubuntu 26.04's uutils mkdir returns 0 when a
+# racing mkdir created the directory first, so two processes could both take the
+# state.md.lockdir the server also takes (server/lib/lockdir.mjs, Node fs.mkdir). atomic_mkdir
+# makes the mkdir(2) call itself: of two racers exactly one succeeds.
+T12_DIR="$TMPDIR_ROOT/t12"
+mkdir -p "$T12_DIR"
+if atomic_mkdir "$T12_DIR/lock"; then pass "T12: atomic_mkdir creates a new directory"; else fail "T12: atomic_mkdir creates a new directory"; fi
+if [ -d "$T12_DIR/lock" ]; then pass "T12: the directory exists after"; else fail "T12: the directory exists after"; fi
+if atomic_mkdir "$T12_DIR/lock"; then fail "T12: atomic_mkdir on an existing directory must fail"; else pass "T12: atomic_mkdir on an existing directory fails"; fi
+if atomic_mkdir "$T12_DIR/missing-parent/lock"; then fail "T12: no parent → fails (no -p)"; else pass "T12: no parent → fails (no -p)"; fi
+exactly_one=0
+for _ in $(seq 1 200); do
+  rm -rf "$T12_DIR/race"
+  ( atomic_mkdir "$T12_DIR/race" && echo ok ) > "$T12_DIR/a" 2>/dev/null &
+  ( atomic_mkdir "$T12_DIR/race" && echo ok ) > "$T12_DIR/b" 2>/dev/null &
+  wait
+  winners=0
+  [ -s "$T12_DIR/a" ] && winners=$((winners + 1))
+  [ -s "$T12_DIR/b" ] && winners=$((winners + 1))
+  [ "$winners" -eq 1 ] && exactly_one=$((exactly_one + 1))
+done
+assert_eq "T12: of two racing atomic_mkdir calls exactly one succeeds, in every one of 200 races" "$exactly_one" "200"
+
+# Test 13: both lockdir takers acquire through atomic_mkdir, never the bare mkdir command.
+for t13_bin in um-forget um-supersede; do
+  t13_src="$SCRIPT_DIR/../../bin/$t13_bin"
+  # shellcheck disable=SC2016  # deliberate literal: the pattern matches "$LOCKDIR" in the script's source text
+  if grep -q 'atomic_mkdir "\$LOCKDIR"' "$t13_src"; then pass "T13: $t13_bin takes its lock with atomic_mkdir"; else fail "T13: $t13_bin takes its lock with atomic_mkdir"; fi
+  # shellcheck disable=SC2016  # deliberate literal, as above
+  if grep -qE '(^|[^_])mkdir "\$LOCKDIR"' "$t13_src"; then fail "T13: $t13_bin still runs the bare mkdir command on its lock"; else pass "T13: $t13_bin runs no bare mkdir on its lock"; fi
+done
+
 # ============================================================
 # Summary
 # ============================================================
