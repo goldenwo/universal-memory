@@ -46,9 +46,18 @@ REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
 # and anyone able to plant files beside a user's directory can usually rewrite
 # the script in it too. CDPATH is cleared so `cd` prints nothing into the
 # substitution.
+# The script's directory comes from a parameter expansion, not `dirname`: this
+# runs before the prerequisite check, so it must need no external tool. (Under
+# an empty PATH a missing dirname left `cd -- ""`, which bash 5.2 ignored and
+# bash 5.3 rejects, so the script stopped before saying what is missing.)
 SELF_ROOT=""
 if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
-  _self_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _self_src="${BASH_SOURCE[0]}"
+  case "$_self_src" in
+    */*) _self_src_dir="${_self_src%/*}"; _self_src_dir="${_self_src_dir:-/}" ;;
+    *)   _self_src_dir="." ;;
+  esac
+  _self_dir="$(CDPATH='' cd -- "$_self_src_dir" && pwd)"
   SELF_ROOT="${_self_dir%/*}"
   if ! [[ -e "$SELF_ROOT/.git" && "$_self_dir" == "$SELF_ROOT/installer" \
         && "$SELF_ROOT/installer/install.sh" -ef "${BASH_SOURCE[0]}" \
