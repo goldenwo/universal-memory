@@ -11,15 +11,16 @@
 //   - resolveFloor: the pre-existing #185 thin-transcript floors (the
 //     pre-rewrite server/lib/checkpoint.mjs's own resolveFloor function,
 //     ec1939e:checkpoint.mjs:111-115). 0 is a valid, deliberate value
-//     there ("disable this floor"). This module becomes its home verbatim —
-//     semantics are copied byte-for-byte, not changed.
+//     there ("disable this floor"). One deliberate difference from that
+//     copy: a blank env value is unset (falls through to config), where
+//     the original read it as Number('') === 0 and disabled the floor.
 //
 // checkpoint.mjs and the §6 layers code both import from here so the five
 // chunking keys and the #185 floors are never duplicated or module-private.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseNumberEnv } from './env-number.mjs';
+import { parseNumberEnv, parseIntEnv } from './env-number.mjs';
 
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 
@@ -35,10 +36,10 @@ export const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.j
 
 /**
  * Resolve a positive-INTEGER config value: env > config > shipped default.
- * Env wins only when set AND `Number(...)` is a **safe integer** AND `>=
- * min` — a blank env var (`Number('') === 0`), garbage (`Number('abc')`
- * NaN), or a fraction (`Number('200000.5')`) all fall through to config,
- * never silently accepted. Same fallthrough applies to `configValue`.
+ * Env wins only when parseIntEnv (env-number.mjs) reads it as a **safe
+ * integer** `>= min` — a blank env var, garbage ('abc'), or a fraction
+ * ('200000.5') all fall through to config, never silently accepted. Same
+ * fallthrough applies to `configValue`.
  *
  * `Number.isSafeInteger` (not `Number.isFinite`) is deliberate: these keys
  * are byte counts / chunk counts / millisecond timeouts, never fractional —
@@ -63,11 +64,8 @@ export const DEFAULT_CONFIG_PATH = path.resolve(LIB_DIR, '../config/checkpoint.j
  * @returns {number}
  */
 export function resolvePositiveInt({ envName, configValue, fallback, min = 1 }) {
-  const raw = process.env[envName];
-  if (raw !== undefined) {
-    const envNum = Number(raw);
-    if (Number.isSafeInteger(envNum) && envNum >= min) return envNum;
-  }
+  const envNum = parseIntEnv(process.env[envName], { min });
+  if (envNum !== undefined) return envNum;
   if (Number.isSafeInteger(configValue) && configValue >= min) {
     return configValue;
   }

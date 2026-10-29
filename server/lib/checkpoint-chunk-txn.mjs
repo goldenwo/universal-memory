@@ -322,7 +322,7 @@ export async function runChunkTransaction(args, deps = {}) {
     return { stopped: { reason: 'cost_cap' } };
   }
 
-  // ----- Step 2: #185 thin-transcript gate, byte-for-byte, applied to the chunk -----
+  // ----- Step 2: #185 thin-transcript gate (the legacy rule), applied to the chunk -----
   const minTranscriptBytes = resolveFloor(
     'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', config.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES);
   const minTranscriptTurns = resolveFloor(
