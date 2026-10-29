@@ -40,6 +40,7 @@
 
 import { mem0OpsTotal } from './metrics.mjs';
 import { obsFallback } from './obs-fallback.mjs';
+import { parseIntEnv } from './env-number.mjs';
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_BASE_DELAY_MS = 100;
@@ -61,7 +62,8 @@ function emitMem0OpMetric(op, status) {
  * @param {() => Promise<T>} fn       - Async work; thrown errors may carry `.retryable`.
  * @param {object} [opts]
  * @param {number} [opts.maxRetries] - Max retries after the initial call. Beats env.
- *                                     Default: parseInt(UM_UPSTREAM_RETRY_MAX) || 3.
+ *                                     Default: UM_UPSTREAM_RETRY_MAX (a whole number
+ *                                     >= 0; anything else is no override), else 3.
  * @param {number} [opts.baseDelayMs]- Base delay for exponential backoff. Default 100ms.
  * @param {number} [opts.jitterMaxMs]- Max jitter (uniform 0..jitterMaxMs). Default 50ms.
  * @param {string} [opts.op]         - Optional op-label for um_mem0_ops_total emit
@@ -72,7 +74,9 @@ function emitMem0OpMetric(op, status) {
  *         a non-retryable error. The original error is preserved in `.cause`.
  */
 export async function withRetry(fn, opts = {}) {
-  const max = opts.maxRetries ?? parseInt(process.env.UM_UPSTREAM_RETRY_MAX || String(DEFAULT_MAX_RETRIES), 10);
+  // A malformed bound is no override: parseInt read ' ' or 'abc' as NaN, and `attempt <= NaN`
+  // never holds, so fn never ran.
+  const max = opts.maxRetries ?? parseIntEnv(process.env.UM_UPSTREAM_RETRY_MAX, { min: 0 }) ?? DEFAULT_MAX_RETRIES;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const jitterMaxMs = opts.jitterMaxMs ?? DEFAULT_JITTER_MAX_MS;
   const op = opts.op;
