@@ -19,6 +19,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseNumberEnv } from './env-number.mjs';
 
 const LIB_DIR = fileURLToPath(new URL('.', import.meta.url));
 
@@ -75,11 +76,11 @@ export function resolvePositiveInt({ envName, configValue, fallback, min = 1 }) 
 
 /**
  * Resolve a #185 thin-transcript floor: env > config > shipped default.
- * EXACT semantics of the private copy this replaces (the pre-rewrite
- * server/lib/checkpoint.mjs's own resolveFloor function,
- * ec1939e:checkpoint.mjs:111-115) — copied byte-for-byte, never changed. Unlike
- * resolvePositiveInt, env `0` YIELDS 0 here: 0 is the deliberate "disable
- * this floor" value for the #185 gate, not a misconfiguration.
+ * Unlike resolvePositiveInt, env `0` YIELDS 0 here: 0 is the deliberate
+ * "disable this floor" value for the #185 gate, not a misconfiguration.
+ * A blank env value is unset, as for every numeric env knob
+ * (env-number.mjs): the copy this replaced (ec1939e:checkpoint.mjs:111-115)
+ * read it as `Number('') === 0` and disabled the floor.
  *
  * @param {string} envName
  * @param {number} [configValue]
@@ -87,9 +88,7 @@ export function resolvePositiveInt({ envName, configValue, fallback, min = 1 }) 
  * @returns {number}
  */
 export function resolveFloor(envName, configValue, fallback) {
-  const envNum = Number(process.env[envName]);
-  if (process.env[envName] !== undefined && Number.isFinite(envNum)) return envNum;
-  return configValue ?? fallback;
+  return parseNumberEnv(process.env[envName]) ?? configValue ?? fallback;
 }
 
 // #185 thin-transcript floor defaults — same values as the pre-rewrite
