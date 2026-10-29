@@ -22,6 +22,7 @@
 // operator who cannot reach a running server always sees the fallback.
 
 import http from 'node:http';
+import { parsePortEnv } from '../lib/env-number.mjs';
 
 const NUCLEAR_HINT =
   'If the server is not running, stop it and delete <UM_VAULT_DIR>/oauth-state.json ' +
@@ -85,7 +86,9 @@ async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.error) fail(2, `${parsed.error}\n\n${USAGE}`);
 
-  const port = parsed.port ?? process.env.MEM0_MCP_PORT ?? '6335';
+  // The env port reads as the server reads it (mem0-mcp-http.mjs PORT): a blank one used to
+  // reach http.request as '' and post to port 80.
+  const port = parsed.port ?? parsePortEnv(process.env.MEM0_MCP_PORT, 6335);
   const body = parsed.all ? { all: true } : { client_id: parsed.client };
 
   let res;

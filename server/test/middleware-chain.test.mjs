@@ -222,6 +222,24 @@ test('B.6b: request body over UM_HTTP_MAX_REQUEST_BYTES → 413 INPUT_TOO_LARGE'
   } finally { await close(); }
 });
 
+// The cap reads like every numeric env knob (lib/env-number.mjs): '1024x' was read as 1024,
+// a cap the operator never set; a malformed value is no override, so the 2 MB default holds.
+test('B.6b: a malformed UM_HTTP_MAX_REQUEST_BYTES falls back to the 2 MB default', async () => {
+  const { close, url } = await startServerWithCap({
+    capBytes: '1024x',
+    token: 'secret',
+    memory: fakeMemory,
+  });
+  try {
+    const r = await fetch(url('/api/reindex'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer secret' },
+      body: JSON.stringify({ pad: 'x'.repeat(2048) }),
+    });
+    assert.notEqual(r.status, 413, 'a 2 KB body is under the 2 MB default');
+  } finally { await close(); }
+});
+
 test('B.6b: body cap rejects via Content-Length header (pre-read short-circuit)', async () => {
   // If Content-Length exceeds the cap, we should reject before even reading
   // the body stream. Set a tiny cap so any body header trips it.

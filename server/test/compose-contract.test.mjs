@@ -3,8 +3,8 @@
 // MEM0_MCP_PORT is read two different ways and the two readings conflict:
 //   • docker-compose.yml `ports:` uses it as the HOST side of the mapping.
 //   • memory-server also has `env_file: .env`, so the same value reaches the
-//     container, where mem0-mcp-http.mjs does parseInt(MEM0_MCP_PORT) to pick
-//     its LISTEN port.
+//     container, where mem0-mcp-http.mjs reads MEM0_MCP_PORT to pick its
+//     LISTEN port.
 //
 // Left alone, MEM0_MCP_PORT=6337 published host 6337 -> target 6335 while the
 // server listened on 6337 inside (nothing on 6335), and the documented binding

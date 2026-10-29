@@ -77,6 +77,7 @@ import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { isRecallable } from './lib/recallable.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey, isMcpHandshakeMessage, defersChargeToMessage, MCP_HANDSHAKE_BUCKET } from './lib/rate-limit.mjs';
+import { parseIntEnv, parsePortEnv } from './lib/env-number.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
@@ -270,7 +271,7 @@ function requireEnv(name) {
 	return v;
 }
 
-const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
+const PORT = parsePortEnv(process.env.MEM0_MCP_PORT, 6335);
 // When run as main, env vars must be set — fail fast. When imported for tests,
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
@@ -482,7 +483,7 @@ export async function initMemory() {
 			provider: 'qdrant',
 			config: {
 				host: process.env.QDRANT_HOST || 'localhost',
-				port: parseInt(process.env.QDRANT_PORT || '6333', 10),
+				port: parsePortEnv(process.env.QDRANT_PORT, 6333),
 				collectionName: process.env.QDRANT_COLLECTION || 'memories',
 			},
 		},
@@ -1591,8 +1592,7 @@ function handleMcpMessage(msg, ctx = {}) {
 const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 function _currentMaxBodyBytes() {
-	const v = parseInt(process.env.UM_HTTP_MAX_REQUEST_BYTES || '', 10);
-	return Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_BODY_BYTES;
+	return parseIntEnv(process.env.UM_HTTP_MAX_REQUEST_BYTES) ?? DEFAULT_MAX_BODY_BYTES;
 }
 
 /**

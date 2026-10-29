@@ -54,6 +54,7 @@ import { openDb } from './capture-events.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { umCaptureLedgerErrorsTotal } from './metrics.mjs';
+import { parseIntEnv } from './env-number.mjs';
 
 const DDL = `
   CREATE TABLE IF NOT EXISTS capture_ledger (
@@ -106,8 +107,7 @@ const DEFAULT_MESSAGES_PER_CAPTURE = 64;
 let _lastPruneDay = null; // prune throttle stamp (UTC day)
 
 function envInt(name, fallback) {
-  const n = Number.parseInt(process.env[name] ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  return parseIntEnv(process.env[name]) ?? fallback;
 }
 
 export function reactionSkewMs() { return envInt('UM_REACTION_TS_SKEW_MS', DEFAULT_SKEW_MS); }
