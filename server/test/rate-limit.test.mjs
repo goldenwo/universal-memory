@@ -115,6 +115,20 @@ test('env override: a blank or malformed UM_RATE_LIMIT_RPM / _BURST falls back t
   });
 });
 
+// A rate is not a count: 7.5 rpm refills one token every 8 s (parseInt read it as 7, and a
+// whole-number-only parse would have turned it into the default 60).
+test('env override: UM_RATE_LIMIT_RPM accepts a fractional rate', () => {
+  withRateEnv({ UM_RATE_LIMIT_RPM: '7.5', UM_RATE_LIMIT_BURST: '1' }, () => {
+    const admit = createRateLimiter();
+    let now = 5_700_000;
+    assert.equal(admit('1.2.3.4', now).admitted, true);
+    now += 7_900;
+    assert.equal(admit('1.2.3.4', now).admitted, false, 'under 8 s: not yet refilled');
+    now += 200;
+    assert.equal(admit('1.2.3.4', now).admitted, true, 'after 8 s at 7.5 rpm: one token');
+  });
+});
+
 // '2x' was read as 2, so eviction began at 1 entry and a drained IP got a fresh bucket as
 // soon as another IP arrived. The default cap (10000) keeps both.
 test('env override: UM_RATE_LIMIT_MAX_IPS takes no numeric prefix', () => {

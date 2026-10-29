@@ -15,6 +15,38 @@
 
 import { getProvider, supportingProviders } from './provider/registry.mjs';
 import { PRICING } from './pricing.mjs';
+import { parseIntEnv, parsePositiveNumberEnv, parsePortEnv } from './env-number.mjs';
+
+// The protection knobs: the rate limiter, the request-body cap and the two ports. Each
+// parse here must be the one its reader uses (rate-limit.mjs, mem0-mcp-http.mjs), so that
+// whatever this accepts, the reader honours.
+const PROTECTION_KNOBS = [
+  ['UM_RATE_LIMIT_RPM', parsePositiveNumberEnv, 'a positive number of requests per minute (default 60)'],
+  ['UM_RATE_LIMIT_BURST', parseIntEnv, 'a whole number >= 1 (default 10)'],
+  ['UM_RATE_LIMIT_MAX_IPS', parseIntEnv, 'a whole number >= 1 (default 10000)'],
+  ['UM_HTTP_MAX_REQUEST_BYTES', parseIntEnv, 'a whole number of bytes >= 1 (default 2097152 = 2 MB)'],
+  ['MEM0_MCP_PORT', parsePortEnv, 'a TCP port 1-65535 (default 6335)'],
+  ['QDRANT_PORT', parsePortEnv, 'a TCP port 1-65535 (default 6333)'],
+];
+
+/**
+ * Refuse boot when a protection knob is set but malformed. Its reader would fall back to
+ * the default (env-number.mjs), which for these knobs silently loosens a protection or moves
+ * a port; #321's rule (UM_OAUTH_CONSENT_TTL_HOURS below) is that the operator learns their
+ * setting was ignored. Unset or blank is no override and passes.
+ *
+ * @param {Record<string, string>} env - Environment variables
+ * @throws {Error} naming the first malformed knob, its value and what it must be
+ */
+export function validateNumericKnobs(env) {
+  for (const [name, parse, expected] of PROTECTION_KNOBS) {
+    const raw = env[name];
+    if (raw === undefined || String(raw).trim() === '') continue;
+    if (parse(raw) === undefined) {
+      throw new Error(`${name} must be ${expected}, got ${JSON.stringify(raw)}`);
+    }
+  }
+}
 
 /**
  * Validates summarizer configuration and logs:

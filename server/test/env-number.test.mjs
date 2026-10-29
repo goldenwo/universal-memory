@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNumberEnv, parseIntEnv, parsePortEnv } from '../lib/env-number.mjs';
+import { parseNumberEnv, parseIntEnv, parsePositiveNumberEnv, parsePortEnv } from '../lib/env-number.mjs';
 
 test('parseNumberEnv: a wholly numeric value, trimmed', () => {
   assert.equal(parseNumberEnv('0.9'), 0.9);
@@ -38,6 +38,14 @@ test('parseIntEnv: a fraction, a prefix, blank, below min or above max is no ove
   }
   assert.equal(parseIntEnv('-1', { min: 0 }), undefined);
   assert.equal(parseIntEnv('65536', { max: 65535 }), undefined);
+});
+
+test('parsePositiveNumberEnv: a number above 0, fractions included', () => {
+  assert.equal(parsePositiveNumberEnv('7.5'), 7.5);
+  assert.equal(parsePositiveNumberEnv(' 60 '), 60);
+  for (const raw of [undefined, '', ' ', '0', '-1', '7.5x', 'abc']) {
+    assert.equal(parsePositiveNumberEnv(raw), undefined, JSON.stringify(raw));
+  }
 });
 
 test('parsePortEnv: a TCP port 1-65535, else the fallback', () => {

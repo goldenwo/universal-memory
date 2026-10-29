@@ -21,13 +21,15 @@
 // (B.2) returns {bypassRateLimit} so /health, /metrics, /openapi etc.
 // skip this limiter entirely.
 
-import { parseIntEnv } from './env-number.mjs';
+import { parseIntEnv, parsePositiveNumberEnv } from './env-number.mjs';
 
 export function createRateLimiter(opts = {}) {
   // A blank or malformed knob is no override (env-number.mjs). parseInt read it as NaN, and a
   // NaN rpm or burst makes every token count NaN, which is never < 1: everything admitted.
+  // A set-but-malformed knob refuses boot (startup-validation.mjs validateNumericKnobs), so
+  // the fallback here only covers unset and blank. The rpm is a rate, so 7.5 is meaningful.
   const maxIps = opts.maxIps ?? parseIntEnv(process.env.UM_RATE_LIMIT_MAX_IPS) ?? 10000;
-  const rpm = opts.rpm ?? parseIntEnv(process.env.UM_RATE_LIMIT_RPM) ?? 60;
+  const rpm = opts.rpm ?? parsePositiveNumberEnv(process.env.UM_RATE_LIMIT_RPM) ?? 60;
   const burst = opts.burst ?? parseIntEnv(process.env.UM_RATE_LIMIT_BURST) ?? 10;
   const refillPerMs = rpm / 60_000;
   const evictThreshold = Math.floor(maxIps * 0.9);

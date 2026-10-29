@@ -87,7 +87,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig, validateNumericKnobs } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
@@ -277,6 +277,14 @@ const PORT = parsePortEnv(process.env.MEM0_MCP_PORT, 6335);
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
 if (IS_MAIN) {
+  // A set-but-malformed rate-limit, body-cap or port knob refuses boot (#321's rule): its
+  // reader would silently fall back to the default.
+  try {
+    validateNumericKnobs(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
   // R9 mitigation (DE6): refuse unsupported (provider, surface) combos at startup
   // BEFORE initMemory so e.g. UM_EMBEDDING_PROVIDER=anthropic is rejected with a
   // helpful list of valid embedding providers. validateProviderSupport throws;

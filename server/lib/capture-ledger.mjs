@@ -54,7 +54,7 @@ import { openDb } from './capture-events.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { umCaptureLedgerErrorsTotal } from './metrics.mjs';
-import { parseIntEnv } from './env-number.mjs';
+import { parseIntEnv, parsePositiveNumberEnv } from './env-number.mjs';
 
 const DDL = `
   CREATE TABLE IF NOT EXISTS capture_ledger (
@@ -111,7 +111,10 @@ function envInt(name, fallback) {
 }
 
 export function reactionSkewMs() { return envInt('UM_REACTION_TS_SKEW_MS', DEFAULT_SKEW_MS); }
-export function reactionHorizonMs() { return envInt('UM_REACTION_MATCH_HORIZON_HOURS', DEFAULT_HORIZON_HOURS) * 3_600_000; }
+// Hours are a duration, not a count: 1.5 is meaningful.
+export function reactionHorizonMs() {
+  return (parsePositiveNumberEnv(process.env.UM_REACTION_MATCH_HORIZON_HOURS) ?? DEFAULT_HORIZON_HOURS) * 3_600_000;
+}
 function retentionDays() { return envInt('UM_CAPTURE_LEDGER_RETENTION_DAYS', DEFAULT_RETENTION_DAYS); }
 function messagesPerCapture() { return envInt('UM_REACTION_MESSAGES_PER_CAPTURE', DEFAULT_MESSAGES_PER_CAPTURE); }
 

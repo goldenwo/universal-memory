@@ -479,6 +479,9 @@ test('ledger env knobs: a numeric prefix, a fraction or a blank is no override',
     }
     process.env.UM_REACTION_MATCH_HORIZON_HOURS = '6h';
     assert.equal(reactionHorizonMs(), 24 * 3_600_000, 'horizon 6h → default 24 h');
+    // Hours are not a count: a fractional horizon is honoured (parseInt read 1.5 as 1).
+    process.env.UM_REACTION_MATCH_HORIZON_HOURS = '1.5';
+    assert.equal(reactionHorizonMs(), 1.5 * 3_600_000, 'horizon 1.5 h');
   } finally {
     for (const k of keys) {
       if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
