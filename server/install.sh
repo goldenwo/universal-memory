@@ -1476,9 +1476,11 @@ fi
 # BACKUP may be unset if the .env path was a pure fresh install — that's fine,
 # the snapshot simply finds nothing and we fall through to defaults.
 _um_read_backup_value() {
-	# $1=key; stdout=value or empty. Treats first match as authoritative;
-	# strips surrounding double/single quotes to match what the user likely
-	# hand-edited.
+	# $1=key; stdout=value or empty. Treats first match as authoritative and
+	# returns the bare value the user hand-edited: the contents of a leading
+	# double- or single-quoted string, else the text before an inline
+	# ' # comment'. Quotes and comments are not part of the value; the server
+	# reads numeric knobs wholly numeric, so '120" # tuned' would be ignored.
 	#
 	# MUST ALWAYS return 0 (never let grep's no-match exit 1 leak out): this
 	# function is called via $(...) under `set -euo pipefail`, and a non-zero
@@ -1491,8 +1493,13 @@ _um_read_backup_value() {
 	_val=$(grep -E "^${k}=" "$BACKUP" 2>/dev/null \
 		| head -1 \
 		| cut -d= -f2- \
-		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
 		|| true)
+	case "$_val" in
+		\"*) _val="${_val#\"}"; _val="${_val%%\"*}" ;;
+		\'*) _val="${_val#\'}"; _val="${_val%%\'*}" ;;
+		*)   _val="${_val%%[[:space:]]#*}"
+		     _val="${_val%"${_val##*[![:space:]]}"}" ;;
+	esac
 	printf '%s' "$_val"
 	return 0
 }

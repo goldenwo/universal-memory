@@ -332,6 +332,9 @@ UM_TEMPORAL_DECAY=false
 UM_AUTH_TOKEN=seeded000000000000000000000000000000000000000000000000000000aaaa
 UM_RATE_LIMIT_RPM=120
 UM_LOG_LEVEL=debug
+UM_HTTP_MAX_REQUEST_BYTES="1048576" # 1 MB, hand-tuned
+UM_UPSTREAM_RETRY_MAX=5 # hand-tuned
+UM_LOCK_LOW_DISK_THRESHOLD='52428800'
 EOF
 
 T5_EXIT=0
@@ -347,6 +350,16 @@ T5_RPM=$(grep -E '^UM_RATE_LIMIT_RPM=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 T5_LOG=$(grep -E '^UM_LOG_LEVEL='      "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 assert_eq "T5: user UM_RATE_LIMIT_RPM preserved"  "$T5_RPM" "120"
 assert_eq "T5: user UM_LOG_LEVEL preserved"       "$T5_LOG" "debug"
+
+# A preserved value comes back bare: quotes and an inline comment are not part of
+# it. The server reads these knobs wholly numeric (server/lib/env-number.mjs), so
+# '1048576" # 1 MB' would silently fall back to the default.
+T5_BYTES=$(grep -E '^UM_HTTP_MAX_REQUEST_BYTES='  "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+T5_RETRY=$(grep -E '^UM_UPSTREAM_RETRY_MAX='      "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+T5_DISK=$(grep -E '^UM_LOCK_LOW_DISK_THRESHOLD=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: double-quoted value with an inline comment preserved bare" "$T5_BYTES" "1048576"
+assert_eq "T5: unquoted value with an inline comment preserved bare"      "$T5_RETRY" "5"
+assert_eq "T5: single-quoted value preserved bare"                        "$T5_DISK"  "52428800"
 
 # Missing keys must land at safe defaults
 T5_BURST=$(grep -E '^UM_RATE_LIMIT_BURST=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
