@@ -336,6 +336,7 @@ UM_HTTP_MAX_REQUEST_BYTES="1048576" # 1 MB, hand-tuned
 UM_UPSTREAM_RETRY_MAX=5 # hand-tuned
 UM_LOCK_LOW_DISK_THRESHOLD='52428800'
 UM_BRIDGE_JITTER_SEC=20" # what an earlier installer wrote back from "20" # tuned
+UM_RATE_LIMIT_MAX_IPS= "5000"
 EOF
 
 T5_EXIT=0
@@ -365,6 +366,10 @@ assert_eq "T5: single-quoted value preserved bare"                        "$T5_D
 # a malformed protection knob at boot, so the reader repairs its own earlier output.
 T5_JITTER=$(grep -E '^UM_BRIDGE_JITTER_SEC=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 assert_eq "T5: stray trailing quote from an earlier installer dropped"    "$T5_JITTER" "20"
+# Compose trims whitespace before a quoted value; so must the reader, or the
+# stray-quote drop turns ` "5000"` into ` "5000` and compose rejects the file.
+T5_MAXIPS=$(grep -E '^UM_RATE_LIMIT_MAX_IPS=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: quoted value after leading whitespace preserved bare"      "$T5_MAXIPS" "5000"
 
 # Missing keys must land at safe defaults
 T5_BURST=$(grep -E '^UM_RATE_LIMIT_BURST=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)

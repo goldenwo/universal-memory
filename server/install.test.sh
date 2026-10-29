@@ -1541,7 +1541,7 @@ T28B_SH=$(make_isolated_server "$T28B/server")
 mkdir -p "$T28B/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T28B/plugins/cache/universal-memory/universal-memory/1.8.1"
 {
   printf 'MEM0_MCP_PORT="6335" # host port\n'
-  printf 'UM_VAULT_DIR=%s\n' "$T28B/vault"
+  printf 'UM_VAULT_DIR= "%s"\n' "$T28B/vault"
   printf "UM_OPENAI_API_KEY='sk-testkey12345' # key\n"
 } > "$T28B/server/.env"
 
@@ -1555,6 +1555,9 @@ T28B_OUT=$(env PATH="$T28B/bin:$PATH" \
 assert_exit_zero "T28b: --verify exits 0 with a quoted, commented value" "$T28B_EXIT"
 assert_contains "T28b: port unquoted in health URL" "$T28B_OUT" "http://localhost:6335/health"
 assert_not_contains "T28b: no quote leaked into the URL" "$T28B_OUT" 'localhost:"6335"'
+# The vault line is ` "<path>"`: compose trims the space and unquotes it.
+assert_contains "T28b: quoted vault path after a space found" "$T28B_OUT" "vault-dir"
+assert_not_contains "T28b: no quote leaked into the vault path" "$T28B_OUT" " \"$T28B/vault"
 
 # ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
 # The CLI is a copy of the repo's scripts with no self-update path, so it stays

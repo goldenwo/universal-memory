@@ -123,10 +123,14 @@ trap _um_cleanup EXIT INT TERM
 # MEM0_MCP_PORT="6335" yields the literal `"6335"` and a health URL that can
 # never answer, which then reads as "the server is down". A quoted value is its
 # contents up to the closing quote (a # inside quotes is data, and an inline
-# comment may follow); an unquoted one ends at a whitespace-separated # comment,
-# trailing whitespace dropped. One rule for both readers below.
+# comment may follow), whitespace before the opening quote dropped; an unquoted
+# one ends at a whitespace-separated # comment, trailing whitespace dropped.
+# Leading whitespace is trimmed only ahead of a quote, as compose does: unquoted,
+# compose keeps it (`KEY= # c` is the literal `# c`). One rule for both readers.
 _um_env_value() {
-	local v="${1%$'\r'}"                       # CRLF-authored .env
+	local v="${1%$'\r'}" t                     # CRLF-authored .env
+	t="${v#"${v%%[![:space:]]*}"}"
+	case "$t" in [\"\']*) v="$t" ;; esac
 	case "$v" in
 		\"*) v="${v#\"}"; v="${v%%\"*}" ;;
 		\'*) v="${v#\'}"; v="${v%%\'*}" ;;
